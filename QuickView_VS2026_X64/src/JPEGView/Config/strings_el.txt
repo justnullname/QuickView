@@ -1,0 +1,512 @@
+﻿//! This file must be encoded with UTF-8 (e.g. with Windows Notepad)
+//! LICENSE: This localization file is part of JPEGView <https://github.com/sylikc/jpegview> and distributed under the same license.  See <https://github.com/sylikc/jpegview/blob/master/LICENSE.txt> for more info.
+
+//! Standard  Filename Convention: 'strings_%languagecode%.txt' where %languagecode% is the ISO 639-1 language code e.g. 'en' for English (See <https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes>)
+//! Alternate Filename Convention: 'strings_%languagecode%-%countrycode%.txt' where %countrycode% is the ISO 3166-1 country code e.g. 'US' for United States (See <https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes>)
+//!    Use the alternate filename convention only when the standard filename already exist (e.g. specifying a country-specific dialect for an existing language)
+
+////////////////////
+// ::: Translation Info ::: //
+//: ISO 639-1 code: el
+//: ISO 3166-1 code:
+//: Language: Greek, Modern
+//: Translator(s) - Name <Contact Info/URL>: Michalis (Μιχάλης) <michalisnet(at)yahoo(dot)gr>
+//: Last Updated:
+//: Additional Notes:
+////////////////////
+
+////////////////////
+// ::: Instructions / Help ::: (help for translators only, does not need to be translated) //
+
+//? Line Format:    English string<tab>Translated string<newline>
+//? * Lines beginning with "//" (comments) are ignored
+//? * Blank lines are ignored
+//? * Lines without a <tab> are ignored
+//? * Lines with no text after the <tab> are ignored
+//? * Multiple tabs are permitted between English and Translated string, e.g. this is valid:    English string<tab><tab><tab>Translated string<newline>
+
+//? NOTE: %s %d have special meanings in the strings, so make sure they appear somewhere in the translated string!
+
+//? For the strings below which are short and have no context:
+//?   "in"        in context: is shorthand for "inch"
+//?   "cm"        in context: is shorthand for "centimeter"
+//?   "C - R"     in context: is "Cyan Red" colors
+//?   "M - G"     in context: is "Magenta Green" colors
+//?   "Y - B"     in context: is "Yellow Blue" colors
+//?   "yes"/"no"  in context: is for showing EXIF flags
+//?   "on"/"off"  in context: is for showing a setting active or not
+//?   "Filter"    in context: is used in Resize image, "sampling filter"
+//?   "Box"       in context: is used in Resize image sampling filter "Box filter"
+////////////////////
+
+
+// ::: Program Strings ::: (sorted alphabetically) //
+%d file(s) renamed, %d file(s) copied, %d folder(s) created	%d αρχείο(α) μετονομάστηκαν, %d αρχείο(α) αντιγράφηκαν, %d φάκελος(οι) δημιουργήθηκαν
+%s camera raw images (embedded JPEGs only)	%s ακατέργαστες εικόνες CAMERA RAW (μόνο ενσωματωμένα JPEG)
+%s images	%s εικόνες
+%s images (processed by Window Imaging Component - WIC)	%s εικόνες (επεξεργασία από το Window Imaging Component - WIC)
+'My Pictures' folder	Φάκελος 'Οι εικόνες μου'
+About JPEGView (32-bit version)...	Σχετικά με το JPEGView (έκδοση 32-bit)...
+About JPEGView (64-bit version)...	Σχετικά με το JPEGView (έκδοση 64-bit)...
+Acquisition date:	Ημερομηνία λήψης:
+Actual size of image	Πραγματικό μέγεθος
+Align image to horizontal or vertical line	Ευθυγράμμιση εικόνας σε οριζόντια ή κάθετη γραμμή
+Alignment:	Ευθυγράμμιση:
+All Files	Όλα τα αρχεία
+All existing user settings will be preserved.	Όλες οι υπάρχουσες ρυθμίσεις του χρήστη θα διατηρηθούν.
+Alternatively, right-click an image file of the given type in Windows Explorer and select 'Open with... > Choose default program'	Εναλλακτικά, κάντε δεξί κλικ σε ένα αρχείο εικόνας του συγκεκριμένου τύπου στην Εξερεύνηση των Windows και επιλέξτε 'Άνοιγμα με... > Επιλογή προεπιλεγμένου προγράμματος".
+Altitude (m):	Υψόμετρο (μ):
+Amount	Ποσοστό
+Application:	Εφαρμογή:
+Applications	Εφαρμογές:
+Apply	Εφαρμογή
+Apply Unsharp Mask	Εφαρμογή μάσκας μείωσης όξυνσης
+Apply auto contrast correction using only visible section of image	Εφαρμογή αυτόματης διόρθωσης της αντίθεσης με βάση το ορατό μέρος της εικόνας
+Ascending	Αύξουσα
+Auto contrast and color correction	Αυτόματη διόρθωση αντίθεσης και χρώματος
+Auto crop corrected image (avoids black border)	Αυτόματη περικοπή διορθωμένης εικόνας (αποφυγή του μαύρου περιθωρίου)
+Auto crop rotated image (avoids black border)	Αυτόματη περικοπή περιστραμμένης εικόνας (αποφυγή του μαύρου περιθωρίου)
+Auto zoom mode	Λειτουργία αυτόματου ζουμ
+Back mouse button	Πίσω πλήκτρο ποντικιού
+Batch rename/copy of files	Μαζική μετονομασία/αντιγραφή αρχείων
+Blend	Μίξη εικόνων
+Bottom	Κάτω
+Box	Πλαίσιο
+Brightness	Φωτεινότητα
+Browse...	Περιήγηση...
+C - R	C - R
+Camera model:	Μοντελο μηχανής:
+Can't rename file	Δεν είναι δυνατή η μετονομασία του αρχείου
+Cancel	Ακύρωση
+Cannot read from parameter DB file '%s'!	Η ΒΔ παραμέτρων '%s' δεν είναι αναγνώσιμη!
+Cannot read parameter DB file '%s' because it is too large!	Η ΒΔ παραμέτρων '%s' δεν είναι αναγνώσιμη λόγω μεγάλου μεγέθους!
+Cannot write to parameter DB file '%s'!	Η ΒΔ παραμέτρων '%s' δεν είναι εγγράψιμη!
+Click and drag the mouse vertically to correct image tilt.	Κάντε κλικ και σύρετε το ποντίκι κάθετα για να διορθώσετε την κλίση της εικόνας.
+Clipboard Image	Εικόνα προχείρου
+Close	Κλείσιμο
+Close help text display / Close JPEGView	Κλείσιμο του κειμένου βοήθειας / Κλείσιμο του JPEGView
+Color Correction	Διόρθωση χρώματος
+Combine keys with '+'	Συνδυασμός πλήκτρων με '+'
+Confirm	Επιβεβαίωση
+Confirm save default parameters	Επιβεβαίωση αποθήκευσης προεπιλεγμένων παραμέτρων
+Conflicting entries in Param DB	Αντικρουόμενες εγγραφές στη ΒΔ παραμέτρων
+Continue rename/copy?	Να συνεχιστεί η μετονομασία/αντιγραφή;
+Contrast	Αντίθεση
+Contrast Correction	Διόρθωση αντίθεσης
+Copy file path of the image to clipboard	Αντιγραφή της διαδρομής του αρχείου εικόνας στο πρόχειρο
+Copy screen to clipboard / Copy processed full size image to clipboard	Αντιγραφή οθόνης στο πρόχειρο/ Αντιγραφή επεξεργασμένης εικόνας στο πρόχειρο
+Copying parameter DB to file '%s' failed. Reason: %s	Η αντιγραφή της ΒΔ παραμέτρων στο αρχείο %s απέτυχε! Αιτία: %s
+Correct converging lines (perspective correction)	Διόρθωση συγκλίνων γραμμών (διόρθωση προοπτικής)
+Creation date/time	Ημερομηνία/ώρα δημιουργίας
+Crop image	Περικοπή εικόνας
+Crop the image and apply transformation? Cropping cannot be undone!	Περικοπή της εικόνας και εφαρμογή του μετασχηματισμού; Η περικοπή δεν μπορεί να αναιρεθεί!
+Ctrl + Left mouse	Ctrl + αριστερό πλήκτρο ποντικού
+Current image	Παρούσα εικόνα
+Cyan-Red	Κυανό-Κόκκινο
+Darken Highlights	Σκοτείνιασμα φωτισμών
+Date	Ημερομηνία
+Date placeholders use the modification date of the image.	Τα πεδία ημερομηνιών χρησιμοποιούν την ημερομηνία τροποποίησης της εικόνας.
+Day / Month / Year (as numbers)	Ημέρα / Μήνας / Έτος (ως αριθμοί)
+Decoding this format requires the Microsoft Visual C++ Redistributable.	Η αποκωδικοποίηση αυτής της μορφής απαιτεί το Microsoft Visual C++ Redistributable.
+Deep Shadows	Βαθιές σκιές
+Delete	Διαγραφή
+Delete current file on disk permanently	Διαγραφή του αρχείου μόνιμα
+Delete image file	Διαγραφή αρχείου εικόνας
+Descending	Φθίνουσα
+Display image (EXIF) information	Προβολή πληροφοριών εικόνας (EXIF)
+Do you really want to delete the current image file on disk?	Θέλετε να διαγράψετε το τρέχον αρχείο εικόνας;
+Do you really want to permanently delete the file %filename%?	Θέλετε να διαγραφεί μονίμως το αρχείο %filename%;
+Do you really want to save the following parameters as default to the INI file	Θέλετε να αποθηκεύσετε τις ακόλουθες παραμέτρους ως προεπιλεγμένες στο αρχείο INI
+Drag at the left or right border for asymmetric correction.	Σύρετε το αριστερό ή το δεξί όριο για ασύμμετρη διόρθωση.
+EXIF date successfully set on %d images, failed on %d images	Η ημερομηνία EXIF ορίστηκε επιτυχώς σε %d εικόνες, απέτυχε σε %d εικόνες
+Edit	Επεξεργασία
+Enable/disable automatic contrast correction (histogram equalization)	Ενεργοποίηση/απενεργοποίηση αυτόματης διόρθωσης αντίθεσης (εξισορρόπηση ιστογράμματος)
+Enable/disable automatic density correction (local brightness correction)	Ενεργοποίηση/απενεργοποίηση αυτόματης διόρθωσης πυκνότητας (τοπική διόρθωση φωτεινότητας)
+Enable/disable full screen mode	Ενεργοποίηση/απενεργοποίηση πλήρους οθόνης
+Enable/disable high quality resampling	Ενεργοποίηση/απενεργοποίηση δειγματοληψίας υψηλής ποιότητας
+Enable/disable keeping of geometry related (zoom/pan/rotation)	Ενεργοποίηση/απενεργοποίηση γεωμετρικών παραμέτρων (ζουμάρισμα/πανάρισμα/περιστροφή)
+Enable/disable landscape picture enhancement mode	Ενεργοποίηση/απενεργοποίηση της λειτουργίας βελτίωσης εικόνας τοπίου
+Error	Σφάλμα
+Error during rename/copy	Σφάλμα κατά τη μετονομασία/αντιγραφή
+Error saving file	Σφάλμα αποθήκευσης αρχείου
+Error while writing the following registry key	Σφάλμα κατά την εγγραφή του ακόλουθου κλειδιού μητρώου
+Error writing file to disk!	Σφάλμα εγγραφής αρχείου στο δίσκο!
+Example:	Παράδειγμα:
+Exif Date Time:	
+Exposure bias (EV):	Διόρθωση έκθεσης (EV):
+Exposure time (s):	Χρόνος έκθεσης (s):
+Extension	Επέκταση
+Extracted number from original file name	Αριθμός που εξήχθηκε από το αρχικό όνομα αρχείου
+F-Number:	F-αριθμός:
+File name	Όνομα αρχείου
+File size	Μέγεθος αρχείου
+File type	Τύπος αρχείου
+Fill page with crop	Γέμισμα χαρτιού με περικοπή
+Fill with crop	Γέμισμα με περικοπή
+Fill with crop (no zoom)	Γέμισμα με περικοπή (χωρίς ζουμ)
+Filter:	Φίλτρο:
+Fit image to screen	Προσαρμογή εικόνας στην οθόνη
+Fit to page	Προσαρμογή στο χαρτί
+Fit to screen	Προσαρμογή στην οθόνη
+Fit to screen (no zoom)	Προσαρμογή στην οθόνη (χωρίς ζουμ)
+Flash fired:	Φλας:
+Focal length (mm):	Εστιακή απόσταση (χιλ.):
+Forward mouse button	Μπροστά πλήκτρο ποντικού
+Full screen mode	Πλήρης οθόνη
+Goto first/last image of current folder (using sort order as defined)	Μετάβαση στην πρώτη/τελευταία εικόνα του τρέχοντος φακέλου (με βάση την ταξινόμηση όπως ορίστηκε)
+Goto next image	Μετάβαση στην επόμενη εικόνα
+Goto previous image	Μετάβαση στην προηγούμενη εικόνα
+Height	Ύψος
+Hide histogram	Απόκρυψη ιστογράμματος
+High quality resampling	Υψηλή ποιότητα δειγματοληψίας
+Hour / Minute (as numbers)	Ώρα / Λεπτό (ως αριθμοί)
+ISO Speed:	ISO:
+Image Pixels	Εικονοστοιχεία εικόνας
+Image files in folder	Αρχεία εικόνας στο φάκελο
+Image height:	Ύψος εικόνας:
+Image width and height must be dividable by the JPEG block size (8 or 16) for lossless transformations!	Το πλάτος και το ύψος της εικόνας πρέπει να διαιρούνται με το μέγεθος του μπλοκ JPEG (8 ή 16) για μετατροπές χωρίς απώλειες!
+Image width:	Πλάτος εικόνας:
+Images	Εικόνες
+Increase/decrease auto color cast correction amount	Αύξηση/μείωση της αυτόματης διόρθωσης έντασης χρώματος
+Increase/decrease auto contrast correction amount	Αύξηση/μείωση της αυτόματης διόρθωσης της αντίθεσης
+Increase/decrease brightness	Αύξηση/μείωση φωτεινότητας
+Increase/decrease contrast	Αύξηση/μείωση αντίθεσης
+Increase/decrease darkening of highlights (LDC must be on)	Αύξηση/μείωση στο σκοτείνιασμα των φωτεινών μερών (το LDC πρέπει να είναι ενεργοποιημένο)
+Increase/decrease lightening of shadows (LDC must be on)	Αύξηση/μείωση της φωτεινότητας των σκιών (το LDC πρέπει να είναι ενεργοποιημένο)
+Increase/decrease sharpness	Αύξηση/μείωση οξύτητας
+Insufficient rights to change the privilege (DACL) on the registry entry. Continue?	Ανεπαρκή δικαιώματα για την αλλαγή του δικαιώματος (DACL) στο μητρώο. Συνέχεια;
+JPEGView Help	Βοήθεια για το JPEGView
+JPEGView is a lean, fast and highly configurable viewer/editor for JPEG, BMP, PNG, WEBP, TGA, GIF and TIFF images with a minimal GUI.	Το JPEGView είναι ένας λιτό, γρήγορο και εξαιρετικά παραμετροποιήσιμο πρόγραμμα προβολής/επεξεργασίας για εικόνες JPEG, BMP, PNG, WEBP, TGA, GIF και TIFF με απλό γραφικό περιβάλλον.
+JPEGView is registered as default viewer for the selected file formats.	Το JPEGVIEW έχει οριστεί ως προεπιλεγμένος προβολέας για τις επιλεγμένες μορφές αρχείων.
+Keep aspect ratio on crop	Διατήρηση της αναλογίας διαστάσεων στην περικοπή
+Keep parameters	Διατήρηση παραμέτρων
+Keep processing parameters between images	Διατήρηση παραμέτρων επεξεργασίας μεταξύ εικόνων
+Known keys:	Γνωστά κλειδιά:
+Lanczos/Bicubic	Lanczos/Bicubic
+Landscape	Οριζόντια
+Landscape picture enhancement mode	Λειτουργία ενίσχυσης οριζόντιας προβολής
+Last modification date/time	Ημερομηνία τελευταίας τροποποίησης
+Left	Αριστερά
+Left mouse & drag	Σύρσιμο με αριστερό πλήκτρο ποντικού
+Licensed under the GNU general public license (GPL), see readme file for details	Άδεια GNU general public license (GPL), δείτε το αρχείο Readme για λεπτομέρειες
+Lighten Shadows	Φωτισμός σκιών
+Local density correction	Διόρθωση τοπικής πυκνότητας
+Location:	Τοποθεσία:
+Loop folder	Έρευνα στο φάκελο
+Loop recursively	Ψάξιμο στα μέσα επίπεδα
+Loop siblings	Ψάξε στα πρώτα επίπεδα
+Loop through files in current directory and all sibling folders (folders on same level)	Κύλιση στα αρχεία του παρόντος φακέλου και των υποφακέλων του ιδίου επιπέδου
+Loop through files in current directory and all subfolders	Κύλιση στα αρχεία του παρόντος φακέλου και όλων των υποφακέλων
+Loop through files in current folder	Κύλιση στς αρχεία του παρόντος φακέλου
+Lossless JPEG transformations	Μη απωλεστική μετατροπή JPEG
+M - G	M - G
+Magenta-Green	Ματζέντα-Πράσινο
+Manage 'Open image with' menu...	Διαχείριση μενού "Άνοιγμα εικόνας με..."
+Margins:	Περιθώρια:
+Mark image for toggling. Use %s to toggle between marked and current image	Μαρκάρισμα εικόνας για εναλλαγή. Χρησιμοποιήστε το %s για εναλλαγή μεταξύ μαρκαρισμένης και τρέχουσας εικόνας
+Maximize/restore to/from virtual desktop (only for multi-monitor systems)	Μεγιστοποίηση/επαναφορά σε/από εικονική επιφάνεια εργασίας (μόνο για συστήματα πολλαπλών οθονών)
+Menu entries:	Καταχωρήσεις μενού:
+Modification date:	Ημερομηνία τροποποίησης:
+Modifier keys:	Πλήκτρα τροποποίησης:
+Month / Short form (text)	Μήνας / Σύντομη μορφή (κείμενο)
+Mouse wheel	Ροδέλα ποντικιού
+Navigation	Πλοήγηση
+New	Νέο
+New height:	Νέο ύψος
+New name (>> : file gets copied)	Νέο όνομα (>> : το αρχείο αντιγράφεται)
+New name contains backslash character!	Το νέο όνομα περιέχει χαρακτήρα backslash(\)!
+New size:	Νέο μέγεθος:
+New width:	Νέο πλάτος:
+Next image	Επόμενη εικόνα
+No image loaded!	Δεν έχει φορτωθεί εικόνα!
+No user INI file exists yet. Create user INI file from INI file template?	Δεν υπάρχει αρχείο INI για το χρήστη. Δημιουργία ενός από το πρότυπο αρχείου INI;
+None	Κανένα
+Not enough memory available	Δεν υπάρχει αρκετή διαθέσιμη μνήμη
+Note: Set the key 'CropWithoutPromptLosslessJPEG=true' in the INI file to always crop without showing this message.	Σημείωση: Ορίστε το κλειδί 'CropWithoutPromptLosslessJPEG=true' στο αρχείο INI για να κόβετε πάντα χωρίς να εμφανίζεται αυτό το μήνυμα.
+Number (consecutively numbered)	Αριθμός (διαδοχική αρίθμηση)
+Number of CPU cores used	Αριθμός πυρήνων CPU που χρησιμοποιούνται
+Number of JPEG files in folder: %d	Αριθμός αρχείων JPEG στο φάκελο: %d
+Number with N digits	Αριθμός με N ψηφία
+OK	Εντάξει
+Old name	Παλιό όνομα
+Open folder containing image and select in Windows Explorer	Ανοίξτε το φάκελο που περιέχει την εικόνα και επιλέξτε τον στην Εξερεύνηση των Windows
+Open new image or slideshow file	Άνοιγμα νέου αρχείου εικόνας ή παρουσίασης
+Order files by	Ταξινόμιση αρχείων κατά
+Orientation:	Προσανατολισμός:
+Original file extension	Αρχική επέκταση αρχείου
+Original file name (with extension)	Αρχικό όνομα αρχείου (με επέκταση)
+Original file name (without extension)	Αρχικό όνομα αρχείου (χωρίς επέκταση)
+Pan image	Πανάρισμα (Pan)
+Paper size:	Χαρτί:
+Parameter DB	ΒΔ παραμέτρων
+Parameter DB error	Σφάλμα στη ΒΔ παραμέτρων
+Parameter DB file '%s' could not be opened!	Η ΒΔ παραμέτρων '%s' δεν μπόρεσε να ανοιχτεί!
+Parameter DB file '%s' is not valid (invalid header)!	Η ΒΔ παραμέτρων '%s' δεν είναι έγκυρη (μη έγκυρη επικεφαλίδα)!
+Paste from clipboard	Επικόλληση από το πρόχειρο
+Pasting image from clipboard failed!	Η επικόλληση εικόνας από το πρόχειρο απέτυχε!
+Performing the lossless transformation failed!	Η εκτέλεση της μετατροπής χωρίς απώλειες απέτυχε!
+Performing the transformation failed	Η εκτέλεση της μετατροπής απέτυχε
+Perspective Correction	Διόρθωση προοπτικής
+Pixels	Εικονοστοιχεία
+Placeholders:	Σύμβολα κράτησης θέσης:
+Portrait	Κάθετα
+Press 'OK' to continue with registration or 'Cancel' to abort all registrations.	Πατήστε "Εντάξει" για συνέχεια της καταχώρησης ή "Άκυρο" για ακύρωση των καταχωρήσεων.
+Press ESC to exit...	Πάτήστε ESC για έξοδο...
+Press any key to search the subdirectories for image files.	Πατήστε οποιοδήποτε πλήκτρο για αναζήτηση εικόνων σε υποφακέλους.
+Preview	Προεπισκόπηση
+Previous image	Προηγούμενη εικόνα
+Print	Εκτύπωση
+Print Image	Εκτύπωση Εικόνας
+Printer driver	Πρόγραμμα εκτυπωτή
+Printer:	Εκτυπωτής
+Project home page	Αρχική σελίδα έργου
+Radius	Ακτίνα
+Random	Τυχαία
+Reading the JPEG file from disk failed	Η ανάγνωση του αρχείου JPEG από το δίσκο απέτυχε
+Reason:	Αιτία:
+Registering or unregistering file extensions in this registry area requires administrator privileges and cannot be done in JPEGView.	Η καταχώρηση/αποκαταχώρηση επεκτάσεων αρχείων σε αυτή την περιοχή μητρώου απαιτεί προνόμια διαχειριστή και δεν μπορεί να γίνει στο JPEGView.
+Registration applies to the current user only.	Η καταχώρηση ισχύει μόνο για τον τρέχοντα χρήστη.
+Remove from	Απομάκρυνση από
+Rename	Μετονομασία
+Rename/copy images to:	Μετονομασία/αντιγραφή εικόνων σε:
+Renaming file failed!	Η μετονομασία αρχείου απέτυχε!
+Reset	Επαναφορά
+Resize Image	Αλλαγή μεγέθους εικόνας
+Right	Δεξιά
+Right mouse button: Context menu	Δεξί πλήκτρο ποντικιού: Μενού περιβάλλοντος
+Roll from bottom	Εκτύλιξη από κάτω
+Roll from left	Εκτύλιξη από αριστερά
+Roll from right	Εκτύλιξη από δεξιά
+Roll from top	Εκτύλιξη από επάνω
+Rotate Image	Περιστροφή εικόνας
+Rotate current file on disk lossless by 270 deg (W/H must be multiple of 16)	Περιστροφή τρέχοντος αρχείου χωρίς απώλειες 270 μοίρες (το πλάτος/ύψος πρέπει να είναι πολλαπλάσιο του 16)
+Rotate current file on disk lossless by 90 deg (W/H must be multiple of 16)	Περιστροφή τρέχοντος αρχείου χωρίς απώλειες 90 μοίρες (το πλάτος/ύψος πρέπει να είναι πολλαπλάσιο του 16)
+Rotate image 90 deg clockwise	Περιστροφή της εικόνας 90 μοίρες δεξιόστροφα
+Rotate image 90 deg counter-clockwise	Περιστροφή της εικόνας 90 μοίρες αριστερόστροφα
+Rotate image and fit to screen	Περιστροφή εικόνας και ταίριασμα στην οθόνη
+Rotate image by user-defined angle	Περιστροφή της εικόνας κατά ορισμένη γωνία
+Rotate the image by dragging with the mouse.	Περιστροφή της εικόνας σύροντας με το ποντίκι.
+SIMD mode used	Χρήση λειτουργίας SIMD
+Same as Image	Ίδιο με την εικόνα
+Saturation	Κορεσμός
+Save	Αποθήκευση
+Save (%s) / delete (%s) image processing parameters into/from parameter DB	Αποθήκευση (%s)/ διαγραφή (%s) των παραμέτροων επεξεργασίας εικόνας στη ΒΔ παραμέτρων
+Save as (in screen size/resolution)	Αποθήκευση ως (σε μέγεθος/ανάλυση οθόνης)
+Save as template	Αποθήκευση ως πρότυπο
+Save cropped image	Αποθήκευση περικομμένης εικόνας
+Save processed image to JPEG file (original size)	Αποθήκευση της επεξεργασμένης εικόνας σε αρχείο JPEG (αρχικό μέγεθος)
+Save processed image to JPEG file (screen size)	Αποθήκευση της επεξεργασμένης εικόνας σε αρχείο JPEG (μέγεθος οθόνης)
+Save to	Αποθήκευση σε
+Scaling mode:	Λειτουργία κλιμάκωσης:
+Screen Pixels	Εικονοστοιχεία οθόνης
+Scroll from bottom	Κύλιση από κάτω
+Scroll from left	Κύλιση από αριστερά
+Scroll from right	Κύλιση από δεξιά
+Scroll from top	Κύλιση από επάνω
+Select Printer...	Επιλογή εκτυπωτή...
+Select all	Επιλογή όλων
+Select application	Επιλογή εφαρμογής
+Select file to display in 'File Open' dialog	Επιλέξτε αρχείο για προβολή στο παράθυρο 'Άνοιγμα Αρχείου'
+Select none	Αποεπιλογή όλων
+Select parameter DB to restore	Επιλέξτε ΒΔ παραμέτρων για επαναφορά
+Set Fixed Crop Size	Ορισμός σταθερού μεγέθους περικοπής
+Set JPEGView as default image viewer	Ορισμός του JPEGView ως προεπιλεγμένου προβολέα εικόνων
+Set timeout to n/10 sec, respectively n/100 sec (Ctrl+Shift)	Ορισμός χρονικού ορίου σε n/10 δευτερόλεπτα, αντίστοιχα n/100 δευτερόλεπτα (Ctrl+Shift)
+Shall existing entries be preserved (Yes) or be overwritten by the imported entries (No)?	Να διατηρηθούν οι υπάρχουσες εγγραφές (Ναι) ή να αντικατασταθούν από τις νέες (Όχι)?
+Sharpen	Όξυνση
+Sharpen low	Χαμηλή όξυνση
+Sharpen medium	Μέτρια όξυνση
+Shortcut Help	Βοήθεια για συντομεύσεις
+Shortcut key:	Πλήκτρο συντόμευσης:
+Show filename	Εμφάνιση ονόματος αρχείου
+Show first image in folder	Εμφάνιση της πρώτης εικόνα στο φάκελο
+Show grid lines	Εμφάνιση πλέγματος
+Show histogram	Προβολή ιστογράμματος
+Show last image in folder	Εμφάνιση της τελευταίας εικόνας στο φάκελο
+Show navigation panel	Εμφάνιση πίνακα πλοήγησης
+Show next image	Εμφάνιση της επόμενης εικόνας
+Show picture info (EXIF)	Προβολή πληροφοριών εικόνας (EXIF)
+Show previous image	Εμφάνιση της προηγούμενης εικόνας
+Show/hide file name	Εμφάνιση/απόκρυψη ονόματος αρχείου
+Show/hide navigation panel	Εμφάνιση/απόκρυψη του πίνακα περιήγησης
+Show/hide picture information (EXIF data)	Προβολή/απόκρυψη πληροφοριών εικόνας (δεδομένα EXIF)
+Show/hide this help text	Εμφάνιση/απόκρυψη αυτού του κειμένου βοήθειας
+Size:	Μέγεθος:
+Slide from bottom	Ολίσθηση από κάτω
+Slide from left	Ολίσθηση από αριστερά
+Slide from right	Ολίσθηση από δεξιά
+Slide from top	Ολίσθηση από επάνω
+Slideshow	Παρουσίαση
+Slideshow with timeout of 'n' seconds (ESC to stop)	Παρουσίαση με χρονικό όριο 'n' δευτερολέπτων (ESC για διακοπή)
+Software:	
+Sort images by creation date, resp. modification date, resp. file name	Ταξινόμιση εικόνων κατά ημερομηνία δημιουργίας, ημερομηνία τροποποίησης, όνομα αρχείου
+Source:	Πηγή:
+Target folders that do not yet exist are created as needed.	Οι φάκελοι που δεν υπάρχουν δημιουργούνται όπως απαιτείται.
+The directory '%s' does not contain any image files!	Ο κατάλογος '%s' δεν περιέχει αρχεία εικόνων!
+The file '%s' could not be copied!	Το αρχείο '%s' δεν μπόρεσε να αντιγραφεί!
+The file '%s' could not be read!	Το αρχείο '%s' δεν μπόρεσε να διαβαστεί!
+The file '%s' could not be renamed!	Το αρχείο '%s' δεν μπόρεσε να μετονομαστεί!
+The file '%s' does not contain a list of file names!	Το αρχείο '%s' δεν περιέχει λίστα με ονόματα αρχείων!
+The file is read-only!	Το αρχείο είναι μόνο για ανάγνωση!
+The following file extensions cannot be unregistered because they have been registered in the 'local machine' registry area.	Οι ακόλουθες επεκτάσεις αρχείων δεν μπορούν να αφαιρεθούν επειδή έχουν καταχωρηθεί στην περιοχή μητρώου 'local machine'.
+The following image extensions are protected by the operating system.	Οι ακόλουθες επεκτάσεις αρχείων προστατεύονται από το λειτουργικό σύστημα.
+The imported param DB contains entries already present in active param DB.	Η εισηγμένη ΒΔ παραμέτρων περιέχει εγγραφές που ήδη υπάρχουν στην ενεργή ΒΔ.
+The new size is too large - width or height is larger than 65535 or total number of pixels is too large!	Το νέο μέγεθος είναι πολύ μεγάλο - το πλάτος ή το ύψος είναι μεγαλύτερο από 65535 ή ο συνολικός αριθμός των εικονοστοιχείων είναι πολύ μεγάλος!
+The old parameter DB file '%s' could not be renamed during conversion to new format!	Η παλιά ΒΔ παραμέτρων '%s' δεν μετονομάστηκε κατά τη μετατροπή στη νέα μορφή!
+The operation failed because not enough memory is available!	Η λειτουργία απέτυχε επειδή δεν υπάρχει αρκετή διαθέσιμη μνήμη!
+The parameter DB file '%s' has been created by a newer version of JPEGView!	Η ΒΔ παραμέτρων '%s' δημιουργήθηκε με νεότερη έκδοση του JPEGView!
+The transformation can be applied if the image is cropped to the next matching size but this will remove some border pixels.	Ο μετασχηματισμός μπορεί να εφαρμοστεί εάν η εικόνα περικοπεί στο επόμενο μέγεθος που ταιριάζει, αλλά αυτό θα αφαιρέσει ορισμένα εικονοστοιχεία στο περιθώριο.
+These values will override the values from the INI file located in the program folder of JPEGView!	Αυτές οι τιμές θα αντικαταστήσουν τις τιμές στο αρχείο INI που βρίσκεται στο φάκελο του JPEGView!
+Threshold	Κατώφλι
+Title:	Τίτλος:
+Toggle between screens (only for multi-monitor systems)	Εναλλαγή οθονών (μόνο για συστήματα με πολλές οθόνες)
+Toggle window always on top mode	Εναλλαγή του παραθύρου πάντα στην κορυφή
+Toggle window title bar hidden mode	Εναλλαγή λειτουργίας κρυφής γραμμής τίτλου
+Top	Πάνω
+Transition Effect	Εφέ μετάβασης
+Unregistering not possible	Η αποκαταχώρηση δεν είναι δυνατή.
+Unsharp mask...	Μάσκα μείωσης όξυνσης...
+Update user settings with new settings from settings template file?	Ενημέρωση ρυθμίσεων χρήστη με νέες ρυθμίσεις από πρότυπο αρχείο ρυθμίσεων;
+Use the 'Default Programs' configuration dialog from the operating system instead.	Χρησιμοποιήστε αντ' αυτού τον διάλογο διαμόρφωσης 'Προεπιλεγμένα προγράμματα' από το λειτουργικό σύστημα.
+Use the mouse to draw a line that shall be horizontal or vertical.	Χρησιμοποιήστε το ποντίκι για να σχεδιάσετε μια γραμμή που θα είναι οριζόντια ή κατακόρυφη.
+Warning	Προειδοποίηση
+Width	Πλάτος
+Window mode	Προβολη σε παράθυρο
+Windows 8 (and above) blocks JPEGView from changing the default program for these file extensions.	Τα Windows 8 (και άνω) εμποδίζουν το JPEGView να αλλάξει το προεπιλεγμένο πρόγραμμα για αυτές τις επεκτάσεις αρχείων.
+Writing the resulting JPEG file to disk failed	Η εγγραφή του αρχείου JPEG στο δίσκο απέτυχε
+Y - B	Y - B
+Year short form (2 digits)	Έτος / Σύντομη μορφή (2 ψηφία)
+Yellow-Blue	Κίτρινο-Μπλε
+Zoom 1:1 (100 %)	Μεγέθυνση 1:1 (100 %)
+Zoom in (%s)/Zoom out (%s)	Μεγέθυνση (%s)/Σμίκρυνση (%s)
+Zoom in/out image	Μεγέθυνση/σμίκρυνση εικόνας
+Zoom mode (drag mouse to zoom)	Λειτουργία ζουμ (σύρετε το ποντίκι για ζουμ)
+and image processing (brightness/contrast/sharpen) parameters between images	και παραμέτρων επεξεργασίας (φωτεινότητα/αντίθεση/σκληρότητα) μεταξύ εικόνων
+cm	εκ
+in	ίντσες
+new menu entry	νέα καταχώρηση μενού
+no	όχι
+off	ανενεργό
+on	ενεργό
+user-defined	οριζόμενο από τον χρήστη
+yes	ναι
+
+// ::: Popup Menu Strings ::: (unsorted to preserve context) //
+Stop slide show/movie	Διακοπή παρουσίασης/ταινίας
+Open image...	Άνοιγμα εικόνας...
+Open image with	Άνοιγμα εικόνας με...
+Save processed image...	Αποθήκευση επεξεργασμένης εικόνας...
+Reload image	Επαναφόρτωση εικόνας
+Open containing folder in Explorer	Ανοίξτε τον φάκελο στην Εξερεύνηση των Windows
+Print image...	Εκτύπωση εικόνας...
+Batch rename/copy...	Μαζική μετονομασία/αντιγραφή...
+Set modification date	Ορισμός ημερομηνίας τροποποίησης
+to current date	στην τρέχουσα ημερομηνία
+to EXIF date	στην ημερομηνία από το EXIF
+to EXIF date (all files in folder)	στην ημερομηνία από το EXIF (όλα τα αρχεία στο φάκελο)
+Set as desktop wallpaper	Ορισμός ως φόντου επιφάνειας εργασίας
+Use original image	Χρήση αρχικής εικόνας
+Use processed image as displayed	Χρήση της εικόνας όπως εμφανίζεται
+Copy to clipboard	Αντιγραφή στο πρόχειρο
+Copy original size image	Αντιγραφή εικόνας αρχικού μεγέθους
+Copy file path	Αντιγραφή της διαδρομής του αρχείου
+Display order	Σειρά εμφάνισης
+Modification date	Ημερομηνία τροποποίησης
+Creation date	Ημερομηνία δημιουργίας
+Play folder as slideshow/movie	Αναπαραγωγή φακέλου ως παρουσίαση/ταινία
+Waiting time	Χρόνος αναμονής
+1 sec	1 δευτ
+2 sec	2 δευτ
+3 sec	3 δευτ
+4 sec	4 δευτ
+5 sec	5 δευτ
+7 sec	7 δευτ
+10 sec	10 δευτ
+20 sec	20 δευτ
+Transition Speed	Ταχύτητα μετάβασης
+Very fast	Πολύ γρήγορα
+Fast	Γρήγορα
+Normal	Κανονικά
+Slow	Αργά
+Very slow	Πολύ αργά
+Movie	Ταινία
+Playback speed	Ταχύτητα αναπαραγωγής
+5 fps	5 fps
+10 fps	10 fps
+25 fps	25 fps
+30 fps	30 fps
+50 fps	50 fps
+100 fps	100 fps
+Transform image	Μετασχηματισμός εικόνας
+Rotate +90	Περιστροφή +90
+Rotate -90	Περιστροφή -90
+Rotate...	Περιστροφή...
+Change size...	Αλλαγή μεγέθους...
+Perspective correction...	Διόρθωση προοπτικής...
+Mirror horizontally	Οριζόντιος κατοπτρισμός
+Mirror vertically	Κάθέτος κατοπτρισμός
+Rotate 180	Περιστροφή 180
+Auto correction	Αυτόματη διόρθωση
+Save parameters to DB	Αποθήκευση παραμέτρων στη ΒΔ
+Clear parameters from DB	Διαγραφή παραμέτρων από τη ΒΔ
+Zoom	Ζουμ
+Span all screens	Κάλυψη όλων των οθονών
+Fit window to image	Ταίριασμα παραθύρου στην εικόνα
+Hide window title bar	Απόκρυψη γραμμής τίτλου παραθύρου
+Set window always on top	Ορισμός παραθύρου πάντα στην κορυφή
+Settings/Admin	Ρυθμίσεις/Διαχειριστής
+Edit global settings...	Επεξεργασία καθολικών ρυθμίσεων...
+Edit user settings...	Επεξεργασία ρυθμίσεων χρήστη...
+Update user settings...	Ενημέρωση ρυθμίσεων χρήστη...
+Set current parameters as default values...	Ορισμός των τρέχοντων παραμέτρων ως προεπιλεγμένες τιμές...
+Set as default viewer...	Ορισμός ως προεπιλεγμένου προγράμματος προβολής...
+Backup parameter DB...	Αντίγραφο ασφαλείας ΒΔ παραμέτρων...
+Restore parameter DB...	Επαναφορά αντιγράφου ΒΔ παραμέτρων...
+User commands	Εντολές χρήστη
+About JPEGView...	Περί του JPEGView...
+Exit	Έξοδος
+Crop Selection	Περικοπή επιλογής
+Crop Selection Lossless...	Περικοπή επιλογής χωρίς απώλεια...
+Copy Selection to Clipboard	Αντιγραφή επιλογής στο πρόχειρο
+Crop Mode	Λειτουργία περικοπής
+Free	Ελεύθερη
+Fixed size...	Συγκεκριμένο μέγεθος...
+Zoom to Selection	Ζουμ στην επιλογή
+
+// ::: INFO: Out-of-date Translations [14] ::: (Not in use anymore, safe to delete) //
+//However this will fail if the current user has no administration privileges.	Ωστόσο αυτό θα αποτύχει εάν ο παρών χρήστης δεν έχει Δικαιώματα Διαχειριστή.
+//Insufficient rights to remove the restrictions. Continue?	Ανεπαρκή δικαιώματα για αφαίρεση περιορισμών. Να συνεχίσω;
+//JPEGView can try to remove the restrictions automatically.	Το JPEGVIEW μπορεί να προσπαθήσει να αφαιρέσει τους περιορισμούς αυτόματα.
+//No file or folder name was provided as command line parameter!	Δεν δόθηκε όνομα αρχείου ή φακέλου ως παράμετρος γραμμής εντολών!
+//PgDn or Right	Πλήκτρο PgDn ή δεξί βέλος
+//PgUp or Left	Πλήκτρο PgUp ή αριστερό βέλος
+//Rename:	Μετονομασία:
+//Rotate the following file lossless by 270 deg?\n%filename%	Να περιστραφεί το αρχείο χωρίς απώλεια 270 μοίρες; \n%filename%
+//Rotate the following file lossless by 90 deg?\n%filename%	Να περιστραφεί το αρχείο χωρίς απώλεια 90 μοίρες; \n%filename%
+//The file '%s' could not be %s.	Το αρχείο '%s' δεν μπόρεσε να %s.
+//To use JPEGView, associate JPG, JPEG and BMP files with JPEGView.	Για να χρησιμοποιήσετε το JPEGView, συσχετίστε τα αρχεία JPG, JPEG και BMP με το JPEGView.
+//copied	αντιγραφεί
+//renamed	μετονομαστεί
+//up/down	επάνω/κάτω
+
+// ::: INFO: Missing Translations [2] ::: (Summary to assist translators: All missing strings which require translation) - Auto-generated by script //
+//! Exif Date Time:
+//! Software:
+
+// ::: INFO: Same Translations [10] ::: (Summary to assist translators: All strings which are known not to need translation [String == Translation]) - Auto-generated by script //
+//! C - R
+//! Lanczos/Bicubic
+//! M - G
+//! Y - B
+//! 5 fps
+//! 10 fps
+//! 25 fps
+//! 30 fps
+//! 50 fps
+//! 100 fps
+
+// ::: STATUS: Last Checked/Updated by Script ::: 2023-10-07T05:14:19.632663+00:00 //
+//! Translation Progress: 100%
+//! * Total (Strings + Menu) = 429
+//! * Done = 427
+//! * Missing = 2 (0%)

@@ -1,0 +1,36 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/11/28 12:14:42.
+
+Project "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj" on node 1 (Build target(s)).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Touching "obj\x64\Release\JPEGView-Static.tlog\unsuccessfulbuild".
+ClCompile:
+  All outputs are up-to-date.
+  All outputs are up-to-date.
+  All outputs are up-to-date.
+ResourceCompile:
+  All outputs are up-to-date.
+Link:
+  All outputs are up-to-date.
+  JPEGView.vcxproj -> e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\bin\x64\Release\JPEGView-Static.exe
+PostBuildEvent:
+  call "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\..\extras\scripts\JPEGView.vcxproj-postbuild-event.bat" "64" "JPEGView-Static" "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\" "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\bin\x64\Release\"
+  :VCEnd
+  The system cannot find the path specified.
+D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppCommon.targets(166,5): error MSB3073: The command "call "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\..\extras\scripts\JPEGView.vcxproj-postbuild-event.bat" "64" "JPEGView-Static" "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\" "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\bin\x64\Release\" [e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj]
+D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppCommon.targets(166,5): error MSB3073: :VCEnd" exited with code 1. [e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj]
+Done Building Project "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj" (Build target(s)) -- FAILED.
+
+Build FAILED.
+
+"e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj" (Build target) (1) ->
+(PostBuildEvent target) -> 
+  D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppCommon.targets(166,5): error MSB3073: The command "call "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\..\extras\scripts\JPEGView.vcxproj-postbuild-event.bat" "64" "JPEGView-Static" "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\" "e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\bin\x64\Release\" [e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj]
+D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppCommon.targets(166,5): error MSB3073: :VCEnd" exited with code 1. [e:\Personal\Coding\QuickView\jpegview-static-post2024-vs2019-x64\src\JPEGView\JPEGView.vcxproj]
+
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:00.33

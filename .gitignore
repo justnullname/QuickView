@@ -1,0 +1,101 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Build results
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.pch
+*.pdb
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.log
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# Build logs
+build_log*.txt
+*.log
+
+# Intermediates
+*.exp
+*.lib
+*.iobj
+*.ipdb
+
+# Archives and large binaries
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# User-specific files
+*.ini
+!QuickView.ini.tpl
+!QuickView_ru.ini.tpl
+
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Windows Installer files
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Backup files
+*.bak
+*~
+
+# Old project folders
+jpegview-static-post2024-vs2019-x64/
+
+# Git backup
+.git.backup/
+
+# Helper scripts (not needed in repo)
+GITHUB_UPLOAD.md
+cleanup.bat
+fix_git.bat
