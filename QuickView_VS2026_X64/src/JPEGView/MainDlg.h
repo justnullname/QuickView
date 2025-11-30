@@ -333,6 +333,7 @@ private:
 	double m_dLastImageDisplayTime;
 	bool m_bWindowBorderless;
 	bool m_bAlwaysOnTop;
+	bool m_bLockWindowSize;
 	bool m_bSelectZoom;  // keeps track of select-to-zoom mode when CTRL+SHIFT+LMouse
 
 	void ExploreFile();

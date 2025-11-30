@@ -253,6 +253,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_autoZoomFitToScreen = Helpers::ZM_FillScreen;
 	m_bWindowBorderless = sp.WindowBorderlessOnStartup();  // unlike AlwaysOnTop, this is set early on initialize as it affects calculations of the window size, position, etc
 	m_bAlwaysOnTop = false;  // default normal window.  this will be set to true when AlwaysOnTop is toggled if set to startup in INI
+	m_bLockWindowSize = sp.LockWindowSize();
 	m_bSelectZoom = false;  // this value is set when LButtonDown happens, to be read by LButtonUp
 
 	m_pPanelMgr = new CPanelMgr();
@@ -612,6 +613,9 @@ LRESULT CMainDlg::OnPaint(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, B
 	// Draw narrow border in borderless mode
 	if (m_bWindowBorderless && !m_bFullScreenMode) {
 		int nBorderWidth = CSettingsProvider::This().NarrowBorderWidth();
+		if (m_bLockWindowSize && nBorderWidth == 0) {
+			nBorderWidth = 1; // Force at least 1 pixel border when locked
+		}
 		if (nBorderWidth > 0) {
 			CRect clientRect;
 			GetClientRect(&clientRect);
@@ -704,10 +708,10 @@ LRESULT CMainDlg::OnLButtonDown(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam,
 				// always go into selection/crop when in the right state and CTRL held down, otherwise it depends on the DefaultSelectionMode setting
 				m_bSelectZoom = bShift;  // if shift, go into select-to-zoom mode (no crop popup)
 				// m_pCropCtl->StartCropping(pointClicked.x, pointClicked.y);
-			} else if (bDraggingRequired && !bTransformPanelShown) {
+			} else if (bDraggingRequired && !bTransformPanelShown && !m_bLockWindowSize) {
 				StartDragging(pointClicked.x, pointClicked.y, false);
-			} else if (!bDraggingRequired && !bTransformPanelShown) {
-				// Allow dragging the window if image fits in client area
+			} else if ((!bDraggingRequired || m_bLockWindowSize) && !bTransformPanelShown) {
+				// Allow dragging the window if image fits in client area OR if window size is locked
 				::ReleaseCapture();
 				::SendMessage(m_hWnd, WM_NCLBUTTONDOWN, HTCAPTION, lParam);
 				return 0;
@@ -847,7 +851,11 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, 
 			GotoImage(POS_Previous);
 		}
 	} else if (m_dZoom > 0 && !m_pUnsharpMaskPanelCtl->IsVisible()) {
-		PerformZoom(CSettingsProvider::This().MouseWheelZoomSpeed() * double(nDelta) / WHEEL_DELTA, true, m_bMouseOn, true);
+		bool bAdjustWindow = true;
+		if (m_bLockWindowSize && m_bWindowBorderless && !m_bFullScreenMode) {
+			bAdjustWindow = false;
+		}
+		PerformZoom(CSettingsProvider::This().MouseWheelZoomSpeed() * double(nDelta) / WHEEL_DELTA, true, m_bMouseOn, bAdjustWindow);
 	}
 	return 0;
 }
@@ -2511,6 +2519,10 @@ bool CMainDlg::PerformZoom(double dValue, bool bExponent, bool bZoomToMouse, boo
 		m_dZoom = m_dZoom * pow(m_dZoomMult, dValue);
 	} else {
 		m_dZoom = dValue;
+	}
+
+	if (m_bLockWindowSize && m_bWindowBorderless && !m_bFullScreenMode) {
+		bAdjustWindowToImage = false;
 	}
 
 	if (m_pCurrentImage == NULL) {

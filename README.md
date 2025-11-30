@@ -1,6 +1,6 @@
 # QuickView - Fast and Lightweight Image Viewer for Windows
 
-![QuickView icon](QuickView_favicon_large.png?raw=true)
+![QuickView icon](repository-open-graph-template-out.png?raw=true)
 
 > A modern, streamlined fork of JPEGView optimized for Windows 10/11 with enhanced features and better performance.
 
