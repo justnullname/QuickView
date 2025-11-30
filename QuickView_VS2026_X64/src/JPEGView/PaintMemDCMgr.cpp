@@ -4,7 +4,7 @@
 #include "SettingsProvider.h"
 #include "PaintMemDCMgr.h"
 
-CPaintMemDCMgr::CPaintMemDCMgr(CPaintDC& paintDC) : m_paintDC(paintDC) {
+CPaintMemDCMgr::CPaintMemDCMgr(CDC& paintDC, const CRect& paintRect) : m_paintDC(paintDC), m_paintRect(paintRect) {
 	m_nNumElems = 0;
 	for (int i = 0; i < MAX_REGIONS_CPaintMemDCMgr; i++) {
 		m_managedRegions[i].MemoryDC = CDC();

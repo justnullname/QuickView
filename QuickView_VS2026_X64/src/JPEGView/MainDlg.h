@@ -333,7 +333,7 @@ private:
 	double m_dLastImageDisplayTime;
 	bool m_bWindowBorderless;
 	bool m_bAlwaysOnTop;
-	bool m_bLockWindowSize;
+
 	bool m_bSelectZoom;  // keeps track of select-to-zoom mode when CTRL+SHIFT+LMouse
 
 	void ExploreFile();
@@ -373,7 +373,8 @@ private:
 	void PrefetchDIB(const CRect& clientRect);
 	bool HandleMouseButtonByKeymap(int nMouseButton, bool bExecuteCommand = true);
 	bool UseSlideShowTransitionEffect();
-	void PaintToDC(CDC& dc);
+	void PaintToDC(CDC& dc, const CRect& paintRect);
+
 	void AnimateTransition();
 	void CleanupAndTerminate();
 	void InvalidateHelpDlg();

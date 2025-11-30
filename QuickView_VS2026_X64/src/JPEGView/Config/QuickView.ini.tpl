@@ -162,9 +162,7 @@ NarrowBorderWidth=2
 ; Color of the narrow border in borderless mode (R G B)
 NarrowBorderColor=128 128 128
 
-; If set to true, the window size is locked in borderless mode.
-; Zooming will only change the image size within the window, not the window itself.
-LockWindowSize=true
+
 
 ; -----------------------------------------------
 ; - IMAGE CONTROL PANELS

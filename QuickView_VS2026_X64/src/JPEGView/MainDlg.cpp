@@ -228,6 +228,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_nMouseX = m_nMouseY = 0;
 	m_bAutoFitWndToImage = sp.DefaultWndToImage();
 	m_bFullScreenMode = bForceFullScreen || (sp.ShowFullScreen() && !sp.AutoFullScreen());
+	m_bWindowBorderless = true; // Force borderless mode
 	m_bLockPaint = true;
 	m_nCurrentTimeout = 0;
 	m_startMouse.x = m_startMouse.y = -1;
@@ -248,17 +249,6 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_nExpectedNextAnimationTickCount = 0;
 	m_bUseLosslessWEBP = false;
 	m_isBeforeFileSelected = true;
-	m_dLastImageDisplayTime = 0.0;
-	m_isUserFitToScreen = false;
-	m_autoZoomFitToScreen = Helpers::ZM_FillScreen;
-	m_bWindowBorderless = sp.WindowBorderlessOnStartup();  // unlike AlwaysOnTop, this is set early on initialize as it affects calculations of the window size, position, etc
-	m_bAlwaysOnTop = false;  // default normal window.  this will be set to true when AlwaysOnTop is toggled if set to startup in INI
-	m_bLockWindowSize = sp.LockWindowSize();
-	m_bSelectZoom = false;  // this value is set when LButtonDown happens, to be read by LButtonUp
-
-	m_pPanelMgr = new CPanelMgr();
-	m_pZoomNavigatorCtl = NULL;
-	m_pEXIFDisplayCtl = NULL;
 	m_pWndButtonPanelCtl = NULL;
 	m_pInfoButtonPanelCtl = NULL;
 	m_pRotationPanelCtl = NULL;
@@ -454,6 +444,11 @@ LRESULT CMainDlg::OnPaint(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, B
 	}
 
 	CPaintDC dc(m_hWnd);
+	PaintToDC(dc, dc.m_ps.rcPaint);
+	return 0;
+}
+
+void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 	m_dRealizedZoom = 1.0;
 
 	this->GetClientRect(&m_clientRect);
@@ -470,7 +465,7 @@ LRESULT CMainDlg::OnPaint(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, B
 	std::list<CRect> excludedClippingRects;
 
 	// Panels are handled over memory DCs to eliminate flickering
-	CPaintMemDCMgr memDCMgr(dc);
+	CPaintMemDCMgr memDCMgr(dc, paintRect);
 
 	if (m_pCurrentImage == NULL) {
 		m_pPanelMgr->OnPrePaint(dc);
@@ -607,30 +602,6 @@ LRESULT CMainDlg::OnPaint(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, B
 	// let crop controller and panels paint its stuff
 	// m_pCropCtl->OnPaint(dc);
 	m_pPanelMgr->OnPostPaint(dc);
-
-	SetCursorForMoveSection();
-
-	// Draw narrow border in borderless mode
-	if (m_bWindowBorderless && !m_bFullScreenMode) {
-		int nBorderWidth = CSettingsProvider::This().NarrowBorderWidth();
-		if (m_bLockWindowSize && nBorderWidth == 0) {
-			nBorderWidth = 1; // Force at least 1 pixel border when locked
-		}
-		if (nBorderWidth > 0) {
-			CRect clientRect;
-			GetClientRect(&clientRect);
-			COLORREF color = CSettingsProvider::This().NarrowBorderColor();
-			CBrush brush;
-			brush.CreateSolidBrush(color);
-			dc.FrameRect(&clientRect, brush);
-			for (int i = 1; i < nBorderWidth; i++) {
-				clientRect.DeflateRect(1, 1);
-				dc.FrameRect(&clientRect, brush);
-			}
-		}
-	}
-
-	return 0;
 }
 
 
@@ -708,10 +679,10 @@ LRESULT CMainDlg::OnLButtonDown(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam,
 				// always go into selection/crop when in the right state and CTRL held down, otherwise it depends on the DefaultSelectionMode setting
 				m_bSelectZoom = bShift;  // if shift, go into select-to-zoom mode (no crop popup)
 				// m_pCropCtl->StartCropping(pointClicked.x, pointClicked.y);
-			} else if (bDraggingRequired && !bTransformPanelShown && !m_bLockWindowSize) {
+			} else if (bDraggingRequired && !bTransformPanelShown) {
 				StartDragging(pointClicked.x, pointClicked.y, false);
-			} else if ((!bDraggingRequired || m_bLockWindowSize) && !bTransformPanelShown) {
-				// Allow dragging the window if image fits in client area OR if window size is locked
+			} else if (!bDraggingRequired && !bTransformPanelShown) {
+				// Allow dragging the window if image fits in client area
 				::ReleaseCapture();
 				::SendMessage(m_hWnd, WM_NCLBUTTONDOWN, HTCAPTION, lParam);
 				return 0;
@@ -847,15 +818,10 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, 
 	if (!bCtrl && CSettingsProvider::This().NavigateWithMouseWheel() && !m_pPanelMgr->IsModalPanelShown()) {
 		if (nDelta < 0) {
 			GotoImage(POS_Next);
-		} else if (nDelta > 0) {
+		} else {
 			GotoImage(POS_Previous);
 		}
-	} else if (m_dZoom > 0 && !m_pUnsharpMaskPanelCtl->IsVisible()) {
-		bool bAdjustWindow = true;
-		if (m_bLockWindowSize && m_bWindowBorderless && !m_bFullScreenMode) {
-			bAdjustWindow = false;
-		}
-		PerformZoom(CSettingsProvider::This().MouseWheelZoomSpeed() * double(nDelta) / WHEEL_DELTA, true, m_bMouseOn, bAdjustWindow);
+		return 0;
 	}
 	return 0;
 }
@@ -1704,53 +1670,8 @@ void CMainDlg::ExecuteCommand(int nCommand) {
 			this->SetWindowPos(NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_FRAMECHANGED);
 			break;
 		case IDM_HIDE_TITLE_BAR:
-			if (!m_bFullScreenMode) {
-				// only available when full screen mode is not active
-
-				m_bWindowBorderless = !m_bWindowBorderless;
-				SetCurrentWindowStyle();
-
-				// get the size of the border to shift the window pos downwards
-				int windowCaptionHeight = Helpers::GetWindowCaptionSize();
-				double dZoom = -1;
-				CRect windowRect = Helpers::GetWindowRectMatchingImageSize(
-					m_hWnd, CSize(MIN_WND_WIDTH, MIN_WND_HEIGHT), HUGE_SIZE, dZoom, m_pCurrentImage, false, true, m_bWindowBorderless);
-
-				// don't try to adjust for an image that isn't loaded!
-				if (m_pCurrentImage != NULL)
-				{
-					// this is the new top to move it to so that the experience seems seamless
-					int newTop;
-					int t = m_pCurrentImage->OrigHeight();
-
-					// these are experimental values figured out through trial and error
-					// it appears if the caption size is odd, and just using /2,
-					// it causes the window to shift up one pixel at a time when going between borderless and not borderless repeatedly
-					// in other cases, it shifts downwards depending on rounding errors resizing the window and image... hard to hunt down but it's as good as it can get right now
-					if (windowCaptionHeight % 2 == 0) {
-						newTop = m_bWindowBorderless ?
-							windowRect.top + (windowCaptionHeight / 2) :
-							windowRect.top - (windowCaptionHeight / 2);
-					} else {
-						newTop = m_bWindowBorderless ?
-							windowRect.top + (windowCaptionHeight / 2) :
-							windowRect.top - (windowCaptionHeight / 2) + 1;
-					}
-
-					// tell the window the Frame has changed, not sure if it makes a difference
-					this->SetWindowPos(HWND_TOP, windowRect.left, newTop, windowRect.Width(), windowRect.Height(), SWP_NOZORDER | SWP_NOCOPYBITS | SWP_FRAMECHANGED);
-
-					// don't auto adjust unless auto is selected in options
-					if (IsAdjustWindowToImage() && !(m_bAutoFitWndToImage && !IsImageExactlyFittingWindow())) {
-						AdjustWindowToImage(false);
-						this->Invalidate(FALSE);
-					}
-
-					StartLowQTimer(ZOOM_TIMEOUT);  // trigger a redraw as if zoom changed (might not be necessary)
-				}
-			}
-
 			break;
+
 		case IDM_ALWAYS_ON_TOP:
 			ToggleAlwaysOnTop();
 
@@ -2015,12 +1936,10 @@ void CMainDlg::ExecuteCommand(int nCommand) {
 // Setting window styles have gotten out of hand with the addition of no title bar
 // instead of each call trying to figure out the logic, consolidate it to one function
 LONG CMainDlg::SetCurrentWindowStyle() {
-	if (!m_bWindowBorderless) {
-		return this->SetWindowLongW(GWL_STYLE, this->GetWindowLongW(GWL_STYLE) | WS_OVERLAPPEDWINDOW | WS_VISIBLE);
-	} else {
-		return this->SetWindowLongW(GWL_STYLE, this->GetWindowLongW(GWL_STYLE) & ~WS_OVERLAPPEDWINDOW | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_VISIBLE);  // lose resizing
-		// just doing (& ~WS_CAPTION) leads to having a sliver of white bar on top but allows for resizing
-	}
+	// Force borderless style
+	// Remove WS_OVERLAPPEDWINDOW and ensure WS_POPUP style for true borderless
+	// We keep WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_VISIBLE as per previous logic
+	return this->SetWindowLongW(GWL_STYLE, (this->GetWindowLongW(GWL_STYLE) & ~WS_OVERLAPPEDWINDOW) | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_VISIBLE);
 }
 
 
@@ -2516,22 +2435,7 @@ bool CMainDlg::PerformZoom(double dValue, bool bExponent, bool bZoomToMouse, boo
 	m_bUserZoom = true;
 	m_isUserFitToScreen = false;
 	if (bExponent) {
-		m_dZoom = m_dZoom * pow(m_dZoomMult, dValue);
-	} else {
-		m_dZoom = dValue;
-	}
-
-	if (m_bLockWindowSize && m_bWindowBorderless && !m_bFullScreenMode) {
-		bAdjustWindowToImage = false;
-	}
-
-	if (m_pCurrentImage == NULL) {
-		m_dZoom = max(Helpers::ZoomMin, min(Helpers::ZoomMax, m_dZoom));
-		return true;
-	}
-
-	double dZoomMin = max(0.0001, min(Helpers::ZoomMin, GetZoomFactorForFitToScreen(false, false) * 0.5));
-	m_dZoom = max(dZoomMin, min(Helpers::ZoomMax, m_dZoom));
+	m_dZoom = max(Helpers::ZoomMin, min(Helpers::ZoomMax, m_dZoom));
 
 	// always try to snap to 100%... aka if within 1% of 100%, snap exactly to it
 	if (abs(m_dZoom - 1.0) < 0.01) {
@@ -2551,6 +2455,7 @@ bool CMainDlg::PerformZoom(double dValue, bool bExponent, bool bZoomToMouse, boo
 			// make a stop at 100 % (or whatever % is configured)
 			m_dZoom = pauseAtZoom;
 		}
+	}
 	}
 
 	// Never create images more than 65535 pixels wide or high - the basic processing cannot handle it
@@ -3192,7 +3097,7 @@ void CMainDlg::AnimateTransition() {
 	CBitmap memDCBitmap;
 	memDCBitmap.CreateCompatibleBitmap(paintDC, nW, nH);
 	memDC.SelectBitmap(memDCBitmap);
-	PaintToDC(memDC);
+	PaintToDC(memDC, m_clientRect);
 
 	int nSteps = max(1, (m_nTransitionTime + 20) / nFrameTimeMs);
 
@@ -3444,23 +3349,3 @@ LRESULT CMainDlg::OnGetMinMaxInfo(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lPara
 	return 0;
 }
 
-void CMainDlg::PaintToDC(CDC& dc) {
-	if (m_bWindowBorderless && !m_bFullScreenMode) {
-		int nBorderWidth = CSettingsProvider::This().NarrowBorderWidth();
-		if (nBorderWidth > 0) {
-			CRect clientRect;
-			GetClientRect(&clientRect);
-			COLORREF color = CSettingsProvider::This().NarrowBorderColor();
-			CBrush brush;
-			brush.CreateSolidBrush(color);
-			dc.FrameRect(&clientRect, brush);
-			if (nBorderWidth > 1) {
-				// Draw inner border if width > 1
-				for (int i = 1; i < nBorderWidth; i++) {
-					clientRect.DeflateRect(1, 1);
-					dc.FrameRect(&clientRect, brush);
-				}
-			}
-		}
-	}
-}

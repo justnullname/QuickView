@@ -14,6 +14,17 @@ typedef signed int int32;
 /// unsigned 32 bit integer value
 typedef unsigned int uint32;
 
+struct CRectF {
+	float Left, Top, Right, Bottom;
+	CRectF() { Left = Top = Right = Bottom = 0.0f; }
+	CRectF(float l, float t, float r, float b) { Left = l; Top = t; Right = r; Bottom = b; }
+	float Width() const { return Right - Left; }
+	float Height() const { return Bottom - Top; }
+	CPoint TopLeft() const { return CPoint((int)Left, (int)Top); }
+	CSize Size() const { return CSize((int)Width(), (int)Height()); }
+	CPoint CenterPoint() const { return CPoint((int)((Left + Right) / 2), (int)((Top + Bottom) / 2)); }
+};
+
 enum EFilterType {
 	Filter_Downsampling_Best_Quality,  // prefer this filter for sampling down
 	Filter_Downsampling_No_Aliasing, // this is a Lanczos type filter

@@ -3,44 +3,27 @@
 #include "ProcessParams.h"
 
 class CJPEGImage;
+class CTrapezoid;
 
-struct CRectF {
-	CRectF(float fLeft, float fTop, float fRight, float fBottom) {
-		Left = fLeft;
-		Right = fRight;
-		Top = fTop;
-		Bottom = fBottom;
-	}
-
-	float Left;
-	float Right;
-	float Top;
-	float Bottom;
-};
-
-// Provides support for a small area containing a thumbnail image giving an overview of the currently
-// displayed section of the image when zoomed in
 class CZoomNavigator
 {
 public:
 	CZoomNavigator();
 
+	// Gets the rectangle of the zoom navigator relative to the panel rectangle.
+	// The navigator rectangle is centered in the panel rectangle.
+	static CRect GetNavigatorRect(CJPEGImage* pImage, const CRect& panelRect, const CRect& navigatorRect);
+
+	// Gets the bounding rectangle of the zoom navigator (including the border)
+	static CRect GetNavigatorBound(const CRect& panelRect);
+
 	// Gets the visible rectangle in float coordinates (normalized to 0..1) relative to full image
 	static CRectF GetVisibleRect(CSize sizeFull, CSize sizeClipped, CPoint offset);
 
-	// Gets the position of the navigator rectangle (thumbnail image rect) în client coordinates.
-	// The zoom navigator is placed relative to the image processing panel rectangle (panelRect) and
-	// the navigator panel rectangle (navigatorRect)
-	static CRect GetNavigatorRect(CJPEGImage* pImage, const CRect& panelRect, const CRect& navigatorRect);
-
-	// Gets the maximal bounds of the navigator
-	static CRect GetNavigatorBound(const CRect& panelRect);
-
-	// Paints the zoom navigator
-	void PaintZoomNavigator(CJPEGImage* pImage, const CRectF& visRect, const CRect& navigatorRect,
-		const CPoint& mousePt,
-		const CImageProcessingParams& processingParams,
-		EProcessingFlags eFlags, double dRotation, const CTrapezoid* pTrapezoid, CPaintDC& dc);
+	// Paints the zoom navigator into the given DC
+	void PaintZoomNavigator(CJPEGImage* pImage, const CRectF& visRect, const CRect& navigatorRect, 
+		const CPoint& mousePos, const CImageProcessingParams& processingParams, EProcessingFlags eProcessingFlags, 
+		double dRotationAngle, const CTrapezoid* pTrapezoid, CDC& dc);
 
 	// Paints the pan rectangle
 	void PaintPanRectangle(CDC& dc, const CPoint& centerPt);

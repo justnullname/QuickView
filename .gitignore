@@ -70,6 +70,7 @@ build_log*.txt
 *.ini
 !QuickView.ini.tpl
 !QuickView_ru.ini.tpl
+!src/JPEGView/Config/QuickView.ini
 
 # Windows image file caches
 Thumbs.db

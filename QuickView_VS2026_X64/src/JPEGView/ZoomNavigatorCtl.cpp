@@ -135,7 +135,7 @@ CRectF CZoomNavigatorCtl::GetVisibleRect(CSize sizeFull, CSize sizeClipped, CPoi
 	return CZoomNavigator::GetVisibleRect(sizeFull, sizeClipped, offset);
 }
 
-void CZoomNavigatorCtl::OnPaint(CPaintDC& paintDC, CRectF visRectZoomNavigator, const CImageProcessingParams* pImageProcParams, 
+void CZoomNavigatorCtl::OnPaint(CDC& paintDC, CRectF visRectZoomNavigator, const CImageProcessingParams* pImageProcParams, 
 		EProcessingFlags eProcessingFlags, double dRotationAngle, const CTrapezoid* pTrapezoid) {
 	if (IsActive()) {
 		m_zoomNavigator.PaintZoomNavigator(m_pMainDlg->GetCurrentImage(), visRectZoomNavigator, PanelRect(), 

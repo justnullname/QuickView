@@ -9,10 +9,11 @@ class CPanel;
 // This eliminates flickering.
 class CPaintMemDCMgr {
 public:
-	CPaintMemDCMgr(CPaintDC& paintDC);
+	CPaintMemDCMgr(CDC& paintDC, const CRect& paintRect);
 	~CPaintMemDCMgr();
 
-	CPaintDC& GetPaintDC() { return m_paintDC; }
+	CDC& GetPaintDC() { return m_paintDC; }
+	const CRect& GetPaintRect() const { return m_paintRect; }
 
 	// Excludes, respectively includes the given list of rectangles into the clipping region
 	static void ExcludeFromClippingRegion(CDC & paintDC, const std::list<CRect>& listExcludedRects);
@@ -26,7 +27,7 @@ public:
 						  const CPoint& dibStart, const CSize& dibSize, float fDimFactor);
 
 	// Blits the DIB data section to target DC using blending with painted version of given panel
-	static void CPaintMemDCMgr::BitBltBlended(CDC & dc, CDC & paintDC, const CSize& dcSize, void* pDIBData, BITMAPINFO* pbmInfo, 
+	static void BitBltBlended(CDC & dc, CDC & paintDC, const CSize& dcSize, void* pDIBData, BITMAPINFO* pbmInfo, 
 						  const CPoint& dibStart, const CSize& dibSize, CPanel& panel, const CPoint& offsetPanel,
 						  float fBlendFactor);
 
@@ -47,7 +48,8 @@ private:
 		CRect DisplayRect;
 	};
 
-	CPaintDC& m_paintDC;
+	CDC& m_paintDC;
+	CRect m_paintRect;
 	int m_nNumElems;
 	CManagedRegion m_managedRegions[MAX_REGIONS_CPaintMemDCMgr];
 };
