@@ -136,7 +136,7 @@ void CParameterDBEntry::InitFromProcessParams(const CImageProcessingParams & pro
 	}
 	freeRotation = (int)(fmod(rotationParams.FreeRotation + 360, 360) * 100 + 0.5);
 
-	float * pCorrections = CSettingsProvider::This().ColorCorrectionAmounts();
+	const float * pCorrections = CSettingsProvider::This().ColorCorrectionAmounts();
 	for (int i = 0; i < 6; i++) {
 		colorCorrectionAmount[i] = Convert(pCorrections[i], 0.0f, 1.0f, false);
 	}

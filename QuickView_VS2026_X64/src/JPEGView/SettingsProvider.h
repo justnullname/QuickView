@@ -61,7 +61,7 @@ public:
 	void SetMonitorOverride(int nMonitor) { m_nDisplayMonitor = nMonitor; }
 	bool AutoContrastCorrection() { return m_bAutoContrastCorrection; }
 	double AutoContrastAmount() { return m_dAutoContrastAmount; }
-	float* ColorCorrectionAmounts(); // can't be declared inline due to compiler bug...sad but true
+	const float* ColorCorrectionAmounts(); // can't be declared inline due to compiler bug...sad but true
 	double AutoBrightnessAmount() { return m_dAutoBrightnessAmount; }
 	bool LocalDensityCorrection() { return m_bLocalDensityCorrection; }
 	double BrightenShadows() { return m_dBrightenShadows; }

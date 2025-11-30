@@ -18,6 +18,19 @@
 - **Improved Zoom Display**: Semi-transparent background for better readability
 - **Enhanced Window Dragging**: Drag window when image fits screen
 - **Cleaner Configuration**: Renamed to `QuickView.ini` for clarity
+- **Stability Improvements**: Fixed startup crashes and zoom logic
+
+## 🚀 Roadmap
+
+### Phase 1: Core Interaction (Completed)
+- [x] Lock Window Size & Interaction
+- [x] Borderless Mode Refinement
+- [x] Fix Zoom & Window Dragging
+
+### Phase 2: Modern UI (Planned)
+- [ ] Chrome-style floating top button bar
+- [ ] Double-click behavior configuration
+- [ ] Bottom thumbnail bar with lazy loading
 
 ## 📥 Download
 

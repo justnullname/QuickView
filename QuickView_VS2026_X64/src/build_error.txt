@@ -1,0 +1,7 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+
+D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppClean.targets(77,5): warning : Access to the path 'e:\personal\coding\quickview\quickview_vs2026_x64\src\jpegview\bin\x64\release\wicloader.dll' is denied. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\WICLoader\WICLoader.vcxproj]
+  stdafx.cpp
+  dllmain.cpp
+  WICLoader.cpp
+LINK : fatal error LNK1104: 无法打开文件“e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\bin\x64\Release\WICLoader.dll” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\WICLoader\WICLoader.vcxproj]

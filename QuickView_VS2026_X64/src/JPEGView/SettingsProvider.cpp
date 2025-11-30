@@ -8,7 +8,7 @@
 static const TCHAR* DEFAULT_INI_FILE_NAME = _T("QuickView.ini");
 static const TCHAR* SECTION_NAME = _T("QuickView");
 
-static float COLOR_CORR_DEFAULT_FACTORS[6] = {0.2f, 0.1f, 0.3f, 0.3f, 0.3f, 0.15f};
+static const float COLOR_CORR_DEFAULT_FACTORS[6] = {0.2f, 0.1f, 0.3f, 0.3f, 0.3f, 0.15f};
 
 CSettingsProvider* CSettingsProvider::sm_instance;
 
@@ -33,7 +33,7 @@ CSettingsProvider& CSettingsProvider::This() {
 	return *sm_instance;
 }
 
-float* CSettingsProvider::ColorCorrectionAmounts() { 
+const float* CSettingsProvider::ColorCorrectionAmounts() { 
 	return (m_fColorCorrections[0] < 0) ? COLOR_CORR_DEFAULT_FACTORS : m_fColorCorrections;
 }
 

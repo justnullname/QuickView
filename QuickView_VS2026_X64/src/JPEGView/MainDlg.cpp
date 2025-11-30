@@ -260,6 +260,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_pKeyMap = new CKeyMap(); // routine to load the keymap, it's not as simple as just loading one file anymore, but all logic handled by CKeyMap
 	m_pPrintImage = new CPrintImage(CSettingsProvider::This().PrintMargin(), CSettingsProvider::This().DefaultPrintWidth());
 	m_pHelpDlg = NULL;
+	m_pPanelMgr = new CPanelMgr();
 }
 
 CMainDlg::~CMainDlg() {
@@ -287,7 +288,7 @@ LRESULT CMainDlg::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam
 	UpdateWindowTitle();
 
 	// set the scaling of the screen (DPI) compared to 96 DPI (design value)
-	CPaintDC dc(this->m_hWnd);
+	CClientDC dc(this->m_hWnd);
 	HelpersGUI::ScreenScaling = ::GetDeviceCaps(dc, LOGPIXELSX)/96.0f;
 
 	::SetClassLongPtr(m_hWnd, GCLP_HCURSOR, NULL);
@@ -675,14 +676,12 @@ LRESULT CMainDlg::OnLButtonDown(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam,
 				m_bZoomMode = true;
 				m_dStartZoom = m_dZoom;
 				m_nCapturedX = m_nMouseX; m_nCapturedY = m_nMouseY;
-			} else if ((bCtrl || bHandleByCropping || (!bDraggingRequired && m_bDefaultSelectionMode)) && !bTransformPanelShown) {
+			} else if ((bCtrl || bHandleByCropping || (!bDraggingRequired && m_bDefaultSelectionMode && !m_bWindowBorderless)) && !bTransformPanelShown) {
 				// always go into selection/crop when in the right state and CTRL held down, otherwise it depends on the DefaultSelectionMode setting
 				m_bSelectZoom = bShift;  // if shift, go into select-to-zoom mode (no crop popup)
 				// m_pCropCtl->StartCropping(pointClicked.x, pointClicked.y);
-			} else if (bDraggingRequired && !bTransformPanelShown) {
-				StartDragging(pointClicked.x, pointClicked.y, false);
-			} else if (!bDraggingRequired && !bTransformPanelShown) {
-				// Allow dragging the window if image fits in client area
+			} else if (!bTransformPanelShown) {
+				// Allow dragging the window
 				::ReleaseCapture();
 				::SendMessage(m_hWnd, WM_NCLBUTTONDOWN, HTCAPTION, lParam);
 				return 0;
@@ -812,10 +811,13 @@ LRESULT CMainDlg::OnMouseMove(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, B
 	return 0;
 }
 
-LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL& /*bHandled*/) {
+LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam, BOOL& /*bHandled*/) {
 	bool bCtrl = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+	bool bShift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+	bool bAlt = (::GetKeyState(VK_MENU) & 0x8000) != 0;
 	int nDelta = GET_WHEEL_DELTA_WPARAM(wParam);
-	if (!bCtrl && CSettingsProvider::This().NavigateWithMouseWheel() && !m_pPanelMgr->IsModalPanelShown()) {
+
+	if (!bCtrl && !bShift && !bAlt && CSettingsProvider::This().NavigateWithMouseWheel() && !m_pPanelMgr->IsModalPanelShown()) {
 		if (nDelta < 0) {
 			GotoImage(POS_Next);
 		} else {
@@ -823,6 +825,22 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, 
 		}
 		return 0;
 	}
+
+	// Zoom
+	double dZoomSpeed = CSettingsProvider::This().MouseWheelZoomSpeed();
+	double dZoomFactor = 1.0 + dZoomSpeed * 0.1;
+	if (nDelta < 0) {
+		dZoomFactor = 1.0 / dZoomFactor;
+	}
+
+	CPoint mousePos(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+	ScreenToClient(&mousePos);
+	m_nMouseX = mousePos.x;
+	m_nMouseY = mousePos.y;
+
+	PerformZoom(dZoomFactor, true, true, true);
+	Invalidate(FALSE);
+
 	return 0;
 }
 
@@ -1672,27 +1690,15 @@ void CMainDlg::ExecuteCommand(int nCommand) {
 		case IDM_HIDE_TITLE_BAR:
 			break;
 
-		case IDM_ALWAYS_ON_TOP:
-			ToggleAlwaysOnTop();
-
-			break;
 		case IDM_FIT_WINDOW_TO_IMAGE:
 			// Note: If auto fit is on but the window size does not match the image size (due to manual window resizing), restore window to image
 			if (!(m_bAutoFitWndToImage && !IsImageExactlyFittingWindow()))
 				m_bAutoFitWndToImage = !m_bAutoFitWndToImage;
 			AdjustWindowToImage(false);
 			break;
-		case IDM_ZOOM_400:
-			PerformZoom(4.0, false, m_bMouseOn, true);
-			break;
-		case IDM_ZOOM_200:
-			PerformZoom(2.0, false, m_bMouseOn, true);
-			break;
-		case IDM_ZOOM_100:
-			ResetZoomTo100Percents(m_bMouseOn);
-			break;
-		case IDM_ZOOM_50:
-			PerformZoom(0.5, false, m_bMouseOn, true);
+		case IDM_ALWAYS_ON_TOP:
+			ToggleAlwaysOnTop();
+
 			break;
 		case IDM_ZOOM_25:
 			PerformZoom(0.25, false, m_bMouseOn, true);
@@ -2435,7 +2441,8 @@ bool CMainDlg::PerformZoom(double dValue, bool bExponent, bool bZoomToMouse, boo
 	m_bUserZoom = true;
 	m_isUserFitToScreen = false;
 	if (bExponent) {
-	m_dZoom = max(Helpers::ZoomMin, min(Helpers::ZoomMax, m_dZoom));
+		m_dZoom *= dValue;
+		m_dZoom = max(Helpers::ZoomMin, min(Helpers::ZoomMax, m_dZoom));
 
 	// always try to snap to 100%... aka if within 1% of 100%, snap exactly to it
 	if (abs(m_dZoom - 1.0) < 0.01) {

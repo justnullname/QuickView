@@ -29,6 +29,16 @@ All notable changes to QuickView will be documented in this file.
 - **Window Dragging**: Added ability to drag window when image fits the window size
   - Previously only worked when image was larger than window
   - Now works in both scenarios for consistent behavior
+  - Fixed issue where left-click dragging was disabled in borderless mode
+
+- **Zoom Functionality**:
+  - Fixed broken zoom with mouse wheel and keyboard shortcuts
+  - Fixed window resizing not triggering when zooming ("Fit Window to Image")
+  - Restored "Fit Window to Image" context menu toggle functionality
+
+- **Startup Stability**:
+  - Fixed crash on startup due to uninitialized pointer
+  - Fixed Access Violation related to const-correctness in settings provider
 
 - **Code Cleanup**: Removed legacy "JPEGView" comments and updated to "QuickView"
 
