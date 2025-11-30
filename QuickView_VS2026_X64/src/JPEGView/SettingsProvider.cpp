@@ -6,7 +6,7 @@
 #include <algorithm>
 
 static const TCHAR* DEFAULT_INI_FILE_NAME = _T("QuickView.ini");
-static const TCHAR* SECTION_NAME = _T("JPEGView");
+static const TCHAR* SECTION_NAME = _T("QuickView");
 
 static float COLOR_CORR_DEFAULT_FACTORS[6] = {0.2f, 0.1f, 0.3f, 0.3f, 0.3f, 0.15f};
 
@@ -71,6 +71,16 @@ CSettingsProvider::CSettingsProvider(void) {
 		if (customIniFileName.GetLength() < 4 || customIniFileName.Right(4) != _T(".ini"))
 			customIniFileName = customIniFileName + _T(".ini");
 		m_sIniFileTitle = customIniFileName;
+	}
+	else if (customIniFileName.IsEmpty()) {
+		// If no custom INI, check if QuickView.ini exists. If not, fallback to JPEGView.ini
+		CString sDefault = m_sEXEPath + DEFAULT_INI_FILE_NAME;
+		if (::GetFileAttributes(sDefault) == INVALID_FILE_ATTRIBUTES) {
+			CString sLegacy = m_sEXEPath + _T("JPEGView.ini");
+			if (::GetFileAttributes(sLegacy) != INVALID_FILE_ATTRIBUTES) {
+				m_sIniFileTitle = _T("JPEGView.ini");
+			}
+		}
 	}
 
 	// Global INI file (at EXE location)
@@ -187,7 +197,7 @@ CSettingsProvider::CSettingsProvider(void) {
 	m_bBeepSoundAlert = GetBool(_T("BeepSoundAlert"), false);  // don't make it default on... too much sound feedback is pretty annoying
 	m_bWindowBorderlessOnStartup = GetBool(_T("WindowBorderlessOnStartup"), false);
 	m_bWindowAlwaysOnTopOnStartup = GetBool(_T("WindowAlwaysOnTopOnStartup"), false);
-	m_bLockWindowSize = GetBool(_T("LockWindowSize"), false);
+	m_bLockWindowSize = GetBool(_T("LockWindowSize"), true);
 	m_zoomPauseFactor = GetInt(_T("ZoomPausePercent"), 100, 0, 6553500) / 100.0;  // can't have a % larger than the MAX_IMAGE_DIMENSION %, and convert to a scale factor (double/double division) only once
 	m_bSaveWithoutPrompt = GetBool(_T("OverwriteOriginalFileWithoutSaveDialog"), false);
 	m_bCropWithoutPromptLosslessJPEG = GetBool(_T("CropWithoutPromptLosslessJPEG"), false);

@@ -1,4 +1,4 @@
-[JPEGView]
+[QuickView]
 
 ; This user INI file has been created from template JPEGView.ini.tpl
 ; Settings in this file override the setting in the global INI file located in the EXE path
@@ -164,7 +164,7 @@ NarrowBorderColor=128 128 128
 
 ; If set to true, the window size is locked in borderless mode.
 ; Zooming will only change the image size within the window, not the window itself.
-LockWindowSize=false
+LockWindowSize=true
 
 ; -----------------------------------------------
 ; - IMAGE CONTROL PANELS

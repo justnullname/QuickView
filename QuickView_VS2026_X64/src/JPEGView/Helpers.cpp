@@ -29,7 +29,7 @@ static TCHAR buffAppPath[MAX_PATH + 32] = _T("");
 LPCTSTR JPEGViewAppDataPath() {
 	if (buffAppPath[0] == 0) {
 		::SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, buffAppPath);
-		_tcscat_s(buffAppPath, MAX_PATH + 32, _T("\\JPEGView\\"));
+		_tcscat_s(buffAppPath, MAX_PATH + 32, _T("\\QuickView\\"));
 	}
 	return buffAppPath;
 }
