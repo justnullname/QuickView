@@ -5,6 +5,17 @@ All notable changes to QuickView will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Chrome-style Floating Buttons**:
+  - Added floating Minimize/Restore/Close buttons that appear when hovering near the top of the window
+  - Works in both Fullscreen and Borderless Windowed modes
+  - Provides a modern, browser-like experience for window management
+
+### Fixed
+- **Fullscreen Interaction**:
+  - Fixed an issue where the window could be dragged in Fullscreen mode
+  - Fixed missing top buttons in Fullscreen mode due to incorrect position calculation
+
+### Added (v1.0.1)
 - **Narrow Border Mode**: Configurable thin border (width and color) that appears only in borderless windowed mode
   - Settings: `NarrowBorderWidth` (0-100, default 2) and `NarrowBorderColor` (RGB, default 128 128 128)
   - Draws after all UI elements for clear visibility

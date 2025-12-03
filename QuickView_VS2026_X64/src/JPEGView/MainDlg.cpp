@@ -681,10 +681,12 @@ LRESULT CMainDlg::OnLButtonDown(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam,
 				m_bSelectZoom = bShift;  // if shift, go into select-to-zoom mode (no crop popup)
 				// m_pCropCtl->StartCropping(pointClicked.x, pointClicked.y);
 			} else if (!bTransformPanelShown) {
-				// Allow dragging the window
-				::ReleaseCapture();
-				::SendMessage(m_hWnd, WM_NCLBUTTONDOWN, HTCAPTION, lParam);
-				return 0;
+				// Allow dragging the window (only if not in fullscreen mode)
+				if (!m_bFullScreenMode) {
+					::ReleaseCapture();
+					::SendMessage(m_hWnd, WM_NCLBUTTONDOWN, HTCAPTION, lParam);
+					return 0;
+				}
 			} 
 		}
 		SetCursorForMoveSection();

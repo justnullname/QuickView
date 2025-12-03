@@ -19,7 +19,7 @@ CWndButtonPanelCtl::~CWndButtonPanelCtl() {
 }
 
 bool CWndButtonPanelCtl::IsVisible() { 
-	return m_bVisible && m_pMainDlg->IsFullScreenMode(); 
+	return m_bVisible && (m_pMainDlg->IsFullScreenMode() || m_pMainDlg->IsWindowBorderless()); 
 }
 
 void CWndButtonPanelCtl::SetVisible(bool bVisible) { 
@@ -30,7 +30,7 @@ void CWndButtonPanelCtl::SetVisible(bool bVisible) {
 }
 
 bool CWndButtonPanelCtl::OnMouseMove(int nX, int nY) {
-	if (!m_pMainDlg->IsFullScreenMode()) {
+	if (!m_pMainDlg->IsFullScreenMode() && !m_pMainDlg->IsWindowBorderless()) {
 		return false;
 	}
 	bool bHandled = CPanelController::OnMouseMove(nX, nY);

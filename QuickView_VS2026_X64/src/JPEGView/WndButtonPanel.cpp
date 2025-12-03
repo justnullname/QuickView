@@ -35,7 +35,7 @@ CRect CWndButtonPanel::PanelRect() {
 	if (m_pImageProcPanel != NULL) {
 		sliderRect = m_pImageProcPanel->PanelRect();
 	} else {
-		::GetClientRect(::GetParent(m_hWnd), &sliderRect);
+		::GetClientRect(m_hWnd, &sliderRect);
 	}
 	m_clientRect = CRect(CPoint(sliderRect.right - m_nWidth, 0), CSize(m_nWidth, m_nHeight));
 	return m_clientRect;

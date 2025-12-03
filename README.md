@@ -27,8 +27,8 @@
 - [x] Borderless Mode Refinement
 - [x] Fix Zoom & Window Dragging
 
-### Phase 2: Modern UI (Planned)
-- [ ] Chrome-style floating top button bar
+### Phase 2: Modern UI (In Progress)
+- [x] Chrome-style floating top button bar
 - [ ] Double-click behavior configuration
 - [ ] Bottom thumbnail bar with lazy loading
 
