@@ -1,117 +1,151 @@
-# QuickView - Fast and Lightweight Image Viewer for Windows
+<div align="center">
 
-![QuickView icon](repository-open-graph-template-out.png?raw=true)
+# ⚡ QuickView
+### The Blazing Fast, Modern Image Viewer for Windows
 
-> A modern, streamlined fork of JPEGView optimized for Windows 10/11 with enhanced features and better performance.
+[![License](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64)-0078D6.svg)]()
+[![Release](https://img.shields.io/badge/release-v1.1.0-brightgreen.svg)](https://github.com/justnullname/QuickView/releases)
 
-## ✨ Features
+**Speed of Assembly. Comfort of Modern UX.**
 
-### Core Functionality
-- **Universal Format Support**: Supports nearly ALL image formats including JPEG, PNG, GIF, WEBP, TIFF, PSD, HEIF, AVIF, JXL, and camera RAW files (NEF, CR2, CR3, ARW, DNG, etc.)
-- **Lightning Fast**: Optimized for quick loading and smooth navigation
-- **Basic Image Editing**: Adjust sharpness, color balance, rotation, perspective, contrast, and exposure on-the-fly
-- **ICC Color Profiles**: Accurate color reproduction
+[Download Latest Release](https://github.com/justnullname/QuickView/releases) • [Report Bug](https://github.com/justnullname/QuickView/issues) • [Request Feature](https://github.com/justnullname/QuickView/issues)
 
-### Enhanced Features (This Fork)
-- **Narrow Border Mode**: Configurable thin border in borderless mode for better visual distinction
-- **Smart Fullscreen**: Double-click background to exit fullscreen, image to retain default behavior
-- **Improved Zoom Display**: Semi-transparent background for better readability
-- **Enhanced Window Dragging**: Drag window when image fits screen
-- **Cleaner Configuration**: Renamed to `QuickView.ini` for clarity
-- **Stability Improvements**: Fixed startup crashes and zoom logic
+</div>
 
-## 🚀 Roadmap
+---
 
-### Phase 1: Core Interaction (Completed)
-- [x] Lock Window Size & Interaction
-- [x] Borderless Mode Refinement
-- [x] Fix Zoom & Window Dragging
+## 📖 Introduction
 
-### Phase 2: Modern UI (In Progress)
-- [x] Chrome-style floating top button bar
-- [ ] Double-click behavior configuration
-- [ ] Bottom thumbnail bar with lazy loading
+**QuickView** is a modern, streamlined fork of the legendary [JPEGView](https://github.com/annh9b/JPEGView-Static).
 
-## 📥 Download
+We love JPEGView's blazing fast rendering engine, but let's face it: its interface belongs to the Windows 98 era. **QuickView** retains the **AVX2-optimized core** and **professional color management**, but wraps it in a **sleek, borderless, and highly customizable interface** inspired by modern viewers like Honeyview.
 
-Download the latest release from the [Releases](../../releases) page.
+It is designed for photographers, designers, and minimalists who demand **instant loading speed** without sacrificing user experience.
 
-## 🛠️ Build from Source
+![QuickView Screenshot](./ScreenShot/ScreenShot_2025-12-03_174244_791.png?raw=true)
+*(Screenshot: v1.1.0 featuring the new Thumbnail Gallery and Borderless UI)*
 
-### Prerequisites
-- Visual Studio 2019 or later
-- Windows 10 SDK or later
+## ✨ Why QuickView?
 
-### Build Steps
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/YourUsername/QuickView.git
-   cd QuickView
-   ```
+### 🚀 Performance First
+- **Zero Bloat:** Statically linked, single executable. No installation required.
+- **Hardware Acceleration:** Uses SSE/AVX2 instructions for real-time high-quality resampling.
+- **Instant Launch:** Optimized startup pipeline with no "white screen flash" — dark mode ready from the first millisecond.
 
-2. Open solution:
-   ```bash
-   cd QuickView_VS2026_X64\src
-   # Open QuickView.sln in Visual Studio
-   ```
+### 🎨 Modern & Immersive UX
+- **True Borderless:** Native borderless window for a distraction-free viewing experience.
+- **Visual Navigation:** Interactive bottom filmstrip gallery to browse images visually.
+- **Smart OSD:** Minimalist On-Screen Display for zoom levels and EXIF data (press `Tab`).
+- **Edge Emphasis:** Optional 1px smart border to visually separate images from the desktop background.
 
-3. Build:
-   - Select `Release` configuration
-   - Select `x64` platform
-   - Build Solution (Ctrl+Shift+B)
+### 🛠 Professional Grade
+- **Universal Format Support:** Opens nearly EVERYTHING.
+  - **Standard:** JPEG, PNG, GIF, WEBP, BMP, TIFF, TGA
+  - **Modern:** AVIF, JXL (JPEG XL), HEIF/HEIC
+  - **Professional:** PSD, RAW (CR2, CR3, NEF, ARW, DNG, etc.) via LibRaw.
+- **Color Management:** Full ICC profile support for accurate color reproduction on wide-gamut monitors.
 
-4. Output will be in:
-   ```
-   QuickView_VS2026_X64\src\JPEGView\bin\x64\Release\
-   ```
+---
+
+## 🆕 What's New in v1.1.0
+
+### 1. Thumbnail Gallery Navigation
+A completely new way to browse. Instead of blindly pressing "Next", see your folder context at a glance.
+* **Visual Filmstrip:** A translucent thumbnail bar appears at the bottom.
+* **Independent Scrolling:** Use the new sleek chevron arrows to peek at upcoming images without changing your main view.
+
+### 2. Chrome-style Floating Controls
+We removed the ugly Windows title bar but kept the functionality.
+* **Auto-hiding Top Bar:** Hover over the top edge of the window to reveal Minimize, Maximize, and Close buttons.
+* **Distraction Free:** The controls vanish when you move your mouse away, leaving just your image.
+
+### 3. Critical Improvements
+* **Dark Mode Startup:** Fixed the "white flash" on launch.
+* **Bug Fixes:** Resolved text overlapping in Zoom OSD and window dragging issues in fullscreen.
+
+---
+
+## 🆚 QuickView vs. The Rest
+
+| Feature | QuickView | Original JPEGView | Honeyview |
+| :--- | :---: | :---: | :---: |
+| **Interface Style** | **Modern / Borderless** | Legacy / Win32 | Modern / Skinned |
+| **Navigation** | **Filmstrip Gallery** | Next/Prev Only | Filmstrip Gallery |
+| **Rendering Speed** | **Extreme (AVX2)** | Extreme (AVX2) | Fast |
+| **Color Management (CMS)**| **✅ Professional** | ✅ Professional | ❌ Basic |
+| **OSD / Feedback** | **✅ Modern Overlays** | ❌ Status Bar Only | ✅ Top Bar |
+| **Format Support** | **✅ All (incl. RAW/JXL)** | ✅ All | ⚠️ Limited Newer Formats |
+
+---
 
 ## ⚙️ Configuration
 
-QuickView uses `QuickView.ini` for configuration:
+QuickView is designed to be portable. Settings are stored in `QuickView.ini`.
 
-**Configuration locations:**
-- User config (takes precedence): `%AppData%\Roaming\JPEGView\QuickView.ini`
-- Global config: `<EXE path>\QuickView.ini`
-
-### Narrow Border Mode Settings
 ```ini
 [JPEGView]
-# Enable borderless mode
+; v1.1.0 New Settings
+ShowBottomPanel=true        ; Enable/Disable the new Thumbnail Gallery
 WindowBorderlessOnStartup=true
 
-# Border settings (only visible in borderless mode)
+; Customize the look
 NarrowBorderWidth=2
 NarrowBorderColor=128 128 128
-```
+````
 
-## 📝 Supported Formats
+-----
 
-**Image Formats**: JPEG, GIF, BMP, PNG, TIFF, PSD, WEBP, JXL, HEIF/HEIC, AVIF, TGA, WDP, HDP, JXR
+## 🗺️ Roadmap
 
-**Camera RAW**: DNG, CRW, CR2, CR3, NEF, NRW, ARW, SR2, ORF, RW2, RAF, X3F, PEF, MRW, KDC, DCR
+We are actively building the ultimate lightweight viewer.
 
-See [LibRaw supported cameras](https://www.libraw.org/supported-cameras) for the complete list.
+  - [x] **Phase 1: The Core (Completed)**
+      - [x] Native borderless window implementation.
+      - [x] Zoom OSD and Smart Edge Border.
+      - [x] Refined window dragging logic.
+  - [x] **Phase 2: Modern Interaction (Completed v1.1)**
+      - [x] Chrome-style floating top bar (auto-hide).
+      - [x] Lazy-loading thumbnail gallery (Bottom bar).
+      - [x] Startup "White Flash" fix.
+  - [ ] **Phase 3: The Polish (Next)**
+      - [ ] Visual Settings Dialog (No more manual INI editing\!).
+      - [ ] "Always on Top" toggle with visual OSD feedback.
+      - [ ] First-run interactive tutorial.
 
-## 🎯 Project Goals
+-----
 
-This fork focuses on:
-- Eliminating legacy code and improving maintainability
-- Full support for modern 64-bit Windows (10/11)
-- Enhanced user experience with thoughtful improvements
-- Clean, modern codebase
+## 📥 Download & Install
+
+**QuickView is portable.** No messy installers.
+
+1.  Go to the [**Releases Page**](https://www.google.com/url?sa=E&source=gmail&q=https://github.com/justnullname/QuickView/releases).
+2.  Download the latest `QuickView_x64.zip`.
+3.  Unzip and run `QuickView.exe`.
+
+-----
+
+## 🛠️ Build from Source
+
+Requirements: **Visual Studio 2022** (Recommended) or 2019, Windows 10 SDK.
+
+1.  **Clone:**
+    ```bash
+    git clone [https://github.com/justnullname/QuickView.git](https://github.com/justnullname/QuickView.git)
+    ```
+2.  **Open:** Navigate to `src/QuickView.sln` and open in Visual Studio.
+3.  **Build:** Set configuration to **Release / x64** and press `Ctrl+Shift+B`.
+
+-----
+
+## 🙏 Credits & Acknowledgements
+
+QuickView stands on the shoulders of giants:
+
+  * **David Kleiner** for the original, brilliant [JPEGView](https://sourceforge.net/projects/jpegview/).
+  * **Sylikc** and **Annh9b** for keeping the project alive with their forks.
+  * Powered by open-source excellence: **LibRaw, LibJpeg-Turbo, LibWebP, LCMS2**.
 
 ## 📄 License
 
-This project is licensed under the GPL-2.0 License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Credits
-
-- Original JPEGView by David Kleiner
-- [Sylikc's JPEGView](https://github.com/sylikc/jpegview) - upstream fork
-- LibRaw, libjpeg-turbo, libwebp, and other open-source libraries
-
-## 🔗 Links
-
-- [Original JPEGView](https://sourceforge.net/projects/jpegview/)
-- [Sylikc's Fork](https://github.com/sylikc/jpegview)
-- [LibRaw](https://www.libraw.org/)
+This project is licensed under the **GPL-2.0 License**.

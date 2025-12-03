@@ -364,6 +364,7 @@ CButtonCtrl::CButtonCtrl(CPanel* pPanel, LPCTSTR sButtonText,
 	m_bActive = false;
 	m_extendedArea = CRect(0, 0, 0, 0);
 	m_dimmingFactor = 0.0f;
+	m_bDrawBorder = true;
 }
 
 CButtonCtrl::CButtonCtrl(CPanel* pPanel, PaintHandler* paintHandler, ButtonPressedHandler* buttonPressedHandler,
@@ -378,6 +379,7 @@ CButtonCtrl::CButtonCtrl(CPanel* pPanel, PaintHandler* paintHandler, ButtonPress
 	m_bActive = false;
 	m_extendedArea = CRect(0, 0, 0, 0);
 	m_dimmingFactor = 0.0f;
+	m_bDrawBorder = true;
 }
 
 void CButtonCtrl::SetActive(bool bActive) {
@@ -466,7 +468,9 @@ void CButtonCtrl::Draw(CDC & dc, CRect position, bool bBlack) {
 		hPen = ::CreatePen(PS_SOLID, 1, (m_bDragging && m_bHighlight) ? CSettingsProvider::This().ColorHighlight() : m_bActive ? CSettingsProvider::This().ColorSelected() : CSettingsProvider::This().ColorGUI());
 		hOldPen = dc.SelectPen(hPen);
 	}
-	HelpersGUI::DrawRectangle(dc, position);
+	if (m_bDrawBorder) {
+		HelpersGUI::DrawRectangle(dc, position);
+	}
 	if (m_sText.GetLength() > 0) {
 		HelpersGUI::SelectDefaultGUIFont(dc);
 		dc.SetBkMode(TRANSPARENT);

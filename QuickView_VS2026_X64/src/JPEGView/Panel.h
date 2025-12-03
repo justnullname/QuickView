@@ -34,6 +34,8 @@ public:
 	// Gets the controls map (ID, Control)
 	const std::map<int, CUICtrl*> & GetControls() { return m_controls; }
 
+	INotifiyMouseCapture* GetNotifyMouseCapture() { return m_pNotifyMouseCapture; }
+
 	// Mouse events must be passed to the panel using the two methods below.
 	// The mouse event is consumed by a UI control if the return value is true.
 	virtual bool OnMouseLButton(EMouseEvent eMouseEvent, int nX, int nY);

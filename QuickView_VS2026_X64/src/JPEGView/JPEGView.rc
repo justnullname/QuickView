@@ -496,9 +496,9 @@ END
 // Version
 //
 
-VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,1,0,0
- PRODUCTVERSION 0,1,0,0
+ VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,1,0,0
+ PRODUCTVERSION 1,1,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -515,12 +515,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "QuickView"
             VALUE "FileDescription", "QuickView - Fast and lightweight image viewer"
-            VALUE "FileVersion", "0.1.0.0"
+            VALUE "FileVersion", "1.1.0.0"
             VALUE "InternalName", "QuickView"
             VALUE "LegalCopyright", "Copyright 2025 QuickView (fork of JPEGView-Static), 2024-2025 JPEGView-Static, 2020-2023 Kevin M (sylikc), 2006-2018 David Kleiner"
             VALUE "OriginalFilename", "QuickView.exe"
             VALUE "ProductName", "QuickView Application"
-            VALUE "ProductVersion", "0.1.0.0"
+            VALUE "ProductVersion", "1.1.0.0"
         END
     END
     BLOCK "VarFileInfo"

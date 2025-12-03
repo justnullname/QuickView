@@ -39,6 +39,7 @@
 // #include "ImageProcPanelCtl.h"
 #include "WndButtonPanelCtl.h"
 #include "InfoButtonPanelCtl.h"
+#include "ThumbnailPanelCtl.h"
 #include "RotationPanelCtl.h"
 #include "TiltCorrectionPanelCtl.h"
 #include "UnsharpMaskPanelCtl.h"
@@ -251,6 +252,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_isBeforeFileSelected = true;
 	m_pWndButtonPanelCtl = NULL;
 	m_pInfoButtonPanelCtl = NULL;
+	m_pThumbnailPanelCtl = NULL;
 	m_pRotationPanelCtl = NULL;
 	m_pTiltCorrectionPanelCtl = NULL;
 	m_pUnsharpMaskPanelCtl = NULL;
@@ -335,6 +337,10 @@ LRESULT CMainDlg::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam
 	// Create info button panel (on top, left)
 	m_pInfoButtonPanelCtl = new CInfoButtonPanelCtl(this, NULL); // m_pImageProcPanelCtl->GetPanel());
 	m_pPanelMgr->AddPanelController(m_pInfoButtonPanelCtl);
+
+	// Create thumbnail panel (bottom)
+	m_pThumbnailPanelCtl = new CThumbnailPanelCtl(this);
+	m_pPanelMgr->AddPanelController(m_pThumbnailPanelCtl);
 
 	// Create zoom navigator
 	m_pZoomNavigatorCtl = new CZoomNavigatorCtl(this, m_pNavPanelCtl->GetPanel());
@@ -453,7 +459,11 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 	m_dRealizedZoom = 1.0;
 
 	this->GetClientRect(&m_clientRect);
-	CRect imageProcessingArea = m_clientRect; // m_pImageProcPanelCtl->PanelRect();
+	CRect imageProcessingArea = m_clientRect;
+	int nThumbHeight = GetThumbnailPanelHeight();
+	if (nThumbHeight > 0) {
+		imageProcessingArea.bottom -= nThumbHeight;
+	}
 	CRectF visRectZoomNavigator(0.0f, 0.0f, 1.0f, 1.0f);
 	CBrush backBrush;
 	backBrush.CreateSolidBrush(CSettingsProvider::This().ColorBackground());
@@ -818,6 +828,12 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam, BOOL
 	bool bShift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
 	bool bAlt = (::GetKeyState(VK_MENU) & 0x8000) != 0;
 	int nDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+	CPoint mousePos(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+	ScreenToClient(&mousePos);
+
+	if (m_pPanelMgr->OnMouseWheel(nDelta, mousePos.x, mousePos.y)) {
+		return 0;
+	}
 
 	if (!bCtrl && !bShift && !bAlt && CSettingsProvider::This().NavigateWithMouseWheel() && !m_pPanelMgr->IsModalPanelShown()) {
 		if (nDelta < 0) {
@@ -835,8 +851,6 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam, BOOL
 		dZoomFactor = 1.0 / dZoomFactor;
 	}
 
-	CPoint mousePos(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-	ScreenToClient(&mousePos);
 	m_nMouseX = mousePos.x;
 	m_nMouseY = mousePos.y;
 
@@ -845,7 +859,6 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam, BOOL
 
 	return 0;
 }
-
 LRESULT CMainDlg::OnKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL& /*bHandled*/) {
 	bool bCtrl = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
 	bool bShift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -854,7 +867,13 @@ LRESULT CMainDlg::OnKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOO
 		return 1; // a panel has handled the key
 	}
 	bool bHandled = false;
-	if (wParam == VK_ESCAPE && CloseHelpDlg()) {
+	if (wParam == 'T') {
+		if (m_pThumbnailPanelCtl != NULL) {
+			m_pThumbnailPanelCtl->SetVisible(!m_pThumbnailPanelCtl->IsVisible());
+			bHandled = true;
+		}
+	}
+	if (!bHandled && wParam == VK_ESCAPE && CloseHelpDlg()) {
 		bHandled = true;
 	} else if (wParam == VK_ESCAPE && false) { // m_pCropCtl->IsCropping()) {
 		bHandled = true;
@@ -880,10 +899,12 @@ LRESULT CMainDlg::OnKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOO
 		bHandled = true;
 		ExecuteCommand(IDM_HELP);
 	} else {
-		int nCommand = m_pKeyMap->GetCommandIdForKey((int)wParam, bAlt, bCtrl, bShift);
-		if (nCommand > 0) {
-			bHandled = true;
-			ExecuteCommand(nCommand);
+		if (!bHandled) {
+			int nCommand = m_pKeyMap->GetCommandIdForKey((int)wParam, bAlt, bCtrl, bShift);
+			if (nCommand > 0) {
+				bHandled = true;
+				ExecuteCommand(nCommand);
+			}
 		}
 	}
 
@@ -895,6 +916,13 @@ LRESULT CMainDlg::OnKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOO
 	}
 
 	return 1;
+}
+
+int CMainDlg::GetThumbnailPanelHeight() {
+	if (m_pThumbnailPanelCtl != NULL && m_pThumbnailPanelCtl->IsVisible()) {
+		return m_pThumbnailPanelCtl->PanelRect().Height();
+	}
+	return 0;
 }
 
 LRESULT CMainDlg::OnSysKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL& /*bHandled*/) {
@@ -1007,7 +1035,11 @@ LRESULT CMainDlg::OnTimer(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL&
 		m_bShowZoomFactor = false;
 		::KillTimer(this->m_hWnd, ZOOM_TEXT_TIMER_EVENT_ID);
 		m_pZoomNavigatorCtl->InvalidateZoomNavigatorRect();
-		CRect imageProcArea = m_clientRect; // m_pImageProcPanelCtl->PanelRect();
+		CRect imageProcArea = m_clientRect;
+		int nThumbHeight = GetThumbnailPanelHeight();
+		if (nThumbHeight > 0) {
+			imageProcArea.bottom -= nThumbHeight;
+		}
 		this->InvalidateRect(GetZoomTextRect(imageProcArea), FALSE);
 	} else {
 		if (true) { // !m_pCropCtl->OnTimer((int)wParam)) {
@@ -1177,7 +1209,15 @@ LRESULT CMainDlg::OnCtlColorEdit(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/
 }
 
 LRESULT CMainDlg::OnEraseBackground(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL& bHandled) {
-	// prevent erasing background
+	// Fill background with the configured background color to prevent white flash on startup
+	HDC hDC = (HDC)wParam;
+	if (hDC != NULL) {
+		RECT rect;
+		GetClientRect(&rect);
+		HBRUSH hBrush = CreateSolidBrush(CSettingsProvider::This().ColorBackground());
+		FillRect(hDC, &rect, hBrush);
+		DeleteObject(hBrush);
+	}
 	bHandled = TRUE;
 	return TRUE;
 }

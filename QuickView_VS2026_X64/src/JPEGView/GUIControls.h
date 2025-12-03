@@ -98,6 +98,7 @@ public:
 	void SetShow(bool bShow, bool bInvalidate);
 	void SetTooltip(LPCTSTR sTooltipText);
 	void SetTooltipHandler(TooltipHandler ttHandler, void* pContext = NULL);
+	bool IsHighlighted() const { return m_bHighlight; }
 
 public:
 	virtual bool OnMouseLButton(EMouseEvent eMouseEvent, int nX, int nY) = 0;
@@ -266,6 +267,9 @@ public:
 	// Sets the dimming factor for the button background, 0 for no dimming 1.0 for blackness
 	void SetDimmingFactor(float factor) { m_dimmingFactor = factor; }
 
+	// Sets if the button border should be drawn (default is true)
+	void SetDrawBorder(bool bDraw) { m_bDrawBorder = bDraw; }
+
 public:
 	virtual CSize GetMinSize();
 	virtual bool OnMouseLButton(EMouseEvent eMouseEvent, int nX, int nY);
@@ -287,6 +291,7 @@ private:
 	int m_nParameter;
 	PaintHandler* m_paintHandler;
 	void* m_pPaintContext;
+	bool m_bDrawBorder;
 };
 
 //-------------------------------------------------------------------------------------------------

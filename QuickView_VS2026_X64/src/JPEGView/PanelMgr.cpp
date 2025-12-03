@@ -96,6 +96,23 @@ bool CPanelMgr::OnMouseMove(int nX, int nY) {
 	return false;
 }
 
+bool CPanelMgr::OnMouseWheel(int nDelta, int nX, int nY) {
+	if (m_pCapturedPanelController != NULL && m_pCapturedPanelController->IsActive()) {
+		if (m_pCapturedPanelController->OnMouseWheel(nDelta, nX, nY)) {
+			return true;
+		}
+	}
+	std::list<CPanelController*>::iterator iter;
+	for (iter = m_panelControllers.begin( ); iter != m_panelControllers.end( ); iter++ ) {
+		if ((*iter)->IsActive() && *iter != m_pCapturedPanelController) {
+			if ((*iter)->OnMouseWheel(nDelta, nX, nY)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 bool CPanelMgr::MouseCursorCaptured() {
 	if (m_pCapturedPanelController != NULL && m_pCapturedPanelController->IsActive()) {
 		if (m_pCapturedPanelController->MouseCursorCaptured()) {

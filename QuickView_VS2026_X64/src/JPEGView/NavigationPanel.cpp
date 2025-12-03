@@ -5,6 +5,7 @@
 #include "HelpersGUI.h"
 #include "SettingsProvider.h"
 #include "KeyMap.h"
+#include "MainDlg.h"
 
 #define NAV_PANEL_HEIGHT 32
 #define NAV_PANEL_BORDER 6
@@ -33,6 +34,13 @@ CRect CNavigationPanel::PanelRect() {
 	::GetClientRect(m_hWnd, &clientRect);
 	int nX = (clientRect.Width() - m_nWidth)/2;
 	int nY = clientRect.Height() - m_nHeight - m_nBorder;
+	
+	if (m_pDecisionMethodParam != NULL) {
+		CMainDlg* pMainDlg = (CMainDlg*)m_pDecisionMethodParam;
+		if (pMainDlg != NULL) {
+			nY -= pMainDlg->GetThumbnailPanelHeight();
+		}
+	}
 	return CRect(nX, nY, nX + m_nWidth, nY + m_nHeight);
 }
 
