@@ -200,5 +200,13 @@ void CThumbnailPanelCtl::ThreadProc() {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
+
 	CoUninitialize();
+}
+
+int CThumbnailPanelCtl::GetHeight() {
+	if (m_bVisible && m_pThumbnailPanel != NULL) {
+		return m_pThumbnailPanel->GetHeight();
+	}
+	return 0;
 }

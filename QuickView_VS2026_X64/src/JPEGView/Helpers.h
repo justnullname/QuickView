@@ -126,7 +126,7 @@ namespace Helpers {
 				(  (uint8)(((g * a + bg_g * one_minus_a) / 255.0) + 0.5) <<  8) + 
 				(  (uint8)(((b * a + bg_b * one_minus_a) / 255.0) + 0.5)      );
 		}
-}
+	}
 
 	// Gets the image size to be used when fitting the image to screen, either using 'fit to screen'
 	// or 'fill with crop' method. If 'fill with crop' is used, the bLimitAR can be set to avoid
@@ -152,23 +152,14 @@ namespace Helpers {
 	// Inflate rectangle by given factor
 	CRect InflateRect(const CRect& rect, float fAmount);
 
-	// Fits a rectangle with the specified size into a fit rectangle and returns the adjusted rectangle, maintaining the aspect ratio of the size
+	// Fits a rectangle of the given size into the fitRect, keeping the aspect ratio
 	CRect FitRectIntoRect(CSize size, CRect fitRect);
 
-	// Fills a rectangle with the specified size around a fit rectangle and returns the adjusted rectangle, maintaining the aspect ratio of the size
+	// Fills the fillRect with a rectangle of the given size, keeping the aspect ratio (cropping the rest)
 	CRect FillRectAroundRect(CSize size, CRect fillRect);
 
-	// Gets the parameters for zooming the given zoom rectangle in an image of given size to a given window size.
+	// Gets the zoom parameters (zoom factor and offsets) to zoom into the given rectangle
 	void GetZoomParameters(float & fZoom, CPoint & offsets, CSize imageSize, CSize windowSize, CRect zoomRect);
-
-	// Gets a window rectangle (in screen coordinates) that fits the given image
-	CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless);
-
-	// Gets if the given image can be displayed without sampling down the image.
-	bool CanDisplayImageWithoutResize(HWND hWnd, CJPEGImage* pImage);
-
-	// Calculates the maximum included rectangle in a trapezoid, keeping the given aspect ratio of the sides
-	CRect CalculateMaxIncludedRectKeepAR(const CTrapezoid& trapezoid, double dAspectRatio);
 
 	// Gets the maximum client size for a framed window that fits into the working area of the screen the given window is placed on
 	CSize GetMaxClientSize(HWND hWnd);
@@ -180,6 +171,16 @@ namespace Helpers {
 	// The window size equals the client area size plus this border size
 	CSize GetTotalBorderSize();
 
+	// Gets the window rectangle that matches the image size, keeping the aspect ratio if requested
+	// nAdditionalHeight is added to the required height (e.g. for thumbnail bar)
+	CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless, int nAdditionalHeight = 0);
+
+	// Checks if the image can be displayed without resizing the window
+	bool CanDisplayImageWithoutResize(HWND hWnd, CJPEGImage* pImage);
+
+	// Calculates the maximum included rectangle in a trapezoid that keeps the aspect ratio
+	CRect CalculateMaxIncludedRectKeepAR(const CTrapezoid& trapezoid, double dAspectRatio);
+
 	// Converts the transition effect from string (as in INI or command line parameter) to enum
 	ETransitionEffect ConvertTransitionEffectFromString(LPCTSTR str);
 
@@ -189,7 +190,6 @@ namespace Helpers {
 	// Tests if the CPU supports AVX2, SSE, MMX(2)
 	CPUType ProbeCPU(void);
 
-	// Get number of cores per physical processor, not counting hyperthreading
 	int NumCoresPerPhysicalProc(void);
 
 	// Gets the path where JPEGView stores its application data, including a trailing backslash

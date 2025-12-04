@@ -20,6 +20,8 @@ public:
 	CThumbnailPanel(HWND hWnd, INotifiyMouseCapture* pNotifyMouseCapture);
 	virtual ~CThumbnailPanel();
 
+	int GetHeight() const { return m_nHeight; }
+
 	virtual CRect PanelRect();
 	virtual void RequestRepositioning();
 	virtual void OnPaint(CDC & dc, const CPoint& offset);

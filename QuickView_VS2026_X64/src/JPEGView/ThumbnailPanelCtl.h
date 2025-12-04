@@ -13,6 +13,7 @@ public:
 	virtual ~CThumbnailPanelCtl();
 
 	CMainDlg* GetMainDlg() { return m_pMainDlg; }
+	int GetHeight();
 
 	virtual float DimFactor() { return 0.0f; }
 	virtual bool IsVisible() { return m_bVisible; }

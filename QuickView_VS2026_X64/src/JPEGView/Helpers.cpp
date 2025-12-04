@@ -550,7 +550,7 @@ CSize GetTotalBorderSize() {
 	return CSize(nBorderWidth, nBorderHeight);
 }
 
-CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless) {
+CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless, int nAdditionalHeight) {
 	int nOrigWidth = (pImage == NULL) ? ::GetSystemMetrics(SM_CXSCREEN) / 2 : pImage->OrigWidth();
 	int nOrigWidthUnzoomed = nOrigWidth;
 	int nOrigHeight = (pImage == NULL) ? ::GetSystemMetrics(SM_CYSCREEN) / 2 : pImage->OrigHeight();
@@ -587,16 +587,16 @@ CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, do
 	}
 
 	int nRequiredWidth = borderSize.cx + nOrigWidth;
-	int nRequiredHeight = borderSize.cy + nOrigHeight;
+	int nRequiredHeight = borderSize.cy + nOrigHeight + nAdditionalHeight;
 	CRect workingArea = CMultiMonitorSupport::GetWorkingRect(hWnd);
 	if (bKeepAspectRatio && (nRequiredWidth > workingArea.Width() || nRequiredHeight > workingArea.Height())) {
 		double dZoom;
 		CSize imageRect = Helpers::GetImageRect(nOrigWidth, nOrigHeight, 
 			min(maxSize.cx, workingArea.Width() - borderSize.cx),
-			min(maxSize.cy, workingArea.Height() - borderSize.cy),
+			min(maxSize.cy, workingArea.Height() - borderSize.cy - nAdditionalHeight),
 			false, false, false, dZoom);
 		nRequiredWidth = imageRect.cx + borderSize.cx;
-		nRequiredHeight = imageRect.cy + borderSize.cy;
+		nRequiredHeight = imageRect.cy + borderSize.cy + nAdditionalHeight;
 	} else {
 		nRequiredWidth = min(maxSize.cx, min(workingArea.Width(), nRequiredWidth));
 		nRequiredHeight = min(maxSize.cy, min(workingArea.Height(), nRequiredHeight));

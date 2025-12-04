@@ -199,6 +199,8 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_bKeepParams = sp.KeepParams();
 	m_eAutoZoomModeWindowed = sp.AutoZoomMode();
 	m_eAutoZoomModeFullscreen = sp.AutoZoomModeFullscreen();
+	m_autoZoomFitToScreen = Helpers::ZM_FitToScreen;
+	m_isUserFitToScreen = true;
 
 	m_eTransitionEffect = sp.SlideShowTransitionEffect();
 	m_nTransitionTime = sp.SlideShowEffectTimeMs();
@@ -492,18 +494,25 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 			m_dZoomMult = GetZoomMultiplier(m_pCurrentImage, m_clientRect);
 		}
 
+		// If not in explicit zoom mode (i.e. Fit to Screen), force recalculation of zoom
+		// to ensure it adapts to the new imageProcessingArea (e.g. when thumbnail bar appears)
+		if (m_isUserFitToScreen) {
+			m_dZoom = -1.0;
+			m_offsets = CPoint(0, 0); // Reset panning to prevent cropping
+		}
+
 		// find out the new vitual image size and the size of the bitmap to request
 		CSize newSize = Helpers::GetVirtualImageSize(m_pCurrentImage->OrigSize(),
-			m_clientRect.Size(), IsAdjustWindowToImage() ? Helpers::ZM_FitToScreenNoZoom : 
+			imageProcessingArea.Size(), IsAdjustWindowToImage() ? Helpers::ZM_FitToScreenNoZoom : 
 			   (m_isUserFitToScreen ? m_autoZoomFitToScreen : GetAutoZoomMode()), m_dZoom);
 		m_virtualImageSize = newSize;
 		m_dRealizedZoom = (double)newSize.cx / m_pCurrentImage->OrigSize().cx;
 		CPoint unlimitedOffsets = m_offsets;
-		m_offsets = Helpers::LimitOffsets(m_offsets, m_clientRect.Size(), newSize);
+		m_offsets = Helpers::LimitOffsets(m_offsets, imageProcessingArea.Size(), newSize);
 		m_DIBOffsets = m_bZoomMode ? (unlimitedOffsets - m_offsets) : CPoint(0, 0);
 
 		// Clip to client rectangle and request the DIB
-		CSize clippedSize(min(m_clientRect.Width(), newSize.cx), min(m_clientRect.Height(), newSize.cy));
+		CSize clippedSize(min(imageProcessingArea.Width(), newSize.cx), min(imageProcessingArea.Height(), newSize.cy));
 		CPoint offsetsInImage = m_pCurrentImage->ConvertOffset(newSize, clippedSize, m_offsets);
 
 		void* pDIBData;
@@ -535,7 +544,7 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 		// Paint the DIB
 		if (pDIBData != NULL) {
 			BITMAPINFO bmInfo{ 0 };
-			CPoint ptDIBStart = HelpersGUI::DrawDIB32bppWithBlackBorders(dc, bmInfo, pDIBData, backBrush, m_clientRect, clippedSize, m_DIBOffsets);
+			CPoint ptDIBStart = HelpersGUI::DrawDIB32bppWithBlackBorders(dc, bmInfo, pDIBData, backBrush, imageProcessingArea, clippedSize, m_DIBOffsets);
 			// The DIB is also blitted into the memory DCs of the panels
 			memDCMgr.BlitImageToMemDC(pDIBData, &bmInfo, ptDIBStart, m_pNavPanelCtl->CurrentBlendingFactor());
 		}
@@ -870,6 +879,9 @@ LRESULT CMainDlg::OnKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOO
 	if (wParam == 'T') {
 		if (m_pThumbnailPanelCtl != NULL) {
 			m_pThumbnailPanelCtl->SetVisible(!m_pThumbnailPanelCtl->IsVisible());
+			if (!m_bFullScreenMode) {
+				AdjustWindowToImage(false);
+			}
 			bHandled = true;
 		}
 	}
@@ -919,8 +931,8 @@ LRESULT CMainDlg::OnKeyDown(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOO
 }
 
 int CMainDlg::GetThumbnailPanelHeight() {
-	if (m_pThumbnailPanelCtl != NULL && m_pThumbnailPanelCtl->IsVisible()) {
-		return m_pThumbnailPanelCtl->PanelRect().Height();
+	if (m_pThumbnailPanelCtl != NULL) {
+		return m_pThumbnailPanelCtl->GetHeight();
 	}
 	return 0;
 }
@@ -1704,7 +1716,7 @@ void CMainDlg::ExecuteCommand(int nCommand) {
 						m_hWnd,
 						CSize(MIN_WND_WIDTH, MIN_WND_HEIGHT),
 						defaultWindowRect.Size(),
-						dZoom, m_pCurrentImage, false, true, m_bWindowBorderless);
+						dZoom, m_pCurrentImage, false, true, m_bWindowBorderless, GetThumbnailPanelHeight());
 				this->SetWindowPos(HWND_TOP, windowRect.left, windowRect.top, windowRect.Width(), windowRect.Height(), SWP_NOZORDER | SWP_NOCOPYBITS);
 				this->MouseOn();
 				m_bSpanVirtualDesktop = false;
@@ -2623,7 +2635,7 @@ void CMainDlg::ResetZoomToFitScreen(bool bFillWithCrop, bool bAllowEnlarge, bool
 	if (m_pCurrentImage != NULL) {
 		if (bAdjustWindowSize && !m_bFullScreenMode && !IsZoomed() && m_bAutoFitWndToImage) {
 			m_dZoom = bAllowEnlarge ? Helpers::ZoomMax : 1;
-			CRect wndRect = Helpers::GetWindowRectMatchingImageSize(m_hWnd, CSize(MIN_WND_WIDTH, MIN_WND_HEIGHT), HUGE_SIZE, m_dZoom, m_pCurrentImage, false, true, m_bWindowBorderless);
+			CRect wndRect = Helpers::GetWindowRectMatchingImageSize(m_hWnd, CSize(MIN_WND_WIDTH, MIN_WND_HEIGHT), HUGE_SIZE, m_dZoom, m_pCurrentImage, false, true, m_bWindowBorderless, GetThumbnailPanelHeight());
 			if (m_dZoom <= 1) {
 				m_dZoom = -1;
 			}
@@ -2856,7 +2868,7 @@ void CMainDlg::AdjustWindowToImage(bool bAfterStartup) {
 	if (IsAdjustWindowToImage() && (m_pCurrentImage != NULL || bAfterStartup)) {
 		// window size shall be adjusted to image size (at least keep aspect ratio)
 		double dZoom = m_dZoom;
-		CRect windowRect = Helpers::GetWindowRectMatchingImageSize(m_hWnd, CSize(MIN_WND_WIDTH, MIN_WND_HEIGHT), HUGE_SIZE, dZoom, m_pCurrentImage, bAfterStartup, dZoom < 0, m_bWindowBorderless);
+		CRect windowRect = Helpers::GetWindowRectMatchingImageSize(m_hWnd, CSize(MIN_WND_WIDTH, MIN_WND_HEIGHT), HUGE_SIZE, dZoom, m_pCurrentImage, bAfterStartup, dZoom < 0, m_bWindowBorderless, GetThumbnailPanelHeight());
 		CRect defaultRect = CMultiMonitorSupport::GetDefaultWindowRect();
 		if (bAfterStartup && CSettingsProvider::This().ExplicitWindowRect()) {
 			windowRect = CRect(defaultRect.TopLeft(), windowRect.Size());

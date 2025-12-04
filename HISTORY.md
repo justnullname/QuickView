@@ -1,5 +1,25 @@
 # QuickView Version History
 
+## Version 1.1.5 (2025-12-03)
+**Window Resizing Fix Release**
+*   **Fix**: Correctly accounts for thumbnail bar height when resizing window to fit image.
+
+## Version 1.1.4 (2025-12-03)
+**Initialization Fix Release**
+*   **Fix**: Resolved startup cropping and centering issues with thumbnail bar.
+
+## Version 1.1.3 (2025-12-03)
+**Zoom Fix Release**
+*   **Fix**: Restored manual zoom functionality while maintaining thumbnail bar layout fix.
+
+## Version 1.1.2 (2025-12-03)
+**Refined Hotfix Release**
+*   **Fix**: Correctly rescales image to fit above thumbnail bar (prevents cropping).
+
+## Version 1.1.1 (2025-12-03)
+**Hotfix Release**
+*   **Fix**: Resolved issue where the thumbnail bar overlapped the bottom of the main image.
+
 ## Version 1.1.0 (2025-12-03)
 **Major Release: Enhanced UI & Navigation**
 *   **New Features**:

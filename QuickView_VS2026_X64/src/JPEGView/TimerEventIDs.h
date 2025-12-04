@@ -2,6 +2,10 @@
 
 #define SLIDESHOW_TIMER_EVENT_ID 1 // Slideshow timer ID
 #define ZOOM_TIMER_EVENT_ID 2 // Zoom refinement timer ID
+#pragma once
+
+#define SLIDESHOW_TIMER_EVENT_ID 1 // Slideshow timer ID
+#define ZOOM_TIMER_EVENT_ID 2 // Zoom refinement timer ID
 #define ZOOM_TEXT_TIMER_EVENT_ID 3 // Zoom label timer ID
 #define AUTOSCROLL_TIMER_EVENT_ID 4 // when cropping, auto scroll timer ID
 #define NAVPANEL_TIMER_EVENT_ID 5 // to show nav panel

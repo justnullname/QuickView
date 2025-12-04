@@ -1,3 +1,59 @@
+# QuickView v1.1.5 Release Notes
+
+**Window Resizing Fix**
+This update resolves an issue where the window would not correctly resize to accommodate the thumbnail bar, causing the image to be cropped.
+
+## 🐛 Bug Fixes
+
+*   **Window Resizing**: Fixed a bug where "Fit Window to Image" ignored the thumbnail bar height. The window now correctly adds extra height for the thumbnail bar, ensuring the full image is visible without cropping.
+
+---
+
+# QuickView v1.1.4 Release Notes
+
+**Initialization & Cropping Fix**
+This update resolves issues where images could appear cropped on startup or when the thumbnail bar was toggled.
+
+## 🐛 Bug Fixes
+
+*   **Startup Cropping**: Fixed a bug where the "Fit to Screen" state was uninitialized on startup, leading to random cropping behavior.
+*   **Panning Reset**: Fixed an issue where the image would remain shifted (panned) when resizing to fit the thumbnail bar, causing the top or bottom to be cut off. Now, the image is correctly centered whenever it auto-resizes.
+
+---
+
+# QuickView v1.1.3 Release Notes
+
+**Zoom Fix Release**
+This update fixes a regression in v1.1.2 that prevented manual zooming.
+
+## 🐛 Bug Fixes
+
+*   **Zoom Regression**: Fixed an issue where manual zooming was disabled (locked to "Fit to Screen") when the thumbnail bar fix was applied. Now, "Fit to Screen" correctly resizes for the thumbnail bar, but manual zooming works freely as expected.
+
+---
+
+# QuickView v1.1.2 Release Notes
+
+**Refined Hotfix Release**
+This update refines the fix for the thumbnail bar overlap issue, ensuring images are properly rescaled to fit the available space.
+
+## 🐛 Bug Fixes
+
+*   **Thumbnail Bar Overlap (Refined)**: In v1.1.1, the image was shifted but not resized, causing the top to be cut off. v1.1.2 correctly recalculates the "Fit to Screen" zoom level when the thumbnail bar appears, ensuring the entire image is visible.
+
+---
+
+# QuickView v1.1.1 Release Notes
+
+**Hotfix Release**
+This update addresses a visual issue introduced in v1.1.0 where the thumbnail bar would overlap the main image.
+
+## 🐛 Bug Fixes
+
+*   **Thumbnail Bar Overlap**: Fixed a bug where the main image was not correctly resized/positioned when the thumbnail bar was visible, causing the bottom of the image to be covered. The image now correctly fits within the available space above the thumbnail bar.
+
+---
+
 # QuickView v1.1.0 Release Notes
 
 **This is a major release marking a significant evolution of QuickView.**
