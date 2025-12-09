@@ -242,6 +242,9 @@ CSettingsProvider::CSettingsProvider(void) {
 	m_colorFileName = GetColor(_T("FileNameColor"), m_colorGUI);
 	m_colorTransparency = GetColor(_T("TransparencyColor"), m_colorBackground);
 
+	m_nNarrowBorderWidth = GetInt(_T("NarrowBorderWidth"), 0, 0, 10);
+	m_cNarrowBorderColor = GetColor(_T("NarrowBorderColor"), RGB(128, 128, 128));
+
 	m_defaultGUIFont = GetString(_T("DefaultGUIFont"), _T("Default"));
 	m_fileNameFont = GetString(_T("FileNameFont"), _T("Default"));
 

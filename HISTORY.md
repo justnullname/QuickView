@@ -1,12 +1,13 @@
 # QuickView Version History
 
+## Version 1.1.6 (Development)
+**New Feature**
+*   **Feature**: Restored "Narrow Border Mode" with configurable width and color (`NarrowBorderWidth`, `NarrowBorderColor`).
+
 ## Version 1.1.5 (2025-12-03)
 **Window Resizing Fix Release**
 *   **Fix**: Correctly accounts for thumbnail bar height when resizing window to fit image.
-
-## Version 1.1.4 (2025-12-03)
-**Initialization Fix Release**
-*   **Fix**: Resolved startup cropping and centering issues with thumbnail bar.
+*   **Fix**: Automatically resizes window when toggling thumbnail bar (T key) to prevent cropping.
 
 ## Version 1.1.3 (2025-12-03)
 **Zoom Fix Release**

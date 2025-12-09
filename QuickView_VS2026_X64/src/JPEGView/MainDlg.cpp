@@ -622,6 +622,56 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 	// let crop controller and panels paint its stuff
 	// m_pCropCtl->OnPaint(dc);
 	m_pPanelMgr->OnPostPaint(dc);
+
+	// Narrow Border Mode: Draw a border if we are in borderless mode and a border width is set
+	int nBorderWidth = CSettingsProvider::This().NarrowBorderWidth();
+	if (m_bWindowBorderless && nBorderWidth > 0) {
+		COLORREF borderColor = CSettingsProvider::This().NarrowBorderColor();
+		
+		// Create a pen for the border
+		CPen pen;
+		pen.CreatePen(PS_SOLID, nBorderWidth, borderColor);
+		HPEN hOldPen = dc.SelectPen(pen);
+		HBRUSH hOldBrush = dc.SelectBrush((HBRUSH)GetStockObject(NULL_BRUSH)); // Transparent interior
+
+		// Draw rectangle. 
+		// Note: Rectangle draws excluding the bottom/right coordinate, so we might need to adjust.
+		// However, for a simple border inside the client area, we should decrement the size by half width 
+		// if drawing 'centered' on the line, but GDI FrameRect or Rectangle behaves specifically.
+		// Let's use FrameRect for single pixel, or Loop for thicker?
+		// Actually, drawing a Rectangle with NULL brush is easiest for variable width.
+		// To ensure it's visible *inside* the client area:
+		// Line width is centered on the path. 
+		// So if width is 2, it draws 1px inside, 1px outside? 
+		// The safest way for "inside" border is to deflate rect by half width or use specific drawing.
+		// Let's keep it simple: Draw inside the client rect.
+		
+		CRect borderRect = m_clientRect;
+		// borderRect.DeflateRect(0, 0); // Start at edges
+		
+		// If width is > 1, GDI Rectangle draws centered on the line. 
+		// To keep it strictly inside, we might need to inset.
+		// For width=1, it usually draws on the line (inside-ish).
+		// Let's just draw it. The user can adjust width/padding if needed.
+		// Actually, let's use a manual frame approach if width > 0 to be safe?
+		// No, standard Rectangle with pen should work fine for visual hint.
+		
+		// Correction: PS_INSIDEFRAME causes the pen to draw strictly inside the rect for closed shapes!
+		// However, PS_INSIDEFRAME only works for geometric pens or width > 1 with dithered colors... 
+		// For solid colors it works too.
+		// Let's try creating pen with PS_INSIDEFRAME if width > 1.
+		
+		if (nBorderWidth > 1) {
+			pen.DeleteObject();
+			pen.CreatePen(PS_INSIDEFRAME, nBorderWidth, borderColor);
+			dc.SelectPen(pen);
+		}
+
+		dc.Rectangle(&borderRect);
+
+		dc.SelectBrush(hOldBrush);
+		dc.SelectPen(hOldPen);
+	}
 }
 
 

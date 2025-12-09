@@ -1,13 +1,27 @@
+# QuickView v1.1.6 Release Notes
+
+**Narrow Border Mode Restored**
+This update restores the "Narrow Border Mode" feature, allowing a configurable border to be drawn in borderless window mode for better visibility.
+
+## 🚀 New Features
+
+*   **Narrow Border Mode**: Restored the ability to draw a colored border around the window when in borderless mode.
+    *   **Configuration**: Add the following to your `QuickView.ini` under `[QuickView]`:
+        ```ini
+        ; Width of the border in pixels (0 = disabled)
+        NarrowBorderWidth=2 
+        ; Color of the border (R G B)
+        NarrowBorderColor=128 128 128
+        ```
+
+---
+
 # QuickView v1.1.5 Release Notes
 
 **Window Resizing Fix**
 This update resolves an issue where the window would not correctly resize to accommodate the thumbnail bar, causing the image to be cropped.
 
 ## 🐛 Bug Fixes
-
-*   **Window Resizing**: Fixed a bug where "Fit Window to Image" ignored the thumbnail bar height. The window now correctly adds extra height for the thumbnail bar, ensuring the full image is visible without cropping.
-
----
 
 # QuickView v1.1.4 Release Notes
 

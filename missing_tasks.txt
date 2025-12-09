@@ -1,0 +1,319 @@
+--- RECOVERED UNTRACKED TASKS ---
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第48次构建)。
+- [ ] 移除不常用功能，保留核心功能。
+- [x] **Thumbnail Bar Improvements (Round 9)**
+- [x] **Remove Button Border**: Disable default rectangle border for arrow buttons.
+- [x] **Fix**: Fullscreen window dragging disabled.
+- [ ] Zoom flicker (partially improved)
+- [ ] **Zoom Flicker** - Investigate if needed (low priority).
+- [x] **Package Files**: Copy executable and docs to Release folder.
+- [x] Implement logic in [MainDlg](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#172-264) to lock window size in borderless mode.
+- [x] **Default to Windowed Mode for Large Images** - 已修复。添加了 AutoFullScreenLargeImages 设置开关，控制大图是否自动全屏。
+- [x] **性能** - 移除调试 OutputDebugString
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第47次构建)。
+- [ ] Zoom lock at 100% (root cause documented)
+- [x] **Crash Fixes** - Added nullptr checks in 7 files
+- [ ] **中键点击功能**
+- [ ] Test zoom to very small sizes
+- [x] **Panel nullptr crashes** - TransformPanel, UnsharpMaskPanel, InfoButtonPanel, WndButtonPanel
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。使用 IDM_FULL_SCREEN_MODE 替代错误的 ID。
+- [ ] Verify all UI elements work correctly
+- [x] **Fix Click Through**: Enable click-through for ThumbnailPanel to allow thumbnail clicks.
+- [x] **Fix Arrow Click Crash**: Pass correct context to arrow click handlers.
+- [ ] Remove `ImageProcessingPanel` UI code but preserve `ProcessParams` logic
+- [x] **Image Display** - Fixed Invalidate and MessageBox issues
+- [x] Updated menus ("About QuickView...")
+- [x] **Missing Command IDs** - Fixed by correcting `IDM_*_IMAGE` to `IDM_*` in [constructor.cpp](file:///e:/Personal/Coding/QuickView/jpegview-static-post2024-vs2019-x64/src/JPEGView/constructor.cpp)
+- [x] **Refine Arrow Style**: Remove background box, resize to ~1/3 height, simple arrow icon.
+- [ ] **Fix Compilation Errors** - 修复因缺失 ImageProcPanelCtl 和 MovieMode 导致的编译错误。
+- [x] Fix startup crash (Access Violation) by enforcing const-correctness.
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第33次构建)。
+- [x] Image display crashes
+- [ ] Implement Zoom OSD (OnMouseWheel trigger, Timer, OnPaint drawing)
+- [ ] **设置对话框**
+- [x] **Fix Overlay Positioning**: Ensure overlays (e.g., zoom text) are relative to the main image area, not covering the thumbnail bar.
+- [x] **Thumbnail Bar Improvements (Round 7)**
+- [x] Add `LockWindowSize` setting to [QuickView.ini](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/Config/QuickView.ini) and [SettingsProvider](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.h#16-347).
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第23次构建)。
+- [ ] **Implement Smart Fullscreen Exit** - 正在进行。双击背景退出全屏，双击图片保持原有行为（通常是切换缩放）。
+- [x] Remove `ImageProcessingPanel` UI code but preserve [ProcessParams](file:///e:/Personal/Coding/QuickView/jpegview-static-post2024-vs2019-x64/src/JPEGView/ProcessParams.h#146-181) logic
+- [ ] **Fix Zoom Functionality**
+- [x] **缩放锁定** - 通过移除"暂停在 100%"逻辑完全修复
+- [ ] **Fix Duplicate Zoom Display** - 正在修复。移除 DisplayFileName 中的缩放显示。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第34次构建)。
+- [ ] Test rotation
+- [ ] **Zoom lock at 100%** - Root cause identified (MainDlg.cpp:2687-2702), solution pending
+- [x] **Update Release Notes**: Add 1.1.0 notes.
+- [x] **Update Version**: Bump version to 0.1.1.0 in resource file.
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第15次构建)。
+- [ ] Test zoom functionality thoroughly
+- [x] **Implement Smart Fullscreen Exit** - 已修复。双击背景退出全屏，双击图片保持原有行为。
+- [ ] Test zoom through 100% scale
+- [x] Add `LockWindowSize` setting to [QuickView.ini](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/Config/QuickView.ini) and [SettingsProvider](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.cpp#40-388).
+- [x] Fix zoom functionality (Mouse Wheel & Keyboard).
+- [x] **OSD Zoom Feedback** - Implemented OSD showing zoom %, turning green at 100%. Fixed invalidation bug and timer ID bug.
+- [ ] Update window titles
+- [x] **版本系统** - 版本 0.1.0，正确的版权信息
+- [x] Verify compilation.
+- [ ] Verify no flicker during operations
+- [x] **Borderless Mode Refinement**
+- [ ] Fix zoom flicker
+- [x] Added debug logging to track execution
+- [x] **OSD Zoom Feedback** - Implemented OSD showing zoom %, turning green at 100%. Fixed timer ID, rendering coordinates, and DC initialization bugs.
+- [x] Add [LockWindowSize](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.h#137-138) setting to `QuickView.ini` and [SettingsProvider](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.h#16-347).
+- [x] **Fix Thumbnail Overlap**: Prevent thumbnail bar from obscuring the main image.
+- [x] Nullptr crashes (7 files)
+- [x] **Thumbnail Bar Improvements (Round 2)**
+- [ ] Verify images display correctly
+- [x] **Fix Window Dragging** - 已修复。在 OnLButtonDown 中添加了当图片适配窗口时的窗口拖动逻辑。
+- [x] **Chrome 式顶部悬浮按钮**
+- [x] **Debug output** - Removed "dZoom dOldZoom" OutputDebugString
+- [ ] **双击退出全屏替代方案**
+- [x] **Narrow Border Mode** - 已完成。仅在无边框模式下绘制可配置边框。
+- [x] **Rename Config to QuickView.ini** - 已完成。配置文件名已从 JPEGView.ini 重命名为 QuickView.ini。
+- [x] Add configuration option.
+- [x] **Refine Thumbnail Overlap Fix**: Ensure image scales correctly (Fit to Screen) when thumbnail bar is visible, preventing cropping.
+- [x] **Narrow Border Mode** - 已修复。仅在无边框模式下绘制窄边框。添加了 NarrowBorderWidth 和 NarrowBorderColor 设置。
+- [ ] **Default to Windowed Mode for Large Images** - 重新评估。用户指出 ShowFullScreen=auto 已存在类似逻辑，需避免重复造轮子。
+- [ ] 创建 Win32 简单对话框。
+- [ ] Test renamed project builds and runs
+- [ ] **置顶 (Always On Top) OSD**
+- [ ] Refactor `KeyMap` for customizability
+- [x] Verify compilation and basic functionality (Color Management, Rotation)
+- [ ] 包含：锁定窗口、显示描边、鼠标习惯等选项。
+- [ ] Fix continuation after pause
+- [x] Updated version info
+- [x] **缺失命令 ID** - 通过修正 [constructor.cpp](file:///e:/Personal/Coding/QuickView/jpegview-static-post2024-vs2019-x64/src/JPEGView/constructor.cpp) 中的 `IDM_*_IMAGE` 为 `IDM_*` 修复
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。显式包含 resource.h 以解决 IDM_FULL_SCREEN 未声明问题。
+- [x] File dialog works
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第26次构建)。
+- [ ] **Fix pNavPanel nullptr crash**
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第27次构建)。
+- [x] Implement logic in [MainDlg](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#173-267) to lock window size in borderless mode.
+- [x] **Fix Main Image Rotation**: Prevent main image from changing when scrolling thumbnails (MouseWheel bubbling).
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。修复未声明的变量和函数错误。
+- [ ] **Rename Config to QuickView.ini** - 正在进行。将配置文件名从 JPEGView.ini 重命名为 QuickView.ini。
+- [x] Remove Crop interaction logic
+- [x] **Update Release Notes**: Add 0.1.1.0 notes.
+- [ ] **Fix Window Dragging** - 正在修复。在 OnLButtonDown 中添加窗口拖动逻辑。
+- [ ] Remove debug OutputDebugString calls
+- [x] **Fix Paging Failure**: Ensure navigation arrows work correctly when gallery has empty space (Resize/Reposition issue).
+- [ ] Test zoom and pan
+- [ ] Test fullscreen mode with mouse at top
+- [x] **Fix Duplicate Zoom Display** - 已修复。移除了 DisplayFileName 中的缩放显示，只保留右下角的显示。
+- [ ] Test fullscreen mode
+- [ ] **Default to Windowed Mode for Large Images** - 正在进行。查找 AfterNewImageLoaded 定义以添加逻辑。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第36次构建)。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第44次构建)。
+- [x] **崩溃修复** - 在 7 个文件中添加 nullptr 检查
+- [x] **Fix Arrow Hit Test**: Ensure arrows work on zoom/resize (Update layout on click).
+- [x] **Remove Outline**: Ensure no unwanted outline artifacts (by using simple lines).
+- [x] **Release**: v1.0.2 packaged.
+- [x] **Code Cleanup** - 已完成。清理了遗留的 JPEGView 注释。
+- [ ] **Visual Zoom Feedback** - Show OSD overlay/color change when zoom hits 100% (Replacement for pause logic)
+- [ ] **代码清理** - 移除遗留的"JPEGView"注释和未使用的代码
+- [x] Add `LockWindowSize` setting to [QuickView.ini](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/Config/QuickView.ini) and [SettingsProvider](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.h#345-346).
+- [x] **QuickView Rename Complete!**
+- [x] Update CHANGELOG.md.
+- [x] Implement logic in [MainDlg](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.h#57-58) to lock window size in borderless mode.
+- [x] **Prepare for GitHub** - 已完成。已创建文档、执行清理、准备好上传到 GitHub。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第28次构建)。
+- [x] Remove `LockWindowSize` feature (simplified behavior).
+- [x] **Zoom Lock** - Fixed by removing "pause at 100%" logic entirely
+- [x] Window resizes to image dimensions (image loads)
+- [ ] Test renamed build
+- [ ] **Implement Smart Fullscreen Exit** - 待开始。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第38次构建)。
+- [x] Optimize README.md with progress and roadmap.
+- [x] **Prepare for GitHub** - 已完成。已成功上传到 GitHub！
+- [x] **Image Display** - Fixed MessageBox blocks, Invalidate(TRUE)
+- [ ] **Fix m_pImageProcPanel nullptr crash**
+- [x] **Build Errors** - Fixed C1090/C1041 PDB errors by adding /FS flag
+- [x] Implement logic in [MainDlg](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#172-274) to lock window size in borderless mode.
+- [x] **OSD Zoom Feedback** - Implemented OSD showing zoom %, turning green at 100%. Fixed timer ID and rendering coordinate bugs.
+- [ ] **Prepare for GitHub** - 正在进行。已创建 README.md, CHANGELOG.md, .gitignore 和清理脚本。待用户审核后执行清理。
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。恢复丢失的头文件包含。
+- [x] **Fix**: Standardize configuration to `QuickView.ini`, `[QuickView]` section, and `AppData\QuickView` folder.
+- [x] **Thick Chevron Style**: Revert to line drawing but with thicker pen (4px).
+- [ ] 视觉提示：强制开启边框或绘制明显边框提示“窗口模式”。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第30次构建)。
+- [x] **Fix Arrow Navigation**: Ensure arrows scroll thumbnails without changing main image (Fix click handling).
+- [x] Remove Slideshow logic
+- [ ] 实现“锁定窗口尺寸”功能（无边框模式下）。
+- [x] **Arrow Styling**: Match background color and add hover effect.
+- [x] **项目重命名** - JPEGView → QuickView
+- [ ] **缩放闪烁** - 如需要则调查（低优先级）
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第21次构建)。
+- [x] **EXIF Crash & Empty Display** - Fixed by restoring corrupted file and handling NULL panel pointer
+- [ ] **Rename to QuickView**
+- [ ] **Test zoom through 100%** - After fix implementation
+- [x] **Fix Compilation Errors** - 已修复。成功构建 QuickView.exe。
+- [x] **Thumbnail Bar Improvements (Round 6)**
+- [ ] Test zoom in/out through 100%
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第45次构建)。
+- [ ] 检测无配置时 (`m_bFirstRun`)，绘制全屏快捷键说明图。
+- [ ] **Customize Zoom Display** - 正在修复。修改缩放显示配色：半透明灰色背景 + 白色文字（100%为绿色）。
+- [ ] Test pan functionality
+- [x] Add "Auto-Show" state (visible only when mouse is at bottom).
+- [ ] Analyze zoom state machine
+- [ ] Refactor [KeyMap](file:///e:/Personal/Coding/QuickView/jpegview-static-post2024-vs2019-x64/src/JPEGView/KeyMap.h#11-13) for customizability
+- [ ] 左右边缘显示半透明箭头，点击翻页。
+- [ ] Rewrite `MainDlg::OnPaint` for frameless rendering
+- [ ] **Fix Window Resizing**: Update AdjustWindowToImage to account for thumbnail bar height, preventing cropping in "Fit Window to Image" mode.
+- [ ] Find pNavPanel usage
+- [x] **Correct Invalidate Rect**: Update [OnTimer](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/PanelMgr.cpp#145-156) to account for thumbnail panel height.
+- [x] Fix window resize on zoom & "Fit Window to Image" toggle.
+- [ ] **Fix Duplicate Zoom Display** - 修复左上角和右下角重复显示缩放比例的问题，并解决左上角文字看不清且不消失的问题。
+- [x] **Thumbnail Bar Improvements (Round 3)**
+- [x] **Lock Window Size & Interaction**
+- [ ] **Code Cleanup**: Address TODOs in [SettingsProvider.cpp](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.cpp) regarding keymap loading.
+- [x] **Investigate White Screen**: Checked for splash screen code (none found).
+- [x] **Documentation & Release**
+- [ ] Test image loading and display
+- [ ] **Customize Zoom Display** - 正在修复。设置背景模式为透明以消除白色背景。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第19次构建)。
+- [x] **Thumbnail Bar Improvements (Round 4)**
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。恢复 stdafx.h 包含以解决预编译头错误。
+- [ ] Locate zoom pause logic
+- [ ] **精简右键菜单**
+- [ ] 快捷键 (T) 切换置顶。
+- [x] Fix window dragging (Left drag moves window).
+- [ ] Fix zoom lock condition
+- [ ] 按键呼出底部缩略图栏 (Lazy load +/- 10 张)。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第24次构建)。
+- [x] **Build Errors** - Fixed C1090/C1041 PDB errors by adding /FS flag (JPEGView & WICLoader)
+- [ ] 屏幕中间显示 OSD 提示。
+- [x] **Update Version**: Bump version to 1.1.0 in resource file.
+- [ ] Find all m_pImageProcPanel references in MainDlg.cpp
+- [x] Add `LockWindowSize` setting to `QuickView.ini` and [SettingsProvider](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/SettingsProvider.h#345-346).
+- [x] **Correct Invalidate Rect**: Update [OnTimer](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/NavigationPanelCtl.cpp#157-183) to account for thumbnail panel height.
+- [ ] **Narrow Border Mode** - 正在进行。分析 OnPaint 实现，准备添加边框绘制逻辑。正在进行。分析 OnPaint 实现，准备添加边框绘制逻辑。
+- [x] Right-click menu works
+- [ ] 清理启动流程，实现“双击秒开”。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第43次构建)。
+- [x] **Fix**: Standardize configuration to [QuickView.ini](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/Config/QuickView.ini), `[QuickView]` section, and `AppData\QuickView` folder.
+- [ ] **Customize Zoom Display** - 正在修复。使用 AlphaBlend 实现真正的半透明背景。
+- [x] **Customize Zoom Display** - 已修复。使用 AlphaBlend 实现了半透明背景。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第42次构建)。
+- [x] **Correct Invalidate Rect**: Update [OnTimer](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/PanelController.h#46-47) to account for thumbnail panel height.
+- [ ] Replace with nullptr checks or remove references
+- [x] **Version System** - Version 0.1.0 with proper copyright
+- [x] **Independent Scrolling**: Arrows should scroll thumbnails without changing the main image.
+- [x] Application builds and runs successfully
+- [ ] **Default to Windowed Mode for Large Images** - 正在进行。添加 AutoFullScreenLargeImages 设置开关。
+- [ ] Zoom lock at 100%
+- [ ] Fix image rendering issue
+- [ ] Verify QuickView.exe output
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第32次构建)。
+- [ ] **Code Cleanup** - Remove legacy JPEGView comments and unused code
+- [ ] **Fix zoom pause at 100%**
+- [ ] **Fix Window Dragging** - 修复鼠标拖动窗口失效的问题，并支持自定义左键/中键拖动。
+- [x] **Window Dragging** - 已实现。当图片适配窗口时，允许通过鼠标左键拖拽移动窗口。
+- [ ] ~~实现双击行为配置（如：双击背景退出，或完全禁用）。~~ (Skipped by user)
+- [ ] **画廊功能 (低优先级)**
+- [x] **Correct Invalidate Rect**: Update [OnTimer](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#1002-1063) to account for thumbnail panel height.
+- [x] **Highlight Color**: Use system highlight color for arrow hover state.
+- [ ] Update executable name
+- [x] Updated string resources
+- [ ] Test basic navigation (prev/next)
+- [x] **OSD Zoom Feedback** - 完全实现，显示缩放百分比（100%时绿色，半透明背景）
+- [ ] **Zoom Flicker** - User decided to postpone (acceptable behavior similar to Honeyview).
+- [x] **Tooltip nullptr** - NavigationPanel.cpp (3 functions)
+- [x] **Correct Invalidate Rect**: Update [OnTimer](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#996-1057) to account for thumbnail panel height.
+- [x] Image display working
+- [ ] Locate "dZoom dOldZoom" debug output
+- [x] 鼠标接近顶部或全屏时显示半透明“关闭/还原”按钮条。
+- [ ] 点击任意键关闭并保存配置。
+- [ ] **移除欢迎底图**
+- [ ] Update window title
+- [x] **OSD Zoom Feedback** - Fully implemented OSD showing zoom % (green at 100%). Fixed timer ID, rendering coordinates, DC initialization, and added missing flag/timer trigger in PerformZoom.
+- [x] Implement logic in [MainDlg](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.h#38-389) to lock window size in borderless mode.
+- [ ] 实现中键点击退出程序（可配置）。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第40次构建)。
+- [ ] Update executable name (JPEGView-Static.exe → QuickView.exe)
+- [x] **Performance** - Removed debug OutputDebugString
+- [x] **Fix Zoom Text Auto-Hide**
+- [x] **OSD Zoom Feedback** - 完全实现，显示缩放百分比（100%时绿色）
+- [ ] **Missing includes** - Removing ImageProcessingPanel.h from WndButtonPanel.cpp
+- [ ] Fix zoom lock after several zoom operations
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第39次构建)。
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。双击背景退出全屏，双击图片保持原有行为。
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第37次构建)。
+- [x] **Fix Zoom Regression**: Fix inability to zoom when thumbnail bar is active, and inability to zoom >100% when inactive.
+- [x] **EXIF 崩溃与空显示** - 通过恢复损坏文件并处理 NULL 面板指针修复
+- [ ] **Narrow Border Mode** - 正在进行。已实现设置和绘制逻辑。正在构建验证。
+- [x] Package release (QuickView_v1.0.1.zip).
+- [x] **Project Rename** - JPEGView → QuickView
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第20次构建)。
+- [ ] Test window title
+- [x] **OSD Zoom Feedback** - Implemented OSD showing zoom %, turning green at 100%.
+- [ ] **Code Cleanup** - Remove legacy "JPEGView" comments and unused code.
+- [x] Updated .vcxproj ProjectName
+- [x] **Customize Zoom Display** - 已修复。修改缩放显示配色：深灰色背景 + 白色文字（100%为绿色）。
+- [x] **Thumbnail Bar Improvements (Round 5)**
+- [x] Force border drawing when locked.
+- [x] Remove `ImageProcessingPanel` UI code but preserve [ProcessParams](file:///e:/Personal/Coding/QuickView/jpegview-static-post2024-vs2019-x64/src/JPEGView/ProcessParams.h#148-169) logic
+- [ ] Identify why OnPaint is not being called
+- [ ] Verify no crashes
+- [ ] **首次启动引导**
+- [ ] Zoom flicker
+- [ ] **边缘翻页热区**
+- [ ] Update any hardcoded "JPEGView" strings
+- [x] **OSD 缩放反馈** - 完成！显示缩放百分比，100% 时绿色背景，半透明灰色背景，白色文字
+- [x] Window displays but shows white/blank
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第35次构建)。
+- [ ] Update any hardcoded "JPEGView" strings in code
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第18次构建)。
+- [ ] **Customize Zoom Display** - 正在进行。修改缩放显示配色：半透明灰色背景 + 白色文字（100%为绿色）。
+- [ ] **Implement Smart Fullscreen Exit** - 正在修复。手动计算图像区域并包含 resource.h。
+- [ ] **Default to Windowed Mode for Large Images** - 正在进行。超过屏幕边框的图片默认不进入全屏模式。
+- [x] **Default to Windowed Mode for Large Images** - 已修复。启动时若图片尺寸超过屏幕，自动切换到窗口模式。
+- [ ] **Visual Zoom Feedback** - Show OSD overlay/color change when zoom hits 100%
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第29次构建)。
+- [x] **Customize Zoom Display** - 已修复。设置背景模式为透明，消除了多余的白色背景。
+- [x] Commit changes and create git tag (v1.0.1).
+- [x] **File Dialog** - User reported as resolved
+- [ ] Refactor [KeyMap](file:///e:/Personal/Coding/QuickView/jpegview-static-post2024-vs2019-x64/src/JPEGView/KeyMap.h#8-36) for customizability
+- [ ] Update resource strings
+- [ ] **Rename Project to QuickView**
+- [x] Fix compilation errors (brace balancing, type mismatches).
+- [ ] 实现双击行为配置（如：双击背景退出，或完全禁用）。
+- [ ] Test zoom in/out multiple times
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第22次构建)。
+- [x] **Transparent Arrows**: Remove background fill for arrows.
+- [ ] Clean rebuild in Visual Studio
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第41次构建)。
+- [x] **Revert Auto-Show**: Remove NavPanelAutoShow setting (redundant).
+- [ ] **Customize Zoom Display** - 正在修复。修复 CBrush 构造函数错误。
+- [x] Update mouse interaction: Left drag moves window, Middle drag pans image (when locked).
+- [ ] **Phase 1: Cleanup & Protection**
+- [x] Debug output removal
+- [ ] Test About dialog
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第31次构建)。
+- [ ] **Narrow Border Mode** - 正在进行。仅在无边框模式下绘制窄边框。正在添加设置和绘制逻辑。
+- [ ] Update .vcxproj TargetName
+- [x] Remove `IDM_HIDE_TITLE_BAR` and enforce borderless style.
+- [x] **编译错误** - 通过添加 /FS 标志修复 C1090/C1041 PDB 错误（JPEGView & WICLoader）
+- [x] Updated QuickView.ico reference
+- [x] **Fix Navigation Bug**: Resolve issue where navigation fails intermittently.
+- [ ] Add nullptr checks
+- [ ] **Fix Compilation Errors** - 正在验证修复结果 (第46次构建)。
+- [x] **文件对话框** - 用户报告已解决
+- [ ] **Debug Image Display Problem**
+- [ ] 交互逻辑：左键拖动窗口，中键拖动图片。
+- [ ] **锁定窗口尺寸与交互优化**
+- [x] **OSD Zoom Feedback** - Implemented OSD showing zoom %, turning green at 100%. Fixed bug where it wasn't showing.
+- [x] **Thumbnail Bar Improvements (Round 8)**
+- [ ] **Narrow Border Mode** - 待开始。
+- [x] **Fix Cropping & Initialization**: Initialize m_isUserFitToScreen, reset offsets in FitToScreen mode to prevent cropping.
+- [ ] Update project name in .vcxproj file
+- [x] Implement logic in [MainDlg](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#172-265) to lock window size in borderless mode.
+- [x] **Build Release**: Rebuild project in Release mode.
+- [ ] Test navigation (prev/next images)
+- [x] **Thicker Arrows**: Draw filled triangles instead of lines.
+- [ ] **Zoom flicker** - Partially improved, may need more work
+- [ ] **Narrow Border Mode** - 正在进行。分析 OnPaint 实现，准备添加边框绘制逻辑。
+- [x] **Correct Invalidate Rect**: Update [OnTimer](file:///e:/Personal/Coding/QuickView/QuickView_VS2026_X64/src/JPEGView/MainDlg.cpp#999-1060) to account for thumbnail panel height.
+- [x] **图像显示** - 修复 Invalidate 和 MessageBox 问题
+- [ ] 锁定状态下：滚动缩放不改变窗口大小（局部放大）。
+- [ ] Implement Auto-hide Toolbar
