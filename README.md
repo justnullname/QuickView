@@ -81,18 +81,15 @@ We removed the ugly Windows title bar but kept the functionality.
 
 ## ⚙️ Configuration
 
-QuickView is designed to be portable. Settings are stored in `QuickView.ini`.
 
-```ini
-[JPEGView]
-; v1.1.0 New Settings
-ShowBottomPanel=true        ; Enable/Disable the new Thumbnail Gallery
-WindowBorderlessOnStartup=true
-
-; Customize the look
-NarrowBorderWidth=2
-NarrowBorderColor=128 128 128
-````
+*   **Narrow Border Mode**: Restored the ability to draw a colored border around the window when in borderless mode.
+    *   **Configuration**: Add the following to your `QuickView.ini` under `[QuickView]`:
+        ```ini
+        ; Width of the border in pixels (0 = disabled)
+        NarrowBorderWidth=2 
+        ; Color of the border (R G B)
+        NarrowBorderColor=128 128 128
+        ```
 
 -----
 
