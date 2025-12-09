@@ -818,10 +818,30 @@ LRESULT CMainDlg::OnLButtonDblClk(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lPara
 		double dZoom = -1.0;
 		CSize sizeAutoZoom = Helpers::GetVirtualImageSize(m_pCurrentImage->OrigSize(),
 			m_clientRect.Size(), IsAdjustWindowToImage() ? Helpers::ZM_FitToScreenNoZoom : GetAutoZoomMode(), dZoom);
-		if (sizeAutoZoom != m_virtualImageSize) {
-			ExecuteCommand(GetAutoZoomMode() * 10 + IDM_AUTO_ZOOM_FIT_NO_ZOOM);
-		} else {
+		
+		// Calculate actual current zoom ratio from virtual size vs original size
+		double dCurrentZoom = (double)m_virtualImageSize.cx / (double)m_pCurrentImage->OrigSize().cx;
+		
+		// Check if zoomed out (less than ~99%)
+		if (dCurrentZoom < 0.99) {
+			// Zoomed out -> go to 100%
+			// Set m_dZoom directly because PerformZoom with bExponent=false doesn't update it
+			double dOldZoom = m_dZoom;
+			m_dZoom = 1.0;
+			m_bUserZoom = true;
+			m_isUserFitToScreen = false;
+			m_offsets = CPoint(0, 0);
+			this->Invalidate(FALSE);
+			// Adjust window to fit image in non-fullscreen mode
+			if (!m_bFullScreenMode) {
+				AdjustWindowToImage(false);
+			}
+		} else if (dCurrentZoom > 1.01) {
+			// Zoomed in (> 100%) -> go to 100%
 			ResetZoomTo100Percents(true);
+		} else {
+			// At ~100% -> go to Fit
+			ExecuteCommand(GetAutoZoomMode() * 10 + IDM_AUTO_ZOOM_FIT_NO_ZOOM);
 		}
 	}
 	return 0;
