@@ -3,6 +3,9 @@
 #include "NLS.h"
 #include "SettingsProvider.h"
 #include "Helpers.h"
+#include "UpdateChecker.h"
+#include "UpdateAvailableDlg.h"
+#include "MessageDef.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Helpers
@@ -71,7 +74,7 @@ LRESULT CAboutDlg::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lPara
 	m_btnClose.Attach(GetDlgItem(IDC_CLOSE));
 	m_lblIcon.Attach(GetDlgItem(IDC_ICONJPEGVIEW));
 
-	m_lblVersion.SetWindowText(CString(_T("QuickView ")) + JPEGVIEW_VERSION);
+	m_lblVersion.SetWindowText(CString(_T("QuickView ")) + CString(JPEGVIEW_VERSION));
 
 	m_lblSIMD.SetWindowText(CString(CNLS::GetString(_T("SIMD mode used"))) + _T(": ") + GetSIMDModeString());
 	TCHAR sNumCores[16];
@@ -116,6 +119,89 @@ LRESULT CAboutDlg::OnLinkClicked(WPARAM wParam, LPNMHDR lpnmhdr, BOOL& bHandled)
 			::ShellExecute(m_hWnd, _T("open"), pTextLink, NULL, NULL, SW_SHOW);
 		}
 		delete[] pTextLink;
+	}
+	return 0;
+}
+
+LRESULT CAboutDlg::OnSysLinkClicked(WPARAM wParam, LPNMHDR lpnmhdr, BOOL& bHandled) {
+	PNMLINK pNMLink = (PNMLINK)lpnmhdr;
+	::ShellExecute(NULL, _T("open"), pNMLink->item.szUrl, NULL, NULL, SW_SHOW);
+	return 0;
+}
+
+LRESULT CAboutDlg::OnCheckUpdate(WORD /*wNotifyCode*/, WORD wID, HWND /*hWndCtl*/, BOOL& /*bHandled*/) {
+	// Disable button to prevent double click
+	::EnableWindow(GetDlgItem(IDC_CHECK_UPDATE), FALSE);
+	
+	// Set wait cursor
+	::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+	
+	// Start async check, notifying this window
+	CUpdateChecker::CheckForUpdateAsync(m_hWnd, [this](const CASyncUpdateResult& result) {
+		if (::IsWindow(m_hWnd)) {
+			CASyncUpdateResult* pResult = new CASyncUpdateResult(result);
+			::PostMessage(m_hWnd, WM_UPDATE_AVAILABLE, 0, (LPARAM)pResult);
+		}
+	});
+
+	return 0;
+}
+
+LRESULT CAboutDlg::OnUpdateAvailable(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/) {
+	// Re-enable check button
+	::EnableWindow(GetDlgItem(IDC_CHECK_UPDATE), TRUE);
+	::SetCursor(::LoadCursor(NULL, IDC_ARROW));
+
+	CASyncUpdateResult* pResult = (CASyncUpdateResult*)lParam;
+	if (pResult) {
+		if (!pResult->bSuccess) {
+			::MessageBox(m_hWnd, _T("Failed to check for updates.\nPlease check your internet connection."), _T("Update Check Failed"), MB_OK | MB_ICONERROR);
+			delete pResult;
+			return 0;
+		}
+
+		std::wstring newVer = pResult->strLatestVersion;
+		
+		
+		CString sCurrentVer(JPEGVIEW_VERSION);
+		sCurrentVer.TrimRight(_T('\0')); // Just in case, though removed from resource.h
+		
+		std::wstring sCurrentVerW = (LPCTSTR)sCurrentVer;
+		
+		if (CUpdateChecker::CompareVersions(newVer, sCurrentVerW) <= 0) {
+			// Not newer, but since user asked, show message
+			CString sMsg;
+			sMsg.Format(_T("You are using the latest version (%s)."), sCurrentVer.GetString());
+			::MessageBox(m_hWnd, sMsg, _T("No Update Available"), MB_OK | MB_ICONINFORMATION);
+			delete pResult;
+			return 0;
+		}
+
+		// Update available - Show custom dialog
+		CUpdateAvailableDlg dlg(*pResult);
+		INT_PTR nResult = dlg.DoModal(m_hWnd);
+		
+		if (nResult == ID_UPDATE_NOW) {
+			// Logic duplicated from MainDlg (download + self-update)
+			std::wstring url = pResult->strDownloadURL;
+			
+			HCURSOR hOldCursor = ::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+			std::wstring localFile = CUpdateChecker::DownloadUpdateSync(url);
+			::SetCursor(hOldCursor);
+			
+			if (CUpdateChecker::InstallUpdate(localFile)) {
+				PostQuitMessage(0);
+			} else {
+				::MessageBox(m_hWnd, _T("Failed to download update."), _T("Update Error"), MB_OK | MB_ICONERROR);
+			}
+		} 
+		// Skip version logic handled by dlg return, but for manual check we might not save it or maybe we should? 
+		// If user clicks Skip in About dialog check, we probably should honor it.
+		else if (dlg.m_bSkipVersion) {
+			CSettingsProvider::This().SetLastSkippedVersion(newVer.c_str());
+		}
+
+		delete pResult;
 	}
 	return 0;
 }

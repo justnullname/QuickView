@@ -14,4 +14,7 @@
 // Posted to main dialog for asynchronously loading the image with file name CMainDlg::m_sStartupFile
 #define WM_LOAD_FILE_ASYNCH (WM_APP + 24)
 
+// Custom message for update notification
+#define WM_UPDATE_AVAILABLE (WM_USER + 500)
+
 #define KEY_MAGIC 2978465

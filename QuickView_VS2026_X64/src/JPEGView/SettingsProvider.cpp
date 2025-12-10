@@ -387,6 +387,9 @@ CSettingsProvider::CSettingsProvider(void) {
 		}
 	} while (nGapIndex <= 2);
 	
+	// Auto-Update settings
+	m_bAutoCheckUpdate = GetBool(_T("AutoCheckUpdate"), true);
+	m_sLastSkippedVersion = GetString(_T("LastSkippedVersion"), _T(""));
 }
 
 CImageProcessingParams CSettingsProvider::LandscapeModeParams(const CImageProcessingParams& templParams) {
@@ -887,4 +890,11 @@ void CSettingsProvider::WriteInt(LPCTSTR sKey, int nValue) {
 	TCHAR buff[32];
 	_stprintf_s(buff, 32, _T("%d"), nValue);
 	WriteString(sKey, buff);
+}
+
+void CSettingsProvider::SetLastSkippedVersion(LPCTSTR sVersion) {
+	MakeSureUserINIExists();
+	m_sLastSkippedVersion = sVersion;
+	WriteString(_T("LastSkippedVersion"), sVersion);
+	m_bUserINIExists = true;
 }

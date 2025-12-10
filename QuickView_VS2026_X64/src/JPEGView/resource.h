@@ -7,7 +7,7 @@
 // if a define is to be included in the publicly-exposed definitions, start the comment with ":KeyMap:"
 // don't worry about the formatting, the script that auto-generates the definition will take care of it
 
-#define JPEGVIEW_VERSION "1.1.5\0"
+#define JPEGVIEW_VERSION "1.2.0"
 // title for main window and msgbox so it can be change via actions
 #define JPEGVIEW_TITLE "QuickView"
 
@@ -134,6 +134,16 @@
 #define IDC_PD_BOTTOM_TITLE             2035
 #define IDC_PD_ED_BOTTOM                2036
 #define IDC_PD_CM3                      2037
+
+// Update Available Dialog
+#define IDD_UPDATE_AVAILABLE            7500
+#define IDC_UPDATE_VERSION_INFO         7501
+#define IDC_UPDATE_RELEASE_NOTES        7502
+#define ID_UPDATE_NOW                   7510
+#define ID_SKIP_VERSION                 7511
+#define ID_REMIND_LATER                 7512
+#define IDC_CHECK_UPDATE                7520
+#define IDC_GITHUB_LINK                 7530
 
 // this is not used anywhere in code, but defined in KeyMap as an "invalid command", so make sure the defined number doesn't match anything!
 #define IDM_DONOTHING		1			// :KeyMap: do nothing (can be used to disable a standard command for a mouse button)

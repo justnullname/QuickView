@@ -161,6 +161,11 @@ public:
 	// Saves the sticky window size to the INI file
 	void SaveStickyWindowRect(CRect rect);
 	
+	// Auto-Update settings
+	bool AutoCheckUpdate() const { return m_bAutoCheckUpdate; }
+	LPCTSTR LastSkippedVersion() const { return m_sLastSkippedVersion; }
+	void SetLastSkippedVersion(LPCTSTR sVersion);
+	
 	// Update user settings with settings from INI file template
 	void UpdateUserSettings();
 
@@ -308,6 +313,9 @@ private:
 	int m_zoomPauseFactor;
 	bool m_bWindowBorderlessOnStartup;
 	bool m_bWindowAlwaysOnTopOnStartup;
+
+	bool m_bAutoCheckUpdate;
+	CString m_sLastSkippedVersion;
 
 
 	std::list<CUserCommand*> m_userCommands;

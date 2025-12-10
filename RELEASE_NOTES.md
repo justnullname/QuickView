@@ -1,3 +1,30 @@
+# QuickView v1.2.0 Release Notes
+
+**The Smart Update**
+QuickView v1.2.0 brings intelligence to your viewing experience with background updates, smart zooming, and instant gallery browsing.
+
+## 🚀 New Features
+
+### 🔄 Seamless Auto-Update
+*   **Silent Background Download**: Updates download while you utilize the app. No waiting bars.
+*   **One-Click Install**: When ready, a simple dialog lets you update instantly.
+*   **Smart Cleanup**: Temporary files are automatically removed.
+
+### 🔍 Smart Double-Click Zoom
+*   **One-Two Punch**: Double-click to inspect details at 100% pixel-perfect zoom. Double-click again to fit to window.
+*   **Zero Latency**: Optimized for instant response.
+
+### 🖼️ Instant Gallery Mode
+*   **Toggle with 'T'**: Press 'T' to instantly show/hide the thumbnail bar.
+*   **Overlay Design**: Modern overlay that doesn't resize your window content unnecessarily.
+
+## ✨ Improvements
+*   **Markdown Support**: Release notes in the update dialog now look cleaner with automatic Markdown formatting.
+*   **Localization**: Full support for interface translation.
+*   **Bug Fixes**: Fixed issues with ZIP download handling and version string display (ANSI/Unicode).
+
+---
+
 # QuickView v1.1.6 Release Notes
 
 **Narrow Border Mode Restored**

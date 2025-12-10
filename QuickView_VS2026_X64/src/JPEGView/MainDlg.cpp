@@ -47,6 +47,8 @@
 #include "NavigationPanelCtl.h"
 #include "NavigationPanel.h"
 #include "KeyMap.h"
+#include "UpdateChecker.h"
+#include "UpdateAvailableDlg.h"
 #include "JPEGLosslessTransform.h"
 #include "DirectoryWatcher.h"
 #include "DesktopWallpaper.h"
@@ -413,6 +415,20 @@ LRESULT CMainDlg::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam
 	this->Invalidate(FALSE);
 
 	this->DragAcceptFiles();
+
+	// Auto-Update Check (safe, wrapped in try-catch)
+	try {
+		if (CSettingsProvider::This().AutoCheckUpdate()) {
+			CUpdateChecker::CheckAndDownloadAsync(m_hWnd, [this](const CASyncUpdateResult& result) {
+				if (result.bSuccess && ::IsWindow(m_hWnd)) {
+					CASyncUpdateResult* pResult = new CASyncUpdateResult(result);
+					::PostMessage(m_hWnd, WM_UPDATE_AVAILABLE, 0, (LPARAM)pResult);
+				}
+			});
+		}
+	} catch (...) {
+		// Silently fail on startup
+	}
 
 	return TRUE;
 }
@@ -3486,4 +3502,79 @@ LRESULT CMainDlg::OnGetMinMaxInfo(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lPara
 	pMMI->ptMinTrackSize.y = MIN_WND_HEIGHT;
 	return 0;
 }
+
+LRESULT CMainDlg::OnUpdateAvailable(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/) {
+	CASyncUpdateResult* pResult = (CASyncUpdateResult*)lParam;
+	if (pResult) {
+		std::wstring newVer = pResult->strLatestVersion;
+		
+		// Build current version string
+		// Build current version string
+		CString sCurrentVer(JPEGVIEW_VERSION);
+		std::wstring sCurrentVerW = (LPCTSTR)sCurrentVer;
+		if (CUpdateChecker::CompareVersions(newVer, sCurrentVerW) <= 0) {
+			// If we downloaded it but it's not newer, delete it
+			if (!pResult->strLocalPath.empty()) {
+				DeleteFile(pResult->strLocalPath.c_str());
+			}
+			delete pResult;
+			return 0; // Not newer
+		}
+
+		// Check if skipped (double check, though background check does it too, but to be sure)
+		CString sSkipped = CSettingsProvider::This().LastSkippedVersion();
+		if (sSkipped == newVer.c_str()) {
+			// If we downloaded it but it's skipped (maybe racing), delete it
+			if (!pResult->strLocalPath.empty()) {
+				DeleteFile(pResult->strLocalPath.c_str());
+			}
+			delete pResult;
+			return 0;
+		}
+
+		// Show custom update dialog
+		CUpdateAvailableDlg dlg(*pResult);
+		INT_PTR nResult = dlg.DoModal(m_hWnd);
+		
+		if (nResult == ID_UPDATE_NOW) {
+			// If already downloaded, install directly
+			if (!pResult->strLocalPath.empty()) {
+				if (CUpdateChecker::InstallUpdate(pResult->strLocalPath)) {
+					PostQuitMessage(0);
+				} else {
+					::MessageBox(m_hWnd, CNLS::GetString(_T("Failed to install update.")), 
+						CNLS::GetString(_T("Update Error")), MB_OK | MB_ICONERROR);
+				}
+			} else {
+				// Not downloaded (maybe failed background?), try foreground download
+				std::wstring url = pResult->strDownloadURL;
+				
+				HCURSOR hOldCursor = ::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+				std::wstring localFile = CUpdateChecker::DownloadUpdateSync(url);
+				::SetCursor(hOldCursor);
+				
+				if (CUpdateChecker::InstallUpdate(localFile)) {
+					PostQuitMessage(0);
+				} else {
+					::MessageBox(m_hWnd, CNLS::GetString(_T("Failed to download update. Please try again later.")), 
+						CNLS::GetString(_T("Update Error")), MB_OK | MB_ICONERROR);
+				}
+			}
+		} else {
+			// User skipped or cancelled or remind later
+			// Clean up downloaded file
+			if (!pResult->strLocalPath.empty()) {
+				DeleteFile(pResult->strLocalPath.c_str());
+			}
+
+			if (dlg.m_bSkipVersion) {
+				CSettingsProvider::This().SetLastSkippedVersion(newVer.c_str());
+			}
+		}
+		
+		delete pResult;
+	}
+	return 0;
+}
+
 

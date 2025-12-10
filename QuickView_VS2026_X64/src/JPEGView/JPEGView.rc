@@ -108,17 +108,32 @@ BEGIN
     DEFPUSHBUTTON   "",IDC_FE_OK,154,344,96,15
 END
 
-IDD_ABOUT DIALOGEX 8, 7, 243, 142
+IDD_ABOUT DIALOGEX 8, 7, 243, 160
 STYLE DS_SETFONT | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    DEFPUSHBUTTON   "",IDC_CLOSE,133,120,104,15
+    DEFPUSHBUTTON   "",IDC_CLOSE,133,138,104,15
+    PUSHBUTTON      "Check for Updates",IDC_CHECK_UPDATE,6,138,120,15
     LTEXT           "",IDC_JPEGVIEW,64,7,163,9,NOT WS_GROUP
-    LTEXT           "Copyright 2025 QuickView (fork of JPEGView-Static)\nCopyright 2024-2025 JPEGView-Static\nCopyright 2020-2023 Kevin M (sylikc)\nCopyright 2006-2018 David Kleiner",IDC_COPYRIGHT,64,17,163,36,NOT WS_GROUP
+    LTEXT           "Copyright 2025 QuickView\nCopyright 2024-2025 JPEGView-Static\nCopyright 2020-2023 Kevin M (sylikc)\nCopyright 2006-2018 David Kleiner",IDC_COPYRIGHT,64,17,163,36,NOT WS_GROUP
     ICON            IDR_MAINFRAME,IDC_ICONJPEGVIEW,12,6,64,64
     CONTROL         "",IDC_LICENSE,"RichEdit20W",WS_TABSTOP | 0x804,64,68,168,42
     LTEXT           "",IDC_SIMDMODE,64,47,163,10,NOT WS_GROUP
     LTEXT           "",IDC_NUMCORES,64,56,163,10,NOT WS_GROUP
+    CONTROL         "<a href=""https://github.com/justnullname/QuickView"">https://github.com/justnullname/QuickView</a>",IDC_GITHUB_LINK,"SysLink",WS_TABSTOP,64,115,168,12
+END
+
+IDD_UPDATE_AVAILABLE DIALOGEX 0, 0, 320, 200
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Update Available"
+FONT 8, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_UPDATE_VERSION_INFO,10,10,300,30,NOT WS_GROUP
+    LTEXT           "Release Notes:",IDC_STATIC,10,45,60,10
+    EDITTEXT        IDC_UPDATE_RELEASE_NOTES,10,58,300,100,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+    DEFPUSHBUTTON   "Update Now",ID_UPDATE_NOW,10,170,90,20
+    PUSHBUTTON      "Skip This Version",ID_SKIP_VERSION,115,170,90,20
+    PUSHBUTTON      "Remind Me Later",ID_REMIND_LATER,220,170,90,20
 END
 
 IDD_SET_CROP_SIZE DIALOGEX 8, 7, 159, 101
@@ -515,12 +530,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "QuickView"
             VALUE "FileDescription", "QuickView - Fast and lightweight image viewer"
-            VALUE "FileVersion", "1.1.5.0"
+            VALUE "FileVersion", "1.2.0.0"
             VALUE "InternalName", "QuickView"
-            VALUE "LegalCopyright", "Copyright 2025 QuickView (fork of JPEGView-Static), 2024-2025 JPEGView-Static, 2020-2023 Kevin M (sylikc), 2006-2018 David Kleiner"
+            VALUE "LegalCopyright", "Copyright 2025 QuickView, 2024-2025 JPEGView-Static, 2020-2023 Kevin M (sylikc), 2006-2018 David Kleiner"
             VALUE "OriginalFilename", "QuickView.exe"
             VALUE "ProductName", "QuickView Application"
-            VALUE "ProductVersion", "1.1.5.0"
+            VALUE "ProductVersion", "1.2.0.0"
         END
     END
     BLOCK "VarFileInfo"

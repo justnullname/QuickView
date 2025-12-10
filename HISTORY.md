@@ -1,8 +1,22 @@
 # QuickView Version History
 
+## Version 1.2.0 (2025-12-10)
+**The Smart Update**
+*   **New Feature**: **Seamless Auto-Update**: Silent background download, one-click install, and smart cleanup.
+*   **New Feature**: **Smart Double-Click Zoom**: Double-click to zoom 100%, again to Fit-to-Window. Zero lag.
+*   **New Feature**: **Instant Gallery (T)**: Press 'T' to toggle thumbnail strip overlay for fast browsing.
+*   **Improvement**: **Markdown Release Notes**: Release notes now support Markdown formatting (bullet points, bold, etc.).
+*   **Improvement**: **Localization**: UI fully supports translation via `strings.txt`.
+*   **Improvement**: **GitHub Link**: Added direct link to GitHub in About dialog.
+
 ## Version 1.1.6 (Development)
 **New Feature**
 *   **Feature**: Restored "Narrow Border Mode" with configurable width and color (`NarrowBorderWidth`, `NarrowBorderColor`).
+*   **Behav**: Improved double-click zoom behavior:
+    *   Zoomed (In/Out) -> Double Click -> 100%
+    *   100% -> Double Click -> Fit to Screen
+    *   Fit to Screen -> Double Click -> 100%
+    *   Now correctly updates window size in windowed mode.
 
 ## Version 1.1.5 (2025-12-03)
 **Window Resizing Fix Release**

@@ -46,6 +46,32 @@ It is designed for photographers, designers, and minimalists who demand **instan
   - **Professional:** PSD, RAW (CR2, CR3, NEF, ARW, DNG, etc.) via LibRaw.
 - **Color Management:** Full ICC profile support for accurate color reproduction on wide-gamut monitors.
 
+-----
+
+# QuickView v1.2.0 - The Smart Update
+
+QuickView is a blazingly fast, lightweight, and modern image viewer designed for speed and simplicity. Built as a successor to JPEGView, it retains the core performance while introducing modern features and UI enhancements.
+
+## 🌟 What's New in v1.2.0
+
+### 🔄 Seamless Auto-Update
+Say goodbye to manual downloads! QuickView now keeps itself up-to-date effortlessly.
+- **Silent Background Download**: Updates are downloaded silently while you work.
+- **One-Click Install**: When ready, a non-intrusive notification lets you update instantly.
+- **Smart Cleanup**: Automatically manages temporary files to keep your system clean.
+
+### 🔍 Smart Double-Click Zoom
+Navigate your details with precision.
+- **Intelligent Toggle**: Double-click to instantly zoom to 100% for pixel-perfect inspection.
+- **Fit-to-Window**: Double-click again to snap back to full view.
+- **Fluid & Fast**: Zero lag, optimized for high-resolution images.
+
+### 🖼️ Instant Gallery Mode (Key: T)
+Visual browsing made elegant.
+- **Press 'T'**: Instantly toggle the thumbnail strip overlay.
+- **Browse Faster**: Quickly scan through folders without leaving the viewer.
+- **Auto-Hide**: Visuals stay clean; the gallery appears only when you need it.
+
 ---
 
 ## 🆕 What's New in v1.1.0
@@ -63,6 +89,12 @@ We removed the ugly Windows title bar but kept the functionality.
 ### 3. Critical Improvements
 * **Dark Mode Startup:** Fixed the "white flash" on launch.
 * **Bug Fixes:** Resolved text overlapping in Zoom OSD and window dragging issues in fullscreen.
+
+---
+## 🚀 Key Features from v1.1.x
+- **Narrow Border Mode**: Configurable 1px border for better visibility in borderless mode.
+- **Modern UI**: Refined toolbar, crisp icons, and improved layout.
+- **Performance**: SIMD-optimized rendering for instant image loading.
 
 ---
 
@@ -91,7 +123,6 @@ We removed the ugly Windows title bar but kept the functionality.
         NarrowBorderColor=128 128 128
         ```
 
------
 
 ## 🗺️ Roadmap
 

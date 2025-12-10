@@ -394,7 +394,10 @@
     <ClCompile Include="BatchCopyDlg.cpp" />
     <ClCompile Include="CropSizeDlg.cpp" />
     <ClCompile Include="FileOpenDialog.cpp" />
-    <ClCompile Include="MainDlg.cpp" /><ClCompile Include="ThumbnailPanel.cpp" /><ClCompile Include="ThumbnailPanelCtl.cpp" />
+    <ClCompile Include="MainDlg.cpp" />
+    <ClCompile Include="UpdateChecker.cpp" />
+    <ClCompile Include="ThumbnailPanel.cpp" />
+    <ClCompile Include="ThumbnailPanelCtl.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ApplyFilterAVX.h" />
@@ -483,7 +486,10 @@
     <ClInclude Include="CropSizeDlg.h" />
     <ClInclude Include="FileOpenDialog.h" />
     <ClInclude Include="MainDlg.h" />
-    <ClInclude Include="resource.h" /><ClInclude Include="ThumbnailPanel.h" /><ClInclude Include="ThumbnailPanelCtl.h" />
+    <ClInclude Include="UpdateChecker.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="ThumbnailPanel.h" />
+    <ClInclude Include="ThumbnailPanelCtl.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="JPEGView.rc" />
