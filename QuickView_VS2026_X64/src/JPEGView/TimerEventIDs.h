@@ -13,3 +13,4 @@
 #define NAVPANEL_START_ANI_TIMER_EVENT_ID 7 // animation start timer for navigation panel
 #define IPPANEL_TIMER_EVENT_ID 8 // to show image processing panel in window mode
 #define ANIMATION_TIMER_EVENT_ID 9 // GIF animation timer ID
+#define OSD_MESSAGE_TIMER_EVENT_ID 10 // OSD message timer ID

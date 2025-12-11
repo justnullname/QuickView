@@ -360,4 +360,9 @@ private:
 	void AdjustAnimationFrameTime();
 	void StopAnimation();
 	void ToggleAlwaysOnTop();
+	void ShowOSDMessage(const CString& message);
+	void DrawOSD(CDC& dc, CRect rect, CString text, COLORREF color = RGB(255, 255, 255));
+
+	CString m_sOSDMessage;
+	bool m_bShowOSDMessage;
 };

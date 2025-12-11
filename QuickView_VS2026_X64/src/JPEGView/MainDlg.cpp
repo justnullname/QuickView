@@ -58,6 +58,8 @@
 // Constants
 //////////////////////////////////////////////////////////////////////////////////////////////
 
+#pragma comment(lib, "Msimg32.lib") // Required for AlphaBlend
+
 static const int MIN_WND_WIDTH = 320;
 static const int MIN_WND_HEIGHT = 240;
 
@@ -198,6 +200,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 
 	m_bDefaultSelectionMode = sp.DefaultSelectionMode();
 	m_bShowFileName = sp.ShowFileName();
+	m_bShowOSDMessage = false;
 	m_bKeepParams = sp.KeepParams();
 	m_eAutoZoomModeWindowed = sp.AutoZoomMode();
 	m_eAutoZoomModeFullscreen = sp.AutoZoomModeFullscreen();
@@ -600,39 +603,28 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 	// Show current zoom factor
 	if (m_bInZooming || m_bShowZoomFactor) {
 		int nZoom = int(m_dZoom*100 + 0.5);
-		TCHAR buff[32];
-		_stprintf_s(buff, 32, _T("%d %%"), nZoom);
-
+		CString sZoom;
+		sZoom.Format(_T("%d %%"), nZoom);
 		CRect zoomRect = GetZoomTextRect(imageProcessingArea);
 		
-#pragma comment(lib, "Msimg32.lib")
-
-		// Draw semi-transparent gray background
-		CDC memDC;
-		memDC.CreateCompatibleDC(dc);
-		CBitmap bmp;
-		bmp.CreateCompatibleBitmap(dc, zoomRect.Width(), zoomRect.Height());
-		HBITMAP hOldBmp = memDC.SelectBitmap(bmp);
-		memDC.FillSolidRect(0, 0, zoomRect.Width(), zoomRect.Height(), RGB(50, 50, 50));
-
-		BLENDFUNCTION bf;
-		bf.BlendOp = AC_SRC_OVER;
-		bf.BlendFlags = 0;
-		bf.SourceConstantAlpha = 150; // ~60% opacity
-		bf.AlphaFormat = 0;
-
-		::AlphaBlend(dc, zoomRect.left, zoomRect.top, zoomRect.Width(), zoomRect.Height(),
-			memDC, 0, 0, zoomRect.Width(), zoomRect.Height(), bf);
-
-		memDC.SelectBitmap(hOldBmp);
-
-		// Text color: Green if 100%, else White
-		COLORREF textColor = (nZoom == 100) ? RGB(0, 255, 0) : RGB(255, 255, 255);
-		dc.SetTextColor(textColor);
-		dc.SetBkMode(TRANSPARENT);
-		
-		HelpersGUI::SelectDefaultFileNameFont(dc);
-		HelpersGUI::DrawTextBordered(dc, buff, zoomRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		COLORREF color = (nZoom == 100) ? RGB(0, 255, 0) : RGB(255, 255, 255);
+		DrawOSD(dc, zoomRect, sZoom, color);
+	}
+	
+	// Show Global OSD Message (Center Screen)
+	if (m_bShowOSDMessage && !m_sOSDMessage.IsEmpty()) {
+		// Calculate center rect
+		CRect centerRect = m_clientRect;
+		// Fixed size for OSD for now, or we could calc it.
+		// Let's make it wide enough for messages.
+		int width = 300;
+		int height = 50;
+		int x = (centerRect.Width() - width) / 2;
+		int y = (centerRect.Height() - height) / 2;
+		if (x < 0) x = 0;
+		if (y < 0) y = 0;
+		CRect osdRect(x, y, x + width, y + height);
+		DrawOSD(dc, osdRect, m_sOSDMessage);
 	}
 
 	// let crop controller and panels paint its stuff
@@ -1146,6 +1138,10 @@ LRESULT CMainDlg::OnTimer(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL&
 			imageProcArea.bottom -= nThumbHeight;
 		}
 		this->InvalidateRect(GetZoomTextRect(imageProcArea), FALSE);
+	} else if (wParam == OSD_MESSAGE_TIMER_EVENT_ID) {
+		m_bShowOSDMessage = false;
+		::KillTimer(this->m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID);
+		this->Invalidate(FALSE);
 	} else {
 		if (true) { // !m_pCropCtl->OnTimer((int)wParam)) {
 			m_pPanelMgr->OnTimer((int)wParam);
@@ -3441,7 +3437,61 @@ void CMainDlg::ToggleAlwaysOnTop() {
 		0, 0, 0, 0,
 		SWP_NOMOVE | SWP_NOSIZE  // causes SetWindowPos to ignore the parameters for top/left/width/height
 	);
+	
+	CString msg;
+	msg.Format(_T("Always On Top: %s"), m_bAlwaysOnTop ? _T("ON") : _T("OFF"));
+	ShowOSDMessage(msg);
+}
 
+void CMainDlg::ShowOSDMessage(const CString& message) {
+	m_sOSDMessage = message;
+	m_bShowOSDMessage = true;
+	::KillTimer(m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID);
+	::SetTimer(m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID, 1500, NULL);
+	this->Invalidate(FALSE);
+}
+
+void CMainDlg::DrawOSD(CDC& dc, CRect rect, CString text, COLORREF color) {
+	if (text.IsEmpty()) return;
+
+	// Draw rounded rectangle background (semi-transparent gray look)
+	// Since we are painting to a DC, we can simulate transparency with a solid color if we don't use alpha blend.
+	// But lines 611-616 in OnPaint demonstrate using AlphaBlend for zoom text.
+	// Let's reimplement that idea here if we want transparency.
+	// For simplicity and matching existing code style, we'll assume we can draw directly or use the same technique.
+	
+	// Create memory DC for alpha blending
+	CDC memDC;
+	memDC.CreateCompatibleDC(dc);
+	CBitmap bmp;
+	bmp.CreateCompatibleBitmap(dc, rect.Width(), rect.Height());
+	HBITMAP hOldBmp = memDC.SelectBitmap(bmp);
+	
+	// Fill with dark gray
+	memDC.FillSolidRect(0, 0, rect.Width(), rect.Height(), RGB(50, 50, 50));
+
+	BLENDFUNCTION bf;
+	bf.BlendOp = AC_SRC_OVER;
+	bf.BlendFlags = 0;
+	bf.SourceConstantAlpha = 180; // Semi-transparent
+	bf.AlphaFormat = 0;
+
+	dc.AlphaBlend(rect.left, rect.top, rect.Width(), rect.Height(), memDC, 0, 0, rect.Width(), rect.Height(), bf);
+
+	memDC.SelectBitmap(hOldBmp);
+
+	// Draw text
+	dc.SetBkMode(TRANSPARENT);
+	dc.SetTextColor(color);
+	
+	CFont font;
+	// Use larger font for center OSD
+	font.CreatePointFont(120, _T("Segoe UI")); // 12pt
+	HFONT hOldFont = dc.SelectFont(font);
+	
+	dc.DrawText(text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+	
+	dc.SelectFont(hOldFont);
 }
 
 void CMainDlg::DisplayFileName(const CRect& imageRect, CDC& dc, double dZoom) {
