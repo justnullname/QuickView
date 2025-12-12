@@ -360,9 +360,21 @@ private:
 	void AdjustAnimationFrameTime();
 	void StopAnimation();
 	void ToggleAlwaysOnTop();
-	void ShowOSDMessage(const CString& message);
-	void DrawOSD(CDC& dc, CRect rect, CString text, COLORREF color = RGB(255, 255, 255));
+	
+	enum EOSDAlignment { OSD_ALIGN_CENTER, OSD_ALIGN_BOTTOM_RIGHT };
+	struct OSDState {
+		bool bVisible;
+		CString sText;
+		COLORREF color;
+		EOSDAlignment alignment;
+		OSDState() : bVisible(false), color(RGB(255, 255, 255)), alignment(OSD_ALIGN_CENTER) {}
+	};
 
-	CString m_sOSDMessage;
-	bool m_bShowOSDMessage;
+	void ShowOSD(const CString& message, EOSDAlignment align = OSD_ALIGN_CENTER, COLORREF color = RGB(255, 255, 255), int durationMs = 1500);
+	void DrawOSD(CDC& dc, const OSDState& osd); // Helper
+
+	OSDState m_CurrentOSD;
+	// bool m_bShowZoomFactor; // Removed
+	// CString m_sOSDMessage; // Removed
+	// bool m_bShowOSDMessage; // Removed
 };

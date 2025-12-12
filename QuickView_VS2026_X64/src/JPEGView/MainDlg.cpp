@@ -200,7 +200,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 
 	m_bDefaultSelectionMode = sp.DefaultSelectionMode();
 	m_bShowFileName = sp.ShowFileName();
-	m_bShowOSDMessage = false;
+	// m_bShowOSDMessage = false; // logic moved to OSDState constructor
 	m_bKeepParams = sp.KeepParams();
 	m_eAutoZoomModeWindowed = sp.AutoZoomMode();
 	m_eAutoZoomModeFullscreen = sp.AutoZoomModeFullscreen();
@@ -243,7 +243,7 @@ CMainDlg::CMainDlg(bool bForceFullScreen) {
 	m_virtualImageSize = CSize(-1, -1);
 	m_bInZooming = false;
 	m_bTemporaryLowQ = false;
-	m_bShowZoomFactor = false;
+	// m_bShowZoomFactor = false; // Removed
 	m_bSpanVirtualDesktop = false;
 	m_bPanMouseCursorSet = false;
 	m_storedWindowPlacement.length = sizeof(WINDOWPLACEMENT);
@@ -600,31 +600,9 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 		dc.SetBkMode(TRANSPARENT);
 	}
 
-	// Show current zoom factor
-	if (m_bInZooming || m_bShowZoomFactor) {
-		int nZoom = int(m_dZoom*100 + 0.5);
-		CString sZoom;
-		sZoom.Format(_T("%d %%"), nZoom);
-		CRect zoomRect = GetZoomTextRect(imageProcessingArea);
-		
-		COLORREF color = (nZoom == 100) ? RGB(0, 255, 0) : RGB(255, 255, 255);
-		DrawOSD(dc, zoomRect, sZoom, color);
-	}
-	
-	// Show Global OSD Message (Center Screen)
-	if (m_bShowOSDMessage && !m_sOSDMessage.IsEmpty()) {
-		// Calculate center rect
-		CRect centerRect = m_clientRect;
-		// Fixed size for OSD for now, or we could calc it.
-		// Let's make it wide enough for messages.
-		int width = 300;
-		int height = 50;
-		int x = (centerRect.Width() - width) / 2;
-		int y = (centerRect.Height() - height) / 2;
-		if (x < 0) x = 0;
-		if (y < 0) y = 0;
-		CRect osdRect(x, y, x + width, y + height);
-		DrawOSD(dc, osdRect, m_sOSDMessage);
+	// Unified OSD Display
+	if (m_CurrentOSD.bVisible) {
+		DrawOSD(dc, m_CurrentOSD);
 	}
 
 	// let crop controller and panels paint its stuff
@@ -1120,8 +1098,17 @@ LRESULT CMainDlg::OnTimer(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL&
 	} else if (wParam == ZOOM_TIMER_EVENT_ID) {
 		::KillTimer(this->m_hWnd, ZOOM_TIMER_EVENT_ID);
 		if (m_bTemporaryLowQ || m_bInZooming) {
-			::SetTimer(this->m_hWnd, ZOOM_TEXT_TIMER_EVENT_ID, ZOOM_TEXT_TIMEOUT, NULL);
-			if (m_bInZooming) m_bShowZoomFactor = true;
+			
+			if (m_bInZooming) {
+				// Show Zoom OSD
+				int nZoom = int(m_dZoom * 100 + 0.5);
+				CString sZoom;
+				sZoom.Format(_T("%d %%"), nZoom);
+				// Green if 100%, else White
+				COLORREF color = (nZoom == 100) ? RGB(0, 255, 0) : RGB(255, 255, 255);
+				ShowOSD(sZoom, OSD_ALIGN_BOTTOM_RIGHT, color, ZOOM_TEXT_TIMEOUT);
+			}
+			
 			m_bTemporaryLowQ = false;
 			m_bInZooming = false;
 			if (m_bHQResampling && m_pCurrentImage != NULL) {
@@ -1129,17 +1116,10 @@ LRESULT CMainDlg::OnTimer(UINT /*uMsg*/, WPARAM wParam, LPARAM /*lParam*/, BOOL&
 			}
 		}
 	} else if (wParam == ZOOM_TEXT_TIMER_EVENT_ID) {
-		m_bShowZoomFactor = false;
+		// Legacy timer ID, kept for safety but should not occur
 		::KillTimer(this->m_hWnd, ZOOM_TEXT_TIMER_EVENT_ID);
-		m_pZoomNavigatorCtl->InvalidateZoomNavigatorRect();
-		CRect imageProcArea = m_clientRect;
-		int nThumbHeight = GetThumbnailPanelHeight();
-		if (nThumbHeight > 0) {
-			imageProcArea.bottom -= nThumbHeight;
-		}
-		this->InvalidateRect(GetZoomTextRect(imageProcArea), FALSE);
 	} else if (wParam == OSD_MESSAGE_TIMER_EVENT_ID) {
-		m_bShowOSDMessage = false;
+		m_CurrentOSD.bVisible = false;
 		::KillTimer(this->m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID);
 		this->Invalidate(FALSE);
 	} else {
@@ -2877,7 +2857,7 @@ void CMainDlg::InitParametersForNewImage() {
 	m_eProcessingFlags2 = PFLAG_HighQualityResampling;
 
 	if (!m_bIsAnimationPlaying) {
-		m_bInZooming = m_bTemporaryLowQ = m_bShowZoomFactor = false;
+		m_bInZooming = m_bTemporaryLowQ = false;
 	}
 }
 
@@ -3440,19 +3420,43 @@ void CMainDlg::ToggleAlwaysOnTop() {
 	
 	CString msg;
 	msg.Format(_T("Always On Top: %s"), m_bAlwaysOnTop ? _T("ON") : _T("OFF"));
-	ShowOSDMessage(msg);
+	ShowOSD(msg, OSD_ALIGN_CENTER);
 }
 
-void CMainDlg::ShowOSDMessage(const CString& message) {
-	m_sOSDMessage = message;
-	m_bShowOSDMessage = true;
+void CMainDlg::ShowOSD(const CString& message, EOSDAlignment align, COLORREF color, int durationMs) {
+	m_CurrentOSD.sText = message;
+	m_CurrentOSD.alignment = align;
+	m_CurrentOSD.color = color;
+	m_CurrentOSD.bVisible = true;
+	
 	::KillTimer(m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID);
-	::SetTimer(m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID, 1500, NULL);
+	::SetTimer(m_hWnd, OSD_MESSAGE_TIMER_EVENT_ID, durationMs, NULL);
 	this->Invalidate(FALSE);
 }
 
-void CMainDlg::DrawOSD(CDC& dc, CRect rect, CString text, COLORREF color) {
-	if (text.IsEmpty()) return;
+void CMainDlg::DrawOSD(CDC& dc, const OSDState& osd) {
+	if (osd.sText.IsEmpty()) return;
+
+	// Calculate Rect based on alignment
+	CRect rect;
+	if (osd.alignment == OSD_ALIGN_BOTTOM_RIGHT) {
+		CRect imageProcArea = m_clientRect;
+		int nThumbHeight = GetThumbnailPanelHeight();
+		if (nThumbHeight > 0) {
+			imageProcArea.bottom -= nThumbHeight;
+		}
+		rect = GetZoomTextRect(imageProcArea);
+	} else {
+		// OSD_ALIGN_CENTER
+		CRect centerRect = m_clientRect;
+		int width = 300;
+		int height = 50;
+		int x = (centerRect.Width() - width) / 2;
+		int y = (centerRect.Height() - height) / 2;
+		if (x < 0) x = 0;
+		if (y < 0) y = 0;
+		rect = CRect(x, y, x + width, y + height);
+	}
 
 	// Draw rounded rectangle background (semi-transparent gray look)
 	// Since we are painting to a DC, we can simulate transparency with a solid color if we don't use alpha blend.
@@ -3482,14 +3486,15 @@ void CMainDlg::DrawOSD(CDC& dc, CRect rect, CString text, COLORREF color) {
 
 	// Draw text
 	dc.SetBkMode(TRANSPARENT);
-	dc.SetTextColor(color);
+	dc.SetTextColor(osd.color);
 	
 	CFont font;
 	// Use larger font for center OSD
-	font.CreatePointFont(120, _T("Segoe UI")); // 12pt
+	int fontSize = (osd.alignment == OSD_ALIGN_CENTER) ? 120 : 100; // 12pt center, 10pt zoom
+	font.CreatePointFont(fontSize, _T("Segoe UI")); 
 	HFONT hOldFont = dc.SelectFont(font);
 	
-	dc.DrawText(text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+	dc.DrawText(osd.sText, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 	
 	dc.SelectFont(hOldFont);
 }
