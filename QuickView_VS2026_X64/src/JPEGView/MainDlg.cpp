@@ -2643,6 +2643,14 @@ bool CMainDlg::PerformZoom(double dValue, bool bExponent, bool bZoomToMouse, boo
 	}
 
 	m_bInZooming = true;
+	
+	// Show Zoom OSD immediately
+	int nZoom = int(m_dZoom * 100 + 0.5);
+	CString sZoom;
+	sZoom.Format(_T("%d %%"), nZoom);
+	COLORREF color = (nZoom == 100) ? RGB(0, 255, 0) : RGB(255, 255, 255);
+	ShowOSD(sZoom, OSD_ALIGN_BOTTOM_RIGHT, color, ZOOM_TEXT_TIMEOUT);
+	
 	StartLowQTimer(ZOOM_TIMEOUT);
 	if (fabs(dOldZoom - m_dZoom) > 0.0001 || m_bZoomMode) {
 		this->Invalidate(FALSE);
