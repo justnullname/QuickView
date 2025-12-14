@@ -7,7 +7,17 @@
 // if a define is to be included in the publicly-exposed definitions, start the comment with ":KeyMap:"
 // don't worry about the formatting, the script that auto-generates the definition will take care of it
 
-#define JPEGVIEW_VERSION "1.2.0"
+// Version definitions - Single source of truth
+#define VER_MAJOR 1
+#define VER_MINOR 2
+#define VER_PATCH 1
+#define VER_BUILD 0
+
+#define _STRINGIZE(x) #x
+#define STRINGIZE(x) _STRINGIZE(x)
+
+#define JPEGVIEW_VERSION STRINGIZE(VER_MAJOR) "." STRINGIZE(VER_MINOR) "." STRINGIZE(VER_PATCH)
+#define JPEGVIEW_VERSION_FULL STRINGIZE(VER_MAJOR) "." STRINGIZE(VER_MINOR) "." STRINGIZE(VER_PATCH) "." STRINGIZE(VER_BUILD)
 // title for main window and msgbox so it can be change via actions
 #define JPEGVIEW_TITLE "QuickView"
 
