@@ -45,6 +45,9 @@
     <ClCompile Include="Clipboard.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ContextMenuHandler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="EXIFHelpers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -291,6 +294,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Clipboard.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ContextMenuHandler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="EXIFHelpers.h">

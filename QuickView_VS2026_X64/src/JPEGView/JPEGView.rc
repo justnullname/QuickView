@@ -300,24 +300,49 @@ BEGIN
         MENUITEM "Save processed image...\t0x5de", IDM_SAVE
         MENUITEM "Reload image",                IDM_RELOAD
         MENUITEM "Open containing folder in Explorer", IDM_EXPLORE
-        MENUITEM "Print image...",              IDM_PRINT
-        MENUITEM "Batch rename/copy...",        IDM_BATCH_COPY
-        POPUP "Set modification date"
-        BEGIN
-            MENUITEM "to current date",             IDM_TOUCH_IMAGE
-            MENUITEM "to EXIF date",                IDM_TOUCH_IMAGE_EXIF
-            MENUITEM "to EXIF date (all files in folder)", IDM_TOUCH_IMAGE_EXIF_FOLDER
-        END
-        POPUP "Set as desktop wallpaper"
-        BEGIN
-            MENUITEM "Use original image",          IDM_SET_WALLPAPER_ORIG
-            MENUITEM "Use processed image as displayed", IDM_SET_WALLPAPER_DISPLAY
-        END
+
         MENUITEM SEPARATOR
         MENUITEM "Copy to clipboard",           IDM_COPY
         MENUITEM "Copy original size image",    IDM_COPY_FULL
         MENUITEM "Copy file path",              IDM_COPY_PATH
         MENUITEM "Paste from clipboard",        IDM_PASTE
+        MENUITEM SEPARATOR
+        POPUP "Tools"
+        BEGIN
+            MENUITEM "Print image...",              IDM_PRINT
+            MENUITEM "Batch rename/copy...",        IDM_BATCH_COPY
+            POPUP "Set modification date"
+            BEGIN
+                MENUITEM "to current date",             IDM_TOUCH_IMAGE
+                MENUITEM "to EXIF date",                IDM_TOUCH_IMAGE_EXIF
+                MENUITEM "to EXIF date (all files in folder)", IDM_TOUCH_IMAGE_EXIF_FOLDER
+            END
+            POPUP "Set as desktop wallpaper"
+            BEGIN
+                MENUITEM "Use original image",          IDM_SET_WALLPAPER_ORIG
+                MENUITEM "Use processed image as displayed", IDM_SET_WALLPAPER_DISPLAY
+            END
+            POPUP "Transform image"
+            BEGIN
+                MENUITEM "Rotate +90",                  IDM_ROTATE_90
+                MENUITEM "Rotate -90",                  IDM_ROTATE_270
+                MENUITEM "Rotate...",                   IDM_ROTATE
+                MENUITEM "Change size...",              IDM_CHANGESIZE
+                MENUITEM "Perspective correction...",   IDM_PERSPECTIVE
+                MENUITEM SEPARATOR
+                MENUITEM "Mirror horizontally",         IDM_MIRROR_H
+                MENUITEM "Mirror vertically",           IDM_MIRROR_V
+            END
+            POPUP "Lossless JPEG transformations"
+            BEGIN
+                MENUITEM "Rotate +90\t0x24B9",          IDM_ROTATE_90_LOSSLESS
+                MENUITEM "Rotate -90\t0x24C3",          IDM_ROTATE_270_LOSSLESS
+                MENUITEM "Rotate 180",                  IDM_ROTATE_180_LOSSLESS
+                MENUITEM SEPARATOR
+                MENUITEM "Mirror horizontally",         IDM_MIRROR_H_LOSSLESS
+                MENUITEM "Mirror vertically",           IDM_MIRROR_V_LOSSLESS
+            END
+        END
         MENUITEM SEPARATOR
         MENUITEM "Show picture info (EXIF)",    IDM_SHOW_FILEINFO
         MENUITEM "Show filename",               IDM_SHOW_FILENAME
@@ -392,26 +417,7 @@ BEGIN
             MENUITEM "Playback speed\t100 fps",         IDM_MOVIE_100_FPS
         END
         MENUITEM SEPARATOR
-        POPUP "Transform image"
-        BEGIN
-            MENUITEM "Rotate +90",                  IDM_ROTATE_90
-            MENUITEM "Rotate -90",                  IDM_ROTATE_270
-            MENUITEM "Rotate...",                   IDM_ROTATE
-            MENUITEM "Change size...",              IDM_CHANGESIZE
-            MENUITEM "Perspective correction...",   IDM_PERSPECTIVE
-            MENUITEM SEPARATOR
-            MENUITEM "Mirror horizontally",         IDM_MIRROR_H
-            MENUITEM "Mirror vertically",           IDM_MIRROR_V
-        END
-        POPUP "Lossless JPEG transformations"
-        BEGIN
-            MENUITEM "Rotate +90\t0x24B9",          IDM_ROTATE_90_LOSSLESS
-            MENUITEM "Rotate -90\t0x24C3",          IDM_ROTATE_270_LOSSLESS
-            MENUITEM "Rotate 180",                  IDM_ROTATE_180_LOSSLESS
-            MENUITEM SEPARATOR
-            MENUITEM "Mirror horizontally",         IDM_MIRROR_H_LOSSLESS
-            MENUITEM "Mirror vertically",           IDM_MIRROR_V_LOSSLESS
-        END
+
         MENUITEM "Auto correction",             IDM_AUTO_CORRECTION
         MENUITEM "Local density correction",    IDM_LDC
         MENUITEM "Keep parameters",             IDM_KEEP_PARAMETERS

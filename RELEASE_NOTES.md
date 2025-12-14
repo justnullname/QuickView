@@ -1,3 +1,9 @@
+# QuickView v1.3.0 Release Notes
+
+**Context Menu Modernization & OSD Fixes**
+*   **Cleaner Context Menu**: Reduced clutter by moving "Print", "Batch Copy", "Wallpaper", and "Transform" into a new **"Tools"** submenu.
+*   **Enhanced OSD**: Fixed a bug where the zoom percentage OSD would lag when using double-click to zoom.
+
 # QuickView v1.2.1 Release Notes
 
 **Visual Feedback & Polish**

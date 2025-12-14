@@ -35,6 +35,8 @@ class CMainDlg : public CDialogImpl<CMainDlg>
 {
 public:
 	enum { IDD = IDD_MAINDLG };
+	
+	friend class CContextMenuHandler;
 
 	enum EImagePosition {
 		POS_First,
@@ -56,7 +58,7 @@ public:
 		MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBackground)
 		MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
 		MESSAGE_HANDLER(WM_SIZE, OnSize)
-		MESSAGE_HANDLER(WM_GETMINMAXINFO, OnGetMinMaxInfo)
+	MESSAGE_HANDLER(WM_GETMINMAXINFO, OnGetMinMaxInfo)
 		MESSAGE_HANDLER(WM_PAINT, OnPaint)
 		MESSAGE_HANDLER(WM_NCHITTEST, OnNCHitTest)
 		MESSAGE_HANDLER(WM_NCLBUTTONDOWN, OnNCLButtonDown)

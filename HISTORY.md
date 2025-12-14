@@ -1,5 +1,11 @@
 # QuickView Version History
 
+## Version 1.3.0 (2025-12-14)
+**Context Menu Modernization**
+*   **Refactoring**: **Cleaner Context Menu**: Reorganized low-frequency items (Print, Batch, wallpaper, transform) into a new **"Tools"** submenu.
+*   **Architecture**: **CContextMenuHandler**: Extracted complex menu logic into a dedicated handler class for better maintainability.
+*   **Bug Fix**: **Double-Click Zoom OSD**: Fixed issue where OSD zoom percentage would not update immediately when double-clicking to zoom.
+
 ## Version 1.2.1 (2025-12-12)
 **OSD & Refactoring Update**
 *   **New Feature**: **Always on Top OSD**: Visual feedback ("Always On Top: ON/OFF") in the center of the screen when toggling the feature.

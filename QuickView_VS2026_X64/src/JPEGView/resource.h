@@ -9,8 +9,8 @@
 
 // Version definitions - Single source of truth
 #define VER_MAJOR 1
-#define VER_MINOR 2
-#define VER_PATCH 1
+#define VER_MINOR 3
+#define VER_PATCH 0
 #define VER_BUILD 0
 
 #define _STRINGIZE(x) #x
@@ -342,17 +342,26 @@
 // in the main menu
 // these position must be changed if menu items are inserted
 #define SUBMENU_POS_OPENWITH 3
-#define SUBMENU_POS_MODDATE 9
-#define SUBMENU_POS_WALLPAPER 10
-#define SUBMENU_POS_NAVIGATION 23
-#define SUBMENU_POS_DISPLAY_ORDER 24
-#define SUBMENU_POS_MOVIE 25
-#define SUBMENU_POS_TRANSFORM 27
-#define SUBMENU_POS_TRANSFORM_LOSSLESS 28
-#define SUBMENU_POS_ZOOM 36
-#define SUBMENU_POS_AUTOZOOMMODE 37
-#define SUBMENU_POS_SETTINGS 39
-#define SUBMENU_POS_USER_COMMANDS 41
+// New "Tools" submenu at index 13
+#define SUBMENU_POS_TOOLS 13
+
+// Valid Root Indices
+#define SUBMENU_POS_NAVIGATION 21
+#define SUBMENU_POS_DISPLAY_ORDER 22
+#define SUBMENU_POS_MOVIE 23
+// Transform/Lossless moved to Tools
+//#define SUBMENU_POS_TRANSFORM 27
+//#define SUBMENU_POS_TRANSFORM_LOSSLESS 28
+#define SUBMENU_POS_ZOOM 31
+#define SUBMENU_POS_AUTOZOOMMODE 32
+#define SUBMENU_POS_SETTINGS 34
+#define SUBMENU_POS_USER_COMMANDS 36
+
+// Sub-indices for Tools Menu
+#define SUBMENU_IDX_TOOLS_MODDATE 2
+#define SUBMENU_IDX_TOOLS_WALLPAPER 3
+#define SUBMENU_IDX_TOOLS_TRANSFORM 4
+#define SUBMENU_IDX_TOOLS_TRANSFORM_LOSSLESS 5
 
 // in the crop menu
 #define SUBMENU_POS_CROPMODE 3
