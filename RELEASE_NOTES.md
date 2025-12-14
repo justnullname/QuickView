@@ -1,3 +1,21 @@
+# QuickView v1.2.1 Release Notes
+
+**Visual Feedback & Polish**
+This update focuses on improving user feedback and code quality. We've introduced a unified On-Screen Display (OSD) system that provides clear visual confirmation for "Always on Top" and other states.
+
+## 🚀 New Features & Improvements
+
+### 🖥️ Always on Top OSD
+*   **Visual Confirmation**: Toggling "Always on Top" (`Shift + F12`) now displays a clear "ON" or "OFF" message in the center of the screen.
+*   **Modern Design**: Using a sleek, semi-transparent dark background with white Segoe UI text.
+
+### ⚡ Unified OSD System (Technical)
+*   **Refactored Core**: All OSD messages (Zoom, System Status) now run on a unified "OSD Manager".
+*   **Zero Latency**: Zoom percentage display is now instant (bypassing the previous 200ms optimization delay for purely visual feedback).
+*   **Consistent Look**: Zoom and System messages share the same visual style.
+
+---
+
 # QuickView v1.2.0 Release Notes
 
 **The Smart Update**

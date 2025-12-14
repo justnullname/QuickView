@@ -1,5 +1,12 @@
 # QuickView Version History
 
+## Version 1.2.1 (2025-12-12)
+**OSD & Refactoring Update**
+*   **New Feature**: **Always on Top OSD**: Visual feedback ("Always On Top: ON/OFF") in the center of the screen when toggling the feature.
+*   **Improvement**: **Unified OSD System**: Refactored OSD logic into a centralized manager (`OSDState`) for cleaner code and consistent visuals.
+*   **Optimization**: **Zero-Latency Zoom OSD**: Fixed 200ms delay in zoom percentage display; now updates instantly.
+*   **Design**: Standardized OSD aesthetics (Semi-transparent rounded background, Segoe UI font).
+
 ## Version 1.2.0 (2025-12-10)
 **The Smart Update**
 *   **New Feature**: **Seamless Auto-Update**: Silent background download, one-click install, and smart cleanup.
