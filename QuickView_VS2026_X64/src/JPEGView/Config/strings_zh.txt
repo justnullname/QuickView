@@ -510,3 +510,72 @@ Zoom to Selection	缩放到选择内容
 //! * Total (Strings + Menu) = 429
 //! * Done = 425
 //! * Missing = 4 (1%)
+
+// ::: Config UI Strings :::
+QuickView Settings	QuickView 设置
+Language:	语言：
+Check for updates automatically	自动检查更新
+Single instance mode	单实例模式
+Portable mode (Store settings in EXE folder)	便携模式（保存设置到EXE目录）
+Window	窗口
+Smart Border	智能边框
+Width:	宽度：
+Always on Top	始终在最前
+OSD & Panels	OSD 与面板
+Show Bottom Panel	显示底部面板
+Show Navigation Panel	显示导航面板
+Show Filename	显示文件名
+Show File Info	显示文件信息
+Show Histogram	显示直方图
+Background Color:	背景颜色：
+Choose...	选择...
+Mouse Wheel Action	鼠标滚轮动作
+Zoom Image	缩放图片
+Navigate Files	浏览文件
+Mouse Buttons	鼠标按键
+Middle Click:	中键点击：
+Swap Back/Forward Buttons	交换后退/前进按钮
+Navigation	导航
+Loop Mode:	循环模式：
+Show Navigation Arrows on hover	悬停时显示导航箭头
+Default Sort:	默认排序：
+Zoom & Viewing	缩放与查看
+Window Mode:	窗口模式：
+Fullscreen:	全屏：
+Auto rotate according to EXIF tag	根据EXIF标签自动旋转
+Quality & Processing	质量与处理
+Resampling:	重采样：
+Use Embedded Color Profiles (ICC)	使用嵌入色彩配置文件(ICC)
+Auto Enhance Contrast	自动增强对比度
+Saving	保存
+JPEG Quality:	JPEG 质量：
+Parameters	参数
+Keep Parameters between images	在图片间保持参数
+System & Deletion	系统与删除
+Confirm File Deletion	确认文件删除
+Delete to Recycle Bin	删除到回收站
+Mouse Trap (Fullscreen)	鼠标陷阱（全屏）
+General	通用
+Appearance	外观
+Interaction	交互
+Image	图片
+Misc	杂项
+Shortcuts	捷径
+
+Do Nothing	不执行任何操作
+Close Application	关闭应用程序
+Toggle Fullscreen	切换全屏
+100% Zoom	100% 缩放
+Loop folder	循环当前文件夹
+Loop recursively	循环所有子文件夹
+Loop siblings	循环同级文件夹
+Fit to screen	适合屏幕
+Fill with crop	填充并裁剪
+Zoom 1:1 (100 %)	1:1 缩放 (100%)
+Best Quality (Lanczos)	最佳质量 (Lanczos)
+Fast (Bilinear)	快速 (Bilinear)
+Nearest Neighbor	最近邻
+File name	文件名
+Last modification date/time	最后修改日期/时间
+Creation date/time	创建日期/时间
+File size	文件大小

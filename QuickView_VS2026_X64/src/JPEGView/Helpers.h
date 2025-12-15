@@ -171,12 +171,14 @@ namespace Helpers {
 	// The window size equals the client area size plus this border size
 	CSize GetTotalBorderSize();
 
+#ifndef QV_CONFIG_APP
 	// Gets the window rectangle that matches the image size, keeping the aspect ratio if requested
 	// nAdditionalHeight is added to the required height (e.g. for thumbnail bar)
 	CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless, int nAdditionalHeight = 0);
 
 	// Checks if the image can be displayed without resizing the window
 	bool CanDisplayImageWithoutResize(HWND hWnd, CJPEGImage* pImage);
+#endif
 
 	// Calculates the maximum included rectangle in a trapezoid that keeps the aspect ratio
 	CRect CalculateMaxIncludedRectKeepAR(const CTrapezoid& trapezoid, double dAspectRatio);
@@ -263,6 +265,7 @@ namespace Helpers {
 	// file size for file with handle
 	__int64 GetFileSize(HANDLE hFile);
 
+#ifndef QV_CONFIG_APP
 	// Gets the frame index of the next frame, depending on the index of the last image (relevant if the image is a multiframe image)
 	int GetFrameIndex(CJPEGImage* pImage, bool bNext, bool bPlayAnimation, bool & switchImage);
 
@@ -271,6 +274,7 @@ namespace Helpers {
 
 	// replaces the file info format string by the actual values from the image and file list
 	CString GetFileInfoString(LPCTSTR sFormat, CJPEGImage* pImage, CFileList* pFilelist, double dZoom);
+#endif
 
 	// Returns the windows version in the format Major * 100 + Minor, e.g. 602 for Windows 8
 	int GetWindowsVersion();

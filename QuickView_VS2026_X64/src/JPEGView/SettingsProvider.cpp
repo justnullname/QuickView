@@ -95,301 +95,7 @@ CSettingsProvider::CSettingsProvider(void) {
 	m_pGlobalKeys = NULL;
 	m_pUserKeys = NULL;
 	m_sIniNameUser = m_sIniNameGlobal;
-	m_bStoreToEXEPath = GetBool(_T("StoreToEXEPath"), false);
-
-	if (!m_bStoreToEXEPath) {
-		// User INI file
-		m_sIniNameUser = CString(Helpers::JPEGViewAppDataPath()) + m_sIniFileTitle;
-		m_bUserINIExists = (::GetFileAttributes(m_sIniNameUser) != INVALID_FILE_ATTRIBUTES);
-	} else {
-		Helpers::SetJPEGViewAppDataPath(m_sEXEPath);
-	}
-
-	// Get "My documents" path
-	CString sMyDocumentsFolder;
-	LPTSTR lpFolderBuffer = sMyDocumentsFolder.GetBuffer(MAX_PATH);
-	::SHGetFolderPath(NULL, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, lpFolderBuffer);
-	sMyDocumentsFolder.ReleaseBuffer();
-
-	// Get "My pictures" path
-	CString sMyPicturesFolder;
-	LPTSTR lpPicturesBuffer = sMyPicturesFolder.GetBuffer(MAX_PATH);
-	::SHGetFolderPath(NULL, CSIDL_MYPICTURES, NULL, SHGFP_TYPE_CURRENT, lpPicturesBuffer);
-	sMyPicturesFolder.ReleaseBuffer();
-
-	// Read settings that can be written with SaveSettings()
-	ReadWriteableINISettings();
-
-	m_bAutoFullScreen = GetString(_T("ShowFullScreen"), _T("")).CompareNoCase(_T("auto")) == 0;
-	m_bShowFullScreen = m_bAutoFullScreen ? true : GetBool(_T("ShowFullScreen"), true);
-	m_nNarrowBorderWidth = GetInt(_T("NarrowBorderWidth"), 2, 0, 100);
-	m_cNarrowBorderColor = GetColor(_T("NarrowBorderColor"), RGB(128, 128, 128));
-	m_bShowEXIFDateInTitle = GetBool(_T("ShowEXIFDateInTitle"), true);
-	m_bShowFullPathInTitle = GetBool(_T("ShowFilePathInTitle"), false);
-	m_bShowHistogram = GetBool(_T("ShowHistogram"), false);
-	m_bShowJPEGComments = GetBool(_T("ShowJPEGComments"), true);
-	m_bShowBottomPanel = GetBool(_T("ShowBottomPanel"), true);
-	m_bShowZoomNavigator = GetBool(_T("ShowZoomNavigator"), true);
-	m_fBlendFactorNavPanel = (float)GetDouble(_T("BlendFactorNavPanel"), 0.5, 0.0, 1.0);
-	m_fScaleFactorNavPanel = (float)GetDouble(_T("ScaleFactorNavPanel"), 1.0, 0.8, 2.5);
-
-	CString sCPU = GetString(_T("CPUType"), _T("AutoDetect"));
-	if (sCPU.CompareNoCase(_T("Generic")) == 0) {
-		m_eCPUAlgorithm = Helpers::CPU_Generic;
-	}
-	else if (sCPU.CompareNoCase(_T("MMX")) == 0) {
-		m_eCPUAlgorithm = Helpers::CPU_MMX;
-	}
-	else if (sCPU.CompareNoCase(_T("SSE")) == 0) {
-		m_eCPUAlgorithm = Helpers::CPU_SSE;
-	}
-	else if (sCPU.CompareNoCase(_T("AVX2")) == 0) {
-		m_eCPUAlgorithm = Helpers::CPU_AVX2;
-	}
-	else {
-		m_eCPUAlgorithm = Helpers::ProbeCPU();
-	}
-	m_nNumCores = GetInt(_T("CPUCoresUsed"), 0, 0, 4);
-	if (m_nNumCores == 0) {
-		m_nNumCores = Helpers::NumCoresPerPhysicalProc();
-		if (m_nNumCores > 4) m_nNumCores = 4;
-	}
-
-	CString sDownSampling = GetString(_T("DownSamplingFilter"), _T("BestQuality"));
-	if (sDownSampling.CompareNoCase(_T("NoAliasing")) == 0) {
-		m_eDownsamplingFilter = Filter_Downsampling_No_Aliasing;
-	}
-	else if (sDownSampling.CompareNoCase(_T("Narrow")) == 0) {
-		m_eDownsamplingFilter = Filter_Downsampling_Narrow;
-	}
-	else {
-		m_eDownsamplingFilter = Filter_Downsampling_Best_Quality;
-	}
-
-	m_bNavigateMouseWheel = GetBool(_T("NavigateWithMouseWheel"), false);
-	m_dMouseWheelZoomSpeed = GetDouble(_T("MouseWheelZoomSpeed"), 1.0, 0.1, 10);
-
-	CString sDeleteConfirmation = GetString(_T("DeleteConfirmation"), _T("OnlyWhenNoRecycleBin"));
-	if (sDeleteConfirmation.CompareNoCase(_T("OnlyWhenNoRecycleBin")) == 0) {
-		m_eDeleteConfirmation = Helpers::DC_OnlyWhenNoRecycleBin;
-	}
-	else if (sDeleteConfirmation.CompareNoCase(_T("Never")) == 0) {
-		m_eDeleteConfirmation = Helpers::DC_Never;
-	}
-	else {
-		m_eDeleteConfirmation = Helpers::DC_Always;
-	}
-
-	m_nMaxSlideShowFileListSize = GetInt(_T("MaxSlideShowFileListSizeKB"), 200, 100, 10000);
-	m_nSlideShowEffectTimeMs = GetInt(_T("SlideShowEffectTime"), 200, 100, 5000);
-	m_bForceGDIPlus = GetBool(_T("ForceGDIPlus"), false);
-	m_bSingleInstance = GetBool(_T("SingleInstance"), false);
-	m_bSingleFullScreenInstance = GetBool(_T("SingleFullScreenInstance"), true);
-	m_nJPEGSaveQuality = GetInt(_T("JPEGSaveQuality"), 85, 0, 100);
-	m_nWEBPSaveQuality = GetInt(_T("WEBPSaveQuality"), 85, 0, 100);
-	m_sDefaultSaveFormat = GetString(_T("DefaultSaveFormat"), _T("jpg"));
-	m_sFilesProcessedByWIC = GetString(_T("FilesProcessedByWIC"), _T("*.wdp;*.mdp;*.hdp"));
-	m_sFileEndingsRAW = GetString(_T("FileEndingsRAW"), _T("*.pef;*.dng;*.crw;*.nef;*.cr2;*.mrw;*.rw2;*.orf;*.x3f;*.arw;*.kdc;*.nrw;*.dcr;*.sr2;*.raf"));
-	m_nDisplayFullSizeRAW = GetInt(_T("DisplayFullSizeRAW"), 0, 0, 3);
-	m_bCreateParamDBEntryOnSave = GetBool(_T("CreateParamDBEntryOnSave"), true);
-	m_bWrapAroundFolder = GetBool(_T("WrapAroundFolder"), true);
-	m_bFlashWindowAlert = GetBool(_T("FlashWindowAlert"), true);
-	m_bBeepSoundAlert = GetBool(_T("BeepSoundAlert"), false);  // don't make it default on... too much sound feedback is pretty annoying
-	m_bWindowBorderlessOnStartup = GetBool(_T("WindowBorderlessOnStartup"), false);
-	m_bWindowAlwaysOnTopOnStartup = GetBool(_T("WindowAlwaysOnTopOnStartup"), false);
-
-	m_zoomPauseFactor = GetInt(_T("ZoomPausePercent"), 100, 0, 6553500) / 100.0;  // can't have a % larger than the MAX_IMAGE_DIMENSION %, and convert to a scale factor (double/double division) only once
-	m_bSaveWithoutPrompt = GetBool(_T("OverwriteOriginalFileWithoutSaveDialog"), false);
-	m_bCropWithoutPromptLosslessJPEG = GetBool(_T("CropWithoutPromptLosslessJPEG"), false);
-	m_bAllowFileDeletion = GetBool(_T("AllowFileDeletion"), true);
-	m_bExchangeXButtons = GetBool(_T("ExchangeXButtons"), true);
-	m_bAutoRotateEXIF = GetBool(_T("AutoRotateEXIF"), true);
-	m_bUseEmbeddedColorProfiles = GetBool(_T("UseEmbeddedColorProfiles"), false);
-	m_nDisplayMonitor = GetInt(_T("DisplayMonitor"), -1, -1, 16);
-	m_dAutoContrastAmount = GetDouble(_T("AutoContrastCorrectionAmount"), 0.5, 0.0, 1.0);
-	m_dAutoBrightnessAmount = GetDouble(_T("AutoBrightnessCorrectionAmount"), 0.2, 0.0, 1.0);
-	m_sLandscapeModeParams = GetString(_T("LandscapeModeParams"), _T("-1 -1 -1 -1 0.5 1.0 0.75 0.4 -1 -1 -1"));
-	m_bLandscapeMode = GetBool(_T("LandscapeMode"), false);
-	m_sCopyRenamePattern = GetString(_T("CopyRenamePattern"), _T(""));
-	m_defaultWindowRect = GetRect(_T("DefaultWindowRect"), CRect(0, 0, 0, 0));
-	m_stickyWindowRect = GetRect(_T("StickyWindowRect"), CRect(0, 0, 0, 0));
-	m_bDefaultMaximized = false;
-	m_bDefaultWndToImage = false;
-	m_bStickyWindowSize = false;
-	m_bExplicitWindowRect = false;
-	if (m_defaultWindowRect.IsRectEmpty()) {
-		CString sAuto = GetString(_T("DefaultWindowRect"), _T(""));
-		if (sAuto.CompareNoCase(_T("max")) == 0) {
-			m_bDefaultMaximized = true;
-		}
-		else if (sAuto.CompareNoCase(_T("image")) == 0) {
-			m_bDefaultWndToImage = true;
-		}
-		else if (sAuto.CompareNoCase(_T("sticky")) == 0) {
-			m_bStickyWindowSize = true;
-			m_bExplicitWindowRect = !m_stickyWindowRect.IsRectEmpty();
-		}
-	}
-	else {
-		m_bExplicitWindowRect = true;
-	}
-
-	m_colorBackground = GetColor(_T("BackgroundColor"), 0);
-	m_colorGUI = GetColor(_T("GUIColor"), RGB(243, 242, 231));
-	m_colorHighlight = GetColor(_T("HighlightColor"), RGB(255, 205, 0));
-	m_colorSelected = GetColor(_T("SelectionColor"), RGB(255, 205, 0));
-	m_colorSlider = GetColor(_T("SliderColor"), RGB(255, 0, 80));
-	m_colorFileName = GetColor(_T("FileNameColor"), m_colorGUI);
-	m_colorTransparency = GetColor(_T("TransparencyColor"), m_colorBackground);
-
-	m_nNarrowBorderWidth = GetInt(_T("NarrowBorderWidth"), 0, 0, 10);
-	m_cNarrowBorderColor = GetColor(_T("NarrowBorderColor"), RGB(128, 128, 128));
-
-	m_defaultGUIFont = GetString(_T("DefaultGUIFont"), _T("Default"));
-	m_fileNameFont = GetString(_T("FileNameFont"), _T("Default"));
-
-	CString sUnsharpMaskParams = GetString(_T("UnsharpMaskParameters"), _T(""));
-	float fRadius, fAmount, fThreshold;
-	if (_stscanf(sUnsharpMaskParams, _T(" %f %f %f "), &fRadius, &fAmount, &fThreshold) == 3) {
-		m_unsharpMaskParms.Radius = fRadius;
-		m_unsharpMaskParms.Amount = fAmount;
-		m_unsharpMaskParms.Threshold = fThreshold;
-	}
-	else {
-		m_unsharpMaskParms.Radius = 1.0;
-		m_unsharpMaskParms.Amount = 1.0;
-		m_unsharpMaskParms.Threshold = 4.0;
-	}
-	m_bRTShowGridLines = GetBool(_T("RTShowGridLines"), true);
-	m_bRTAutoCrop = GetBool(_T("RTAutoCrop"), true);
-	m_bRTPreserveAspectRatio = GetBool(_T("RTPreserveAspectRatio"), true);
-	m_sFileNameFormat = GetString(_T("FileNameFormat"), _T("%index% %filepath%"));
-	m_sFileNameFormat = ReplacePlaceholdersFileNameFormat(m_sFileNameFormat);
-	m_bReloadWhenDisplayedImageChanged = GetBool(_T("ReloadWhenDisplayedImageChanged"), true);
-	m_bAllowEditGlobalSettings = GetBool(_T("AllowEditGlobalSettings"), false);
-	m_dPrintMargin = GetDouble(_T("PrintMargin"), 1.0, 0.0, 100.0);
-	m_dDefaultPrintWidth = GetDouble(_T("PrintWidth"), -15.0, -1000, 1000);
-
-	m_sIniEditor = GetString(_T("IniEditor"), _T("notepad"));
-	if (m_sIniEditor.CompareNoCase(_T("notepad")) == 0) {
-		m_eIniEditor = Helpers::INI_Notepad;
-	}
-	else if (m_sIniEditor.CompareNoCase(_T("system")) == 0) {
-		m_eIniEditor = Helpers::INI_System;
-	}
-	else {
-		m_eIniEditor = Helpers::INI_Custom;
-	}
-
-	CString sUnit = GetString(_T("Units"), _T("auto"));
-	if (sUnit.CompareNoCase(_T("auto")) == 0) {
-		TCHAR buffer[2];
-		::GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_IMEASURE, (LPTSTR)&buffer, 2);
-		buffer[1] = 0;
-		m_eMeasureUnit = (buffer[0] == _T('1')) ? Helpers::MU_English : Helpers::MU_Metric;
-	}
-	else if (sUnit.CompareNoCase(_T("english")) == 0) {
-		m_eMeasureUnit = Helpers::MU_English;
-	}
-	else {
-		m_eMeasureUnit = Helpers::MU_Metric;
-	}
-
-	m_minimalWindowSize = GetSize(_T("MinimalWindowSize"), CSize(320, 240));
-	m_minimalDisplayTime = GetInt(_T("MinimalDisplayTime"), 0, 0, 1000);
-	m_userCropAspectRatio = GetSize(_T("UserCropAspectRatio"), CSize(1, 1));
-	if (m_userCropAspectRatio.cx <= 0 || m_userCropAspectRatio.cy <= 0) {
-		m_userCropAspectRatio = CSize(1, 1);
-	}
-
-	m_sWallpaperPath = GetString(_T("WallpaperPath"), _T("%temp%"));
-	if (m_sWallpaperPath == _T("%temp%")) {
-		TCHAR tempPath[MAX_PATH];
-		tempPath[0] = 0;
-		::GetTempPath(MAX_PATH, tempPath);
-		m_sWallpaperPath = tempPath;
-	}
-	else {
-		TCHAR buffer[MAX_PATH];
-		if (::ExpandEnvironmentStrings(m_sWallpaperPath, (LPTSTR)buffer, MAX_PATH)) {
-			m_sWallpaperPath = buffer;
-		}
-	}
-
-	m_bSkipFileOpenDialogOnStartup = GetBool(_T("SkipFileOpenDialogOnStartup"), false);
-
-	m_sLanguage = GetString(_T("Language"), _T("auto"));
-	m_sGPSMapProvider = GetString(_T("GPSMapProvider"), _T("https://opentopomap.org/#marker=15/{lat}/{lng}"));
-
-	m_sACCExclude = GetString(_T("ACCExclude"), _T("")); 
-	m_sACCExclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
-	m_sACCExclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
-	m_sACCInclude = GetString(_T("ACCInclude"), _T("")); 
-	m_sACCInclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
-	m_sACCInclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
-	m_sLDCExclude = GetString(_T("LDCExclude"), _T(""));
-	m_sLDCExclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
-	m_sLDCExclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
-	m_sLDCInclude = GetString(_T("LDCInclude"), _T(""));
-	m_sLDCInclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
-	m_sLDCInclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
-
-	CString sColorCorrections = GetString(_T("ColorCorrection"), _T(""));
-	if (sColorCorrections.GetLength() > 0 &&
-		_stscanf(sColorCorrections, _T("R: %f G: %f B: %f C: %f M: %f Y: %f"), 
-		&m_fColorCorrections[0], &m_fColorCorrections[1], &m_fColorCorrections[2],
-		&m_fColorCorrections[3], &m_fColorCorrections[4], &m_fColorCorrections[5]) == 6) {
-		for (int i = 0; i < 6; i++) {
-			m_fColorCorrections[i] = min(1.0f, max(0.0f, m_fColorCorrections[i]));
-		}
-	} else {
-		for (int i = 0; i < 6; i++) {
-			m_fColorCorrections[i] = -1;
-		}
-	}
-
-	m_DefaultFixedCropSize = GetSize(_T("DefaultFixedCropSize"), CSize(320, 200));
-
-	// read all user commands
-	CString sCmd;
-	int nIndex = 0;
-	do {
-		CString sKey;
-		sKey.Format(_T("UserCmd%d"), nIndex++);
-		sCmd = GetString(sKey, _T(""));
-		if (sCmd.GetLength() > 0) {
-			CUserCommand* pUserCmd = new CUserCommand(nIndex - 1, sCmd, true);
-			if (pUserCmd->IsValid()) {
-				m_userCommands.push_back(pUserCmd);
-			}
-		}
-	} while (sCmd.GetLength() > 0 || nIndex <= 3);
-
-	// read all open with commands
-	nIndex = 0;
-	m_nNextOpenWithIndex = 0;
-	int nGapIndex = 0;
-	do {
-		CString sKey;
-		sKey.Format(_T("OpenWith%d"), nIndex++);
-		sCmd = GetString(sKey, _T(""));
-		if (!sCmd.IsEmpty()) {
-			if (sCmd != _T("[deleted]")) {
-				CUserCommand* pOpenWithCmd = new CUserCommand(nIndex - 1, sCmd, false);
-				if (pOpenWithCmd->IsValid()) {
-					m_openWithCommands.push_back(pOpenWithCmd);
-				}
-			}
-			m_nNextOpenWithIndex = nIndex;
-			nGapIndex = 0;
-		} else {
-			nGapIndex++;
-		}
-	} while (nGapIndex <= 2);
-	
-	// Auto-Update settings
-	m_bAutoCheckUpdate = GetBool(_T("AutoCheckUpdate"), true);
-	m_sLastSkippedVersion = GetString(_T("LastSkippedVersion"), _T(""));
+	LoadSettings();
 }
 
 CImageProcessingParams CSettingsProvider::LandscapeModeParams(const CImageProcessingParams& templParams) {
@@ -873,7 +579,9 @@ LPCTSTR CSettingsProvider::GetAutoZoomModeString(Helpers::EAutoZoomMode autoZoom
 }
 
 void CSettingsProvider::WriteString(LPCTSTR sKey, LPCTSTR sString) {
+	MakeSureUserINIExists();
 	::WritePrivateProfileString(SECTION_NAME, sKey, sString, m_sIniNameUser);
+	m_bUserINIExists = true;
 }
 
 void CSettingsProvider::WriteDouble(LPCTSTR sKey, double dValue) {
@@ -897,4 +605,334 @@ void CSettingsProvider::SetLastSkippedVersion(LPCTSTR sVersion) {
 	m_sLastSkippedVersion = sVersion;
 	WriteString(_T("LastSkippedVersion"), sVersion);
 	m_bUserINIExists = true;
+}
+
+void CSettingsProvider::ReloadSettings() {
+    delete[] m_pIniGlobalSectionBuffer;
+    m_pIniGlobalSectionBuffer = NULL;
+    delete[] m_pIniUserSectionBuffer;
+    m_pIniUserSectionBuffer = NULL;
+    if (m_pGlobalKeys) {
+        delete m_pGlobalKeys;
+        m_pGlobalKeys = NULL;
+    }
+    if (m_pUserKeys) {
+        delete m_pUserKeys;
+        m_pUserKeys = NULL;
+    }
+    
+    // Clear lists
+    std::list<CUserCommand*>::iterator iter;
+    for (iter = m_userCommands.begin(); iter != m_userCommands.end(); iter++) {
+        delete *iter;
+    }
+    m_userCommands.clear();
+
+    for (iter = m_openWithCommands.begin(); iter != m_openWithCommands.end(); iter++) {
+        delete *iter;
+    }
+    m_openWithCommands.clear();
+
+    // Reset fallback
+    m_sIniNameUser = m_sIniNameGlobal;
+
+    LoadSettings();
+}
+
+void CSettingsProvider::LoadSettings() {
+	m_bStoreToEXEPath = GetBool(_T("StoreToEXEPath"), false);
+
+	if (!m_bStoreToEXEPath) {
+		// User INI file
+		m_sIniNameUser = CString(Helpers::JPEGViewAppDataPath()) + m_sIniFileTitle;
+		m_bUserINIExists = (::GetFileAttributes(m_sIniNameUser) != INVALID_FILE_ATTRIBUTES);
+	} else {
+		Helpers::SetJPEGViewAppDataPath(m_sEXEPath);
+	}
+
+	// Get "My documents" path
+	CString sMyDocumentsFolder;
+	LPTSTR lpFolderBuffer = sMyDocumentsFolder.GetBuffer(MAX_PATH);
+	::SHGetFolderPath(NULL, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, lpFolderBuffer);
+	sMyDocumentsFolder.ReleaseBuffer();
+
+	// Get "My pictures" path
+	CString sMyPicturesFolder;
+	LPTSTR lpPicturesBuffer = sMyPicturesFolder.GetBuffer(MAX_PATH);
+	::SHGetFolderPath(NULL, CSIDL_MYPICTURES, NULL, SHGFP_TYPE_CURRENT, lpPicturesBuffer);
+	sMyPicturesFolder.ReleaseBuffer();
+
+	// Read settings that can be written with SaveSettings()
+	ReadWriteableINISettings();
+
+	m_bAutoFullScreen = GetString(_T("ShowFullScreen"), _T("")).CompareNoCase(_T("auto")) == 0;
+	m_bShowFullScreen = m_bAutoFullScreen ? true : GetBool(_T("ShowFullScreen"), true);
+	m_nNarrowBorderWidth = GetInt(_T("NarrowBorderWidth"), 2, 0, 100);
+	m_cNarrowBorderColor = GetColor(_T("NarrowBorderColor"), RGB(128, 128, 128));
+	m_bShowEXIFDateInTitle = GetBool(_T("ShowEXIFDateInTitle"), true);
+	m_bShowFullPathInTitle = GetBool(_T("ShowFilePathInTitle"), false);
+	m_bShowHistogram = GetBool(_T("ShowHistogram"), false);
+	m_bShowJPEGComments = GetBool(_T("ShowJPEGComments"), true);
+	m_bShowBottomPanel = GetBool(_T("ShowBottomPanel"), true);
+	m_bShowZoomNavigator = GetBool(_T("ShowZoomNavigator"), true);
+	m_fBlendFactorNavPanel = (float)GetDouble(_T("BlendFactorNavPanel"), 0.5, 0.0, 1.0);
+	m_fScaleFactorNavPanel = (float)GetDouble(_T("ScaleFactorNavPanel"), 1.0, 0.8, 2.5);
+
+	CString sCPU = GetString(_T("CPUType"), _T("AutoDetect"));
+	if (sCPU.CompareNoCase(_T("Generic")) == 0) {
+		m_eCPUAlgorithm = Helpers::CPU_Generic;
+	}
+	else if (sCPU.CompareNoCase(_T("MMX")) == 0) {
+		m_eCPUAlgorithm = Helpers::CPU_MMX;
+	}
+	else if (sCPU.CompareNoCase(_T("SSE")) == 0) {
+		m_eCPUAlgorithm = Helpers::CPU_SSE;
+	}
+	else if (sCPU.CompareNoCase(_T("AVX2")) == 0) {
+		m_eCPUAlgorithm = Helpers::CPU_AVX2;
+	}
+	else {
+		m_eCPUAlgorithm = Helpers::ProbeCPU();
+	}
+	m_nNumCores = GetInt(_T("CPUCoresUsed"), 0, 0, 4);
+	if (m_nNumCores == 0) {
+		m_nNumCores = Helpers::NumCoresPerPhysicalProc();
+		if (m_nNumCores > 4) m_nNumCores = 4;
+	}
+
+	CString sDownSampling = GetString(_T("DownSamplingFilter"), _T("BestQuality"));
+	if (sDownSampling.CompareNoCase(_T("NoAliasing")) == 0) {
+		m_eDownsamplingFilter = Filter_Downsampling_No_Aliasing;
+	}
+	else if (sDownSampling.CompareNoCase(_T("Narrow")) == 0) {
+		m_eDownsamplingFilter = Filter_Downsampling_Narrow;
+	}
+	else {
+		m_eDownsamplingFilter = Filter_Downsampling_Best_Quality;
+	}
+
+	m_bNavigateMouseWheel = GetBool(_T("NavigateWithMouseWheel"), false);
+	m_dMouseWheelZoomSpeed = GetDouble(_T("MouseWheelZoomSpeed"), 1.0, 0.1, 10);
+
+	CString sDeleteConfirmation = GetString(_T("DeleteConfirmation"), _T("OnlyWhenNoRecycleBin"));
+	if (sDeleteConfirmation.CompareNoCase(_T("OnlyWhenNoRecycleBin")) == 0) {
+		m_eDeleteConfirmation = Helpers::DC_OnlyWhenNoRecycleBin;
+	}
+	else if (sDeleteConfirmation.CompareNoCase(_T("Never")) == 0) {
+		m_eDeleteConfirmation = Helpers::DC_Never;
+	}
+	else {
+		m_eDeleteConfirmation = Helpers::DC_Always;
+	}
+
+	m_nMaxSlideShowFileListSize = GetInt(_T("MaxSlideShowFileListSizeKB"), 200, 100, 10000);
+	m_nSlideShowEffectTimeMs = GetInt(_T("SlideShowEffectTime"), 200, 100, 5000);
+	m_bForceGDIPlus = GetBool(_T("ForceGDIPlus"), false);
+	m_bSingleInstance = GetBool(_T("SingleInstance"), false);
+	m_bSingleFullScreenInstance = GetBool(_T("SingleFullScreenInstance"), true);
+	m_nJPEGSaveQuality = GetInt(_T("JPEGSaveQuality"), 85, 0, 100);
+	m_nWEBPSaveQuality = GetInt(_T("WEBPSaveQuality"), 85, 0, 100);
+	m_sDefaultSaveFormat = GetString(_T("DefaultSaveFormat"), _T("jpg"));
+	m_sFilesProcessedByWIC = GetString(_T("FilesProcessedByWIC"), _T("*.wdp;*.mdp;*.hdp"));
+	m_sFileEndingsRAW = GetString(_T("FileEndingsRAW"), _T("*.pef;*.dng;*.crw;*.nef;*.cr2;*.mrw;*.rw2;*.orf;*.x3f;*.arw;*.kdc;*.nrw;*.dcr;*.sr2;*.raf"));
+	m_nDisplayFullSizeRAW = GetInt(_T("DisplayFullSizeRAW"), 0, 0, 3);
+	m_bCreateParamDBEntryOnSave = GetBool(_T("CreateParamDBEntryOnSave"), true);
+	m_bWrapAroundFolder = GetBool(_T("WrapAroundFolder"), true);
+	m_bFlashWindowAlert = GetBool(_T("FlashWindowAlert"), true);
+	m_bBeepSoundAlert = GetBool(_T("BeepSoundAlert"), false);  // don't make it default on... too much sound feedback is pretty annoying
+	m_bWindowBorderlessOnStartup = GetBool(_T("WindowBorderlessOnStartup"), false);
+	m_bWindowAlwaysOnTopOnStartup = GetBool(_T("WindowAlwaysOnTopOnStartup"), false);
+
+	m_zoomPauseFactor = GetInt(_T("ZoomPausePercent"), 100, 0, 6553500) / 100.0;  // can't have a % larger than the MAX_IMAGE_DIMENSION %, and convert to a scale factor (double/double division) only once
+	m_bSaveWithoutPrompt = GetBool(_T("OverwriteOriginalFileWithoutSaveDialog"), false);
+	m_bCropWithoutPromptLosslessJPEG = GetBool(_T("CropWithoutPromptLosslessJPEG"), false);
+	m_bAllowFileDeletion = GetBool(_T("AllowFileDeletion"), true);
+	m_bExchangeXButtons = GetBool(_T("ExchangeXButtons"), true);
+	m_bAutoRotateEXIF = GetBool(_T("AutoRotateEXIF"), true);
+	m_bUseEmbeddedColorProfiles = GetBool(_T("UseEmbeddedColorProfiles"), false);
+	m_nDisplayMonitor = GetInt(_T("DisplayMonitor"), -1, -1, 16);
+	m_dAutoContrastAmount = GetDouble(_T("AutoContrastCorrectionAmount"), 0.5, 0.0, 1.0);
+	m_dAutoBrightnessAmount = GetDouble(_T("AutoBrightnessCorrectionAmount"), 0.2, 0.0, 1.0);
+	m_sLandscapeModeParams = GetString(_T("LandscapeModeParams"), _T("-1 -1 -1 -1 0.5 1.0 0.75 0.4 -1 -1 -1"));
+	m_bLandscapeMode = GetBool(_T("LandscapeMode"), false);
+	m_sCopyRenamePattern = GetString(_T("CopyRenamePattern"), _T(""));
+	m_defaultWindowRect = GetRect(_T("DefaultWindowRect"), CRect(0, 0, 0, 0));
+	m_stickyWindowRect = GetRect(_T("StickyWindowRect"), CRect(0, 0, 0, 0));
+	m_bDefaultMaximized = false;
+	m_bDefaultWndToImage = false;
+	m_bStickyWindowSize = false;
+	m_bExplicitWindowRect = false;
+	if (m_defaultWindowRect.IsRectEmpty()) {
+		CString sAuto = GetString(_T("DefaultWindowRect"), _T(""));
+		if (sAuto.CompareNoCase(_T("max")) == 0) {
+			m_bDefaultMaximized = true;
+		}
+		else if (sAuto.CompareNoCase(_T("image")) == 0) {
+			m_bDefaultWndToImage = true;
+		}
+		else if (sAuto.CompareNoCase(_T("sticky")) == 0) {
+			m_bStickyWindowSize = true;
+			m_bExplicitWindowRect = !m_stickyWindowRect.IsRectEmpty();
+		}
+	}
+	else {
+		m_bExplicitWindowRect = true;
+	}
+
+	m_colorBackground = GetColor(_T("BackgroundColor"), 0);
+	m_colorGUI = GetColor(_T("GUIColor"), RGB(243, 242, 231));
+	m_colorHighlight = GetColor(_T("HighlightColor"), RGB(255, 205, 0));
+	m_colorSelected = GetColor(_T("SelectionColor"), RGB(255, 205, 0));
+	m_colorSlider = GetColor(_T("SliderColor"), RGB(255, 0, 80));
+	m_colorFileName = GetColor(_T("FileNameColor"), m_colorGUI);
+	m_colorTransparency = GetColor(_T("TransparencyColor"), m_colorBackground);
+
+	m_nNarrowBorderWidth = GetInt(_T("NarrowBorderWidth"), 0, 0, 10);
+	m_cNarrowBorderColor = GetColor(_T("NarrowBorderColor"), RGB(128, 128, 128));
+
+	m_defaultGUIFont = GetString(_T("DefaultGUIFont"), _T("Default"));
+	m_fileNameFont = GetString(_T("FileNameFont"), _T("Default"));
+
+	CString sUnsharpMaskParams = GetString(_T("UnsharpMaskParameters"), _T(""));
+	float fRadius, fAmount, fThreshold;
+	if (_stscanf(sUnsharpMaskParams, _T(" %f %f %f "), &fRadius, &fAmount, &fThreshold) == 3) {
+		m_unsharpMaskParms.Radius = fRadius;
+		m_unsharpMaskParms.Amount = fAmount;
+		m_unsharpMaskParms.Threshold = fThreshold;
+	}
+	else {
+		m_unsharpMaskParms.Radius = 1.0;
+		m_unsharpMaskParms.Amount = 1.0;
+		m_unsharpMaskParms.Threshold = 4.0;
+	}
+	m_bRTShowGridLines = GetBool(_T("RTShowGridLines"), true);
+	m_bRTAutoCrop = GetBool(_T("RTAutoCrop"), true);
+	m_bRTPreserveAspectRatio = GetBool(_T("RTPreserveAspectRatio"), true);
+	m_sFileNameFormat = GetString(_T("FileNameFormat"), _T("%index% %filepath%"));
+	m_sFileNameFormat = ReplacePlaceholdersFileNameFormat(m_sFileNameFormat);
+	m_bReloadWhenDisplayedImageChanged = GetBool(_T("ReloadWhenDisplayedImageChanged"), true);
+	m_bAllowEditGlobalSettings = GetBool(_T("AllowEditGlobalSettings"), false);
+	m_dPrintMargin = GetDouble(_T("PrintMargin"), 1.0, 0.0, 100.0);
+	m_dDefaultPrintWidth = GetDouble(_T("PrintWidth"), -15.0, -1000, 1000);
+
+	m_sIniEditor = GetString(_T("IniEditor"), _T("notepad"));
+	if (m_sIniEditor.CompareNoCase(_T("notepad")) == 0) {
+		m_eIniEditor = Helpers::INI_Notepad;
+	}
+	else if (m_sIniEditor.CompareNoCase(_T("system")) == 0) {
+		m_eIniEditor = Helpers::INI_System;
+	}
+	else {
+		m_eIniEditor = Helpers::INI_Custom;
+	}
+
+	CString sUnit = GetString(_T("Units"), _T("auto"));
+	if (sUnit.CompareNoCase(_T("auto")) == 0) {
+		TCHAR buffer[2];
+		::GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_IMEASURE, (LPTSTR)&buffer, 2);
+		buffer[1] = 0;
+		m_eMeasureUnit = (buffer[0] == _T('1')) ? Helpers::MU_English : Helpers::MU_Metric;
+	}
+	else if (sUnit.CompareNoCase(_T("english")) == 0) {
+		m_eMeasureUnit = Helpers::MU_English;
+	}
+	else {
+		m_eMeasureUnit = Helpers::MU_Metric;
+	}
+
+	m_minimalWindowSize = GetSize(_T("MinimalWindowSize"), CSize(320, 240));
+	m_minimalDisplayTime = GetInt(_T("MinimalDisplayTime"), 0, 0, 1000);
+	m_userCropAspectRatio = GetSize(_T("UserCropAspectRatio"), CSize(1, 1));
+	if (m_userCropAspectRatio.cx <= 0 || m_userCropAspectRatio.cy <= 0) {
+		m_userCropAspectRatio = CSize(1, 1);
+	}
+
+	m_sWallpaperPath = GetString(_T("WallpaperPath"), _T("%temp%"));
+	if (m_sWallpaperPath == _T("%temp%")) {
+		TCHAR tempPath[MAX_PATH];
+		tempPath[0] = 0;
+		::GetTempPath(MAX_PATH, tempPath);
+		m_sWallpaperPath = tempPath;
+	}
+	else {
+		TCHAR buffer[MAX_PATH];
+		if (::ExpandEnvironmentStrings(m_sWallpaperPath, (LPTSTR)buffer, MAX_PATH)) {
+			m_sWallpaperPath = buffer;
+		}
+	}
+
+	m_bSkipFileOpenDialogOnStartup = GetBool(_T("SkipFileOpenDialogOnStartup"), false);
+
+	m_sLanguage = GetString(_T("Language"), _T("auto"));
+	m_sGPSMapProvider = GetString(_T("GPSMapProvider"), _T("https://opentopomap.org/#marker=15/{lat}/{lng}"));
+
+	m_sACCExclude = GetString(_T("ACCExclude"), _T("")); 
+	m_sACCExclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
+	m_sACCExclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
+	m_sACCInclude = GetString(_T("ACCInclude"), _T("")); 
+	m_sACCInclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
+	m_sACCInclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
+	m_sLDCExclude = GetString(_T("LDCExclude"), _T(""));
+	m_sLDCExclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
+	m_sLDCExclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
+	m_sLDCInclude = GetString(_T("LDCInclude"), _T(""));
+	m_sLDCInclude.Replace(_T("%mydocuments%"), sMyDocumentsFolder);
+	m_sLDCInclude.Replace(_T("%mypictures%"), sMyPicturesFolder);
+
+	CString sColorCorrections = GetString(_T("ColorCorrection"), _T(""));
+	if (sColorCorrections.GetLength() > 0 &&
+		_stscanf(sColorCorrections, _T("R: %f G: %f B: %f C: %f M: %f Y: %f"), 
+		&m_fColorCorrections[0], &m_fColorCorrections[1], &m_fColorCorrections[2],
+		&m_fColorCorrections[3], &m_fColorCorrections[4], &m_fColorCorrections[5]) == 6) {
+		for (int i = 0; i < 6; i++) {
+			m_fColorCorrections[i] = min(1.0f, max(0.0f, m_fColorCorrections[i]));
+		}
+	} else {
+		for (int i = 0; i < 6; i++) {
+			m_fColorCorrections[i] = -1;
+		}
+	}
+
+	m_DefaultFixedCropSize = GetSize(_T("DefaultFixedCropSize"), CSize(320, 200));
+
+	// read all user commands
+	CString sCmd;
+	int nIndex = 0;
+	do {
+		CString sKey;
+		sKey.Format(_T("UserCmd%d"), nIndex++);
+		sCmd = GetString(sKey, _T(""));
+		if (sCmd.GetLength() > 0) {
+			CUserCommand* pUserCmd = new CUserCommand(nIndex - 1, sCmd, true);
+			if (pUserCmd->IsValid()) {
+				m_userCommands.push_back(pUserCmd);
+			}
+		}
+	} while (sCmd.GetLength() > 0 || nIndex <= 3);
+
+	// read all open with commands
+	nIndex = 0;
+	m_nNextOpenWithIndex = 0;
+	int nGapIndex = 0;
+	do {
+		CString sKey;
+		sKey.Format(_T("OpenWith%d"), nIndex++);
+		sCmd = GetString(sKey, _T(""));
+		if (!sCmd.IsEmpty()) {
+			if (sCmd != _T("[deleted]")) {
+				CUserCommand* pOpenWithCmd = new CUserCommand(nIndex - 1, sCmd, false);
+				if (pOpenWithCmd->IsValid()) {
+					m_openWithCommands.push_back(pOpenWithCmd);
+				}
+			}
+			m_nNextOpenWithIndex = nIndex;
+			nGapIndex = 0;
+		} else {
+			nGapIndex++;
+		}
+	} while (nGapIndex <= 2);
+	
+	// Auto-Update settings
+	m_bAutoCheckUpdate = GetBool(_T("AutoCheckUpdate"), true);
+	m_sLastSkippedVersion = GetString(_T("LastSkippedVersion"), _T(""));
 }

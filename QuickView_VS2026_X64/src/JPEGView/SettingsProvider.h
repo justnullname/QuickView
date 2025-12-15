@@ -1,7 +1,9 @@
 #pragma once
 
 #include "Helpers.h"
+#ifndef QV_CONFIG_APP
 #include "FileList.h"
+#endif
 #include "UserCommand.h"
 #include "ProcessParams.h"
 #include "HashCompareLPCTSTR.h"
@@ -18,6 +20,12 @@ class CSettingsProvider
 public:
 	// Singleton instance
 	static CSettingsProvider& This();
+
+	// Public Write Accessors for Config App
+	void WriteString(LPCTSTR sKey, LPCTSTR sString);
+	void WriteDouble(LPCTSTR sKey, double dValue);
+	void WriteBool(LPCTSTR sKey, bool bValue);
+	void WriteInt(LPCTSTR sKey, int nValue);
 
 	// The methods correspond to the INI file settings
 	bool StoreToEXEPath() { return m_bStoreToEXEPath; }
@@ -90,6 +98,7 @@ public:
 	bool WrapAroundFolder() { return m_bWrapAroundFolder && m_eNavigation == Helpers::NM_LoopDirectory; }
 	bool ExchangeXButtons() { return m_bExchangeXButtons; }
 	bool AutoRotateEXIF() { return m_bAutoRotateEXIF; }
+	LPCTSTR GetEXEPath() { return m_sEXEPath; }
 	bool UseEmbeddedColorProfiles() { return m_bUseEmbeddedColorProfiles; }
 	LPCTSTR ACCExclude() { return m_sACCExclude; }
 	LPCTSTR ACCInclude() { return m_sACCInclude; }
@@ -169,6 +178,16 @@ public:
 	// Update user settings with settings from INI file template
 	void UpdateUserSettings();
 
+
+
+	// Reloads settings from INI file (Hot Reload)
+	void ReloadSettings();
+
+private:
+	void LoadSettings(); // Initialization helper
+
+public:
+
 	// Deletes the open with command, returns index of the deleted command, -1 if invalid
 	int DeleteOpenWithCommand(CUserCommand* pCommand);
 
@@ -181,8 +200,7 @@ public:
 	// Returns the next index for an open with entry
 	int GetNextOpenWithIndex() { return m_nNextOpenWithIndex; }
 
-	// Gets the path where the global INI file and the EXE is located
-	LPCTSTR GetEXEPath() { return m_sEXEPath; }
+
 
 	// Get the file name with path of the global INI file (in EXE path)
 	LPCTSTR GetGlobalINIFileName() { return m_sIniNameGlobal; }
@@ -252,6 +270,7 @@ private:
 	Helpers::ETransitionEffect m_eSlideShowTransitionEffect;
 	int m_nSlideShowEffectTimeMs;
 	bool m_bForceGDIPlus;
+
 	bool m_bSingleInstance;
 	bool m_bSingleFullScreenInstance;
 	int m_nJPEGSaveQuality;
@@ -345,10 +364,5 @@ private:
 	COLORREF GetColor(LPCTSTR sKey, COLORREF defaultColor);
 	Helpers::EAutoZoomMode GetAutoZoomMode(LPCTSTR sKey, Helpers::EAutoZoomMode defaultZoomMode);
 	LPCTSTR GetAutoZoomModeString(Helpers::EAutoZoomMode autoZoomMode);
-	void WriteString(LPCTSTR sKey, LPCTSTR sString);
-	void WriteDouble(LPCTSTR sKey, double dValue);
-	void WriteBool(LPCTSTR sKey, bool bValue);
-	void WriteInt(LPCTSTR sKey, int nValue);
-
 	CSettingsProvider(void);
 };

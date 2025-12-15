@@ -14,7 +14,7 @@ CString CNLS::GetLocalizedFileName(LPCTSTR sPath, LPCTSTR sPrefixName, LPCTSTR s
 		::GetLocaleInfo(threadLocale, LOCALE_SISO639LANGNAME, (LPTSTR) &buff, sizeof(buff));
 		::GetLocaleInfo(threadLocale, LOCALE_SISO3166CTRYNAME, (LPTSTR) &buff2, sizeof(buff2));
 		sLanguageCode = buff;
-		sNLSFile = CString(sPath) + sPrefixName + _T("_") + sLanguageCode + "-" + buff2 + _T(".") + sExtension;
+		sNLSFile = CString(sPath) + sPrefixName + _T("_") + sLanguageCode + _T("-") + buff2 + _T(".") + sExtension;
 		if (::GetFileAttributes(sNLSFile) == INVALID_FILE_ATTRIBUTES) {
 			sNLSFile.Empty();
 		}

@@ -9,7 +9,7 @@
 
 // Version definitions - Single source of truth
 #define VER_MAJOR 1
-#define VER_MINOR 3
+#define VER_MINOR 4
 #define VER_PATCH 0
 #define VER_BUILD 0
 
@@ -278,6 +278,7 @@
 #define IDM_AUTO_ZOOM_FILL_NO_ZOOM	12510		// :KeyMap: set auto zoom mode fill screen, never zoom
 #define IDM_AUTO_ZOOM_FIT	12520		// :KeyMap: set auto zoom mode fit to screen
 #define IDM_AUTO_ZOOM_FILL	12530		// :KeyMap: set auto zoom mode fill screen
+#define IDM_SETTINGS		12590       // :KeyMap: open settings dialog
 #define IDM_EDIT_GLOBAL_CONFIG 12600		// :KeyMap: edit global configuration
 #define IDM_EDIT_USER_CONFIG   12610		// :KeyMap: edit user configuration
 #define IDM_MANAGE_OPEN_WITH_MENU 12612

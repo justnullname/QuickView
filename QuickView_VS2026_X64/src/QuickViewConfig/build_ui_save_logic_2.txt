@@ -1,0 +1,617 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/14 16:04:09.
+
+Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Touching "obj\x64\Debug\QuickViewConfig.tlog\unsuccessfulbuild".
+ClCompile:
+  All outputs are up-to-date.
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\CL.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /Od /D WIN32 /D _DEBUG /D _WINDOWS /D STRICT /D QV_CONFIG_APP /D _ATL_CSTRING_EXPLICIT_CONSTRUCTORS /D _ATL_NO_COM_SUPPORT /D _UNICODE /D UNICODE /Gm- /EHsc /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Yu"stdafx.h" /Fp"obj\x64\Debug\QuickViewConfig.pch" /Fo"obj\x64\Debug\\" /Fd"obj\x64\Debug\vc143.pdb" /external:W3 /Gd /TP /FC /errorReport:queue QuickViewConfig.cpp MainDlgConfig.cpp
+  QuickViewConfig.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(21,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(29,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(37,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(20,30): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(353,7):
+      参见“CSettingsProvider::WriteInt”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(22,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(23,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(24,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(26,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(27,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(19,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(23,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(24,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(25,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(29,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(30,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(31,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(32,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(33,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(20,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(21,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(22,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(25,30): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(26,35): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(27,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(31,27): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(33,16): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(34,31): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(35,21): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(38,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(39,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(40,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(21,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(26,12): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/QuickViewConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(353,7):
+      参见“CSettingsProvider::WriteInt”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+  MainDlgConfig.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(21,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(29,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(37,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(20,30): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(353,7):
+      参见“CSettingsProvider::WriteInt”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(22,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(23,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(24,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(26,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(27,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(19,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(23,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(24,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(25,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(29,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(30,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(31,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(32,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(33,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(20,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(21,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(22,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(25,30): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(26,35): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(27,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(31,27): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(33,16): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(34,31): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(35,21): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(38,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(39,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(40,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(352,7):
+      参见“CSettingsProvider::WriteBool”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(21,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(350,7):
+      参见“CSettingsProvider::WriteString”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(26,12): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/MainDlgConfig.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(353,7):
+      参见“CSettingsProvider::WriteInt”的声明
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(18,7):
+      参见“CSettingsProvider”的声明
+  
+  正在生成代码...
+Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(21,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(29,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(37,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(20,30): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(22,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(23,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(24,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(26,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(27,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(19,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(23,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(24,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(25,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(29,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(30,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(31,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(32,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(33,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(20,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(21,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(22,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(25,30): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(26,35): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(27,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(31,27): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(33,16): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(34,31): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(35,21): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(38,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(39,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(40,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(21,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(26,12): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(21,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(29,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelGeneral.h(37,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(20,30): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(22,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(23,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(24,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(25,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(26,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelAppearance.h(27,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(19,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(23,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(24,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(25,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(29,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(30,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(31,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(32,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelInteraction.h(33,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(20,28): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(21,33): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(22,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(25,30): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(26,35): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(27,17): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(31,27): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(33,16): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(34,31): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(35,21): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(38,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(39,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelImage.h(40,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(18,12): error C2248: “CSettingsProvider::WriteBool”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(21,12): error C2248: “CSettingsProvider::WriteString”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\PanelMisc.h(26,12): error C2248: “CSettingsProvider::WriteInt”: 无法访问 private 成员(在“CSettingsProvider”类中声明) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+
+    0 Warning(s)
+    74 Error(s)
+
+Time Elapsed 00:00:00.51

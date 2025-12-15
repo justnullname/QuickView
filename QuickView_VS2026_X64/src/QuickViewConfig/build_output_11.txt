@@ -1,0 +1,50 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/14 14:51:14.
+
+Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Touching "obj\x64\Debug\QuickViewConfig.tlog\unsuccessfulbuild".
+ClCompile:
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\CL.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /Od /D WIN32 /D _DEBUG /D _WINDOWS /D STRICT /D QV_CONFIG_APP /D _ATL_CSTRING_EXPLICIT_CONSTRUCTORS /D _ATL_NO_COM_SUPPORT /D _UNICODE /D UNICODE /Gm- /EHsc /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Yc"stdafx.h" /Fp"obj\x64\Debug\QuickViewConfig.pch" /Fo"obj\x64\Debug\\" /Fd"obj\x64\Debug\vc143.pdb" /external:W3 /Gd /TP /FC /errorReport:queue stdafx.cpp
+  stdafx.cpp
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\CL.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /Od /D WIN32 /D _DEBUG /D _WINDOWS /D STRICT /D QV_CONFIG_APP /D _ATL_CSTRING_EXPLICIT_CONSTRUCTORS /D _ATL_NO_COM_SUPPORT /D _UNICODE /D UNICODE /Gm- /EHsc /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Yu"stdafx.h" /Fp"obj\x64\Debug\QuickViewConfig.pch" /Fo"obj\x64\Debug\\" /Fd"obj\x64\Debug\vc143.pdb" /external:W3 /Gd /TP /FC /errorReport:queue QuickViewConfig.cpp ..\JPEGView\SettingsProvider.cpp ..\JPEGView\Helpers.cpp ..\JPEGView\UserCommand.cpp ..\JPEGView\NLS.cpp ..\JPEGView\HashCompareLPCTSTR.cpp ..\JPEGView\MultiMonitorSupport.cpp ..\JPEGView\KeyMap.cpp
+  QuickViewConfig.cpp
+  SettingsProvider.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+  Helpers.cpp
+  UserCommand.cpp
+  NLS.cpp
+  HashCompareLPCTSTR.cpp
+  MultiMonitorSupport.cpp
+  KeyMap.cpp
+  正在生成代码...
+Link:
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\link.exe /ERRORREPORT:QUEUE /OUT:"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\bin\x64\Debug\QuickViewConfig.exe" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\bin\x64\Debug\QuickViewConfig.pdb" /SUBSYSTEM:WINDOWS /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\bin\x64\Debug\QuickViewConfig.lib" /MACHINE:X64 obj\x64\Debug\QuickViewConfig.obj
+  obj\x64\Debug\stdafx.obj
+  obj\x64\Debug\SettingsProvider.obj
+  obj\x64\Debug\Helpers.obj
+  obj\x64\Debug\UserCommand.obj
+  obj\x64\Debug\NLS.obj
+  obj\x64\Debug\HashCompareLPCTSTR.obj
+  obj\x64\Debug\MultiMonitorSupport.obj
+  obj\x64\Debug\KeyMap.obj
+  QuickViewConfig.vcxproj -> e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\bin\x64\Debug\QuickViewConfig.exe
+FinalizeBuildStatus:
+  Deleting file "obj\x64\Debug\QuickViewConfig.tlog\unsuccessfulbuild".
+  Touching "obj\x64\Debug\QuickViewConfig.tlog\QuickViewConfig.lastbuildstate".
+Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default targets).
+
+Build succeeded.
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:03.80

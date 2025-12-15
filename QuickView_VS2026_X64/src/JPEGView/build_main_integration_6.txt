@@ -1,0 +1,467 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/14 16:27:56.
+
+Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Touching "obj\x64\Release\QuickView.tlog\unsuccessfulbuild".
+ClCompile:
+  All outputs are up-to-date.
+  All outputs are up-to-date.
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x64\CL.exe /c /I..\WTL\Include /nologo /W3 /WX- /diagnostics:column /O2 /D WIN32 /D _WINDOWS /D STRICT /D NDEBUG /D _UNICODE /D UNICODE /GF- /Gm- /EHa /MT /GS /Gy- /fp:precise /fp:except- /Zc:wchar_t /Zc:forScope /Zc:inline /GR /openmp- /std:c++17 /Yu"stdafx.h" /Fp"obj\x64\Release\QuickView.pch" /Fo"obj\x64\Release\\" /Fd"obj\x64\Release\QuickView.pdb" /external:W3 /Gd /TP /FC /errorReport:queue /FS ContextMenuHandler.cpp DesktopWallpaper.cpp FileExtensionsDlg.cpp FileExtensionsRegistry.cpp FileList.cpp Helpers.cpp HelpersGUI.cpp ICCProfileTransform.cpp ImageLoadThread.cpp InfoButtonPanel.cpp JPEGImage.cpp JPEGView.cpp KeyMap.cpp ManageOpenWithDlg.cpp MultiMonitorSupport.cpp NLS.cpp ParameterDB.cpp PrintDlg.cpp ProcessingThreadPool.cpp PSDWrapper.cpp SaveImage.cpp SettingsProvider.cpp TransformPanelCtl.cpp UserCommand.cpp GUIControls.cpp NavigationPanel.cpp PaintMemDCMgr.cpp Panel.cpp WndButtonPanel.cpp EXIFDisplayCtl.cpp HelpDisplayCtl.cpp NavigationPanelCtl.cpp UnsharpMaskPanelCtl.cpp ZoomNavigatorCtl.cpp AboutDlg.cpp BatchCopyDlg.cpp CropSizeDlg.cpp FileOpenDialog.cpp MainDlg.cpp UpdateChecker.cpp ThumbnailPanel.cpp
+  ContextMenuHandler.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ContextMenuHandler.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  DesktopWallpaper.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/DesktopWallpaper.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  FileExtensionsDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/FileExtensionsDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  FileExtensionsRegistry.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/FileExtensionsRegistry.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  FileList.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/FileList.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  Helpers.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/Helpers.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  HelpersGUI.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/HelpersGUI.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  ICCProfileTransform.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1291,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1292,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1293,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1295,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1296,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1297,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+  ImageLoadThread.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(499,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(506,99): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(507,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(510,71): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(524,111): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(535,39): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(536,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(537,70): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(616,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(623,167): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(694,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(787,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(791,160): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(860,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(865,74): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(922,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(927,153): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(984,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(986,104): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+  InfoButtonPanel.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/InfoButtonPanel.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  JPEGImage.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/JPEGImage.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  JPEGView.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/JPEGView.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  KeyMap.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/KeyMap.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  ManageOpenWithDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ManageOpenWithDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  MultiMonitorSupport.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MultiMonitorSupport.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  NLS.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/NLS.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  ParameterDB.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ParameterDB.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  PrintDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PrintDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  ProcessingThreadPool.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ProcessingThreadPool.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  PSDWrapper.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(223,23): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(257,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(281,34): warning C4244: “参数”: 从“unsigned __int64”转换到“LONG”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(287,31): warning C4244: “初始化”: 从“__int64”转换到“unsigned int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(331,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(393,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(505,22): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(519,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+  正在生成代码...
+  正在编译...
+  SaveImage.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/SaveImage.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  SettingsProvider.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/SettingsProvider.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/SettingsProvider.cpp')
+  
+  TransformPanelCtl.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/TransformPanelCtl.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  UserCommand.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/UserCommand.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  GUIControls.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/GUIControls.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  NavigationPanel.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/NavigationPanel.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  PaintMemDCMgr.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PaintMemDCMgr.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  Panel.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/Panel.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  WndButtonPanel.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/WndButtonPanel.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  EXIFDisplayCtl.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/EXIFDisplayCtl.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  HelpDisplayCtl.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/HelpDisplayCtl.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  NavigationPanelCtl.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/NavigationPanelCtl.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  UnsharpMaskPanelCtl.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/UnsharpMaskPanelCtl.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  ZoomNavigatorCtl.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ZoomNavigatorCtl.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  AboutDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/AboutDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  BatchCopyDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/BatchCopyDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  CropSizeDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/CropSizeDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  FileOpenDialog.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/FileOpenDialog.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  MainDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2065: “IDM_SETTINGS”: 未声明的标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2051: case 表达式不是常量 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1981,19): warning C4090: “初始化”: 不同的“__unaligned”限定符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+  
+  UpdateChecker.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/UpdateChecker.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  正在生成代码...
+  正在编译...
+  ThumbnailPanel.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ThumbnailPanel.cpp')
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(101,10):
+      参见“CSettingsProvider::GetEXEPath”的声明
+  
+  正在生成代码...
+Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1291,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1292,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1293,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1295,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1296,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1297,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(499,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(506,99): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(507,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(510,71): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(524,111): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(535,39): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(536,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(537,70): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(616,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(623,167): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(694,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(787,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(791,160): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(860,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(865,74): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(922,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(927,153): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(984,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(986,104): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(223,23): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(257,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(281,34): warning C4244: “参数”: 从“unsigned __int64”转换到“LONG”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(287,31): warning C4244: “初始化”: 从“__int64”转换到“unsigned int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(331,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(393,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(505,22): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(519,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1981,19): warning C4090: “初始化”: 不同的“__unaligned”限定符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2065: “IDM_SETTINGS”: 未声明的标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2051: case 表达式不是常量 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.h(194,10): error C2535: “LPCTSTR CSettingsProvider::GetEXEPath(void)”: 已经定义或声明成员函数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+
+    35 Warning(s)
+    43 Error(s)
+
+Time Elapsed 00:00:07.35

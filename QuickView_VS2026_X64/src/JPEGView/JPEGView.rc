@@ -452,6 +452,8 @@ BEGIN
         MENUITEM SEPARATOR
         POPUP "Settings/Admin"
         BEGIN
+
+            MENUITEM SEPARATOR
             MENUITEM "Edit global settings...",     IDM_EDIT_GLOBAL_CONFIG
             MENUITEM "Edit user settings...",       IDM_EDIT_USER_CONFIG
             MENUITEM "Update user settings...",     IDM_UPDATE_USER_CONFIG
@@ -469,6 +471,8 @@ BEGIN
         BEGIN
             MENUITEM "_empty_",                     IDM_ABOUT
         END
+        MENUITEM SEPARATOR
+        MENUITEM "Settings...",                  IDM_SETTINGS
         MENUITEM SEPARATOR
         MENUITEM "About QuickView...",           IDM_ABOUT
         MENUITEM SEPARATOR

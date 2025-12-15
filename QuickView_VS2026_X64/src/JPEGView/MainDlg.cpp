@@ -60,7 +60,10 @@
 // Constants
 //////////////////////////////////////////////////////////////////////////////////////////////
 
+
+
 #pragma comment(lib, "Msimg32.lib") // Required for AlphaBlend
+#pragma comment(lib, "Shell32.lib") // Required for ShellExecute
 
 static const int MIN_WND_WIDTH = 320;
 static const int MIN_WND_HEIGHT = 240;
@@ -177,6 +180,7 @@ static EProcessingFlags _SetLandscapeModeFlags(EProcessingFlags eFlags) {
 //////////////////////////////////////////////////////////////////////////////////////////////
 
 CMainDlg::CMainDlg(bool bForceFullScreen) {
+	m_nMsgSettingsChanged = 0;
 	CSettingsProvider& sp = CSettingsProvider::This();
 
 	CResizeFilterCache::This(); // Access before multiple threads are created
@@ -295,7 +299,9 @@ void CMainDlg::SetStartupInfo(LPCTSTR sStartupFile, int nAutostartSlideShow, Hel
 	if (nDisplayMonitor >= 0) CSettingsProvider::This().SetMonitorOverride(nDisplayMonitor);
 }
 
-LRESULT CMainDlg::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/) {	
+LRESULT CMainDlg::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/) {
+	// Register IPC Message
+	m_nMsgSettingsChanged = ::RegisterWindowMessage(_T("QuickView_SettingsChanged"));	
 	UpdateWindowTitle();
 
 	// set the scaling of the screen (DPI) compared to 96 DPI (design value)
@@ -1737,6 +1743,21 @@ void CMainDlg::ExecuteCommand(int nCommand) {
 				break;
 			}
 		case IDM_EDIT_GLOBAL_CONFIG:
+		case IDM_SETTINGS:
+			{
+				TCHAR szPath[MAX_PATH];
+				::GetModuleFileName(NULL, szPath, MAX_PATH);
+				CString sDir = szPath;
+				int nPos = sDir.ReverseFind('\\');
+				if (nPos > 0) sDir = sDir.Left(nPos);
+				CString sPath = sDir + _T("\\QuickViewConfig.exe");
+				if (::GetFileAttributes(sPath) != INVALID_FILE_ATTRIBUTES) {
+					::ShellExecute(m_hWnd, _T("open"), sPath, NULL, NULL, SW_SHOWNORMAL);
+				} else {
+					::MessageBox(m_hWnd, _T("QuickViewConfig.exe not found!"), _T("QuickView"), MB_OK | MB_ICONERROR);
+				}
+			}
+			break;
 		case IDM_EDIT_USER_CONFIG:
 			EditINIFile(nCommand == IDM_EDIT_GLOBAL_CONFIG);
 			break;
@@ -3440,6 +3461,18 @@ LRESULT CMainDlg::OnAnotherInstanceStarted(UINT /*uMsg*/, WPARAM wParam, LPARAM 
 		::ShowWindow(m_hWnd, SW_RESTORE);
 	}
 	::SetForegroundWindow(m_hWnd);
+
+    PCOPYDATASTRUCT pCDS = (PCOPYDATASTRUCT)lParam;
+    if (pCDS != NULL && pCDS->dwData == KEY_MAGIC) {
+        if (pCDS->cbData > 0 && pCDS->lpData != NULL) {
+            LPCTSTR sFile = (LPCTSTR)pCDS->lpData;
+            if (_tcslen(sFile) > 0) {
+                 OpenFile(sFile, false);
+            }
+        }
+        return KEY_MAGIC;
+    }
+
 	return 0;
 }
 
@@ -3525,3 +3558,11 @@ LRESULT CMainDlg::OnUpdateAvailable(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lPa
 }
 
 
+
+LRESULT CMainDlg::OnSettingsChanged(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/) {
+	// Reload settings from disk
+	CSettingsProvider::This().ReloadSettings();
+	// Repaint the window to reflect changes
+	Invalidate();
+	return 0;
+}

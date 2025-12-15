@@ -1,0 +1,221 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/14 16:38:47.
+
+Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Touching "obj\x64\Release\QuickView.tlog\unsuccessfulbuild".
+ClCompile:
+  All outputs are up-to-date.
+  All outputs are up-to-date.
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x64\CL.exe /c /I..\WTL\Include /nologo /W3 /WX- /diagnostics:column /O2 /D WIN32 /D _WINDOWS /D STRICT /D NDEBUG /D _UNICODE /D UNICODE /GF- /Gm- /EHa /MT /GS /Gy- /fp:precise /fp:except- /Zc:wchar_t /Zc:forScope /Zc:inline /GR /openmp- /std:c++17 /Yu"stdafx.h" /Fp"obj\x64\Release\QuickView.pch" /Fo"obj\x64\Release\\" /Fd"obj\x64\Release\QuickView.pdb" /external:W3 /Gd /TP /FC /errorReport:queue /FS ContextMenuHandler.cpp DesktopWallpaper.cpp FileExtensionsDlg.cpp FileExtensionsRegistry.cpp FileList.cpp Helpers.cpp HelpersGUI.cpp ICCProfileTransform.cpp ImageLoadThread.cpp InfoButtonPanel.cpp JPEGImage.cpp JPEGView.cpp KeyMap.cpp ManageOpenWithDlg.cpp MultiMonitorSupport.cpp NLS.cpp ParameterDB.cpp PrintDlg.cpp ProcessingThreadPool.cpp PSDWrapper.cpp SaveImage.cpp SettingsProvider.cpp TransformPanelCtl.cpp UserCommand.cpp GUIControls.cpp NavigationPanel.cpp PaintMemDCMgr.cpp Panel.cpp WndButtonPanel.cpp EXIFDisplayCtl.cpp HelpDisplayCtl.cpp NavigationPanelCtl.cpp UnsharpMaskPanelCtl.cpp ZoomNavigatorCtl.cpp AboutDlg.cpp BatchCopyDlg.cpp CropSizeDlg.cpp FileOpenDialog.cpp MainDlg.cpp UpdateChecker.cpp ThumbnailPanel.cpp
+  ContextMenuHandler.cpp
+  DesktopWallpaper.cpp
+  FileExtensionsDlg.cpp
+  FileExtensionsRegistry.cpp
+  FileList.cpp
+  Helpers.cpp
+  HelpersGUI.cpp
+  ICCProfileTransform.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1291,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1292,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1293,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1295,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1296,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1297,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ICCProfileTransform.cpp')
+  
+  ImageLoadThread.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(499,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(506,99): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(507,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(510,71): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(524,111): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(535,39): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(536,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(537,70): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(616,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(623,167): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(694,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(787,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(791,160): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(860,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(865,74): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(922,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(927,153): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(984,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(986,104): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/ImageLoadThread.cpp')
+  
+  InfoButtonPanel.cpp
+  JPEGImage.cpp
+  JPEGView.cpp
+  KeyMap.cpp
+  ManageOpenWithDlg.cpp
+  MultiMonitorSupport.cpp
+  NLS.cpp
+  ParameterDB.cpp
+  PrintDlg.cpp
+  ProcessingThreadPool.cpp
+  PSDWrapper.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(223,23): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(257,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(281,34): warning C4244: “参数”: 从“unsigned __int64”转换到“LONG”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(287,31): warning C4244: “初始化”: 从“__int64”转换到“unsigned int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(331,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(393,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(505,22): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(519,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/PSDWrapper.cpp')
+  
+  正在生成代码...
+  正在编译...
+  SaveImage.cpp
+  SettingsProvider.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/SettingsProvider.cpp')
+  
+  TransformPanelCtl.cpp
+  UserCommand.cpp
+  GUIControls.cpp
+  NavigationPanel.cpp
+  PaintMemDCMgr.cpp
+  Panel.cpp
+  WndButtonPanel.cpp
+  EXIFDisplayCtl.cpp
+  HelpDisplayCtl.cpp
+  NavigationPanelCtl.cpp
+  UnsharpMaskPanelCtl.cpp
+  ZoomNavigatorCtl.cpp
+  AboutDlg.cpp
+  BatchCopyDlg.cpp
+  CropSizeDlg.cpp
+  FileOpenDialog.cpp
+  MainDlg.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2065: “IDM_SETTINGS”: 未声明的标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2051: case 表达式不是常量 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1981,19): warning C4090: “初始化”: 不同的“__unaligned”限定符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file '/MainDlg.cpp')
+  
+  UpdateChecker.cpp
+  正在生成代码...
+  正在编译...
+  ThumbnailPanel.cpp
+  正在生成代码...
+Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1291,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1292,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1293,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1295,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1296,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\lcms2\include\lcms2.h(1297,44): warning C5033: “register”不再为受支持的存储类 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(499,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(506,99): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(507,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(510,71): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(524,111): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(535,39): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(536,47): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(537,70): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(616,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(623,167): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(694,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(787,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(791,160): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(860,56): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(865,74): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(922,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(927,153): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(984,34): warning C4244: “参数”: 从“__int64”转换到“DWORD”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\ImageLoadThread.cpp(986,104): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(223,23): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(257,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(281,34): warning C4244: “参数”: 从“unsigned __int64”转换到“LONG”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(287,31): warning C4244: “初始化”: 从“__int64”转换到“unsigned int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(331,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(393,18): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(505,22): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\PSDWrapper.cpp(519,24): warning C4146: 一元负运算符应用于无符号类型，结果仍为无符号类型 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1981,19): warning C4090: “初始化”: 不同的“__unaligned”限定符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2065: “IDM_SETTINGS”: 未声明的标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2051: case 表达式不是常量 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+
+    35 Warning(s)
+    2 Error(s)
+
+Time Elapsed 00:00:15.78

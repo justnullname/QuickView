@@ -1,0 +1,27 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/14 16:17:49.
+
+Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Creating "obj\x64\Release\QuickView.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+  Touching "obj\x64\Release\QuickView.tlog\unsuccessfulbuild".
+ClCompile:
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x64\CL.exe /c /I..\WTL\Include /nologo /W3 /WX- /diagnostics:column /O2 /D WIN32 /D _WINDOWS /D STRICT /D NDEBUG /D _UNICODE /D UNICODE /GF- /Gm- /EHa /MT /GS /Gy- /fp:precise /fp:except- /Zc:wchar_t /Zc:forScope /Zc:inline /GR /openmp- /std:c++17 /Yc"stdafx.h" /Fp"obj\x64\Release\QuickView.pch" /Fo"obj\x64\Release\\" /Fd"obj\x64\Release\QuickView.pdb" /external:W3 /Gd /TP /FC /errorReport:queue /FS stdafx.cpp
+  stdafx.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\stdafx.h(80,1): error C1020: 意外的 #endif [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+  (compiling source file 'stdafx.cpp')
+  
+Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\stdafx.h(80,1): error C1020: 意外的 #endif [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
+
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:03.81

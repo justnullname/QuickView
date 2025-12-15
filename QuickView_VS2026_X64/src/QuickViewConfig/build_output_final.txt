@@ -1,0 +1,223 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/14 14:46:03.
+
+Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+InitializeBuildStatus:
+  Touching "obj\x64\Debug\QuickViewConfig.tlog\unsuccessfulbuild".
+ClCompile:
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\CL.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /Od /D WIN32 /D _DEBUG /D _WINDOWS /D STRICT /D QV_CONFIG_APP /D _ATL_CSTRING_EXPLICIT_CONSTRUCTORS /D _ATL_NO_COM_SUPPORT /D _UNICODE /D UNICODE /Gm- /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Yc"stdafx.h" /Fp"obj\x64\Debug\QuickViewConfig.pch" /Fo"obj\x64\Debug\\" /Fd"obj\x64\Debug\vc143.pdb" /external:W3 /Gd /TP /FC /errorReport:queue stdafx.cpp
+  stdafx.cpp
+  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\CL.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /Od /D WIN32 /D _DEBUG /D _WINDOWS /D STRICT /D QV_CONFIG_APP /D _ATL_CSTRING_EXPLICIT_CONSTRUCTORS /D _ATL_NO_COM_SUPPORT /D _UNICODE /D UNICODE /Gm- /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Yu"stdafx.h" /Fp"obj\x64\Debug\QuickViewConfig.pch" /Fo"obj\x64\Debug\\" /Fd"obj\x64\Debug\vc143.pdb" /external:W3 /Gd /TP /FC /errorReport:queue QuickViewConfig.cpp ..\JPEGView\SettingsProvider.cpp ..\JPEGView\Helpers.cpp ..\JPEGView\UserCommand.cpp ..\JPEGView\NLS.cpp
+  QuickViewConfig.cpp
+  SettingsProvider.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(253,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(339,3): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(400,2): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(544,3): warning C4996: '_snwprintf': This function or variable may be unsafe. Consider using _snwprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(809,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(824,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(839,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/SettingsProvider.cpp')
+  
+  Helpers.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\Helpers.cpp(428,3): error C3861: “assert”: 找不到标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/Helpers.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\Helpers.cpp(830,12): warning C4996: '_wcslwr': This function or variable may be unsafe. Consider using _wcslwr_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/Helpers.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\Helpers.cpp(831,12): warning C4996: '_wcslwr': This function or variable may be unsafe. Consider using _wcslwr_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/Helpers.cpp')
+  
+  UserCommand.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\UserCommand.cpp(34,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/UserCommand.cpp')
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\UserCommand.cpp(39,7): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/UserCommand.cpp')
+  
+  NLS.cpp
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53): error C2678: 二进制“+”: 没有找到接受“ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”类型的左操作数的运算符(或没有可接受的转换) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/NLS.cpp')
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(647,24):
+      可能是“ATL::CSimpleStringT<TCHAR,false> ATL::CSimpleStringT<TCHAR,false>::operator +(const ATL::CSimpleStringT<TCHAR,false> &,const ATL::CSimpleStringT<TCHAR,false> &)”[通过使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CSimpleStringT<TCHAR,false> ATL::CSimpleStringT<TCHAR,false>::operator +(const ATL::CSimpleStringT<TCHAR,false> &,const ATL::CSimpleStringT<TCHAR,false> &)”: 无法将参数 2 从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false> &”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              原因如下: 无法从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false>”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT”: 没有重载函数可以转换所有参数类型
+                  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(214,2):
+                  可能是“ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<TCHAR,false> &)”
+                      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                      “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<TCHAR,false> &)”: 无法将参数 1 从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false> &”
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          原因如下: 无法从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false>”
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          转换要求第二个用户定义的转换运算符或构造函数
+                  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(221,2):
+                  或    “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<BaseType,true> &)”
+          with
+          [
+              BaseType=TCHAR
+          ]
+                      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                      “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<BaseType,true> &)”: 无法将参数 1 从“const char [2]”转换为“const ATL::CSimpleStringT<BaseType,true> &”
+          with
+          [
+              BaseType=TCHAR
+          ]
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          原因如下: 无法从“const char [2]”转换为“const ATL::CSimpleStringT<BaseType,true>”
+          with
+          [
+              BaseType=TCHAR
+          ]
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          转换要求第二个用户定义的转换运算符或构造函数
+                  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                  尝试匹配参数列表“(const char [2])”时
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(658,24):
+      或    “ATL::CSimpleStringT<TCHAR,false> ATL::CSimpleStringT<TCHAR,false>::operator +(const ATL::CSimpleStringT<TCHAR,false> &,const wchar_t *)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CSimpleStringT<TCHAR,false> ATL::CSimpleStringT<TCHAR,false>::operator +(const ATL::CSimpleStringT<TCHAR,false> &,const wchar_t *)”: 无法将参数 2 从“const char [2]”转换为“const wchar_t *”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              指向的类型不相关; 转换需要 reinterpret_cast、C 样式强制转换或带圆括号的函数样式强制转换
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(669,24):
+      或    “ATL::CSimpleStringT<TCHAR,false> ATL::CSimpleStringT<TCHAR,false>::operator +(const wchar_t *,const ATL::CSimpleStringT<TCHAR,false> &)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CSimpleStringT<TCHAR,false> ATL::CSimpleStringT<TCHAR,false>::operator +(const wchar_t *,const ATL::CSimpleStringT<TCHAR,false> &)”: 无法将参数 2 从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false> &”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              原因如下: 无法从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false>”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT”: 没有重载函数可以转换所有参数类型
+                  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(214,2):
+                  可能是“ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<TCHAR,false> &)”
+                      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                      “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<TCHAR,false> &)”: 无法将参数 1 从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false> &”
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          原因如下: 无法从“const char [2]”转换为“const ATL::CSimpleStringT<TCHAR,false>”
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          转换要求第二个用户定义的转换运算符或构造函数
+                  D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\atlsimpstr.h(221,2):
+                  或    “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<BaseType,true> &)”
+          with
+          [
+              BaseType=TCHAR
+          ]
+                      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                      “ATL::CSimpleStringT<TCHAR,false>::CSimpleStringT(const ATL::CSimpleStringT<BaseType,true> &)”: 无法将参数 1 从“const char [2]”转换为“const ATL::CSimpleStringT<BaseType,true> &”
+          with
+          [
+              BaseType=TCHAR
+          ]
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          原因如下: 无法从“const char [2]”转换为“const ATL::CSimpleStringT<BaseType,true>”
+          with
+          [
+              BaseType=TCHAR
+          ]
+                          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                          转换要求第二个用户定义的转换运算符或构造函数
+                  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+                  尝试匹配参数列表“(const char [2])”时
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2390,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”: 无法将参数 2 从“const char [2]”转换为“const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              原因如下: 无法从“const char [2]”转换为“const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              class“ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”的构造函数声明为“explicit”
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2401,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,const wchar_t *)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,const wchar_t *)”: 无法将参数 2 从“const char [2]”转换为“const wchar_t *”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              指向的类型不相关; 转换需要 reinterpret_cast、C 样式强制转换或带圆括号的函数样式强制转换
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2412,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const wchar_t *,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const wchar_t *,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”: 无法将参数 2 从“const char [2]”转换为“const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              原因如下: 无法从“const char [2]”转换为“const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              class“ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”的构造函数声明为“explicit”
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2429,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,char)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,char)”: 无法将参数 2 从“const char [2]”转换为“char”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              没有使该转换得以执行的上下文
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2441,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(char,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(char,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”: 无法将参数 1 从“ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”转换为“char”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+              没有可用于执行该转换的用户定义的转换运算符，或者无法调用该运算符
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2454,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,wchar_t)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &,wchar_t)”: 无法将参数 2 从“const char [2]”转换为“wchar_t”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,71):
+              没有使该转换得以执行的上下文
+      D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\atlmfc\include\cstringt.h(2466,18):
+      或    “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(wchar_t,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”[使用参数相关的查找找到]
+          e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+          “ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>::operator +(wchar_t,const ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>> &)”: 无法将参数 1 从“ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”转换为“wchar_t”
+              e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+              没有可用于执行该转换的用户定义的转换运算符，或者无法调用该运算符
+      e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53):
+      尝试匹配参数列表“(ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>, const char [2])”时
+  
+e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(34,15): warning C4996: '_wfopen': This function or variable may be unsafe. Consider using _wfopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  (compiling source file '/JPEGView/NLS.cpp')
+  
+  正在生成代码...
+Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(201,70): warning C4244: “=”: 从“double”转换到“int”，可能丢失数据 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(253,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(339,3): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(400,2): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(544,3): warning C4996: '_snwprintf': This function or variable may be unsafe. Consider using _snwprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(809,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(824,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\SettingsProvider.cpp(839,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\Helpers.cpp(830,12): warning C4996: '_wcslwr': This function or variable may be unsafe. Consider using _wcslwr_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\Helpers.cpp(831,12): warning C4996: '_wcslwr': This function or variable may be unsafe. Consider using _wcslwr_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\UserCommand.cpp(34,6): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\UserCommand.cpp(39,7): warning C4996: 'swscanf': This function or variable may be unsafe. Consider using swscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(34,15): warning C4996: '_wfopen': This function or variable may be unsafe. Consider using _wfopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+
+
+"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj" (default target) (1) ->
+(ClCompile target) -> 
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\Helpers.cpp(428,3): error C3861: “assert”: 找不到标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\NLS.cpp(17,53): error C2678: 二进制“+”: 没有找到接受“ATL::CStringT<wchar_t,ATL::StrTraitATL<wchar_t,ATL::ChTraitsCRT<wchar_t>>>”类型的左操作数的运算符(或没有可接受的转换) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickViewConfig\QuickViewConfig.vcxproj]
+
+    13 Warning(s)
+    2 Error(s)
+
+Time Elapsed 00:00:02.74

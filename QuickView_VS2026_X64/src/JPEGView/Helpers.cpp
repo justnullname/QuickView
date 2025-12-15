@@ -3,14 +3,18 @@
 #include "immintrin.h"
 #include "NLS.h"
 #include "MultiMonitorSupport.h"
-#include "JPEGImage.h"
-#include "FileList.h"
 #include "SettingsProvider.h"
 #include <math.h>
+
+#ifndef QV_CONFIG_APP
+#include "JPEGImage.h"
+#include "FileList.h"
+#endif
 
 namespace Helpers {
 
 float ScreenScaling = -1.0f;
+
 
 TCHAR CReplacePipe::sm_buffer[MAX_SIZE_REPLACE_PIPE];
 
@@ -550,7 +554,8 @@ CSize GetTotalBorderSize() {
 	return CSize(nBorderWidth, nBorderHeight);
 }
 
-CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless, int nAdditionalHeight) {
+#ifndef QV_CONFIG_APP
+	CRect GetWindowRectMatchingImageSize(HWND hWnd, CSize minSize, CSize maxSize, double& dZoom, CJPEGImage* pImage, bool bForceCenterWindow, bool bKeepAspectRatio, bool bWindowBorderless, int nAdditionalHeight) {
 	int nOrigWidth = (pImage == NULL) ? ::GetSystemMetrics(SM_CXSCREEN) / 2 : pImage->OrigWidth();
 	int nOrigWidthUnzoomed = nOrigWidth;
 	int nOrigHeight = (pImage == NULL) ? ::GetSystemMetrics(SM_CYSCREEN) / 2 : pImage->OrigHeight();
@@ -626,6 +631,7 @@ bool CanDisplayImageWithoutResize(HWND hWnd, CJPEGImage* pImage) {
 	CSize borderSize = GetTotalBorderSize();
 	return pImage->OrigWidth() + borderSize.cx <= workingArea.Width() && pImage->OrigHeight() + borderSize.cy <= workingArea.Height();
 }
+#endif
 
 CRect CalculateMaxIncludedRectKeepAR(const CTrapezoid& trapezoid, double dAspectRatio) {
 	int w1 = trapezoid.x1e - trapezoid.x1s;
@@ -861,6 +867,7 @@ __int64 GetFileSize(HANDLE hFile) {
 	return fileSize;
 }
 
+#ifndef QV_CONFIG_APP
 // Gets the frame index of the next frame, depending on the index of the last image (relevant if the image is a multiframe image)
 int GetFrameIndex(CJPEGImage* pImage, bool bNext, bool bPlayAnimation, bool & switchImage) {
 	bool isMultiFrame = pImage != NULL && pImage->NumberOfFrames() > 1;
@@ -959,6 +966,7 @@ CString GetFileInfoString(LPCTSTR sFormat, CJPEGImage* pImage, CFileList* pFilel
 	sFileInfo.TrimRight();
 	return sFileInfo;
 }
+#endif
 
 int GetWindowsVersion() {
 #pragma warning(push)

@@ -22,10 +22,16 @@ static BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
 	TCHAR buff[BUF_LEN + 1];
 	buff[BUF_LEN] = 0;
 	::GetWindowText(hwnd, (LPTSTR)&buff, BUF_LEN);
-	if (_tcsstr(buff, _T(" - JPEGView-Static")) != NULL) {
-		_HWNDOtherInstance = hwnd;
-		return FALSE;
-	}
+    
+    TCHAR className[256];
+    ::GetClassName(hwnd, className, 256);
+
+    if (_tcscmp(className, _T("#32770")) == 0) {
+	    if (_tcscmp(buff, _T(JPEGVIEW_TITLE)) == 0 || _tcsstr(buff, _T(" - ") _T(JPEGVIEW_TITLE)) != NULL) {
+		    _HWNDOtherInstance = hwnd;
+		    return FALSE;
+	    }
+    }
 	return TRUE;
 }
 
@@ -213,21 +219,24 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPTSTR lp
 
 	// Searches for other instances and terminates them
 	bool bFileLoadedByExistingInstance = false;
-	HANDLE hMutex = ::CreateMutex(NULL, FALSE, _T("JPVMtX2869"));
-	if (::GetLastError() == ERROR_ALREADY_EXISTS) {
-		::EnumWindows((WNDENUMPROC)EnumWindowsProc, 0);
-		if (_HWNDOtherInstance != NULL) {
-			// Other instance found, send the filename to be loaded to this instance
-			COPYDATASTRUCT copyData{ 0 };
-			copyData.dwData = KEY_MAGIC;
-			copyData.cbData = (sStartupFile.GetLength() + 1) * sizeof(TCHAR);
-			copyData.lpData = (LPVOID)(LPCTSTR)sStartupFile;
-			ULONG_PTR result = 0;
-			PDWORD_PTR resultPtr = &result;
-			LRESULT res = ::SendMessageTimeout(_HWNDOtherInstance, WM_COPYDATA, 0, (LPARAM)&copyData, 0, 250, resultPtr);
-			bFileLoadedByExistingInstance = *resultPtr == (ULONG_PTR)KEY_MAGIC;
-		}
-	}
+    HANDLE hMutex = NULL;
+    if (CSettingsProvider::This().SingleInstance()) {
+	    hMutex = ::CreateMutex(NULL, FALSE, _T("JPVMtX2869"));
+	    if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+		    ::EnumWindows((WNDENUMPROC)EnumWindowsProc, 0);
+		    if (_HWNDOtherInstance != NULL) {
+			    // Other instance found, send the filename to be loaded to this instance
+			    COPYDATASTRUCT copyData{ 0 };
+			    copyData.dwData = KEY_MAGIC;
+			    copyData.cbData = (sStartupFile.GetLength() + 1) * sizeof(TCHAR);
+			    copyData.lpData = (LPVOID)(LPCTSTR)sStartupFile;
+			    ULONG_PTR result = 0;
+			    PDWORD_PTR resultPtr = &result;
+			    LRESULT res = ::SendMessageTimeout(_HWNDOtherInstance, WM_COPYDATA, 0, (LPARAM)&copyData, 0, 2000, resultPtr);
+			    bFileLoadedByExistingInstance = *resultPtr == (ULONG_PTR)KEY_MAGIC;
+		    }
+	    }
+    }
 
 	int nRet = 0;
 	//Run application
@@ -241,14 +250,11 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPTSTR lp
 
 		dlgMain.SetStartupInfo(sStartupFile, nAutostartSlideShow, eSorting, eTransitionEffect, nTransitionTime, bAutoExit, nDisplayMonitor);
 
-#include "DebugLog.h"
 
 // ...
 
 		try {
-			LogDebug(_T("About to call DoModal"));
 			nRet = (int)dlgMain.DoModal();
-			LogDebug(_T("Returned from DoModal"));
 			if (CSettingsProvider::This().StickyWindowSize() && !dlgMain.IsFullScreenMode()) {
 				CSettingsProvider::This().SaveStickyWindowRect(dlgMain.WindowRectOnClose());
 			}

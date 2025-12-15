@@ -1,5 +1,13 @@
 # QuickView Version History
 
+## Version 1.4.0 (2025-12-15)
+**Settings UI & Localization**
+*   **New Feature**: **QuickView Settings**: A brand new, comprehensive Settings Dialog (`QuickViewConfig.exe`) to configure all aspects of the application (General, Appearance, Interaction, Image, Misc).
+*   **New Feature**: **Chinese Localization**: Complete Simplified Chinese translation for the Settings UI and main application.
+*   **Improvement**: **Single Instance Fixed**: Resolved issue where "Single Instance" mode was not enforced. Now consistently activates the existing window.
+*   **Improvement**: **Hot Reload**: Changing settings in the Config app immediately applies them to the running QuickView instance.
+*   **Refactoring**: **Localization System**: Migrated to `CNLS` for dynamic string loading, supporting future language packs.
+
 ## Version 1.3.0 (2025-12-14)
 **Context Menu Modernization**
 *   **Refactoring**: **Cleaner Context Menu**: Reorganized low-frequency items (Print, Batch, wallpaper, transform) into a new **"Tools"** submenu.
