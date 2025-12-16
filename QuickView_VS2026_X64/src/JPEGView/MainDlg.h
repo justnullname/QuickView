@@ -86,6 +86,7 @@ public:
 		MESSAGE_HANDLER(WM_CLOSE, OnClose)
 		MESSAGE_HANDLER(WM_COPYDATA, OnAnotherInstanceStarted) 
 		MESSAGE_HANDLER(WM_UPDATE_AVAILABLE, OnUpdateAvailable)
+		MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBkgnd)
 		MESSAGE_HANDLER(m_nMsgSettingsChanged, OnSettingsChanged)
 		COMMAND_ID_HANDLER(IDOK, OnOK)
 		COMMAND_ID_HANDLER(IDCANCEL, OnCancel)
@@ -124,6 +125,7 @@ public:
 	LRESULT OnAnotherInstanceStarted(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/);
 	LRESULT OnClose(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/);
 	LRESULT OnUpdateAvailable(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/);
+	LRESULT OnEraseBkgnd(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/) { return 1; }
 
 	void SetStartupInfo(LPCTSTR sStartupFile, int nAutostartSlideShow, Helpers::ESorting eSorting, Helpers::ETransitionEffect eEffect, 
 		int nTransitionTime, bool bAutoExit, int nDisplayMonitor);
@@ -286,6 +288,7 @@ private:
 	bool m_bMouseOn;
 	bool m_bKeepParametersBeforeAnimation;
 	bool m_bIsAnimationPlaying;
+	bool m_bMButtonDown;
 	int m_nLastAnimationOffset;
 	int m_nExpectedNextAnimationTickCount;
 	int m_nMonitor;

@@ -149,8 +149,8 @@ static EProcessingFlags CreateProcessingFlags(bool bHQResampling, bool bAutoCont
 static void InitFromProcessingFlags(EProcessingFlags eFlags, bool& bHQResampling, bool& bAutoContrast, 
 									bool& bAutoContrastSection, bool& bLDC, bool& bLandscapeMode) {
 	bHQResampling = GetProcessingFlag(eFlags, PFLAG_HighQualityResampling);
-	bAutoContrast = GetProcessingFlag(eFlags, PFLAG_AutoContrast);
-	bAutoContrastSection = GetProcessingFlag(eFlags, PFLAG_AutoContrastSection);
+	bAutoContrast = false; // Feature removed: GetProcessingFlag(eFlags, PFLAG_AutoContrast);
+	bAutoContrastSection = false; // Feature removed: GetProcessingFlag(eFlags, PFLAG_AutoContrastSection);
 	bLDC = GetProcessingFlag(eFlags, PFLAG_LDC);
 	bLandscapeMode = GetProcessingFlag(eFlags, PFLAG_LandscapeMode);
 }
@@ -571,7 +571,8 @@ void CMainDlg::PaintToDC(CDC& dc, const CRect& paintRect) {
 		// Paint the DIB
 		if (pDIBData != NULL) {
 			BITMAPINFO bmInfo{ 0 };
-			CPoint ptDIBStart = HelpersGUI::DrawDIB32bppWithBlackBorders(dc, bmInfo, pDIBData, backBrush, imageProcessingArea, clippedSize, m_DIBOffsets);
+			bool bHasAlpha = m_pCurrentImage->HasRelevantAlpha();
+			CPoint ptDIBStart = HelpersGUI::DrawDIB32bppWithBlackBorders(dc, bmInfo, pDIBData, backBrush, imageProcessingArea, clippedSize, m_DIBOffsets, bHasAlpha);
 			// The DIB is also blitted into the memory DCs of the panels
 			memDCMgr.BlitImageToMemDC(pDIBData, &bmInfo, ptDIBStart, m_pNavPanelCtl->CurrentBlendingFactor());
 		}
@@ -704,16 +705,20 @@ LRESULT CMainDlg::OnRButtonUp(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*
 
 LRESULT CMainDlg::OnMButtonDown(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/) {
 	this->SetCapture();
-	if (HandleMouseButtonByKeymap(VK_MBUTTON)) {
-		return 0;
-	}
+	m_bMButtonDown = true;
 	StartDragging(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), false);
 	return 0;
 }
 
 LRESULT CMainDlg::OnMButtonUp(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/) {
+	bool bWasDragging = m_bDoDragging;
 	EndDragging();
 	::ReleaseCapture();
+	if (m_bMButtonDown && !bWasDragging) {
+		m_bMButtonDown = false;
+		HandleMouseButtonByKeymap(VK_MBUTTON);
+	}
+	m_bMButtonDown = false;
 	return 0;
 }
 
@@ -926,19 +931,6 @@ LRESULT CMainDlg::OnMouseWheel(UINT /*uMsg*/, WPARAM wParam, LPARAM lParam, BOOL
 	int nDelta = GET_WHEEL_DELTA_WPARAM(wParam);
 	CPoint mousePos(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
 	ScreenToClient(&mousePos);
-
-	if (m_pPanelMgr->OnMouseWheel(nDelta, mousePos.x, mousePos.y)) {
-		return 0;
-	}
-
-	if (!bCtrl && !bShift && !bAlt && CSettingsProvider::This().NavigateWithMouseWheel() && !m_pPanelMgr->IsModalPanelShown()) {
-		if (nDelta < 0) {
-			GotoImage(POS_Next);
-		} else {
-			GotoImage(POS_Previous);
-		}
-		return 0;
-	}
 
 	// Zoom
 	double dZoomSpeed = CSettingsProvider::This().MouseWheelZoomSpeed();
@@ -3564,5 +3556,6 @@ LRESULT CMainDlg::OnSettingsChanged(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*l
 	CSettingsProvider::This().ReloadSettings();
 	// Repaint the window to reflect changes
 	Invalidate();
+	UpdateWindow();
 	return 0;
 }

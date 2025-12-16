@@ -320,7 +320,7 @@ void CResizeFilter::CalculateFilterKernels() {
 
 void CResizeFilter::CalculateXMMFilterKernels() {
 	CalculateFilterKernels();
-	if (m_nTargetSize == 0) {
+	if (m_nTargetSize == 0 || m_kernels.Indices == NULL) {
 		return;
 	}
 
@@ -365,7 +365,7 @@ void CResizeFilter::CalculateXMMFilterKernels() {
 
 void CResizeFilter::CalculateAVXFilterKernels() {
 	CalculateFilterKernels();
-	if (m_nTargetSize == 0) {
+	if (m_nTargetSize == 0 || m_kernels.Indices == NULL) {
 		return;
 	}
 

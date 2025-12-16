@@ -111,6 +111,7 @@ CJPEGImage::CJPEGImage(int nWidth, int nHeight, void* pPixels, void* pEXIFData, 
 	m_pThumbnail = NULL;
 	m_pHistogramThumbnail = NULL;
 	m_pGrayImage = NULL;
+	m_bHasRelevantAlpha = (nChannels == 4);
 	m_pSmoothGrayImage = NULL;
 	
 	m_pLUTAllChannels = NULL;
@@ -569,6 +570,208 @@ void CJPEGImage::ResampleWithPan(void* & pDIBPixels, void* & pDIBPixelsLUTProces
 	delete[] pDIBPixelsLUTProcessed; pDIBPixelsLUTProcessed = NULL;
 }
 
+
+// Helper to perform HQ resampling while preserving Alpha channel (Split-Resize-Merge)
+// NOTE: We forces Generic C++ implementation here to avoid potential SIMD alignment/crash issues 
+// with the manually constructed buffers. Stability > Speed for this edge case.
+// Helper for High Quality Resampling of 32-bit images (Proprietary Split-Resize-Merge)
+// Assumes 4-channel input (BGRA).
+// Includes Safety Padding to preventing buffer underrun in generic resampler.
+// Helper for High Quality Resampling of 32-bit images (Proprietary Split-Resize-Merge)
+// Assumes 4-channel input (BGRA).
+// Uses 4-CHANNEL intermediate buffers to guarantee row alignment (Width*4 is ALWAYS 4-byte aligned).
+static void* ResampleHQWithAlpha(CSize fullTargetSize, CPoint targetOffset, CSize clippedTargetSize,
+	CSize sourceSize, const void* pSourcePixels, int nSourceStride, double dSharpen, 
+	EFilterType filter, Helpers::CPUType cpuType) { // Updated signature
+	
+	
+	int nWidth = sourceSize.cx;
+	int nHeight = sourceSize.cy;
+	
+	// Validate dimensions
+	if (nWidth <= 0 || nHeight <= 0 || nWidth > 65535 || nHeight > 65535) {
+		return NULL;
+	}
+
+	// Determine if Upsampling
+	bool bUpsampling = (fullTargetSize.cx > sourceSize.cx || fullTargetSize.cy > sourceSize.cy);
+
+	// FIX: Extended Width Padding
+	// ApplyFilter reads negative pixel offsets (up to -7 pixels) for kernel convolution.
+	// To prevent Access Violation and maintain Stride alignment, we add explicit horizontal padding.
+	// We create a wider image, render the center, and rely on SampleDown_HQ to extract the valid region.
+	
+	const int HORZ_PAD = 16; // MAX_FILTER_LEN is 16
+	
+	// ALIGNMENT FIX 2: Ensure Stride is 32-byte aligned (multiple of 8 pixels)
+	// This prevents SIMD misalignment issues for odd-width images.
+	// nPaddedWidth = Align((Width + 32), 8)
+	int nRawPaddedWidth = nWidth + 2 * HORZ_PAD;
+	int nPaddedWidth = (nRawPaddedWidth + 7) & ~7;
+	int nRowStride = nPaddedWidth * 4; // 4 bytes/pixel, always 32-byte aligned now
+	
+	// FIX 2: Add SAFETY HEADROOM (Head/Tail Padding)
+	// SampleDown_HQ will process the padded image starting at (0,0).
+	// The Filter Kernel will try to read negative pixels (e.g. -7) relative to (0,0).
+	// We MUST ensure there is valid memory before the pointer we pass to SampleDown_HQ.
+	const int SAFETY_HEADROOM = 4096; // Bytes before and after
+	
+	// Buffer size
+	size_t bufferSize = (size_t)nRowStride * nHeight + 2 * SAFETY_HEADROOM;
+	
+	// Use _aligned_malloc
+	uint8* pAlphaAsRGBABuffer = (uint8*)_aligned_malloc(bufferSize, 32);
+	uint8* pRGBAsRGBABuffer = (uint8*)_aligned_malloc(bufferSize, 32);
+	
+	if (!pAlphaAsRGBABuffer || !pRGBAsRGBABuffer) {
+		if (pAlphaAsRGBABuffer) _aligned_free(pAlphaAsRGBABuffer);
+		if (pRGBAsRGBABuffer) _aligned_free(pRGBAsRGBABuffer);
+		return NULL;
+	}
+ 
+	// Zero initialize entire buffer (handles the padding regions)
+	memset(pAlphaAsRGBABuffer, 0, bufferSize);
+	memset(pRGBAsRGBABuffer, 0, bufferSize);
+	
+	// The pointer we will eventually pass to SampleDown_HQ (Start of Padded Image)
+	uint8* pRGBStart = pRGBAsRGBABuffer + SAFETY_HEADROOM;
+	uint8* pAlphaStart = pAlphaAsRGBABuffer + SAFETY_HEADROOM;
+	
+	const uint8* pSrcStart = (const uint8*)pSourcePixels;
+	
+	// Extract Data into Center of Buffer (Offset by HORZ_PAD)
+	for (int y = 0; y < nHeight; y++) {
+		const uint8* pSrcRow = pSrcStart + y * nSourceStride;
+		// Destination: Start of row + Left Padding
+		uint8* pRGBDst = pRGBStart + y * nRowStride + HORZ_PAD * 4;
+		uint8* pAlphaDst = pAlphaStart + y * nRowStride + HORZ_PAD * 4;
+		
+		for (int x = 0; x < nWidth; x++) {
+			// Extract RGB
+			pRGBDst[0] = pSrcRow[0]; pRGBDst[1] = pSrcRow[1]; pRGBDst[2] = pSrcRow[2]; pRGBDst[3] = 255;
+			// Extract Alpha
+			uint8 alpha = pSrcRow[3];
+			pAlphaDst[0] = alpha; pAlphaDst[1] = alpha; pAlphaDst[2] = alpha; pAlphaDst[3] = 255;
+			
+			pRGBDst += 4;
+			pAlphaDst += 4;
+			pSrcRow += 4;
+		}
+	}
+	
+	// 2. Adjust Resampling Parameters for Padded Source
+	// We want to scale the Padded Image such that the "Real Content" scales exactly as requested.
+	// ScaleX = FullTargetX / OriginalWidth
+	// NewFullTargetX = ScaleX * PaddedWidth
+	double dScaleX = (double)fullTargetSize.cx / nWidth;
+	int nPaddedFullTargetWidth = (int)(dScaleX * nPaddedWidth + 0.5);
+	
+	// Adjust Target Offset to point to the Real Content in the new Padded Target
+	// The Real Content starts at Source X = HORZ_PAD.
+	// In Target space, this is HORZ_PAD * ScaleX.
+	// We also verify existing targetOffset (viewport offset).
+	int nPadOffsetInTarget = (int)(HORZ_PAD * dScaleX + 0.5);
+	int nNewTargetOffsetX = targetOffset.x + nPadOffsetInTarget;
+	
+	CSize paddedSourceSize(nPaddedWidth, nHeight);
+	CSize paddedFullTargetSize(nPaddedFullTargetWidth, fullTargetSize.cy);
+	CPoint paddedTargetOffset(nNewTargetOffsetX, targetOffset.y);
+	
+	// 3. Call SampleDown_HQ with Padded Parameters
+	// Dispatch to SIMD version if available
+	void* pResizedRGB = NULL;
+	void* pResizedAlpha32 = NULL;
+	
+	// Prepare output buffers (We allocate them to ensure ownership and alignment compatibility)
+	// Caller expects a buffer compatible with 'delete[]', so we use 'new[]'.
+	// Size calculation matches SampleDown_HQ_SIMD internal logic: Width * 4 * PaddedHeight
+	int nSimdPadding = (cpuType == Helpers::CPU_AVX2) ? 16 : 8;
+	
+	// Ensure safe allocation size
+	int nSafeResultSize = clippedTargetSize.cx * 4 * Helpers::DoPadding(clippedTargetSize.cy, nSimdPadding) + 4096;
+	
+	uint8* pBufferRGB = new(std::nothrow) uint8[nSafeResultSize];
+	uint8* pBufferAlpha = new(std::nothrow) uint8[nSafeResultSize];
+	
+	if (!pBufferRGB || !pBufferAlpha) {
+		delete[] pBufferRGB;
+		delete[] pBufferAlpha;
+		_aligned_free(pAlphaAsRGBABuffer);
+		_aligned_free(pRGBAsRGBABuffer);
+		return NULL;
+	}
+	
+	// Initialize to zero
+	memset(pBufferRGB, 0, nSafeResultSize);
+	memset(pBufferAlpha, 0, nSafeResultSize);
+
+	CBasicProcessing::SIMDArchitecture simd = CBasicProcessing::SSE;
+	if (cpuType == Helpers::CPU_AVX2) simd = CBasicProcessing::AVX2;
+	else if (cpuType == Helpers::CPU_MMX) simd = CBasicProcessing::MMX; // Note: SampleUp might fall back to SSE if MMX not fully supported via same API, but wrapper should handle.
+
+	if (bUpsampling) {
+		pResizedRGB = CBasicProcessing::SampleUp_HQ_SIMD(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+			paddedSourceSize, pRGBStart, 4, simd, pBufferRGB);
+		pResizedAlpha32 = CBasicProcessing::SampleUp_HQ_SIMD(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+			paddedSourceSize, pAlphaStart, 4, simd, pBufferAlpha);
+	} else {
+		pResizedRGB = CBasicProcessing::SampleDown_HQ_SIMD(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+			paddedSourceSize, pRGBStart, 4, dSharpen, filter, simd, pBufferRGB);
+		pResizedAlpha32 = CBasicProcessing::SampleDown_HQ_SIMD(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+			paddedSourceSize, pAlphaStart, 4, dSharpen, filter, simd, pBufferAlpha);
+	}
+
+	if (pResizedRGB == NULL && cpuType == Helpers::CPU_Generic) {
+		// Fallback to C++ implementation (Does not support pTarget injection usually, so we let it allocate and copy/adopt?)
+		// C++ implementation allocates using new[].
+		// We delete our pre-allocated buffers and let C++ allocate.
+		delete[] pBufferRGB;
+		delete[] pBufferAlpha;
+		if (bUpsampling) {
+			pResizedRGB = CBasicProcessing::SampleUp_HQ(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+				paddedSourceSize, pRGBStart, 4);
+			pResizedAlpha32 = CBasicProcessing::SampleUp_HQ(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+				paddedSourceSize, pAlphaStart, 4);
+		} else {
+			pResizedRGB = CBasicProcessing::SampleDown_HQ(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+				paddedSourceSize, pRGBStart, 4, dSharpen, filter);
+			pResizedAlpha32 = CBasicProcessing::SampleDown_HQ(paddedFullTargetSize, paddedTargetOffset, clippedTargetSize,
+				paddedSourceSize, pAlphaStart, 4, dSharpen, filter);
+		}
+	}
+
+	_aligned_free(pAlphaAsRGBABuffer);
+	_aligned_free(pRGBAsRGBABuffer);
+
+	if (!pResizedRGB || !pResizedAlpha32) {
+		delete[] (uint8*)pResizedRGB;
+		delete[] (uint8*)pResizedAlpha32;
+		return NULL;
+	}
+
+	// 4. Merge (Standard Merge, since SampleDown_HQ extracted the viewport for us)
+	int nResWidth = clippedTargetSize.cx;
+	int nResHeight = clippedTargetSize.cy;
+	int nDstStride = nResWidth * 4;
+	
+	uint8* pDstBase = (uint8*)pResizedRGB;
+	uint8* pAlphaSrcBase = (uint8*)pResizedAlpha32;
+
+	for (int y = 0; y < nResHeight; y++) {
+		uint8* pDstRow = pDstBase + y * nDstStride;
+		uint8* pAlphaSrcRow = pAlphaSrcBase + y * nDstStride;
+		for (int x = 0; x < nResWidth; x++) {
+			pDstRow[3] = pAlphaSrcRow[0]; // Copy Alpha
+			pDstRow += 4;
+			pAlphaSrcRow += 4;
+		}
+	}
+
+	
+	delete[] (uint8*)pResizedAlpha32;
+	return pResizedRGB;
+}
+
 void* CJPEGImage::Resample(CSize fullTargetSize, CSize clippingSize, CPoint targetOffset, 
 						  EProcessingFlags eProcFlags, double dSharpen, double dRotation, EResizeType eResizeType) {
 
@@ -598,7 +801,32 @@ void* CJPEGImage::Resample(CSize fullTargetSize, CSize clippingSize, CPoint targ
 
 	EFilterType filter = CSettingsProvider::This().DownsamplingFilter();
 
-	if (fullTargetSize.cx > 65535 || fullTargetSize.cy > 65535) return NULL;
+
+	// FIX: Use Split-Resize-Merge for High Quality Alpha Resampling (PNG Only)
+	// FALLBACK: If ResampleHQWithAlpha returns NULL, fall through to SIMD path.
+	if (GetProcessingFlag(eProcFlags, PFLAG_HighQualityResampling) && 
+		m_bHasRelevantAlpha && m_nOriginalChannels == 4 && 
+		m_eImageFormat != IF_JPEG && m_eImageFormat != IF_JPEG_Embedded &&
+		!(eResizeType == NoResize && (filter == Filter_Downsampling_Best_Quality || filter == Filter_Downsampling_No_Aliasing))) {
+		
+		int32 nStride = m_nOrigWidth * 4; // Absolute 32-bit Tight Packing
+
+		void* pResult = NULL;
+		if (eResizeType == UpSample) {
+			pResult = ResampleHQWithAlpha(fullTargetSize, targetOffset, clippingSize,
+				CSize(m_nOrigWidth, m_nOrigHeight), m_pOrigPixels, nStride, dSharpen, filter, cpu);
+		} else {
+			pResult = ResampleHQWithAlpha(fullTargetSize, targetOffset, clippingSize,
+				CSize(m_nOrigWidth, m_nOrigHeight), m_pOrigPixels, nStride, dSharpen, filter, cpu);
+		}
+		
+		// If ResampleHQWithAlpha succeeded, return the result.
+		// If it returned NULL (disabled or error), fall through to SIMD path below.
+		if (pResult != NULL) {
+			return pResult;
+		}
+		// Fall through to standard SIMD resampling
+	}
 
 	if (GetProcessingFlag(eProcFlags, PFLAG_HighQualityResampling) && 
 		!(eResizeType == NoResize && (filter == Filter_Downsampling_Best_Quality || filter == Filter_Downsampling_No_Aliasing))) {
@@ -620,6 +848,7 @@ void* CJPEGImage::Resample(CSize fullTargetSize, CSize clippingSize, CPoint targ
 			}
 		}
 	} else {
+		// Point Sampling (Low Quality)
 		bool bHasRotation = fabs(dRotation) > 1e-3;
 		if (bHasRotation) {
 			return CBasicProcessing::PointSampleWithRotation(fullTargetSize, targetOffset, clippingSize, 
@@ -675,8 +904,10 @@ bool CJPEGImage::VerifyRotation(const CRotationParams& rotationParams) {
 	}
 	if (fabs(rotationParams.FreeRotation - m_rotationParams.FreeRotation) >= 0.009)
 	{
-		return RotateOriginalPixels(2 * 3.141592653  * rotationParams.FreeRotation / 360, 
+		bool bSuccess = RotateOriginalPixels(2 * 3.141592653  * rotationParams.FreeRotation / 360, 
 			GetRotationFlag(rotationParams.Flags, RFLAG_AutoCrop), GetRotationFlag(rotationParams.Flags, RFLAG_KeepAspectRatio));
+		if (bSuccess) m_bHasRelevantAlpha = true; // Free rotation introduces transparency
+		return bSuccess;
 	}
 	return true;
 }

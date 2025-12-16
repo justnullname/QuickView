@@ -53,7 +53,7 @@ public:
 	COLORREF NarrowBorderColor() { return m_cNarrowBorderColor; }
 	float BlendFactorNavPanel() { return m_fBlendFactorNavPanel; }
 	float ScaleFactorNavPanel() { return m_fScaleFactorNavPanel; }
-	bool KeepParams() { return m_bKeepParams; }
+	bool KeepParams() { return false; } // Feature Removed
 	LPCTSTR Language() { return m_sLanguage; }
 	Helpers::CPUType AlgorithmImplementation() { return m_eCPUAlgorithm; }
 	int NumberOfCoresToUse() { return m_nNumCores; }
@@ -61,13 +61,13 @@ public:
 	Helpers::ESorting Sorting() { return m_eSorting; }
 	bool IsSortedAscending() { return m_bIsSortedAscending; }
 	Helpers::ENavigationMode Navigation() { return m_eNavigation; }
-	bool NavigateWithMouseWheel() { return m_bNavigateMouseWheel; }
+	bool NavigateWithMouseWheel() { return false; } // Removed feature
 	double MouseWheelZoomSpeed() { return m_dMouseWheelZoomSpeed; }
 	Helpers::EAutoZoomMode AutoZoomMode() { return m_eAutoZoomMode; }
 	Helpers::EAutoZoomMode AutoZoomModeFullscreen() { return m_eAutoZoomModeFullscreen; }
 	int DisplayMonitor() { return m_nDisplayMonitor; }
 	void SetMonitorOverride(int nMonitor) { m_nDisplayMonitor = nMonitor; }
-	bool AutoContrastCorrection() { return m_bAutoContrastCorrection; }
+	bool AutoContrastCorrection() { return false; } // Removed feature
 	double AutoContrastAmount() { return m_dAutoContrastAmount; }
 	const float* ColorCorrectionAmounts(); // can't be declared inline due to compiler bug...sad but true
 	double AutoBrightnessAmount() { return m_dAutoBrightnessAmount; }
@@ -93,7 +93,7 @@ public:
 	bool CreateParamDBEntryOnSave() { return m_bCreateParamDBEntryOnSave; }
 	bool SaveWithoutPrompt() { return m_bSaveWithoutPrompt; }
 	bool CropWithoutPromptLosslessJPEG() { return m_bCropWithoutPromptLosslessJPEG; }
-	Helpers::EDeleteConfirmation DeleteConfirmation() { return m_eDeleteConfirmation; }
+	Helpers::EDeleteConfirmation DeleteConfirmation() { return Helpers::DC_OnlyWhenNoRecycleBin; } // Always Recycle Bin
 	bool AllowFileDeletion() { return m_bAllowFileDeletion; }
 	bool WrapAroundFolder() { return m_bWrapAroundFolder && m_eNavigation == Helpers::NM_LoopDirectory; }
 	bool ExchangeXButtons() { return m_bExchangeXButtons; }
@@ -143,7 +143,10 @@ public:
 	bool BeepSoundAlert() { return m_bBeepSoundAlert; }
 	bool WindowBorderlessOnStartup() { return m_bWindowBorderlessOnStartup; }
 	bool WindowAlwaysOnTopOnStartup() { return m_bWindowAlwaysOnTopOnStartup; }
+	
+	void Flush();
 
+	bool TransparencyCheckerboard() { return m_bTransparencyCheckerboard; }
 
 	double ZoomPauseFactor() { return m_zoomPauseFactor; }  // while internally this is represented in doubles, using a whole number percent simplifies it for the user... configuring doubles is not user friendly at all
 
@@ -334,6 +337,7 @@ private:
 	bool m_bWindowAlwaysOnTopOnStartup;
 
 	bool m_bAutoCheckUpdate;
+	bool m_bTransparencyCheckerboard;
 	CString m_sLastSkippedVersion;
 
 

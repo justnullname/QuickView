@@ -44,6 +44,7 @@ public:
 		MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
         MESSAGE_HANDLER(WM_SIZE, OnSize)
 		COMMAND_ID_HANDLER(IDOK, OnOK)
+        COMMAND_ID_HANDLER(ID_APPLY, OnApply)
 		COMMAND_ID_HANDLER(IDCANCEL, OnCancel)
         COMMAND_HANDLER(IDC_LIST_CATEGORIES, LBN_SELCHANGE, OnCategorySelChange)
         CHAIN_MSG_MAP(CDialogResize<CMainDlgConfig>)
@@ -52,6 +53,7 @@ public:
     BEGIN_DLGRESIZE_MAP(CMainDlgConfig)
         // DLGRESIZE_CONTROL(IDC_STATIC, DLSZ_SIZE_X | DLSZ_SIZE_Y) // REMOVED to fix Assert
         DLGRESIZE_CONTROL(IDOK, DLSZ_MOVE_X | DLSZ_MOVE_Y)
+        DLGRESIZE_CONTROL(ID_APPLY, DLSZ_MOVE_X | DLSZ_MOVE_Y)
         DLGRESIZE_CONTROL(IDCANCEL, DLSZ_MOVE_X | DLSZ_MOVE_Y)
     END_DLGRESIZE_MAP()
 
@@ -62,6 +64,7 @@ public:
         // Translate Title
         SetWindowText(CNLS::GetString(_T("QuickView Settings")));
         SetDlgItemText(IDOK, CNLS::GetString(_T("OK")));
+        SetDlgItemText(ID_APPLY, CNLS::GetString(_T("Apply")));
         SetDlgItemText(IDCANCEL, CNLS::GetString(_T("Cancel")));
 
         // Resize map init
@@ -207,22 +210,32 @@ public:
 		return 0;
 	}
 
-	LRESULT OnOK(WORD /*wNotifyCode*/, WORD wID, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
+	LRESULT OnApply(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
 	{
 		// Apply Settings from all panels
-        m_pageGeneral.ApplySettings();
-        m_pageAppearance.ApplySettings();
-        m_pageInteraction.ApplySettings();
-        m_pageImage.ApplySettings();
-        m_pageMisc.ApplySettings();
+		m_pageGeneral.ApplySettings();
+		m_pageAppearance.ApplySettings();
+		m_pageInteraction.ApplySettings();
+		m_pageImage.ApplySettings();
+		m_pageMisc.ApplySettings();
 
-        // Broadcast Change
-        UINT msg = ::RegisterWindowMessage(_T("QuickView_SettingsChanged"));
-        ::PostMessage(HWND_BROADCAST, msg, 0, 0);
+        // Flush to disk
+        CSettingsProvider::This().Flush();
 
+		// Broadcast Change
+		UINT msg = ::RegisterWindowMessage(_T("QuickView_SettingsChanged"));
+		::PostMessage(HWND_BROADCAST, msg, 0, 0);
+
+		return 0;
+	}
+
+	LRESULT OnOK(WORD /*wNotifyCode*/, WORD wID, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
+	{
+		OnApply(0, ID_APPLY, NULL, *(BOOL*)NULL); // Force Apply
 		DestroyWindow();
 		return 0;
 	}
+
 
 	LRESULT OnCancel(WORD /*wNotifyCode*/, WORD wID, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
 	{

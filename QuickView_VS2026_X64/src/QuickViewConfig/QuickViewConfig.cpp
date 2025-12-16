@@ -20,6 +20,22 @@ int Run(LPTSTR /*lpstrCmdLine*/ = NULL, int nCmdShow = SW_SHOWDEFAULT)
 	CString sNLSFile = CNLS::GetStringTableFileName(sLanguage);
 	CNLS::ReadStringTable(sNLSFile);
 
+    // Single Instance Check
+    HANDLE hMutex = ::CreateMutex(NULL, TRUE, _T("Global\\QuickViewConfig_Instance_Mutex"));
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Find existing window and activate
+        // Try English and Chinese titles
+        HWND hExisting = ::FindWindow(NULL, CNLS::GetString(_T("QuickView Settings")));
+        if (!hExisting) hExisting = ::FindWindow(NULL, _T("QuickView 设置")); 
+        if (!hExisting) hExisting = ::FindWindow(NULL, _T("QuickView Settings"));
+
+        if (hExisting) {
+            ::SetForegroundWindow(hExisting);
+            if (::IsIconic(hExisting)) ::ShowWindow(hExisting, SW_RESTORE);
+        }
+        return 0; // Exit
+    }
+
 	CMainDlgConfig dlg;
 	if (dlg.Create(NULL) == NULL) {
 		ATLTRACE(_T("Main dialog creation failed!\n"));

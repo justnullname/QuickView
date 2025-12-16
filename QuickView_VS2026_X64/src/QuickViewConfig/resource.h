@@ -22,6 +22,8 @@
 #define IDC_CHECK_SHOW_FILEINFO                 3107
 #define IDC_CHECK_SHOW_HISTOGRAM                3108
 #define IDC_BTN_COLOR_BG                        3109
+#define IDC_STATIC_COLOR_PREVIEW                3110
+#define IDC_CHK_TRANSPARENCY_CHECKERBOARD       3111
 
 // Interaction Panel
 #define IDD_PANEL_INTERACTION                   2003
@@ -75,3 +77,5 @@
 #define IDC_LBL_JPEG_QUALITY                    5018
 #define IDC_GRP_PARAMS                          5019
 #define IDC_GRP_SYSTEM                          5020
+
+#define ID_APPLY                                3900

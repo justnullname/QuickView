@@ -466,8 +466,13 @@ Set as default viewer...	设为默认图片查看器...
 Backup parameter DB...	备份参数数据库...
 Restore parameter DB...	还原参数数据库...
 User commands	用户命令
-About JPEGView...	关于JPEGView...
+About QuickView...	关于 QuickView...
+About QuickView	关于 QuickView
+Settings	设置
+Tools	工具
+Check for updates	检查更新
 Exit	退出
+Check for updates...	检查更新...
 Crop Selection	裁剪选择内容
 Crop Selection Lossless...	无损裁剪选择内容...
 Copy Selection to Clipboard	复制选择内容到剪贴板
@@ -518,14 +523,14 @@ Check for updates automatically	自动检查更新
 Single instance mode	单实例模式
 Portable mode (Store settings in EXE folder)	便携模式（保存设置到EXE目录）
 Window	窗口
-Smart Border	智能边框
+Smart Border	凸显边缘
 Width:	宽度：
 Always on Top	始终在最前
 OSD & Panels	OSD 与面板
 Show Bottom Panel	显示底部面板
 Show Navigation Panel	显示导航面板
 Show Filename	显示文件名
-Show File Info	显示文件信息
+Show Image Info (EXIF)	显示图片信息 (EXIF)
 Show Histogram	显示直方图
 Background Color:	背景颜色：
 Choose...	选择...
@@ -560,7 +565,7 @@ Appearance	外观
 Interaction	交互
 Image	图片
 Misc	杂项
-Shortcuts	捷径
+Shortcuts	快捷键
 
 Do Nothing	不执行任何操作
 Close Application	关闭应用程序
@@ -579,3 +584,4 @@ File name	文件名
 Last modification date/time	最后修改日期/时间
 Creation date/time	创建日期/时间
 File size	文件大小
+Settings... 设置...

@@ -183,7 +183,7 @@ public:
 	// Notice that the A channel is not processed and set to fixed value 0xFF.
 	// Notice that the returned image is always 32 bpp!
 	static void* SampleDown_HQ_SIMD(CSize fullTargetSize, CPoint fullTargetOffset, CSize clippedTargetSize,
-		CSize sourceSize, const void* pPixels, int nChannels, double dSharpen, EFilterType eFilter, SIMDArchitecture simd);
+		CSize sourceSize, const void* pPixels, int nChannels, double dSharpen, EFilterType eFilter, SIMDArchitecture simd, uint8* pTarget = NULL);
 
 	// High quality upsampling of 32 or 24 bpp BGR(A) image using bicubic interpolation.
 	// Notice that the A channel is not processed and set to fixed value 0xFF.
@@ -196,7 +196,7 @@ public:
 	// Notice that the A channel is not processed and set to fixed value 0xFF.
 	// Notice that the returned image is always 32 bpp!
 	static void* SampleUp_HQ_SIMD(CSize fullTargetSize, CPoint fullTargetOffset, CSize clippedTargetSize,
-		CSize sourceSize, const void* pPixels, int nChannels, SIMDArchitecture simd);
+		CSize sourceSize, const void* pPixels, int nChannels, SIMDArchitecture simd, uint8* pTarget = NULL);
 
 	// Rotate 32 or 24 bpp BGR(A) image around image center using bicubic interpolation.
 	// Notice that the A channel is processed for 32 bpp images.

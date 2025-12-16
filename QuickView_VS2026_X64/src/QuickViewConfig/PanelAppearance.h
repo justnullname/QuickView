@@ -26,6 +26,12 @@ public:
         sp.WriteBool(_T("ShowFileName"), CButton(GetDlgItem(IDC_CHECK_SHOW_FILENAME)).GetCheck() == BST_CHECKED);
         sp.WriteBool(_T("ShowFileInfo"), CButton(GetDlgItem(IDC_CHECK_SHOW_FILEINFO)).GetCheck() == BST_CHECKED);
         sp.WriteBool(_T("ShowHistogram"), CButton(GetDlgItem(IDC_CHECK_SHOW_HISTOGRAM)).GetCheck() == BST_CHECKED);
+        sp.WriteBool(_T("TransparencyCheckerboard"), CButton(GetDlgItem(IDC_CHK_TRANSPARENCY_CHECKERBOARD)).GetCheck() == BST_CHECKED);
+
+        // Write Color
+        CString sColor;
+        sColor.Format(_T("%d %d %d"), GetRValue(m_colorBg), GetGValue(m_colorBg), GetBValue(m_colorBg));
+        sp.WriteString(_T("BackgroundColor"), sColor);
     }
     
     void TranslateUI() {
@@ -43,16 +49,21 @@ public:
         
         SetDlgItemText(IDC_LBL_BG_COLOR, CNLS::GetString(_T("Background Color:")));
         SetDlgItemText(IDC_BTN_COLOR_BG, CNLS::GetString(_T("Choose...")));
+        SetDlgItemText(IDC_CHK_TRANSPARENCY_CHECKERBOARD, CNLS::GetString(_T("Checkerboard for Transparency")));
     }
 
     BEGIN_MSG_MAP(CPanelAppearance)
         MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
         COMMAND_ID_HANDLER(IDC_BTN_COLOR_BG, OnColorBg)
+        MESSAGE_HANDLER(WM_DRAWITEM, OnDrawItem)
     END_MSG_MAP()
+
+    COLORREF m_colorBg;
 
     LRESULT OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/)
     {
         CSettingsProvider& sp = CSettingsProvider::This();
+        m_colorBg = sp.ColorBackground();
 
         TranslateUI();
 
@@ -72,18 +83,34 @@ public:
         CButton(GetDlgItem(IDC_CHECK_SHOW_FILENAME)).SetCheck(sp.ShowFileName() ? BST_CHECKED : BST_UNCHECKED);
         CButton(GetDlgItem(IDC_CHECK_SHOW_FILEINFO)).SetCheck(sp.ShowFileInfo() ? BST_CHECKED : BST_UNCHECKED);
         CButton(GetDlgItem(IDC_CHECK_SHOW_HISTOGRAM)).SetCheck(sp.ShowHistogram() ? BST_CHECKED : BST_UNCHECKED);
+        CButton(GetDlgItem(IDC_CHK_TRANSPARENCY_CHECKERBOARD)).SetCheck(sp.TransparencyCheckerboard() ? BST_CHECKED : BST_UNCHECKED);
 
         return TRUE;
     }
 
     LRESULT OnColorBg(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL& /*bHandled*/)
     {
-        CColorDialog dlg(CSettingsProvider::This().ColorBackground());
+        CColorDialog dlg(m_colorBg, CC_FULLOPEN);
         if (dlg.DoModal() == IDOK)
         {
-            // TODO: Store chosen color temporarily
-            // For now just beep
-            MessageBeep(MB_OK);
+            m_colorBg = dlg.GetColor();
+            ::InvalidateRect(GetDlgItem(IDC_STATIC_COLOR_PREVIEW), NULL, TRUE);
+        }
+        return 0;
+    }
+
+    LRESULT OnDrawItem(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& /*bHandled*/)
+    {
+        LPDRAWITEMSTRUCT lpDrawItemStruct = (LPDRAWITEMSTRUCT)lParam;
+        if (lpDrawItemStruct->CtlID == IDC_STATIC_COLOR_PREVIEW)
+        {
+            HDC hdc = lpDrawItemStruct->hDC;
+            RECT rc = lpDrawItemStruct->rcItem;
+            HBRUSH hBrush = CreateSolidBrush(m_colorBg);
+            FillRect(hdc, &rc, hBrush);
+            DeleteObject(hBrush);
+            DrawEdge(hdc, &rc, EDGE_SUNKEN, BF_RECT);
+            return TRUE;
         }
         return 0;
     }

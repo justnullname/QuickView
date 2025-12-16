@@ -2555,37 +2555,55 @@ void* SampleUp_HQ_AVX_Core(CSize fullTargetSize, CPoint fullTargetOffset, CSize 
 
 void* CBasicProcessing::SampleDown_HQ_SIMD(CSize fullTargetSize, CPoint fullTargetOffset, CSize clippedTargetSize,
 	CSize sourceSize, const void* pPixels, int nChannels, double dSharpen,
-	EFilterType eFilter, SIMDArchitecture simd) {
+	EFilterType eFilter, SIMDArchitecture simd, uint8* pTarget) { // Updated signature
 	if (pPixels == NULL || clippedTargetSize.cx <= 0 || clippedTargetSize.cy <= 0) {
 		return NULL;
 	}
-	int padding = (simd == AVX2) ? 16 : 8;
-	uint8* pTarget = new(std::nothrow) uint8[clippedTargetSize.cx * 4 * Helpers::DoPadding(clippedTargetSize.cy, padding)];
-	if (pTarget == NULL) return NULL;
+	bool bExternalTarget = (pTarget != NULL);
+	if (!bExternalTarget) {
+		int padding = (simd == AVX2) ? 16 : 8;
+		pTarget = new(std::nothrow) uint8[clippedTargetSize.cx * 4 * Helpers::DoPadding(clippedTargetSize.cy, padding)];
+		if (pTarget == NULL) return NULL;
+	}
+	
 	CProcessingThreadPool& threadPool = CProcessingThreadPool::This();
 	CRequestUpDownSampling request(pPixels, sourceSize,
 		pTarget, fullTargetSize, fullTargetOffset, clippedTargetSize,
 		nChannels, dSharpen, eFilter, simd);
 	bool bSuccess = threadPool.Process(&request);
 
-	return bSuccess ? pTarget : NULL;
+	if (!bSuccess) {
+		if (!bExternalTarget) delete[] pTarget;
+		return NULL;
+	}
+
+	return pTarget;
 }
 
 void* CBasicProcessing::SampleUp_HQ_SIMD(CSize fullTargetSize, CPoint fullTargetOffset, CSize clippedTargetSize,
-	CSize sourceSize, const void* pPixels, int nChannels, SIMDArchitecture simd) {
+	CSize sourceSize, const void* pPixels, int nChannels, SIMDArchitecture simd, uint8* pTarget) {
 	if (pPixels == NULL || fullTargetSize.cx < 2 || fullTargetSize.cy < 2 || clippedTargetSize.cx <= 0 || clippedTargetSize.cy <= 0) {
 		return NULL;
 	}
-	int padding = (simd == AVX2) ? 16 : 8;
-	uint8* pTarget = new(std::nothrow) uint8[clippedTargetSize.cx * 4 * Helpers::DoPadding(clippedTargetSize.cy, padding)];
-	if (pTarget == NULL) return NULL;
+	bool bExternalTarget = (pTarget != NULL);
+	if (!bExternalTarget) {
+		int padding = (simd == AVX2) ? 16 : 8;
+		pTarget = new(std::nothrow) uint8[clippedTargetSize.cx * 4 * Helpers::DoPadding(clippedTargetSize.cy, padding)];
+		if (pTarget == NULL) return NULL;
+	}
+
 	CProcessingThreadPool& threadPool = CProcessingThreadPool::This();
 	CRequestUpDownSampling request(pPixels, sourceSize,
 		pTarget, fullTargetSize, fullTargetOffset, clippedTargetSize,
 		nChannels, 0.0, Filter_Upsampling_Bicubic, simd);
 	bool bSuccess = threadPool.Process(&request);
 
-	return bSuccess ? pTarget : NULL;
+	if (!bSuccess) {
+		if (!bExternalTarget) delete[] pTarget;
+		return NULL;
+	}
+
+	return pTarget;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////

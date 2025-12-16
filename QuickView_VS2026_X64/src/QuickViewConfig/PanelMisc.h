@@ -16,7 +16,7 @@ public:
     {
         CSettingsProvider& sp = CSettingsProvider::This();
 
-        sp.WriteBool(_T("KeepParameters"), CButton(GetDlgItem(IDC_CHECK_KEEP_PARAMS)).GetCheck() == BST_CHECKED);
+        // sp.WriteBool(_T("KeepParameters"), CButton(GetDlgItem(IDC_CHECK_KEEP_PARAMS)).GetCheck() == BST_CHECKED); // Removed
         
         bool bConfirm = CButton(GetDlgItem(IDC_CHECK_CONFIRM_DELETE)).GetCheck() == BST_CHECKED;
         sp.WriteString(_T("DeleteConfirmation"), bConfirm ? _T("Always") : _T("Never"));
@@ -31,13 +31,13 @@ public:
         SetDlgItemText(IDC_GRP_SAVING, CNLS::GetString(_T("Saving")));
         SetDlgItemText(IDC_LBL_JPEG_QUALITY, CNLS::GetString(_T("JPEG Quality:")));
         
-        SetDlgItemText(IDC_GRP_PARAMS, CNLS::GetString(_T("Parameters")));
-        SetDlgItemText(IDC_CHECK_KEEP_PARAMS, CNLS::GetString(_T("Keep Parameters between images")));
+        // SetDlgItemText(IDC_GRP_PARAMS, CNLS::GetString(_T("Parameters"))); // Hidden
+        // SetDlgItemText(IDC_CHECK_KEEP_PARAMS, CNLS::GetString(_T("Keep Parameters between images"))); // Hidden
         
         SetDlgItemText(IDC_GRP_SYSTEM, CNLS::GetString(_T("System & Deletion")));
         SetDlgItemText(IDC_CHECK_CONFIRM_DELETE, CNLS::GetString(_T("Confirm File Deletion")));
-        SetDlgItemText(IDC_CHECK_RECYCLE_BIN, CNLS::GetString(_T("Delete to Recycle Bin")));
-        SetDlgItemText(IDC_CHECK_MOUSE_TRAP, CNLS::GetString(_T("Mouse Trap (Fullscreen)")));
+        // SetDlgItemText(IDC_CHECK_RECYCLE_BIN, CNLS::GetString(_T("Delete to Recycle Bin"))); // Hidden
+        // SetDlgItemText(IDC_CHECK_MOUSE_TRAP, CNLS::GetString(_T("Mouse Trap (Fullscreen)"))); // Hidden
     }
 
     BEGIN_MSG_MAP(CPanelMisc)
@@ -52,8 +52,14 @@ public:
         TranslateUI();
 
         // Checkboxes
-        CButton(GetDlgItem(IDC_CHECK_KEEP_PARAMS)).SetCheck(sp.KeepParams() ? BST_CHECKED : BST_UNCHECKED);
+        // CButton(GetDlgItem(IDC_CHECK_KEEP_PARAMS)).SetCheck(sp.KeepParams() ? BST_CHECKED : BST_UNCHECKED);
         
+        // Hide Removed Features
+        GetDlgItem(IDC_GRP_PARAMS).ShowWindow(SW_HIDE);
+        GetDlgItem(IDC_CHECK_KEEP_PARAMS).ShowWindow(SW_HIDE);
+        GetDlgItem(IDC_CHECK_RECYCLE_BIN).ShowWindow(SW_HIDE);
+        GetDlgItem(IDC_CHECK_MOUSE_TRAP).ShowWindow(SW_HIDE);
+
         // Delete Confirmation (Enum mapping needed)
         bool bConfirm = (sp.DeleteConfirmation() != Helpers::DC_Never);
         CButton(GetDlgItem(IDC_CHECK_CONFIRM_DELETE)).SetCheck(bConfirm ? BST_CHECKED : BST_UNCHECKED);

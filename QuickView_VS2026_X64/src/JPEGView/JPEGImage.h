@@ -147,6 +147,9 @@ public:
 	// Gets the hash value of the pixels, for JPEGs the hash is on the compressed pixels
 	__int64 GetPixelHash() const { return m_nPixelHash; }
 
+	// Returns true if the image has a relevant alpha channel (PNG or transparency introduced by processing)
+	bool HasRelevantAlpha() const { return m_bHasRelevantAlpha; }
+
 	// Gets the pixel hash over the de-compressed pixels
 	__int64 GetUncompressedPixelHash() const;
 
@@ -438,6 +441,7 @@ private:
 	bool m_bLDCOwned;
 	float m_fColorCorrectionFactors[6];
 	float m_fColorCorrectionFactorsNull[6];
+	bool m_bHasRelevantAlpha; // True if the image has a relevant alpha channel (e.g. PNG or transparency from rotation)
 
 	// Internal GetDIB() implementation combining unsharp mask and (low quality) rotation with GetDIB().
 	// pUnsharpMaskParams and pTrapezoid can be null if not used.

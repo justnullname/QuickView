@@ -226,7 +226,48 @@ namespace HelpersGUI {
 		}
 	}
 
-	CPoint DrawDIB32bppWithBlackBorders(CDC& dc, BITMAPINFO& bmInfo, void* pDIBData, HBRUSH backBrush, const CRect& targetArea, CSize dibSize, CPoint offset) {
+
+
+	static void DrawCheckerboard(CDC& dc, const CRect& rect) {
+		int gridSize = 20;
+		CBrush brush1, brush2;
+		COLORREF bg = CSettingsProvider::This().ColorBackground();
+		// Create a contrasting color (e.g., +/- 40 luminance)
+		// Simple approach: Toggle bits or offset.
+		// Let's do a simple offset: If dark, lighten. If light, darken.
+		// Luminance check:
+		double lum = 0.299 * GetRValue(bg) + 0.587 * GetGValue(bg) + 0.114 * GetBValue(bg);
+		int offset = (lum < 128) ? 40 : -40;
+		int r = max(0, min(255, GetRValue(bg) + offset));
+		int g = max(0, min(255, GetGValue(bg) + offset));
+		int b = max(0, min(255, GetBValue(bg) + offset));
+		COLORREF bgContrast = RGB(r, g, b);
+
+		brush1.CreateSolidBrush(bg);
+		brush2.CreateSolidBrush(bgContrast);
+
+		// Optimization: Clip loop to rect
+		for (int y = rect.top; y < rect.bottom; y += gridSize) {
+			for (int x = rect.left; x < rect.right; x += gridSize) {
+				CRect r(x, y, x + gridSize, y + gridSize);
+				r.IntersectRect(r, rect); // Clip
+				bool isWhite = ((x / gridSize) + (y / gridSize)) % 2 == 0;
+				dc.FillRect(&r, isWhite ? brush2 : brush1);
+			}
+		}
+	}
+
+
+	// Helper: Draw Background (Solid or Checkerboard)
+	static void DrawBackground(CDC& dc, const CRect& rect, HBRUSH solidBrush, bool bUseCheckerboard) {
+		if (bUseCheckerboard) {
+			DrawCheckerboard(dc, rect);
+		} else {
+			dc.FillRect(&rect, solidBrush);
+		}
+	}
+
+	CPoint DrawDIB32bppWithBlackBorders(CDC& dc, BITMAPINFO& bmInfo, void* pDIBData, HBRUSH backBrush, const CRect& targetArea, CSize dibSize, CPoint offset, bool bHasAlpha) {
 		memset(&bmInfo, 0, sizeof(BITMAPINFO));
 		bmInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 		bmInfo.bmiHeader.biWidth = dibSize.cx;
@@ -237,26 +278,56 @@ namespace HelpersGUI {
 		int xDest = (targetArea.Width() - dibSize.cx) / 2 + offset.x;
 		int yDest = (targetArea.Height() - dibSize.cy) / 2 + offset.y;
 
-		// remaining client area is painted black
+		// Only use checkerboard if the image actually has transparency AND the setting is on.
+		// Use Solid Background for opaque images to avoid flicker/flash user reported.
+		bool bUseCheckerboard = bHasAlpha && CSettingsProvider::This().TransparencyCheckerboard();
+
+		// remaining client area is painted with Background (Solid or Checkerboard)
 		if (xDest > 0) {
 			CRect r(0, 0, xDest, targetArea.Height());
-			dc.FillRect(&r, backBrush);
+			DrawBackground(dc, r, backBrush, bUseCheckerboard);
 		}
 		if (xDest + dibSize.cx < targetArea.Width()) {
 			CRect r(xDest + dibSize.cx, 0, targetArea.Width(), targetArea.Height());
-			dc.FillRect(&r, backBrush);
+			DrawBackground(dc, r, backBrush, bUseCheckerboard);
 		}
 		if (yDest > 0) {
 			CRect r(xDest, 0, xDest + dibSize.cx, yDest);
-			dc.FillRect(&r, backBrush);
+			DrawBackground(dc, r, backBrush, bUseCheckerboard);
 		}
 		if (yDest + dibSize.cy < targetArea.Height()) {
 			CRect r(xDest, yDest + dibSize.cy, xDest + dibSize.cx, targetArea.Height());
-			dc.FillRect(&r, backBrush);
+			DrawBackground(dc, r, backBrush, bUseCheckerboard);
 		}
 
-		dc.SetDIBitsToDevice(xDest, yDest, dibSize.cx, dibSize.cy, 0, 0, 0, dibSize.cy, pDIBData, 
-			&bmInfo, DIB_RGB_COLORS);
+		if (bHasAlpha) {
+			// Fill image area with background (Solid or Checkerboard)
+			CRect imageRect(xDest, yDest, xDest + dibSize.cx, yDest + dibSize.cy);
+			DrawBackground(dc, imageRect, backBrush, bUseCheckerboard);
+
+			// Use AlphaBlend
+			CDC memDC;
+			memDC.CreateCompatibleDC(dc);
+			CBitmap bmp;
+			bmp.CreateCompatibleBitmap(dc, dibSize.cx, dibSize.cy);
+			HBITMAP hOldBmp = memDC.SelectBitmap(bmp);
+			
+			// Copy bits to bitmap
+			::SetDIBits(memDC.m_hDC, bmp, 0, dibSize.cy, pDIBData, &bmInfo, DIB_RGB_COLORS);
+
+			BLENDFUNCTION bf;
+			bf.BlendOp = AC_SRC_OVER;
+			bf.BlendFlags = 0;
+			bf.SourceConstantAlpha = 255;
+			bf.AlphaFormat = AC_SRC_ALPHA; // Uses per-pixel alpha
+
+			dc.AlphaBlend(xDest, yDest, dibSize.cx, dibSize.cy, memDC, 0, 0, dibSize.cx, dibSize.cy, bf);
+			
+			memDC.SelectBitmap(hOldBmp);
+		} else {
+			dc.SetDIBitsToDevice(xDest, yDest, dibSize.cx, dibSize.cy, 0, 0, 0, dibSize.cy, pDIBData, 
+				&bmInfo, DIB_RGB_COLORS);
+		}
 
 		return CPoint(xDest, yDest);
 	}

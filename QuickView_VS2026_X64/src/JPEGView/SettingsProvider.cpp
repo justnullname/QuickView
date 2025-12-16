@@ -584,6 +584,12 @@ void CSettingsProvider::WriteString(LPCTSTR sKey, LPCTSTR sString) {
 	m_bUserINIExists = true;
 }
 
+void CSettingsProvider::Flush() {
+	if (m_bUserINIExists) {
+		::WritePrivateProfileString(NULL, NULL, NULL, m_sIniNameUser);
+	}
+}
+
 void CSettingsProvider::WriteDouble(LPCTSTR sKey, double dValue) {
 	TCHAR buff[32];
 	_stprintf_s(buff, 32, _T("%.2f"), dValue);
@@ -635,6 +641,7 @@ void CSettingsProvider::ReloadSettings() {
 
     // Reset fallback
     m_sIniNameUser = m_sIniNameGlobal;
+    m_bUserINIExists = false;
 
     LoadSettings();
 }
@@ -669,6 +676,8 @@ void CSettingsProvider::LoadSettings() {
 	m_bShowFullScreen = m_bAutoFullScreen ? true : GetBool(_T("ShowFullScreen"), true);
 	m_nNarrowBorderWidth = GetInt(_T("NarrowBorderWidth"), 2, 0, 100);
 	m_cNarrowBorderColor = GetColor(_T("NarrowBorderColor"), RGB(128, 128, 128));
+	m_colorBackground = GetColor(_T("BackgroundColor"), RGB(0, 0, 0));
+	m_bTransparencyCheckerboard = GetBool(_T("TransparencyCheckerboard"), false);
 	m_bShowEXIFDateInTitle = GetBool(_T("ShowEXIFDateInTitle"), true);
 	m_bShowFullPathInTitle = GetBool(_T("ShowFilePathInTitle"), false);
 	m_bShowHistogram = GetBool(_T("ShowHistogram"), false);

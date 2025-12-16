@@ -88,6 +88,7 @@ class CUICtrl {
 public:
 	// pPanel: parent panel
 	CUICtrl(CPanel* pPanel);
+	virtual ~CUICtrl() {}
 	
 	// Layout rectangle in main window client coordinates
 	CRect GetPosition() const { return m_position; }
