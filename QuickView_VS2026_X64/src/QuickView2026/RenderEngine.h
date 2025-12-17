@@ -1,4 +1,9 @@
 #include "pch.h"
+#include <dxgi1_3.h>
+#include <memory>
+#include <dwrite.h>
+#include "OSDState.h"
+#pragma comment(lib, "dwrite.lib")
 
 /// <summary>
 /// Direct2D Render Engine (Simplified)
@@ -70,9 +75,7 @@ private:
     // D3D11 resources
     ComPtr<ID3D11Device> m_d3dDevice;
     ComPtr<ID3D11DeviceContext> m_d3dContext;
-
-#include <dxgi1_3.h>
-
+    
     // DXGI resources
     ComPtr<IDXGISwapChain2> m_swapChain;
     HANDLE m_frameLatencyWaitableObject = nullptr;
@@ -80,6 +83,7 @@ private:
 public:
     void WaitForGPU();
     bool IsWaitable() const { return m_frameLatencyWaitableObject != nullptr; }
+    void DrawOSD(const OSDState& state);
 
 
     // D2D resources
@@ -87,6 +91,10 @@ public:
     ComPtr<ID2D1Device> m_d2dDevice;
     ComPtr<ID2D1DeviceContext> m_d2dContext;
     ComPtr<ID2D1Bitmap1> m_targetBitmap;
+
+    // DirectWrite resources
+    ComPtr<IDWriteFactory> m_dwriteFactory;
+    ComPtr<IDWriteTextFormat> m_textFormat;
 
     // WIC resources
     ComPtr<IWICImagingFactory> m_wicFactory;

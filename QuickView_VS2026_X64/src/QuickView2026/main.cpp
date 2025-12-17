@@ -8,6 +8,23 @@
 #include "AppStrings.h"
 #include <cwctype>
 #include <commctrl.h> 
+#include <wrl/client.h>
+#include <d2d1_2.h>
+#include <d2d1_1.h>
+#include <d3d11.h>
+#include <dxgi1_3.h>
+#include <dwrite.h>
+#include <wincodec.h>
+#include "OSDState.h"
+
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "dwrite.lib")
+
+using namespace Microsoft::WRL;
+
 #include <algorithm> 
 #include <shellapi.h> 
 #include <commdlg.h> 
@@ -50,19 +67,7 @@ struct DialogState {
     DialogResult FinalResult = DialogResult::None;
 };
 
-struct OSDState {
-    std::wstring Message;
-    DWORD StartTime = 0;
-    DWORD Duration = 2000;
-    bool IsError = false;
-    bool IsWarning = false;
-    D2D1_COLOR_F CustomColor = D2D1::ColorF(D2D1::ColorF::Black, 0.0f);
-
-    void Show(const std::wstring& msg, bool error = false, bool warning = false, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::Black, 0.0f)) {
-        Message = msg; StartTime = GetTickCount(); IsError = error; IsWarning = warning; CustomColor = color;
-    }
-    bool IsVisible() const { return !Message.empty() && (GetTickCount() - StartTime) < Duration; }
-};
+// struct OSDState moved to OSDState.h
 
 struct ViewState {
     float Zoom = 1.0f;
@@ -84,7 +89,7 @@ static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
-static OSDState g_osd;
+OSDState g_osd; // Removed static, explicitly Global
 static DialogState g_dialog;
 static EditState g_editState;
 static AppConfig g_config;
@@ -146,38 +151,7 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
 
 // --- Draw Functions ---
 
-void DrawOSD(ID2D1DeviceContext* context, const RECT& clientRect) {
-    if (!g_osd.IsVisible() || !context) return;
-    
-    static ComPtr<IDWriteFactory> pDWriteFactory;
-    static ComPtr<IDWriteTextFormat> pTextFormat;
-    static ComPtr<ID2D1SolidColorBrush> pBrush;
-    if (!pDWriteFactory) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDWriteFactory.GetAddressOf()));
-    if (pDWriteFactory && !pTextFormat) pDWriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, L"en-us", &pTextFormat);
-    if (!pBrush) context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &pBrush);
-    
-    if (pTextFormat && pBrush) {
-        D2D1_SIZE_F renderSize = context->GetSize();
-        std::wstring msg = g_osd.Message;
-        ComPtr<IDWriteTextLayout> pLayout;
-        pDWriteFactory->CreateTextLayout(msg.c_str(), (UINT32)msg.length(), pTextFormat.Get(), renderSize.width, renderSize.height, &pLayout);
-        DWRITE_TEXT_METRICS metrics; pLayout->GetMetrics(&metrics);
-        float padding = 15.0f;
-        float boxWidth = metrics.width + padding * 2;
-        float boxHeight = metrics.height + padding * 2;
-        D2D1_RECT_F boxRect = D2D1::RectF((renderSize.width - boxWidth) / 2.0f, 40.0f, (renderSize.width + boxWidth) / 2.0f, 40.0f + boxHeight);
-        
-        ComPtr<ID2D1SolidColorBrush> pBgBrush;
-        D2D1_COLOR_F bgColor = g_osd.CustomColor;
-        if (bgColor.a == 0.0f) {
-            if (g_osd.IsError) bgColor = D2D1::ColorF(0.8f, 0.2f, 0.2f, 0.9f);
-            else bgColor = D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.8f);
-        }
-        context->CreateSolidColorBrush(bgColor, &pBgBrush);
-        context->FillRoundedRectangle(D2D1::RoundedRect(boxRect, 8.0f, 8.0f), pBgBrush.Get());
-        context->DrawTextLayout(D2D1::Point2F(boxRect.left + padding, boxRect.top + padding), pLayout.Get(), pBrush.Get());
-    }
-}
+// DrawOSD moved to RenderEngine
 
 // --- Window Controls ---
 enum class WindowHit { None, Min, Max, Close };
@@ -1050,7 +1024,9 @@ void OnPaint(HWND hwnd) {
         CalculateWindowControls(size);
         DrawWindowControls(context);
         
-        DrawOSD(context, rect);
+        DrawWindowControls(context);
+        
+        g_renderEngine->DrawOSD(g_osd);
         DrawDialog(context, rect);
     }
     g_renderEngine->EndDraw();
