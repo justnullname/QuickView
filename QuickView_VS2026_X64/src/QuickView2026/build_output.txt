@@ -1,0 +1,121 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+Build started 2025/12/17 13:04:33.
+
+     1>Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj" on node 1 (default targets).
+     1>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+       InitializeBuildStatus:
+         Touching "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\obj\x64\Release\QuickView2026.tlog\unsuccessfulbuild".
+       ClCompile:
+         All outputs are up-to-date.
+         D:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\CL.exe /c /Zi /nologo /W4 /WX- /diagnostics:column /sdl /O2 /Oi /GL /D NDEBUG /D _WINDOWS /D _UNICODE /D UNICODE /Gm- /EHsc /MD /GS /Gy /arch:AVX2 /fp:fast /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++20 /permissive- /Yu"pch.h" /Fp"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\obj\x64\Release\QuickView2026.pch" /Fo"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\obj\x64\Release\\" /Fd"e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\obj\x64\Release\vc143.pdb" /external:W4 /Gd /TP /FC /errorReport:queue main.cpp
+         main.cpp
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\RenderEngine.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\ImageLoader.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,30): error C3872: “0xe1e4”: 此字符不允许在标识符中使用 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,71): error C2001: 常量中有换行符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,30): error C3688: 文本后缀“閿欒”无效；未找到文文本运算符或文本运算符模板“operator """"閿欒” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(76,9): error C2143: 语法错误: 缺少“)”(在“return”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,9): error C2660: “MessageBoxW”: 函数不接受 1 个参数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+             D:\Windows Kits\10\Include\10.0.26100.0\um\winuser.h(9238,1):
+             参见“MessageBoxW”的声明
+             e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,9):
+             尝试匹配参数列表“(nullptr)”时
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(76,9): error C2143: 语法错误: 缺少“;”(在“return”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,30): error C3872: “0xe1e4”: 此字符不允许在标识符中使用 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,76): error C2001: 常量中有换行符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,30): error C3688: 文本后缀“閿欒”无效；未找到文文本运算符或文本运算符模板“operator """"閿欒” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(93,9): error C2146: 语法错误: 缺少“)”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,9): error C2660: “MessageBoxW”: 函数不接受 1 个参数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+             D:\Windows Kits\10\Include\10.0.26100.0\um\winuser.h(9238,1):
+             参见“MessageBoxW”的声明
+             e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,9):
+             尝试匹配参数列表“(nullptr)”时
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(93,9): error C2146: 语法错误: 缺少“;”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,30): error C3872: “0xe1e4”: 此字符不允许在标识符中使用 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,76): error C2001: 常量中有换行符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,30): error C3688: 文本后缀“閿欒”无效；未找到文文本运算符或文本运算符模板“operator """"閿欒” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(122,9): error C2146: 语法错误: 缺少“)”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,9): error C2660: “MessageBoxW”: 函数不接受 1 个参数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+             D:\Windows Kits\10\Include\10.0.26100.0\um\winuser.h(9238,1):
+             参见“MessageBoxW”的声明
+             e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,9):
+             尝试匹配参数列表“(nullptr)”时
+         
+     1>e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(122,9): error C2146: 语法错误: 缺少“;”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         (compiling source file '/main.cpp')
+         
+     1>Done Building Project "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+       "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj" (default target) (1) ->
+       (ClCompile target) -> 
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\RenderEngine.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\ImageLoader.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+
+
+       "e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj" (default target) (1) ->
+       (ClCompile target) -> 
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,30): error C3872: “0xe1e4”: 此字符不允许在标识符中使用 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,71): error C2001: 常量中有换行符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,30): error C3688: 文本后缀“閿欒”无效；未找到文文本运算符或文本运算符模板“operator """"閿欒” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(76,9): error C2143: 语法错误: 缺少“)”(在“return”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(75,9): error C2660: “MessageBoxW”: 函数不接受 1 个参数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(76,9): error C2143: 语法错误: 缺少“;”(在“return”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,30): error C3872: “0xe1e4”: 此字符不允许在标识符中使用 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,76): error C2001: 常量中有换行符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,30): error C3688: 文本后缀“閿欒”无效；未找到文文本运算符或文本运算符模板“operator """"閿欒” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(93,9): error C2146: 语法错误: 缺少“)”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(92,9): error C2660: “MessageBoxW”: 函数不接受 1 个参数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(93,9): error C2146: 语法错误: 缺少“;”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,30): error C3872: “0xe1e4”: 此字符不允许在标识符中使用 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,76): error C2001: 常量中有换行符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,30): error C3688: 文本后缀“閿欒”无效；未找到文文本运算符或文本运算符模板“operator """"閿欒” [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(122,9): error C2146: 语法错误: 缺少“)”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(121,9): error C2660: “MessageBoxW”: 函数不接受 1 个参数 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+         e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\main.cpp(122,9): error C2146: 语法错误: 缺少“;”(在标识符“CoUninitialize”的前面) [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\QuickView2026\QuickView2026.vcxproj]
+
+    3 Warning(s)
+    18 Error(s)
+
+Time Elapsed 00:00:00.55

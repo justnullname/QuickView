@@ -15,6 +15,18 @@
 
 ---
 
+## ✨ ✨ ✨ QuickView 2.0: A Fresh Start ✨ ✨ ✨ 
+
+Starting with version 2.0, QuickView is being rebuilt from the ground up, driven by the principles of code modernization and extreme optimization. While the project will diverge completely from the original JpegView codebase, we will preserve its core strengths where necessary.
+
+**Our Goal: To create a dedicated native image viewer that is:**
+
+- Borderless: A clean, immersive interface.
+- Blazing Fast: Optimized for speed.
+- Flexible: Supports freeform drag-and-drop interactions.
+- Modern: Designed with a contemporary aesthetic.
+- Scope: We focus purely on the viewing experience. No image editing or modification features will be added. Functionality remains strictly limited to viewing aids, such as rotation and flipping.
+
 ## 📖 Introduction
 
 **QuickView** is a modern, streamlined fork of the legendary [JPEGView](https://github.com/annh9b/JPEGView-Static).
