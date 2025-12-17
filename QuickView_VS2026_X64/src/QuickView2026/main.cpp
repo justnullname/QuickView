@@ -74,6 +74,8 @@ struct ViewState {
     void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; }
 };
 
+#include "FileNavigator.h"
+
 // --- Globals ---
 
 static const wchar_t* g_szClassName = L"QuickView2026Class";
@@ -87,6 +89,9 @@ static DialogState g_dialog;
 static EditState g_editState;
 static AppConfig g_config;
 static ViewState g_viewState;
+static FileNavigator g_navigator; // New Navigator
+static ComPtr<IWICBitmap> g_prefetchedBitmap;
+static std::wstring g_prefetchedPath;
 
 
 // --- Forward Declarations ---
@@ -95,6 +100,7 @@ void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
+void Navigate(HWND hwnd, int direction); 
 void ReleaseImageResources();
 void DiscardChanges();
 
@@ -627,6 +633,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     
     int argc = 0; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argc > 1) {
+        g_navigator.Initialize(argv[1]);
         LoadImageAsync(hwnd, argv[1]);
     }
     LocalFree(argv);
@@ -894,7 +901,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (DragQueryFileW(hDrop, 0, path, MAX_PATH)) {
             g_editState.Reset();
             g_viewState.Reset();
-            LoadImageAsync(hwnd, path); // Async, adjust window handled internally
+            g_navigator.Initialize(path);
+            LoadImageAsync(hwnd, path); // Async
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         DragFinish(hDrop);
@@ -908,7 +916,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 'H': PerformTransform(hwnd, TransformType::FlipHorizontal); break;
         case 'V': PerformTransform(hwnd, TransformType::FlipVertical); break;
         case 'T': PerformTransform(hwnd, TransformType::Rotate180); break;
-        case VK_SPACE: break;
+        case VK_LEFT: Navigate(hwnd, -1); break;
+        case VK_RIGHT: Navigate(hwnd, 1); break;
+        case VK_SPACE: Navigate(hwnd, 1); break; // Space = Next
         }
         return 0;
     }
@@ -917,39 +927,90 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 }
 
 void OnResize(HWND hwnd, UINT width, UINT height) { if (g_renderEngine) g_renderEngine->Resize(width, height); }
+FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
+
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
-    if (!g_imageLoader || !g_renderEngine) co_return; // Use co_return for coroutine
+    if (!g_imageLoader || !g_renderEngine) co_return;
     
-    // 1. Switch to Background Thread for Heavy Lifting
-    co_await ResumeBackground{};
-
-    // 2. Decode Image to System Memory (CPU intensive)
+    // 1. Check Prefetch Cache (Main Thread)
     ComPtr<IWICBitmap> wicMemoryBitmap;
-    HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap);
-
-    // 3. Switch back to Main Thread for GPU Upload (D2D Single Threaded)
-    co_await ResumeMainThread(hwnd);
-
-    if (FAILED(hr) || !wicMemoryBitmap) {
-        g_osd.Show(L"Failed to load image", true);
-        co_return; // Failed
+    if (path == g_prefetchedPath && g_prefetchedBitmap) {
+        wicMemoryBitmap = g_prefetchedBitmap;
+        // Consume cache (optional: keep it? No, we might move away. clear it or keep until overwritten?)
+        // If we keep it, we don't need to reload if user goes back/forth quickly.
+        // But for now, let's just use it.
     }
 
-    // 4. Upload to GPU (Fast Memcpy)
+    // 2. If Miss, Load from Disk
+    if (!wicMemoryBitmap) {
+        // Switch to Background Thread
+        co_await ResumeBackground{};
+
+        // Decode
+        HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap);
+
+        // Switch back
+        co_await ResumeMainThread(hwnd);
+
+        if (FAILED(hr) || !wicMemoryBitmap) {
+            g_osd.Show(L"Failed to load image", true);
+            co_return; 
+        }
+    }
+
+    // 3. Upload to GPU
     ComPtr<ID2D1Bitmap> d2dBitmap;
     if (FAILED(g_renderEngine->CreateBitmapFromWIC(wicMemoryBitmap.Get(), &d2dBitmap))) {
          g_osd.Show(L"Failed to upload texture", true);
          co_return;
     }
 
-    // 5. Update State
+    // 4. Update State
     g_currentBitmap = d2dBitmap; 
     g_imagePath = path; 
 
-    // 6. Adjust Window & Repaint
+    // 5. Adjust & Repaint
     AdjustWindowToImage(hwnd);
     InvalidateRect(hwnd, nullptr, FALSE);
+    
+    // 6. Trigger Prefetch for NEXT image
+    if (g_navigator.Count() > 0) {
+        std::wstring nextPath = g_navigator.PeekNext();
+        if (!nextPath.empty() && nextPath != g_prefetchedPath && nextPath != path) {
+             PrefetchImageAsync(hwnd, nextPath);
+        }
+    }
 }
+
+FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path) {
+    if (path.empty() || path == g_prefetchedPath) co_return;
+
+    co_await ResumeBackground{};
+    
+    ComPtr<IWICBitmap> bitmap;
+    HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &bitmap);
+    
+    co_await ResumeMainThread(hwnd);
+    
+    if (SUCCEEDED(hr) && bitmap) {
+        g_prefetchedBitmap = bitmap;
+        g_prefetchedPath = path;
+        // g_osd.Show(L"Prefetched", false, false); // Debug
+    }
+}
+
+void Navigate(HWND hwnd, int direction) {
+    if (g_navigator.Count() <= 0) return;
+    if (CheckUnsavedChanges(hwnd)) {
+        std::wstring path = (direction > 0) ? g_navigator.Next() : g_navigator.Previous();
+        if (!path.empty()) {
+            g_editState.Reset();
+            g_viewState.Reset();
+            LoadImageAsync(hwnd, path);
+        }
+    }
+}
+
 void OnPaint(HWND hwnd) {
     if (!g_renderEngine) return;
     g_renderEngine->BeginDraw();
