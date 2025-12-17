@@ -12,7 +12,6 @@
 #include <shellapi.h> 
 #include <commdlg.h> 
 #include <vector>
-
 #include <dwmapi.h>
 #include <ShellScalingApi.h>
 #pragma comment(lib, "dwmapi.lib")
@@ -94,8 +93,8 @@ static ViewState g_viewState;
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
-bool LoadImage(LPCWSTR path);
-bool ReloadCurrentImage(HWND hwnd);
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path);
+void ReloadCurrentImage(HWND hwnd);
 void ReleaseImageResources();
 void DiscardChanges();
 
@@ -553,18 +552,15 @@ void AdjustWindowToImage(HWND hwnd) {
     SetWindowPos(hwnd, nullptr, newLeft, newTop, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-bool ReloadCurrentImage(HWND hwnd) {
-    if (g_imagePath.empty() && g_editState.OriginalFilePath.empty()) return false;
+void ReloadCurrentImage(HWND hwnd) {
+    if (g_imagePath.empty() && g_editState.OriginalFilePath.empty()) return;
     g_currentBitmap.Reset();
     LPCWSTR path;
     if (g_editState.IsDirty && FileExists(g_editState.TempFilePath.c_str())) path = g_editState.TempFilePath.c_str();
     else path = g_editState.OriginalFilePath.empty() ? g_imagePath.c_str() : g_editState.OriginalFilePath.c_str();
-    bool ok = LoadImage(path); // LoadImage now doesn't pass HWND, we need to call Adjust manually? 
-    // Wait, LoadImage signature is bool LoadImage(LPCWSTR).
-    // Let's modify logic: Call AdjustWindowToImage HERE if ok.
-    if (ok) AdjustWindowToImage(hwnd);
-    InvalidateRect(hwnd, nullptr, FALSE);
-    return ok;
+    
+    LoadImageAsync(hwnd, path);
+    // Note: AdjustWindowToImage is called inside LoadImageAsync upon success
 }
 
 void PerformTransform(HWND hwnd, TransformType type) {
@@ -621,7 +617,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     wcex.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
     
     RegisterClassExW(&wcex);
-    HWND hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+    HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
     
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
@@ -631,7 +627,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     
     int argc = 0; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argc > 1) {
-        if (LoadImage(argv[1])) AdjustWindowToImage(hwnd);
+        LoadImageAsync(hwnd, argv[1]);
     }
     LocalFree(argv);
     
@@ -650,6 +646,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_NCCALCSIZE: if (wParam) return 0; break;
+    case WM_APP + 1: {
+        auto handle = std::coroutine_handle<>::from_address((void*)lParam);
+        handle.resume();
+        return 0;
+    }
     case WM_NCHITTEST: {
         LRESULT hit = DefWindowProc(hwnd, message, wParam, lParam);
         if (hit != HTCLIENT) return hit;
@@ -893,7 +894,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (DragQueryFileW(hDrop, 0, path, MAX_PATH)) {
             g_editState.Reset();
             g_viewState.Reset();
-            if (LoadImage(path)) AdjustWindowToImage(hwnd);
+            LoadImageAsync(hwnd, path); // Async, adjust window handled internally
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         DragFinish(hDrop);
@@ -916,13 +917,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 }
 
 void OnResize(HWND hwnd, UINT width, UINT height) { if (g_renderEngine) g_renderEngine->Resize(width, height); }
-bool LoadImage(LPCWSTR path) {
-    if (!g_imageLoader || !g_renderEngine) return false;
-    ComPtr<IWICBitmapSource> wicBitmap;
-    if (FAILED(g_imageLoader->LoadFromFile(path, &wicBitmap))) return false;
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
+    if (!g_imageLoader || !g_renderEngine) co_return; // Use co_return for coroutine
+    
+    // 1. Switch to Background Thread for Heavy Lifting
+    co_await ResumeBackground{};
+
+    // 2. Decode Image to System Memory (CPU intensive)
+    ComPtr<IWICBitmap> wicMemoryBitmap;
+    HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap);
+
+    // 3. Switch back to Main Thread for GPU Upload (D2D Single Threaded)
+    co_await ResumeMainThread(hwnd);
+
+    if (FAILED(hr) || !wicMemoryBitmap) {
+        g_osd.Show(L"Failed to load image", true);
+        co_return; // Failed
+    }
+
+    // 4. Upload to GPU (Fast Memcpy)
     ComPtr<ID2D1Bitmap> d2dBitmap;
-    if (FAILED(g_renderEngine->CreateBitmapFromWIC(wicBitmap.Get(), &d2dBitmap))) return false;
-    g_currentBitmap = d2dBitmap; g_imagePath = path; return true;
+    if (FAILED(g_renderEngine->CreateBitmapFromWIC(wicMemoryBitmap.Get(), &d2dBitmap))) {
+         g_osd.Show(L"Failed to upload texture", true);
+         co_return;
+    }
+
+    // 5. Update State
+    g_currentBitmap = d2dBitmap; 
+    g_imagePath = path; 
+
+    // 6. Adjust Window & Repaint
+    AdjustWindowToImage(hwnd);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 void OnPaint(HWND hwnd) {
     if (!g_renderEngine) return;

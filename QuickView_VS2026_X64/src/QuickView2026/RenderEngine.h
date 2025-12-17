@@ -1,6 +1,4 @@
-#pragma once
 #include "pch.h"
-#include <dcomp.h>
 
 /// <summary>
 /// Direct2D Render Engine (Simplified)
@@ -73,8 +71,16 @@ private:
     ComPtr<ID3D11Device> m_d3dDevice;
     ComPtr<ID3D11DeviceContext> m_d3dContext;
 
+#include <dxgi1_3.h>
+
     // DXGI resources
-    ComPtr<IDXGISwapChain1> m_swapChain;
+    ComPtr<IDXGISwapChain2> m_swapChain;
+    HANDLE m_frameLatencyWaitableObject = nullptr;
+
+public:
+    void WaitForGPU();
+    bool IsWaitable() const { return m_frameLatencyWaitableObject != nullptr; }
+
 
     // D2D resources
     ComPtr<ID2D1Factory1> m_d2dFactory;
@@ -84,9 +90,4 @@ private:
 
     // WIC resources
     ComPtr<IWICImagingFactory> m_wicFactory;
-
-    // DComp resources
-    ComPtr<IDCompositionDevice> m_dcompDevice;
-    ComPtr<IDCompositionTarget> m_dcompTarget;
-    ComPtr<IDCompositionVisual> m_dcompVisual;
 };

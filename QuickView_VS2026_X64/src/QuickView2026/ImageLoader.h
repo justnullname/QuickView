@@ -21,6 +21,11 @@ public:
     HRESULT LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap);
 
     /// <summary>
+    /// Load WIC bitmap from file and force decode to memory
+    /// </summary>
+    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap); // Force decode to memory
+
+    /// <summary>
     /// Get image size without full decode
     /// </summary>
     HRESULT GetImageSize(LPCWSTR filePath, UINT* width, UINT* height);
