@@ -30,6 +30,17 @@ public:
     /// </summary>
     HRESULT GetImageSize(LPCWSTR filePath, UINT* width, UINT* height);
 
+    // Helper: Create WIC bitmap from raw bits
+    HRESULT CreateWICBitmapFromMemory(UINT width, UINT height, REFGUID format, UINT stride, UINT size, BYTE* data, IWICBitmap** ppBitmap);
+
 private:
     ComPtr<IWICImagingFactory> m_wicFactory;
+
+    // Specialized High-Performance Loaders
+    HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
+    HRESULT LoadPNG(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libpng + zlib-ng
+    HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libwebp
+    HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libavif + dav1d
+    HRESULT LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libjxl
+    HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libraw
 };

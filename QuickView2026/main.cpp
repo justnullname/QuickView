@@ -229,21 +229,27 @@ void DrawWindowControls(ID2D1DeviceContext* context) {
         if (g_winControls.HoverState == WindowHit::Min) context->FillRectangle(g_winControls.MinRect, pGray.Get());
     }
     
-    // Icons (Simple strokes)
-    ComPtr<ID2D1SolidColorBrush> pWhite;
+    // Icons (White with dark outline for visibility on any background)
+    ComPtr<ID2D1SolidColorBrush> pWhite, pOutline;
     context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f), &pWhite);
-    float str = 1.0f;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &pOutline);
+    float str = 1.2f;
+    float outlineStr = 2.5f;  // Thicker for shadow effect
     
-    // Min (_)
+    // Min (_) - outline then white
     D2D1_RECT_F r = g_winControls.MinRect;
+    context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 16), D2D1::Point2F(r.right - 18, r.top + 16), pOutline.Get(), outlineStr);
     context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 16), D2D1::Point2F(r.right - 18, r.top + 16), pWhite.Get(), str);
     
-    // Max ([ ])
+    // Max ([ ]) - outline then white
     r = g_winControls.MaxRect;
+    context->DrawRectangle(D2D1::RectF(r.left + 16, r.top + 10, r.right - 16, r.bottom - 10), pOutline.Get(), outlineStr);
     context->DrawRectangle(D2D1::RectF(r.left + 16, r.top + 10, r.right - 16, r.bottom - 10), pWhite.Get(), str);
     
-    // Close (X)
+    // Close (X) - outline then white
     r = g_winControls.CloseRect;
+    context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 10), D2D1::Point2F(r.right - 18, r.bottom - 10), pOutline.Get(), outlineStr);
+    context->DrawLine(D2D1::Point2F(r.left + 18, r.bottom - 10), D2D1::Point2F(r.right - 18, r.top + 10), pOutline.Get(), outlineStr);
     context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 10), D2D1::Point2F(r.right - 18, r.bottom - 10), pWhite.Get(), str);
     context->DrawLine(D2D1::Point2F(r.left + 18, r.bottom - 10), D2D1::Point2F(r.right - 18, r.top + 10), pWhite.Get(), str);
 }
@@ -1096,13 +1102,17 @@ void OnPaint(HWND hwnd) {
             D2D1_SIZE_F size = g_currentBitmap->GetSize();
             D2D1_SIZE_F rtSize = context->GetSize();
             
+            // Calculate fit scale (to fit image in window at Zoom=1.0)
             float fitScale = std::min(rtSize.width / size.width, rtSize.height / size.height);
-            float offsetX = (rtSize.width - size.width * fitScale) / 2.0f;
-            float offsetY = (rtSize.height - size.height * fitScale) / 2.0f;
-            
-            // Apply ViewState (Zoom & Pan)
-            // Transform = Scale(Fit * Zoom) * Translate(Offset + Pan)
             float finalScale = fitScale * g_viewState.Zoom;
+            
+            // Calculate centering offset based on FINAL scaled size
+            float scaledW = size.width * finalScale;
+            float scaledH = size.height * finalScale;
+            float offsetX = (rtSize.width - scaledW) / 2.0f;
+            float offsetY = (rtSize.height - scaledH) / 2.0f;
+            
+            // Apply pan offset
             float totalX = offsetX + g_viewState.PanX;
             float totalY = offsetY + g_viewState.PanY;
              

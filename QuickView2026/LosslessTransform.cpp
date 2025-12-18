@@ -2,10 +2,9 @@
 #include "LosslessTransform.h"
 
 // Include libjpeg-turbo header
-// Path relative to JPEGView source
-#include "../JPEGView/libjpeg-turbo/include/turbojpeg.h"
+// Include libjpeg-turbo header
+#include <turbojpeg.h>
 
-#pragma comment(lib, "turbojpeg-static.lib")
 
 // JPEG magic bytes: FF D8 FF
 static const unsigned char JPEG_MAGIC[] = { 0xFF, 0xD8, 0xFF };
