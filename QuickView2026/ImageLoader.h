@@ -23,7 +23,7 @@ public:
     /// <summary>
     /// Load WIC bitmap from file and force decode to memory
     /// </summary>
-    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap); // Force decode to memory
+    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr); // Force decode to memory
 
     /// <summary>
     /// Get image size without full decode

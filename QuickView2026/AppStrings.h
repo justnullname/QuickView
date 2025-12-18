@@ -31,4 +31,11 @@ namespace AppStrings {
     static const wchar_t* Checkbox_AlwaysSaveLossless = L"Always save lossless transforms";
     static const wchar_t* Checkbox_AlwaysSaveEdgeAdapted = L"Always save edge-adapted";
     static const wchar_t* Checkbox_AlwaysSaveLossy = L"Always save re-encoded";
+    
+    // HEIC Codec Missing
+    static const wchar_t* OSD_HEICCodecMissing = L"Cannot decode HEIC - Install HEVC Video Extension";
+    static const wchar_t* Dialog_HEICTitle = L"Cannot decode HEIC";
+    static const wchar_t* Dialog_HEICContent = L"Your system is missing the HEVC Video Extension.\nQuickView uses system hardware acceleration for best performance.";
+    static const wchar_t* Dialog_HEICGetExtension = L"Get Extension (Free)";
+    static const wchar_t* Dialog_Cancel = L"Cancel";
 }
