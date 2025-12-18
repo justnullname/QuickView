@@ -239,20 +239,200 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // AVIF (libavif + dav1d)
 // ----------------------------------------------------------------------------
 HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
-    // Basic implementation using avifDecoder
-    // Requires full implementation linking 
-    return E_NOTIMPL;
+    if (!filePath || !ppBitmap) return E_INVALIDARG;
+
+    // Read file to memory buffer
+    std::vector<uint8_t> avifBuf;
+    if (!ReadFileToVector(filePath, avifBuf)) return E_FAIL;
+
+    // Create Decoder
+    avifDecoder* decoder = avifDecoderCreate();
+    if (!decoder) return E_OUTOFMEMORY;
+    
+    // Set Memory Source
+    avifResult result = avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size());
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Parse
+    result = avifDecoderParse(decoder);
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Next Image (Frame 0)
+    result = avifDecoderNextImage(decoder);
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Convert YUV to RGB
+    avifRGBImage rgb;
+    avifRGBImageSetDefaults(&rgb, decoder->image);
+    
+    // Configure for WIC (BGRA, 8-bit)
+    rgb.format = AVIF_RGB_FORMAT_BGRA;
+    rgb.depth = 8;
+    
+    // Calculate stride and size
+    // Note: libavif might want to allocate its own pixels or proper stride
+    // Let's allocate our own buffer for safety and control
+    rgb.rowBytes = rgb.width * 4;
+    std::vector<uint8_t> pixelData(rgb.rowBytes * rgb.height);
+    rgb.pixels = pixelData.data();
+    
+    result = avifImageYUVToRGB(decoder->image, &rgb);
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Create WIC Bitmap
+    HRESULT hr = CreateWICBitmapFromMemory(rgb.width, rgb.height, GUID_WICPixelFormat32bppPBGRA, (UINT)rgb.rowBytes, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+
+    avifDecoderDestroy(decoder);
+    return hr;
 }
 
 // ----------------------------------------------------------------------------
 // JPEG XL (libjxl)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) { return E_NOTIMPL; }
+HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    if (!filePath || !ppBitmap) return E_INVALIDARG;
+
+    std::vector<uint8_t> jxlBuf;
+    if (!ReadFileToVector(filePath, jxlBuf)) return E_FAIL;
+
+    // 1. Create Decoder and Runner
+    JxlDecoder* dec = JxlDecoderCreate(NULL);
+    if (!dec) return E_OUTOFMEMORY;
+
+    // Use max threads (default to system CPU count)
+    void* runner = JxlResizableParallelRunnerCreate(NULL);
+    if (!runner) {
+        JxlDecoderDestroy(dec);
+        return E_OUTOFMEMORY;
+    }
+    
+    JxlDecoderSetParallelRunner(dec, JxlResizableParallelRunner, runner);
+
+    // 2. Subscribe to events
+    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE)) {
+        JxlResizableParallelRunnerDestroy(runner);
+        JxlDecoderDestroy(dec);
+        return E_FAIL;
+    }
+
+    // 3. Set Input
+    JxlDecoderSetInput(dec, jxlBuf.data(), jxlBuf.size());
+
+    JxlBasicInfo info;
+    JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; // RGBA
+    
+    std::vector<uint8_t> pixels;
+    HRESULT hr = E_FAIL;
+
+    // 4. Decode Loop
+    for (;;) {
+        JxlDecoderStatus status = JxlDecoderProcessInput(dec);
+        
+        if (status == JXL_DEC_ERROR) {
+            hr = E_FAIL;
+            break;
+        }
+        else if (status == JXL_DEC_SUCCESS) {
+            hr = S_OK;
+            break;
+        }
+        else if (status == JXL_DEC_BASIC_INFO) {
+            if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
+                 hr = E_FAIL; break; 
+            }
+            // Resize buffer
+            size_t stride = info.xsize * 4;
+            pixels.resize(stride * info.ysize);
+        }
+        else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+            size_t bufferSize = pixels.size();
+            JxlDecoderSetImageOutBuffer(dec, &format, pixels.data(), bufferSize);
+        }
+        else if (status == JXL_DEC_FULL_IMAGE) {
+            // Nothing to do, just continue
+        }
+        else {
+            // Unknown status or need more input (should not happen with full buffer)
+            // break; (Don't break, loop might need to continue)
+        }
+    }
+
+    if (SUCCEEDED(hr)) {
+        // JXL outputs RGBA (by default assumption with 4 channels and standard).
+        // WIC needs a GUID. We use GUID_WICPixelFormat32bppRGBA.
+        // QuickView's RenderEngine might expect PBGRA. WIC FormatConverter usually runs after loading if needed (fallback uses it).
+        // BUT, CImageLoader::LoadToMemory returns a Bitmap. Main loop expects to Draw it.
+        // D2D CreateBitmapFromWicBitmap automatically converts if possible.
+        // So RGBA is fine.
+        hr = CreateWICBitmapFromMemory(info.xsize, info.ysize, GUID_WICPixelFormat32bppRGBA, info.xsize * 4, (UINT)pixels.size(), pixels.data(), ppBitmap);
+    }
+
+    JxlResizableParallelRunnerDestroy(runner);
+    JxlDecoderDestroy(dec);
+    return hr;
+}
 
 // ----------------------------------------------------------------------------
 // RAW (LibRaw)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap) { return E_NOTIMPL; }
+HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap) { 
+    // Uses standard LibRaw processing
+    // Warning: extensive memory usage
+
+    std::wstring pathStr = filePath;
+    std::string pathUtf8(pathStr.begin(), pathStr.end()); // Simple conversion for now. LibRaw supports wstring on Windows?
+    // LibRaw::open_file accepts wchar_t* on Windows if compiled with unicode support?
+    // Let's check headers or try open_file(filePath).
+    // Safest is open_buffer to avoid path encoding issues if API differs.
+    
+    std::vector<uint8_t> rawBuf;
+    if (!ReadFileToVector(filePath, rawBuf)) return E_FAIL;
+
+    LibRaw RawProcessor;
+    
+    if (RawProcessor.open_buffer(rawBuf.data(), rawBuf.size()) != LIBRAW_SUCCESS) return E_FAIL;
+    if (RawProcessor.unpack() != LIBRAW_SUCCESS) return E_FAIL;
+    
+    // Standard processing (auto-brightness, etc)
+    // dcraw_process() can be slow.
+    if (RawProcessor.dcraw_process() != LIBRAW_SUCCESS) return E_FAIL;
+    
+    // Get memory image
+    libraw_processed_image_t* image = RawProcessor.dcraw_make_mem_image();
+    if (!image) return E_FAIL;
+    
+    HRESULT hr = E_FAIL;
+    
+    if (image->type == LIBRAW_IMAGE_BITMAP) {
+        // usually only 16-bit support later, but dcraw_make_mem_image usually returns 8-bit RGB by default process settings?
+        // Check depth
+        if (image->bits == 8 && image->colors == 3) {
+            // RGB structure
+            UINT width = image->width;
+            UINT height = image->height;
+            UINT stride = width * 3; 
+            
+            // WIC needs a GUID. GUID_WICPixelFormat24bppRGB.
+            // Data in image->data.
+            hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat24bppRGB, stride, image->data_size, image->data, ppBitmap);
+        }
+    }
+    
+    RawProcessor.dcraw_clear_mem(image);
+    return hr;
+}
 
 HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
@@ -260,23 +440,84 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     std::wstring path = filePath;
     std::transform(path.begin(), path.end(), path.begin(), ::towlower);
     
+    // -------------------------------------------------------------
+    // Architecture Upgrade: Robust Format Detection & Fallback
+    // -------------------------------------------------------------
+    
+    // 1. Read first 16 bytes for Magic Number
+    uint8_t magic[16] = {0};
+    bool magicRead = false;
+    {
+        HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD bytesRead = 0;
+            if (ReadFile(hFile, magic, 16, &bytesRead, nullptr) && bytesRead >= 4) {
+                magicRead = true;
+            }
+            CloseHandle(hFile);
+        }
+    }
+    
+    enum class DetectedFormat { Unknown, JPEG, PNG, WebP, AVIF, JXL, RAW };
+    DetectedFormat detected = DetectedFormat::Unknown;
+
+    if (magicRead) {
+        // Check JPEG: FF D8 FF
+        if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) 
+            detected = DetectedFormat::JPEG;
+        
+        // Check PNG: 89 50 4E 47
+        else if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) 
+            detected = DetectedFormat::PNG;
+            
+        // Check WebP: RIFF ... WEBP
+        else if (magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
+                 magic[8] == 'W' && magic[9] == 'E' && magic[10] == 'B' && magic[11] == 'P')
+            detected = DetectedFormat::WebP;
+            
+        // Check AVIF: ftypavif
+        // Usually located at bytes 4-12, e.g., ....ftypavif
+        else if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p' &&
+                 magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 'f')
+            detected = DetectedFormat::AVIF;
+            
+        // Check JXL: FF 0A or 00 00 00 0C JXL 
+        else if (magic[0] == 0xFF && magic[1] == 0x0A)
+            detected = DetectedFormat::JXL;
+        else if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x00 && magic[3] == 0x0C &&
+                 magic[4] == 'J' && magic[5] == 'X' && magic[6] == 'L' && magic[7] == ' ')
+            detected = DetectedFormat::JXL;
+            
+        // RAW is tricky via magic (many formats), rely on extension as secondary hint + WIC fallback
+        // But for completeness, check extension if magic is unknown
+    }
+
+    // 2. Dispatch Logic
     HRESULT hr = E_FAIL;
     
-    // 1. Try High-Performance Dedicated Loaders based on extension
-    if (path.ends_with(L".jpg") || path.ends_with(L".jpeg") || path.ends_with(L".jpe")) {
-        hr = LoadJPEG(filePath, ppBitmap);
+    switch (detected) {
+        case DetectedFormat::JPEG: hr = LoadJPEG(filePath, ppBitmap); break;
+        case DetectedFormat::PNG:  hr = LoadPNG(filePath, ppBitmap); break;
+        case DetectedFormat::WebP: hr = LoadWebP(filePath, ppBitmap); break;
+        case DetectedFormat::AVIF: hr = LoadAVIF(filePath, ppBitmap); break;
+        case DetectedFormat::JXL:  hr = LoadJXL(filePath, ppBitmap); break;
+        case DetectedFormat::Unknown:
+        default:
+            // Fallback to extension check for RAW or generic
+            if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || path.ends_with(L".dng")) {
+                 hr = LoadRaw(filePath, ppBitmap);
+            }
+            break;
     }
-    else if (path.ends_with(L".png")) hr = LoadPNG(filePath, ppBitmap);
-    else if (path.ends_with(L".webp")) hr = LoadWebP(filePath, ppBitmap);
-    else if (path.ends_with(L".avif")) hr = LoadAVIF(filePath, ppBitmap);
-    else if (path.ends_with(L".jxl")) hr = LoadJXL(filePath, ppBitmap);
-    else if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || path.ends_with(L".dng")) hr = LoadRaw(filePath, ppBitmap);
     
+    // If Specialized Loader Succeeded, Return
     if (SUCCEEDED(hr)) return hr;
 
-    // 2. Fallback to WIC (Standard Loading)
+    // 3. Robust Fallback to WIC (Standard Loading)
+    // If High-Perf loader failed (e.g. malformed specific header, unsupported feature) OR format verified but unimplemented (stub),
+    // OR format unknown.
     // ---------------------------------------------------------
-    
+
     // 1. Load Lazy Source
     ComPtr<IWICBitmapSource> source;
     // Note: Can't use this->LoadFromFile nicely if we want to avoid double-open, 
