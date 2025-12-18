@@ -258,7 +258,11 @@ HRESULT CRenderEngine::Resize(UINT width, UINT height) {
 
 void CRenderEngine::WaitForGPU() {
     if (m_frameLatencyWaitableObject) {
-        WaitForSingleObjectEx(m_frameLatencyWaitableObject, 1000, true);
+        DWORD result = WaitForSingleObjectEx(m_frameLatencyWaitableObject, 100, true); // Reduced timeout: 100ms
+        if (result == WAIT_TIMEOUT) {
+            // Timeout occurred - GPU may be stuck, skip waiting
+            // This prevents hang when D2D/WIC enters error state
+        }
     }
 }
 
@@ -274,11 +278,12 @@ void CRenderEngine::Clear(const D2D1_COLOR_F& color) {
 void CRenderEngine::DrawBitmap(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect) {
     if (!bitmap) return;
 
+    // Default to high quality - caller handles dynamic mode selection if needed
     m_d2dContext->DrawBitmap(
         bitmap,
         destRect,
         1.0f,  // Opacity
-        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC  // High quality scaling
+        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
     );
 }
 

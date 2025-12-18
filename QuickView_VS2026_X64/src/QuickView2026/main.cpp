@@ -74,9 +74,12 @@ struct ViewState {
     float PanX = 0.0f;
     float PanY = 0.0f;
     bool IsDragging = false;
+    bool IsInteracting = false;  // True during drag/zoom/resize for dynamic interpolation
     POINT LastMousePos = { 0, 0 };
+    POINT DragStartPos = { 0, 0 };  // For click vs drag detection
+    DWORD DragStartTime = 0;        // For click vs drag detection
 
-    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; }
+    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; }
 };
 
 #include "FileNavigator.h"
@@ -108,6 +111,44 @@ void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
 void ReleaseImageResources();
 void DiscardChanges();
+
+// Helper: Check if panning makes sense (image exceeds window OR window exceeds screen)
+bool CanPan(HWND hwnd) {
+    if (!g_currentBitmap) return false;
+    
+    RECT rc; GetClientRect(hwnd, &rc);
+    float windowW = (float)(rc.right - rc.left);
+    float windowH = (float)(rc.bottom - rc.top);
+    
+    D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+    float fitScale = std::min(windowW / imgSize.width, windowH / imgSize.height);
+    float scaledW = imgSize.width * fitScale * g_viewState.Zoom;
+    float scaledH = imgSize.height * fitScale * g_viewState.Zoom;
+    
+    // Condition 1: Image exceeds window bounds
+    if (scaledW > windowW + 1.0f || scaledH > windowH + 1.0f) {
+        return true;
+    }
+    
+    // Condition 2: Window exceeds screen bounds (locked window mode or zoomed beyond screen)
+    // Get screen work area (excludes taskbar)
+    HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof(mi) };
+    if (GetMonitorInfo(hMon, &mi)) {
+        RECT windowRect; GetWindowRect(hwnd, &windowRect);
+        int winW = windowRect.right - windowRect.left;
+        int winH = windowRect.bottom - windowRect.top;
+        int screenW = mi.rcWork.right - mi.rcWork.left;
+        int screenH = mi.rcWork.bottom - mi.rcWork.top;
+        
+        // If window is larger than screen work area in either dimension
+        if (winW > screenW || winH > screenH) {
+            return true;
+        }
+    }
+    
+    return false;
+}
 
 // --- Helper Functions ---
 
@@ -632,6 +673,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         handle.resume();
         return 0;
     }
+    case WM_TIMER: {
+        static const UINT_PTR INTERACTION_TIMER_ID = 1001;
+        if (wParam == INTERACTION_TIMER_ID) {
+            KillTimer(hwnd, INTERACTION_TIMER_ID);
+            g_viewState.IsInteracting = false;  // End interaction mode
+            InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
+        }
+        return 0;
+    }
     case WM_NCHITTEST: {
         LRESULT hit = DefWindowProc(hwnd, message, wParam, lParam);
         if (hit != HTCLIENT) return hit;
@@ -726,23 +776,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
         
     case WM_MBUTTONDOWN: {
-        MouseAction action = g_config.MiddleDragAction; // Decide if likely drag or click? usually use Down for drag.
-        // For click action (Exit), we usually check on UP. But User said "Middle Click defaults exit".
-        // Let's support Click Action on UP if no Drag happened?
-        // Or if config is ExitApp, do it on Down/Up. 
-        if (g_config.MiddleClickAction == MouseAction::ExitApp) {
-             PostQuitMessage(0); return 0;
-        }
-        if (g_config.MiddleDragAction == MouseAction::PanImage) {
+        // Record start position/time for click vs drag detection
+        g_viewState.LastMousePos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        g_viewState.DragStartPos = g_viewState.LastMousePos;
+        g_viewState.DragStartTime = GetTickCount();
+        
+        // Only allow panning if image exceeds window bounds
+        if (CanPan(hwnd)) {
             SetCapture(hwnd);
             g_viewState.IsDragging = true;
-            g_viewState.LastMousePos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+            g_viewState.IsInteracting = true;  // Start interaction mode
+        } else {
+            // Not dragging, but still need to track for click detection
+            g_viewState.IsDragging = false; // Will check on MBUTTONUP
         }
         return 0;
     }
-    case WM_MBUTTONUP:
-        if (g_viewState.IsDragging) { ReleaseCapture(); g_viewState.IsDragging = false; }
+    case WM_MBUTTONUP: {
+        // Release capture if we were dragging
+        if (g_viewState.IsDragging) {
+            ReleaseCapture();
+            g_viewState.IsDragging = false;
+        }
+        
+        // FIRST: Check if this was a "click" (short duration, minimal movement)
+        // Must check BEFORE setting IsInteracting=false to avoid triggering HIGH_QUALITY repaint
+        POINT currentPos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        DWORD elapsed = GetTickCount() - g_viewState.DragStartTime;
+        int dx = abs(currentPos.x - g_viewState.DragStartPos.x);
+        int dy = abs(currentPos.y - g_viewState.DragStartPos.y);
+        
+        // Click threshold: <300ms and <5px movement
+        if (elapsed < 300 && dx < 5 && dy < 5) {
+            if (g_config.MiddleClickAction == MouseAction::ExitApp) {
+                // CRITICAL FIX: Use WM_CLOSE instead of PostQuitMessage
+                // PostQuitMessage kills the message loop immediately, causing DXGI 
+                // cleanup deadlock (SwapChain needs to communicate with HWND during Release)
+                // WM_CLOSE triggers proper destruction: WM_CLOSE -> DestroyWindow -> WM_DESTROY
+                // This allows DXGI to clean up while message loop is still active
+                if (CheckUnsavedChanges(hwnd)) {
+                    PostMessage(hwnd, WM_CLOSE, 0, 0);
+                    return 0;
+                }
+            }
+        }
+        
+        // Only end interaction and repaint if NOT exiting
+        g_viewState.IsInteracting = false;
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    }
         
     case WM_LBUTTONDBLCLK:
         // Fit Window
@@ -769,18 +852,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
             return 0;
         } else if (g_config.LeftDragAction == MouseAction::PanImage) {
-            SetCapture(hwnd);
-            g_viewState.IsDragging = true;
-            g_viewState.LastMousePos = pt;
+            // Only allow panning if image exceeds window bounds
+            if (CanPan(hwnd)) {
+                SetCapture(hwnd);
+                g_viewState.IsDragging = true;
+                g_viewState.IsInteracting = true;  // Start interaction mode
+                g_viewState.LastMousePos = pt;
+            }
         }
         return 0;
     }
     case WM_LBUTTONUP:
-        if (g_viewState.IsDragging) { ReleaseCapture(); g_viewState.IsDragging = false; }
+        if (g_viewState.IsDragging) { 
+            ReleaseCapture(); 
+            g_viewState.IsDragging = false; 
+        }
+        g_viewState.IsInteracting = false;  // End interaction mode
+        InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
         return 0;
 
     case WM_MOUSEWHEEL: {
         if (!g_currentBitmap) return 0;
+        
+        // Enable interaction mode during zoom (use LINEAR interpolation)
+        g_viewState.IsInteracting = true;
+        // Set timer to reset interaction mode after 150ms of inactivity
+        static const UINT_PTR INTERACTION_TIMER_ID = 1001;
+        SetTimer(hwnd, INTERACTION_TIMER_ID, 150, nullptr);
+        
         float delta = GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
         
         // Calc Current Total Scale (Fit * Zoom)
@@ -1013,7 +1112,11 @@ void OnPaint(HWND hwnd) {
             context->SetTransform(transform);
             
             // Draw at (0,0) with original size, transform handles placement
-            context->DrawBitmap(g_currentBitmap.Get(), D2D1::RectF(0, 0, size.width, size.height));
+            // Use dynamic interpolation: LINEAR during interaction for responsiveness, CUBIC when static for quality
+            D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
+                ? D2D1_INTERPOLATION_MODE_LINEAR 
+                : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+            context->DrawBitmap(g_currentBitmap.Get(), D2D1::RectF(0, 0, size.width, size.height), 1.0f, interpMode);
         }
         
         // Reset transform for OSD
