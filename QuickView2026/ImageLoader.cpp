@@ -388,44 +388,78 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // RAW (LibRaw)
 // ----------------------------------------------------------------------------
 HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap) { 
-    // Uses standard LibRaw processing
-    // Warning: extensive memory usage
+    // Optimization: Try to load embedded JPEG preview first (FAST)
+    // Fallback: Full RAW decode (SLOW)
 
-    std::wstring pathStr = filePath;
-    std::string pathUtf8(pathStr.begin(), pathStr.end()); // Simple conversion for now. LibRaw supports wstring on Windows?
-    // LibRaw::open_file accepts wchar_t* on Windows if compiled with unicode support?
-    // Let's check headers or try open_file(filePath).
-    // Safest is open_buffer to avoid path encoding issues if API differs.
-    
     std::vector<uint8_t> rawBuf;
     if (!ReadFileToVector(filePath, rawBuf)) return E_FAIL;
 
     LibRaw RawProcessor;
-    
     if (RawProcessor.open_buffer(rawBuf.data(), rawBuf.size()) != LIBRAW_SUCCESS) return E_FAIL;
-    if (RawProcessor.unpack() != LIBRAW_SUCCESS) return E_FAIL;
+
+    // 1. Try Unpack Thumbnail (Embedded Preview)
+    if (RawProcessor.unpack_thumb() == LIBRAW_SUCCESS) {
+        int err = 0;
+        libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb(&err);
+        if (thumb && thumb->type == LIBRAW_IMAGE_JPEG) {
+            // It's a JPEG! Use TurboJPEG for max speed or WIC
+            // Let's use WIC for simplicity of memory loading unless I refactor LoadJPEG to be valid for memory
+            // Actually, WIC is very fast for memory JPEGs too if IWICStream is used.
+            // But wait, we have LoadJPEG which uses TurboJPEG.
+            // Let's use TurboJPEG directly here since we have the code pattern.
+            
+            // Check TurboJPEG availability (copy-paste pattern from LoadJPEG or refactor)
+            // For now, easy path: CreateWICBitmapFromMemory? No, that expects Raw pixels.
+            // This is a compressed JPEG blob.
+            
+            // Use WIC Stream for the JPEG blob
+            ComPtr<IWICStream> stream;
+            HRESULT hr = m_wicFactory->CreateStream(&stream);
+            if (SUCCEEDED(hr)) {
+                hr = stream->InitializeFromMemory(thumb->data, thumb->data_size);
+            }
+            ComPtr<IWICBitmapDecoder> decoder;
+            if (SUCCEEDED(hr)) {
+                hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+            }
+            ComPtr<IWICBitmapFrameDecode> frame;
+            if (SUCCEEDED(hr)) {
+                hr = decoder->GetFrame(0, &frame);
+            }
+            // Convert to PBGRA
+            ComPtr<IWICFormatConverter> converter;
+            if (SUCCEEDED(hr)) {
+                hr = m_wicFactory->CreateFormatConverter(&converter);
+            }
+            if (SUCCEEDED(hr)) {
+                hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut);
+            }
+            if (SUCCEEDED(hr)) {
+                hr = m_wicFactory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, ppBitmap);
+            }
+            
+            if (SUCCEEDED(hr)) {
+                RawProcessor.dcraw_clear_mem(thumb);
+                return hr; // Success with Preview!
+            }
+        }
+        if (thumb) RawProcessor.dcraw_clear_mem(thumb);
+    }
     
-    // Standard processing (auto-brightness, etc)
-    // dcraw_process() can be slow.
+    // 2. Fallback: Full Decode (Slow)
+    if (RawProcessor.unpack() != LIBRAW_SUCCESS) return E_FAIL;
     if (RawProcessor.dcraw_process() != LIBRAW_SUCCESS) return E_FAIL;
     
-    // Get memory image
     libraw_processed_image_t* image = RawProcessor.dcraw_make_mem_image();
     if (!image) return E_FAIL;
     
     HRESULT hr = E_FAIL;
     
     if (image->type == LIBRAW_IMAGE_BITMAP) {
-        // usually only 16-bit support later, but dcraw_make_mem_image usually returns 8-bit RGB by default process settings?
-        // Check depth
         if (image->bits == 8 && image->colors == 3) {
-            // RGB structure
             UINT width = image->width;
             UINT height = image->height;
             UINT stride = width * 3; 
-            
-            // WIC needs a GUID. GUID_WICPixelFormat24bppRGB.
-            // Data in image->data.
             hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat24bppRGB, stride, image->data_size, image->data, ppBitmap);
         }
     }
@@ -434,7 +468,7 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     return hr;
 }
 
-HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
     
     std::wstring path = filePath;
@@ -496,16 +530,34 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     HRESULT hr = E_FAIL;
     
     switch (detected) {
-        case DetectedFormat::JPEG: hr = LoadJPEG(filePath, ppBitmap); break;
-        case DetectedFormat::PNG:  hr = LoadPNG(filePath, ppBitmap); break;
-        case DetectedFormat::WebP: hr = LoadWebP(filePath, ppBitmap); break;
-        case DetectedFormat::AVIF: hr = LoadAVIF(filePath, ppBitmap); break;
-        case DetectedFormat::JXL:  hr = LoadJXL(filePath, ppBitmap); break;
+        case DetectedFormat::JPEG: 
+            hr = LoadJPEG(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"TurboJPEG (v3 + ASM)"; 
+            break;
+        case DetectedFormat::PNG:  
+            hr = LoadPNG(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibPNG (zlib-ng)"; 
+            break;
+        case DetectedFormat::WebP: 
+            hr = LoadWebP(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibWebP (SIMD)"; 
+            break;
+        case DetectedFormat::AVIF: 
+            hr = LoadAVIF(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Dav1d (AV1)"; 
+            break;
+        case DetectedFormat::JXL:  
+            hr = LoadJXL(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibJXL (Highway)"; 
+            break;
         case DetectedFormat::Unknown:
         default:
-            // Fallback to extension check for RAW or generic
-            if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || path.ends_with(L".dng")) {
+            if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".cr3") || 
+                path.ends_with(L".nef") || path.ends_with(L".dng") || path.ends_with(L".orf") || 
+                path.ends_with(L".rw2") || path.ends_with(L".raf") || path.ends_with(L".pef") || 
+                path.ends_with(L".srw")) {
                  hr = LoadRaw(filePath, ppBitmap);
+                 if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibRaw (Legacy Mode)";
             }
             break;
     }
@@ -514,6 +566,8 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     if (SUCCEEDED(hr)) return hr;
 
     // 3. Robust Fallback to WIC (Standard Loading)
+    if (pLoaderName) *pLoaderName = L"WIC (Fallback)";
+    
     // If High-Perf loader failed (e.g. malformed specific header, unsupported feature) OR format verified but unimplemented (stub),
     // OR format unknown.
     // ---------------------------------------------------------

@@ -1025,8 +1025,11 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         // Switch to Background Thread
         co_await ResumeBackground{};
 
-        // Decode
-        HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap);
+        // Decode & Measure Time
+        DWORD startTime = GetTickCount();
+        std::wstring loaderName = L"Unknown";
+        HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap, &loaderName);
+        DWORD duration = GetTickCount() - startTime;
 
         // Switch back
         co_await ResumeMainThread(hwnd);
@@ -1035,6 +1038,31 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
             g_osd.Show(L"Failed to load image", true);
             co_return; 
         }
+        
+        // Update Title with Performance Info
+        // Format: "filename.ext - LoaderName (XX ms) - QuickView 2026"
+        size_t lastSlash = path.find_last_of(L"\\/");
+        std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
+        
+        wchar_t titleBuf[512];
+        swprintf_s(titleBuf, L"%s - %s (%lu ms) - %s", filename.c_str(), loaderName.c_str(), duration, g_szWindowTitle);
+        SetWindowTextW(hwnd, titleBuf);
+
+        // ALSO Show on OSD (Since title bar often hidden)
+        // Format for OSD: "Loader: [LoaderName] ([Time] ms)"
+        wchar_t osdBuf[256];
+        swprintf_s(osdBuf, L"Back: %s | Time: %lu ms", loaderName.c_str(), duration);
+        g_osd.Show(osdBuf, false);
+    }
+    else {
+        // Cache Hit
+        size_t lastSlash = path.find_last_of(L"\\/");
+        std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
+        wchar_t titleBuf[512];
+        swprintf_s(titleBuf, L"%s - Prefetch Cache (0 ms) - %s", filename.c_str(), g_szWindowTitle);
+        SetWindowTextW(hwnd, titleBuf);
+        
+        g_osd.Show(L"Loaded from Cache (Immediate)", false);
     }
 
     // 3. Upload to GPU
