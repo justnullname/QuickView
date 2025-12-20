@@ -38,9 +38,13 @@ private:
 
     // Specialized High-Performance Loaders
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
-    HRESULT LoadPNG(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libpng + zlib-ng
+    // LoadPNG REMOVED - replaced by LoadPngWuffs
     HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libwebp
     HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libavif + dav1d
     HRESULT LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libjxl
     HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libraw
+    
+    // Wuffs (Google's memory-safe decoder) - Ultimate Performance
+    HRESULT LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs PNG (replaces libpng)
+    HRESULT LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs GIF (replaces WIC)
 };

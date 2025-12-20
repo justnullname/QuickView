@@ -15,3 +15,7 @@ set(VCPKG_CXX_FLAGS_RELEASE "/O2 /Oi /Ob2 /GL")
 set(VCPKG_LINKER_FLAGS_RELEASE "/LTCG")
 
 # Debug: Default (no forced optimizations, allows /RTC1)
+
+# zlib-ng: Use ZLIB_COMPAT mode to replace zlib with faster zlib-ng
+# This makes zlib-ng output zlib-compatible library names and APIs
+set(ZLIB_COMPAT ON)

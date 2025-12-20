@@ -38,7 +38,7 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 #include <turbojpeg.h>
 
 // High-Performance Library Includes
-#include <png.h>             // libpng
+// libpng REMOVED - replaced by Wuffs
 #include <webp/decode.h>     // libwebp
 #include <webp/demux.h>
 #include <avif/avif.h>       // libavif
@@ -50,6 +50,11 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 #include <string>
 #include <algorithm>
 #include <vector>
+#include <thread> // For hardware_concurrency
+
+// Wuffs (Google's memory-safe decoder)
+// Implementation is in WuffsImpl.cpp with selective module loading
+#include "WuffsLoader.h"
 
 // Helper to read file to vector
 static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
@@ -113,103 +118,7 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     return hr;
 }
 
-// ----------------------------------------------------------------------------
-// PNG (libpng)
-// ----------------------------------------------------------------------------
-struct MemReaderState {
-    const uint8_t* data;
-    size_t size;
-    size_t offset;
-};
-
-static void PngReadCallback(png_structp png_ptr, png_bytep data, png_size_t length) {
-    MemReaderState* state = (MemReaderState*)png_get_io_ptr(png_ptr);
-    if (state->offset + length > state->size) {
-        png_error(png_ptr, "Read Error");
-    }
-    memcpy(data, state->data + state->offset, length);
-    state->offset += length;
-}
-
-HRESULT CImageLoader::LoadPNG(LPCWSTR filePath, IWICBitmap** ppBitmap) { 
-    std::vector<uint8_t> pngBuf;
-    if (!ReadFileToVector(filePath, pngBuf)) return E_FAIL;
-
-    // Check PNG signature
-    if (pngBuf.size() < 8 || png_sig_cmp(pngBuf.data(), 0, 8)) return E_FAIL;
-
-    png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
-    if (!png_ptr) return E_FAIL;
-
-    png_infop info_ptr = png_create_info_struct(png_ptr);
-    if (!info_ptr) {
-        png_destroy_read_struct(&png_ptr, nullptr, nullptr);
-        return E_FAIL;
-    }
-
-    if (setjmp(png_jmpbuf(png_ptr))) {
-        png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
-        return E_FAIL;
-    }
-
-    MemReaderState state = { pngBuf.data(), pngBuf.size(), 0 };
-    png_set_read_fn(png_ptr, &state, PngReadCallback);
-
-    png_read_info(png_ptr, info_ptr);
-
-    int bitDepth, colorType;
-    png_uint_32 width, height;
-    png_get_IHDR(png_ptr, info_ptr, &width, &height, &bitDepth, &colorType, nullptr, nullptr, nullptr);
-
-    // Transforms to ensure BGRA output
-    if (colorType == PNG_COLOR_TYPE_PALETTE)
-        png_set_palette_to_rgb(png_ptr);
-
-    if (colorType == PNG_COLOR_TYPE_GRAY && bitDepth < 8)
-        png_set_expand_gray_1_2_4_to_8(png_ptr);
-
-    if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS))
-        png_set_tRNS_to_alpha(png_ptr);
-
-    if (bitDepth == 16)
-        png_set_strip_16(png_ptr);
-
-    if (colorType == PNG_COLOR_TYPE_GRAY || colorType == PNG_COLOR_TYPE_GRAY_ALPHA)
-        png_set_gray_to_rgb(png_ptr);
-
-    // QuickView uses PBGRA usually, but for WIC creation from memory, standard BGRA is fine depending on the GUID used.
-    // GUID_WICPixelFormat32bppBGRA is standard. GUID_WICPixelFormat32bppPBGRA is premultiplied.
-    // D2D prefers PBGRA.
-    // libpng doesn't support premultiplication out of the box easily without manual processing.
-    // Let's output BGRA (Add alpha if missing) and let WIC converter handle premultiplication if needed eventually,
-    // OR just use BGRA and create a bitmap.
-    
-    // Force Alpha channel
-    if (!(colorType & PNG_COLOR_MASK_ALPHA))
-        png_set_add_alpha(png_ptr, 0xFF, PNG_FILLER_AFTER);
-
-    // Swap RGB to BGR
-    png_set_bgr(png_ptr);
-
-    png_read_update_info(png_ptr, info_ptr);
-
-    // Read rows
-    size_t rowBytes = png_get_rowbytes(png_ptr, info_ptr);
-    size_t imgSize = rowBytes * height;
-    std::vector<uint8_t> pixelData(imgSize);
-    
-    std::vector<png_bytep> rowPointers(height);
-    for (uint32_t i = 0; i < height; ++i) {
-        rowPointers[i] = pixelData.data() + i * rowBytes;
-    }
-
-    png_read_image(png_ptr, rowPointers.data());
-    png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
-
-    // We have BGRA now.
-    // Note: Creating WIC bitmap with GUID_WICPixelFormat32bppBGRA.
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA, (UINT)rowBytes, (UINT)imgSize, pixelData.data(), ppBitmap);
-}
+// LoadPNG REMOVED - replaced by LoadPngWuffs (Wuffs decoder)
 
 // ----------------------------------------------------------------------------
 // WebP (libwebp)
@@ -218,20 +127,41 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     std::vector<uint8_t> webpBuf;
     if (!ReadFileToVector(filePath, webpBuf)) return E_FAIL;
 
-    int width, height;
-    if (!WebPGetInfo(webpBuf.data(), webpBuf.size(), &width, &height)) return E_FAIL;
+    // Advanced API for threading support
+    WebPDecoderConfig config;
+    if (!WebPInitDecoderConfig(&config)) return E_FAIL;
 
-    // Decode to BGRA
-    uint8_t* output = WebPDecodeBGRA(webpBuf.data(), webpBuf.size(), &width, &height);
-    if (!output) return E_FAIL;
+    // Enable multi-threaded decoding
+    config.options.use_threads = 1;
+    // Set output colorspace to BGRA (WIC compatible)
+    config.output.colorspace = MODE_BGRA;
 
-    // Create WIC Bitmap
-    UINT stride = width * 4;
-    UINT size = stride * height;
+    // Decode directly to buffer managed by WebP? 
+    // No, standard flow is:
+    // 1. GetFeatures (to determine size)
+    // 2. Allocate buffer (optional, or let WebP do it)
+    // 3. Decode
+    
+    if (WebPGetFeatures(webpBuf.data(), webpBuf.size(), &config.input) != VP8_STATUS_OK) return E_FAIL;
+    
+    // Check dimensions
+    int width = config.input.width;
+    int height = config.input.height;
+    if (width == 0 || height == 0) return E_FAIL;
+
+    // Decode
+    if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) != VP8_STATUS_OK) {
+        WebPFreeDecBuffer(&config.output);
+        return E_FAIL;
+    }
+
+    uint8_t* output = config.output.u.RGBA.rgba;
+    int stride = config.output.u.RGBA.stride;
+    int size = stride * height;
+
     HRESULT hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA, stride, size, output, ppBitmap);
     
-    // Free WebP buffer (WebPDecodeBGRA allocates memory using internal malloc)
-    WebPFree(output);
+    WebPFreeDecBuffer(&config.output);
     return hr;
 }
 
@@ -248,6 +178,15 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     // Create Decoder
     avifDecoder* decoder = avifDecoderCreate();
     if (!decoder) return E_OUTOFMEMORY;
+    
+    // Enable multi-threaded decoding
+    // Use hardware_concurrency() to maximize throughput on multi-core CPUs
+    unsigned int threads = std::thread::hardware_concurrency();
+    if (threads > 0) {
+        decoder->maxThreads = threads;
+    } else {
+        decoder->maxThreads = 4; // Fallback sensible default
+    }
     
     // Set Memory Source
     avifResult result = avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size());
@@ -397,56 +336,62 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     LibRaw RawProcessor;
     if (RawProcessor.open_buffer(rawBuf.data(), rawBuf.size()) != LIBRAW_SUCCESS) return E_FAIL;
 
-    // 1. Try Unpack Thumbnail (Embedded Preview)
+    // 1. Try Unpack Thumbnail (Embedded Preview) - FASTEST
     if (RawProcessor.unpack_thumb() == LIBRAW_SUCCESS) {
         int err = 0;
         libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb(&err);
-        if (thumb && thumb->type == LIBRAW_IMAGE_JPEG) {
-            // It's a JPEG! Use TurboJPEG for max speed or WIC
-            // Let's use WIC for simplicity of memory loading unless I refactor LoadJPEG to be valid for memory
-            // Actually, WIC is very fast for memory JPEGs too if IWICStream is used.
-            // But wait, we have LoadJPEG which uses TurboJPEG.
-            // Let's use TurboJPEG directly here since we have the code pattern.
-            
-            // Check TurboJPEG availability (copy-paste pattern from LoadJPEG or refactor)
-            // For now, easy path: CreateWICBitmapFromMemory? No, that expects Raw pixels.
-            // This is a compressed JPEG blob.
-            
-            // Use WIC Stream for the JPEG blob
-            ComPtr<IWICStream> stream;
-            HRESULT hr = m_wicFactory->CreateStream(&stream);
-            if (SUCCEEDED(hr)) {
-                hr = stream->InitializeFromMemory(thumb->data, thumb->data_size);
+        
+        if (thumb) {
+            if (thumb->type == LIBRAW_IMAGE_JPEG) {
+                // JPEG Thumbnail
+                ComPtr<IWICStream> stream;
+                HRESULT hr = m_wicFactory->CreateStream(&stream);
+                if (SUCCEEDED(hr)) hr = stream->InitializeFromMemory(thumb->data, thumb->data_size);
+                
+                ComPtr<IWICBitmapDecoder> decoder;
+                if (SUCCEEDED(hr)) hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+                
+                ComPtr<IWICBitmapFrameDecode> frame;
+                if (SUCCEEDED(hr)) hr = decoder->GetFrame(0, &frame);
+                
+                ComPtr<IWICFormatConverter> converter;
+                if (SUCCEEDED(hr)) hr = m_wicFactory->CreateFormatConverter(&converter);
+                if (SUCCEEDED(hr)) hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut);
+                
+                if (SUCCEEDED(hr)) {
+                    hr = m_wicFactory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, ppBitmap);
+                }
+                
+                if (SUCCEEDED(hr)) {
+                    RawProcessor.dcraw_clear_mem(thumb);
+                    return hr; // Success with JPEG Preview!
+                }
+            } else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
+                // Bitmap Thumbnail (RGB)
+                if (thumb->bits == 8 && thumb->colors == 3) {
+                    UINT width = thumb->width;
+                    UINT height = thumb->height;
+                    UINT stride = width * 3;
+                    HRESULT hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat24bppRGB, stride, thumb->data_size, thumb->data, ppBitmap);
+                    if (SUCCEEDED(hr)) {
+                        RawProcessor.dcraw_clear_mem(thumb);
+                        return hr; // Success with Bitmap Preview!
+                    }
+                }
             }
-            ComPtr<IWICBitmapDecoder> decoder;
-            if (SUCCEEDED(hr)) {
-                hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
-            }
-            ComPtr<IWICBitmapFrameDecode> frame;
-            if (SUCCEEDED(hr)) {
-                hr = decoder->GetFrame(0, &frame);
-            }
-            // Convert to PBGRA
-            ComPtr<IWICFormatConverter> converter;
-            if (SUCCEEDED(hr)) {
-                hr = m_wicFactory->CreateFormatConverter(&converter);
-            }
-            if (SUCCEEDED(hr)) {
-                hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut);
-            }
-            if (SUCCEEDED(hr)) {
-                hr = m_wicFactory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, ppBitmap);
-            }
-            
-            if (SUCCEEDED(hr)) {
-                RawProcessor.dcraw_clear_mem(thumb);
-                return hr; // Success with Preview!
-            }
+            RawProcessor.dcraw_clear_mem(thumb);
         }
-        if (thumb) RawProcessor.dcraw_clear_mem(thumb);
     }
     
     // 2. Fallback: Full Decode (Slow)
+    // Optimization: Disable Auto WB (slow), use Camera WB
+    RawProcessor.imgdata.params.use_camera_wb = 1;
+    RawProcessor.imgdata.params.use_auto_wb = 0; // Speed up
+    RawProcessor.imgdata.params.user_qual = 2;   // 0=Linear(fast), 2=AHD(good), 3=AHD+Interpolation
+    
+    // If you want extreme speed at cost of resolution, uncomment:
+    // RawProcessor.imgdata.params.half_size = 1; 
+
     if (RawProcessor.unpack() != LIBRAW_SUCCESS) return E_FAIL;
     if (RawProcessor.dcraw_process() != LIBRAW_SUCCESS) return E_FAIL;
     
@@ -492,7 +437,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         }
     }
     
-    enum class DetectedFormat { Unknown, JPEG, PNG, WebP, AVIF, JXL, RAW };
+    enum class DetectedFormat { Unknown, JPEG, PNG, GIF, WebP, AVIF, JXL, RAW };
     DetectedFormat detected = DetectedFormat::Unknown;
 
     if (magicRead) {
@@ -522,6 +467,11 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
                  magic[4] == 'J' && magic[5] == 'X' && magic[6] == 'L' && magic[7] == ' ')
             detected = DetectedFormat::JXL;
             
+        // Check GIF: GIF87a or GIF89a
+        else if (magic[0] == 'G' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == '8' &&
+                 (magic[4] == '7' || magic[4] == '9') && magic[5] == 'a')
+            detected = DetectedFormat::GIF;
+            
         // RAW is tricky via magic (many formats), rely on extension as secondary hint + WIC fallback
         // But for completeness, check extension if magic is unknown
     }
@@ -535,8 +485,12 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
             if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"TurboJPEG (v3 + ASM)"; 
             break;
         case DetectedFormat::PNG:  
-            hr = LoadPNG(filePath, ppBitmap); 
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibPNG (zlib-ng)"; 
+            hr = LoadPngWuffs(filePath, ppBitmap);  // Wuffs (Google's memory-safe decoder)
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs PNG (Safe+Fast)"; 
+            break;
+        case DetectedFormat::GIF:
+            hr = LoadGifWuffs(filePath, ppBitmap);  // Wuffs GIF
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs GIF (Chrome)"; 
             break;
         case DetectedFormat::WebP: 
             hr = LoadWebP(filePath, ppBitmap); 
@@ -557,7 +511,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
                 path.ends_with(L".rw2") || path.ends_with(L".raf") || path.ends_with(L".pef") || 
                 path.ends_with(L".srw")) {
                  hr = LoadRaw(filePath, ppBitmap);
-                 if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibRaw (Legacy Mode)";
+                 if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibRaw (Optimized)";
             }
             break;
     }
@@ -619,4 +573,42 @@ HRESULT CImageLoader::GetImageSize(LPCWSTR filePath, UINT* width, UINT* height) 
     if (FAILED(hr)) return hr;
 
     return bitmap->GetSize(width, height);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs PNG Decoder (Google's memory-safe decoder)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> pngBuf;
+    if (!ReadFileToVector(filePath, pngBuf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+    
+    if (!WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs GIF Decoder (First frame only for now)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> gifBuf;
+    if (!ReadFileToVector(filePath, gifBuf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+    
+    if (!WuffsLoader::DecodeGIF(gifBuf.data(), gifBuf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
 }
