@@ -1,0 +1,1416 @@
+#include "pch.h"
+
+// NanoSVG
+#pragma warning(push)
+#pragma warning(disable: 4244) 
+#pragma warning(disable: 4702)
+#define NANOSVG_IMPLEMENTATION
+#define NANOSVGRAST_IMPLEMENTATION
+#include "../third_party/nanosvg/nanosvg.h"
+#include "../third_party/nanosvg/nanosvgrast.h"
+#pragma warning(pop)
+#include "ImageLoader.h"
+#include <jxl/decode.h> // JXL
+#include "WuffsLoader.h"
+#include "StbLoader.h"
+#include "TinyExrLoader.h"
+#include <thread>
+
+HRESULT CImageLoader::Initialize(IWICImagingFactory* wicFactory) {
+    if (!wicFactory) return E_INVALIDARG;
+    m_wicFactory = wicFactory;
+    return S_OK;
+}
+
+HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) {
+    if (!filePath || !bitmap) return E_INVALIDARG;
+
+    // Delegate to the new architecture (Detected Logic + Specialized Loaders + WIC Fallback)
+    IWICBitmap* pBitmap = nullptr;
+    std::wstring loaderName; // Optional, or ignore
+    
+    // We cast IWICBitmap** to IWICBitmapSource**? 
+    // No, LoadToMemory returns IWICBitmap. We want IWICBitmapSource.
+    // IWICBitmap* supports IWICBitmapSource interface.
+    // But pointers are different? No, inheritance.
+    
+    // Actually LoadToMemory signature: 
+    // HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr);
+    
+    ComPtr<IWICBitmap> ptrBitmap;
+    HRESULT hr = LoadToMemory(filePath, &ptrBitmap, nullptr);
+    
+    if (SUCCEEDED(hr)) {
+        *bitmap = ptrBitmap.Detach(); // Detach gives strictly the pointer.
+        return S_OK;
+    }
+    
+    return hr;
+}
+
+#include <turbojpeg.h>
+
+// High-Performance Library Includes
+// libpng REMOVED - replaced by Wuffs
+#include <webp/decode.h>     // libwebp
+#include <webp/demux.h>
+#include <avif/avif.h>       // libavif
+#include <jxl/decode.h>      // libjxl
+#include <jxl/resizable_parallel_runner.h>
+#include <jxl/thread_parallel_runner.h>
+#include <libraw/libraw.h>   // libraw
+
+#include <string>
+#include <algorithm>
+#include <vector>
+#include <thread> // For hardware_concurrency
+
+// Wuffs (Google's memory-safe decoder)
+// Implementation is in WuffsImpl.cpp with selective module loading
+#include "WuffsLoader.h"
+
+// Helper to read file to vector
+static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    DWORD fileSize = GetFileSize(hFile, nullptr);
+    if (fileSize == INVALID_FILE_SIZE) { CloseHandle(hFile); return false; }
+
+    buffer.resize(fileSize);
+    DWORD bytesRead;
+    BOOL result = ReadFile(hFile, buffer.data(), fileSize, &bytesRead, nullptr);
+    CloseHandle(hFile);
+    return result && bytesRead == fileSize;
+}
+
+HRESULT CImageLoader::CreateWICBitmapFromMemory(UINT width, UINT height, REFGUID format, UINT stride, UINT size, BYTE* data, IWICBitmap** ppBitmap) {
+    if (!m_wicFactory) return E_FAIL;
+    return m_wicFactory->CreateBitmapFromMemory(width, height, format, stride, size, data, ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// JPEG (libjpeg-turbo)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> jpegBuf;
+    if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
+
+    // Initialize TurboJPEG (Decompressor)
+    tjhandle tjInstance = tj3Init(TJINIT_DECOMPRESS);
+    if (!tjInstance) return E_FAIL;
+
+    HRESULT hr = E_FAIL;
+    
+    // Parse header (TurboJPEG v3 API)
+    if (tj3DecompressHeader(tjInstance, jpegBuf.data(), jpegBuf.size()) == 0) {
+        
+        // Get dimensions from handle
+        int width = tj3Get(tjInstance, TJPARAM_JPEGWIDTH);
+        int height = tj3Get(tjInstance, TJPARAM_JPEGHEIGHT);
+        int jpegSubsamp = tj3Get(tjInstance, TJPARAM_SUBSAMP);
+        int jpegColorspace = tj3Get(tjInstance, TJPARAM_COLORSPACE);
+
+        if (width > 0 && height > 0) {
+            // Decompress to BGRX (compatible with PBGRA/BGRA)
+            // Stride must be 4-byte aligned (width * 4 is always 4-byte aligned)
+            int pixelFormat = TJPF_BGRX; 
+            int stride = width * 4;
+            size_t bufSize = (size_t)stride * height;
+            
+            std::vector<uint8_t> pixelBuf(bufSize);
+            
+            if (tj3Decompress8(tjInstance, jpegBuf.data(), jpegBuf.size(), pixelBuf.data(), stride, pixelFormat) == 0) {
+                 // Create WIC Bitmap from pixels
+                 hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA, stride, (UINT)bufSize, pixelBuf.data(), ppBitmap);
+            }
+        }
+    }
+
+    tj3Destroy(tjInstance);
+    return hr;
+}
+
+// LoadPNG REMOVED - replaced by LoadPngWuffs (Wuffs decoder)
+
+// ----------------------------------------------------------------------------
+// WebP (libwebp)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> webpBuf;
+    if (!ReadFileToVector(filePath, webpBuf)) return E_FAIL;
+
+    // Advanced API for threading support
+    WebPDecoderConfig config;
+    if (!WebPInitDecoderConfig(&config)) return E_FAIL;
+
+    // Enable multi-threaded decoding
+    config.options.use_threads = 1;
+    // Set output colorspace to BGRA (WIC compatible)
+    config.output.colorspace = MODE_BGRA;
+
+    // Decode directly to buffer managed by WebP? 
+    // No, standard flow is:
+    // 1. GetFeatures (to determine size)
+    // 2. Allocate buffer (optional, or let WebP do it)
+    // 3. Decode
+    
+    if (WebPGetFeatures(webpBuf.data(), webpBuf.size(), &config.input) != VP8_STATUS_OK) return E_FAIL;
+    
+    // Check dimensions
+    int width = config.input.width;
+    int height = config.input.height;
+    if (width == 0 || height == 0) return E_FAIL;
+
+    // Decode
+    if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) != VP8_STATUS_OK) {
+        WebPFreeDecBuffer(&config.output);
+        return E_FAIL;
+    }
+
+    uint8_t* output = config.output.u.RGBA.rgba;
+    int stride = config.output.u.RGBA.stride;
+    int size = stride * height;
+
+    HRESULT hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA, stride, size, output, ppBitmap);
+    
+    WebPFreeDecBuffer(&config.output);
+    return hr;
+}
+
+// ----------------------------------------------------------------------------
+// AVIF (libavif + dav1d)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    if (!filePath || !ppBitmap) return E_INVALIDARG;
+
+    // Read file to memory buffer
+    std::vector<uint8_t> avifBuf;
+    if (!ReadFileToVector(filePath, avifBuf)) return E_FAIL;
+
+    // Create Decoder
+    avifDecoder* decoder = avifDecoderCreate();
+    if (!decoder) return E_OUTOFMEMORY;
+    
+    // Enable multi-threaded decoding
+    // Use hardware_concurrency() to maximize throughput on multi-core CPUs
+    unsigned int threads = std::thread::hardware_concurrency();
+    if (threads > 0) {
+        decoder->maxThreads = threads;
+    } else {
+        decoder->maxThreads = 4; // Fallback sensible default
+    }
+    
+    // Set Memory Source
+    avifResult result = avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size());
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Parse
+    result = avifDecoderParse(decoder);
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Next Image (Frame 0)
+    result = avifDecoderNextImage(decoder);
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Convert YUV to RGB
+    avifRGBImage rgb;
+    avifRGBImageSetDefaults(&rgb, decoder->image);
+    
+    // Configure for WIC (BGRA, 8-bit)
+    rgb.format = AVIF_RGB_FORMAT_BGRA;
+    rgb.depth = 8;
+    
+    // Calculate stride and size
+    // Note: libavif might want to allocate its own pixels or proper stride
+    // Let's allocate our own buffer for safety and control
+    rgb.rowBytes = rgb.width * 4;
+    std::vector<uint8_t> pixelData(rgb.rowBytes * rgb.height);
+    rgb.pixels = pixelData.data();
+    
+    result = avifImageYUVToRGB(decoder->image, &rgb);
+    if (result != AVIF_RESULT_OK) {
+        avifDecoderDestroy(decoder);
+        return E_FAIL;
+    }
+
+    // Create WIC Bitmap
+    HRESULT hr = CreateWICBitmapFromMemory(rgb.width, rgb.height, GUID_WICPixelFormat32bppPBGRA, (UINT)rgb.rowBytes, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+
+    avifDecoderDestroy(decoder);
+    return hr;
+}
+
+// ----------------------------------------------------------------------------
+// JPEG XL (libjxl)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    if (!filePath || !ppBitmap) return E_INVALIDARG;
+
+    std::vector<uint8_t> jxlBuf;
+    if (!ReadFileToVector(filePath, jxlBuf)) return E_FAIL;
+
+    // 1. Create Decoder and Runner
+    JxlDecoder* dec = JxlDecoderCreate(NULL);
+    if (!dec) return E_OUTOFMEMORY;
+
+    // Use max threads (default to system CPU count)
+    void* runner = JxlResizableParallelRunnerCreate(NULL);
+    if (!runner) {
+        JxlDecoderDestroy(dec);
+        return E_OUTOFMEMORY;
+    }
+    
+    JxlDecoderSetParallelRunner(dec, JxlResizableParallelRunner, runner);
+
+    // 2. Subscribe to events
+    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE)) {
+        JxlResizableParallelRunnerDestroy(runner);
+        JxlDecoderDestroy(dec);
+        return E_FAIL;
+    }
+
+    // 3. Set Input
+    JxlDecoderSetInput(dec, jxlBuf.data(), jxlBuf.size());
+
+    JxlBasicInfo info;
+    JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; // RGBA
+    
+    std::vector<uint8_t> pixels;
+    HRESULT hr = E_FAIL;
+
+    // 4. Decode Loop
+    for (;;) {
+        JxlDecoderStatus status = JxlDecoderProcessInput(dec);
+        
+        if (status == JXL_DEC_ERROR) {
+            hr = E_FAIL;
+            break;
+        }
+        else if (status == JXL_DEC_SUCCESS) {
+            hr = S_OK;
+            break;
+        }
+        else if (status == JXL_DEC_BASIC_INFO) {
+            if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
+                 hr = E_FAIL; break; 
+            }
+            // Resize buffer
+            size_t stride = info.xsize * 4;
+            pixels.resize(stride * info.ysize);
+        }
+        else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+            size_t bufferSize = pixels.size();
+            JxlDecoderSetImageOutBuffer(dec, &format, pixels.data(), bufferSize);
+        }
+        else if (status == JXL_DEC_FULL_IMAGE) {
+            // Nothing to do, just continue
+        }
+        else {
+            // Unknown status or need more input (should not happen with full buffer)
+            // break; (Don't break, loop might need to continue)
+        }
+    }
+
+    if (SUCCEEDED(hr)) {
+        // JXL outputs RGBA (by default assumption with 4 channels and standard).
+        // WIC needs a GUID. We use GUID_WICPixelFormat32bppRGBA.
+        // QuickView's RenderEngine might expect PBGRA. WIC FormatConverter usually runs after loading if needed (fallback uses it).
+        // BUT, CImageLoader::LoadToMemory returns a Bitmap. Main loop expects to Draw it.
+        // D2D CreateBitmapFromWicBitmap automatically converts if possible.
+        // So RGBA is fine.
+        hr = CreateWICBitmapFromMemory(info.xsize, info.ysize, GUID_WICPixelFormat32bppRGBA, info.xsize * 4, (UINT)pixels.size(), pixels.data(), ppBitmap);
+    }
+
+    JxlResizableParallelRunnerDestroy(runner);
+    JxlDecoderDestroy(dec);
+    return hr;
+}
+
+// ----------------------------------------------------------------------------
+// RAW (LibRaw)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap) { 
+    // Optimization: Try to load embedded JPEG preview first (FAST)
+    // Fallback: Full RAW decode (SLOW)
+
+    std::vector<uint8_t> rawBuf;
+    if (!ReadFileToVector(filePath, rawBuf)) return E_FAIL;
+
+    LibRaw RawProcessor;
+    if (RawProcessor.open_buffer(rawBuf.data(), rawBuf.size()) != LIBRAW_SUCCESS) return E_FAIL;
+
+    // 1. Try Unpack Thumbnail (Embedded Preview) - FASTEST
+    if (RawProcessor.unpack_thumb() == LIBRAW_SUCCESS) {
+        int err = 0;
+        libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb(&err);
+        
+        if (thumb) {
+            if (thumb->type == LIBRAW_IMAGE_JPEG) {
+                // JPEG Thumbnail
+                ComPtr<IWICStream> stream;
+                HRESULT hr = m_wicFactory->CreateStream(&stream);
+                if (SUCCEEDED(hr)) hr = stream->InitializeFromMemory(thumb->data, thumb->data_size);
+                
+                ComPtr<IWICBitmapDecoder> decoder;
+                if (SUCCEEDED(hr)) hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+                
+                ComPtr<IWICBitmapFrameDecode> frame;
+                if (SUCCEEDED(hr)) hr = decoder->GetFrame(0, &frame);
+                
+                ComPtr<IWICFormatConverter> converter;
+                if (SUCCEEDED(hr)) hr = m_wicFactory->CreateFormatConverter(&converter);
+                if (SUCCEEDED(hr)) hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut);
+                
+                if (SUCCEEDED(hr)) {
+                    hr = m_wicFactory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, ppBitmap);
+                }
+                
+                if (SUCCEEDED(hr)) {
+                    RawProcessor.dcraw_clear_mem(thumb);
+                    return hr; // Success with JPEG Preview!
+                }
+            } else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
+                // Bitmap Thumbnail (RGB)
+                if (thumb->bits == 8 && thumb->colors == 3) {
+                    UINT width = thumb->width;
+                    UINT height = thumb->height;
+                    UINT stride = width * 3;
+                    HRESULT hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat24bppRGB, stride, thumb->data_size, thumb->data, ppBitmap);
+                    if (SUCCEEDED(hr)) {
+                        RawProcessor.dcraw_clear_mem(thumb);
+                        return hr; // Success with Bitmap Preview!
+                    }
+                }
+            }
+            RawProcessor.dcraw_clear_mem(thumb);
+        }
+    }
+    
+    // 2. Fallback: Full Decode (Slow)
+    // Optimization: Disable Auto WB (slow), use Camera WB
+    RawProcessor.imgdata.params.use_camera_wb = 1;
+    RawProcessor.imgdata.params.use_auto_wb = 0; // Speed up
+    RawProcessor.imgdata.params.user_qual = 2;   // 0=Linear(fast), 2=AHD(good), 3=AHD+Interpolation
+    
+    // If you want extreme speed at cost of resolution, uncomment:
+    // RawProcessor.imgdata.params.half_size = 1; 
+
+    if (RawProcessor.unpack() != LIBRAW_SUCCESS) return E_FAIL;
+    if (RawProcessor.dcraw_process() != LIBRAW_SUCCESS) return E_FAIL;
+    
+    libraw_processed_image_t* image = RawProcessor.dcraw_make_mem_image();
+    if (!image) return E_FAIL;
+    
+    HRESULT hr = E_FAIL;
+    
+    if (image->type == LIBRAW_IMAGE_BITMAP) {
+        if (image->bits == 8 && image->colors == 3) {
+            UINT width = image->width;
+            UINT height = image->height;
+            UINT stride = width * 3; 
+            hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat24bppRGB, stride, image->data_size, image->data, ppBitmap);
+        }
+    }
+    
+    RawProcessor.dcraw_clear_mem(image);
+    return hr;
+}
+
+HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName) {
+    if (!filePath || !ppBitmap) return E_INVALIDARG;
+    
+    std::wstring path = filePath;
+    std::transform(path.begin(), path.end(), path.begin(), ::towlower);
+    
+    // -------------------------------------------------------------
+    // Architecture Upgrade: Robust Format Detection & Fallback
+    // -------------------------------------------------------------
+    
+    // 1. Read first 16 bytes for Magic Number
+    uint8_t magic[16] = {0};
+    bool magicRead = false;
+    {
+        HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD bytesRead = 0;
+            if (ReadFile(hFile, magic, 16, &bytesRead, nullptr) && bytesRead >= 4) {
+                magicRead = true;
+            }
+            CloseHandle(hFile);
+        }
+    }
+    
+    enum class DetectedFormat { Unknown, JPEG, PNG, GIF, WebP, AVIF, JXL, RAW, BMP, TGA, WBMP, PSD, HDR, PIC, PNM, EXR, PCX, SVG, QOI };
+    DetectedFormat detected = DetectedFormat::Unknown;
+
+    if (magicRead) {
+        // Check JPEG: FF D8 FF
+        if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) 
+            detected = DetectedFormat::JPEG;
+        
+        // Check PNG: 89 50 4E 47
+        else if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) 
+            detected = DetectedFormat::PNG;
+            
+        // Check WebP: RIFF ... WEBP
+        else if (magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
+                 magic[8] == 'W' && magic[9] == 'E' && magic[10] == 'B' && magic[11] == 'P')
+            detected = DetectedFormat::WebP;
+            
+        // Check AVIF: ftypavif
+        // Usually located at bytes 4-12, e.g., ....ftypavif
+        else if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p' &&
+                 magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 'f')
+            detected = DetectedFormat::AVIF;
+            
+        // Check JXL: FF 0A or 00 00 00 0C JXL 
+        else if (magic[0] == 0xFF && magic[1] == 0x0A)
+            detected = DetectedFormat::JXL;
+        else if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x00 && magic[3] == 0x0C &&
+                 magic[4] == 'J' && magic[5] == 'X' && magic[6] == 'L' && magic[7] == ' ')
+            detected = DetectedFormat::JXL;
+            
+        // Check GIF: GIF87a or GIF89a
+        else if (magic[0] == 'G' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == '8' &&
+                 (magic[4] == '7' || magic[4] == '9') && magic[5] == 'a')
+            detected = DetectedFormat::GIF;
+
+        // Check BMP: BM
+        else if (magic[0] == 'B' && magic[1] == 'M')
+            detected = DetectedFormat::BMP;
+
+        // Check PSD: 8BPS
+        else if (magic[0] == '8' && magic[1] == 'B' && magic[2] == 'P' && magic[3] == 'S')
+            detected = DetectedFormat::PSD;
+
+        // Check HDR: #?RADIANCE or #?RGBE
+        else if (magic[0] == '#' && magic[1] == '?')
+            detected = DetectedFormat::HDR;
+
+        // Check EXR: v/1\x01 (0x76 0x2f 0x31 0x01)
+        else if (magic[0] == 0x76 && magic[1] == 0x2F && magic[2] == 0x31 && magic[3] == 0x01)
+            detected = DetectedFormat::EXR;
+            
+        // Check PIC: 0x53 0x80 ...
+        else if (magic[0] == 0x53 && magic[1] == 0x80 && magic[2] == 0xF6 && magic[3] == 0x34)
+            detected = DetectedFormat::PIC;
+            
+
+        // Check PNM: P1-P7 (PBM, PGM, PPM, PAM)
+        else if (magic[0] == 'P' && magic[1] >= '1' && magic[1] <= '7')
+            detected = DetectedFormat::PNM;
+
+        // Check PCX: 0x0A (ZSoft)
+        else if (magic[0] == 0x0A)
+            detected = DetectedFormat::PCX;
+
+        // Check SVG: <svg or <?xml (Text check)
+        // Simple check for '<' at start, then verify extension or content later.
+        else if (magic[0] == '<' && (magic[1] == 's' || magic[1] == '?' || magic[1] == '!')) 
+            detected = DetectedFormat::SVG;
+        
+        // Check QOI: "qoif" magic
+        else if (magic[0] == 'q' && magic[1] == 'o' && magic[2] == 'i' && magic[3] == 'f')
+            detected = DetectedFormat::QOI;
+    }
+    
+    // Fallback or specific checks via extension
+    if (detected == DetectedFormat::Unknown) {
+         if (path.ends_with(L".tga") || path.ends_with(L".icb") || path.ends_with(L".vda") || path.ends_with(L".vst")) 
+             detected = DetectedFormat::TGA;
+         else if (path.ends_with(L".wbmp") || path.ends_with(L".wbm"))
+             detected = DetectedFormat::WBMP;
+         else if (path.ends_with(L".svg") || path.ends_with(L".svgz"))
+             detected = DetectedFormat::SVG;
+         else if (path.ends_with(L".pcx"))
+             detected = DetectedFormat::PCX;
+         else if (path.ends_with(L".pam") || path.ends_with(L".pbm") || path.ends_with(L".pgm") || path.ends_with(L".ppm"))
+             detected = DetectedFormat::PNM;
+    }
+    
+
+    // 2. Dispatch Logic
+    HRESULT hr = E_FAIL;
+    
+    switch (detected) {
+        case DetectedFormat::JPEG: 
+            hr = LoadJPEG(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"TurboJPEG (v3 + ASM)"; 
+            break;
+        case DetectedFormat::PNG:  
+            hr = LoadPngWuffs(filePath, ppBitmap);  // Wuffs (Google's memory-safe decoder)
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs PNG (Safe+Fast)"; 
+            break;
+        case DetectedFormat::GIF:
+            hr = LoadGifWuffs(filePath, ppBitmap);  // Wuffs GIF
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs GIF (Chrome)"; 
+            break;
+        case DetectedFormat::WebP: 
+            hr = LoadWebP(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibWebP (SIMD)"; 
+            break;
+        case DetectedFormat::AVIF: 
+            hr = LoadAVIF(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Dav1d (AV1)"; 
+            break;
+        case DetectedFormat::JXL:  
+            hr = LoadJXL(filePath, ppBitmap); 
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibJXL (Highway)"; 
+            break;
+
+        case DetectedFormat::BMP:
+            hr = LoadBmpWuffs(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs BMP (Safe)";
+            break;
+
+        case DetectedFormat::TGA:
+            hr = LoadTgaWuffs(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs TGA";
+            break;
+
+        case DetectedFormat::WBMP:
+            hr = LoadWbmpWuffs(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs WBMP";
+            break;
+
+        case DetectedFormat::PSD:
+            // Use StbImage for PSD (force 4 channels)
+            hr = LoadStbImage(filePath, ppBitmap, false);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"stb_image (PSD)";
+            break;
+
+        case DetectedFormat::HDR:
+            // Use StbImage (Float for HDR)
+            hr = LoadStbImage(filePath, ppBitmap, true);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"stb_image (HDR)";
+            break;
+
+        case DetectedFormat::PIC:
+            // Use StbImage (8-bit)
+            hr = LoadStbImage(filePath, ppBitmap, false);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"stb_image (PIC)";
+            break;
+
+        case DetectedFormat::PNM:
+            // Wuffs NetPBM supports P5/P6 (Binary PGM/PPM only)
+            hr = LoadNetpbmWuffs(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs NetPBM";
+            break;
+
+        case DetectedFormat::EXR:
+            hr = LoadTinyExrImage(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"TinyEXR";
+            break;
+
+        case DetectedFormat::PCX:
+            // Custom PCX Decoder (RLE + Palette)
+            hr = LoadPCX(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Custom PCX";
+            break;
+
+        case DetectedFormat::SVG:
+            hr = LoadSVG(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"NanoSVG (Rasterized)";
+            break;
+
+        case DetectedFormat::QOI:
+            hr = LoadQoiWuffs(filePath, ppBitmap);
+            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs QOI";
+            break;
+
+        case DetectedFormat::Unknown:
+        default:
+            if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".cr3") || 
+                path.ends_with(L".nef") || path.ends_with(L".dng") || path.ends_with(L".orf") || 
+                path.ends_with(L".rw2") || path.ends_with(L".raf") || path.ends_with(L".pef") || 
+                path.ends_with(L".srw")) {
+                 hr = LoadRaw(filePath, ppBitmap);
+                 if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibRaw (Optimized)";
+            }
+            break;
+    }
+    
+    // If Specialized Loader Succeeded, Return
+    if (SUCCEEDED(hr)) return hr;
+
+    // 3. Robust Fallback to WIC (Standard Loading)
+    if (pLoaderName) *pLoaderName = L"WIC (Fallback)";
+    
+    // If High-Perf loader failed (e.g. malformed specific header, unsupported feature) OR format verified but unimplemented (stub),
+    // OR format unknown.
+    // ---------------------------------------------------------
+
+    // 1. Load Lazy Source
+    ComPtr<IWICBitmapSource> source;
+    // Note: Can't use this->LoadFromFile nicely if we want to avoid double-open, 
+    // but LoadFromFile uses WIC factory directly. Let's just use the WIC path inline or call existing helper.
+    // Re-use existing WIC fallback logic:
+    
+    ComPtr<IWICBitmapDecoder> decoder;
+    hr = m_wicFactory->CreateDecoderFromFilename(
+        filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder
+    );
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) return hr;
+    
+    // 2. Convert to D2D Compatible Format (PBGRA32)
+    ComPtr<IWICFormatConverter> converter;
+    hr = m_wicFactory->CreateFormatConverter(&converter);
+    if (FAILED(hr)) return hr;
+
+    hr = converter->Initialize(
+        frame.Get(), // Use frame source
+        GUID_WICPixelFormat32bppPBGRA,
+        WICBitmapDitherTypeNone,
+        nullptr,
+        0.f,
+        WICBitmapPaletteTypeMedianCut
+    );
+    if (FAILED(hr)) return hr;
+
+    // 3. Force Decode to Memory
+    return m_wicFactory->CreateBitmapFromSource(
+        converter.Get(),
+        WICBitmapCacheOnLoad, 
+        ppBitmap
+    );
+}
+
+HRESULT CImageLoader::GetImageSize(LPCWSTR filePath, UINT* width, UINT* height) {
+    if (!filePath || !width || !height) return E_INVALIDARG;
+
+    ComPtr<IWICBitmapSource> bitmap;
+    HRESULT hr = LoadFromFile(filePath, &bitmap);
+    if (FAILED(hr)) return hr;
+
+    return bitmap->GetSize(width, height);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs PNG Decoder (Google's memory-safe decoder)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> pngBuf;
+    if (!ReadFileToVector(filePath, pngBuf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+    
+    if (!WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs GIF Decoder (First frame only for now)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> gifBuf;
+    if (!ReadFileToVector(filePath, gifBuf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+
+    if (!WuffsLoader::DecodeGIF(gifBuf.data(), gifBuf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs BMP Decoder
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadBmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+
+    if (!WuffsLoader::DecodeBMP(buf.data(), buf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs TGA Decoder
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadTgaWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+
+    if (!WuffsLoader::DecodeTGA(buf.data(), buf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs WBMP Decoder
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+
+    if (!WuffsLoader::DecodeWBMP(buf.data(), buf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                      (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Stb Image Decoder (PSD, HDR, PIC, PNM)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadStbImage(LPCWSTR filePath, IWICBitmap** ppBitmap, bool floatFormat) {
+    // Read file to memory first (Solves Windows Unicode Path issues reliably)
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    int width = 0, height = 0, channels = 0;
+    std::vector<uint8_t> pixelData;
+    
+    // Use Memory Loader
+    if (!StbLoader::LoadImageFromMemory(buf.data(), buf.size(), &width, &height, &channels, pixelData, floatFormat)) {
+        return E_FAIL;
+    }
+
+    if (floatFormat) {
+        // HDR: Create float bitmap (128bpp RGBA Float)
+        size_t stride = width * 4 * sizeof(float);
+        return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat128bppRGBAFloat,
+                                          (UINT)stride, (UINT)pixelData.size(), (BYTE*)pixelData.data(), ppBitmap);
+    } else {
+        // Standard 8-bit RGBA
+        // WIC prefers BGRA for 32bpp
+        // Swap R and B
+        uint8_t* p = pixelData.data();
+        size_t pixelCount = (size_t)width * height;
+        for (size_t i = 0; i < pixelCount; i++) {
+            std::swap(p[i*4], p[i*4+2]); // Swap R and B
+        }
+        
+        size_t stride = width * 4;
+        return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                          (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// TinyEXR Decoder
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadTinyExrImage(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    // Read file to memory (Solves Path and Locking issues)
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    int width = 0, height = 0;
+    std::vector<float> pixelData;
+
+    // Use Memory Loader
+    if (!TinyExrLoader::LoadEXRFromMemory(buf.data(), buf.size(), &width, &height, pixelData)) {
+         return E_FAIL;
+    }
+
+    // TinyEXR returns RGBA floats.
+    // Create WIC Bitmap (128bpp RGBA Float)
+    size_t stride = width * 4 * sizeof(float);
+    // Note: pixelData.size() is count of floats. Size in bytes is size() * sizeof(float).
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat128bppRGBAFloat,
+                                      (UINT)stride, (UINT)(pixelData.size() * sizeof(float)), (BYTE*)pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// NanoSVG Decoder (SVG Support)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadSVG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> fileData;
+    if (!ReadFileToVector(filePath, fileData)) return E_FAIL;
+
+    // NanoSVG parses char* string (null terminated recommended)
+    std::vector<char> xmlData(fileData.begin(), fileData.end());
+    xmlData.push_back('\0'); 
+
+    // Parse (96 DPI default units)
+    // Note: nsvgParse modifies the input string content during parsing (destructive)
+    NSVGimage* image = nsvgParse(xmlData.data(), "px", 96.0f);
+    if (!image) return E_FAIL;
+
+    // Scale Logic: 2.0x for crisp rendering
+    float scale = 2.0f; 
+    
+    // Safety size limit (e.g. 8k)
+    float maxDim = 8192.0f;
+    if (image->width * scale > maxDim || image->height * scale > maxDim) {
+         float aspect = image->width / image->height;
+         if (aspect > 1.0f) {
+             scale = maxDim / image->width;
+         } else {
+             scale = maxDim / image->height;
+         }
+    }
+
+    int width = (int)(image->width * scale);
+    int height = (int)(image->height * scale);
+    
+    if (width <= 0 || height <= 0) {
+        nsvgDelete(image);
+        return E_FAIL;
+    }
+
+    // Rasterize
+    NSVGrasterizer* rast = nsvgCreateRasterizer();
+    if (!rast) {
+        nsvgDelete(image);
+        return E_OUTOFMEMORY;
+    }
+
+    // NanoSVG generates RGBA (32-bit)
+    size_t stride = width * 4;
+    size_t size = stride * height;
+    std::vector<uint8_t> imgData(size);
+
+    nsvgRasterize(rast, image, 0, 0, scale, imgData.data(), width, height, (int)stride);
+
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+
+    // Create WIC Bitmap (GUID_WICPixelFormat32bppRGBA)
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppRGBA,
+                                     (UINT)stride, (UINT)size, imgData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs NetPBM (PAM, PBM, PGM, PPM)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadNetpbmWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+
+    if (!WuffsLoader::DecodeNetpbm(buf.data(), buf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                     (UINT)stride, (UINT)(stride * height), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Wuffs QOI (Quite OK Image)
+// ----------------------------------------------------------------------------
+HRESULT CImageLoader::LoadQoiWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> pixelData;
+
+    if (!WuffsLoader::DecodeQOI(buf.data(), buf.size(), &width, &height, pixelData)) {
+        return E_FAIL;
+    }
+
+    size_t stride = width * 4;
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+                                     (UINT)stride, (UINT)(stride * height), pixelData.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Custom PCX Decoder (Since stb_image lacks support)
+// ----------------------------------------------------------------------------
+#pragma pack(push, 1)
+struct PCXHeader {
+    uint8_t manufacturer; // 0x0A
+    uint8_t version;
+    uint8_t encoding;     // 1 = RLE
+    uint8_t bitsPerPixel;
+    uint16_t xmin, ymin, xmax, ymax;
+    uint16_t hDpi, vDpi;
+    uint8_t palette[48];
+    uint8_t reserved;
+    uint8_t colorPlanes;
+    uint16_t bytesPerLine;
+    uint16_t paletteType;
+    uint16_t hScreenSize, vScreenSize;
+    uint8_t filler[54];
+};
+#pragma pack(pop)
+
+HRESULT CImageLoader::LoadPCX(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+    std::vector<uint8_t> data;
+    if (!ReadFileToVector(filePath, data)) return E_FAIL;
+
+    if (data.size() < sizeof(PCXHeader)) return E_FAIL;
+
+    const PCXHeader* header = (const PCXHeader*)data.data();
+    if (header->manufacturer != 0x0A) return E_FAIL;
+    if (header->encoding != 1) return E_FAIL; // Only RLE supported
+
+    int width = header->xmax - header->xmin + 1;
+    int height = header->ymax - header->ymin + 1;
+    if (width <= 0 || height <= 0) return E_FAIL;
+    if (width > 32768 || height > 32768) return E_FAIL;
+
+    // Decode RLE
+    size_t scanlineBytes = header->bytesPerLine * header->colorPlanes;
+    std::vector<uint8_t> decodedBytes(scanlineBytes * height);
+    uint8_t* dst = decodedBytes.data();
+    uint8_t* dstEnd = dst + decodedBytes.size();
+
+    const uint8_t* ptr = data.data() + 128;
+    const uint8_t* end = data.data() + data.size();
+
+    while (dst < dstEnd && ptr < end) {
+        uint8_t byte = *ptr++;
+        if ((byte & 0xC0) == 0xC0) {
+            uint8_t count = byte & 0x3F;
+            if (ptr >= end) break;
+            uint8_t val = *ptr++;
+            if (dst + count > dstEnd) count = (uint8_t)(dstEnd - dst);
+            memset(dst, val, count);
+            dst += count;
+        } else {
+            *dst++ = byte;
+        }
+    }
+
+    // Convert to RGBA
+    std::vector<uint8_t> rgba(width * height * 4);
+    
+    if (header->colorPlanes == 3 && header->bitsPerPixel == 8) {
+        // 24-bit RGB
+        for (int y = 0; y < height; y++) {
+            uint8_t* rowSrc = decodedBytes.data() + y * scanlineBytes;
+            uint8_t* rSrc = rowSrc;
+            uint8_t* gSrc = rowSrc + header->bytesPerLine;
+            uint8_t* bSrc = rowSrc + header->bytesPerLine * 2;
+            uint8_t* dstRow = rgba.data() + y * width * 4;
+
+            for (int x = 0; x < width; x++) {
+                if (x < header->bytesPerLine) {
+                    dstRow[x * 4 + 0] = rSrc[x];
+                    dstRow[x * 4 + 1] = gSrc[x];
+                    dstRow[x * 4 + 2] = bSrc[x];
+                    dstRow[x * 4 + 3] = 255;
+                }
+            }
+        }
+    } else if (header->colorPlanes == 1 && header->bitsPerPixel == 8) {
+        // 256 color palette (at end of file)
+        if (data.size() < 769) return E_FAIL;
+        const uint8_t* palPtr = data.data() + data.size() - 768;
+        
+        for (int y = 0; y < height; y++) {
+            uint8_t* rowSrc = decodedBytes.data() + y * scanlineBytes;
+            uint8_t* dstRow = rgba.data() + y * width * 4;
+            for (int x = 0; x < width; x++) {
+                if (x < header->bytesPerLine) {
+                    uint8_t idx = rowSrc[x];
+                    dstRow[x * 4 + 0] = palPtr[idx * 3 + 0];
+                    dstRow[x * 4 + 1] = palPtr[idx * 3 + 1];
+                    dstRow[x * 4 + 2] = palPtr[idx * 3 + 2];
+                    dstRow[x * 4 + 3] = 255;
+                }
+            }
+        }
+    } else {
+        return E_FAIL; // Unsupported format
+    }
+
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppRGBA,
+                                     width * 4, width * height * 4, rgba.data(), ppBitmap);
+}
+
+// ----------------------------------------------------------------------------
+// Metadata Implementation
+// ----------------------------------------------------------------------------
+
+#include <propsys.h>
+#include <propvarutil.h>
+#include <cmath>
+#pragma comment(lib, "propsys.lib")
+
+static HRESULT GetMetadataString(IWICMetadataQueryReader* reader, LPCWSTR query, std::wstring& out) {
+    if (!reader) return E_INVALIDARG;
+    PROPVARIANT val; PropVariantInit(&val);
+    HRESULT hr = reader->GetMetadataByName(query, &val);
+    if (SUCCEEDED(hr)) {
+        WCHAR buf[512] = {};
+        if (SUCCEEDED(PropVariantToString(val, buf, 512))) {
+             out = buf;
+        }
+        PropVariantClear(&val);
+    }
+    return hr;
+}
+
+static double DecodeRational(unsigned __int64 val) {
+    uint32_t num = (uint32_t)(val & 0xFFFFFFFF);
+    uint32_t den = (uint32_t)(val >> 32);
+    if (den == 0) return 0.0;
+    return (double)num / (double)den;
+}
+
+static double DecodeSignedRational(unsigned __int64 val) {
+    int32_t num = (int32_t)(val & 0xFFFFFFFF);
+    int32_t den = (int32_t)(val >> 32);
+    if (den == 0) return 0.0;
+    return (double)num / (double)den;
+}
+
+static HRESULT GetMetadataSignedRational(IWICMetadataQueryReader* reader, LPCWSTR query, double* out) {
+    if (!reader || !out) return E_INVALIDARG;
+    PROPVARIANT val; PropVariantInit(&val);
+    HRESULT hr = reader->GetMetadataByName(query, &val);
+    if (SUCCEEDED(hr)) {
+        if (val.vt == VT_UI8) {
+            *out = DecodeSignedRational(val.uhVal.QuadPart);
+        } else {
+            PropVariantToDouble(val, out);
+        }
+        PropVariantClear(&val);
+    }
+    return hr;
+}
+
+static HRESULT GetMetadataRational(IWICMetadataQueryReader* reader, LPCWSTR query, double* out) {
+    if (!reader || !out) return E_INVALIDARG;
+    PROPVARIANT val; PropVariantInit(&val);
+    HRESULT hr = reader->GetMetadataByName(query, &val);
+    if (SUCCEEDED(hr)) {
+        if (val.vt == VT_UI8) {
+            *out = DecodeRational(val.uhVal.QuadPart);
+        } else {
+            PropVariantToDouble(val, out);
+        }
+        PropVariantClear(&val);
+    }
+    return hr;
+}
+
+
+
+static HRESULT GetMetadataGPS(IWICMetadataQueryReader* reader, LPCWSTR coordQuery, LPCWSTR refQuery, double* outVal) {
+    if (!reader || !outVal) return E_INVALIDARG;
+    
+    // 1. Read Reference (N/S/E/W)
+    WCHAR refBuf[16] = {};
+    PROPVARIANT varRef; PropVariantInit(&varRef);
+    if (SUCCEEDED(reader->GetMetadataByName(refQuery, &varRef))) {
+        PropVariantToString(varRef, refBuf, 16);
+        PropVariantClear(&varRef);
+    }
+    
+    // 2. Read Coordinate (Vector of 3 UI8s)
+    PROPVARIANT varCoord; PropVariantInit(&varCoord);
+    HRESULT hr = reader->GetMetadataByName(coordQuery, &varCoord);
+    if (FAILED(hr)) return hr;
+    
+    double result = 0.0;
+    
+    if (varCoord.vt == (VT_UI8 | VT_VECTOR)) {
+        if (varCoord.cauh.cElems == 3) {
+            double deg = DecodeRational(varCoord.cauh.pElems[0].QuadPart);
+            double min = DecodeRational(varCoord.cauh.pElems[1].QuadPart);
+            double sec = DecodeRational(varCoord.cauh.pElems[2].QuadPart);
+            result = deg + min/60.0 + sec/3600.0;
+        }
+    }
+    PropVariantClear(&varCoord);
+    
+    // Apply Ref (S or W means negative)
+    if (refBuf[0] == 'S' || refBuf[0] == 's' || refBuf[0] == 'W' || refBuf[0] == 'w') {
+        result = -result;
+    }
+    
+    *outVal = result;
+    return S_OK;
+}
+
+HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata) {
+    if (!filePath || !pMetadata) return E_INVALIDARG;
+    *pMetadata = {}; // Clear
+
+    if (!m_wicFactory) return E_FAIL;
+
+    // 1. Create Decoder based on file (Safe fallback)
+    ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = m_wicFactory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+    if (FAILED(hr)) return hr; // Format not supported by WIC (e.g. some raw, or no codec)
+
+    // 2. Get Frame 0
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) return S_FALSE;
+
+    // 3. Basic Info
+    frame->GetSize(&pMetadata->Width, &pMetadata->Height);
+    
+    // File Size & Time Fallback
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER size;
+        if (GetFileSizeEx(hFile, &size)) pMetadata->FileSize = size.QuadPart;
+        
+        // Get File Modify Time (Fallback for Date)
+        FILETIME ftWrite;
+        if (GetFileTime(hFile, nullptr, nullptr, &ftWrite)) {
+             SYSTEMTIME st; FileTimeToSystemTime(&ftWrite, &st);
+             wchar_t buf[64];
+             swprintf_s(buf, L"%04d-%02d-%02d %02d:%02d:%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+             // We store it, but if EXIF exists, we overwrite
+             pMetadata->Date = buf;
+        }
+        CloseHandle(hFile);
+    }
+
+    // 4. Metadata Query
+    ComPtr<IWICMetadataQueryReader> reader;
+    if (FAILED(frame->GetMetadataQueryReader(&reader))) return S_OK;
+
+    // 5. Read Tags
+    // 5. Read Tags (Try multiple paths for robustness)
+    const wchar_t* makeQueries[] = { L"/app1/ifd/{ushort=271}", L"/ifd/{ushort=271}" };
+    for (auto q : makeQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Make)) && !pMetadata->Make.empty()) break;
+
+    const wchar_t* modelQueries[] = { L"/app1/ifd/{ushort=272}", L"/ifd/{ushort=272}" };
+    for (auto q : modelQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Model)) && !pMetadata->Model.empty()) break;
+
+    const wchar_t* dateQueries[] = { L"/app1/ifd/exif/{ushort=36867}", L"/app1/ifd/{ushort=306}", L"/ifd/exif/{ushort=36867}", L"/ifd/{ushort=306}" };
+    for (auto q : dateQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Date)) && !pMetadata->Date.empty()) break;
+
+    // ISO (34855)
+    std::wstring iso;
+    const wchar_t* isoQueries[] = { L"/app1/ifd/exif/{ushort=34855}", L"/ifd/exif/{ushort=34855}", L"/app1/ifd/{ushort=34855}" };
+    for (auto q : isoQueries) {
+        if (SUCCEEDED(GetMetadataString(reader.Get(), q, iso)) && !iso.empty()) {
+            pMetadata->ISO = iso; break;
+        }
+    }
+
+    // Aperture (FNumber 33437)
+    double fnum = 0.0;
+    const wchar_t* fnumQueries[] = { L"/app1/ifd/exif/{ushort=33437}", L"/ifd/exif/{ushort=33437}", L"/app1/ifd/{ushort=33437}" };
+    for (auto q : fnumQueries) {
+        if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &fnum))) {
+             wchar_t buf[32]; swprintf_s(buf, L"f/%.1f", fnum);
+             pMetadata->Aperture = buf;
+             break;
+        }
+    }
+
+    // ExposureTime (33434)
+    double expTime = 0.0;
+    const wchar_t* expQueries[] = { L"/app1/ifd/exif/{ushort=33434}", L"/ifd/exif/{ushort=33434}", L"/app1/ifd/{ushort=33434}" };
+    for (auto q : expQueries) {
+        if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &expTime))) {
+            if (expTime > 0) {
+                if (expTime < 1.0) {
+                    wchar_t buf[32]; swprintf_s(buf, L"1/%.0f", 1.0 / expTime);
+                    pMetadata->Shutter = buf;
+                } else {
+                     wchar_t buf[32]; swprintf_s(buf, L"%.1f\"", expTime);
+                     pMetadata->Shutter = buf;
+                }
+            }
+            break;
+        }
+    }
+
+    // FocalLength (37386)
+    double focal = 0.0;
+    const wchar_t* focalQueries[] = { L"/app1/ifd/exif/{ushort=37386}", L"/ifd/exif/{ushort=37386}", L"/app1/ifd/{ushort=37386}" };
+    for (auto q : focalQueries) {
+        if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &focal))) {
+             wchar_t buf[32]; swprintf_s(buf, L"%.0fmm", focal);
+             pMetadata->Focal = buf;
+             break;
+        }
+    }
+    
+    // Lens Model (42036 or 0xA434)
+    const wchar_t* lensQueries[] = { L"/app1/ifd/exif/{ushort=42036}", L"/ifd/exif/{ushort=42036}" };
+    for (auto q : lensQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Lens)) && !pMetadata->Lens.empty()) break;
+
+    // Software (305) - Try multiple paths
+    const wchar_t* softQueries[] = { L"/app1/ifd/{ushort=305}", L"/ifd/{ushort=305}" };
+    for (auto q : softQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Software)) && !pMetadata->Software.empty()) break;
+
+    // Exposure Bias (37380) - Signed Rational
+    double bias = 0.0;
+    const wchar_t* biasQueries[] = { L"/app1/ifd/exif/{ushort=37380}", L"/ifd/exif/{ushort=37380}" };
+    for (auto q : biasQueries) if (SUCCEEDED(GetMetadataSignedRational(reader.Get(), q, &bias))) {
+        if (std::abs(bias) > 0.0001) { // Check non-zero with epsilon
+            wchar_t buf[32]; swprintf_s(buf, L"%+.1f ev", bias);
+            pMetadata->ExposureBias = buf;
+        }
+        break;
+    }
+
+    // Flash (37377)
+    PROPVARIANT flashVar; PropVariantInit(&flashVar);
+    const wchar_t* flashQueries[] = { L"/app1/ifd/exif/{ushort=37377}", L"/ifd/exif/{ushort=37377}" };
+    for (auto q : flashQueries) {
+        if (SUCCEEDED(reader->GetMetadataByName(q, &flashVar))) {
+            UINT flashVal = 0;
+            if (flashVar.vt == VT_UI2) flashVal = flashVar.uiVal;
+            else if (flashVar.vt == VT_UI4) flashVal = flashVar.ulVal;
+            
+            pMetadata->Flash = (flashVal & 1) ? L"Flash: On" : L"Flash: Off"; // Simple logic
+            if ((flashVal & 1) == 0) pMetadata->Flash = L""; // Don't show if Off? Or show "Flash: Off"? User said "Whether there is flash". "Off" is info.
+            // But usually clean UI hides "Off". "Windows Photo" shows it.
+            // I'll show it if it was explicitly recorded.
+            PropVariantClear(&flashVar);
+            break;
+        }
+    }
+
+    // GPS
+    double lat = 0, lon = 0;
+    bool foundGPS = false;
+    
+    // Block 1: Try /app1/ifd/gps/...
+    if (SUCCEEDED(GetMetadataGPS(reader.Get(), L"/app1/ifd/gps/{ushort=2}", L"/app1/ifd/gps/{ushort=1}", &lat)) &&
+        SUCCEEDED(GetMetadataGPS(reader.Get(), L"/app1/ifd/gps/{ushort=4}", L"/app1/ifd/gps/{ushort=3}", &lon))) {
+        foundGPS = true;
+    }
+    // Block 2: Try /ifd/gps/... (Fallback)
+    else if (SUCCEEDED(GetMetadataGPS(reader.Get(), L"/ifd/gps/{ushort=2}", L"/ifd/gps/{ushort=1}", &lat)) &&
+             SUCCEEDED(GetMetadataGPS(reader.Get(), L"/ifd/gps/{ushort=4}", L"/ifd/gps/{ushort=3}", &lon))) {
+        foundGPS = true;
+    }
+
+    if (foundGPS) {
+        pMetadata->HasGPS = true;
+        pMetadata->Latitude = lat;
+        pMetadata->Longitude = lon;
+        
+        // Altitude
+        double alt = 0;
+        if (SUCCEEDED(GetMetadataRational(reader.Get(), L"/app1/ifd/gps/{ushort=6}", &alt))) {
+            pMetadata->Altitude = alt;
+            // Check Ref (5): 0=Above, 1=Below
+            PROPVARIANT altRef; PropVariantInit(&altRef);
+            if (SUCCEEDED(reader->GetMetadataByName(L"/app1/ifd/gps/{ushort=5}", &altRef))) {
+                 if (altRef.vt == VT_UI1 && altRef.bVal == 1) pMetadata->Altitude = -alt;
+                 PropVariantClear(&altRef);
+            }
+        }
+    }
+
+    return S_OK;
+}
+
+HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* pMetadata) {
+    if (!source || !pMetadata) return E_INVALIDARG;
+    
+    // Reset
+    pMetadata->HistR.assign(256, 0);
+    pMetadata->HistG.assign(256, 0);
+    pMetadata->HistB.assign(256, 0);
+    pMetadata->HistL.assign(256, 0);
+
+    ComPtr<IWICBitmap> bitmap;
+    if (FAILED(source->QueryInterface(IID_PPV_ARGS(&bitmap)))) {
+        return E_NOINTERFACE; 
+    }
+    
+    ComPtr<IWICBitmapLock> lock;
+    if (FAILED(bitmap->Lock(nullptr, WICBitmapLockRead, &lock))) return E_FAIL;
+    
+    UINT width = 0, height = 0;
+    bitmap->GetSize(&width, &height);
+    
+    UINT stride = 0;
+    lock->GetStride(&stride);
+
+    UINT bufSize = 0;
+    BYTE* ptr = nullptr;
+    if (FAILED(lock->GetDataPointer(&bufSize, &ptr))) return E_FAIL;
+    
+    WICPixelFormatGUID format;
+    source->GetPixelFormat(&format);
+    
+    // Determine offsets
+    int offsetR = 0, offsetG = 1, offsetB = 2; // Default RGBA
+    if (IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA) || 
+        IsEqualGUID(format, GUID_WICPixelFormat32bppPBGRA)) {
+        offsetR = 2; offsetG = 1; offsetB = 0;
+    }
+    
+    // Optimized Histogram Calculation
+    // For small images (< 2MP), use Step=1 (Exact).
+    // For large images, use Step > 1 (Sparse).
+    
+    UINT64 totalPixels = (UINT64)width * height;
+    
+    UINT step = 1;
+    if (totalPixels > 2000000) { // 2MP threshold
+         // Target ~250k samples
+         step = (UINT)sqrt(totalPixels / 250000.0);
+         if (step < 1) step = 1;
+    }
+    
+    // Sampling Loop
+    for (UINT y = 0; y < height; y += step) {
+        BYTE* row = ptr + (UINT64)y * stride; // Use 64-bit math for stride offset safety
+        for (UINT x = 0; x < width; x += step) {
+            // Safety check for last pixel in row? 
+            // x*4 should be < stride. x < width implies x*4 < width*4 <= stride.
+            // But if stride is tight...
+            
+            BYTE r = row[x * 4 + offsetR];
+            BYTE g = row[x * 4 + offsetG];
+            BYTE b = row[x * 4 + offsetB];
+            
+            pMetadata->HistR[r]++;
+            pMetadata->HistG[g]++;
+            pMetadata->HistB[b]++;
+            
+            // Luma (Integer approx: 0.2126R + 0.7152G + 0.0722B)
+            // (54*R + 183*G + 18*B) / 256
+            BYTE l = (BYTE)((54 * r + 183 * g + 19 * b) >> 8);
+            pMetadata->HistL[l]++;
+        }
+    }
+    
+    return S_OK;
+}

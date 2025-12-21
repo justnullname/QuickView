@@ -1,11 +1,12 @@
 #include "pch.h"
 #include "framework.h"
-#include "QuickView2026.h"
+#include "QuickView.h"
 #include "RenderEngine.h"
 #include "ImageLoader.h"
 #include "LosslessTransform.h"
 #include "EditState.h"
 #include "AppStrings.h"
+#include "ContextMenu.h"
 #include <cwctype>
 #include <commctrl.h> 
 #include <wrl/client.h>
@@ -28,12 +29,17 @@ using namespace Microsoft::WRL;
 
 #include <algorithm> 
 #include <shellapi.h> 
+#include <shlobj.h>
+#include <ShObjIdl_core.h>  // For IDesktopWallpaper
 #include <commdlg.h> 
 #include <vector>
 #include <dwmapi.h>
 #include <ShellScalingApi.h>
+#include <winspool.h>
+#include <shellapi.h>
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "Shcore.lib")
+#pragma comment(lib, "winspool.lib")
 #pragma comment(lib, "comctl32.lib")
 
 #pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -46,7 +52,11 @@ struct DialogButton {
     DialogResult Result;
     std::wstring Text;
     bool IsDefault;
-    DialogButton(DialogResult r, std::wstring t, bool d = false) : Result(r), Text(t), IsDefault(d) {}
+    DialogButton(DialogResult r, const wchar_t* t, bool d = false) : Result(r), Text(t), IsDefault(d) {}
+    DialogButton(const DialogButton&) = default;
+    DialogButton(DialogButton&&) = default;
+    DialogButton& operator=(const DialogButton&) = default;
+    DialogButton& operator=(DialogButton&&) = default;
 };
 
 struct DialogLayout {
@@ -88,7 +98,7 @@ struct ViewState {
 
 // --- Globals ---
 
-static const wchar_t* g_szClassName = L"QuickView2026Class";
+static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView 2026";
 static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
@@ -100,8 +110,27 @@ static EditState g_editState;
 static AppConfig g_config;
 static ViewState g_viewState;
 static FileNavigator g_navigator; // New Navigator
+static CImageLoader::ImageMetadata g_currentMetadata;
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
+static ComPtr<IDWriteTextFormat> g_pPanelTextFormat;
+static D2D1_RECT_F g_gpsLinkRect = {}; 
+static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
+static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
+
+static float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) {
+    if (text.empty() || !format) return 0.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    g_renderEngine->m_dwriteFactory->CreateTextLayout(
+        text.c_str(), (UINT32)text.length(), format, 
+        5000.0f, 5000.0f, // Large max width/height
+        &layout
+    );
+    if (!layout) return 0.0f;
+    DWRITE_TEXT_METRICS metrics;
+    layout->GetMetrics(&metrics);
+    return metrics.width;
+}
 
 
 // --- Forward Declarations ---
@@ -109,10 +138,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path);
+FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
 void ReleaseImageResources();
 void DiscardChanges();
+std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName);
 
 // Helper: Check if panning makes sense (image exceeds window OR window exceeds screen)
 bool CanPan(HWND hwnd) {
@@ -127,6 +158,9 @@ bool CanPan(HWND hwnd) {
     float scaledW = imgSize.width * fitScale * g_viewState.Zoom;
     float scaledH = imgSize.height * fitScale * g_viewState.Zoom;
     
+    // Condition 0: Always allow pan if zoomed in
+    if (g_viewState.Zoom > 1.01f) return true;
+
     // Condition 1: Image exceeds window bounds
     if (scaledW > windowW + 1.0f || scaledH > windowH + 1.0f) {
         return true;
@@ -166,25 +200,46 @@ void ReleaseImageResources() {
 
 DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     DialogLayout layout;
-    float dlgW = 600.0f; 
-    float dlgH = 280.0f; // Increased slightly for Quality Text space
+    float dlgW = 420.0f;
+    
+    // Calculate required height based on content
+    // Title line: ~30px, Message lines: estimate based on length, Buttons: 50px, Padding: 40px
+    float titleHeight = 35.0f;
+    float messageHeight = 25.0f;
+    
+    // Estimate title wrapping (assume ~25 chars per line at this width)
+    int titleLines = (int)(g_dialog.Title.length() / 22) + 1;
+    if (titleLines > 3) titleLines = 3;  // Max 3 lines
+    
+    // Message usually single line
+    int msgLines = 1;
+    
+    float contentHeight = (titleLines * titleHeight) + (msgLines * messageHeight);
+    float checkboxHeight = g_dialog.HasCheckbox ? 45.0f : 0.0f;
+    float buttonsHeight = 55.0f;
+    float padding = 35.0f;
+    
+    float dlgH = padding + contentHeight + checkboxHeight + buttonsHeight;
+    if (dlgH < 130.0f) dlgH = 130.0f;  // Minimum height
+    if (dlgH > 300.0f) dlgH = 300.0f;  // Maximum height
+    
     float left = (size.width - dlgW) / 2.0f;
     float top = (size.height - dlgH) / 2.0f;
     layout.Box = D2D1::RectF(left, top, left + dlgW, top + dlgH);
     
-    // Checkbox area
-    float checkY = top + 180;
-    layout.Checkbox = D2D1::RectF(left + 30, checkY, left + 50, checkY + 20);
+    // Checkbox area (only used if HasCheckbox)
+    float checkY = top + dlgH - 95;
+    layout.Checkbox = D2D1::RectF(left + 25, checkY, left + 45, checkY + 20);
     
     // Buttons area
-    float btnW = 110.0f;
-    float btnH = 35.0f;
-    float btnGap = 20.0f;
+    float btnW = 95.0f;
+    float btnH = 30.0f;
+    float btnGap = 12.0f;
     float totalBtnWidth = (g_dialog.Buttons.size() * btnW) + ((g_dialog.Buttons.size() - 1) * btnGap);
-    float startX = left + dlgW - 30 - totalBtnWidth;
-    if (startX < left + 30) startX = left + 30; // Safety clamp
+    float startX = left + dlgW - 20 - totalBtnWidth;
+    if (startX < left + 20) startX = left + 20; // Safety clamp
     
-    float btnY = top + dlgH - 60;
+    float btnY = top + dlgH - 45;
     
     for (size_t i = 0; i < g_dialog.Buttons.size(); ++i) {
         layout.Buttons.push_back(D2D1::RectF(startX + i * (btnW + btnGap), btnY, startX + i * (btnW + btnGap) + btnW, btnY + btnH));
@@ -286,7 +341,10 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     
     if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
     if (pDW) {
-        if (!fmtTitle) pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24.0f, L"en-us", &fmtTitle);
+        if (!fmtTitle) {
+            pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 22.0f, L"en-us", &fmtTitle);
+            if (fmtTitle) fmtTitle->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
         if (!fmtBody) pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 18.0f, L"en-us", &fmtBody);
         if (!fmtBtn) pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"en-us", &fmtBtn);
         if (!fmtBtnCenter) {
@@ -299,13 +357,22 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     ComPtr<ID2D1SolidColorBrush> pWhite;
     context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &pWhite);
     
-    // Title
-    context->DrawText(g_dialog.Title.c_str(), (UINT32)g_dialog.Title.length(), fmtTitle.Get(), 
-        D2D1::RectF(layout.Box.left + 30, layout.Box.top + 30, layout.Box.right - 30, layout.Box.top + 70), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    // Title (truncate to show end of filename with extension, single line)
+    std::wstring displayTitle = g_dialog.Title;
+    const size_t maxLen = 30;
+    if (displayTitle.length() > maxLen) {
+        displayTitle = L"..." + displayTitle.substr(displayTitle.length() - (maxLen - 3));
+    }
+    float titleTop = layout.Box.top + 18;
+    float titleBottom = layout.Box.top + 48;
+    context->DrawText(displayTitle.c_str(), (UINT32)displayTitle.length(), fmtTitle.Get(), 
+        D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         
-    // Message
+    // Message (below title with proper spacing)
+    float msgTop = titleBottom + 15; // Increased spacing
+    float msgBottom = msgTop + 30;
     context->DrawText(g_dialog.Message.c_str(), (UINT32)g_dialog.Message.length(), fmtBody.Get(), 
-        D2D1::RectF(layout.Box.left + 30, layout.Box.top + 80, layout.Box.right - 30, layout.Box.top + 130), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     
     // Quality Info (Colored)
     if (!g_dialog.QualityText.empty()) {
@@ -337,7 +404,9 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         }
         
         std::wstring& text = g_dialog.Buttons[i].Text;
-        context->DrawText(text.c_str(), (UINT32)text.length(), fmtBtnCenter.Get(), btnRect, pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        // Adjust rect slightly for better visual centering (baseline offset)
+        D2D1_RECT_F textRect = D2D1::RectF(btnRect.left, btnRect.top - 2, btnRect.right, btnRect.bottom - 2);
+        context->DrawText(text.c_str(), (UINT32)text.length(), fmtBtnCenter.Get(), textRect, pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
     }
 }
 
@@ -427,6 +496,238 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     
     InvalidateRect(hwnd, nullptr, FALSE);
     return g_dialog.FinalResult;
+}
+
+// --- Rename Dialog (Pseudo-OSD) ---
+static std::wstring g_renameResult;
+static HWND g_hRenameEdit;
+static WNDPROC g_oldEditProc;
+
+// Custom Button State
+static int g_hoverBtn = -1; // 0=OK, 1=Cancel, -1=None
+static bool g_isMouseDown = false;
+static const RECT g_rcOk = { 115, 60, 195, 86 };
+static const RECT g_rcCancel = { 205, 60, 285, 86 };
+
+// Subclass procedure for the Edit control to handle Enter/Esc
+LRESULT CALLBACK EditSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_KEYDOWN:
+        if (wParam == VK_RETURN) {
+            SendMessage(GetParent(hwnd), WM_COMMAND, IDOK, 0);
+            return 0;
+        }
+        if (wParam == VK_ESCAPE) {
+            SendMessage(GetParent(hwnd), WM_COMMAND, IDCANCEL, 0);
+            return 0;
+        }
+        break;
+    }
+    return CallWindowProc(g_oldEditProc, hwnd, msg, wParam, lParam);
+}
+
+static HBRUSH g_hDarkBrush = nullptr;
+
+LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, RGB(30, 30, 30)); // Dark Gray
+        SetTextColor(hdc, RGB(255, 255, 255)); // White
+        if (!g_hDarkBrush) g_hDarkBrush = CreateSolidBrush(RGB(30,30,30));
+        return (LRESULT)g_hDarkBrush;
+    }
+    case WM_CREATE: {
+        NONCLIENTMETRICSW ncm = { sizeof(NONCLIENTMETRICSW) };
+        SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+        ncm.lfMessageFont.lfHeight = -24; // 24px height
+        ncm.lfMessageFont.lfWeight = 600; // Semi-bold
+        HFONT hFont = CreateFontIndirectW(&ncm.lfMessageFont);
+
+        // Edit Control moved down slightly, taller to avoid clipping
+        g_hRenameEdit = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | ES_CENTER | ES_AUTOHSCROLL, 
+            10, 15, 380, 30, hwnd, (HMENU)100, GetModuleHandle(nullptr), nullptr);
+        
+        SendMessage(g_hRenameEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        
+        // Subclass to hijack Enter/Esc
+        g_oldEditProc = (WNDPROC)SetWindowLongPtr(g_hRenameEdit, GWLP_WNDPROC, (LONG_PTR)EditSubclassProc);
+        
+        g_hoverBtn = -1;
+        g_isMouseDown = false;
+        return 0;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        
+        // Background
+        HBRUSH hBg = CreateSolidBrush(RGB(30, 30, 30));
+        FillRect(hdc, &ps.rcPaint, hBg);
+        DeleteObject(hBg);
+
+        // Draw Buttons
+        auto DrawBtn = [&](const RECT& rc, const wchar_t* text, int id) {
+            bool isHover = (g_hoverBtn == id);
+            COLORREF bgCol = isHover ? (g_isMouseDown ? RGB(80, 80, 80) : RGB(60, 60, 60)) : RGB(45, 45, 45);
+            HBRUSH hBr = CreateSolidBrush(bgCol);
+            FillRect(hdc, &rc, hBr);
+            DeleteObject(hBr);
+            
+            // Border (optional, maybe just flat)
+            // FrameRect(hdc, &rc, (HBRUSH)GetStockObject(LTGRAY_BRUSH));
+
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(220, 220, 220));
+            DrawTextW(hdc, text, -1, (LPRECT)&rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        };
+
+        // Use system font for buttons
+        HFONT hOldFont = (HFONT)SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT)); 
+        // Or better, create a specific font? Standard GUI font is ugly. 
+        // Let's use the one from Edit control or similar? 
+        // Ideally we should cache the button font. For now, DEFAULT_GUI_FONT is safe but ugly.
+        // Actually, let's re-create the button font on the fly or better cache it.
+        // To be safe and quick, I'll use simple variable.
+        
+        NONCLIENTMETRICSW ncm = { sizeof(NONCLIENTMETRICSW) };
+        SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+        ncm.lfMessageFont.lfHeight = -16; // Button font
+        HFONT hBtnFont = CreateFontIndirectW(&ncm.lfMessageFont);
+        SelectObject(hdc, hBtnFont);
+
+        DrawBtn(g_rcOk, L"OK", 0);
+        DrawBtn(g_rcCancel, L"Cancel", 1);
+
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hBtnFont);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        POINT pt = { LOWORD(lParam), HIWORD(lParam) };
+        int oldHover = g_hoverBtn;
+        if (PtInRect(&g_rcOk, pt)) g_hoverBtn = 0;
+        else if (PtInRect(&g_rcCancel, pt)) g_hoverBtn = 1;
+        else g_hoverBtn = -1;
+
+        if (oldHover != g_hoverBtn) {
+            InvalidateRect(hwnd, nullptr, FALSE); // Redraw
+            
+            if (g_hoverBtn != -1) { // Track mouse leave
+                TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+                TrackMouseEvent(&tme);
+            }
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE: {
+        if (g_hoverBtn != -1) {
+            g_hoverBtn = -1;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        POINT pt = { LOWORD(lParam), HIWORD(lParam) };
+        if (PtInRect(&g_rcOk, pt) || PtInRect(&g_rcCancel, pt)) {
+            g_isMouseDown = true;
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        if (g_isMouseDown) {
+            g_isMouseDown = false;
+            ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            
+            POINT pt = { LOWORD(lParam), HIWORD(lParam) };
+            if (g_hoverBtn == 0 && PtInRect(&g_rcOk, pt)) {
+                SendMessage(hwnd, WM_COMMAND, IDOK, 0);
+            } else if (g_hoverBtn == 1 && PtInRect(&g_rcCancel, pt)) {
+                SendMessage(hwnd, WM_COMMAND, IDCANCEL, 0);
+            }
+        }
+        return 0;
+    }
+    case WM_COMMAND: {
+        if (LOWORD(wParam) == IDOK) {
+            int len = GetWindowTextLengthW(g_hRenameEdit);
+            std::vector<wchar_t> buf(len + 1);
+            if (len > 0) GetWindowTextW(g_hRenameEdit, &buf[0], len + 1);
+            g_renameResult = buf.data() ? buf.data() : L"";
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDCANCEL) {
+            g_renameResult.clear();
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    }
+    case WM_ACTIVATE:
+        // Keep focus on edit if activated
+        if (LOWORD(wParam) != WA_INACTIVE) {
+            SetFocus(g_hRenameEdit);
+        }
+        break;
+    case WM_CLOSE:
+        g_renameResult.clear();
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName) {
+    g_renameResult.clear();
+    
+    WNDCLASSEXW wc = { sizeof(wc) };
+    wc.lpfnWndProc = RenameWndProc;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = L"QuickViewRenameOSD";
+    wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30)); // Match Edit BG
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    RegisterClassExW(&wc);
+    
+    RECT rcOwner; GetWindowRect(hParent, &rcOwner);
+    int w = 400, h = 100; // Taller for better layout
+    int x = rcOwner.left + (rcOwner.right - rcOwner.left - w) / 2;
+    int y = rcOwner.top + (rcOwner.bottom - rcOwner.top - h) / 2;
+
+    // WS_POPUP, No Border, TopMost (Removed WS_EX_LAYERED to keep buttons opaque)
+    HWND hDlg = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"QuickViewRenameOSD", L"", 
+        WS_POPUP | WS_VISIBLE, x, y, w, h, hParent, nullptr, wc.hInstance, nullptr);
+
+    // Enable rounded corners (Windows 11)
+    // Constants: DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
+    enum { DWMWA_WINDOW_CORNER_PREFERENCE_LOCAL = 33 };
+    enum { DWMWCP_ROUND_LOCAL = 2 };
+    int cornerPref = DWMWCP_ROUND_LOCAL;
+    DwmSetWindowAttribute(hDlg, DWMWA_WINDOW_CORNER_PREFERENCE_LOCAL, &cornerPref, sizeof(cornerPref));
+
+    SetWindowTextW(g_hRenameEdit, oldName.c_str());
+    SendMessage(g_hRenameEdit, EM_SETSEL, 0, -1);
+    SetFocus(g_hRenameEdit);
+
+    EnableWindow(hParent, FALSE);
+    
+    MSG msg;
+    while (GetMessage(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    
+    EnableWindow(hParent, TRUE);
+    SetForegroundWindow(hParent);
+    return g_renameResult;
 }
 
 // --- Logic Functions ---
@@ -525,6 +826,7 @@ bool CheckUnsavedChanges(HWND hwnd) {
 
 void AdjustWindowToImage(HWND hwnd) {
     if (!g_currentBitmap) return;
+    if (g_config.LockWindowSize) return;  // Don't auto-resize when locked
 
     D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
     
@@ -633,6 +935,10 @@ void PerformTransform(HWND hwnd, TransformType type) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // Enable Per-Monitor DPI Awareness V2 for proper multi-monitor support
+    // This enables WM_DPICHANGED messages when window is dragged across monitors
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     WNDCLASSEXW wcex = {};
     wcex.cbSize = sizeof(WNDCLASSEXW);
@@ -642,8 +948,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wcex.hbrBackground = nullptr;
     wcex.lpszClassName = g_szClassName;
-    wcex.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    wcex.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
+    wcex.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(1));    // Load from resource
+    wcex.hIconSm = LoadIconW(hInstance, MAKEINTRESOURCEW(1));  // Load from resource
     
     RegisterClassExW(&wcex);
     HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
@@ -658,6 +964,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     if (argc > 1) {
         g_navigator.Initialize(argv[1]);
         LoadImageAsync(hwnd, argv[1]);
+    } else {
+        // No file specified - auto open file dialog
+        OPENFILENAMEW ofn = {};
+        wchar_t szFile[MAX_PATH] = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.avif;*.jxl;*.heic;*.heif;*.tga;*.psd;*.hdr;*.exr;*.svg;*.qoi;*.pcx;*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef;*.pgm;*.ppm\0JPEG\0*.jpg;*.jpeg\0PNG\0*.png\0WebP\0*.webp\0AVIF\0*.avif\0JPEG XL\0*.jxl\0HEIC/HEIF\0*.heic;*.heif\0RAW\0*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef\0All Files\0*.*\0";
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+        if (GetOpenFileNameW(&ofn)) {
+            g_navigator.Initialize(szFile);
+            LoadImageAsync(hwnd, szFile);
+        }
     }
     LocalFree(argv);
     
@@ -725,6 +1045,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             CalculateWindowControls(D2D1::SizeF((float)LOWORD(lParam), (float)HIWORD(lParam)));
         }
         return 0;
+    
+    case WM_DPICHANGED: {
+        // Handle DPI change (e.g., window dragged to different monitor)
+        // wParam: LOWORD = new X DPI, HIWORD = new Y DPI
+        // lParam: pointer to RECT with suggested new window size/position
+        RECT* pNewRect = (RECT*)lParam;
+        SetWindowPos(hwnd, nullptr, 
+                     pNewRect->left, pNewRect->top,
+                     pNewRect->right - pNewRect->left,
+                     pNewRect->bottom - pNewRect->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        // WM_SIZE will be triggered by SetWindowPos, which calls OnResize
+        // No additional action needed - D2D handles DPI internally
+        return 0;
+    }
+    
     case WM_CLOSE: if (!CheckUnsavedChanges(hwnd)) return 0; DestroyWindow(hwnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     
@@ -783,6 +1119,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
         
+
+        
     case WM_MBUTTONDOWN: {
         // Record start position/time for click vs drag detection
         g_viewState.LastMousePos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
@@ -836,14 +1174,47 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
         
     case WM_LBUTTONDBLCLK:
-        // Fit Window
-         g_viewState.Reset();
-         AdjustWindowToImage(hwnd); // Reset window size too
-         InvalidateRect(hwnd, nullptr, FALSE);
+        // Fit Window - restore from maximized first if needed
+        if (IsZoomed(hwnd)) {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        g_viewState.Reset();
+        AdjustWindowToImage(hwnd); // Reset window size too
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
         
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        
+        if (g_config.ShowInfoPanel) {
+             // 1. Toggle Button
+             if (pt.x >= g_panelToggleRect.left && pt.x <= g_panelToggleRect.right &&
+                 pt.y >= g_panelToggleRect.top && pt.y <= g_panelToggleRect.bottom) {
+                 g_config.InfoPanelExpanded = !g_config.InfoPanelExpanded;
+                 InvalidateRect(hwnd, nullptr, FALSE);
+                 return 0;
+             }
+             
+             // 2. Close Button
+             if (pt.x >= g_panelCloseRect.left && pt.x <= g_panelCloseRect.right &&
+                 pt.y >= g_panelCloseRect.top && pt.y <= g_panelCloseRect.bottom) {
+                 g_config.ShowInfoPanel = false;
+                 InvalidateRect(hwnd, nullptr, FALSE);
+                 return 0;
+             }
+             
+             // 3. GPS Link (Bing Maps) - Only if Expanded
+             if (g_config.InfoPanelExpanded && g_currentMetadata.HasGPS) {
+                 if (pt.x >= g_gpsLinkRect.left && pt.x <= g_gpsLinkRect.right &&
+                     pt.y >= g_gpsLinkRect.top && pt.y <= g_gpsLinkRect.bottom) {
+                     wchar_t url[256];
+                     // Bing Maps URL format
+                     swprintf_s(url, L"https://www.bing.com/maps?where1=%.6f%%2C%.6f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
+                     ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+                     return 0;
+                 }
+             }
+        }
         
         // Buttons
         if (g_showControls) {
@@ -903,7 +1274,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (newTotalScale < 0.1f * fitScale) newTotalScale = 0.1f * fitScale; // Min 10% of FIT
         if (newTotalScale > 20.0f) newTotalScale = 20.0f;
 
-        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd)) {
+        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_config.LockWindowSize) {
             // Calculate Desired Window Size to achieve NewTotalScale with Zoom=1.0 (Fit)
             // DesiredCanvasW = ImageW * NewTotalScale
             // But FitScale logic is Window / Image.
@@ -948,27 +1319,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
         } else {
              // Standard Zoom (Window size fixed or Maxed)
-             // Preserves cursor focus
-             POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
-             ScreenToClient(hwnd, &pt);
-             
+             // Zoom centered on window center
              RECT rcNew; GetClientRect(hwnd, &rcNew);
+             
              float newFitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
              float oldZoom = g_viewState.Zoom;
              float newZoom = newTotalScale / newFitScale;
              
-             // Pan adjustment logic
-             // ... (Existing logic adapted) ...
-             D2D1_SIZE_F rtSize = D2D1::SizeF((float)rcNew.right, (float)rcNew.bottom);
-             float panFitScale = std::min(rtSize.width / imgSize.width, rtSize.height / imgSize.height);
-             float offsetX = (rtSize.width - imgSize.width * panFitScale) / 2.0f;
-             float offsetY = (rtSize.height - imgSize.height * panFitScale) / 2.0f;
-             float totalX = offsetX + g_viewState.PanX;
-             float totalY = offsetY + g_viewState.PanY;
-             float totalX_new = pt.x - (pt.x - totalX) * (newZoom / oldZoom);
-             float totalY_new = pt.y - (pt.y - totalY) * (newZoom / oldZoom);
-             g_viewState.PanX = totalX_new - offsetX;
-             g_viewState.PanY = totalY_new - offsetY;
+             // Simple center-based zoom: just scale Pan values proportionally
+             // Since zoom is centered on window center, pan should scale with zoom ratio
+             float zoomRatio = newZoom / oldZoom;
+             g_viewState.PanX *= zoomRatio;
+             g_viewState.PanY *= zoomRatio;
              g_viewState.Zoom = newZoom;
         }
         
@@ -1003,12 +1365,307 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
+    
+    case WM_RBUTTONUP: {
+        // Show context menu
+        POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, false, g_config.LockWindowSize, g_config.ShowInfoPanel);
+        return 0;
+    }
+    
+    case WM_COMMAND: {
+        UINT cmdId = LOWORD(wParam);
+        switch (cmdId) {
+        case IDM_OPEN: {
+            if (!CheckUnsavedChanges(hwnd)) break;
+            OPENFILENAMEW ofn = {};
+            wchar_t szFile[MAX_PATH] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = hwnd;
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.avif;*.jxl;*.heic;*.heif;*.tga;*.psd;*.hdr;*.exr;*.svg;*.qoi;*.pcx;*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef;*.pgm;*.ppm\0All Files\0*.*\0";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            if (GetOpenFileNameW(&ofn)) {
+                g_editState.Reset();
+                g_viewState.Reset();
+                g_navigator.Initialize(szFile);
+                LoadImageAsync(hwnd, szFile);
+            }
+            break;
+        }
+        case IDM_OPENWITH_DEFAULT: {
+            // Use rundll32 to show proper "Open With" dialog
+            if (!g_imagePath.empty()) {
+                std::wstring args = L"shell32.dll,OpenAs_RunDLL " + g_imagePath;
+                ShellExecuteW(hwnd, nullptr, L"rundll32.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+            }
+            break;
+        }
+        case IDM_EDIT: {
+            // Open with default editor (use "edit" verb, fallback to mspaint)
+            if (!g_imagePath.empty()) {
+                HINSTANCE result = ShellExecuteW(hwnd, L"edit", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                if ((intptr_t)result <= 32) {
+                    // No editor registered, try mspaint
+                    ShellExecuteW(hwnd, nullptr, L"mspaint.exe", g_imagePath.c_str(), nullptr, SW_SHOWNORMAL);
+                }
+            }
+            break;
+        }
+        case IDM_SHOW_IN_EXPLORER: {
+            if (!g_imagePath.empty()) {
+                std::wstring cmd = L"/select,\"" + g_imagePath + L"\"";
+                ShellExecuteW(nullptr, nullptr, L"explorer.exe", cmd.c_str(), nullptr, SW_SHOWNORMAL);
+            }
+            break;
+        }
+        case IDM_COPY_PATH: {
+            if (!g_imagePath.empty() && OpenClipboard(hwnd)) {
+                EmptyClipboard();
+                size_t len = (g_imagePath.length() + 1) * sizeof(wchar_t);
+                HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len);
+                if (hMem) {
+                    memcpy(GlobalLock(hMem), g_imagePath.c_str(), len);
+                    GlobalUnlock(hMem);
+                    SetClipboardData(CF_UNICODETEXT, hMem);
+                }
+                CloseClipboard();
+                g_osd.Show(L"Path copied", false);
+            }
+            break;
+        }
+        case IDM_COPY_IMAGE: {
+            // Copy file to clipboard (can paste in Explorer or other apps)
+            if (!g_imagePath.empty() && OpenClipboard(hwnd)) {
+                EmptyClipboard();
+                
+                // CF_HDROP format for file copy
+                size_t pathLen = (g_imagePath.length() + 1) * sizeof(wchar_t);
+                size_t totalSize = sizeof(DROPFILES) + pathLen + sizeof(wchar_t); // Extra null for double-null terminator
+                HGLOBAL hDrop = GlobalAlloc(GHND, totalSize);
+                if (hDrop) {
+                    DROPFILES* df = (DROPFILES*)GlobalLock(hDrop);
+                    df->pFiles = sizeof(DROPFILES);
+                    df->fWide = TRUE;
+                    memcpy((char*)df + sizeof(DROPFILES), g_imagePath.c_str(), pathLen);
+                    GlobalUnlock(hDrop);
+                    SetClipboardData(CF_HDROP, hDrop);
+                }
+                
+                CloseClipboard();
+                g_osd.Show(L"File copied to clipboard", false);
+            }
+            break;
+        }
+        case IDM_PRINT: {
+            if (!g_imagePath.empty()) {
+                // Windows 10/11: Use "print" verb directly - Windows handles the print dialog
+                // This works for most image formats via Windows photo printing
+                HINSTANCE result = ShellExecuteW(hwnd, L"print", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                
+                if ((intptr_t)result <= 32) {
+                    // Fallback: Open in default app and show OSD instructions
+                    ShellExecuteW(hwnd, L"open", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    g_osd.Show(L"Print: Use Ctrl+P in opened app", false);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            break;
+        }
+        case IDM_FULLSCREEN: {
+            if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+            else ShowWindow(hwnd, SW_MAXIMIZE);
+            break;
+        }
+        case IDM_DELETE: {
+            if (!g_imagePath.empty()) {
+                // Get filename for display
+                size_t lastSlash = g_imagePath.find_last_of(L"\\/");
+                std::wstring filename = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
+                
+                // OSD-style confirmation dialog (consistent with rotation save dialog)
+                std::wstring dlgMessage = L"Move to Recycle Bin?";
+                std::vector<DialogButton> dlgButtons;
+                dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
+                dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                
+                // Red accent color for delete warning
+                DialogResult dlgResult = ShowQuickViewDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
+                                                             D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
+                
+                if (dlgResult == DialogResult::Yes) {
+                    std::wstring nextPath = g_navigator.PeekNext();
+                    if (nextPath == g_imagePath) nextPath = g_navigator.PeekPrevious();
+                    
+                    // Release image before delete
+                    ReleaseImageResources();
+                    
+                    // Use SHFileOperation for recycle bin
+                    std::wstring pathCopy = g_imagePath;
+                    pathCopy.push_back(L'\0'); // Double null terminator
+                    SHFILEOPSTRUCTW op = {};
+                    op.wFunc = FO_DELETE;
+                    op.pFrom = pathCopy.c_str();
+                    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+                    if (SHFileOperationW(&op) == 0) {
+                        g_osd.Show(L"Moved to Recycle Bin", false);
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        g_editState.Reset();
+                        g_viewState.Reset();
+                        g_currentBitmap.Reset();
+                        g_navigator.Initialize(nextPath.empty() ? L"" : nextPath.c_str());
+                        if (!nextPath.empty()) LoadImageAsync(hwnd, nextPath);
+                        else InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                }
+            }
+            break;
+        }
+        case IDM_LOCK_WINDOW_SIZE: {
+            g_config.LockWindowSize = !g_config.LockWindowSize;
+            g_osd.Show(g_config.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        }
+        case IDM_SHOW_INFO_PANEL: {
+            g_config.ShowInfoPanel = !g_config.ShowInfoPanel;
+            if (g_config.ShowInfoPanel && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                 UpdateHistogramAsync(hwnd, g_imagePath);
+            }
+            
+            // Refresh Title (Just simple name now, Overlay handles info)
+            {
+                 std::wstring title = L"QuickView";
+                 if (!g_imagePath.empty()) {
+                     size_t lastSlash = g_imagePath.find_last_of(L"\\/");
+                     std::wstring rname = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
+                     title = rname + L" - " + title;
+                 }
+                 SetWindowTextW(hwnd, title.c_str());
+            }
+
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        }
+        case IDM_WALLPAPER_FILL:
+        case IDM_WALLPAPER_FIT:
+        case IDM_WALLPAPER_TILE: {
+            if (!g_imagePath.empty()) {
+                // Use IDesktopWallpaper COM interface
+                CoInitialize(nullptr);
+                IDesktopWallpaper* pWallpaper = nullptr;
+                HRESULT hr = CoCreateInstance(__uuidof(DesktopWallpaper), nullptr, CLSCTX_ALL, 
+                                              IID_PPV_ARGS(&pWallpaper));
+                if (SUCCEEDED(hr) && pWallpaper) {
+                    DESKTOP_WALLPAPER_POSITION pos = DWPOS_FILL;
+                    if (cmdId == IDM_WALLPAPER_FIT) pos = DWPOS_FIT;
+                    else if (cmdId == IDM_WALLPAPER_TILE) pos = DWPOS_TILE;
+                    
+                    pWallpaper->SetPosition(pos);
+                    hr = pWallpaper->SetWallpaper(nullptr, g_imagePath.c_str());
+                    pWallpaper->Release();
+                    
+                    if (SUCCEEDED(hr)) {
+                        g_osd.Show(L"Wallpaper Set", false);
+                    } else {
+                        g_osd.Show(L"Failed to set wallpaper", true);
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                CoUninitialize();
+            }
+            break;
+        }
+        case IDM_RENAME: {
+            if (!g_imagePath.empty()) {
+                // Get current filename
+                size_t lastSlash = g_imagePath.find_last_of(L"\\/");
+                std::wstring dir = (lastSlash != std::wstring::npos) ? g_imagePath.substr(0, lastSlash + 1) : L"";
+                std::wstring oldName = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
+                
+                // Custom Rename Dialog
+                std::wstring newName = ShowRenameDialog(hwnd, oldName);
+                
+                if (!newName.empty()) {
+                    // Auto-append extension if missing (User request)
+                    if (newName.find_last_of(L'.') == std::wstring::npos) {
+                        size_t oldDot = oldName.find_last_of(L'.');
+                        if (oldDot != std::wstring::npos) {
+                            newName += oldName.substr(oldDot);
+                        }
+                    }
+
+                    if (newName != oldName) {
+                    std::wstring newPath = dir + newName;
+                    if (newPath != g_imagePath) {
+                        ReleaseImageResources();
+                        if (MoveFileW(g_imagePath.c_str(), newPath.c_str())) {
+                            g_imagePath = newPath;
+                            g_navigator.Initialize(newPath.c_str());
+                            LoadImageAsync(hwnd, newPath);
+                            g_osd.Show(L"Renamed", false);
+                        } else {
+                            LoadImageAsync(hwnd, g_imagePath);
+                            g_osd.Show(L"Rename Failed", true);
+                        }
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                }
+                }
+            }
+            break;
+        }
+        case IDM_FIX_EXTENSION: {
+            // TODO: Implement extension fix based on detected format
+            g_osd.Show(L"Fix Extension: Not implemented yet", true);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        }
+        case IDM_ABOUT: {
+            MessageBoxW(hwnd, L"QuickView\n\nHigh Performance Image Viewer\n\n(c) 2024-2026", L"About QuickView", MB_ICONINFORMATION);
+            break;
+        }
+        case IDM_EXIT: {
+            if (CheckUnsavedChanges(hwnd)) PostMessage(hwnd, WM_CLOSE, 0, 0);
+            break;
+        }
+        // TODO: Implement other menu commands
+        default:
+            break;
+        }
+        return 0;
+    }
     }
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
 void OnResize(HWND hwnd, UINT width, UINT height) { if (g_renderEngine) g_renderEngine->Resize(width, height); }
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
+
+
+FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
+    if (path.empty() || path != g_imagePath) co_return;
+    
+    co_await ResumeBackground{};
+    
+    ComPtr<IWICBitmap> tempBitmap;
+    std::wstring loaderName; // dummy
+    if (SUCCEEDED(g_imageLoader->LoadToMemory(path.c_str(), &tempBitmap, &loaderName))) {
+         CImageLoader::ImageMetadata histMeta;
+         g_imageLoader->ComputeHistogram(tempBitmap.Get(), &histMeta);
+         
+         co_await ResumeMainThread(hwnd);
+         
+         if (path == g_imagePath) {
+             g_currentMetadata.HistR = histMeta.HistR;
+             g_currentMetadata.HistG = histMeta.HistG;
+             g_currentMetadata.HistB = histMeta.HistB;
+             g_currentMetadata.HistL = histMeta.HistL;
+             InvalidateRect(hwnd, nullptr, FALSE);
+         }
+    }
+}
 
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     if (!g_imageLoader || !g_renderEngine) co_return;
@@ -1031,6 +1688,19 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         DWORD startTime = GetTickCount();
         std::wstring loaderName = L"Unknown";
         HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap, &loaderName);
+        
+        // Read Metadata (Background Thread)
+        // Read Metadata (Background Thread)
+        CImageLoader::ImageMetadata tempMetadata;
+        if (SUCCEEDED(hr)) {
+             g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
+             
+             // Compute Histogram if needed
+             if (g_config.ShowInfoPanel && wicMemoryBitmap) {
+                 g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
+             }
+        }
+
         DWORD duration = GetTickCount() - startTime;
 
         // Switch back
@@ -1052,12 +1722,14 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
             co_return; 
         }
         
-        // Update Title with Performance Info
-        // Format: "filename.ext - LoaderName (XX ms) - QuickView 2026"
+        g_currentMetadata = tempMetadata;
+
+        // Update Title with Performance Info AND Compact Metadata
+        // Format: "filename.ext - [Metadata Compact] - QuickView"
         size_t lastSlash = path.find_last_of(L"\\/");
         std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
         
-        wchar_t titleBuf[512];
+        wchar_t titleBuf[1024];
         swprintf_s(titleBuf, L"%s - %s (%lu ms) - %s", filename.c_str(), loaderName.c_str(), duration, g_szWindowTitle);
         SetWindowTextW(hwnd, titleBuf);
 
@@ -1131,6 +1803,214 @@ void Navigate(HWND hwnd, int direction) {
     }
 }
 
+void DrawHistogram(ID2D1DeviceContext* context, const CImageLoader::ImageMetadata& meta, D2D1_RECT_F rect) {
+    if (meta.HistL.empty()) return;
+    
+    // Normalize logic
+    uint32_t maxVal = 0;
+    for (uint32_t v : meta.HistL) if (v > maxVal) maxVal = v;
+    if (maxVal == 0) maxVal = 1;
+    
+    // Create Path
+    ComPtr<ID2D1PathGeometry> path;
+    g_renderEngine->m_d2dFactory->CreatePathGeometry(&path);
+    ComPtr<ID2D1GeometrySink> sink;
+    path->Open(&sink);
+    
+    float stepX = (rect.right - rect.left) / 256.0f;
+    float bottom = rect.bottom;
+    float height = rect.bottom - rect.top;
+    
+    sink->BeginFigure(D2D1::Point2F(rect.left, bottom), D2D1_FIGURE_BEGIN_FILLED);
+    
+    for (int i = 0; i < 256; i++) {
+        float val = (float)meta.HistL[i] / maxVal; // Normalized 0..1
+        // Logarithmic scale often better? Linear for now.
+        float y = bottom - val * height;
+        sink->AddLine(D2D1::Point2F(rect.left + i * stepX, y));
+    }
+    
+    sink->AddLine(D2D1::Point2F(rect.right, bottom));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    
+    ComPtr<ID2D1SolidColorBrush> brush;
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), &brush);
+    context->FillGeometry(path.Get(), brush.Get());
+    context->DrawGeometry(path.Get(), brush.Get(), 1.0f);
+}
+
+void DrawCompactInfo(ID2D1DeviceContext* context) {
+    if (g_imagePath.empty()) return;
+    
+    if (!g_pPanelTextFormat) {
+         g_renderEngine->m_dwriteFactory->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 
+            13.0f, L"en-us", &g_pPanelTextFormat
+        );
+    }
+    
+    std::wstring info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
+    
+    // Add Size
+    if (g_currentMetadata.Width > 0) {
+        wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
+        info += sz;
+        
+        // File Size
+        if (g_currentMetadata.FileSize > 0) {
+            double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
+            swprintf_s(sz, L"   %.2f MB", mb);
+            info += sz;
+        }
+    }
+    // Add Compact EXIF
+    std::wstring meta = g_currentMetadata.GetCompactString();
+    if (!meta.empty()) info += L"   " + meta;
+    
+    // Measure Text
+    float textW = MeasureTextWidth(info, g_pPanelTextFormat.Get());
+    float totalW = textW + 70.0f; // Padding for 2 buttons
+    
+    D2D1_RECT_F rect = D2D1::RectF(20, 10, 20 + textW, 40);
+    D2D1_RECT_F bgRect = D2D1::RectF(20, 10, 20 + totalW + 10, 40);
+    
+    // Shadow Text
+    ComPtr<ID2D1SolidColorBrush> brushShadow;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), &brushShadow);
+    D2D1_RECT_F shadowRect = D2D1::RectF(rect.left + 1, rect.top + 1, rect.right + 1, rect.bottom + 1);
+    context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), shadowRect, brushShadow.Get());
+    
+    // Text
+    ComPtr<ID2D1SolidColorBrush> brushText;
+    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
+    context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), rect, brushText.Get());
+
+    // Expand Button [ + ]
+    g_panelToggleRect = D2D1::RectF(rect.right + 5, rect.top, rect.right + 30, rect.bottom);
+    
+    // Box
+    ComPtr<ID2D1SolidColorBrush> brushBtnBg;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.2f, 0.2f, 0.5f), &brushBtnBg);
+    context->FillRoundedRectangle(D2D1::RoundedRect(g_panelToggleRect, 3.0f, 3.0f), brushBtnBg.Get());
+    context->DrawRoundedRectangle(D2D1::RoundedRect(g_panelToggleRect, 3.0f, 3.0f), brushText.Get(), 1.0f);
+    
+    // Icon
+    context->DrawTextW(L"+", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelToggleRect.left + 4, g_panelToggleRect.top, g_panelToggleRect.right, g_panelToggleRect.bottom), brushText.Get());
+    
+    // Close Button [ X ]
+    g_panelCloseRect = D2D1::RectF(g_panelToggleRect.right + 5, rect.top, g_panelToggleRect.right + 30, rect.bottom);
+    
+    context->FillRoundedRectangle(D2D1::RoundedRect(g_panelCloseRect, 3.0f, 3.0f), brushBtnBg.Get());
+    context->DrawRoundedRectangle(D2D1::RoundedRect(g_panelCloseRect, 3.0f, 3.0f), brushText.Get(), 1.0f);
+    
+    context->DrawTextW(L"x", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelCloseRect.left + 5, g_panelCloseRect.top, g_panelCloseRect.right, g_panelCloseRect.bottom), brushText.Get());
+}
+
+void DrawInfoPanel(ID2D1DeviceContext* context) {
+    if (!g_config.ShowInfoPanel) return;
+    
+    // Init Font
+    if (!g_pPanelTextFormat) {
+        g_renderEngine->m_dwriteFactory->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 
+            13.0f, L"en-us", &g_pPanelTextFormat
+        );
+    }
+    
+    // Panel Rect (Top Left)
+    float padding = 10.0f;
+    float width = 300.0f; 
+    float height = 220.0f; 
+    float startX = 20.0f;
+    float startY = 40.0f; 
+    
+    if (g_currentMetadata.HasGPS) height += 30.0f;
+    if (!g_currentMetadata.HistL.empty()) height += 100.0f;
+    if (!g_currentMetadata.Software.empty()) height += 20.0f;
+
+    D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
+    
+    // Background
+    ComPtr<ID2D1SolidColorBrush> brushBg;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f), &brushBg);
+    context->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f, 8.0f), brushBg.Get());
+    
+    ComPtr<ID2D1SolidColorBrush> brushWhite;
+    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushWhite);
+    
+    // Buttons (Top Right)
+    // Close [ X ]
+    g_panelCloseRect = D2D1::RectF(startX + width - 25, startY + 5, startX + width - 5, startY + 25);
+    context->DrawTextW(L"x", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelCloseRect.left + 5, g_panelCloseRect.top, g_panelCloseRect.right, g_panelCloseRect.bottom), brushWhite.Get());
+    
+    // Minimize [ - ]
+    g_panelToggleRect = D2D1::RectF(startX + width - 50, startY + 5, startX + width - 30, startY + 25);
+    context->DrawTextW(L"-", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelToggleRect.left + 6, g_panelToggleRect.top, g_panelToggleRect.right, g_panelToggleRect.bottom), brushWhite.Get());
+
+
+
+    // Text Info
+    std::wstring info;
+    info += L"File: " + g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1) + L"\n";
+    info += L"Size: " + std::to_wstring(g_currentMetadata.Width) + L" x " + std::to_wstring(g_currentMetadata.Height);
+    if (g_currentMetadata.FileSize > 0) {
+        double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
+        wchar_t sz[32]; swprintf_s(sz, L"  (%.2f MB)", mb);
+        info += sz;
+    }
+    info += L"\n";
+    
+    if (!g_currentMetadata.Date.empty()) info += L"Date: " + g_currentMetadata.Date + L"\n";
+    
+    if (!g_currentMetadata.Make.empty()) info += g_currentMetadata.Make + L" " + g_currentMetadata.Model + L"\n";
+    if (!g_currentMetadata.Software.empty()) info += L"Software: " + g_currentMetadata.Software + L"\n";
+    
+    if (!g_currentMetadata.ISO.empty()) {
+        info += L"ISO " + g_currentMetadata.ISO + L"  " + g_currentMetadata.Aperture + L"  " + g_currentMetadata.Shutter;
+        if (!g_currentMetadata.ExposureBias.empty()) info += L"  " + g_currentMetadata.ExposureBias;
+        info += L"\n";
+    }
+    
+    if (!g_currentMetadata.Lens.empty()) info += L"Lens: " + g_currentMetadata.Lens + L"\n";
+    if (!g_currentMetadata.Focal.empty()) info += L"Focal: " + g_currentMetadata.Focal + L"\n";
+    if (!g_currentMetadata.Flash.empty()) info += g_currentMetadata.Flash + L"\n";
+    
+    D2D1_RECT_F textRect = D2D1::RectF(startX + padding, startY + padding, startX + width - padding, startY + height - padding);
+    context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), textRect, brushWhite.Get());
+    
+    float currentY = startY + (height - (g_currentMetadata.HasGPS ? 130.0f : 100.0f)); 
+    // Heuristic layout is tricky with variable lines. 
+    // Re-calculating Y based on lines?
+    // Let's use fixed offset from bottom for Histogram?
+    if (!g_currentMetadata.HistL.empty()) {
+        float histH = 80.0f;
+        float histY = startY + height - padding - histH - (g_currentMetadata.HasGPS ? 30.0f : 0);
+        DrawHistogram(context, g_currentMetadata, D2D1::RectF(startX + padding, histY, startX + width - padding, histY + histH));
+    }
+    
+    // GPS
+    g_gpsLinkRect = {}; 
+    if (g_currentMetadata.HasGPS) {
+        float gpsY = startY + height - 35.0f;
+        wchar_t gpsBuf[128];
+        swprintf_s(gpsBuf, L"GPS: %.5f, %.5f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
+        if (g_currentMetadata.Altitude != 0) {
+            wchar_t altBuf[32]; swprintf_s(altBuf, L"  Alt: %.0fm", g_currentMetadata.Altitude);
+            wcscat_s(gpsBuf, altBuf);
+        }
+        
+        D2D1_RECT_F gpsRect = D2D1::RectF(startX + padding, gpsY, startX + width - padding, gpsY + 20.0f);
+        context->DrawTextW(gpsBuf, (UINT32)wcslen(gpsBuf), g_pPanelTextFormat.Get(), gpsRect, brushWhite.Get());
+        
+        // Link Button
+        g_gpsLinkRect = D2D1::RectF(startX + width - 120.0f, gpsY, startX + width - padding, gpsY + 20.0f);
+        ComPtr<ID2D1SolidColorBrush> brushLink;
+        context->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.7f, 1.0f), &brushLink);
+        context->DrawTextW(L"Open Map (Bing)", 15, g_pPanelTextFormat.Get(), g_gpsLinkRect, brushLink.Get());
+    }
+}
+
 void OnPaint(HWND hwnd) {
     if (!g_renderEngine) return;
     g_renderEngine->BeginDraw();
@@ -1170,7 +2050,7 @@ void OnPaint(HWND hwnd) {
             context->DrawBitmap(g_currentBitmap.Get(), D2D1::RectF(0, 0, size.width, size.height), 1.0f, interpMode);
         }
         
-        // Reset transform for OSD
+        // Reset transform for OSD and UI elements
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         
         RECT rect; GetClientRect(hwnd, &rect);
@@ -1178,9 +2058,19 @@ void OnPaint(HWND hwnd) {
         CalculateWindowControls(size);
         DrawWindowControls(context);
         
-        DrawWindowControls(context);
-        
+        // Draw OSD
         g_renderEngine->DrawOSD(g_osd);
+        
+        // Draw Info Panel
+        // Draw Info Panel OR Compact Overlay
+        if (g_config.ShowInfoPanel) {
+             if (g_config.InfoPanelExpanded) {
+                 DrawInfoPanel(context);
+             } else {
+                 DrawCompactInfo(context);
+             }
+        }
+        
         DrawDialog(context, rect);
     }
     g_renderEngine->EndDraw();

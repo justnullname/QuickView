@@ -36,4 +36,39 @@ bool DecodeGIF(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels);
 
+/// <summary>
+/// Decode BMP image to BGRA pixels
+/// </summary>
+bool DecodeBMP(const uint8_t* data, size_t size,
+               uint32_t* outWidth, uint32_t* outHeight,
+               std::vector<uint8_t>& outPixels);
+
+/// <summary>
+/// Decode TGA (Targa) image to BGRA pixels
+/// </summary>
+bool DecodeTGA(const uint8_t* data, size_t size,
+               uint32_t* outWidth, uint32_t* outHeight,
+               std::vector<uint8_t>& outPixels);
+
+/// <summary>
+/// Decode WBMP image to BGRA pixels
+/// </summary>
+bool DecodeWBMP(const uint8_t* data, size_t size,
+               uint32_t* outWidth, uint32_t* outHeight,
+               std::vector<uint8_t>& outPixels);
+
+/// <summary>
+/// Decode NetPBM (PAM, PBM, PGM, PPM) image to BGRA pixels
+/// </summary>
+bool DecodeNetpbm(const uint8_t* data, size_t size,
+               uint32_t* outWidth, uint32_t* outHeight,
+               std::vector<uint8_t>& outPixels);
+
+/// <summary>
+/// Decode QOI (Quite OK Image) to BGRA pixels
+/// </summary>
+bool DecodeQOI(const uint8_t* data, size_t size,
+               uint32_t* outWidth, uint32_t* outHeight,
+               std::vector<uint8_t>& outPixels);
+
 } // namespace WuffsLoader

@@ -78,7 +78,11 @@ struct AppConfig {
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;
     bool AutoHideWindowControls = true;
-
+    
+    // View options
+    bool LockWindowSize = false;         // Prevent window auto-resize
+    bool ShowInfoPanel = false;          // Master Toggle
+    bool InfoPanelExpanded = false;      // Compact vs Full
     
     /// <summary>
     /// Should auto-save for given quality?
