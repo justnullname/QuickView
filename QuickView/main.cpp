@@ -1385,6 +1385,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.LastMousePos = pt;
              InvalidateRect(hwnd, nullptr, FALSE);
          }
+         
+         // Hand cursor for info panel clickable areas
+         if (g_config.ShowInfoPanel) {
+             float mx = (float)pt.x, my = (float)pt.y;
+             bool onClickable = false;
+             
+             // Toggle/Close buttons
+             if ((mx >= g_panelToggleRect.left && mx <= g_panelToggleRect.right && my >= g_panelToggleRect.top && my <= g_panelToggleRect.bottom) ||
+                 (mx >= g_panelCloseRect.left && mx <= g_panelCloseRect.right && my >= g_panelCloseRect.top && my <= g_panelCloseRect.bottom)) {
+                 onClickable = true;
+             }
+             
+             // Info grid rows (when expanded)
+             if (g_config.InfoPanelExpanded) {
+                 for (const auto& row : g_infoGrid) {
+                     if (mx >= row.hitRect.left && mx <= row.hitRect.right && my >= row.hitRect.top && my <= row.hitRect.bottom) {
+                         onClickable = true; break;
+                     }
+                 }
+                 // GPS coordinate and link
+                 if (g_currentMetadata.HasGPS) {
+                     if ((mx >= g_gpsCoordRect.left && mx <= g_gpsCoordRect.right && my >= g_gpsCoordRect.top && my <= g_gpsCoordRect.bottom) ||
+                         (mx >= g_gpsLinkRect.left && mx <= g_gpsLinkRect.right && my >= g_gpsLinkRect.top && my <= g_gpsLinkRect.bottom)) {
+                         onClickable = true;
+                     }
+                 }
+             }
+             
+             if (onClickable) SetCursor(LoadCursor(nullptr, IDC_HAND));
+         }
          return 0;
     }
     case WM_MOUSELEAVE:
