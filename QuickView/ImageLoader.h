@@ -75,6 +75,11 @@ public:
         int height;
         int stride;
         bool isValid = false;
+        
+        // Metadata for Hover
+        int origWidth = 0;
+        int origHeight = 0;
+        uint64_t fileSize = 0;
     };
 
     /// <summary>
@@ -95,7 +100,7 @@ public:
     /// <summary>
     /// Load WIC bitmap from file and force decode to memory
     /// </summary>
-    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr); // Force decode to memory
+    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr, bool forceFullDecode = false); // Force decode to memory
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)
@@ -124,12 +129,14 @@ private:
     // Specialized High-Performance Loaders
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
     HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
+    HRESULT LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for in-memory buffers
+    HRESULT LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for WebP buffers
 
     // LoadPNG REMOVED - replaced by LoadPngWuffs
     HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libwebp
     HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libavif + dav1d
     HRESULT LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libjxl
-    HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap);   // libraw
+    HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forceFullDecode);   // libraw
     
     // Wuffs (Google's memory-safe decoder) - Ultimate Performance
     HRESULT LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs PNG (replaces libpng)

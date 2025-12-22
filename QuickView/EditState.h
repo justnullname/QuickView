@@ -83,6 +83,7 @@ struct AppConfig {
     bool LockWindowSize = false;         // Prevent window auto-resize
     bool ShowInfoPanel = false;          // Master Toggle
     bool InfoPanelExpanded = false;      // Compact vs Full
+    bool ForceRawDecode = false;         // Force full RAW decoding (slower but high res)
     
     /// <summary>
     /// Should auto-save for given quality?

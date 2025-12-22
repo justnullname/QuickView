@@ -93,6 +93,8 @@ public:
         return -1;
     }
 
+    const std::vector<std::wstring>& GetAllFiles() const { return m_files; }
+
 
 private:
     std::vector<std::wstring> m_files;

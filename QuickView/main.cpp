@@ -96,6 +96,7 @@ struct ViewState {
 
 #include "FileNavigator.h"
 #include "GalleryOverlay.h"
+#include "Toolbar.h"
 
 // --- Globals ---
 
@@ -113,6 +114,7 @@ static ViewState g_viewState;
 static FileNavigator g_navigator; // New Navigator
 static ThumbnailManager g_thumbMgr;
 static GalleryOverlay g_gallery;
+static Toolbar g_toolbar;
 static CImageLoader::ImageMetadata g_currentMetadata;
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
@@ -1202,6 +1204,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 KillTimer(hwnd, 998);
             }
         }
+        
+        // Toolbar Animation Timer (997)
+        if (wParam == 997) {
+            if (g_toolbar.UpdateAnimation()) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else {
+                KillTimer(hwnd, 997);
+            }
+        }
         return 0;
     }
     case WM_NCHITTEST: {
@@ -1260,12 +1271,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     
      // Mouse Interaction
      case WM_MOUSEMOVE: {
+          POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+          
+          if (g_gallery.IsVisible()) {
+              g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
+              InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
+          }
+
+          // Toolbar Trigger
+          RECT rc; GetClientRect(hwnd, &rc);
+          float winH = (float)(rc.bottom - rc.top);
+          bool showToolbar = (pt.y > winH - 60.0f);
+          
+          // Also keep visible if hovering toolbar itself (handled by OnMouseMove internally?)
+          // No, Toolbar needs explicit visibility target.
+          // Toolbar::OnMouseMove updates internal hover state on buttons.
+          g_toolbar.OnMouseMove((float)pt.x, (float)pt.y);
+          
+          g_toolbar.SetVisible(showToolbar); 
+          // Start animation timer if state changed? 
+          // Or just ensure timer is running if opacity is not target.
+          // Let's assume SetVisible sets dirty flag.
+          // We need to start timer 997.
+          SetTimer(hwnd, 997, 16, nullptr);         
+
           // Force redraw for smooth tooltip/hover when info panel is active
           if (g_config.ShowInfoPanel) {
               InvalidateRect(hwnd, nullptr, FALSE);
           }
-          
-          POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
          // Update Button Hover
          WindowHit oldHit = g_winControls.HoverState;
          g_winControls.HoverState = WindowHit::None;
@@ -1529,7 +1562,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
         }
         
-        // Buttons
+        // Buttons (Window Controls)
         if (g_showControls) {
              if (g_winControls.HoverState == WindowHit::Close) { PostMessage(hwnd, WM_CLOSE, 0, 0); return 0; }
              if (g_winControls.HoverState == WindowHit::Max) { 
@@ -1537,6 +1570,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  return 0; 
              }
              if (g_winControls.HoverState == WindowHit::Min) { ShowWindow(hwnd, SW_MINIMIZE); return 0; }
+        }
+
+        // Toolbar Interaction - Prevent Window Drag if clicking toolbar
+        if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
+            return 0; // Handled by LBUTTONUP
         }
         
         if (g_config.LeftDragAction == MouseAction::WindowDrag) {
@@ -1554,7 +1592,39 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
-    case WM_LBUTTONUP:
+    case WM_LBUTTONUP: {
+        POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        
+        // Toolbar Click
+        ToolbarButtonID tbId;
+        if (g_toolbar.OnClick((float)pt.x, (float)pt.y, tbId)) {
+            switch (tbId) {
+                case ToolbarButtonID::Prev: Navigate(hwnd, -1); break;
+                case ToolbarButtonID::Next: Navigate(hwnd, 1); break;
+                case ToolbarButtonID::RotateL: PerformTransform(hwnd, TransformType::Rotate90CCW); break;
+                case ToolbarButtonID::RotateR: PerformTransform(hwnd, TransformType::Rotate90CW); break;
+                case ToolbarButtonID::FlipH:   PerformTransform(hwnd, TransformType::FlipHorizontal); break;
+                case ToolbarButtonID::LockSize: SendMessage(hwnd, WM_COMMAND, IDM_LOCK_WINDOW_SIZE, 0); break;
+                case ToolbarButtonID::Exif:    SendMessage(hwnd, WM_COMMAND, IDM_SHOW_INFO_PANEL, 0); break;
+                case ToolbarButtonID::RawToggle: {
+                    g_config.ForceRawDecode = !g_config.ForceRawDecode;
+                    // Reload
+                    ReleaseImageResources(); // Free current
+                    LoadImageAsync(hwnd, g_imagePath);
+                    
+                    std::wstring msg = g_config.ForceRawDecode ? L"RAW: Full Decode (High Quality)" : L"RAW: Embedded Preview (Fast)";
+                    g_osd.Show(hwnd, msg, false);
+                    break;
+                }
+                case ToolbarButtonID::FixExtension: SendMessage(hwnd, WM_COMMAND, IDM_FIX_EXTENSION, 0); break;
+                case ToolbarButtonID::Gallery: 
+                    if (g_gallery.IsVisible()) g_gallery.Close(); else g_gallery.Open(g_navigator.Index()); 
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+            }
+            return 0;
+        }
+
         if (g_viewState.IsDragging) { 
             ReleaseCapture(); 
             g_viewState.IsDragging = false; 
@@ -1562,6 +1632,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         g_viewState.IsInteracting = false;  // End interaction mode
         InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
         return 0;
+    }
 
     case WM_MOUSEWHEEL: {
         if (g_gallery.IsVisible()) {
@@ -1887,6 +1958,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         case IDM_LOCK_WINDOW_SIZE: {
             g_config.LockWindowSize = !g_config.LockWindowSize;
+            g_toolbar.SetLockState(g_config.LockWindowSize);
             g_osd.Show(hwnd, g_config.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
@@ -1905,9 +1977,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      std::wstring rname = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
                      title = rname + L" - " + title;
                  }
-                 SetWindowTextW(hwnd, title.c_str());
-            }
-
+                 }
+ 
+            g_toolbar.SetExifState(g_config.ShowInfoPanel);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -2071,7 +2143,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
-void OnResize(HWND hwnd, UINT width, UINT height) { if (g_renderEngine) g_renderEngine->Resize(width, height); }
+void OnResize(HWND hwnd, UINT width, UINT height) { 
+    if (g_renderEngine) g_renderEngine->Resize(width, height); 
+    g_toolbar.UpdateLayout((float)width, (float)height);
+}
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
 
 
@@ -2118,7 +2193,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         // Decode & Measure Time
         DWORD startTime = GetTickCount();
         std::wstring loaderName = L"Unknown";
-        HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap, &loaderName);
+        HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap, &loaderName, g_config.ForceRawDecode);
         
         // Read Metadata (Background Thread)
         // Read Metadata (Background Thread)
@@ -2210,6 +2285,24 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     // 4. Update State
     g_currentBitmap = d2dBitmap; 
     g_imagePath = path; 
+
+    // Update Toolbar RAW State
+    bool isRaw = false;
+    std::wstring pLower = path;
+    std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::towlower);
+    if (pLower.ends_with(L".arw") || pLower.ends_with(L".cr2") || pLower.ends_with(L".nef") || 
+        pLower.ends_with(L".dng") || pLower.ends_with(L".orf") || pLower.ends_with(L".rw2") || 
+        pLower.ends_with(L".raf") || pLower.ends_with(L".pef") || pLower.ends_with(L".srw") || pLower.ends_with(L".cr3")) {
+        isRaw = true;
+    }
+    g_toolbar.SetRawState(isRaw, g_config.ForceRawDecode);
+
+    // Update Toolbar Extension Warning
+    bool needsFix = false;
+    if (!g_currentMetadata.Format.empty()) {
+        needsFix = CheckExtensionMismatch(path, g_currentMetadata.Format);
+    }
+    g_toolbar.SetExtensionWarning(needsFix);
 
     // 5. Adjust & Repaint
     AdjustWindowToImage(hwnd);
@@ -2729,6 +2822,9 @@ void OnPaint(HWND hwnd) {
             D2D1_SIZE_F rtSize = context->GetSize();
             g_gallery.Render(context, rtSize);
         }
+
+        // Toolbar (Top of Gallery?)
+        g_toolbar.Render(context);
 
         DrawDialog(context, rect);
     }

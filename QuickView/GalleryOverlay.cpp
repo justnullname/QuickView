@@ -98,6 +98,15 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
     m_brushBg->SetOpacity(m_opacity * 0.85f);
     pDC->FillRectangle(screenRect, m_brushBg.Get());
     
+    // Init Text Resources (Lazy)
+    if (!m_dwriteFactory) {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
+    }
+    if (m_dwriteFactory && !m_textFormat) {
+        m_dwriteFactory->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &m_textFormat);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, L"en-us", &m_textFormatOSD);
+    }
+    
     size_t count = m_pNav->Count();
     if (count == 0) return;
     
@@ -166,7 +175,6 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         auto bmp = m_pThumbMgr->GetThumbnail(i, path.c_str(), pDC);
         
         if (bmp) {
-            // Draw Bitmap (Center Crop)
             D2D1_SIZE_F bmpSize = bmp->GetSize();
             D2D1_RECT_F src = GetCenterCropRect(bmpSize, cellRect);
             pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
@@ -185,12 +193,52 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         }
         
         // Draw Info on Hover (User request)
-        // Check Mouse
-        if (m_hoverIndex == i) {
-             // ... Simple hover overlay ...
+        if (m_hoverIndex == i && m_textFormat) {
+             // Draw Hover items on top of EVERYTHING?
+             // Actually inside loop is fine if z-order is managed, but tooltips should be top-most.
+             // We can defer drawing or just assume loop order (later items cover previous).
+             // But if I hover item 5, item 6 might overlap tooltip?
+             // Not if tooltip is drawn AFTER loop.
         }
     }
     
+    // Draw Hover Tooltip (Top-most)
+    if (m_hoverIndex >= startIdx && m_hoverIndex <= endIdx) { // Visible check
+        int r = m_hoverIndex / m_cols;
+        int c = m_hoverIndex % m_cols;
+        float x = PADDING + c * (m_cellWidth + GAP);
+        float y = PADDING + r * (m_cellHeight + GAP);
+        
+        ThumbnailManager::ImageInfo info = m_pThumbMgr->GetImageInfo(m_hoverIndex);
+        std::wstring path = m_pNav->GetFile(m_hoverIndex);
+        size_t lastSlash = path.find_last_of(L"\\/");
+        std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
+        
+        std::wstring desc = filename + L"\n";
+        if (info.isValid) {
+            desc += std::to_wstring(info.origWidth) + L" x " + std::to_wstring(info.origHeight) + L"\n";
+            desc += std::to_wstring(info.fileSize / 1024) + L" KB";
+        } else {
+            desc += L"Loading...";
+        }
+        
+        // Measure text rough layout
+        float tooltipW = 200.0f;
+        float tooltipH = 60.0f; // Approx
+        
+        D2D1_RECT_F tooltipRect = D2D1::RectF(x + 10, y + 10, x + 10 + tooltipW, y + 10 + tooltipH);
+        
+        // Ensure inside screen (optional, skipping for brevity)
+        
+        m_brushBg->SetOpacity(0.9f);
+        pDC->FillRoundedRectangle(D2D1::RoundedRect(tooltipRect, 4, 4), m_brushBg.Get());
+        
+        m_brushText->SetOpacity(1.0f);
+        pDC->DrawText(desc.c_str(), (UINT32)desc.length(), m_textFormat.Get(), 
+            D2D1::RectF(tooltipRect.left + 5, tooltipRect.top + 5, tooltipRect.right - 5, tooltipRect.bottom - 5), 
+            m_brushText.Get());
+    }
+
     pDC->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 

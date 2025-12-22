@@ -60,10 +60,15 @@ private:
     const float PADDING = 40.0f; // Outer padding
     const float THUMB_SIZE_MIN = 180.0f; // Adaptive sizing
     
-    // Brushes
+    // Resources
     ComPtr<ID2D1SolidColorBrush> m_brushBg;
     ComPtr<ID2D1SolidColorBrush> m_brushSelection;
     ComPtr<ID2D1SolidColorBrush> m_brushText;
+    
+    // Text Rendering
+    ComPtr<IDWriteFactory> m_dwriteFactory;
+    ComPtr<IDWriteTextFormat> m_textFormat; // For Grid cells
+    ComPtr<IDWriteTextFormat> m_textFormatOSD; // For global stats
     ComPtr<ID2D1SolidColorBrush> m_brushTextBg;
 
     void EnsureVisible(int index);

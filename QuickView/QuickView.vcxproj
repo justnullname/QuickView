@@ -109,10 +109,11 @@
     <ClInclude Include="WuffsLoader.h" />
     <ClInclude Include="StbLoader.h" />
     <ClInclude Include="TinyExrLoader.h" />
-    <ClInclude Include="TinyExrLoader.h" />
     <ClInclude Include="ContextMenu.h" />
     <ClInclude Include="GalleryOverlay.h" />
     <ClInclude Include="ThumbnailManager.h" />
+    <ClInclude Include="Toolbar.h" />
+    <ClInclude Include="PreviewExtractor.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -129,10 +130,11 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="main.cpp" />
     <ClCompile Include="ContextMenu.cpp" />
     <ClCompile Include="GalleryOverlay.cpp" />
     <ClCompile Include="ThumbnailManager.cpp" />
+    <ClCompile Include="Toolbar.cpp" />
+    <ClCompile Include="PreviewExtractor.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />
