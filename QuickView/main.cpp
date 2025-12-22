@@ -95,6 +95,7 @@ struct ViewState {
 };
 
 #include "FileNavigator.h"
+#include "GalleryOverlay.h"
 
 // --- Globals ---
 
@@ -110,6 +111,8 @@ static EditState g_editState;
 static AppConfig g_config;
 static ViewState g_viewState;
 static FileNavigator g_navigator; // New Navigator
+static ThumbnailManager g_thumbMgr;
+static GalleryOverlay g_gallery;
 static CImageLoader::ImageMetadata g_currentMetadata;
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
@@ -347,9 +350,9 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     float buttonsHeight = 55.0f;
     float padding = 35.0f;
     
-    float dlgH = padding + contentHeight + checkboxHeight + buttonsHeight;
-    if (dlgH < 130.0f) dlgH = 130.0f;  // Minimum height
-    if (dlgH > 300.0f) dlgH = 300.0f;  // Maximum height
+    float dlgH = padding + contentHeight + checkboxHeight + buttonsHeight + 20.0f; // Added buffer
+    if (dlgH < 160.0f) dlgH = 160.0f;  // Increased minimum height
+    if (dlgH > 350.0f) dlgH = 350.0f;  // Increased maximum height
     
     float left = (size.width - dlgW) / 2.0f;
     float top = (size.height - dlgH) / 2.0f;
@@ -497,8 +500,13 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         
     // Message (below title with proper spacing)
+    // Message (below title with proper spacing)
     float msgTop = titleBottom + 15; // Increased spacing
-    float msgBottom = msgTop + 30;
+    // Dynamic bottom based on buttons
+    float buttonsTop = layout.Box.bottom - 55.0f; // Approx
+    if (!layout.Buttons.empty()) buttonsTop = layout.Buttons[0].top;
+    
+    float msgBottom = buttonsTop - 15.0f;
     context->DrawText(g_dialog.Message.c_str(), (UINT32)g_dialog.Message.length(), fmtBody.Get(), 
         D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     
@@ -808,6 +816,7 @@ LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        g_thumbMgr.Shutdown();
         PostQuitMessage(0);
         return 0;
     }
@@ -899,6 +908,35 @@ bool SaveCurrentImage(bool saveAs) {
         return false;
     }
     return true;
+}
+
+// Helper: Check if file extension matches detected format
+bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format) {
+    if (path.empty() || format.empty()) return false;
+    
+    size_t lastDot = path.find_last_of(L'.');
+    if (lastDot == std::wstring::npos) return true; // No extension is a mismatch (technically)
+    
+    std::wstring ext = path.substr(lastDot);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+    
+    std::wstring fmt = format;
+    std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
+    
+    // Basic mapping
+    if (fmt == L"jpeg") return (ext != L".jpg" && ext != L".jpeg" && ext != L".jpe" && ext != L".jfif");
+    if (fmt == L"png") return (ext != L".png");
+    if (fmt == L"webp") return (ext != L".webp");
+    if (fmt == L"avif") return (ext != L".avif");
+    if (fmt == L"gif") return (ext != L".gif");
+    if (fmt == L"bmp") return (ext != L".bmp" && ext != L".dib");
+    if (fmt == L"tiff") return (ext != L".tif" && ext != L".tiff");
+    if (fmt == L"heif" || fmt == L"heic") return (ext != L".heic" && ext != L".heif");
+    
+    // JXL
+    if (fmt == L"jxl" || fmt == L"jpeg xl") return (ext != L".jxl");
+    
+    return false;
 }
 
 void DiscardChanges() {
@@ -1050,14 +1088,14 @@ void PerformTransform(HWND hwnd, TransformType type) {
         if (!isModified && !hasDataLoss) {
             g_editState.IsDirty = false;
             DeleteFileW(g_editState.TempFilePath.c_str());
-            g_osd.Show(std::wstring(CLosslessTransform::GetTransformName(type)) + L" (Restored)", false, false, g_editState.GetQualityColor());
+            g_osd.Show(hwnd, std::wstring(CLosslessTransform::GetTransformName(type)) + L" (Restored)", false, false, g_editState.GetQualityColor());
         } else {
             g_editState.IsDirty = true;
-            g_osd.Show(std::wstring(CLosslessTransform::GetTransformName(type)) + L" - " + g_editState.GetQualityText(), false, false, g_editState.GetQualityColor());
+            g_osd.Show(hwnd, std::wstring(CLosslessTransform::GetTransformName(type)) + L" - " + g_editState.GetQualityText(), false, false, g_editState.GetQualityColor());
         }
         ReloadCurrentImage(hwnd);
     } else {
-        g_osd.Show(std::wstring(CLosslessTransform::GetTransformName(type)) + L" failed: " + result.ErrorMessage, true);
+        g_osd.Show(hwnd, std::wstring(CLosslessTransform::GetTransformName(type)) + L" failed: " + result.ErrorMessage, true);
         ReloadCurrentImage(hwnd);
     }
 }
@@ -1085,6 +1123,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
+    
+    // Init Gallery
+    g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
+    g_gallery.Initialize(&g_thumbMgr, &g_navigator);
     DragAcceptFiles(hwnd, TRUE);
     ShowWindow(hwnd, nCmdShow); UpdateWindow(hwnd);
     
@@ -1131,10 +1173,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_TIMER: {
         static const UINT_PTR INTERACTION_TIMER_ID = 1001;
+        static const UINT_PTR OSD_TIMER_ID = 999;
+        
+        // Interaction Timer (1001)
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
             g_viewState.IsInteracting = false;  // End interaction mode
             InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
+        }
+        
+        // OSD Timer (999) - Heartbeat/Expiration check
+        if (wParam == OSD_TIMER_ID) {
+             if (!g_osd.IsVisible()) {
+                 KillTimer(hwnd, OSD_TIMER_ID);
+                 InvalidateRect(hwnd, nullptr, FALSE); // Clear it (redraw without OSD)
+             }
+        }
+        
+        // Gallery Fade Timer (998)
+        if (wParam == 998) {
+            if (g_gallery.IsVisible()) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                // Stop timer if opacity reached full
+                if (g_gallery.GetOpacity() >= 1.0f) {
+                     KillTimer(hwnd, 998);
+                }
+            } else {
+                KillTimer(hwnd, 998);
+            }
         }
         return 0;
     }
@@ -1166,7 +1232,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         return HTCLIENT;
     }
-    case WM_PAINT: OnPaint(hwnd); return 0;
+
     case WM_SIZE: 
         if (wParam != SIZE_MINIMIZED) {
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
@@ -1190,7 +1256,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     
     case WM_CLOSE: if (!CheckUnsavedChanges(hwnd)) return 0; DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY: g_thumbMgr.Shutdown(); PostQuitMessage(0); return 0;
     
      // Mouse Interaction
      case WM_MOUSEMOVE: {
@@ -1316,14 +1382,70 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
         
+    case WM_PAINT:
+        OnPaint(hwnd);
+        // Gallery Animation Loop if visible
+        if (g_gallery.IsVisible()) {
+            // Need continuous update for fade-in?
+            // Simple hack: Invalidate if fading
+            // Or use OnPaint delta time?
+            // Let's assume OnPaint happens? 
+            // Better: SetTimer logic or just Invalidate if opacity < 1.0f inside Render?
+            // GalleryOverlay::Render doesn't invalidate.
+            // Let's rely on standard Paint messages or manual Invalidate from Interaction.
+            // For animation "Fade In", we should probably Invalidate continuously for 0.2s.
+            // We can add logic in OnPaint or just Timer?
+            // Simplest: In Render call, if animating, POST Invalidate?
+            // Let's do nothing special here, OnPaint calls Render.
+        }
+        return 0;
+        
+    case WM_THUMB_KEY_READY:
+        // Redraw only if gallery visible
+        if (g_gallery.IsVisible()) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        if (g_gallery.IsVisible()) {
+            if (g_gallery.OnLButtonDown(pt.x, pt.y)) {
+                // Check if closed with selection
+                if (!g_gallery.IsVisible()) {
+                    int idx = g_gallery.GetSelectedIndex();
+                    if (idx >= 0 && idx < (int)g_navigator.Count()) {
+                         // Sync Navigator? 
+                         // Navigator doesn't have SetIndex. Need to use file path.
+                         std::wstring path = g_navigator.GetFile(idx);
+                         g_navigator.Initialize(path); // Re-init to jump to index? (Inefficient but robust)
+                         // Actually Initialize does scanning. FindIndex is better but we don't have SetIndex.
+                         // Let's just LoadImageAsync(path). Navigator usually updates on Load?
+                         // LoadImageAsync helper doesn't update Navigator index explicitly unless it scans?
+                         // Initialize updates index.
+                         // But if we just call LoadImageAsync(hwnd, path), DragDrop does Initialize.
+                         // Let's re-initialize navigator carefully or just assume path loading works.
+                         // Correct flow:
+                         g_navigator.Initialize(path); // Update index state
+                         LoadImageAsync(hwnd, path.c_str());
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                } else {
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
+        }
         
         if (g_config.ShowInfoPanel) {
              // 1. Toggle Button
              if (pt.x >= g_panelToggleRect.left && pt.x <= g_panelToggleRect.right &&
                  pt.y >= g_panelToggleRect.top && pt.y <= g_panelToggleRect.bottom) {
                  g_config.InfoPanelExpanded = !g_config.InfoPanelExpanded;
+                 // Lazy Load Histogram if expanding and data missing
+                 if (g_config.InfoPanelExpanded && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                     UpdateHistogramAsync(hwnd, g_imagePath);
+                 }
                  InvalidateRect(hwnd, nullptr, FALSE);
                  return 0;
              }
@@ -1359,7 +1481,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          if (row.label == L"File") textToCopy = g_imagePath;
                          
                          if (CopyToClipboard(hwnd, textToCopy)) {
-                             g_osd.Show(L"Copied!", false);
+                             g_osd.Show(hwnd, L"Copied!", false);
                          }
                          InvalidateRect(hwnd, nullptr, FALSE); // For visual feedback if we add click effect later
                          return 0;
@@ -1374,7 +1496,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      wchar_t coordBuf[128];
                      swprintf_s(coordBuf, L"%.6f, %.6f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
                      if (CopyToClipboard(hwnd, coordBuf)) {
-                         g_osd.Show(L"Coordinates copied!", false);
+                         g_osd.Show(hwnd, L"Coordinates copied!", false);
                      }
                      InvalidateRect(hwnd, nullptr, FALSE);
                      return 0;
@@ -1399,7 +1521,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      pt.y >= g_filenameRect.top && pt.y <= g_filenameRect.bottom) {
                      std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
                      if (CopyToClipboard(hwnd, filename)) {
-                         g_osd.Show(L"Filename copied!", false);
+                         g_osd.Show(hwnd, L"Filename copied!", false);
                      }
                      InvalidateRect(hwnd, nullptr, FALSE);
                      return 0;
@@ -1442,6 +1564,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_MOUSEWHEEL: {
+        if (g_gallery.IsVisible()) {
+             int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+             if (g_gallery.OnMouseWheel(delta)) {
+                 InvalidateRect(hwnd, nullptr, FALSE);
+             }
+             return 0;
+        }
         if (!g_currentBitmap) return 0;
         
         // Enable interaction mode during zoom (use LINEAR interpolation)
@@ -1528,6 +1657,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
+
+    
     case WM_DROPFILES: {
         if (!CheckUnsavedChanges(hwnd)) return 0;
         HDROP hDrop = reinterpret_cast<HDROP>(wParam);
@@ -1536,6 +1667,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_editState.Reset();
             g_viewState.Reset();
             g_navigator.Initialize(path);
+            g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
             LoadImageAsync(hwnd, path); // Async
             InvalidateRect(hwnd, nullptr, FALSE);
         }
@@ -1543,13 +1675,42 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_KEYDOWN: {
+        // Gallery handling
+        if (g_gallery.IsVisible()) {
+            if (g_gallery.OnKeyDown(wParam)) {
+                if (!g_gallery.IsVisible()) {
+                    // Closed with selection potentially
+                    int idx = g_gallery.GetSelectedIndex();
+                    if (idx >= 0 && idx < (int)g_navigator.Count()) {
+                         std::wstring path = g_navigator.GetFile(idx);
+                         g_navigator.Initialize(path); 
+                         LoadImageAsync(hwnd, path.c_str());
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                } else {
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
+            // If ESC handled by gallery, fine.
+        } else {
+            // Not Visible - Check for 'T'
+            if (wParam == 'T') {
+                g_gallery.Open(g_navigator.Index());
+                InvalidateRect(hwnd, nullptr, FALSE);
+                // Trigger animation update loop?
+                SetTimer(hwnd, 998, 16, nullptr); // 60fps timer for fade in
+                return 0;
+            }
+        }
+
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         switch (wParam) {
         case VK_ESCAPE: if (CheckUnsavedChanges(hwnd)) PostQuitMessage(0); break;
         case 'R': PerformTransform(hwnd, shift ? TransformType::Rotate90CCW : TransformType::Rotate90CW); break;
         case 'H': PerformTransform(hwnd, TransformType::FlipHorizontal); break;
         case 'V': PerformTransform(hwnd, TransformType::FlipVertical); break;
-        case 'T': PerformTransform(hwnd, TransformType::Rotate180); break;
+        // case 'T': PerformTransform(hwnd, TransformType::Rotate180); break; // T is now Gallery
         case VK_LEFT: Navigate(hwnd, -1); break;
         case VK_RIGHT: Navigate(hwnd, 1); break;
         case VK_SPACE: Navigate(hwnd, 1); break; // Space = Next
@@ -1561,7 +1722,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Show context menu
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         ClientToScreen(hwnd, &pt);
-        ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, false, g_config.LockWindowSize, g_config.ShowInfoPanel);
+        
+        bool needsFix = false;
+        if (g_currentBitmap && !g_imagePath.empty()) {
+             needsFix = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
+        }
+        
+        ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, needsFix, g_config.LockWindowSize, g_config.ShowInfoPanel);
         return 0;
     }
     
@@ -1582,6 +1749,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_editState.Reset();
                 g_viewState.Reset();
                 g_navigator.Initialize(szFile);
+                g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
                 LoadImageAsync(hwnd, szFile);
             }
             break;
@@ -1623,7 +1791,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     SetClipboardData(CF_UNICODETEXT, hMem);
                 }
                 CloseClipboard();
-                g_osd.Show(L"Path copied", false);
+                g_osd.Show(hwnd, L"Path copied", false);
+                // Ensure UI updates to show OSD
+                InvalidateRect(hwnd, nullptr, FALSE);
             }
             break;
         }
@@ -1646,7 +1816,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
                 
                 CloseClipboard();
-                g_osd.Show(L"File copied to clipboard", false);
+                g_osd.Show(hwnd, L"File copied to clipboard", false);
+                InvalidateRect(hwnd, nullptr, FALSE);
             }
             break;
         }
@@ -1659,7 +1830,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 if ((intptr_t)result <= 32) {
                     // Fallback: Open in default app and show OSD instructions
                     ShellExecuteW(hwnd, L"open", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                    g_osd.Show(L"Print: Use Ctrl+P in opened app", false);
+                    g_osd.Show(hwnd, L"Print: Use Ctrl+P in opened app", false);
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
             }
@@ -1701,7 +1872,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     op.pFrom = pathCopy.c_str();
                     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
                     if (SHFileOperationW(&op) == 0) {
-                        g_osd.Show(L"Moved to Recycle Bin", false);
+                        g_osd.Show(hwnd, L"Moved to Recycle Bin", false);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         g_editState.Reset();
                         g_viewState.Reset();
@@ -1716,7 +1887,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         case IDM_LOCK_WINDOW_SIZE: {
             g_config.LockWindowSize = !g_config.LockWindowSize;
-            g_osd.Show(g_config.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
+            g_osd.Show(hwnd, g_config.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -1759,9 +1930,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     pWallpaper->Release();
                     
                     if (SUCCEEDED(hr)) {
-                        g_osd.Show(L"Wallpaper Set", false);
+                        g_osd.Show(hwnd, L"Wallpaper Set", false);
                     } else {
-                        g_osd.Show(L"Failed to set wallpaper", true);
+                        g_osd.Show(hwnd, L"Failed to set wallpaper", true);
                     }
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
@@ -1796,10 +1967,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             g_imagePath = newPath;
                             g_navigator.Initialize(newPath.c_str());
                             LoadImageAsync(hwnd, newPath);
-                            g_osd.Show(L"Renamed", false);
+                            g_osd.Show(hwnd, L"Renamed", false);
                         } else {
                             LoadImageAsync(hwnd, g_imagePath);
-                            g_osd.Show(L"Rename Failed", true);
+                            g_osd.Show(hwnd, L"Rename Failed", true);
                         }
                         InvalidateRect(hwnd, nullptr, FALSE);
                     }
@@ -1809,8 +1980,76 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_FIX_EXTENSION: {
-            // TODO: Implement extension fix based on detected format
-            g_osd.Show(L"Fix Extension: Not implemented yet", true);
+            if (!g_imagePath.empty() && !g_currentMetadata.Format.empty()) {
+                std::wstring fmt = g_currentMetadata.Format;
+                std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
+                
+                std::wstring newExt;
+                if (fmt == L"jpeg") newExt = L".jpg";
+                else if (fmt == L"png") newExt = L".png";
+                else if (fmt == L"webp") newExt = L".webp";
+                else if (fmt == L"avif") newExt = L".avif";
+                else if (fmt == L"jxl" || fmt == L"jpeg xl") newExt = L".jxl";
+                else if (fmt == L"gif") newExt = L".gif";
+                else if (fmt == L"bmp") newExt = L".bmp";
+                else if (fmt == L"tiff") newExt = L".tiff";
+                else if (fmt == L"heif" || fmt == L"heic") newExt = L".heic";
+                else if (fmt == L"hdr") newExt = L".hdr";
+                else if (fmt == L"psd") newExt = L".psd";
+                else if (fmt == L"tga") newExt = L".tga";
+                else if (fmt == L"exr") newExt = L".exr";
+                else if (fmt == L"qoi") newExt = L".qoi";
+                else if (fmt == L"pcx") newExt = L".pcx";
+                else if (fmt == L"svg") newExt = L".svg";
+                else if (fmt == L"ico") newExt = L".ico";
+                else if (fmt == L"wbmp") newExt = L".wbmp";
+                else if (fmt == L"pic") newExt = L".pic";
+                else if (fmt == L"pnm") newExt = L".pnm";
+                
+                if (!newExt.empty()) {
+                    size_t lastDot = g_imagePath.find_last_of(L'.');
+                    std::wstring basePath = (lastDot != std::wstring::npos) ? g_imagePath.substr(0, lastDot) : g_imagePath;
+                    std::wstring newPath = basePath + newExt;
+                    
+                    std::wstring msg = L"Format detected: " + g_currentMetadata.Format + L"\nChange extension to " + newExt + L"?";
+                    
+                    std::vector<DialogButton> buttons = {
+                        { DialogResult::Yes, L"Rename", true },
+                        { DialogResult::Cancel, L"Cancel" }
+                    };
+                    
+                    DialogResult result = ShowQuickViewDialog(hwnd, L"Fix Extension", msg, D2D1::ColorF(D2D1::ColorF::Orange), buttons);
+                    if (result == DialogResult::Yes) {
+                        ReleaseImageResources();
+                        if (MoveFileW(g_imagePath.c_str(), newPath.c_str())) {
+                            g_imagePath = newPath;
+                            LoadImageAsync(hwnd, newPath);
+                            g_osd.Show(hwnd, L"Extension Fixed", false);
+                        } else {
+                            LoadImageAsync(hwnd, g_imagePath); // Reload old
+                            g_osd.Show(hwnd, L"Rename Failed", true);
+                        }
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            break;
+        }
+        case IDM_SETTINGS: {
+            // Simple Settings / Help Dialog
+            std::wstring msg = L"Shortcuts:\n"
+                               L"Double Click: Full Screen\n"
+                               L"Wheel: Zoom\n"
+                               L"Drag: Pan\n"
+                               L"Hold Shift + R: Rotate Left\n"
+                               L"R, H, V: Rotate/Flip\n"
+                               L"Arrows/Space: Navigate\n"
+                               L"Esc/MButton: Exit";
+                               
+            std::vector<DialogButton> buttons = {
+                { DialogResult::Yes, L"OK", true }
+            };
+            ShowQuickViewDialog(hwnd, L"QuickView Settings", msg, D2D1::ColorF(D2D1::ColorF::DodgerBlue), buttons);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -1887,8 +2126,8 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         if (SUCCEEDED(hr)) {
              g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
              
-             // Compute Histogram if needed
-             if (g_config.ShowInfoPanel && wicMemoryBitmap) {
+             // Compute Histogram if needed (Expanded Mode only)
+             if (g_config.ShowInfoPanel && g_config.InfoPanelExpanded && wicMemoryBitmap) {
                  g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
              }
         }
@@ -1907,9 +2146,9 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
                           
             if (isHEIC && (hr == WINCODEC_ERR_COMPONENTNOTFOUND || hr == E_FAIL)) {
                 // User needs HEVC extension
-                g_osd.Show(AppStrings::OSD_HEICCodecMissing, true);
+                g_osd.Show(hwnd, AppStrings::OSD_HEICCodecMissing, true);
             } else {
-                g_osd.Show(L"Failed to load image", true);
+                g_osd.Show(hwnd, L"Failed to load image", true);
             }
             co_return; 
         }
@@ -1940,6 +2179,14 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         // Cache Hit - still need to load metadata
         CImageLoader::ImageMetadata tempMetadata;
         g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
+        
+        // Compute Histogram if needed (Offload to background to avoid jank)
+        // Optimization: Only if Expanded
+        if (g_config.ShowInfoPanel && g_config.InfoPanelExpanded && wicMemoryBitmap) {
+             co_await ResumeBackground{};
+             g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
+             co_await ResumeMainThread(hwnd);
+        }
         g_currentMetadata = tempMetadata;
         g_currentMetadata.LoaderName = L"Prefetch Cache";
         g_currentMetadata.LoadTimeMs = 0;
@@ -1956,7 +2203,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     // 3. Upload to GPU
     ComPtr<ID2D1Bitmap> d2dBitmap;
     if (FAILED(g_renderEngine->CreateBitmapFromWIC(wicMemoryBitmap.Get(), &d2dBitmap))) {
-         g_osd.Show(L"Failed to upload texture", true);
+         g_osd.Show(hwnd, L"Failed to upload texture", true);
          co_return;
     }
 
@@ -2319,7 +2566,7 @@ void DrawInfoPanel(ID2D1DeviceContext* context) {
     float startY = 40.0f; 
     
     if (g_currentMetadata.HasGPS) height += 50.0f;
-    if (!g_currentMetadata.HistL.empty()) height += 100.0f;
+    if (g_config.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f;
     if (!g_currentMetadata.Software.empty()) height += 20.0f;
 
     D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
@@ -2476,9 +2723,17 @@ void OnPaint(HWND hwnd) {
         // Draw Tooltip (from grid hover)
         DrawGridTooltip(context);
         
+        // --- Gallery Overlay ---
+        g_gallery.Update(0.016f);
+        if (g_gallery.IsVisible()) {
+            D2D1_SIZE_F rtSize = context->GetSize();
+            g_gallery.Render(context, rtSize);
+        }
+
         DrawDialog(context, rect);
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
+
     ValidateRect(hwnd, nullptr);
 }

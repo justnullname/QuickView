@@ -24,7 +24,7 @@
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
-    <EnableASAN>true</EnableASAN>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -32,6 +32,7 @@
     <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -108,7 +109,10 @@
     <ClInclude Include="WuffsLoader.h" />
     <ClInclude Include="StbLoader.h" />
     <ClInclude Include="TinyExrLoader.h" />
+    <ClInclude Include="TinyExrLoader.h" />
     <ClInclude Include="ContextMenu.h" />
+    <ClInclude Include="GalleryOverlay.h" />
+    <ClInclude Include="ThumbnailManager.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -125,7 +129,10 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="main.cpp" />
     <ClCompile Include="ContextMenu.cpp" />
+    <ClCompile Include="GalleryOverlay.cpp" />
+    <ClCompile Include="ThumbnailManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />

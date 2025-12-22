@@ -11,12 +11,16 @@ struct OSDState {
     bool IsWarning = false;
     D2D1_COLOR_F CustomColor = D2D1::ColorF(D2D1::ColorF::Black, 0.0f);
 
-    void Show(const std::wstring& msg, bool error = false, bool warning = false, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::Black, 0.0f)) {
+    void Show(HWND hwnd, const std::wstring& msg, bool error = false, bool warning = false, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::Black, 0.0f)) {
         Message = msg; 
         StartTime = GetTickCount(); 
         IsError = error; 
         IsWarning = warning; 
         CustomColor = color;
+        if (hwnd) {
+            SetTimer(hwnd, 999, 250, nullptr);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
     }
     
     bool IsVisible() const { 

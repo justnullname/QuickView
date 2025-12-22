@@ -16,6 +16,94 @@
 #include "TinyExrLoader.h"
 #include <thread>
 
+// Helper to detect format from file content (Magic Bytes)
+static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
+    // 1. Read first 16 bytes for Magic Number
+    uint8_t magic[16] = {0};
+    bool magicRead = false;
+    {
+        HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD bytesRead = 0;
+            if (ReadFile(hFile, magic, 16, &bytesRead, nullptr) && bytesRead >= 4) {
+                magicRead = true;
+            }
+            CloseHandle(hFile);
+        }
+    }
+    
+    if (!magicRead) return L"Unknown";
+
+    // Check JPEG: FF D8 FF
+    if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) return L"JPEG";
+    
+    // Check PNG: 89 50 4E 47
+    if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) return L"PNG";
+        
+    // Check WebP: RIFF ... WEBP
+    if (magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
+             magic[8] == 'W' && magic[9] == 'E' && magic[10] == 'B' && magic[11] == 'P') return L"WebP";
+        
+    // Check AVIF: ftypavif
+    if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p' &&
+             magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 'f') return L"AVIF";
+
+    // Check HEIC/HEIF: ftyp + brand
+    // Common brands: heic, heix, hevc, heim, heis, hevm, hevs, mif1, msf1
+    if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p') {
+        // Check brand at offset 8
+        if ((magic[8] == 'h' && magic[9] == 'e' && magic[10] == 'i' && (magic[11] == 'c' || magic[11] == 'x' || magic[11] == 's' || magic[11] == 'm')) || // heic, heix, heis, heim
+            (magic[8] == 'h' && magic[9] == 'e' && magic[10] == 'v' && (magic[11] == 'c' || magic[11] == 'm' || magic[11] == 's')) || // hevc, hevm, hevs
+            (magic[8] == 'm' && magic[9] == 'i' && magic[10] == 'f' && magic[11] == '1') || // mif1
+             (magic[8] == 'm' && magic[9] == 's' && magic[10] == 'f' && magic[11] == '1'))   // msf1
+        {
+             return L"HEIC"; // Unified as HEIC/HEIF
+        }
+    }
+        
+    // Check JXL: FF 0A or 00 00 00 0C JXL 
+    if (magic[0] == 0xFF && magic[1] == 0x0A) return L"JXL";
+    if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x00 && magic[3] == 0x0C &&
+             magic[4] == 'J' && magic[5] == 'X' && magic[6] == 'L' && magic[7] == ' ') return L"JXL";
+        
+    // Check GIF: GIF87a or GIF89a
+    if (magic[0] == 'G' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == '8' &&
+             (magic[4] == '7' || magic[4] == '9') && magic[5] == 'a') return L"GIF";
+
+    // Check BMP: BM
+    if (magic[0] == 'B' && magic[1] == 'M') return L"BMP";
+
+    // Check PSD: 8BPS
+    if (magic[0] == '8' && magic[1] == 'B' && magic[2] == 'P' && magic[3] == 'S') return L"PSD";
+
+    // Check HDR: #?RADIANCE or #?RGBE
+    if (magic[0] == '#' && magic[1] == '?') return L"HDR";
+
+    // Check EXR: v/1\x01 (0x76 0x2f 0x31 0x01)
+    if (magic[0] == 0x76 && magic[1] == 0x2F && magic[2] == 0x31 && magic[3] == 0x01) return L"EXR";
+        
+    // Check PIC: 0x53 0x80 ...
+    if (magic[0] == 0x53 && magic[1] == 0x80 && magic[2] == 0xF6 && magic[3] == 0x34) return L"PIC";
+        
+    // Check PNM: P1-P7
+    if (magic[0] == 'P' && magic[1] >= '1' && magic[1] <= '7') return L"PNM";
+    
+    // Check QOI: qoif
+    if (magic[0] == 'q' && magic[1] == 'o' && magic[2] == 'i' && magic[3] == 'f') return L"QOI";
+    
+    // Check PCX: 0x0A ...
+    if (magic[0] == 0x0A) return L"PCX";
+    
+    // Check ICO: 00 00 01 00
+    if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x01 && magic[3] == 0x00) return L"ICO";
+
+    // Check TIFF: II (49 49 2A 00) or MM (4D 4D 00 2A)
+    if (magic[0] == 0x49 && magic[1] == 0x49 && magic[2] == 0x2A && magic[3] == 0x00) return L"TIFF";
+    if (magic[0] == 0x4D && magic[1] == 0x4D && magic[2] == 0x00 && magic[3] == 0x2A) return L"TIFF";
+    
+    return L"Unknown";
+}
+
 HRESULT CImageLoader::Initialize(IWICImagingFactory* wicFactory) {
     if (!wicFactory) return E_INVALIDARG;
     m_wicFactory = wicFactory;
@@ -211,6 +299,159 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     }
 
     tj3Destroy(tjInstance);
+    return hr;
+}
+
+// ----------------------------------------------------------------------------
+// Step 2: Optimized Thumbnail Loading
+// ----------------------------------------------------------------------------
+
+HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData) {
+    if (!pData) return E_INVALIDARG;
+
+    std::vector<uint8_t> jpegBuf;
+    if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
+
+    tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+    if (!tj) return E_FAIL;
+
+    // Helper to auto-destroy handle
+    struct TjGuard { tjhandle h; ~TjGuard() { if(h) tj3Destroy(h); } } guard{tj};
+
+    int width = 0, height = 0;
+    if (tj3DecompressHeader(tj, jpegBuf.data(), jpegBuf.size()) < 0) {
+        return E_FAIL;
+    }
+    width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+    height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+    
+    if (width <= 0 || height <= 0) return E_FAIL;
+
+    // Calculate Scaling Factor
+    int numFactors;
+    tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+    tjscalingfactor chosenFactor = { 1, 1 };
+    
+    // Find smallest factor that produces a dimension >= targetSize
+    int bestMetric = 999999;
+    for (int i = 0; i < numFactors; i++) {
+        int sW = TJSCALED(width, factors[i]);
+        int sH = TJSCALED(height, factors[i]);
+        if (sW >= targetSize && sH >= targetSize) {
+            int metric = sW; 
+            if (metric < bestMetric) {
+                bestMetric = metric;
+                chosenFactor = factors[i];
+            }
+        }
+    }
+
+    if (tj3SetScalingFactor(tj, chosenFactor) < 0) {
+        // Fallback to 1/1
+        tjscalingfactor one = {1, 1};
+        tj3SetScalingFactor(tj, one);
+    }
+
+    int finalW = TJSCALED(width, chosenFactor);
+    int finalH = TJSCALED(height, chosenFactor);
+
+    // Decode directly to target buffer
+    pData->width = finalW;
+    pData->height = finalH;
+    pData->stride = finalW * 4;
+    pData->pixels.resize(pData->stride * finalH);
+
+    // Use TJPF_BGRA for D2D compatibility
+    if (tj3Decompress8(tj, jpegBuf.data(), jpegBuf.size(), pData->pixels.data(), pData->stride, TJPF_BGRA) < 0) {
+        return E_FAIL;
+    }
+
+    pData->isValid = true;
+    return S_OK;
+}
+
+HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData* pData) {
+    if (!pData) return E_INVALIDARG;
+    pData->isValid = false;
+
+    // Detect format
+    std::wstring format = DetectFormatFromContent(filePath);
+
+    // 1. Optimized Path (JPEG)
+    if (format == L"JPEG") {
+        if (SUCCEEDED(LoadThumbJPEG(filePath, targetSize, pData))) {
+            return S_OK;
+        }
+    }
+
+    // 2. Fallback Path (WIC Scaler for everything else)
+    ComPtr<IWICBitmapSource> source;
+    // Use LoadFromFile to leverage specialized loaders where possible (e.g. Wuffs for PNG)
+    HRESULT hr = LoadFromFile(filePath, &source); 
+    
+    if (FAILED(hr) || !source) return hr;
+
+    // Scale
+    UINT origW, origH;
+    source->GetSize(&origW, &origH);
+    if (origW == 0 || origH == 0) return E_FAIL;
+
+    // Compute ratio to fill targetSize (Center Crop style needs slightly larger coverage? 
+    // Or just fit? Gallery uses Center Crop. So we should scale such that MIN(w,h) >= targetSize.
+    // Let's ensure both dims >= targetSize if possible, or at least one matches?
+    // Actually for center crop, we need the *smaller* dimension to be at least targetSize.
+    // wait, if we request targetSize, we usually mean the cell size.
+    // let's aim for the image covering targetSize x targetSize.
+    // So scale factor = max(targetSize/w, targetSize/h).
+    
+    double ratio = std::max((double)targetSize / origW, (double)targetSize / origH);
+    
+    UINT newW, newH;
+    if (ratio >= 1.0) {
+        // Image is smaller than thumbnail slot? Keep original (don't upscale bloat)
+        // Or upscale if needed? Let's just keep original effectively.
+        // Actually WIC Scaler handles upscaling too.
+        // For thumbnails, usually we are downscaling.
+        // If image is tiny, maybe just use it.
+        newW = origW; 
+        newH = origH;
+    } else {
+        newW = (UINT)(origW * ratio);
+        newH = (UINT)(origH * ratio);
+        if (newW < 1) newW = 1;
+        if (newH < 1) newH = 1;
+    }
+    
+    // WIC Scaler
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(m_wicFactory->CreateBitmapScaler(&scaler))) return E_FAIL;
+    
+    if (FAILED(scaler->Initialize(source.Get(), newW, newH, WICBitmapInterpolationModeFant))) return E_FAIL;
+
+    // Format Converter (Ensure PBGRA/BGRA for D2D)
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(m_wicFactory->CreateFormatConverter(&converter))) return E_FAIL;
+    
+    // D2D prefers PBGRA usually, but we used BGRA for TurboJPEG. 
+    // CreateBitmap functions usually accept both if specified correctly.
+    // Let's use PBGRA (Premultiplied BGRA) which works best with D2D alpha blending.
+    // TurboJPEG TJPF_BGRA is technically straight alpha (not premultiplied).
+    // D2D supports IgnoreAlpha or StraightAlpha via different flags, but PBGRA is standard.
+    // If JPG has no alpha, BGRA == PBGRA. So it's fine.
+    // But PNG might have alpha. WIC converter to PBGRA handles premultiplication.
+    
+    if (FAILED(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) return E_FAIL;
+
+    // Copy to raw buffer
+    pData->width = newW;
+    pData->height = newH;
+    pData->stride = newW * 4;
+    pData->pixels.resize(pData->stride * newH);
+
+    hr = converter->CopyPixels(nullptr, pData->stride, (UINT)pData->pixels.size(), pData->pixels.data());
+    if (SUCCEEDED(hr)) {
+        pData->isValid = true;
+    }
     return hr;
 }
 
@@ -544,212 +785,95 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
     // Architecture Upgrade: Robust Format Detection & Fallback
     // -------------------------------------------------------------
     
-    // 1. Read first 16 bytes for Magic Number
-    uint8_t magic[16] = {0};
-    bool magicRead = false;
-    {
-        HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hFile != INVALID_HANDLE_VALUE) {
-            DWORD bytesRead = 0;
-            if (ReadFile(hFile, magic, 16, &bytesRead, nullptr) && bytesRead >= 4) {
-                magicRead = true;
-            }
-            CloseHandle(hFile);
-        }
+    // 1. Detect Format
+    std::wstring detectedFmt = DetectFormatFromContent(filePath);
+    
+    // -------------------------------------------------------------
+    // Architecture Upgrade: Priority-Based Loading
+    // -------------------------------------------------------------
+    
+    // 1. High-Performance Special Format Loaders (Bypass WIC)
+    if (detectedFmt == L"JPEG") {
+        HRESULT hr = LoadJPEG(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libjpeg-turbo"; return S_OK; }
+    }
+    else if (detectedFmt == L"PNG") {
+        HRESULT hr = LoadPngWuffs(filePath, ppBitmap); // Wuffs is faster/safer
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs PNG"; return S_OK; }
+    }
+    else if (detectedFmt == L"WebP") {
+        HRESULT hr = LoadWebP(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libwebp"; return S_OK; }
+    }
+    else if (detectedFmt == L"AVIF") {
+        HRESULT hr = LoadAVIF(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libavif"; return S_OK; }
+    }
+    else if (detectedFmt == L"JXL") {
+        HRESULT hr = LoadJXL(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libjxl"; return S_OK; }
+    }
+    else if (detectedFmt == L"GIF") {
+        HRESULT hr = LoadGifWuffs(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs GIF"; return S_OK; }
+    }
+    else if (detectedFmt == L"BMP") {
+         HRESULT hr = LoadBmpWuffs(filePath, ppBitmap);
+         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs BMP"; return S_OK; }
+    }
+    else if (detectedFmt == L"TGA") {
+         HRESULT hr = LoadTgaWuffs(filePath, ppBitmap);
+         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs TGA"; return S_OK; }
+    }
+     else if (detectedFmt == L"WBMP") {
+         HRESULT hr = LoadWbmpWuffs(filePath, ppBitmap);
+         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs WBMP"; return S_OK; }
+    }
+    else if (detectedFmt == L"PSD") {
+        HRESULT hr = LoadStbImage(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (PSD)"; return S_OK; }
+    }
+    else if (detectedFmt == L"HDR") {
+        HRESULT hr = LoadStbImage(filePath, ppBitmap, true); // float
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (HDR)"; return S_OK; }
+    }
+    else if (detectedFmt == L"PIC") {
+         HRESULT hr = LoadStbImage(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (PIC)"; return S_OK; }
+    }
+    else if (detectedFmt == L"PNM") {
+        // Try Wuffs first (safer), fallback to Stb? Not needed, Wuffs covers well.
+        HRESULT hr = LoadNetpbmWuffs(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs NetPBM"; return S_OK; }
+    }
+    else if (detectedFmt == L"EXR") {
+        HRESULT hr = LoadTinyExrImage(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"TinyEXR"; return S_OK; }
+    }
+    else if (detectedFmt == L"SVG") {
+        HRESULT hr = LoadSVG(filePath, ppBitmap);
+        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"NanoSVG"; return S_OK; }
+    }
+    else if (detectedFmt == L"QOI") {
+         HRESULT hr = LoadQoiWuffs(filePath, ppBitmap);
+         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs QOI"; return S_OK; }
+    }
+    else if (detectedFmt == L"PCX") {
+         HRESULT hr = LoadPCX(filePath, ppBitmap);
+         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Custom PCX"; return S_OK; }
     }
     
-    enum class DetectedFormat { Unknown, JPEG, PNG, GIF, WebP, AVIF, JXL, RAW, BMP, TGA, WBMP, PSD, HDR, PIC, PNM, EXR, PCX, SVG, QOI };
-    DetectedFormat detected = DetectedFormat::Unknown;
-
-    if (magicRead) {
-        // Check JPEG: FF D8 FF
-        if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) 
-            detected = DetectedFormat::JPEG;
-        
-        // Check PNG: 89 50 4E 47
-        else if (magic[0] == 0x89 && magic[1] == 0x50 && magic[2] == 0x4E && magic[3] == 0x47) 
-            detected = DetectedFormat::PNG;
-            
-        // Check WebP: RIFF ... WEBP
-        else if (magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
-                 magic[8] == 'W' && magic[9] == 'E' && magic[10] == 'B' && magic[11] == 'P')
-            detected = DetectedFormat::WebP;
-            
-        // Check AVIF: ftypavif
-        // Usually located at bytes 4-12, e.g., ....ftypavif
-        else if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p' &&
-                 magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 'f')
-            detected = DetectedFormat::AVIF;
-            
-        // Check JXL: FF 0A or 00 00 00 0C JXL 
-        else if (magic[0] == 0xFF && magic[1] == 0x0A)
-            detected = DetectedFormat::JXL;
-        else if (magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x00 && magic[3] == 0x0C &&
-                 magic[4] == 'J' && magic[5] == 'X' && magic[6] == 'L' && magic[7] == ' ')
-            detected = DetectedFormat::JXL;
-            
-        // Check GIF: GIF87a or GIF89a
-        else if (magic[0] == 'G' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == '8' &&
-                 (magic[4] == '7' || magic[4] == '9') && magic[5] == 'a')
-            detected = DetectedFormat::GIF;
-
-        // Check BMP: BM
-        else if (magic[0] == 'B' && magic[1] == 'M')
-            detected = DetectedFormat::BMP;
-
-        // Check PSD: 8BPS
-        else if (magic[0] == '8' && magic[1] == 'B' && magic[2] == 'P' && magic[3] == 'S')
-            detected = DetectedFormat::PSD;
-
-        // Check HDR: #?RADIANCE or #?RGBE
-        else if (magic[0] == '#' && magic[1] == '?')
-            detected = DetectedFormat::HDR;
-
-        // Check EXR: v/1\x01 (0x76 0x2f 0x31 0x01)
-        else if (magic[0] == 0x76 && magic[1] == 0x2F && magic[2] == 0x31 && magic[3] == 0x01)
-            detected = DetectedFormat::EXR;
-            
-        // Check PIC: 0x53 0x80 ...
-        else if (magic[0] == 0x53 && magic[1] == 0x80 && magic[2] == 0xF6 && magic[3] == 0x34)
-            detected = DetectedFormat::PIC;
-            
-
-        // Check PNM: P1-P7 (PBM, PGM, PPM, PAM)
-        else if (magic[0] == 'P' && magic[1] >= '1' && magic[1] <= '7')
-            detected = DetectedFormat::PNM;
-
-        // Check PCX: 0x0A (ZSoft)
-        else if (magic[0] == 0x0A)
-            detected = DetectedFormat::PCX;
-
-        // Check SVG: <svg or <?xml (Text check)
-        // Simple check for '<' at start, then verify extension or content later.
-        else if (magic[0] == '<' && (magic[1] == 's' || magic[1] == '?' || magic[1] == '!')) 
-            detected = DetectedFormat::SVG;
-        
-        // Check QOI: "qoif" magic
-        else if (magic[0] == 'q' && magic[1] == 'o' && magic[2] == 'i' && magic[3] == 'f')
-            detected = DetectedFormat::QOI;
+    // RAW Check (no magic bytes usually reliable, use extension + try)
+    if (detectedFmt == L"Unknown") { // Raw files often have no standard magic or complicated ones
+         // Check extension
+         if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || 
+             path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || 
+             path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw")) {
+             HRESULT hr = LoadRaw(filePath, ppBitmap);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"LibRaw"; return S_OK; }
+         }
     }
-    
-    // Fallback or specific checks via extension
-    if (detected == DetectedFormat::Unknown) {
-         if (path.ends_with(L".tga") || path.ends_with(L".icb") || path.ends_with(L".vda") || path.ends_with(L".vst")) 
-             detected = DetectedFormat::TGA;
-         else if (path.ends_with(L".wbmp") || path.ends_with(L".wbm"))
-             detected = DetectedFormat::WBMP;
-         else if (path.ends_with(L".svg") || path.ends_with(L".svgz"))
-             detected = DetectedFormat::SVG;
-         else if (path.ends_with(L".pcx"))
-             detected = DetectedFormat::PCX;
-         else if (path.ends_with(L".pam") || path.ends_with(L".pbm") || path.ends_with(L".pgm") || path.ends_with(L".ppm"))
-             detected = DetectedFormat::PNM;
-    }
-    
 
-    // 2. Dispatch Logic
-    HRESULT hr = E_FAIL;
-    
-    switch (detected) {
-        case DetectedFormat::JPEG: 
-            hr = LoadJPEG(filePath, ppBitmap); 
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"TurboJPEG (v3 + ASM)"; 
-            break;
-        case DetectedFormat::PNG:  
-            hr = LoadPngWuffs(filePath, ppBitmap);  // Wuffs (Google's memory-safe decoder)
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs PNG (Safe+Fast)"; 
-            break;
-        case DetectedFormat::GIF:
-            hr = LoadGifWuffs(filePath, ppBitmap);  // Wuffs GIF
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs GIF (Chrome)"; 
-            break;
-        case DetectedFormat::WebP: 
-            hr = LoadWebP(filePath, ppBitmap); 
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibWebP (SIMD)"; 
-            break;
-        case DetectedFormat::AVIF: 
-            hr = LoadAVIF(filePath, ppBitmap); 
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Dav1d (AV1)"; 
-            break;
-        case DetectedFormat::JXL:  
-            hr = LoadJXL(filePath, ppBitmap); 
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibJXL (Highway)"; 
-            break;
-
-        case DetectedFormat::BMP:
-            hr = LoadBmpWuffs(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs BMP (Safe)";
-            break;
-
-        case DetectedFormat::TGA:
-            hr = LoadTgaWuffs(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs TGA";
-            break;
-
-        case DetectedFormat::WBMP:
-            hr = LoadWbmpWuffs(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs WBMP";
-            break;
-
-        case DetectedFormat::PSD:
-            // Use StbImage for PSD (force 4 channels)
-            hr = LoadStbImage(filePath, ppBitmap, false);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"stb_image (PSD)";
-            break;
-
-        case DetectedFormat::HDR:
-            // Use StbImage (Float for HDR)
-            hr = LoadStbImage(filePath, ppBitmap, true);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"stb_image (HDR)";
-            break;
-
-        case DetectedFormat::PIC:
-            // Use StbImage (8-bit)
-            hr = LoadStbImage(filePath, ppBitmap, false);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"stb_image (PIC)";
-            break;
-
-        case DetectedFormat::PNM:
-            // Wuffs NetPBM supports P5/P6 (Binary PGM/PPM only)
-            hr = LoadNetpbmWuffs(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs NetPBM";
-            break;
-
-        case DetectedFormat::EXR:
-            hr = LoadTinyExrImage(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"TinyEXR";
-            break;
-
-        case DetectedFormat::PCX:
-            // Custom PCX Decoder (RLE + Palette)
-            hr = LoadPCX(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Custom PCX";
-            break;
-
-        case DetectedFormat::SVG:
-            hr = LoadSVG(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"NanoSVG (Rasterized)";
-            break;
-
-        case DetectedFormat::QOI:
-            hr = LoadQoiWuffs(filePath, ppBitmap);
-            if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"Wuffs QOI";
-            break;
-
-        case DetectedFormat::Unknown:
-        default:
-            if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".cr3") || 
-                path.ends_with(L".nef") || path.ends_with(L".dng") || path.ends_with(L".orf") || 
-                path.ends_with(L".rw2") || path.ends_with(L".raf") || path.ends_with(L".pef") || 
-                path.ends_with(L".srw")) {
-                 hr = LoadRaw(filePath, ppBitmap);
-                 if (SUCCEEDED(hr) && pLoaderName) *pLoaderName = L"LibRaw (Optimized)";
-            }
-            break;
-    }
-    
-    // If Specialized Loader Succeeded, Return
-    if (SUCCEEDED(hr)) return hr;
 
     // 3. Robust Fallback to WIC (Standard Loading)
     if (pLoaderName) *pLoaderName = L"WIC (Fallback)";
@@ -765,7 +889,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
     // Re-use existing WIC fallback logic:
     
     ComPtr<IWICBitmapDecoder> decoder;
-    hr = m_wicFactory->CreateDecoderFromFilename(
+    HRESULT hr = m_wicFactory->CreateDecoderFromFilename(
         filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder
     );
     if (FAILED(hr)) return hr;
@@ -1291,10 +1415,29 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata) {
 
     if (!m_wicFactory) return E_FAIL;
 
-    // 1. Create Decoder based on file (Safe fallback)
+    // 1. Detect Format (New robust logic)
+    pMetadata->Format = DetectFormatFromContent(filePath);
+    
+    // 2. Create Decoder based on file (Safe fallback)
     ComPtr<IWICBitmapDecoder> decoder;
     HRESULT hr = m_wicFactory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
-    if (FAILED(hr)) return hr; // Format not supported by WIC (e.g. some raw, or no codec)
+    
+    if (FAILED(hr)) {
+        // If WIC failed but we detected a format (e.g. JXL, Custom RAW), return S_OK so we at least have the Format field
+        if (pMetadata->Format != L"Unknown") return S_OK;
+        return hr; 
+    }
+
+    // WIC Format check (Secondary verification or detail)
+    // If our magic byte detector returned generic or WIC has better info?
+    // Actually our detector is better for JXL/AVIF/WebP often. 
+    // Just keep the Magic Byte result as primary.
+    /* 
+    GUID containerFormat;
+    if (SUCCEEDED(decoder->GetContainerFormat(&containerFormat))) {
+        // ... WIC detection fallback if needed ...
+    }
+    */
 
     // 2. Get Frame 0
     ComPtr<IWICBitmapFrameDecode> frame;

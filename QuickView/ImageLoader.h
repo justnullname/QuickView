@@ -1,5 +1,6 @@
 #pragma once
 #include "pch.h"
+#include <vector>
 
 /// <summary>
 /// Image Loader
@@ -67,6 +68,15 @@ public:
         }
     };
 
+    // --- NEW: Raw Thumbnail Data (Zero-Copy flow) ---
+    struct ThumbData {
+        std::vector<uint8_t> pixels; // Raw BGRA (Compatible with PBGRA/BGRX)
+        int width;
+        int height;
+        int stride;
+        bool isValid = false;
+    };
+
     /// <summary>
     /// Read metadata from file using WIC
     /// </summary>
@@ -88,6 +98,14 @@ public:
     HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr); // Force decode to memory
 
     /// <summary>
+    /// NEW: Load Thumbnail (Raw Data)
+    /// Optimizes for speed using TurboJPEG scaling where possible.
+    /// Returns raw BGRA buffer.
+    /// </summary>
+    HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData* pData);
+
+
+    /// <summary>
     /// Get format details from last load (e.g. "4:2:0", "10-bit")
     /// </summary>
     std::wstring GetLastFormatDetails() const;
@@ -105,6 +123,8 @@ private:
 
     // Specialized High-Performance Loaders
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
+    HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
+
     // LoadPNG REMOVED - replaced by LoadPngWuffs
     HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libwebp
     HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libavif + dav1d

@@ -76,8 +76,22 @@ public:
     }
     
     // Status info
+    // Status info
     size_t Count() const { return m_files.size(); }
     int Index() const { return m_currentIndex; }
+
+    // Random Access (For Gallery Virtualization)
+    const std::wstring& GetFile(int index) const {
+        static std::wstring empty;
+        if (index < 0 || index >= (int)m_files.size()) return empty;
+        return m_files[index];
+    }
+
+    int FindIndex(const std::wstring& path) const {
+        auto it = std::find(m_files.begin(), m_files.end(), path);
+        if (it != m_files.end()) return (int)std::distance(m_files.begin(), it);
+        return -1;
+    }
 
 
 private:
