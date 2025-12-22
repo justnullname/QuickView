@@ -15,6 +15,7 @@
 #include "StbLoader.h"
 #include "TinyExrLoader.h"
 #include <thread>
+#include "PreviewExtractor.h"
 
 // Helper to detect format from file content (Magic Bytes)
 static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
@@ -306,11 +307,8 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // Step 2: Optimized Thumbnail Loading
 // ----------------------------------------------------------------------------
 
-HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData) {
-    if (!pData) return E_INVALIDARG;
-
-    std::vector<uint8_t> jpegBuf;
-    if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
+HRESULT CImageLoader::LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData) {
+    if (!pData || !pBuf || size == 0) return E_INVALIDARG;
 
     tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
     if (!tj) return E_FAIL;
@@ -319,11 +317,14 @@ HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData*
     struct TjGuard { tjhandle h; ~TjGuard() { if(h) tj3Destroy(h); } } guard{tj};
 
     int width = 0, height = 0;
-    if (tj3DecompressHeader(tj, jpegBuf.data(), jpegBuf.size()) < 0) {
+    if (tj3DecompressHeader(tj, pBuf, size) < 0) {
         return E_FAIL;
     }
     width = tj3Get(tj, TJPARAM_JPEGWIDTH);
     height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+    pData->origWidth = width;
+    pData->origHeight = height;
+    pData->fileSize = size;
     
     if (width <= 0 || height <= 0) return E_FAIL;
 
@@ -337,6 +338,8 @@ HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData*
     for (int i = 0; i < numFactors; i++) {
         int sW = TJSCALED(width, factors[i]);
         int sH = TJSCALED(height, factors[i]);
+        // Ideally we want >= targetSize.
+        // If all are smaller, pick largest (1/1).
         if (sW >= targetSize && sH >= targetSize) {
             int metric = sW; 
             if (metric < bestMetric) {
@@ -362,7 +365,8 @@ HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData*
     pData->pixels.resize(pData->stride * finalH);
 
     // Use TJPF_BGRA for D2D compatibility
-    if (tj3Decompress8(tj, jpegBuf.data(), jpegBuf.size(), pData->pixels.data(), pData->stride, TJPF_BGRA) < 0) {
+    // Note: TurboJPEG BGRA is straight alpha. If extracted thumb has no alpha (JPEG doesn't), it's opaque (A=255).
+    if (tj3Decompress8(tj, pBuf, size, pData->pixels.data(), pData->stride, TJPF_BGRA) < 0) {
         return E_FAIL;
     }
 
@@ -370,10 +374,108 @@ HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData*
     return S_OK;
 }
 
+HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData) {
+    if (!pData || !pBuf || size == 0) return E_INVALIDARG;
+
+    // Advanced API for threading + scaling support
+    WebPDecoderConfig config;
+    if (!WebPInitDecoderConfig(&config)) return E_FAIL;
+    
+    if (WebPGetFeatures(pBuf, size, &config.input) != VP8_STATUS_OK) return E_FAIL;
+    
+    int w = config.input.width;
+    int h = config.input.height;
+    pData->origWidth = w;
+    pData->origHeight = h;
+    pData->fileSize = size;
+    if (w <= 0 || h <= 0) return E_FAIL;
+
+    // Calculate Ratio aiming for targetSize in smallest dimension (cover)? 
+    // Or fit?
+    // TurboJPEG logic above tries to find a metric >= targetSize.
+    // Let's match typical scaler logic: Match one dimension to target size?
+    // Actually WebP scaling is arbitrary (unlike JPEG which is 1/2, 1/4, 1/8).
+    // So we can request exact size?
+    // WebP documentation says "scaled_width/height".
+    // "The output buffer will be scaled to these dimensions".
+    // So we can request exactly targetSize X something.
+    
+    // Let's compute exact target size maintaining aspect ratio.
+    float ratio = std::max((float)targetSize/w, (float)targetSize/h);
+    // If ratio >= 1.0 (Image smaller than target), keep original.
+    int newW, newH;
+    if (ratio >= 1.0f) {
+        newW = w;
+        newH = h;
+    } else {
+        newW = (int)(w * ratio);
+        newH = (int)(h * ratio);
+        if (newW < 1) newW = 1; 
+        if (newH < 1) newH = 1;
+    }
+
+    config.options.use_threads = 1;
+    config.options.use_scaling = 1;
+    config.options.scaled_width = newW;
+    config.options.scaled_height = newH;
+    config.options.no_fancy_upsampling = 1; // Speed up
+    config.output.colorspace = MODE_BGRA;   // Direct BGRA
+    
+    // Decode
+    if (WebPDecode(pBuf, size, &config) != VP8_STATUS_OK) {
+         WebPFreeDecBuffer(&config.output);
+         return E_FAIL;
+    }
+    
+    // Copy/Move to ThumbData
+    // We could have decoded directly to pData->pixels if we resized it first and used external memory.
+    // But stride handling: WebP stride might differ?
+    // config.output.u.RGBA.stride usually is width*4 for MODE_BGRA.
+    
+    uint8_t* output = config.output.u.RGBA.rgba;
+    int stride = config.output.u.RGBA.stride;
+    int dataSize = config.output.u.RGBA.size;
+    
+    pData->width = newW;
+    pData->height = newH;
+    pData->stride = newW * 4; // Our target stride
+    
+    if (stride == pData->stride) {
+        pData->pixels.assign(output, output + dataSize);
+    } else {
+        // Copy row by row
+        pData->pixels.resize(pData->stride * newH);
+        for(int y=0; y<newH; ++y) {
+            BYTE* src = output + y * stride;
+            BYTE* dst = pData->pixels.data() + y * pData->stride;
+            memcpy(dst, src, std::min(stride, pData->stride));
+        }
+    }
+    
+    pData->isValid = true;
+    WebPFreeDecBuffer(&config.output);
+    return S_OK;
+}
+
+HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData) {
+    if (!pData) return E_INVALIDARG;
+
+    std::vector<uint8_t> jpegBuf;
+    if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
+    
+    return LoadThumbJPEGFromMemory(jpegBuf.data(), jpegBuf.size(), targetSize, pData);
+}
+
 HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData* pData) {
     if (!pData) return E_INVALIDARG;
     pData->isValid = false;
-
+    
+    // Get file size (cheap)
+    // Actually we iterate file path anyway. But if we read to vector, we know size.
+    // If we use WIC, we might not know size unless we query file.
+    // Let's use std::filesystem for non-vector paths logic
+    // But most paths read vector.
+    
     // Detect format
     std::wstring format = DetectFormatFromContent(filePath);
 
@@ -382,9 +484,88 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
         if (SUCCEEDED(LoadThumbJPEG(filePath, targetSize, pData))) {
             return S_OK;
         }
+    } else if (format == L"WebP") {
+        // 1b. Optimized WebP (Scaled & Multithreaded)
+        std::vector<uint8_t> buf;
+        if (ReadFileToVector(filePath, buf)) {
+            if (SUCCEEDED(LoadThumbWebPFromMemory(buf.data(), buf.size(), targetSize, pData))) {
+                return S_OK;
+            }
+        }
+    }
+    
+    // 1b. Optimized Extraction (RAW / HEIC / PSD) via PreviewExtractor
+    // Check extension logic or format details?
+    // DetectFormatFromContent usually returns "RAW (ARW)" or "HEIC".
+    // Let's use extension check for speed first (since Detect might read file).
+    // Actually LoadThumbnail passed filePath.
+    
+    std::wstring ext = filePath;
+    size_t dot = ext.find_last_of(L'.');
+    if (dot != std::wstring::npos) {
+        std::wstring e = ext.substr(dot);
+        std::transform(e.begin(), e.end(), e.begin(), ::towlower);
+        
+        bool tryExtract = false;
+        bool isRaw = (e == L".arw" || e == L".cr2" || e == L".nef" || e == L".dng" || e == L".orf" || e == L".rw2" || e == L".raf");
+        bool isHeic = (e == L".heic" || e == L".heif" || e == L".avif"); // AVIF might not have exif thumb, but worth try?
+        bool isPsd = (e == L".psd" || e == L".psb");
+        
+        if (isRaw || isHeic || isPsd) {
+            // Read file header/content
+            // Note: RAW/PSD extraction might need significant portion of file.
+            // For now, read whole file. (Memory Mapped would be better, but Read works).
+            std::vector<uint8_t> buf;
+            if (ReadFileToVector(filePath, buf)) {
+                PreviewExtractor::ExtractedData exData;
+                bool extracted = false;
+                
+                if (isRaw) extracted = PreviewExtractor::ExtractFromRAW(buf.data(), buf.size(), exData);
+                else if (isHeic) extracted = PreviewExtractor::ExtractFromHEIC(buf.data(), buf.size(), exData);
+                else if (isPsd) extracted = PreviewExtractor::ExtractFromPSD(buf.data(), buf.size(), exData);
+                
+                if (extracted && exData.IsValid()) {
+                    // It's a JPEG buffer!
+                    if (SUCCEEDED(LoadThumbJPEGFromMemory(exData.pData, exData.size, targetSize, pData))) {
+                        // For extracted previews, we might not know the FULL RAW dimensions here unless parsed.
+                        // However, preview dimensions (pData->origWidth) are set by LoadThumbJPEGFromMemory.
+                        // That's the preview dimension, not RAW dimension.
+                        // User might want RAW dimension.
+                        // But getting RAW dimension requires parsing TIFF/HEIC headers fully.
+                        // PreviewExtractor might have that info?
+                        // For now, let's accept Preview Size or File Size.
+                        // But File Size should be the RAW file size.
+                        // buf.size() is the RAW file size.
+                        pData->fileSize = buf.size();
+                        return S_OK;
+                    }
+                }
+            }
+        }
     }
 
     // 2. Fallback Path (WIC Scaler for everything else)
+    
+    // Fail Fast: Check Dimensions to prevent OOM on massive files (e.g. 20k x 20k)
+    // Only needed for fallback path which likely does full decode.
+    {
+        ComPtr<IWICBitmapDecoder> decoder;
+        // Used GENERIC_READ. WIC Decoder is fast (reads header only).
+        if (SUCCEEDED(m_wicFactory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder))) {
+            ComPtr<IWICBitmapFrameDecode> frame;
+            if (SUCCEEDED(decoder->GetFrame(0, &frame))) {
+                UINT w = 0, h = 0;
+                frame->GetSize(&w, &h);
+                // Limit: 16384x16384 (268 MP). 
+                // RGBA = 268 * 4 = 1GB per image. 
+                // 1GB is too much for a thumbnail thread.
+                if (w > 16384 || h > 16384) {
+                     return E_OUTOFMEMORY;
+                }
+            }
+        }
+    }
+
     ComPtr<IWICBitmapSource> source;
     // Use LoadFromFile to leverage specialized loaders where possible (e.g. Wuffs for PNG)
     HRESULT hr = LoadFromFile(filePath, &source); 
@@ -449,7 +630,16 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     pData->pixels.resize(pData->stride * newH);
 
     hr = converter->CopyPixels(nullptr, pData->stride, (UINT)pData->pixels.size(), pData->pixels.data());
+    hr = converter->CopyPixels(nullptr, pData->stride, (UINT)pData->pixels.size(), pData->pixels.data());
     if (SUCCEEDED(hr)) {
+        pData->origWidth = origW;
+        pData->origHeight = origH;
+        // FileSize?
+        // Check file manually
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        if (GetFileAttributesEx(filePath, GetFileExInfoStandard, &fad)) {
+            pData->fileSize = (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+        }
         pData->isValid = true;
     }
     return hr;

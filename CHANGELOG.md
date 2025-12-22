@@ -2,7 +2,37 @@
 
 All notable changes to QuickView will be documented in this file.
 
-## [Unreleased]
+## [2.0 Preview] - The Rebirth
+
+### 🚀 Brand New Architecture (Total Rewrite)
+This major release marks a complete departure from the legacy JPEGView codebase. **QuickView 2.0** is built from scratch to be the fastest, most modern image viewer for Windows.
+-   **Direct2D Rendering**: GPU-accelerated rendering pipeline for silky smooth zooming and panning (60fps+).
+-   **Modern C++**: Utilizing modern C++ standards, RAII, and smart pointers for robust stability.
+
+### ⚡ Performance Engine
+-   **Dual-Lane Scheduling**: Revolutionary "Fast/Slow" queue system ensures the UI never freezes, even when processing 200MB+ Raw files.
+-   **TurboJPEG integration**: SIMD-optimized JPEG decoding.
+-   **Google Wuffs**: State-of-the-art secure and fast decoding for PNG and GIF.
+-   **libwebp**: Multithreaded WebP decoding.
+-   **Instant Preview**: Direct extraction of embedded JPEGs from RAW (ARW, CR2, DNG, etc.), HEIC, and PSD files for instant viewing.
+
+### ✨ New Features
+#### Immersive Thumbnail Gallery ("T" Key)
+-   **Virtualization**: Handle folders with 10,000+ images effortlessly.
+-   **Smart Caching**: Dual-Layer (RAM + VRAM) cache with strict 200MB limit.
+-   **Hover Info**: Instant inspection of file dimensions and size by hovering over thumbnails.
+
+#### Smart Context Actions
+-   **Auto Format Fix**: Detects mismatched extensions (e.g., PNG saved as .jpg) via Magic Bytes and repairs them with one click.
+-   **Enhanced Copy**: Quick copy for File Path and Image Content.
+
+### 🐛 Known Limitations (Preview)
+-   **Memory Safety**: Cache hard limit set to 200MB.
+-   **Resolution Limit**: Images larger than 16384x16384 (268 MP) are currently skipped to prevent OOM.
+
+---
+
+## [Legacy Versions]
 
 ### Added
 - **Chrome-style Floating Buttons**:

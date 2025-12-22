@@ -75,6 +75,11 @@ public:
         int height;
         int stride;
         bool isValid = false;
+        
+        // Metadata for Hover
+        int origWidth = 0;
+        int origHeight = 0;
+        uint64_t fileSize = 0;
     };
 
     /// <summary>
@@ -124,6 +129,8 @@ private:
     // Specialized High-Performance Loaders
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
     HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
+    HRESULT LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for in-memory buffers
+    HRESULT LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for WebP buffers
 
     // LoadPNG REMOVED - replaced by LoadPngWuffs
     HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libwebp

@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "ThumbnailManager.h"
+#include <algorithm>
+#include <cwctype>
 
 ThumbnailManager::ThumbnailManager() {}
 
@@ -11,15 +13,16 @@ void ThumbnailManager::Initialize(HWND hwnd, CImageLoader* pLoader) {
     m_hwnd = hwnd;
     m_pLoader = pLoader;
     m_running = true;
-    m_workerThread = std::thread(&ThumbnailManager::WorkerLoop, this);
+    m_workerThreadFast = std::thread(&ThumbnailManager::WorkerLoopFast, this);
+    m_workerThreadSlow = std::thread(&ThumbnailManager::WorkerLoopSlow, this);
 }
 
 void ThumbnailManager::Shutdown() {
     m_running = false;
-    m_cv.notify_all();
-    if (m_workerThread.joinable()) {
-        m_workerThread.join();
-    }
+    m_cvFast.notify_all();
+    m_cvSlow.notify_all();
+    if (m_workerThreadFast.joinable()) m_workerThreadFast.join();
+    if (m_workerThreadSlow.joinable()) m_workerThreadSlow.join();
     ClearCache();
 }
 
@@ -34,7 +37,8 @@ void ThumbnailManager::ClearCache() {
     // Also clear queue?
     std::lock_guard<std::mutex> queueLock(m_queueMutex);
     m_pendingTasks.clear();
-    m_taskQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+    m_fastQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+    m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
 }
 
 ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(int fileIndex, LPCWSTR filePath, ID2D1RenderTarget* pRT) {
@@ -108,7 +112,8 @@ void ThumbnailManager::UpdateOptimizedPriority(int startIdx, int endIdx, int pri
     // Just clear everything and re-add the new range. The overlap is fine to re-add (deduplication via m_pendingTasks needs check).
     
     // Note: clearing m_taskQueue is hard (no clear()). Assign new.
-    m_taskQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+    m_fastQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+    m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
     
     // Also clear pending flags?
     // If we clear queue, those tasks are gone. So we should clear pending flags for them.
@@ -191,43 +196,66 @@ void ThumbnailManager::TouchLRU(int index) {
     }
 }
 
-void ThumbnailManager::WorkerLoop() {
+void ThumbnailManager::WorkerLoopFast() {
     while (m_running) {
         Task task;
         {
             std::unique_lock<std::mutex> lock(m_queueMutex);
-            m_cv.wait(lock, [this] { return !m_taskQueue.empty() || !m_running; });
+            m_cvFast.wait(lock, [this] { return !m_fastQueue.empty() || !m_running; });
             
             if (!m_running) break;
             
-            task = m_taskQueue.top();
-            m_taskQueue.pop();
-            // m_pendingTasks.erase(task.index); // Keep marked pending until done? Or remove now?
-            // If remove now, duplicate request might come in.
-            // Better remove AFTER done? Or remove now to allow re-queue if failed?
-            // Let's remove now.
+            // Double check empty in case of spurious wake or stolen task (unlikely with one consumer per queue, but safe)
+            if (m_fastQueue.empty()) continue;
+
+            task = m_fastQueue.top();
+            m_fastQueue.pop();
+            
             auto it = m_pendingTasks.find(task.index);
             if (it != m_pendingTasks.end()) m_pendingTasks.erase(it);
         }
         
-        // Decode (Optimized TurboJPEG)
-        // Thumbnail size: e.g. 200px or 300px?
-        // Let's hardcode 300 for now or make it configurable?
-        // Gallery grid is usually responsive. 250-300px is good.
         int targetSize = 300; 
-        
         CImageLoader::ThumbData data;
         if (SUCCEEDED(m_pLoader->LoadThumbnail(task.path.c_str(), targetSize, &data)) && data.isValid) {
-            
-            // Store in L1 Cache
             {
                 std::lock_guard<std::mutex> lock(m_cacheMutex);
                 size_t size = data.pixels.size();
                 m_l1Cache[task.index] = std::move(data);
                 AddToLRU(task.index, size);
             }
+            PostMessage(m_hwnd, WM_THUMB_KEY_READY, (WPARAM)task.index, 0);
+        }
+    }
+}
+
+void ThumbnailManager::WorkerLoopSlow() {
+    while (m_running) {
+        Task task;
+        {
+            std::unique_lock<std::mutex> lock(m_queueMutex);
+            m_cvSlow.wait(lock, [this] { return !m_slowQueue.empty() || !m_running; });
             
-            // Notify UI
+            if (!m_running) break;
+            
+            if (m_slowQueue.empty()) continue;
+
+            task = m_slowQueue.top();
+            m_slowQueue.pop();
+            
+            auto it = m_pendingTasks.find(task.index);
+            if (it != m_pendingTasks.end()) m_pendingTasks.erase(it);
+        }
+        
+        int targetSize = 300; 
+        CImageLoader::ThumbData data;
+        if (SUCCEEDED(m_pLoader->LoadThumbnail(task.path.c_str(), targetSize, &data)) && data.isValid) {
+            {
+                std::lock_guard<std::mutex> lock(m_cacheMutex);
+                size_t size = data.pixels.size();
+                m_l1Cache[task.index] = std::move(data);
+                AddToLRU(task.index, size);
+            }
             PostMessage(m_hwnd, WM_THUMB_KEY_READY, (WPARAM)task.index, 0);
         }
     }
@@ -250,14 +278,55 @@ void ThumbnailManager::QueueRequest(int index, LPCWSTR path, int priority) {
     t.index = index;
     t.path = path;
     t.priorityDistance = priority;
+
+    // Detect format for Lane Selection
+    std::wstring ext = path;
+    size_t dot = ext.find_last_of(L'.');
+    bool isFast = false;
+    if (dot != std::wstring::npos) {
+        std::wstring e = ext.substr(dot);
+        std::transform(e.begin(), e.end(), e.begin(), ::towlower);
+        // Fast Lane: JPEG (Optimized) + RAW/HEIC/PSD (Embedded Preview) + WebP (Scaled)
+        if (e == L".jpg" || e == L".jpeg" || e == L".jpe" || e == L".jfif" ||
+            e == L".arw" || e == L".cr2" || e == L".nef" || e == L".dng" || e == L".orf" || e == L".rw2" || e == L".raf" ||
+            e == L".heic" || e == L".heif" || e == L".avif" ||
+            e == L".psd" || e == L".psb" ||
+            e == L".webp") { // Debug Stats (Removed)
+            isFast = true;
+        }
+    }
+    t.isFastLane = isFast;
+
+    if (isFast) {
+        m_fastQueue.push(t);
+        m_cvFast.notify_one();
+    } else {
+        m_slowQueue.push(t);
+        m_cvSlow.notify_one();
+    }
     
-    m_taskQueue.push(t);
     m_pendingTasks[index] = true;
-    m_cv.notify_one();
 }
 
 void ThumbnailManager::ClearQueue() {
     std::lock_guard<std::mutex> lock(m_queueMutex);
-    m_taskQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+    m_fastQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+    m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
     m_pendingTasks.clear();
+}
+
+
+
+ThumbnailManager::ImageInfo ThumbnailManager::GetImageInfo(int index) {
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    auto it = m_l1Cache.find(index);
+    if (it != m_l1Cache.end()) {
+        ImageInfo info;
+        info.origWidth = it->second.origWidth;
+        info.origHeight = it->second.origHeight;
+        info.fileSize = it->second.fileSize;
+        info.isValid = true;
+        return info;
+    }
+    return { 0, 0, 0, false };
 }

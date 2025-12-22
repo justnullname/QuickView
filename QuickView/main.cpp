@@ -1260,12 +1260,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     
      // Mouse Interaction
      case WM_MOUSEMOVE: {
+          POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+          
+          if (g_gallery.IsVisible()) {
+              g_gallery.OnMouseMove(pt.x, pt.y);
+              InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
+          }
+
           // Force redraw for smooth tooltip/hover when info panel is active
           if (g_config.ShowInfoPanel) {
               InvalidateRect(hwnd, nullptr, FALSE);
           }
-          
-          POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
          // Update Button Hover
          WindowHit oldHit = g_winControls.HoverState;
          g_winControls.HoverState = WindowHit::None;

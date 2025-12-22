@@ -19,6 +19,17 @@ public:
     // Singleton-like access if needed, or passed as dependency. 
     // For now, let's assume it's a member of MainWindow.
 
+    // Debug Stats (Removed)
+
+
+    struct ImageInfo {
+        int origWidth;
+        int origHeight;
+        uint64_t fileSize;
+        bool isValid;
+    };
+    ImageInfo GetImageInfo(int index);
+
     void Initialize(HWND hwnd, CImageLoader* pLoader);
     void Shutdown();
 
@@ -76,24 +87,34 @@ private:
     const size_t MAX_CACHE_COUNT = 1000;
 
     // --- Worker Thread ---
+    // --- Worker Threads ---
     struct Task {
         int index;
         std::wstring path;
         int priorityDistance; // 0 = highest (center)
+        bool isFastLane;      // Tag to verify lane if needed
         
         bool operator>(const Task& other) const {
-            return priorityDistance > other.priorityDistance; // Min-heap (smallest dist first)
+            return priorityDistance > other.priorityDistance; // Min-heap
         }
     };
 
-    std::thread m_workerThread;
-    std::mutex m_queueMutex;
-    std::condition_variable m_cv;
-    std::priority_queue<Task, std::vector<Task>, std::greater<Task>> m_taskQueue;
-    std::unordered_map<int, bool> m_pendingTasks; // To avoid duplicates
+    std::thread m_workerThreadFast;
+    std::thread m_workerThreadSlow;
+    
+    std::mutex m_queueMutex; // Protects BOTH queues and pending map
+    std::condition_variable m_cvFast;
+    std::condition_variable m_cvSlow;
+    
+    std::priority_queue<Task, std::vector<Task>, std::greater<Task>> m_fastQueue;
+    std::priority_queue<Task, std::vector<Task>, std::greater<Task>> m_slowQueue;
+    
+    std::unordered_map<int, bool> m_pendingTasks; 
     std::atomic<bool> m_running = false;
 
-    void WorkerLoop();
+    void WorkerLoopFast();
+    void WorkerLoopSlow();
+    
     void EvictLRU();
     void AddToLRU(int index, size_t size);
     void TouchLRU(int index);
