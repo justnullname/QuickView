@@ -32,7 +32,13 @@ public:
         UINT Width = 0;
         UINT Height = 0;
         UINT64 FileSize = 0;
-        std::wstring Format;   // e.g. "JPEG", "RAW (ARW)"
+        std::wstring Format;        // e.g. "JPEG", "RAW (ARW)"
+        std::wstring FormatDetails; // e.g. "4:2:0", "10-bit", "Lossy"
+        std::wstring ColorSpace;    // e.g. "sRGB", "Display P3", "Adobe RGB"
+        
+        // Decoder Info
+        std::wstring LoaderName;    // e.g. "TurboJPEG", "libavif"
+        DWORD LoadTimeMs = 0;       // Load time in milliseconds
         
         // GPS
         bool HasGPS = false;
@@ -80,6 +86,11 @@ public:
     /// Load WIC bitmap from file and force decode to memory
     /// </summary>
     HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr); // Force decode to memory
+
+    /// <summary>
+    /// Get format details from last load (e.g. "4:2:0", "10-bit")
+    /// </summary>
+    std::wstring GetLastFormatDetails() const;
 
     /// <summary>
     /// Get image size without full decode

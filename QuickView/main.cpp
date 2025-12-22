@@ -115,8 +115,136 @@ static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
 static ComPtr<IDWriteTextFormat> g_pPanelTextFormat;
 static D2D1_RECT_F g_gpsLinkRect = {}; 
+static D2D1_RECT_F g_gpsCoordRect = {};  // GPS Coordinates click area
+static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
+
+// Helper: Copy text to clipboard
+static bool CopyToClipboard(HWND hwnd, const std::wstring& text) {
+    if (!OpenClipboard(hwnd)) return false;
+    EmptyClipboard();
+    size_t size = (text.length() + 1) * sizeof(wchar_t);
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (hMem) {
+        memcpy(GlobalLock(hMem), text.c_str(), size);
+        GlobalUnlock(hMem);
+        SetClipboardData(CF_UNICODETEXT, hMem);
+    }
+    CloseClipboard();
+    return hMem != nullptr;
+}
+
+// Helper: Format bytes with thousand separators (e.g., 1,138,997 B)
+static std::wstring FormatBytesWithCommas(UINT64 bytes) {
+    std::wstring num = std::to_wstring(bytes);
+    int insertPos = (int)num.length() - 3;
+    while (insertPos > 0) {
+        num.insert(insertPos, L",");
+        insertPos -= 3;
+    }
+    return num + L" B";
+}
+
+// ============================================================================
+// UI Grid System - Data-Driven Info Panel
+// ============================================================================
+
+enum class TruncateMode {
+    None,           // No truncation
+    EndEllipsis,    // End truncation: "Canon EF 24-70mm..."
+    MiddleEllipsis, // Middle truncation: "Project_A...Final.psd"
+};
+
+struct InfoRow {
+    std::wstring icon;       // Emoji icon (e.g., "📄")
+    std::wstring label;      // Label (e.g., "文件")
+    std::wstring valueMain;  // Main value (e.g., "f/1.6")
+    std::wstring valueSub;   // Secondary value in gray (e.g., "(1,138,997 B)")
+    std::wstring fullText;   // Full text for tooltip
+    
+    TruncateMode mode = TruncateMode::EndEllipsis;
+    bool isClickable = false;
+    
+    // Runtime (calculated during layout)
+    D2D1_RECT_F hitRect = {};
+    std::wstring displayText; // Truncated display text
+    bool isTruncated = false;
+};
+
+// Grid state
+static std::vector<InfoRow> g_infoGrid;
+static int g_hoverRowIndex = -1; // -1 = no hover
+static POINT g_lastMousePos = {};
+
+// Grid layout constants
+static const float GRID_ICON_WIDTH = 20.0f;
+static const float GRID_LABEL_WIDTH = 55.0f;
+static const float GRID_ROW_HEIGHT = 18.0f;
+static const float GRID_PADDING = 8.0f;
+
+static float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format);
+
+// Smart truncation: measure text width and truncate accordingly
+static std::wstring MakeMiddleEllipsis(IDWriteTextFormat* format, float maxWidth, const std::wstring& text) {
+    if (text.empty() || !format || !g_renderEngine) return text;
+    
+    float fullWidth = MeasureTextWidth(text, format);
+    if (fullWidth <= maxWidth) return text;
+    
+    // Binary search for optimal truncation
+    float ellipsisWidth = MeasureTextWidth(L"...", format);
+    float availWidth = maxWidth - ellipsisWidth;
+    if (availWidth <= 0) return L"...";
+    
+    // Approximate: keep 1/3 at start, 2/3 at end
+    size_t total = text.length();
+    size_t keepStart = total / 3;
+    size_t keepEnd = total / 2;
+    
+    // Refine by measuring
+    for (int i = 0; i < 5; i++) { // Max 5 iterations
+        std::wstring candidate = text.substr(0, keepStart) + L"..." + text.substr(total - keepEnd);
+        float width = MeasureTextWidth(candidate, format);
+        if (width <= maxWidth) {
+            return candidate;
+        }
+        keepStart = keepStart * 9 / 10;
+        keepEnd = keepEnd * 9 / 10;
+        if (keepStart < 3 || keepEnd < 3) break;
+    }
+    
+    // Fallback: very short
+    if (total > 10) {
+        return text.substr(0, 4) + L"..." + text.substr(total - 4);
+    }
+    return text.substr(0, 3) + L"...";
+}
+
+static std::wstring MakeEndEllipsis(IDWriteTextFormat* format, float maxWidth, const std::wstring& text) {
+    if (text.empty() || !format || !g_renderEngine) return text;
+    
+    float fullWidth = MeasureTextWidth(text, format);
+    if (fullWidth <= maxWidth) return text;
+    
+    float ellipsisWidth = MeasureTextWidth(L"...", format);
+    float availWidth = maxWidth - ellipsisWidth;
+    if (availWidth <= 0) return L"...";
+    
+    // Binary search
+    size_t lo = 0, hi = text.length();
+    while (lo < hi) {
+        size_t mid = (lo + hi + 1) / 2;
+        float w = MeasureTextWidth(text.substr(0, mid), format);
+        if (w <= availWidth) lo = mid;
+        else hi = mid - 1;
+    }
+    
+    if (lo > 0) return text.substr(0, lo) + L"...";
+    return L"...";
+}
+
+
 
 static float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) {
     if (text.empty() || !format) return 0.0f;
@@ -1064,9 +1192,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_CLOSE: if (!CheckUnsavedChanges(hwnd)) return 0; DestroyWindow(hwnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     
-    // Mouse Interaction
-    case WM_MOUSEMOVE: {
-         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+     // Mouse Interaction
+     case WM_MOUSEMOVE: {
+          // Force redraw for smooth tooltip/hover when info panel is active
+          if (g_config.ShowInfoPanel) {
+              InvalidateRect(hwnd, nullptr, FALSE);
+          }
+          
+          POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
          // Update Button Hover
          WindowHit oldHit = g_winControls.HoverState;
          g_winControls.HoverState = WindowHit::None;
@@ -1203,7 +1336,52 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  return 0;
              }
              
-             // 3. GPS Link (Bing Maps) - Only if Expanded
+             // 3. Grid Row Click (Copy to Clipboard)
+             if (g_config.InfoPanelExpanded) {
+                 float mx = (float)pt.x;
+                 float my = (float)pt.y;
+                 for (const auto& row : g_infoGrid) {
+                     if (mx >= row.hitRect.left && mx <= row.hitRect.right &&
+                         my >= row.hitRect.top && my <= row.hitRect.bottom) {
+                         
+                         std::wstring textToCopy = row.fullText.empty() ? row.valueMain : row.valueMain; // Prefer Main or Full? 
+                         // Logic: If truncated, fullText usually holds untruncated. If unique (like filename), fullText holds basename. 
+                         // Let's use fullText if available and different?
+                         // Actually:
+                         // File: fullText = basename
+                         // Size: fullText = ""
+                         // Lens: fullText = lens name
+                         // So fullText is good. If empty, use valueMain.
+                         if (!row.fullText.empty()) textToCopy = row.fullText;
+                         else textToCopy = row.valueMain;
+                         
+                         // Special case: File -> Full Path
+                         if (row.label == L"File") textToCopy = g_imagePath;
+                         
+                         if (CopyToClipboard(hwnd, textToCopy)) {
+                             g_osd.Show(L"Copied!", false);
+                         }
+                         InvalidateRect(hwnd, nullptr, FALSE); // For visual feedback if we add click effect later
+                         return 0;
+                     }
+                 }
+             }
+             
+             // 3. GPS Coordinates (Click to Copy)
+             if (g_config.InfoPanelExpanded && g_currentMetadata.HasGPS) {
+                 if (pt.x >= g_gpsCoordRect.left && pt.x <= g_gpsCoordRect.right &&
+                     pt.y >= g_gpsCoordRect.top && pt.y <= g_gpsCoordRect.bottom) {
+                     wchar_t coordBuf[128];
+                     swprintf_s(coordBuf, L"%.6f, %.6f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
+                     if (CopyToClipboard(hwnd, coordBuf)) {
+                         g_osd.Show(L"Coordinates copied!", false);
+                     }
+                     InvalidateRect(hwnd, nullptr, FALSE);
+                     return 0;
+                 }
+             }
+             
+             // 4. GPS Link (Bing Maps) - Only if Expanded
              if (g_config.InfoPanelExpanded && g_currentMetadata.HasGPS) {
                  if (pt.x >= g_gpsLinkRect.left && pt.x <= g_gpsLinkRect.right &&
                      pt.y >= g_gpsLinkRect.top && pt.y <= g_gpsLinkRect.bottom) {
@@ -1211,6 +1389,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      // Bing Maps URL format
                      swprintf_s(url, L"https://www.bing.com/maps?where1=%.6f%%2C%.6f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
                      ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+                     return 0;
+                 }
+             }
+             
+             // 5. Filename (Click to Copy) - Only if Expanded
+             if (g_config.InfoPanelExpanded) {
+                 if (pt.x >= g_filenameRect.left && pt.x <= g_filenameRect.right &&
+                     pt.y >= g_filenameRect.top && pt.y <= g_filenameRect.bottom) {
+                     std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
+                     if (CopyToClipboard(hwnd, filename)) {
+                         g_osd.Show(L"Filename copied!", false);
+                     }
+                     InvalidateRect(hwnd, nullptr, FALSE);
                      return 0;
                  }
              }
@@ -1369,6 +1560,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_RBUTTONUP: {
         // Show context menu
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        ClientToScreen(hwnd, &pt);
         ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, false, g_config.LockWindowSize, g_config.ShowInfoPanel);
         return 0;
     }
@@ -1672,11 +1864,11 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     
     // 1. Check Prefetch Cache (Main Thread)
     ComPtr<IWICBitmap> wicMemoryBitmap;
+    bool usedPrefetchCache = false;
     if (path == g_prefetchedPath && g_prefetchedBitmap) {
         wicMemoryBitmap = g_prefetchedBitmap;
-        // Consume cache (optional: keep it? No, we might move away. clear it or keep until overwritten?)
-        // If we keep it, we don't need to reload if user goes back/forth quickly.
-        // But for now, let's just use it.
+        usedPrefetchCache = true;
+        // Note: FormatDetails from prefetch may be stale, will be cleared later
     }
 
     // 2. If Miss, Load from Disk
@@ -1723,6 +1915,16 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         }
         
         g_currentMetadata = tempMetadata;
+        // FormatDetails: only valid if freshly loaded (not from prefetch cache)
+        if (usedPrefetchCache) {
+            g_currentMetadata.FormatDetails.clear(); // Prefetch doesn't preserve format details
+            g_currentMetadata.LoaderName = L"Prefetch Cache";
+            g_currentMetadata.LoadTimeMs = 0;
+        } else {
+            g_currentMetadata.FormatDetails = g_imageLoader->GetLastFormatDetails();
+            g_currentMetadata.LoaderName = loaderName;
+            g_currentMetadata.LoadTimeMs = duration;
+        }
 
         // Update Title with Performance Info AND Compact Metadata
         // Format: "filename.ext - [Metadata Compact] - QuickView"
@@ -1732,22 +1934,23 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         wchar_t titleBuf[1024];
         swprintf_s(titleBuf, L"%s - %s (%lu ms) - %s", filename.c_str(), loaderName.c_str(), duration, g_szWindowTitle);
         SetWindowTextW(hwnd, titleBuf);
-
-        // ALSO Show on OSD (Since title bar often hidden)
-        // Format for OSD: "Loader: [LoaderName] ([Time] ms)"
-        wchar_t osdBuf[256];
-        swprintf_s(osdBuf, L"Back: %s | Time: %lu ms", loaderName.c_str(), duration);
-        g_osd.Show(osdBuf, false);
+        // Decoder info now shown in Info Panel instead of OSD
     }
     else {
-        // Cache Hit
+        // Cache Hit - still need to load metadata
+        CImageLoader::ImageMetadata tempMetadata;
+        g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
+        g_currentMetadata = tempMetadata;
+        g_currentMetadata.LoaderName = L"Prefetch Cache";
+        g_currentMetadata.LoadTimeMs = 0;
+        g_currentMetadata.FormatDetails.clear(); // Prefetch doesn't preserve format details
+        
         size_t lastSlash = path.find_last_of(L"\\/");
         std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
         wchar_t titleBuf[512];
         swprintf_s(titleBuf, L"%s - Prefetch Cache (0 ms) - %s", filename.c_str(), g_szWindowTitle);
         SetWindowTextW(hwnd, titleBuf);
-        
-        g_osd.Show(L"Loaded from Cache (Immediate)", false);
+        // Decoder info now shown in Info Panel instead of OSD
     }
 
     // 3. Upload to GPU
@@ -1804,40 +2007,46 @@ void Navigate(HWND hwnd, int direction) {
 }
 
 void DrawHistogram(ID2D1DeviceContext* context, const CImageLoader::ImageMetadata& meta, D2D1_RECT_F rect) {
-    if (meta.HistL.empty()) return;
+    if (meta.HistR.empty()) return; // Need RGB data
     
-    // Normalize logic
-    uint32_t maxVal = 0;
-    for (uint32_t v : meta.HistL) if (v > maxVal) maxVal = v;
-    if (maxVal == 0) maxVal = 1;
-    
-    // Create Path
-    ComPtr<ID2D1PathGeometry> path;
-    g_renderEngine->m_d2dFactory->CreatePathGeometry(&path);
-    ComPtr<ID2D1GeometrySink> sink;
-    path->Open(&sink);
+    // Find max across all channels for consistent scaling
+    uint32_t maxVal = 1;
+    for (int i = 0; i < 256; i++) {
+        if (meta.HistR[i] > maxVal) maxVal = meta.HistR[i];
+        if (meta.HistG[i] > maxVal) maxVal = meta.HistG[i];
+        if (meta.HistB[i] > maxVal) maxVal = meta.HistB[i];
+    }
     
     float stepX = (rect.right - rect.left) / 256.0f;
     float bottom = rect.bottom;
     float height = rect.bottom - rect.top;
     
-    sink->BeginFigure(D2D1::Point2F(rect.left, bottom), D2D1_FIGURE_BEGIN_FILLED);
+    // Helper lambda to draw a single channel
+    auto drawChannel = [&](const std::vector<uint32_t>& hist, D2D1::ColorF color) {
+        ComPtr<ID2D1PathGeometry> path;
+        g_renderEngine->m_d2dFactory->CreatePathGeometry(&path);
+        ComPtr<ID2D1GeometrySink> sink;
+        path->Open(&sink);
+        
+        sink->BeginFigure(D2D1::Point2F(rect.left, bottom), D2D1_FIGURE_BEGIN_FILLED);
+        for (int i = 0; i < 256; i++) {
+            float val = (float)hist[i] / maxVal;
+            float y = bottom - val * height;
+            sink->AddLine(D2D1::Point2F(rect.left + i * stepX, y));
+        }
+        sink->AddLine(D2D1::Point2F(rect.right, bottom));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->Close();
+        
+        ComPtr<ID2D1SolidColorBrush> brush;
+        context->CreateSolidColorBrush(color, &brush);
+        context->FillGeometry(path.Get(), brush.Get());
+    };
     
-    for (int i = 0; i < 256; i++) {
-        float val = (float)meta.HistL[i] / maxVal; // Normalized 0..1
-        // Logarithmic scale often better? Linear for now.
-        float y = bottom - val * height;
-        sink->AddLine(D2D1::Point2F(rect.left + i * stepX, y));
-    }
-    
-    sink->AddLine(D2D1::Point2F(rect.right, bottom));
-    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    sink->Close();
-    
-    ComPtr<ID2D1SolidColorBrush> brush;
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), &brush);
-    context->FillGeometry(path.Get(), brush.Get());
-    context->DrawGeometry(path.Get(), brush.Get(), 1.0f);
+    // Draw RGB with semi-transparency (order: B, G, R for nice overlap)
+    drawChannel(meta.HistB, D2D1::ColorF(0.0f, 0.4f, 1.0f, 0.4f));  // Blue
+    drawChannel(meta.HistG, D2D1::ColorF(0.2f, 0.9f, 0.3f, 0.4f));  // Green
+    drawChannel(meta.HistR, D2D1::ColorF(1.0f, 0.3f, 0.3f, 0.4f));  // Red
 }
 
 void DrawCompactInfo(ID2D1DeviceContext* context) {
@@ -1848,6 +2057,10 @@ void DrawCompactInfo(ID2D1DeviceContext* context) {
             L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 
             13.0f, L"en-us", &g_pPanelTextFormat
         );
+        // Set no-wrap mode to prevent long filenames from wrapping
+        if (g_pPanelTextFormat) {
+            g_pPanelTextFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
     }
     
     std::wstring info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
@@ -1886,25 +2099,205 @@ void DrawCompactInfo(ID2D1DeviceContext* context) {
     context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
     context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), rect, brushText.Get());
 
-    // Expand Button [ + ]
-    g_panelToggleRect = D2D1::RectF(rect.right + 5, rect.top, rect.right + 30, rect.bottom);
+    // Expand Button [+] - Yellow with shadow
+    g_panelToggleRect = D2D1::RectF(rect.right + 8, rect.top, rect.right + 38, rect.bottom);
     
-    // Box
-    ComPtr<ID2D1SolidColorBrush> brushBtnBg;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.2f, 0.2f, 0.5f), &brushBtnBg);
-    context->FillRoundedRectangle(D2D1::RoundedRect(g_panelToggleRect, 3.0f, 3.0f), brushBtnBg.Get());
-    context->DrawRoundedRectangle(D2D1::RoundedRect(g_panelToggleRect, 3.0f, 3.0f), brushText.Get(), 1.0f);
+    // Shadow
+    D2D1_RECT_F shadowRect1 = D2D1::RectF(g_panelToggleRect.left + 1, g_panelToggleRect.top + 1, g_panelToggleRect.right + 1, g_panelToggleRect.bottom + 1);
+    context->DrawTextW(L"[+]", 3, g_pPanelTextFormat.Get(), shadowRect1, brushShadow.Get());
     
-    // Icon
-    context->DrawTextW(L"+", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelToggleRect.left + 4, g_panelToggleRect.top, g_panelToggleRect.right, g_panelToggleRect.bottom), brushText.Get());
+    ComPtr<ID2D1SolidColorBrush> brushYellow;
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.85f, 0.0f), &brushYellow); // Warm yellow
+    context->DrawTextW(L"[+]", 3, g_pPanelTextFormat.Get(), g_panelToggleRect, brushYellow.Get());
     
-    // Close Button [ X ]
-    g_panelCloseRect = D2D1::RectF(g_panelToggleRect.right + 5, rect.top, g_panelToggleRect.right + 30, rect.bottom);
+    // Close Button [x] - Red with shadow
+    g_panelCloseRect = D2D1::RectF(g_panelToggleRect.right + 5, rect.top, g_panelToggleRect.right + 35, rect.bottom);
     
-    context->FillRoundedRectangle(D2D1::RoundedRect(g_panelCloseRect, 3.0f, 3.0f), brushBtnBg.Get());
-    context->DrawRoundedRectangle(D2D1::RoundedRect(g_panelCloseRect, 3.0f, 3.0f), brushText.Get(), 1.0f);
+    // Shadow
+    D2D1_RECT_F shadowRect2 = D2D1::RectF(g_panelCloseRect.left + 1, g_panelCloseRect.top + 1, g_panelCloseRect.right + 1, g_panelCloseRect.bottom + 1);
+    context->DrawTextW(L"[x]", 3, g_pPanelTextFormat.Get(), shadowRect2, brushShadow.Get());
     
-    context->DrawTextW(L"x", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelCloseRect.left + 5, g_panelCloseRect.top, g_panelCloseRect.right, g_panelCloseRect.bottom), brushText.Get());
+    ComPtr<ID2D1SolidColorBrush> brushRed;
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f), &brushRed); // Soft red
+    context->DrawTextW(L"[x]", 3, g_pPanelTextFormat.Get(), g_panelCloseRect, brushRed.Get());
+}
+
+// ============================================================================
+// Grid-Based Info Panel System
+// ============================================================================
+
+// Build info grid data from current metadata
+void BuildInfoGrid() {
+    g_infoGrid.clear();
+    
+    // Row 1: Filename
+    std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
+    g_infoGrid.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
+    
+    // Row 2: Dimensions + Megapixels
+    if (g_currentMetadata.Width > 0) {
+        UINT64 totalPixels = (UINT64)g_currentMetadata.Width * g_currentMetadata.Height;
+        double megapixels = totalPixels / 1000000.0;
+        wchar_t dimBuf[64];
+        // Use 'x' instead of multiplication sign to avoid mojibake
+        swprintf_s(dimBuf, L"%u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
+        wchar_t mpBuf[32];
+        swprintf_s(mpBuf, L"(%.1f MP)", megapixels);
+        g_infoGrid.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
+    }
+    
+    // Row 3: File Size
+    if (g_currentMetadata.FileSize > 0) {
+        UINT64 bytes = g_currentMetadata.FileSize;
+        wchar_t sizeBuf[32];
+        if (bytes >= 1024 * 1024) {
+            swprintf_s(sizeBuf, L"%.2f MB", bytes / (1024.0 * 1024.0));
+        } else if (bytes >= 1024) {
+            swprintf_s(sizeBuf, L"%.2f KB", bytes / 1024.0);
+        } else {
+            swprintf_s(sizeBuf, L"%llu B", bytes);
+        }
+        std::wstring sub = L"(" + FormatBytesWithCommas(bytes) + L")";
+        std::wstring extra = g_currentMetadata.FormatDetails.empty() ? L"" : L" [" + g_currentMetadata.FormatDetails + L"]";
+        g_infoGrid.push_back({L"\U0001F4BE", L"Disk", std::wstring(sizeBuf) + extra, sub, L"", TruncateMode::None, false});
+    }
+    
+    // Row 4: Date
+    if (!g_currentMetadata.Date.empty()) {
+        g_infoGrid.push_back({L"\U0001F4C5", L"Date", g_currentMetadata.Date, L"", L"", TruncateMode::EndEllipsis, false});
+    }
+    
+    // Row 5: Camera
+    if (!g_currentMetadata.Make.empty()) {
+        std::wstring camera = g_currentMetadata.Make + L" " + g_currentMetadata.Model;
+        g_infoGrid.push_back({L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false});
+    }
+    
+    // Row 6: Exposure (ISO + Aperture + Shutter + Bias)
+    if (!g_currentMetadata.ISO.empty()) {
+        std::wstring exp = L"ISO " + g_currentMetadata.ISO + L"  " + g_currentMetadata.Aperture + L"  " + g_currentMetadata.Shutter;
+        std::wstring sub = g_currentMetadata.ExposureBias.empty() ? L"" : g_currentMetadata.ExposureBias;
+        g_infoGrid.push_back({L"\U000026A1", L"Exp", exp, sub, exp + L" " + sub, TruncateMode::EndEllipsis, false});
+    }
+    
+    // Row 7: Lens
+    if (!g_currentMetadata.Lens.empty()) {
+        g_infoGrid.push_back({L"\U0001F52D", L"Lens", g_currentMetadata.Lens, L"", g_currentMetadata.Lens, TruncateMode::EndEllipsis, false});
+    }
+    
+    // Row 8: Focal
+    if (!g_currentMetadata.Focal.empty()) {
+        g_infoGrid.push_back({L"\U0001F3AF", L"Focal", g_currentMetadata.Focal, L"", L"", TruncateMode::None, false});
+    }
+    
+    // Row 9: Color Space
+    if (!g_currentMetadata.ColorSpace.empty()) {
+        g_infoGrid.push_back({L"\U0001F3A8", L"Color", g_currentMetadata.ColorSpace, L"", L"", TruncateMode::None, false});
+    }
+    
+    // Row 10: Decoder
+    if (!g_currentMetadata.LoaderName.empty()) {
+        wchar_t timeBuf[32];
+        swprintf_s(timeBuf, L"(%lu ms)", g_currentMetadata.LoadTimeMs);
+        g_infoGrid.push_back({L"\U00002699", L"Decode", g_currentMetadata.LoaderName, timeBuf, L"", TruncateMode::None, false});
+    }
+    
+    // Row 11: Software
+    if (!g_currentMetadata.Software.empty()) {
+        g_infoGrid.push_back({L"\U0001F4BB", L"Soft", g_currentMetadata.Software, L"", g_currentMetadata.Software, TruncateMode::EndEllipsis, false});
+    }
+}
+
+// Layout and draw the info grid
+void DrawInfoGrid(ID2D1DeviceContext* context, float startX, float startY, float width) {
+    if (g_infoGrid.empty()) return;
+    
+    ComPtr<ID2D1SolidColorBrush> brushWhite, brushGray, brushHover;
+    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushWhite);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.6f, 0.6f, 0.65f), &brushGray);
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &brushHover);
+    
+    float valueColStart = startX + GRID_ICON_WIDTH + GRID_LABEL_WIDTH;
+    float valueColWidth = width - GRID_ICON_WIDTH - GRID_LABEL_WIDTH - GRID_PADDING;
+    float y = startY;
+    
+    for (size_t i = 0; i < g_infoGrid.size(); i++) {
+        auto& row = g_infoGrid[i];
+        
+        // Calculate hit rect (for tooltip and click)
+        row.hitRect = D2D1::RectF(startX, y, startX + width, y + GRID_ROW_HEIGHT);
+        
+        // Hover highlight
+        if ((int)i == g_hoverRowIndex) {
+            context->FillRectangle(row.hitRect, brushHover.Get());
+        }
+        
+        // Icon column
+        D2D1_RECT_F iconRect = D2D1::RectF(startX, y, startX + GRID_ICON_WIDTH, y + GRID_ROW_HEIGHT);
+        context->DrawTextW(row.icon.c_str(), (UINT32)row.icon.length(), g_pPanelTextFormat.Get(), iconRect, brushWhite.Get());
+        
+        // Label column (gray)
+        D2D1_RECT_F labelRect = D2D1::RectF(startX + GRID_ICON_WIDTH, y, valueColStart, y + GRID_ROW_HEIGHT);
+        context->DrawTextW(row.label.c_str(), (UINT32)row.label.length(), g_pPanelTextFormat.Get(), labelRect, brushGray.Get());
+        
+        // Value column - apply truncation
+        float subWidth = row.valueSub.empty() ? 0 : MeasureTextWidth(row.valueSub, g_pPanelTextFormat.Get()) + 5;
+        float mainMaxWidth = valueColWidth - subWidth;
+        
+        if (row.mode == TruncateMode::MiddleEllipsis) {
+            row.displayText = MakeMiddleEllipsis(g_pPanelTextFormat.Get(), mainMaxWidth, row.valueMain);
+        } else if (row.mode == TruncateMode::EndEllipsis) {
+            row.displayText = MakeEndEllipsis(g_pPanelTextFormat.Get(), mainMaxWidth, row.valueMain);
+        } else {
+            row.displayText = row.valueMain;
+        }
+        row.isTruncated = (row.displayText != row.valueMain);
+        
+        // Draw main value
+        D2D1_RECT_F valueRect = D2D1::RectF(valueColStart, y, valueColStart + mainMaxWidth, y + GRID_ROW_HEIGHT);
+        context->DrawTextW(row.displayText.c_str(), (UINT32)row.displayText.length(), g_pPanelTextFormat.Get(), valueRect, brushWhite.Get());
+        
+        // Draw sub value (gray, smaller feel)
+        if (!row.valueSub.empty()) {
+            D2D1_RECT_F subRect = D2D1::RectF(valueColStart + mainMaxWidth, y, startX + width, y + GRID_ROW_HEIGHT);
+            context->DrawTextW(row.valueSub.c_str(), (UINT32)row.valueSub.length(), g_pPanelTextFormat.Get(), subRect, brushGray.Get());
+        }
+        
+        y += GRID_ROW_HEIGHT;
+    }
+}
+
+// Draw tooltip for hovered row
+void DrawGridTooltip(ID2D1DeviceContext* context) {
+    if (g_hoverRowIndex < 0 || g_hoverRowIndex >= (int)g_infoGrid.size()) return;
+    
+    const auto& row = g_infoGrid[g_hoverRowIndex];
+    if (!row.isTruncated || row.fullText.empty()) return;
+    
+    float x = (float)g_lastMousePos.x + 10;
+    float y = (float)g_lastMousePos.y + 20;
+    
+    float textWidth = MeasureTextWidth(row.fullText, g_pPanelTextFormat.Get());
+    float padding = 6.0f;
+    float boxWidth = textWidth + padding * 2;
+    float boxHeight = 20.0f;
+    
+    D2D1_SIZE_F size = context->GetSize();
+    if (x + boxWidth > size.width - 10) x = size.width - boxWidth - 10;
+    if (y + boxHeight > size.height - 10) y = size.height - boxHeight - 10;
+    
+    D2D1_RECT_F boxRect = D2D1::RectF(x, y, x + boxWidth, y + boxHeight);
+    
+    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.1f, 0.12f, 0.95f), &brushBg);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.4f, 0.45f), &brushBorder);
+    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
+    
+    context->FillRoundedRectangle(D2D1::RoundedRect(boxRect, 4.0f, 4.0f), brushBg.Get());
+    context->DrawRoundedRectangle(D2D1::RoundedRect(boxRect, 4.0f, 4.0f), brushBorder.Get(), 1.0f);
+    
+    D2D1_RECT_F textRect = D2D1::RectF(x + padding, y + 2, x + boxWidth - padding, y + boxHeight);
+    context->DrawTextW(row.fullText.c_str(), (UINT32)row.fullText.length(), g_pPanelTextFormat.Get(), textRect, brushText.Get());
 }
 
 void DrawInfoPanel(ID2D1DeviceContext* context) {
@@ -1925,7 +2318,7 @@ void DrawInfoPanel(ID2D1DeviceContext* context) {
     float startX = 20.0f;
     float startY = 40.0f; 
     
-    if (g_currentMetadata.HasGPS) height += 30.0f;
+    if (g_currentMetadata.HasGPS) height += 50.0f;
     if (!g_currentMetadata.HistL.empty()) height += 100.0f;
     if (!g_currentMetadata.Software.empty()) height += 20.0f;
 
@@ -1949,70 +2342,79 @@ void DrawInfoPanel(ID2D1DeviceContext* context) {
     context->DrawTextW(L"-", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelToggleRect.left + 6, g_panelToggleRect.top, g_panelToggleRect.right, g_panelToggleRect.bottom), brushWhite.Get());
 
 
-
-    // Text Info
-    std::wstring info;
-    info += L"File: " + g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1) + L"\n";
-    info += L"Size: " + std::to_wstring(g_currentMetadata.Width) + L" x " + std::to_wstring(g_currentMetadata.Height);
-    if (g_currentMetadata.FileSize > 0) {
-        double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
-        wchar_t sz[32]; swprintf_s(sz, L"  (%.2f MB)", mb);
-        info += sz;
-    }
-    info += L"\n";
+    // === NEW: Grid-Based Info Panel ===
+    BuildInfoGrid();
+    float gridStartY = startY + 30.0f; // After buttons
+    float gridContentHeight = g_infoGrid.size() * GRID_ROW_HEIGHT;
+    DrawInfoGrid(context, startX + padding, gridStartY, width - padding * 2);
     
-    if (!g_currentMetadata.Date.empty()) info += L"Date: " + g_currentMetadata.Date + L"\n";
-    
-    if (!g_currentMetadata.Make.empty()) info += g_currentMetadata.Make + L" " + g_currentMetadata.Model + L"\n";
-    if (!g_currentMetadata.Software.empty()) info += L"Software: " + g_currentMetadata.Software + L"\n";
-    
-    if (!g_currentMetadata.ISO.empty()) {
-        info += L"ISO " + g_currentMetadata.ISO + L"  " + g_currentMetadata.Aperture + L"  " + g_currentMetadata.Shutter;
-        if (!g_currentMetadata.ExposureBias.empty()) info += L"  " + g_currentMetadata.ExposureBias;
-        info += L"\n";
-    }
-    
-    if (!g_currentMetadata.Lens.empty()) info += L"Lens: " + g_currentMetadata.Lens + L"\n";
-    if (!g_currentMetadata.Focal.empty()) info += L"Focal: " + g_currentMetadata.Focal + L"\n";
-    if (!g_currentMetadata.Flash.empty()) info += g_currentMetadata.Flash + L"\n";
-    
-    D2D1_RECT_F textRect = D2D1::RectF(startX + padding, startY + padding, startX + width - padding, startY + height - padding);
-    context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), textRect, brushWhite.Get());
+    // Calculate where histogram/GPS should start (after grid content)
     
     float currentY = startY + (height - (g_currentMetadata.HasGPS ? 130.0f : 100.0f)); 
     // Heuristic layout is tricky with variable lines. 
     // Re-calculating Y based on lines?
     // Let's use fixed offset from bottom for Histogram?
-    if (!g_currentMetadata.HistL.empty()) {
+    if (!g_currentMetadata.HistR.empty()) {
         float histH = 80.0f;
-        float histY = startY + height - padding - histH - (g_currentMetadata.HasGPS ? 30.0f : 0);
+        float histY = startY + height - padding - histH - (g_currentMetadata.HasGPS ? 50.0f : 0);
         DrawHistogram(context, g_currentMetadata, D2D1::RectF(startX + padding, histY, startX + width - padding, histY + histH));
     }
     
     // GPS
     g_gpsLinkRect = {}; 
     if (g_currentMetadata.HasGPS) {
-        float gpsY = startY + height - 35.0f;
+        float gpsY = startY + height - 55.0f;
+        
+        // Line 1: Coordinates (clickable to copy)
         wchar_t gpsBuf[128];
         swprintf_s(gpsBuf, L"GPS: %.5f, %.5f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
+        g_gpsCoordRect = D2D1::RectF(startX + padding, gpsY, startX + width - padding, gpsY + 18.0f);
+        context->DrawTextW(gpsBuf, (UINT32)wcslen(gpsBuf), g_pPanelTextFormat.Get(), g_gpsCoordRect, brushWhite.Get());
+        
+        // Line 2: Altitude and OpenMap
+        float line2Y = gpsY + 20.0f;
+        
+        // Altitude (if available)
         if (g_currentMetadata.Altitude != 0) {
-            wchar_t altBuf[32]; swprintf_s(altBuf, L"  Alt: %.0fm", g_currentMetadata.Altitude);
-            wcscat_s(gpsBuf, altBuf);
+            wchar_t altBuf[64]; swprintf_s(altBuf, L"Alt: %.1fm", g_currentMetadata.Altitude);
+            D2D1_RECT_F altRect = D2D1::RectF(startX + padding, line2Y, startX + width - 90, line2Y + 18.0f);
+            context->DrawTextW(altBuf, (UINT32)wcslen(altBuf), g_pPanelTextFormat.Get(), altRect, brushWhite.Get());
         }
         
-        D2D1_RECT_F gpsRect = D2D1::RectF(startX + padding, gpsY, startX + width - padding, gpsY + 20.0f);
-        context->DrawTextW(gpsBuf, (UINT32)wcslen(gpsBuf), g_pPanelTextFormat.Get(), gpsRect, brushWhite.Get());
-        
-        // Link Button
-        g_gpsLinkRect = D2D1::RectF(startX + width - 120.0f, gpsY, startX + width - padding, gpsY + 20.0f);
+        // Link Button - Right side
+        g_gpsLinkRect = D2D1::RectF(startX + width - 85.0f, line2Y, startX + width - padding, line2Y + 18.0f);
         ComPtr<ID2D1SolidColorBrush> brushLink;
         context->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.7f, 1.0f), &brushLink);
-        context->DrawTextW(L"Open Map (Bing)", 15, g_pPanelTextFormat.Get(), g_gpsLinkRect, brushLink.Get());
+        context->DrawTextW(L"OpenMap", 7, g_pPanelTextFormat.Get(), g_gpsLinkRect, brushLink.Get());
     }
 }
 
+
+
 void OnPaint(HWND hwnd) {
     if (!g_renderEngine) return;
+    
+    // Track mouse position and update grid hover state
+    POINT cursorPos;
+    GetCursorPos(&cursorPos);
+    ScreenToClient(hwnd, &cursorPos);
+    g_lastMousePos = cursorPos;
+    
+    // Check which grid row is being hovered
+    g_hoverRowIndex = -1;
+    if (g_config.InfoPanelExpanded && g_config.ShowInfoPanel) {
+        float x = (float)cursorPos.x;
+        float y = (float)cursorPos.y;
+        for (size_t i = 0; i < g_infoGrid.size(); i++) {
+            const auto& row = g_infoGrid[i];
+            if (x >= row.hitRect.left && x <= row.hitRect.right &&
+                y >= row.hitRect.top && y <= row.hitRect.bottom) {
+                g_hoverRowIndex = (int)i;
+                break;
+            }
+        }
+    }
+    
     g_renderEngine->BeginDraw();
     auto context = g_renderEngine->GetDeviceContext();
     if (context) {
@@ -2070,6 +2472,9 @@ void OnPaint(HWND hwnd) {
                  DrawCompactInfo(context);
              }
         }
+        
+        // Draw Tooltip (from grid hover)
+        DrawGridTooltip(context);
         
         DrawDialog(context, rect);
     }
