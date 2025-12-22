@@ -4,16 +4,17 @@
 // Icon Codes (Segoe Fluent Icons)
 #define ICON_PREV L"\uE76B"
 #define ICON_NEXT L"\uE76C"
-#define ICON_ROTATE_L L"\uE7AD" // Need to mirror? Or use Undo \uE7A9? Rotate is E7AD.
+#define ICON_ROTATE_L L"\uE7AD"
 #define ICON_ROTATE_R L"\uE7AD" 
-#define ICON_FLIP L"\uE840"
-#define ICON_LOCK L"\uE72E"
-#define ICON_UNLOCK L"\uE785"
+#define ICON_FLIP L"\uE8AB" // Mirror
+#define ICON_LOCK L"\uE9A6" // Lock icon (same for both states, color changes)
+#define ICON_UNLOCK L"\uE9A6"
 #define ICON_GALLERY L"\uE80A"
 #define ICON_INFO L"\uE946"
-#define ICON_RAW_PREV L"\uE7B3"
-#define ICON_RAW_FULL L"\uE890" 
+#define ICON_RAW L"\uE722" // RAW icon (same for both states, color changes)
 #define ICON_WARNING L"\uE7BA"
+#define ICON_PIN L"\uE718"
+#define ICON_UNPIN L"\uE77A"
 
 Toolbar::Toolbar() {
     // Define Buttons
@@ -25,12 +26,14 @@ Toolbar::Toolbar() {
         { ToolbarButtonID::RotateR,     ICON_ROTATE_R[0], L"Rotate Right (R)", {}, true },
         { ToolbarButtonID::FlipH,       ICON_FLIP[0], L"Flip Horizontal (H)", {}, true },
         
-        { ToolbarButtonID::LockSize,    ICON_UNLOCK[0], L"Lock Window Size", {}, true, false },
+        { ToolbarButtonID::LockSize,    ICON_LOCK[0], L"Lock Window Size", {}, true, false },
         { ToolbarButtonID::Gallery,     ICON_GALLERY[0], L"Gallery (T)", {}, true },
         
         { ToolbarButtonID::Exif,        ICON_INFO[0], L"Info Panel", {}, true, false },
-        { ToolbarButtonID::RawToggle,   ICON_RAW_PREV[0], L"RAW Preview (Fast)", {}, false, false }, // Hidden/Disabled if not RAW
-        { ToolbarButtonID::FixExtension, ICON_WARNING[0], L"Extension Mismatch (Fix)", {}, false, false, true } // Hidden if no mismatch
+        { ToolbarButtonID::RawToggle,   ICON_RAW[0], L"RAW Preview (Fast)", {}, false, false }, // Hidden/Disabled if not RAW
+        { ToolbarButtonID::FixExtension, ICON_WARNING[0], L"Extension Mismatch (Fix)", {}, false, false, true }, // Hidden if no mismatch
+        
+        { ToolbarButtonID::Pin,         ICON_PIN[0], L"Pin Toolbar", {}, true, false }
     };
 }
 
@@ -75,34 +78,19 @@ void Toolbar::Init(ID2D1RenderTarget* pRT) {
 }
 
 void Toolbar::UpdateLayout(float winW, float winH) {
-    // Calculate total width based on visible buttons
-    float visibleCount = 0;
-    for (const auto& btn : m_buttons) {
-        if (btn.isEnabled || btn.id == ToolbarButtonID::FixExtension && btn.isWarning) visibleCount++; 
-        // Logic: if not enabled, do we hide or dim?
-        // For Raw/Extension, we HIDE if not applicable.
-        // For Lock/Exif, we DIM/Active.
-        // Let's refine visibility logic in Render/Layout.
-    }
     
     // Simpler: Count visible buttons
-    float totalW = PADDING_X * 2;
-    int idx = 0;
-    for (auto& btn : m_buttons) {
-        // Condition to show:
+    int visibleCount = 0;
+    for (const auto& btn : m_buttons) {
         bool visible = true;
         if (btn.id == ToolbarButtonID::RawToggle && !btn.isEnabled) visible = false; 
         if (btn.id == ToolbarButtonID::FixExtension && !btn.isWarning) visible = false;
-        
-        if (visible) {
-            totalW += BUTTON_SIZE;
-            if (idx > 0) totalW += GAP;
-            idx++;
-        }
+        if (visible) visibleCount++;
     }
-    // Remove last gap logic handled by loop?
-    if (idx > 0) totalW -= GAP; // Correct for last gap
-    else totalW = PADDING_X * 2; // Empty?
+    
+    // Calculate total width: padding + buttons + gaps between buttons
+    float totalW = PADDING_X * 2 + (visibleCount * BUTTON_SIZE);
+    if (visibleCount > 1) totalW += (visibleCount - 1) * GAP;
 
     float startX = (winW - totalW) / 2.0f;
     float startY = winH - BOTTOM_MARGIN - BUTTON_SIZE - PADDING_Y * 2; 
@@ -120,6 +108,13 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         bool visible = true;
         if (btn.id == ToolbarButtonID::RawToggle && !btn.isEnabled) visible = false; 
         if (btn.id == ToolbarButtonID::FixExtension && !btn.isWarning) visible = false;
+        
+        // Sync Pin State
+        if (btn.id == ToolbarButtonID::Pin) {
+             btn.isToggled = m_isPinned;
+             btn.iconChar = m_isPinned ? ICON_UNPIN[0] : ICON_PIN[0];
+             btn.tooltip = m_isPinned ? L"Unpin Toolbar" : L"Pin Toolbar";
+        }
         
         if (visible) {
             btn.rect = D2D1::RectF(cx, cy, cx + BUTTON_SIZE, cy + BUTTON_SIZE);
@@ -156,9 +151,10 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
         for (const auto& btn : m_buttons) {
             if (btn.rect.right == 0) continue; // Hidden
             
-            // Hover effect
+            // Hover effect with rounded corners
             if (btn.isHovered) {
-                pRT->FillRectangle(btn.rect, m_brushHover.Get());
+                D2D1_ROUNDED_RECT hoverRect = D2D1::RoundedRect(btn.rect, 6.0f, 6.0f);
+                pRT->FillRoundedRectangle(hoverRect, m_brushHover.Get());
             }
             
             // Icon Brush
@@ -166,6 +162,7 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
             if (btn.isToggled) pBrush = m_brushIconActive.Get();
             if (btn.isWarning) pBrush = m_brushWarning.Get();
             if (btn.id == ToolbarButtonID::LockSize && btn.isToggled) pBrush = m_brushIconActive.Get();
+            if (btn.id == ToolbarButtonID::Pin && btn.isToggled) pBrush = m_brushIconActive.Get();
             
             // Specific Icon Logic
             wchar_t icon = btn.iconChar;
@@ -189,6 +186,39 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
         }
         
         pRT->PopLayer();
+    }
+    
+    // Tooltip for hovered button (rendered OUTSIDE layer for full opacity)
+    for (const auto& btn : m_buttons) {
+        if (btn.isHovered && !btn.tooltip.empty()) {
+            static ComPtr<IDWriteTextFormat> tooltipFormat;
+            if (!tooltipFormat && m_dwriteFactory) {
+                m_dwriteFactory->CreateTextFormat(
+                    L"Segoe UI", NULL,
+                    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                    12.0f, L"en-us", &tooltipFormat);
+                if (tooltipFormat) {
+                    tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    tooltipFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                }
+            }
+            
+            if (tooltipFormat) {
+                float tipWidth = btn.tooltip.length() * 7.0f + 16.0f;
+                float tipHeight = 22.0f;
+                float tipX = (btn.rect.left + btn.rect.right) / 2 - tipWidth / 2;
+                float tipY = m_bgRect.rect.top - tipHeight - 8.0f;
+                if (tipX < 5) tipX = 5;
+                
+                D2D1_RECT_F tipRect = D2D1::RectF(tipX, tipY, tipX + tipWidth, tipY + tipHeight);
+                
+                ComPtr<ID2D1SolidColorBrush> tipBg;
+                pRT->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f), &tipBg);
+                pRT->FillRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f, 4.0f), tipBg.Get());
+                pRT->DrawText(btn.tooltip.c_str(), (UINT32)btn.tooltip.length(), tooltipFormat.Get(), tipRect, m_brushIcon.Get());
+            }
+            break;
+        }
     }
 }
 
@@ -265,9 +295,8 @@ void Toolbar::SetLockState(bool locked) {
     for (auto& btn : m_buttons) {
         if (btn.id == ToolbarButtonID::LockSize) {
             btn.isToggled = locked;
-            btn.iconChar = locked ? ICON_LOCK[0] : ICON_UNLOCK[0];
-            btn.tooltip = locked ? L"Inlock Window Size" : L"Lock Window Size"; // Typo logic: Locked -> Unlock action? Or State?
-            // Usually icon shows state. Locked = Lock Icon.
+            // Icon stays the same (E9A6), only color changes via isToggled
+            btn.tooltip = locked ? L"Unlock Window Size" : L"Lock Window Size";
         }
     }
 }
@@ -286,7 +315,7 @@ void Toolbar::SetRawState(bool isRaw, bool isFullDecode) {
             btn.isEnabled = isRaw;
             if (isRaw) {
                 btn.isToggled = isFullDecode;
-                btn.iconChar = isFullDecode ? ICON_RAW_FULL[0] : ICON_RAW_PREV[0];
+                // Icon stays the same (E722), only color changes via isToggled
                 btn.tooltip = isFullDecode ? L"RAW: Full Decode (Click for Preview)" : L"RAW: Preview (Click for Full)";
             }
         }

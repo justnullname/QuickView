@@ -9,7 +9,8 @@ enum class ToolbarButtonID {
     Prev, Next, 
     RotateL, RotateR, FlipH, 
     LockSize, Gallery, 
-    Exif, RawToggle, FixExtension
+    Exif, RawToggle, FixExtension,
+    Pin // New Pin Button
 };
 
 struct ToolbarButton {
@@ -39,7 +40,9 @@ public:
     
     bool IsVisible() const { return m_opacity > 0.0f; }
     void SetVisible(bool visible); // Triggers animation logic external to this class?
-    // Actually, we can just set a target state and let UpdateAnimation be called by Timer.
+    // actually, we can just set a target state and let UpdateAnimation be called by Timer.
+    bool IsPinned() const { return m_isPinned; }
+    void TogglePin() { m_isPinned = !m_isPinned; }
     
     // Animation Step (returns true if still animating)
     bool UpdateAnimation(); 
@@ -60,7 +63,9 @@ private:
 
     // Animation
     float m_opacity = 0.0f;
+
     bool m_targetVisible = false;
+    bool m_isPinned = false;
     
     D2D1_ROUNDED_RECT m_bgRect = {};
     std::vector<ToolbarButton> m_buttons;

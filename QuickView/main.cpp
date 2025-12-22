@@ -107,6 +107,7 @@ static std::unique_ptr<CImageLoader> g_imageLoader;
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
 OSDState g_osd; // Removed static, explicitly Global
+DWORD g_toolbarHideTime = 0; // For auto-hide delay
 static DialogState g_dialog;
 static EditState g_editState;
 static AppConfig g_config;
@@ -348,13 +349,14 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     int msgLines = 1;
     
     float contentHeight = (titleLines * titleHeight) + (msgLines * messageHeight);
+    float qualityHeight = !g_dialog.QualityText.empty() ? 30.0f : 0.0f; // Add space for quality text
     float checkboxHeight = g_dialog.HasCheckbox ? 45.0f : 0.0f;
     float buttonsHeight = 55.0f;
-    float padding = 35.0f;
+    float padding = 45.0f; // Increased padding
     
-    float dlgH = padding + contentHeight + checkboxHeight + buttonsHeight + 20.0f; // Added buffer
-    if (dlgH < 160.0f) dlgH = 160.0f;  // Increased minimum height
-    if (dlgH > 350.0f) dlgH = 350.0f;  // Increased maximum height
+    float dlgH = padding + contentHeight + qualityHeight + checkboxHeight + buttonsHeight + 30.0f; // More buffer
+    if (dlgH < 200.0f) dlgH = 200.0f;  // Increased minimum height
+    if (dlgH > 400.0f) dlgH = 400.0f;  // Increased maximum height
     
     float left = (size.width - dlgW) / 2.0f;
     float top = (size.height - dlgH) / 2.0f;
@@ -502,20 +504,17 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         
     // Message (below title with proper spacing)
-    // Message (below title with proper spacing)
-    float msgTop = titleBottom + 15; // Increased spacing
-    // Dynamic bottom based on buttons
-    float buttonsTop = layout.Box.bottom - 55.0f; // Approx
-    if (!layout.Buttons.empty()) buttonsTop = layout.Buttons[0].top;
-    
-    float msgBottom = buttonsTop - 15.0f;
+    float msgTop = titleBottom + 8;
+    // Message ends 25px above QualityText
+    float msgBottom = layout.Checkbox.top - 55.0f;
     context->DrawText(g_dialog.Message.c_str(), (UINT32)g_dialog.Message.length(), fmtBody.Get(), 
         D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     
-    // Quality Info (Colored)
+    // Quality Info (Colored) - positioned with more space above checkbox
     if (!g_dialog.QualityText.empty()) {
+        float qualityY = layout.Checkbox.top - 45.0f; // 45px above checkbox
         context->DrawText(g_dialog.QualityText.c_str(), (UINT32)g_dialog.QualityText.length(), fmtBody.Get(), 
-            D2D1::RectF(layout.Box.left + 30, layout.Box.top + 130, layout.Box.right - 30, layout.Box.top + 160), pBorderBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            D2D1::RectF(layout.Box.left + 30, qualityY, layout.Box.right - 30, qualityY + 25), pBorderBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
         
     // Checkbox
@@ -916,6 +915,11 @@ bool SaveCurrentImage(bool saveAs) {
 bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format) {
     if (path.empty() || format.empty()) return false;
     
+    // Skip .tmp files (temporary files during editing)
+    std::wstring pathLower = path;
+    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+    if (pathLower.ends_with(L".tmp")) return false;
+    
     size_t lastDot = path.find_last_of(L'.');
     if (lastDot == std::wstring::npos) return true; // No extension is a mismatch (technically)
     
@@ -942,13 +946,18 @@ bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format
 }
 
 void DiscardChanges() {
+    // Save original path BEFORE reset (Reset clears it)
+    std::wstring originalPath = g_editState.OriginalFilePath;
+    
     if (g_editState.IsDirty && !g_editState.TempFilePath.empty()) {
         ReleaseImageResources();
         if (!DeleteFileW(g_editState.TempFilePath.c_str())) { Sleep(100); DeleteFileW(g_editState.TempFilePath.c_str()); }
     }
     g_editState.Reset();
-    if (!g_imagePath.empty()) {
-        if (!g_editState.OriginalFilePath.empty()) g_imagePath = g_editState.OriginalFilePath;
+    
+    // Restore to original file path if we had one
+    if (!originalPath.empty()) {
+        g_imagePath = originalPath;
         ReloadCurrentImage(GetActiveWindow());
     }
 }
@@ -959,8 +968,8 @@ bool CheckUnsavedChanges(HWND hwnd) {
     
     std::vector<DialogButton> buttons = {
         { DialogResult::Yes, AppStrings::Dialog_ButtonSave, true },
-        { DialogResult::No, AppStrings::Dialog_ButtonSaveAs },
-        { DialogResult::Cancel, AppStrings::Dialog_ButtonDiscard }
+        { DialogResult::Custom1, AppStrings::Dialog_ButtonSaveAs },
+        { DialogResult::No, AppStrings::Dialog_ButtonDiscard }
     };
     
     const wchar_t* checkboxLabel = AppStrings::Checkbox_AlwaysSaveLossless;
@@ -986,8 +995,9 @@ bool CheckUnsavedChanges(HWND hwnd) {
     }
     
     if (result == DialogResult::Yes) return SaveCurrentImage(false);
-    if (result == DialogResult::No) return SaveCurrentImage(true);
-    if (result == DialogResult::Cancel) { DiscardChanges(); return true; }
+    if (result == DialogResult::Custom1) return SaveCurrentImage(true);
+    if (result == DialogResult::No) { DiscardChanges(); return true; }
+    if (result == DialogResult::Cancel) return false;
     
     return false;
 }
@@ -1064,6 +1074,10 @@ void ReloadCurrentImage(HWND hwnd) {
 
 void PerformTransform(HWND hwnd, TransformType type) {
     if (g_imagePath.empty()) return;
+    
+    // Set Wait Cursor
+    HCURSOR hOldCursor = SetCursor(LoadCursor(nullptr, IDC_WAIT));
+
     if (!g_editState.IsDirty && g_editState.OriginalFilePath.empty()) {
         g_editState.OriginalFilePath = g_imagePath;
         g_editState.TempFilePath = g_imagePath + L".rotating.tmp";
@@ -1075,6 +1089,9 @@ void PerformTransform(HWND hwnd, TransformType type) {
     
     if (CLosslessTransform::IsJPEG(inputPath)) result = CLosslessTransform::TransformJPEG(inputPath, outputPath, type);
     else result = CLosslessTransform::TransformGeneric(inputPath, outputPath, type);
+    
+    // Restore Cursor
+    SetCursor(hOldCursor);
     
     if (result.Success) {
         if (type == TransformType::Rotate90CW) g_editState.TotalRotation = (g_editState.TotalRotation + 90) % 360;
@@ -1207,7 +1224,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // Toolbar Animation Timer (997)
         if (wParam == 997) {
-            if (g_toolbar.UpdateAnimation()) {
+            // Auto-Hide Delay Logic
+            if (g_toolbarHideTime > 0 && (GetTickCount() - g_toolbarHideTime > 2000)) {
+                 if (!g_toolbar.IsPinned()) g_toolbar.SetVisible(false);
+            }
+            
+            bool animating = g_toolbar.UpdateAnimation();
+            
+            // Keep timer alive if motivating factor exists (Animation OR Pending Hide)
+            if (animating || (g_toolbar.IsVisible() && !g_toolbar.IsPinned() && g_toolbarHideTime > 0)) {
                 InvalidateRect(hwnd, nullptr, FALSE);
             } else {
                 KillTimer(hwnd, 997);
@@ -1274,7 +1299,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
           
           if (g_gallery.IsVisible()) {
-<<<<<<< HEAD
+
               g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
               InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
           }
@@ -1282,28 +1307,39 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           // Toolbar Trigger
           RECT rc; GetClientRect(hwnd, &rc);
           float winH = (float)(rc.bottom - rc.top);
-          bool showToolbar = (pt.y > winH - 60.0f);
+          float zoneHeight = g_toolbar.IsVisible() ? 100.0f : 60.0f; // Expanded zone if visible
+          bool inZone = (pt.y > winH - zoneHeight);
           
-          // Also keep visible if hovering toolbar itself (handled by OnMouseMove internally?)
-          // No, Toolbar needs explicit visibility target.
-          // Toolbar::OnMouseMove updates internal hover state on buttons.
+          static DWORD s_hideRequestTime = 0;
+          
+          if (inZone || g_toolbar.IsPinned()) {
+              g_toolbar.SetVisible(true);
+              s_hideRequestTime = 0;
+          } else {
+              // Outside zone and not pinned
+              if (g_toolbar.IsVisible() && s_hideRequestTime == 0) {
+                  s_hideRequestTime = GetTickCount(); // Start countdown
+              }
+          }
+           
+          // Pass intent to Timer:
+          // We can't pass 's_hideRequestTime' to Timer easily without global.
+          // Let's use a static variable in main.cpp scope or just a global.
+          // For now, let's just use SetVisible(false) here IF the delay was short, but for 2s delay we need Timer.
+          // Let's store s_hideRequestTime in a global "g_toolbarHideTime" for simplicity.
+          extern DWORD g_toolbarHideTime; // Defined in global scope
+          g_toolbarHideTime = s_hideRequestTime; 
+
           g_toolbar.OnMouseMove((float)pt.x, (float)pt.y);
           
-          g_toolbar.SetVisible(showToolbar); 
-          // Start animation timer if state changed? 
-          // Or just ensure timer is running if opacity is not target.
-          // Let's assume SetVisible sets dirty flag.
-          // We need to start timer 997.
-          SetTimer(hwnd, 997, 16, nullptr);         
-
-=======
-              g_gallery.OnMouseMove(pt.x, pt.y);
-              InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
+          // Set hand cursor when hovering toolbar buttons
+          if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
+              SetCursor(LoadCursor(nullptr, IDC_HAND));
           }
-
->>>>>>> 8caba7f2d39df4061fd302778c5dee7b412955be
-          // Force redraw for smooth tooltip/hover when info panel is active
-          if (g_config.ShowInfoPanel) {
+          
+          SetTimer(hwnd, 997, 16, nullptr); // Drive animation/latency logic
+          // Force redraw for hover effects when toolbar is visible
+          if (g_toolbar.IsVisible() || g_config.ShowInfoPanel) {
               InvalidateRect(hwnd, nullptr, FALSE);
           }
          // Update Button Hover
@@ -1624,6 +1660,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     break;
                 }
                 case ToolbarButtonID::FixExtension: SendMessage(hwnd, WM_COMMAND, IDM_FIX_EXTENSION, 0); break;
+                case ToolbarButtonID::Pin: {
+                    g_toolbar.TogglePin();
+                    // Refresh layout to update icon
+                    RECT rc; GetClientRect(hwnd, &rc);
+                    g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+                }
                 case ToolbarButtonID::Gallery: 
                     if (g_gallery.IsVisible()) g_gallery.Close(); else g_gallery.Open(g_navigator.Index()); 
                     InvalidateRect(hwnd, nullptr, FALSE);
