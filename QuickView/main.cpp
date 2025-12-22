@@ -1274,6 +1274,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
           
           if (g_gallery.IsVisible()) {
+<<<<<<< HEAD
               g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
               InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
           }
@@ -1295,6 +1296,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           // We need to start timer 997.
           SetTimer(hwnd, 997, 16, nullptr);         
 
+=======
+              g_gallery.OnMouseMove(pt.x, pt.y);
+              InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
+          }
+
+>>>>>>> 8caba7f2d39df4061fd302778c5dee7b412955be
           // Force redraw for smooth tooltip/hover when info panel is active
           if (g_config.ShowInfoPanel) {
               InvalidateRect(hwnd, nullptr, FALSE);

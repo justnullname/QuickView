@@ -112,7 +112,10 @@
     <ClInclude Include="ContextMenu.h" />
     <ClInclude Include="GalleryOverlay.h" />
     <ClInclude Include="ThumbnailManager.h" />
+<<<<<<< HEAD
     <ClInclude Include="Toolbar.h" />
+=======
+>>>>>>> 8caba7f2d39df4061fd302778c5dee7b412955be
     <ClInclude Include="PreviewExtractor.h" />
   </ItemGroup>
   <ItemGroup>
@@ -133,7 +136,10 @@
     <ClCompile Include="ContextMenu.cpp" />
     <ClCompile Include="GalleryOverlay.cpp" />
     <ClCompile Include="ThumbnailManager.cpp" />
+<<<<<<< HEAD
     <ClCompile Include="Toolbar.cpp" />
+=======
+>>>>>>> 8caba7f2d39df4061fd302778c5dee7b412955be
     <ClCompile Include="PreviewExtractor.cpp" />
   </ItemGroup>
   <ItemGroup>
