@@ -7,7 +7,7 @@
 // ContextMenu.cpp - Right-click Context Menu Implementation
 // ============================================================
 
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop, bool renderRaw) {
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop, bool renderRaw, bool isRawFile) {
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
 
@@ -54,7 +54,12 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hViewMenu, MF_STRING, IDM_LITE_INFO, L"Lite Info Panel\tTab");
     AppendMenuW(hViewMenu, MF_STRING | (showInfoPanel ? MF_CHECKED : 0), IDM_SHOW_INFO_PANEL, L"Show Info Panel\tI");
     AppendMenuW(hViewMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hViewMenu, MF_STRING | (renderRaw ? MF_CHECKED : 0), IDM_RENDER_RAW, L"Render RAW");
+    
+    UINT rawFlags = MF_STRING;
+    if (!isRawFile) rawFlags |= MF_GRAYED;
+    if (renderRaw) rawFlags |= MF_CHECKED;
+    AppendMenuW(hViewMenu, rawFlags, IDM_RENDER_RAW, L"Render RAW");
+    
     AppendMenuW(hViewMenu, MF_STRING, IDM_FULLSCREEN, L"Fullscreen\tF11");
 
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hViewMenu, L"View");

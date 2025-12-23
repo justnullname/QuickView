@@ -327,6 +327,22 @@ bool FileExists(LPCWSTR path) {
     return (dwAttrib != INVALID_FILE_ATTRIBUTES && !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 
+bool IsRawFile(const std::wstring& path) {
+    size_t dot = path.find_last_of(L'.');
+    if (dot == std::wstring::npos) return false;
+    std::wstring ext = path.substr(dot);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+    
+    static const wchar_t* rawExts[] = { 
+        L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".pef",
+        L".erf", L".mef", L".mos", L".mrw", L".nrw", L".raw", L".rwl", L".sr2", L".x3f", L".iiq", L".3fr"
+    };
+    for (const auto* e : rawExts) {
+        if (ext == e) return true;
+    }
+    return false;
+}
+
 void ReleaseImageResources() {
     g_currentBitmap.Reset();
     Sleep(50);
@@ -2217,11 +2233,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         bool hasImage = g_currentBitmap != nullptr;
         bool extensionFixNeeded = false;
+        bool isRaw = false;
         if (hasImage && !g_imagePath.empty()) {
              extensionFixNeeded = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
+             isRaw = IsRawFile(g_imagePath);
         }
         
-        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_config.LockWindowSize, g_config.ShowInfoPanel, g_config.AlwaysOnTop, g_config.RenderRAW);
+        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_config.LockWindowSize, g_config.ShowInfoPanel, g_config.AlwaysOnTop, g_config.RenderRAW, isRaw);
         return 0;
     }
     
