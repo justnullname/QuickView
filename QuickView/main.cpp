@@ -2050,17 +2050,115 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 'V': PerformTransform(hwnd, TransformType::FlipVertical); break;
         
         // Zoom
-        case '1': case 'Z': // 100% Original size
-            g_viewState.Zoom = 1.0f;
-            g_viewState.PanX = 0;
-            g_viewState.PanY = 0;
+        // Zoom
+        // Zoom
+        case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
+            if (g_currentBitmap) {
+                D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+                if (imgSize.width > 0 && imgSize.height > 0) {
+                    // Logic to resize window to wrap image at 100% if allowed
+                    if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_config.LockWindowSize) {
+                         // Target is 100% of image size
+                         int targetW = (int)imgSize.width;
+                         int targetH = (int)imgSize.height;
+                         
+                         // Get Monitor Info
+                         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                         MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                         int maxW = (mi.rcWork.right - mi.rcWork.left);
+                         int maxH = (mi.rcWork.bottom - mi.rcWork.top);
+                         
+                         // Clamp to screen
+                         if (targetW > maxW) targetW = maxW;
+                         if (targetH > maxH) targetH = maxH;
+                         // Min size safety
+                         if (targetW < 400) targetW = 400; 
+                         if (targetH < 300) targetH = 300;
+                         
+                         // Center Window
+                         RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                         int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
+                         int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
+                         
+                         SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+                         
+                         // Recalculate Fit Scale with NEW window size
+                         RECT rcNew; GetClientRect(hwnd, &rcNew);
+                         float newFitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
+                         if (newFitScale > 0) g_viewState.Zoom = 1.0f / newFitScale;
+                    } else {
+                        // Standard logic (window size static)
+                        RECT rc; GetClientRect(hwnd, &rc);
+                        float fitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+                        if (fitScale > 0) g_viewState.Zoom = 1.0f / fitScale;
+                    }
+
+                    g_viewState.PanX = 0;
+                    g_viewState.PanY = 0;
+                    g_osd.Show(hwnd, L"Zoom: 100%", false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
+                }
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
-        case '0': case 'F': // Fit to window
-            g_viewState.Zoom = 0.0f; // 0 means auto-fit
-            g_viewState.PanX = 0;
-            g_viewState.PanY = 0;
-            InvalidateRect(hwnd, nullptr, FALSE);
+            
+        case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
+            if (g_currentBitmap) {
+                // Get Monitor & Work Area
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                int screenW = mi.rcWork.right - mi.rcWork.left;
+                int screenH = mi.rcWork.bottom - mi.rcWork.top;
+                
+                // Get Window Borders
+                RECT rcWin, rcClient;
+                GetWindowRect(hwnd, &rcWin);
+                GetClientRect(hwnd, &rcClient);
+                int borderW = (rcWin.right - rcWin.left) - (rcClient.right - rcClient.left);
+                int borderH = (rcWin.bottom - rcWin.top) - (rcClient.bottom - rcClient.top);
+                
+                // Max Client Size available
+                int maxClientW = screenW - borderW;
+                int maxClientH = screenH - borderH;
+                
+                // Get Image Size (DIPs -> Pixels)
+                D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+                float dpi = 96.0f;
+                UINT dpiX, dpiY;
+                if (SUCCEEDED(GetDpiForMonitor(hMon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
+                    dpi = (float)dpiX;
+                }
+                float imgPixW = imgSize.width * (dpi / 96.0f);
+                float imgPixH = imgSize.height * (dpi / 96.0f);
+
+                if (imgPixW > 0 && imgPixH > 0) {
+                     // Scale to fit max client area
+                     float ratioW = (float)maxClientW / imgPixW;
+                     float ratioH = (float)maxClientH / imgPixH;
+                     float scale = std::min(ratioW, ratioH);
+                     
+                     // Target Client Size
+                     int targetClientW = (int)(imgPixW * scale);
+                     int targetClientH = (int)(imgPixH * scale);
+                     
+                     // Target Window Size
+                     int targetWinW = targetClientW + borderW;
+                     int targetWinH = targetClientH + borderH;
+                     
+                     // Center on Screen
+                     int x = mi.rcWork.left + (screenW - targetWinW) / 2;
+                     int y = mi.rcWork.top + (screenH - targetWinH) / 2;
+                     
+                     SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                
+                // Reset View to Fit
+                g_viewState.Zoom = 1.0f; 
+                g_viewState.PanX = 0;
+                g_viewState.PanY = 0;
+                
+                g_osd.Show(hwnd, L"Zoom: Fit Screen", false, false, D2D1::ColorF(D2D1::ColorF::White));
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
             break;
         
         // Fullscreen
