@@ -1809,6 +1809,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         if (!g_currentBitmap) return 0;
         
+        // --- Magnetic Snap Time Lock ---
+        static DWORD s_lastSnapTime = 0;
+        if (GetTickCount() - s_lastSnapTime < 400) {
+            return 0; // Ignore input briefly after snapping
+        }
+        
         // Enable interaction mode during zoom (use LINEAR interpolation)
         g_viewState.IsInteracting = true;
         // Set timer to reset interaction mode after 150ms of inactivity
@@ -1826,6 +1832,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         float zoomFactor = (delta > 0) ? 1.1f : 0.90909f;
         float newTotalScale = currentTotalScale * zoomFactor;
         
+        // --- Magnetic Snap to 100% ---
+        const float SNAP_THRESHOLD = 0.05f;
+        bool isAlreadyAt100 = (abs(currentTotalScale - 1.0f) < 0.001f);
+        
+        if (!isAlreadyAt100) {
+            bool snapped = false;
+            // Check for crossing 1.0
+            if ((currentTotalScale < 1.0f && newTotalScale > 1.0f) || 
+                (currentTotalScale > 1.0f && newTotalScale < 1.0f)) {
+                newTotalScale = 1.0f;
+                snapped = true;
+            }
+            // Check for proximity
+            else if (abs(newTotalScale - 1.0f) < SNAP_THRESHOLD) {
+                newTotalScale = 1.0f;
+                snapped = true;
+            }
+            
+            if (snapped) {
+                s_lastSnapTime = GetTickCount(); // Engage Time Lock
+            }
+        }
+
         // Limits
         if (newTotalScale < 0.1f * fitScale) newTotalScale = 0.1f * fitScale; // Min 10% of FIT
         if (newTotalScale > 20.0f) newTotalScale = 20.0f;
@@ -1890,6 +1919,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.Zoom = newZoom;
         }
         
+        // Show Zoom OSD
+        int percent = (int)(std::round(newTotalScale * 100.0f));
+        bool is100 = (abs(newTotalScale - 1.0f) < 0.001f);
+        
+        wchar_t zoomBuf[32];
+        swprintf_s(zoomBuf, L"Zoom: %d%%", percent);
+        D2D1_COLOR_F color = is100 ? D2D1::ColorF(0.4f, 1.0f, 0.4f) : D2D1::ColorF(D2D1::ColorF::White); // Green if 100%
+        
+        g_osd.Show(hwnd, zoomBuf, false, false, color);
+
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
