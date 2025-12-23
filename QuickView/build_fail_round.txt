@@ -1,4 +1,0 @@
-MSBuild version 18.0.5+e22287bf1 for .NET Framework
-
-D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppBuild.targets(548,5): warning MSB8028: The intermediate directory (E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\) contains files shared from another project (QuickView2026.vcxproj).  This can lead to incorrect clean and rebuild behavior. [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
-LINK : fatal error LNK1104: 无法打开文件“E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.exe” [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]

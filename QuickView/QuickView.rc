@@ -1,8 +1,0 @@
-// QuickView.rc - Resource file
-// Application Icon
-
-#include <windows.h>
-
-// Main Application Icon (ID = 1 for default)
-// IDI_APPLICATION will be overridden by this
-1 ICON "..\\QuickView.ico"
