@@ -22,6 +22,7 @@ enum ContextMenuCommand : UINT {
     IDM_FULLSCREEN,
     IDM_LOCK_WINDOW_SIZE,
     IDM_SHOW_INFO_PANEL,
+    IDM_ALWAYS_ON_TOP,
     IDM_WALLPAPER_FILL,
     IDM_WALLPAPER_FIT,
     IDM_WALLPAPER_TILE,
@@ -46,4 +47,4 @@ enum ContextMenuCommand : UINT {
 /// <param name="needsExtensionFix">Whether extension fix is available</param>
 /// <param name="isWindowLocked">Whether window size is locked</param>
 /// <param name="showInfoPanel">Whether info panel is shown</param>
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel);
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop);

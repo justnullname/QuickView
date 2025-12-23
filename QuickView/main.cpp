@@ -387,8 +387,9 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
 // DrawOSD moved to RenderEngine
 
 // --- Window Controls ---
-enum class WindowHit { None, Min, Max, Close };
+enum class WindowHit { None, Pin, Min, Max, Close };
 struct WindowControls {
+    D2D1_RECT_F PinRect;   // Pin (Always on Top) button - leftmost
     D2D1_RECT_F MinRect;
     D2D1_RECT_F MaxRect;
     D2D1_RECT_F CloseRect;
@@ -402,6 +403,7 @@ void CalculateWindowControls(D2D1_SIZE_F size) {
     g_winControls.CloseRect = D2D1::RectF(size.width - btnW, 0, size.width, btnH);
     g_winControls.MaxRect = D2D1::RectF(size.width - btnW * 2, 0, size.width - btnW, btnH);
     g_winControls.MinRect = D2D1::RectF(size.width - btnW * 3, 0, size.width - btnW * 2, btnH);
+    g_winControls.PinRect = D2D1::RectF(size.width - btnW * 4, 0, size.width - btnW * 3, btnH);
 }
 
 static bool g_showControls = false; 
@@ -419,17 +421,39 @@ void DrawWindowControls(ID2D1DeviceContext* context) {
         context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &pGray);
         if (g_winControls.HoverState == WindowHit::Max) context->FillRectangle(g_winControls.MaxRect, pGray.Get());
         if (g_winControls.HoverState == WindowHit::Min) context->FillRectangle(g_winControls.MinRect, pGray.Get());
+        if (g_winControls.HoverState == WindowHit::Pin) context->FillRectangle(g_winControls.PinRect, pGray.Get());
     }
     
     // Icons (White with dark outline for visibility on any background)
-    ComPtr<ID2D1SolidColorBrush> pWhite, pOutline;
+    ComPtr<ID2D1SolidColorBrush> pWhite, pOutline, pPinActive;
     context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f), &pWhite);
     context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &pOutline);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &pPinActive); // Blue when active
     float str = 1.2f;
     float outlineStr = 2.5f;  // Thicker for shadow effect
     
+    // Pin icon using Segoe Fluent Icons (same as toolbar)
+    D2D1_RECT_F r = g_winControls.PinRect;
+    ID2D1SolidColorBrush* pinBrush = g_config.AlwaysOnTop ? pPinActive.Get() : pWhite.Get();
+    
+    // Create text format for Segoe Fluent Icons if needed
+    static ComPtr<IDWriteFactory> pDW;
+    static ComPtr<IDWriteTextFormat> pinIconFormat;
+    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+    if (pDW && !pinIconFormat) {
+        pDW->CreateTextFormat(L"Segoe Fluent Icons", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"en-us", &pinIconFormat);
+        if (pinIconFormat) {
+            pinIconFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            pinIconFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+    if (pinIconFormat) {
+        wchar_t pinIcon = g_config.AlwaysOnTop ? L'\uE77A' : L'\uE718'; // Unpin if active, Pin if not
+        context->DrawText(&pinIcon, 1, pinIconFormat.Get(), r, pinBrush);
+    }
+    
     // Min (_) - outline then white
-    D2D1_RECT_F r = g_winControls.MinRect;
+    r = g_winControls.MinRect;
     context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 16), D2D1::Point2F(r.right - 18, r.top + 16), pOutline.Get(), outlineStr);
     context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 16), D2D1::Point2F(r.right - 18, r.top + 16), pWhite.Get(), str);
     
@@ -444,6 +468,46 @@ void DrawWindowControls(ID2D1DeviceContext* context) {
     context->DrawLine(D2D1::Point2F(r.left + 18, r.bottom - 10), D2D1::Point2F(r.right - 18, r.top + 10), pOutline.Get(), outlineStr);
     context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 10), D2D1::Point2F(r.right - 18, r.bottom - 10), pWhite.Get(), str);
     context->DrawLine(D2D1::Point2F(r.left + 18, r.bottom - 10), D2D1::Point2F(r.right - 18, r.top + 10), pWhite.Get(), str);
+    
+    // Tooltip for Pin button
+    if (g_winControls.HoverState == WindowHit::Pin) {
+        std::wstring tip = g_config.AlwaysOnTop ? L"Unpin (Ctrl+T)" : L"Always on Top (Ctrl+T)";
+        
+        static ComPtr<IDWriteTextFormat> tipFormat;
+        if (!tipFormat && pDW) {
+            pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &tipFormat);
+        }
+        
+        if (tipFormat && pDW) {
+            ComPtr<IDWriteTextLayout> layout;
+            pDW->CreateTextLayout(tip.c_str(), (UINT32)tip.length(), tipFormat.Get(), 200.0f, 50.0f, &layout);
+            
+            if (layout) {
+                DWRITE_TEXT_METRICS metrics;
+                layout->GetMetrics(&metrics);
+                
+                float tipW = metrics.width + 12.0f;
+                float tipH = metrics.height + 8.0f;
+                
+                // Position below the button
+                D2D1_RECT_F btnRect = g_winControls.PinRect;
+                float tipX = btnRect.left + (btnRect.right - btnRect.left - tipW) / 2.0f;
+                float tipY = btnRect.bottom + 5.0f;
+                
+                // Tooltip Background
+                D2D1_RECT_F tipRect = D2D1::RectF(tipX, tipY, tipX + tipW, tipY + tipH);
+                ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush, borderBrush;
+                context->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.15f), &bgBrush);
+                context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f), &textBrush);
+                context->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.4f, 0.4f), &borderBrush);
+                
+                context->FillRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f, 4.0f), bgBrush.Get());
+                context->DrawRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f, 4.0f), borderBrush.Get(), 1.0f);
+                
+                context->DrawTextLayout(D2D1::Point2F(tipX + 6.0f, tipY + 4.0f), layout.Get(), textBrush.Get());
+            }
+        }
+    }
 }
 
 void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
@@ -1368,6 +1432,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  g_winControls.HoverState = WindowHit::Max;
              else if (pt.x >= (long)g_winControls.MinRect.left && pt.x <= (long)g_winControls.MinRect.right && pt.y <= (long)g_winControls.MinRect.bottom) 
                  g_winControls.HoverState = WindowHit::Min;
+             else if (pt.x >= (long)g_winControls.PinRect.left && pt.x <= (long)g_winControls.PinRect.right && pt.y <= (long)g_winControls.PinRect.bottom) 
+                 g_winControls.HoverState = WindowHit::Pin;
+             
+             // Hand cursor for window control buttons
+             if (g_winControls.HoverState != WindowHit::None) {
+                 SetCursor(LoadCursor(nullptr, IDC_HAND));
+             }
          }
 
          if (oldHit != g_winControls.HoverState) {
@@ -1515,6 +1586,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        
+        // Window control buttons click handling
+        if (g_showControls && g_winControls.HoverState != WindowHit::None) {
+            switch (g_winControls.HoverState) {
+                case WindowHit::Close: SendMessage(hwnd, WM_CLOSE, 0, 0); return 0;
+                case WindowHit::Max: ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); return 0;
+                case WindowHit::Min: ShowWindow(hwnd, SW_MINIMIZE); return 0;
+                case WindowHit::Pin: SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0); return 0;
+                default: break;
+            }
+        }
+        
         if (g_gallery.IsVisible()) {
             if (g_gallery.OnLButtonDown(pt.x, pt.y)) {
                 // Check if closed with selection
@@ -1560,6 +1643,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              if (pt.x >= g_panelCloseRect.left && pt.x <= g_panelCloseRect.right &&
                  pt.y >= g_panelCloseRect.top && pt.y <= g_panelCloseRect.bottom) {
                  g_config.ShowInfoPanel = false;
+                 g_toolbar.SetExifState(false); // Sync toolbar icon state
                  InvalidateRect(hwnd, nullptr, FALSE);
                  return 0;
              }
@@ -1846,26 +1930,113 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             // If ESC handled by gallery, fine.
         } else {
-            // Not Visible - Check for 'T'
-            if (wParam == 'T') {
-                g_gallery.Open(g_navigator.Index());
-                InvalidateRect(hwnd, nullptr, FALSE);
-                // Trigger animation update loop?
-                SetTimer(hwnd, 998, 16, nullptr); // 60fps timer for fade in
-                return 0;
-            }
+            // Not Visible - Handled in switch below
         }
 
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        
         switch (wParam) {
-        case VK_ESCAPE: if (CheckUnsavedChanges(hwnd)) PostQuitMessage(0); break;
+        // Navigation
+        case VK_LEFT: Navigate(hwnd, -1); break;
+        case VK_RIGHT: Navigate(hwnd, 1); break;
+        case VK_SPACE: Navigate(hwnd, 1); break;
+        
+        // File operations
+        case 'O': SendMessage(hwnd, WM_COMMAND, IDM_OPEN, 0); break; // O or Ctrl+O: Open
+        case 'E': SendMessage(hwnd, WM_COMMAND, IDM_EDIT, 0); break; // E: Edit
+        case VK_F2: SendMessage(hwnd, WM_COMMAND, IDM_RENAME, 0); break; // F2: Rename
+        case VK_DELETE: SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0); break; // Del: Delete
+        case 'P': if (ctrl) { SendMessage(hwnd, WM_COMMAND, IDM_PRINT, 0); } break; // Ctrl+P: Print
+        case 'C': // Ctrl+C: Copy image, Ctrl+Alt+C: Copy path
+            if (ctrl && alt) {
+                if (!g_imagePath.empty() && CopyToClipboard(hwnd, g_imagePath)) {
+                    g_osd.Show(hwnd, L"File path copied!", false);
+                }
+            } else if (ctrl) {
+                SendMessage(hwnd, WM_COMMAND, IDM_COPY_IMAGE, 0);
+            }
+            break;
+        
+        // View
+        case 'T': // T: Gallery (non-Ctrl), Ctrl+T: Always on Top
+            if (ctrl) {
+                SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0);
+            } else {
+                // Toggle Gallery (Only if not visible, ESC closes it)
+                if (!g_gallery.IsVisible()) {
+                    g_gallery.Open(g_navigator.Index());
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    SetTimer(hwnd, 998, 16, nullptr); // Fade in
+                }
+            }
+            break;
+        case VK_TAB: // Tab: Toggle compact info panel
+            if (!g_config.ShowInfoPanel) {
+                g_config.ShowInfoPanel = true;
+                g_config.InfoPanelExpanded = false;
+                g_toolbar.SetExifState(true);
+            } else if (g_config.InfoPanelExpanded) {
+                g_config.InfoPanelExpanded = false;
+            } else {
+                g_config.ShowInfoPanel = false;
+                g_toolbar.SetExifState(false);
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        case 'I': // I: Toggle full info panel
+            if (!g_config.ShowInfoPanel) {
+                g_config.ShowInfoPanel = true;
+                g_config.InfoPanelExpanded = true;
+                if (g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                    UpdateHistogramAsync(hwnd, g_imagePath);
+                }
+                g_toolbar.SetExifState(true);
+            } else if (!g_config.InfoPanelExpanded) {
+                g_config.InfoPanelExpanded = true;
+                if (g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                    UpdateHistogramAsync(hwnd, g_imagePath);
+                }
+            } else {
+                g_config.ShowInfoPanel = false;
+                g_toolbar.SetExifState(false);
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        
+        // Transforms
         case 'R': PerformTransform(hwnd, shift ? TransformType::Rotate90CCW : TransformType::Rotate90CW); break;
         case 'H': PerformTransform(hwnd, TransformType::FlipHorizontal); break;
         case 'V': PerformTransform(hwnd, TransformType::FlipVertical); break;
-        // case 'T': PerformTransform(hwnd, TransformType::Rotate180); break; // T is now Gallery
-        case VK_LEFT: Navigate(hwnd, -1); break;
-        case VK_RIGHT: Navigate(hwnd, 1); break;
-        case VK_SPACE: Navigate(hwnd, 1); break; // Space = Next
+        
+        // Zoom
+        case '1': case 'Z': // 100% Original size
+            g_viewState.Zoom = 1.0f;
+            g_viewState.PanX = 0;
+            g_viewState.PanY = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        case '0': case 'F': // Fit to window
+            g_viewState.Zoom = 0.0f; // 0 means auto-fit
+            g_viewState.PanX = 0;
+            g_viewState.PanY = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        
+        // Fullscreen
+        case VK_RETURN: case VK_F11: // Enter/F11: Toggle fullscreen
+            SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+            break;
+        
+        // Exit
+        case VK_ESCAPE: 
+            if (IsZoomed(hwnd)) {
+                ShowWindow(hwnd, SW_RESTORE);
+            } else {
+                if (CheckUnsavedChanges(hwnd)) PostQuitMessage(0);
+            }
+            break;
         }
         return 0;
     }
@@ -1880,7 +2051,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              needsFix = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
         }
         
-        ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, needsFix, g_config.LockWindowSize, g_config.ShowInfoPanel);
+        ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, needsFix, g_config.LockWindowSize, g_config.ShowInfoPanel, g_config.AlwaysOnTop);
         return 0;
     }
     
@@ -2061,6 +2232,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  }
  
             g_toolbar.SetExifState(g_config.ShowInfoPanel);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        }
+        case IDM_ALWAYS_ON_TOP: {
+            g_config.AlwaysOnTop = !g_config.AlwaysOnTop;
+            SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+                         0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            g_osd.Show(hwnd, g_config.AlwaysOnTop ? L"Always on Top: ON" : L"Always on Top: OFF", false);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -2619,7 +2798,7 @@ void BuildInfoGrid() {
     // Row 10: Decoder
     if (!g_currentMetadata.LoaderName.empty()) {
         wchar_t timeBuf[32];
-        swprintf_s(timeBuf, L"(%lu ms)", g_currentMetadata.LoadTimeMs);
+        swprintf_s(timeBuf, L"(%llu ms)", (UINT64)g_currentMetadata.LoadTimeMs);
         g_infoGrid.push_back({L"\U00002699", L"Decode", g_currentMetadata.LoaderName, timeBuf, L"", TruncateMode::None, false});
     }
     
@@ -2730,6 +2909,13 @@ void DrawInfoPanel(ID2D1DeviceContext* context) {
             L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 
             13.0f, L"en-us", &g_pPanelTextFormat
         );
+    }
+    
+    // Ensure format attributes are reset (prevent contamination from DrawCompactInfo)
+    if (g_pPanelTextFormat) {
+        g_pPanelTextFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        g_pPanelTextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        g_pPanelTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
     
     // Panel Rect (Top Left)

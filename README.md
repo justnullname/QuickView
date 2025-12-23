@@ -1,191 +1,182 @@
 <div align="center">
 
-# ⚡ QuickView
-### The Blazing Fast, Modern Image Viewer for Windows
+<img src="ScreenShot/ScreenShot_2025-12-23_102812_617.png" alt="QuickView Banner" width="100%">
 
-[![License](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64)-0078D6.svg)]()
-[![Release](https://img.shields.io/badge/release-v1.1.0-brightgreen.svg)](https://github.com/justnullname/QuickView/releases)
+# ⚡ QuickView 2.0
 
-**Speed of Assembly. Comfort of Modern UX.**
+### The Rebirth: Built for Speed, Engineered for Geeks.
 
-[Download Latest Release](https://github.com/justnullname/QuickView/releases) • [Report Bug](https://github.com/justnullname/QuickView/issues) • [Request Feature](https://github.com/justnullname/QuickView/issues)
+<p>
+    <strong>Direct2D Rendering</strong> • 
+    <strong>AVX2/SIMD Optimized</strong> • 
+    <strong>Dynamic Island UI</strong>
+</p>
+
+<p>
+    <a href="LICENSE">
+        <img src="https://img.shields.io/badge/license-GPL--2.0-blue.svg?style=flat-square&logo=github" alt="License">
+    </a>
+    <a href="#">
+        <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64)-0078D6.svg?style=flat-square&logo=windows" alt="Platform">
+    </a>
+    <a href="https://github.com/justnullname/QuickView/releases">
+        <img src="https://img.shields.io/badge/release-v2.0_Preview-orange.svg?style=flat-square&logo=rocket" alt="Release">
+    </a>
+</p>
+
+<p>
+    <a href="https://github.com/justnullname/QuickView/releases"><b>📥 Download Latest Release</b></a> • 
+    <a href="https://github.com/justnullname/QuickView/issues">Report Bug</a> • 
+    <a href="https://github.com/justnullname/QuickView/issues">Request Feature</a>
+</p>
 
 </div>
 
 ---
 
-## ✨ ✨ ✨ QuickView 2.0: A Fresh Start ✨ ✨ ✨ 
+## 💥 2.0 Preview: The Rebirth
 
-Starting with version 2.0, QuickView is being rebuilt from the ground up, driven by the principles of code modernization and extreme optimization. While the project will diverge completely from the original JpegView codebase, we will preserve its core strengths where necessary.
+**QuickView 2.0 represents a complete break from the past.**
 
-**Our Goal: To create a dedicated native image viewer that is:**
-
-- Borderless: A clean, immersive interface.
-- Blazing Fast: Optimized for speed.
-- Flexible: Supports freeform drag-and-drop interactions.
-- Modern: Designed with a contemporary aesthetic.
-- Scope: We focus purely on the viewing experience. No image editing or modification features will be added. Functionality remains strictly limited to viewing aids, such as rotation and flipping.
-
-## 📖 Introduction
-
-**QuickView** is a modern, streamlined fork of the legendary [JPEGView](https://github.com/annh9b/JPEGView-Static).
-
-We love JPEGView's blazing fast rendering engine, but let's face it: its interface belongs to the Windows 98 era. **QuickView** retains the **AVX2-optimized core** and **professional color management**, but wraps it in a **sleek, borderless, and highly customizable interface** inspired by modern viewers like Honeyview.
-
-It is designed for photographers, designers, and minimalists who demand **instant loading speed** without sacrificing user experience.
-
-![QuickView Screenshot](./ScreenShot/ScreenShot_2025-12-03_174244_791.png?raw=true)
-*(Screenshot: v1.1.0 featuring the new Thumbnail Gallery and Borderless UI)*
-
-## ✨ Why QuickView?
-
-### 🚀 Performance First
-- **Zero Bloat:** Statically linked, single executable. No installation required.
-- **Hardware Acceleration:** Uses SSE/AVX2 instructions for real-time high-quality resampling.
-- **Instant Launch:** Optimized startup pipeline with no "white screen flash" — dark mode ready from the first millisecond.
-
-### 🎨 Modern & Immersive UX
-- **True Borderless:** Native borderless window for a distraction-free viewing experience.
-- **Visual Navigation:** Interactive bottom filmstrip gallery to browse images visually.
-- **Smart OSD:** Minimalist On-Screen Display for zoom levels and EXIF data (press `Tab`).
-- **Edge Emphasis:** Optional 1px smart border to visually separate images from the desktop background.
-
-### 🛠 Professional Grade
-- **Universal Format Support:** Opens nearly EVERYTHING.
-  - **Standard:** JPEG, PNG, GIF, WEBP, BMP, TIFF, TGA
-  - **Modern:** AVIF, JXL (JPEG XL), HEIF/HEIC
-  - **Professional:** PSD, RAW (CR2, CR3, NEF, ARW, DNG, etc.) via LibRaw.
-- **Color Management:** Full ICC profile support for accurate color reproduction on wide-gamut monitors.
-
------
-
-# QuickView v1.2.0 - The Smart Update
-
-QuickView is a blazingly fast, lightweight, and modern image viewer designed for speed and simplicity. Built as a successor to JPEGView, it retains the core performance while introducing modern features and UI enhancements.
-
-## 🌟 What's New in v1.2.0
-
-### 🔄 Seamless Auto-Update
-Say goodbye to manual downloads! QuickView now keeps itself up-to-date effortlessly.
-- **Silent Background Download**: Updates are downloaded silently while you work.
-- **One-Click Install**: When ready, a non-intrusive notification lets you update instantly.
-- **Smart Cleanup**: Automatically manages temporary files to keep your system clean.
-
-### 🔍 Smart Double-Click Zoom
-Navigate your details with precision.
-- **Intelligent Toggle**: Double-click to instantly zoom to 100% for pixel-perfect inspection.
-- **Fit-to-Window**: Double-click again to snap back to full view.
-- **Fluid & Fast**: Zero lag, optimized for high-resolution images.
-
-### 🖼️ Instant Gallery Mode (Key: T)
-Visual browsing made elegant.
-- **Press 'T'**: Instantly toggle the thumbnail strip overlay.
-- **Browse Faster**: Quickly scan through folders without leaving the viewer.
-- **Auto-Hide**: Visuals stay clean; the gallery appears only when you need it.
+This is not a simple iteration. It is a ground-up rewrite based on **Modern C++ (C++23)** and **Direct2D**. We have discarded the legacy GDI rendering baggage and integrated the industry's most cutting-edge decoding technologies (Google Wuffs, TurboJPEG v3, dav1d) with one goal in mind: **To build the fastest, most hardcore image viewer on the Windows platform.**
 
 ---
 
-## 🆕 What's New in v1.1.0
+## 🚀 Key Features
 
-### 1. Thumbnail Gallery Navigation
-A completely new way to browse. Instead of blindly pressing "Next", see your folder context at a glance.
-* **Visual Filmstrip:** A translucent thumbnail bar appears at the bottom.
-* **Independent Scrolling:** Use the new sleek chevron arrows to peek at upcoming images without changing your main view.
+### 🏎️ Extreme Performance Engine
 
-### 2. Chrome-style Floating Controls
-We removed the ugly Windows title bar but kept the functionality.
-* **Auto-hiding Top Bar:** Hover over the top edge of the window to reveal Minimize, Maximize, and Close buttons.
-* **Distraction Free:** The controls vanish when you move your mouse away, leaving just your image.
+> *"Speed is a feature."* We squeeze every ounce of performance out of your hardware.
 
-### 3. Critical Improvements
-* **Dark Mode Startup:** Fixed the "white flash" on launch.
-* **Bug Fixes:** Resolved text overlapping in Zoom OSD and window dragging issues in fullscreen.
+<div align="center">
+    <img src="ScreenShot/ScreenShot_2025-12-23_101934.png" alt="Task Manager Proof" width="800">
+    <br>
+    <em>Figure: 18.6MB RAM usage while rendering high-res content with Real-time Histogram.</em>
+</div>
+
+<br>
+
+* **Direct2D Pipeline:** Fully GPU-accelerated. Panning, zooming, and rendering on 4K high-refresh displays run at a silky smooth **60fps+**.
+* **Dual-Lane Scheduling:** Unique "Fast/Slow" thread pools ensure that loading massive RAW files in the background **never** blocks UI responsiveness.
+* **Instant Preview:** For RAW (ARW, CR2, DNG...), HEIC, and PSD, we extract embedded preview streams for **zero-latency** opening of 200MB+ files.
+
+### 🏝️ Dynamic Island Toolbar (New!)
+
+*A UI that breathes with you.*
+
+* **Immersive Interaction:** The toolbar floats elegantly at the bottom, mimicking the "Dynamic Island" aesthetic.
+* **Hover-Reactive:** It remains invisible to maximize viewing area and seamlessly expands when your mouse approaches the bottom edge.
+* **Geek Tools:** Instant access to Format Repair, RAW Toggle, and Exif data without cluttering the screen.
+
+### 🖼️ HUD Photo Wall
+
+*Browse visually, not just sequentially.*
+
+<div align="center">
+    <img src="ScreenShot/ScreenShot_2025-12-23_102543_642.png" alt="HUD Photo Wall" width="800">
+    <br>
+    <em>Figure: HUD Photo Wall.</em>
+</div>
+
+* **"T" to Toggle:** Press `T` to summon the Photo Wall overlay in a Heads-Up Display style.
+* **Virtualization:** Effortlessly handles folders with **10,000+ images**. We only render what is currently visible on screen.
+* **Smart Caching:** Dual-layer RAM (L1) + VRAM (L2) architecture with strict memory capping.
+
+### 📊 Geek Visualization
+
+*Don't just view the image; understand the data.*
+
+
+* **Real-time RGB Histogram:** Translucent waveform overlay for exposure analysis.
+* **Reverse Q-Factor:** Algorithmically estimates the original JPEG quality (e.g., `Q~98`), seeing through "100% Quality" saves.
+* **Chroma Subsampling:** Instantly identify **4:4:4** (Lossless/Design) vs **4:2:0** (Compressed).
 
 ---
-## 🚀 Key Features from v1.1.x
-- **Narrow Border Mode**: Configurable 1px border for better visibility in borderless mode.
-- **Modern UI**: Refined toolbar, crisp icons, and improved layout.
-- **Performance**: SIMD-optimized rendering for instant image loading.
+
+## ⚙️ The Engine Room: Format Support
+
+QuickView 2.0 doesn't just "open" images; it uses the fastest, most secure libraries available for each format.
+
+| Category | Format | Backend Engine | Why it rocks (Architecture) |
+| :--- | :--- | :--- | :--- |
+| **Standard** | **JPEG** | **libjpeg-turbo v3** | AVX2 SIMD acceleration. The king of decompression speed. |
+| | **PNG** | **Google Wuffs** | Memory-safe, outperforms libpng, handles massive dimensions. |
+| | **GIF** | **Google Wuffs** | Extremely low CPU usage for playback (Better than WIC). |
+| | **WebP** | **libwebp** | Google's official library. Supports Lossless, Animation, & Alpha. |
+| | **BMP / TGA**| **Google Wuffs** | Replaces WIC for robust handling of malformed files. |
+| **Modern** | **AVIF** | **libavif + dav1d** | Assembly-level AV1 decoding. Opens AVIFs instantly. |
+| | **JXL** | **libjxl + highway** | Next-gen JPEG XL standard with multi-threaded decoding. |
+| **Pro / RAW**| **RAW** | **LibRaw** | Prioritizes "Instant Preview" extraction for speed. |
+| | **EXR** | **TinyEXR** | Lightweight, industrial-grade OpenEXR support. |
+| | **HDR** | **stb_image** | Radiance HDR format support. |
+| | **PSD** | **stb_image** | Reads composite preview layer for instant viewing. |
+| **Vector** | **SVG** | **NanoSVG** | Rasterizes vector to bitmap for infinite scaling. |
+| **System** | **HEIC** | **Windows WIC** | Hardware accelerated (Requires HEIF Extension). |
 
 ---
 
-## 🆚 QuickView vs. The Rest
+## ⌨️ Shortcuts
 
-| Feature | QuickView | Original JPEGView | Honeyview |
-| :--- | :---: | :---: | :---: |
-| **Interface Style** | **Modern / Borderless** | Legacy / Win32 | Modern / Skinned |
-| **Navigation** | **Filmstrip Gallery** | Next/Prev Only | Filmstrip Gallery |
-| **Rendering Speed** | **Extreme (AVX2)** | Extreme (AVX2) | Fast |
-| **Color Management (CMS)**| **✅ Professional** | ✅ Professional | ❌ Basic |
-| **OSD / Feedback** | **✅ Modern Overlays** | ❌ Status Bar Only | ✅ Top Bar |
-| **Format Support** | **✅ All (incl. RAW/JXL)** | ✅ All | ⚠️ Limited Newer Formats |
+Master these shortcuts to navigate QuickView at the speed of thought:
+
+### 👁️ Viewing & Navigation
+| Key | Action | Description |
+| :--- | :--- | :--- |
+| **`T`** | **Photo Wall** | Toggle the HUD Gallery overlay. |
+| **`1`** / **`Z`** | **100% View** | Pixel-perfect inspection (Actual Size). |
+| **`0`** / **`F`** | **Fit to Window** | Fit the entire image to the screen. |
+| **`Enter`** / **`F11`** | **Fullscreen** | Toggle immersive fullscreen mode. |
+| **`Esc`** | **Exit** | Exit fullscreen or close the application. |
+| **`Tab`** | **Lite Info** | Cycle through basic OSD overlays. |
+| **`I`** | **Full Info** | Toggle the detailed EXIF/Histogram panel. |
+| **`Ctrl + T`** | **Always on Top** | Pin the window to the foreground. |
+
+### 🔄 Transform & Edit
+| Key | Action | Description |
+| :--- | :--- | :--- |
+| **`R`** | **Rotate CW** | Rotate 90° Clockwise. |
+| **`Shift + R`** | **Rotate CCW** | Rotate 90° Counter-Clockwise. |
+| **`H`** | **Flip Horizontal** | Mirror the image horizontally. |
+| **`V`** | **Flip Vertical** | Mirror the image vertically. |
+| **`E`** | **Edit** | Open image in default external editor. |
+
+### 📁 File Operations
+| Key | Action | Description |
+| :--- | :--- | :--- |
+| **`O`** / **`Ctrl + O`** | **Open File** | Open file dialog. |
+| **`F2`** | **Rename** | Rename the current file on disk. |
+| **`Del`** | **Delete** | Move current file to Recycle Bin. |
+| **`Ctrl + C`** | **Copy Image** | Copy image data to Clipboard. |
+| **`Ctrl + Alt + C`** | **Copy Path** | Copy full file path text. |
+| **`Ctrl + P`** | **Print** | Open system print dialog. |
 
 ---
-
-## ⚙️ Configuration
-
-
-*   **Narrow Border Mode**: Restored the ability to draw a colored border around the window when in borderless mode.
-    *   **Configuration**: Add the following to your `QuickView.ini` under `[QuickView]`:
-        ```ini
-        ; Width of the border in pixels (0 = disabled)
-        NarrowBorderWidth=2 
-        ; Color of the border (R G B)
-        NarrowBorderColor=128 128 128
-        ```
-
-
-## 🗺️ Roadmap
-
-We are actively building the ultimate lightweight viewer.
-
-  - [x] **Phase 1: The Core (Completed)**
-      - [x] Native borderless window implementation.
-      - [x] Zoom OSD and Smart Edge Border.
-      - [x] Refined window dragging logic.
-  - [x] **Phase 2: Modern Interaction (Completed v1.1)**
-      - [x] Chrome-style floating top bar (auto-hide).
-      - [x] Lazy-loading thumbnail gallery (Bottom bar).
-      - [x] Startup "White Flash" fix.
-  - [ ] **Phase 3: The Polish (Next)**
-      - [ ] Visual Settings Dialog (No more manual INI editing\!).
-      - [ ] "Always on Top" toggle with visual OSD feedback.
-      - [ ] First-run interactive tutorial.
-
------
 
 ## 📥 Download & Install
 
-**QuickView is portable.** No messy installers.
+**QuickView is Portable.** No installers, no registry bloat.
 
-1.  Go to the [**Releases Page**](https://www.google.com/url?sa=E&source=gmail&q=https://github.com/justnullname/QuickView/releases).
-2.  Download the latest `QuickView_x64.zip`.
-3.  Unzip and run `QuickView.exe`.
+1. Go to the [**Releases Page**](https://github.com/justnullname/QuickView/releases).
+2. Download the latest `QuickView_2.0_Preview_x64.zip`.
+3. Unzip and run `QuickView.exe`.
 
------
+---
 
-## 🛠️ Build from Source
+## 🗺️ Roadmap
 
-Requirements: **Visual Studio 2022** (Recommended) or 2019, Windows 10 SDK.
+We are moving fast. Here is our current progress:
 
-1.  **Clone:**
-    ```bash
-    git clone [https://github.com/justnullname/QuickView.git](https://github.com/justnullname/QuickView.git)
-    ```
-2.  **Open:** Navigate to `src/QuickView.sln` and open in Visual Studio.
-3.  **Build:** Set configuration to **Release / x64** and press `Ctrl+Shift+B`.
+- [x] **Core Engine 2.0** (D2D, Wuffs, TurboJPEG)
+- [x] **HUD Photo Wall** (Virtualization, Smart Cache)
+- [x] **Geek Panel** (Histogram, Q-Estimator)
+- [x] **Dynamic Island Toolbar** (Hover-reactive UI)
+- [x] **Full Format Support** (SVG, EXR, PSD, JXL, AVIF)
+- [ ] **Visual Settings UI** (Replacing manual .ini editing)
+- [ ] **Gif/WebP Frame Inspector** (Frame-by-frame analysis)
 
------
+---
 
-## 🙏 Credits & Acknowledgements
-
-QuickView stands on the shoulders of giants:
-
-  * **David Kleiner** for the original, brilliant [JPEGView](https://sourceforge.net/projects/jpegview/).
-  * **Sylikc** and **Annh9b** for keeping the project alive with their forks.
-  * Powered by open-source excellence: **LibRaw, LibJpeg-Turbo, LibWebP, LCMS2**.
-
-## 📄 License
+## ⚖️ License & Credits
 
 This project is licensed under the **GPL-2.0 License**.
+QuickView stands on the shoulders of giants. We salute **David Kleiner** (original JPEGView) and the open-source community behind **LibRaw, LibJpeg-Turbo, Google Wuffs, dav1d, and TinyEXR**.

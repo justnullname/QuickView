@@ -7,7 +7,7 @@
 // ContextMenu.cpp - Right-click Context Menu Implementation
 // ============================================================
 
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel) {
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop) {
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
 
@@ -30,6 +30,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hMenu, MF_STRING, IDM_FULLSCREEN, L"Full Screen\tDouble Click");
     AppendMenuW(hMenu, MF_STRING | (isWindowLocked ? MF_CHECKED : 0), IDM_LOCK_WINDOW_SIZE, L"Lock Window Size");
     AppendMenuW(hMenu, MF_STRING | (showInfoPanel ? MF_CHECKED : 0), IDM_SHOW_INFO_PANEL, L"Show Info Panel");
+    AppendMenuW(hMenu, MF_STRING | (alwaysOnTop ? MF_CHECKED : 0), IDM_ALWAYS_ON_TOP, L"Always on Top\tCtrl+T");
     
     // Set as Wallpaper submenu
     HMENU hWallpaperMenu = CreatePopupMenu();
