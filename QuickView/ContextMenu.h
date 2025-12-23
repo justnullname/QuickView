@@ -20,12 +20,25 @@ enum ContextMenuCommand : UINT {
 
     // [视图控制] Group
     IDM_FULLSCREEN,
+    IDM_ZOOM_100,
+    IDM_ZOOM_FIT, // Lite
+    IDM_ZOOM_IN,
+    IDM_ZOOM_OUT,
     IDM_LOCK_WINDOW_SIZE,
-    IDM_SHOW_INFO_PANEL,
+    IDM_SHOW_INFO_PANEL, // Full
+    IDM_LITE_INFO,       // Lite
     IDM_ALWAYS_ON_TOP,
+    IDM_RENDER_RAW, // Sync with toolbar
+    IDM_HUD_GALLERY,
     IDM_WALLPAPER_FILL,
     IDM_WALLPAPER_FIT,
     IDM_WALLPAPER_TILE,
+
+    // [Transform] Group
+    IDM_ROTATE_CW,
+    IDM_ROTATE_CCW,
+    IDM_FLIP_H,
+    IDM_FLIP_V,
 
     // [文件操作] Group
     IDM_RENAME,
@@ -47,4 +60,7 @@ enum ContextMenuCommand : UINT {
 /// <param name="needsExtensionFix">Whether extension fix is available</param>
 /// <param name="isWindowLocked">Whether window size is locked</param>
 /// <param name="showInfoPanel">Whether info panel is shown</param>
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop);
+/// <param name="alwaysOnTop">Whether window is always on top</param>
+/// <param name="renderRaw">Whether Render RAW mode is active</param>
+/// <param name="isRawFile">Whether current file is RAW format</param>
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop, bool renderRaw, bool isRawFile);

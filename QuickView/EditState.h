@@ -74,6 +74,7 @@ struct AppConfig {
     
     // Interaction
     bool ResizeWindowOnZoom = true;
+    bool RenderRAW = false; // Sync RAW preview state
     MouseAction LeftDragAction = MouseAction::WindowDrag;
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;

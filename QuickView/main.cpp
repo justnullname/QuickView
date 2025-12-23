@@ -408,7 +408,9 @@ void CalculateWindowControls(D2D1_SIZE_F size) {
 
 static bool g_showControls = false; 
 
-void DrawWindowControls(ID2D1DeviceContext* context) {
+// --- REFACTOR: DrawWindowControls with Segoe Fluent Icons ---
+// --- REFACTOR: DrawWindowControls with Segoe Fluent Icons ---
+void DrawWindowControls(HWND hwnd, ID2D1DeviceContext* context) {
     if (g_config.AutoHideWindowControls && !g_showControls && g_winControls.HoverState == WindowHit::None) return;
 
     // Backgrounds
@@ -424,50 +426,56 @@ void DrawWindowControls(ID2D1DeviceContext* context) {
         if (g_winControls.HoverState == WindowHit::Pin) context->FillRectangle(g_winControls.PinRect, pGray.Get());
     }
     
-    // Icons (White with dark outline for visibility on any background)
+    // Brushes
     ComPtr<ID2D1SolidColorBrush> pWhite, pOutline, pPinActive;
     context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f), &pWhite);
     context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &pOutline);
     context->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &pPinActive); // Blue when active
-    float str = 1.2f;
-    float outlineStr = 2.5f;  // Thicker for shadow effect
     
-    // Pin icon using Segoe Fluent Icons (same as toolbar)
-    D2D1_RECT_F r = g_winControls.PinRect;
-    ID2D1SolidColorBrush* pinBrush = g_config.AlwaysOnTop ? pPinActive.Get() : pWhite.Get();
-    
-    // Create text format for Segoe Fluent Icons if needed
+    // Create text format for Segoe Fluent Icons
     static ComPtr<IDWriteFactory> pDW;
-    static ComPtr<IDWriteTextFormat> pinIconFormat;
+    static ComPtr<IDWriteTextFormat> iconFormat;
     if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    if (pDW && !pinIconFormat) {
-        pDW->CreateTextFormat(L"Segoe Fluent Icons", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"en-us", &pinIconFormat);
-        if (pinIconFormat) {
-            pinIconFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            pinIconFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    if (pDW && !iconFormat) {
+        pDW->CreateTextFormat(L"Segoe Fluent Icons", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &iconFormat);
+        if (iconFormat) {
+            iconFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            iconFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
-    if (pinIconFormat) {
-        wchar_t pinIcon = g_config.AlwaysOnTop ? L'\uE77A' : L'\uE718'; // Unpin if active, Pin if not
-        context->DrawText(&pinIcon, 1, pinIconFormat.Get(), r, pinBrush);
+
+    if (iconFormat) {
+        // Draw Icon Helper
+        auto DrawIcon = [&](wchar_t icon, D2D1_RECT_F r, ID2D1SolidColorBrush* brush) {
+             // Outline (Offsets)
+            float offsets[] = { -1.0f, 1.0f };
+            for (float ox : offsets) {
+                for (float oy : offsets) {
+                    D2D1_RECT_F rOut = D2D1::RectF(r.left + ox, r.top + oy, r.right + ox, r.bottom + oy);
+                    context->DrawText(&icon, 1, iconFormat.Get(), rOut, pOutline.Get());
+                }
+            }
+            context->DrawText(&icon, 1, iconFormat.Get(), r, brush);
+        };
+
+        // Pin
+        wchar_t pinIcon = g_config.AlwaysOnTop ? L'\uE77A' : L'\uE718'; 
+        DrawIcon(pinIcon, g_winControls.PinRect, g_config.AlwaysOnTop ? pPinActive.Get() : pWhite.Get());
+
+        // Min
+        DrawIcon(L'\uE921', g_winControls.MinRect, pWhite.Get()); 
+
+        // Max / Restore
+        // Max / Restore
+        // HWND is passed in
+        // Check IsZoomed using passed HWND
+        wchar_t maxIcon = IsZoomed(hwnd) ? L'\uE923' : L'\uE922'; // Restore : Maximize
+        DrawIcon(maxIcon, g_winControls.MaxRect, pWhite.Get());
+
+        // Close
+        DrawIcon(L'\uE8BB', g_winControls.CloseRect, pWhite.Get());
     }
-    
-    // Min (_) - outline then white
-    r = g_winControls.MinRect;
-    context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 16), D2D1::Point2F(r.right - 18, r.top + 16), pOutline.Get(), outlineStr);
-    context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 16), D2D1::Point2F(r.right - 18, r.top + 16), pWhite.Get(), str);
-    
-    // Max ([ ]) - outline then white
-    r = g_winControls.MaxRect;
-    context->DrawRectangle(D2D1::RectF(r.left + 16, r.top + 10, r.right - 16, r.bottom - 10), pOutline.Get(), outlineStr);
-    context->DrawRectangle(D2D1::RectF(r.left + 16, r.top + 10, r.right - 16, r.bottom - 10), pWhite.Get(), str);
-    
-    // Close (X) - outline then white
-    r = g_winControls.CloseRect;
-    context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 10), D2D1::Point2F(r.right - 18, r.bottom - 10), pOutline.Get(), outlineStr);
-    context->DrawLine(D2D1::Point2F(r.left + 18, r.bottom - 10), D2D1::Point2F(r.right - 18, r.top + 10), pOutline.Get(), outlineStr);
-    context->DrawLine(D2D1::Point2F(r.left + 18, r.top + 10), D2D1::Point2F(r.right - 18, r.bottom - 10), pWhite.Get(), str);
-    context->DrawLine(D2D1::Point2F(r.left + 18, r.bottom - 10), D2D1::Point2F(r.right - 18, r.top + 10), pWhite.Get(), str);
+
     
     // Tooltip for Pin button
     if (g_winControls.HoverState == WindowHit::Pin) {
@@ -2050,18 +2058,140 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 'V': PerformTransform(hwnd, TransformType::FlipVertical); break;
         
         // Zoom
-        case '1': case 'Z': // 100% Original size
-            g_viewState.Zoom = 1.0f;
-            g_viewState.PanX = 0;
-            g_viewState.PanY = 0;
+        // Zoom
+        // Zoom
+        case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
+            if (g_currentBitmap) {
+                D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+                if (imgSize.width > 0 && imgSize.height > 0) {
+                    // Logic to resize window to wrap image at 100% if allowed
+                    if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_config.LockWindowSize) {
+                         // Target is 100% of image size
+                         int targetW = (int)imgSize.width;
+                         int targetH = (int)imgSize.height;
+                         
+                         // Get Monitor Info
+                         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                         MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                         int maxW = (mi.rcWork.right - mi.rcWork.left);
+                         int maxH = (mi.rcWork.bottom - mi.rcWork.top);
+                         
+                         // Clamp to screen
+                         if (targetW > maxW) targetW = maxW;
+                         if (targetH > maxH) targetH = maxH;
+                         // Min size safety
+                         if (targetW < 400) targetW = 400; 
+                         if (targetH < 300) targetH = 300;
+                         
+                         // Center Window
+                         RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                         int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
+                         int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
+                         
+                         SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+                         
+                         // Recalculate Fit Scale with NEW window size
+                         RECT rcNew; GetClientRect(hwnd, &rcNew);
+                         float newFitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
+                         if (newFitScale > 0) g_viewState.Zoom = 1.0f / newFitScale;
+                    } else {
+                        // Standard logic (window size static)
+                        RECT rc; GetClientRect(hwnd, &rc);
+                        float fitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+                        if (fitScale > 0) g_viewState.Zoom = 1.0f / fitScale;
+                    }
+
+                    g_viewState.PanX = 0;
+                    g_viewState.PanY = 0;
+                    g_osd.Show(hwnd, L"Zoom: 100%", false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
+                }
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
-        case '0': case 'F': // Fit to window
-            g_viewState.Zoom = 0.0f; // 0 means auto-fit
-            g_viewState.PanX = 0;
-            g_viewState.PanY = 0;
+            
+        case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
+            if (g_currentBitmap) {
+                // Get Monitor & Work Area
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                int screenW = mi.rcWork.right - mi.rcWork.left;
+                int screenH = mi.rcWork.bottom - mi.rcWork.top;
+                
+                // Get Window Borders
+                RECT rcWin, rcClient;
+                GetWindowRect(hwnd, &rcWin);
+                GetClientRect(hwnd, &rcClient);
+                int borderW = (rcWin.right - rcWin.left) - (rcClient.right - rcClient.left);
+                int borderH = (rcWin.bottom - rcWin.top) - (rcClient.bottom - rcClient.top);
+                
+                // Max Client Size available
+                int maxClientW = screenW - borderW;
+                int maxClientH = screenH - borderH;
+                
+                // Get Image Size (DIPs -> Pixels)
+                D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+                float dpi = 96.0f;
+                UINT dpiX, dpiY;
+                if (SUCCEEDED(GetDpiForMonitor(hMon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
+                    dpi = (float)dpiX;
+                }
+                float imgPixW = imgSize.width * (dpi / 96.0f);
+                float imgPixH = imgSize.height * (dpi / 96.0f);
+
+                if (imgPixW > 0 && imgPixH > 0) {
+                     // Scale to fit max client area
+                     float ratioW = (float)maxClientW / imgPixW;
+                     float ratioH = (float)maxClientH / imgPixH;
+                     float scale = std::min(ratioW, ratioH);
+                     
+                     // Target Client Size
+                     int targetClientW = (int)(imgPixW * scale);
+                     int targetClientH = (int)(imgPixH * scale);
+                     
+                     int totalW = targetClientW + borderW;
+                     int totalH = targetClientH + borderH;
+
+                     // Center
+                     int cX = mi.rcWork.left + (screenW - totalW) / 2;
+                     int cY = mi.rcWork.top + (screenH - totalH) / 2;
+                     
+                     SetWindowPos(hwnd, nullptr, cX, cY, totalW, totalH, SWP_NOZORDER | SWP_NOACTIVATE);
+                     
+                     // Set Zoom to match fit
+                     RECT rcNew; GetClientRect(hwnd, &rcNew);
+                     float fitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
+                     g_viewState.Zoom = 1.0f / fitScale; // This fits image exactly in window?
+                     // Wait, Logic: FinalScale = FitScale * Zoom. If we want FinalScale = FitScale, then Zoom = 1.0?
+                     // Line 3236: float finalScale = fitScale * g_viewState.Zoom;
+                     // So if we want to "Fit to Screen" (image fills window), Zoom should be 1.0f.
+                     g_viewState.Zoom = 1.0f;
+                }
+                g_viewState.PanX = 0;
+                g_viewState.PanY = 0;
+                
+                g_osd.Show(hwnd, L"Zoom: Fit Screen", false, false, D2D1::ColorF(D2D1::ColorF::White));
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+
+        case VK_ADD: case VK_OEM_PLUS: // Zoom In
+        case VK_SUBTRACT: case VK_OEM_MINUS: { // Zoom Out
+            bool isZoomIn = (wParam == VK_ADD || wParam == VK_OEM_PLUS);
+            float step = ctrl ? 0.01f : 0.1f; // 1% or 10%
+            
+            if (isZoomIn) g_viewState.Zoom += step;
+            else g_viewState.Zoom -= step;
+            
+            if (g_viewState.Zoom < 0.01f) g_viewState.Zoom = 0.01f;
+            if (g_viewState.Zoom > 50.0f) g_viewState.Zoom = 50.0f;
+
+            // Show OSD
+            wchar_t buf[32];
+            swprintf_s(buf, L"Zoom: %.0f%%", g_viewState.Zoom * 100.0f);
+            g_osd.Show(hwnd, buf, false);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
+        }
         
         // Fullscreen
         case VK_RETURN: case VK_F11: // Enter/F11: Toggle fullscreen
@@ -2085,12 +2215,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         ClientToScreen(hwnd, &pt);
         
-        bool needsFix = false;
-        if (g_currentBitmap && !g_imagePath.empty()) {
-             needsFix = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
+        bool hasImage = g_currentBitmap != nullptr;
+        bool extensionFixNeeded = false;
+        if (hasImage && !g_imagePath.empty()) {
+             extensionFixNeeded = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
         }
         
-        ShowContextMenu(hwnd, pt, g_currentBitmap != nullptr, needsFix, g_config.LockWindowSize, g_config.ShowInfoPanel, g_config.AlwaysOnTop);
+        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_config.LockWindowSize, g_config.ShowInfoPanel, g_config.AlwaysOnTop, g_config.RenderRAW);
         return 0;
     }
     
@@ -2282,6 +2413,54 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
+        
+        case IDM_HUD_GALLERY:
+             // Toggle Gallery
+             SendMessage(hwnd, WM_KEYDOWN, 'T', 0);
+             break;
+
+        case IDM_LITE_INFO:
+             SendMessage(hwnd, WM_KEYDOWN, VK_TAB, 0);
+             break;
+
+        case IDM_ZOOM_100:
+             SendMessage(hwnd, WM_KEYDOWN, '1', 0);
+             break;
+
+        case IDM_ZOOM_FIT:
+             SendMessage(hwnd, WM_KEYDOWN, '0', 0);
+             break;
+             
+        case IDM_ZOOM_IN:
+            // Simulate Key Press
+            SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); 
+            break;
+        case IDM_ZOOM_OUT:
+            SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0);
+            break;
+
+        case IDM_ROTATE_CW:
+             PerformTransform(hwnd, TransformType::Rotate90CW);
+             break;
+        case IDM_ROTATE_CCW:
+             PerformTransform(hwnd, TransformType::Rotate90CCW);
+             break;
+        case IDM_FLIP_H:
+             PerformTransform(hwnd, TransformType::FlipHorizontal);
+             break;
+        case IDM_FLIP_V:
+             PerformTransform(hwnd, TransformType::FlipVertical);
+             break;
+
+        case IDM_RENDER_RAW:
+             g_config.RenderRAW = !g_config.RenderRAW;
+             g_toolbar.SetRawState(g_config.RenderRAW, false); 
+             if (!g_imagePath.empty()) {
+                 LoadImageAsync(hwnd, g_imagePath.c_str()); 
+             }
+             InvalidateRect(hwnd, nullptr, FALSE);
+             break;
+
         case IDM_WALLPAPER_FILL:
         case IDM_WALLPAPER_FIT:
         case IDM_WALLPAPER_TILE: {
@@ -3104,7 +3283,7 @@ void OnPaint(HWND hwnd) {
         RECT rect; GetClientRect(hwnd, &rect);
         D2D1_SIZE_F size = context->GetSize();
         CalculateWindowControls(size);
-        DrawWindowControls(context);
+        DrawWindowControls(hwnd, context);
         
         // Draw OSD
         g_renderEngine->DrawOSD(g_osd);

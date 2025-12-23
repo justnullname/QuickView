@@ -124,7 +124,7 @@ Master these shortcuts to navigate QuickView at the speed of thought:
 | :--- | :--- | :--- |
 | **`T`** | **Photo Wall** | Toggle the HUD Gallery overlay. |
 | **`1`** / **`Z`** | **100% View** | Pixel-perfect inspection (Actual Size). |
-| **`0`** / **`F`** | **Fit to Window** | Fit the entire image to the screen. |
+| **`0`** / **`F`** | **Fit to Screen** | Fit the entire image to the screen. |
 | **`Enter`** / **`F11`** | **Fullscreen** | Toggle immersive fullscreen mode. |
 | **`Esc`** | **Exit** | Exit fullscreen or close the application. |
 | **`Tab`** | **Lite Info** | Cycle through basic OSD overlays. |
