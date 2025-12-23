@@ -1019,19 +1019,28 @@ bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format
     std::wstring fmt = format;
     std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
     
-    // Basic mapping
-    if (fmt == L"jpeg") return (ext != L".jpg" && ext != L".jpeg" && ext != L".jpe" && ext != L".jfif");
-    if (fmt == L"png") return (ext != L".png");
-    if (fmt == L"webp") return (ext != L".webp");
-    if (fmt == L"avif") return (ext != L".avif");
-    if (fmt == L"gif") return (ext != L".gif");
-    if (fmt == L"bmp") return (ext != L".bmp" && ext != L".dib");
-    if (fmt == L"tiff") return (ext != L".tif" && ext != L".tiff");
-    if (fmt == L"heif" || fmt == L"heic") return (ext != L".heic" && ext != L".heif");
+    // Basic mapping & Loader Name Detection
+    if (fmt == L"jpeg" || fmt.contains(L"jpeg")) return (ext != L".jpg" && ext != L".jpeg" && ext != L".jpe" && ext != L".jfif");
+    if (fmt == L"png" || fmt.contains(L"png")) return (ext != L".png");
+    if (fmt == L"webp" || fmt.contains(L"webp")) return (ext != L".webp");
+    if (fmt == L"avif" || fmt.contains(L"avif") || fmt.contains(L"libavif")) return (ext != L".avif");
+    if (fmt == L"gif" || fmt.contains(L"gif")) return (ext != L".gif");
+    if (fmt == L"bmp" || fmt.contains(L"bmp")) return (ext != L".bmp" && ext != L".dib");
+    if (fmt == L"tiff" || fmt.contains(L"tiff")) return (ext != L".tif" && ext != L".tiff");
+    if (fmt == L"heif" || fmt == L"heic" || fmt.contains(L"heic")) return (ext != L".heic" && ext != L".heif");
     
     // JXL
-    if (fmt == L"jxl" || fmt == L"jpeg xl") return (ext != L".jxl");
+    if (fmt == L"jxl" || fmt == L"jpeg xl" || fmt.contains(L"jxl")) return (ext != L".jxl");
     
+    // HDR (Stb Image (HDR))
+    if (fmt == L"hdr" || fmt.contains(L"hdr")) return (ext != L".hdr" && ext != L".pic");
+    
+    // PSD
+    if (fmt == L"psd" || fmt.contains(L"psd")) return (ext != L".psd");
+    
+    // EXR
+    if (fmt == L"exr" || fmt.contains(L"exr") || fmt.contains(L"tinyexr")) return (ext != L".exr");
+
     return false;
 }
 
@@ -2236,7 +2245,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         bool extensionFixNeeded = false;
         bool isRaw = false;
         if (hasImage && !g_imagePath.empty()) {
-             extensionFixNeeded = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
+             extensionFixNeeded = CheckExtensionMismatch(g_imagePath, g_currentMetadata.LoaderName);
              isRaw = IsRawFile(g_imagePath);
         }
         
@@ -2791,7 +2800,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     g_imagePath = path; 
 
     // Update Toolbar RAW State
-    bool isRaw = false;
+    bool isRaw = false; // logic existing
     std::wstring pLower = path;
     std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::towlower);
     if (pLower.ends_with(L".arw") || pLower.ends_with(L".cr2") || pLower.ends_with(L".nef") || 
@@ -2799,14 +2808,21 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         pLower.ends_with(L".raf") || pLower.ends_with(L".pef") || pLower.ends_with(L".srw") || pLower.ends_with(L".cr3")) {
         isRaw = true;
     }
-    g_toolbar.SetRawState(isRaw, g_config.ForceRawDecode);
+    
+    // Update Toolbar Mismatch State
+    bool mismatch = CheckExtensionMismatch(path, g_currentMetadata.LoaderName);
+    g_toolbar.SetExtensionWarning(mismatch);
+    
+    // Force Toolbar Layout Update (Visibility change requires re-layout)
+    RECT rc; GetClientRect(hwnd, &rc);
+    g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
+    
+    g_toolbar.SetRawState(g_config.RenderRAW && isRaw, g_config.ForceRawDecode);
+     
+    // Redraw
+    InvalidateRect(hwnd, nullptr, FALSE);
 
-    // Update Toolbar Extension Warning
-    bool needsFix = false;
-    if (!g_currentMetadata.Format.empty()) {
-        needsFix = CheckExtensionMismatch(path, g_currentMetadata.Format);
-    }
-    g_toolbar.SetExtensionWarning(needsFix);
+
 
     // 5. Adjust & Repaint
     AdjustWindowToImage(hwnd);

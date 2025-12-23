@@ -1087,6 +1087,18 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
              HRESULT hr = LoadAVIF(filePath, ppBitmap);
              if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libavif"; return S_OK; }
          }
+         else if (path.ends_with(L".hdr") || path.ends_with(L".pic")) {
+             HRESULT hr = LoadStbImage(filePath, ppBitmap, true);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (HDR)"; return S_OK; }
+         }
+         else if (path.ends_with(L".exr")) {
+             HRESULT hr = LoadTinyExrImage(filePath, ppBitmap);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"TinyEXR"; return S_OK; }
+         }
+         else if (path.ends_with(L".psd")) {
+             HRESULT hr = LoadStbImage(filePath, ppBitmap);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (PSD)"; return S_OK; }
+         }
     }
 
 

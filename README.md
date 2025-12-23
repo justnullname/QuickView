@@ -106,20 +106,20 @@ QuickView 2.0 doesn't just "open" images; it uses the fastest, most secure libra
 | | **BMP / TGA**| **Google Wuffs** | Replaces WIC for robust handling of malformed files. |
 | **Modern** | **AVIF** | **libavif + dav1d** | Assembly-level AV1 decoding. Opens AVIFs instantly. |
 | | **JXL** | **libjxl + highway** | Next-gen JPEG XL standard with multi-threaded decoding. |
+| | **QOI** | **Google Wuffs** | Memory-safe, outperforms libpng, handles massive dimensions. |
 | **Pro / RAW**| **RAW** | **LibRaw** | Prioritizes "Instant Preview" extraction for speed. |
 | | **EXR** | **TinyEXR** | Lightweight, industrial-grade OpenEXR support. |
 | | **HDR** | **stb_image** | Radiance HDR format support. |
 | | **PSD** | **stb_image** | Reads composite preview layer for instant viewing. |
 | **Vector** | **SVG** | **NanoSVG** | Rasterizes vector to bitmap for infinite scaling. |
-| **System** | **HEIC** | **Windows WIC** | Hardware accelerated (Requires HEIF Extension). |
+| **System** | **HEIC / More** | **Windows WIC** | Hardware accelerated (Requires Windows  Extension). |
 
 ---
 
 ## ⌨️ Shortcuts
-
 Master these shortcuts to navigate QuickView at the speed of thought:
 
-### 👁️ Viewing & Navigation
+### 👁️ Viewing & NavigationS
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`T`** | **Photo Wall** | Toggle the HUD Gallery overlay. |
