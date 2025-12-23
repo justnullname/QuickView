@@ -2164,6 +2164,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      int targetClientW = (int)(imgPixW * scale);
                      int targetClientH = (int)(imgPixH * scale);
                      
+<<<<<<< HEAD
                      int totalW = targetClientW + borderW;
                      int totalH = targetClientH + borderH;
 
@@ -2182,12 +2183,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      // So if we want to "Fit to Screen" (image fills window), Zoom should be 1.0f.
                      g_viewState.Zoom = 1.0f;
                 }
+=======
+                     // Target Window Size
+                     int targetWinW = targetClientW + borderW;
+                     int targetWinH = targetClientH + borderH;
+                     
+                     // Center on Screen
+                     int x = mi.rcWork.left + (screenW - targetWinW) / 2;
+                     int y = mi.rcWork.top + (screenH - targetWinH) / 2;
+                     
+                     SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                
+                // Reset View to Fit
+                g_viewState.Zoom = 1.0f; 
+>>>>>>> 86ab245bf3828b79c29a67446c97cc74c452c2d1
                 g_viewState.PanX = 0;
                 g_viewState.PanY = 0;
                 
                 g_osd.Show(hwnd, L"Zoom: Fit Screen", false, false, D2D1::ColorF(D2D1::ColorF::White));
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
+<<<<<<< HEAD
             break;
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
@@ -2206,6 +2223,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             swprintf_s(buf, L"Zoom: %.0f%%", g_viewState.Zoom * 100.0f);
             g_osd.Show(hwnd, buf, false);
             InvalidateRect(hwnd, nullptr, FALSE);
+=======
+>>>>>>> 86ab245bf3828b79c29a67446c97cc74c452c2d1
             break;
         }
         
