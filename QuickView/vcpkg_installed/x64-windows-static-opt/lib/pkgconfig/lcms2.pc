@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: lcms2
+Description: LCMS Color Management Library
+Version: 2.17
+
+Libs: "-L${libdir}" -llcms2
+Cflags: "-I${includedir}"

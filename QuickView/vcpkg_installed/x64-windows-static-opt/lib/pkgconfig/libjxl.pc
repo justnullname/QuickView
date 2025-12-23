@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libjxl
+Description: Loads and saves JPEG XL files
+Version: 0.11.1
+
+Libs: "-L${libdir}" -ljxl
+Requires: libhwy libbrotlienc libbrotlidec libjxl_cms
+Cflags: "-I${includedir}" -DJXL_STATIC_DEFINE

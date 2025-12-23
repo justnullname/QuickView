@@ -720,7 +720,6 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     if (!decoder) return E_OUTOFMEMORY;
     
     // Enable multi-threaded decoding
-    // Use hardware_concurrency() to maximize throughput on multi-core CPUs
     unsigned int threads = std::thread::hardware_concurrency();
     if (threads > 0) {
         decoder->maxThreads = threads;
@@ -729,22 +728,19 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     }
     
     // Set Memory Source
-    avifResult result = avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size());
-    if (result != AVIF_RESULT_OK) {
+    if (avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size()) != AVIF_RESULT_OK) {
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
 
     // Parse
-    result = avifDecoderParse(decoder);
-    if (result != AVIF_RESULT_OK) {
+    if (avifDecoderParse(decoder) != AVIF_RESULT_OK) {
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
 
     // Next Image (Frame 0)
-    result = avifDecoderNextImage(decoder);
-    if (result != AVIF_RESULT_OK) {
+    if (avifDecoderNextImage(decoder) != AVIF_RESULT_OK) {
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -758,14 +754,11 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     rgb.depth = 8;
     
     // Calculate stride and size
-    // Note: libavif might want to allocate its own pixels or proper stride
-    // Let's allocate our own buffer for safety and control
     rgb.rowBytes = rgb.width * 4;
     std::vector<uint8_t> pixelData(rgb.rowBytes * rgb.height);
     rgb.pixels = pixelData.data();
     
-    result = avifImageYUVToRGB(decoder->image, &rgb);
-    if (result != AVIF_RESULT_OK) {
+    if (avifImageYUVToRGB(decoder->image, &rgb) != AVIF_RESULT_OK) {
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -1053,17 +1046,46 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Custom PCX"; return S_OK; }
     }
     
-    // RAW Check (no magic bytes usually reliable, use extension + try)
-    if (detectedFmt == L"Unknown") { // Raw files often have no standard magic or complicated ones
-         // Check extension
+
+    
+    // 2. Handle TIFF (CR2, NEF, ARW often identify as TIFF via Magic Bytes)
+    else if (detectedFmt == L"TIFF") {
+         // Check if it's actually a RAW file based on extension
          if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || 
              path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || 
-             path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw") || path.ends_with(L".cr3")) {
+             path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw") || path.ends_with(L".cr3") || path.ends_with(L".nrw")) {
              HRESULT hr = LoadRaw(filePath, ppBitmap, forceFullDecode);
              if (SUCCEEDED(hr)) { 
                  if (pLoaderName) *pLoaderName = forceFullDecode ? L"LibRaw (Full)" : L"LibRaw (Preview)"; 
                  return S_OK; 
              }
+         }
+         // If no RAW extension, fall through to WIC (Standard TIFF)
+    }
+
+    // RAW Check (no magic bytes usually reliable OR falls into Unknown)
+    if (detectedFmt == L"Unknown") { 
+         // Check extension
+         if (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || 
+             path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || 
+             path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw") || path.ends_with(L".cr3") || path.ends_with(L".nrw")) {
+             HRESULT hr = LoadRaw(filePath, ppBitmap, forceFullDecode);
+             if (SUCCEEDED(hr)) { 
+                 if (pLoaderName) *pLoaderName = forceFullDecode ? L"LibRaw (Full)" : L"LibRaw (Preview)"; 
+                 return S_OK; 
+             }
+         }
+         else if (path.ends_with(L".svg")) {
+             HRESULT hr = LoadSVG(filePath, ppBitmap);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"NanoSVG"; return S_OK; }
+         }
+         else if (path.ends_with(L".tga")) {
+             HRESULT hr = LoadTgaWuffs(filePath, ppBitmap);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs TGA"; return S_OK; }
+         }
+         else if (path.ends_with(L".avif")) {
+             HRESULT hr = LoadAVIF(filePath, ppBitmap);
+             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libavif"; return S_OK; }
          }
     }
 

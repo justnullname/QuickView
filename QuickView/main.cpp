@@ -3,6 +3,7 @@
 #include "QuickView.h"
 #include "RenderEngine.h"
 #include "ImageLoader.h"
+#include <mimalloc-new-delete.h>
 #include "LosslessTransform.h"
 #include "EditState.h"
 #include "AppStrings.h"
@@ -125,6 +126,7 @@ static D2D1_RECT_F g_gpsCoordRect = {};  // GPS Coordinates click area
 static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
+static bool g_isLoading = false;           // Show Wait Cursor
 
 // Helper: Copy text to clipboard
 static bool CopyToClipboard(HWND hwnd, const std::wstring& text) {
@@ -1264,6 +1266,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_SETCURSOR && g_isLoading) {
+        SetCursor(LoadCursor(nullptr, IDC_WAIT));
+        return TRUE;
+    }
     static bool isTracking = false;
     switch (message) {
     case WM_CREATE: {
@@ -2164,26 +2170,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      int targetClientW = (int)(imgPixW * scale);
                      int targetClientH = (int)(imgPixH * scale);
                      
-<<<<<<< HEAD
-                     int totalW = targetClientW + borderW;
-                     int totalH = targetClientH + borderH;
 
-                     // Center
-                     int cX = mi.rcWork.left + (screenW - totalW) / 2;
-                     int cY = mi.rcWork.top + (screenH - totalH) / 2;
-                     
-                     SetWindowPos(hwnd, nullptr, cX, cY, totalW, totalH, SWP_NOZORDER | SWP_NOACTIVATE);
-                     
-                     // Set Zoom to match fit
-                     RECT rcNew; GetClientRect(hwnd, &rcNew);
-                     float fitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
-                     g_viewState.Zoom = 1.0f / fitScale; // This fits image exactly in window?
-                     // Wait, Logic: FinalScale = FitScale * Zoom. If we want FinalScale = FitScale, then Zoom = 1.0?
-                     // Line 3236: float finalScale = fitScale * g_viewState.Zoom;
-                     // So if we want to "Fit to Screen" (image fills window), Zoom should be 1.0f.
-                     g_viewState.Zoom = 1.0f;
-                }
-=======
                      // Target Window Size
                      int targetWinW = targetClientW + borderW;
                      int targetWinH = targetClientH + borderH;
@@ -2197,19 +2184,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 
                 // Reset View to Fit
                 g_viewState.Zoom = 1.0f; 
->>>>>>> 86ab245bf3828b79c29a67446c97cc74c452c2d1
-                g_viewState.PanX = 0;
-                g_viewState.PanY = 0;
-                
                 g_osd.Show(hwnd, L"Zoom: Fit Screen", false, false, D2D1::ColorF(D2D1::ColorF::White));
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
-<<<<<<< HEAD
             break;
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
         case VK_SUBTRACT: case VK_OEM_MINUS: { // Zoom Out
             bool isZoomIn = (wParam == VK_ADD || wParam == VK_OEM_PLUS);
+            bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             float step = ctrl ? 0.01f : 0.1f; // 1% or 10%
             
             if (isZoomIn) g_viewState.Zoom += step;
@@ -2223,10 +2206,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             swprintf_s(buf, L"Zoom: %.0f%%", g_viewState.Zoom * 100.0f);
             g_osd.Show(hwnd, buf, false);
             InvalidateRect(hwnd, nullptr, FALSE);
-=======
->>>>>>> 86ab245bf3828b79c29a67446c97cc74c452c2d1
             break;
         }
+
         
         // Fullscreen
         case VK_RETURN: case VK_F11: // Enter/F11: Toggle fullscreen
@@ -2691,6 +2673,10 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     if (!g_imageLoader || !g_renderEngine) co_return;
     
+    g_isLoading = true;
+    // Notify cursor update immediately
+    PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    
     // 1. Check Prefetch Cache (Main Thread)
     ComPtr<IWICBitmap> wicMemoryBitmap;
     bool usedPrefetchCache = false;
@@ -2730,9 +2716,10 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         if (FAILED(hr) || !wicMemoryBitmap) {
             // Error Handling
             
-            // Check for HEIC Missing Codec
+            // Check for HEIC/AVIF Missing Codec
             bool isHEIC = path.ends_with(L".heic") || path.ends_with(L".HEIC") || 
-                          path.ends_with(L".heif") || path.ends_with(L".HEIF");
+                          path.ends_with(L".heif") || path.ends_with(L".HEIF") ||
+                          path.ends_with(L".avif") || path.ends_with(L".AVIF");
                           
             if (isHEIC && (hr == WINCODEC_ERR_COMPONENTNOTFOUND || hr == E_FAIL)) {
                 // User needs HEVC extension
@@ -2740,6 +2727,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
             } else {
                 g_osd.Show(hwnd, L"Failed to load image", true);
             }
+            g_isLoading = false;
             co_return; 
         }
         
@@ -2794,6 +2782,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     ComPtr<ID2D1Bitmap> d2dBitmap;
     if (FAILED(g_renderEngine->CreateBitmapFromWIC(wicMemoryBitmap.Get(), &d2dBitmap))) {
          g_osd.Show(hwnd, L"Failed to upload texture", true);
+         g_isLoading = false;
          co_return;
     }
 
@@ -2823,13 +2812,13 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     AdjustWindowToImage(hwnd);
     InvalidateRect(hwnd, nullptr, FALSE);
     
-    // 6. Trigger Prefetch for NEXT image
     if (g_navigator.Count() > 0) {
         std::wstring nextPath = g_navigator.PeekNext();
         if (!nextPath.empty() && nextPath != g_prefetchedPath && nextPath != path) {
              PrefetchImageAsync(hwnd, nextPath);
         }
     }
+    g_isLoading = false;
 }
 
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path) {

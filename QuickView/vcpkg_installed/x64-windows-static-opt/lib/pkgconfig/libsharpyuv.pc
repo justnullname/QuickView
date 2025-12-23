@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include/webp
+
+Name: libsharpyuv
+Description: Library for sharp RGB to YUV conversion
+Version: 1.6.0
+
+Libs: "-L${libdir}" -llibsharpyuv
+Cflags: "-I${includedir}"

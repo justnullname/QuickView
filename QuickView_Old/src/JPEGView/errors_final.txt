@@ -1,4 +1,0 @@
-e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2065: “IDM_SETTINGS”: 未声明的标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
-e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2051: case 表达式不是常量 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
-  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2065: “IDM_SETTINGS”: 未声明的标识符 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]
-  e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\MainDlg.cpp(1740,8): error C2051: case 表达式不是常量 [e:\Personal\Coding\QuickView\QuickView_VS2026_X64\src\JPEGView\JPEGView.vcxproj]

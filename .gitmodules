@@ -1,3 +1,18 @@
 [submodule "third_party/libjpeg-turbo"]
 	path = third_party/libjpeg-turbo
 	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+[submodule "third_party/vcpkg"]
+	path = third_party/vcpkg
+	url = https://github.com/microsoft/vcpkg.git
+[submodule "third_party/nanosvg"]
+	path = third_party/nanosvg
+	url = https://github.com/memononen/nanosvg.git
+[submodule "third_party/stb"]
+	path = third_party/stb
+	url = https://github.com/nothings/stb.git
+[submodule "third_party/tinyexr"]
+	path = third_party/tinyexr
+	url = https://github.com/syoyo/tinyexr.git
+[submodule "third_party/wuffs"]
+	path = third_party/wuffs
+	url = https://github.com/google/wuffs.git

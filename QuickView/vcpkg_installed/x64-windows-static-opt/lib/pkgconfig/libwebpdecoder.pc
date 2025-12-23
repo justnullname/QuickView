@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libwebpdecoder
+Description: Library for the WebP graphics format (decode only)
+Version: 1.6.0
+
+Libs: "-L${libdir}" -llibwebpdecoder
+Cflags: "-I${includedir}"

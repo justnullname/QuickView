@@ -1,0 +1,10 @@
+libyuv provides CMake targets:
+
+  # Unofficial config package and target from vcpkg
+  find_package(libyuv CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE yuv)
+
+Attention:
+You are using MSVC to compile libyuv. This build won't compile any
+of the acceleration codes, which results in a very slow library.
+See workarounds: https://github.com/microsoft/vcpkg/issues/28446

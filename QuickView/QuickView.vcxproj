@@ -17,6 +17,9 @@
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <VcpkgTriplet Condition="'$(Platform)'=='x64'">x64-windows-static-opt</VcpkgTriplet>
     <VcpkgEnabled>true</VcpkgEnabled>
+    <VcpkgRoot>..\third_party\vcpkg</VcpkgRoot>
+    <VcpkgManifestInstall>true</VcpkgManifestInstall>
+    <VcpkgOverlayTriplets>..\custom-triplet</VcpkgOverlayTriplets>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -89,7 +92,7 @@
       <Optimization>MaxSpeed</Optimization>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>vcpkg_installed\x64-windows-static-opt\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -97,8 +100,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dwrite.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>vcpkg_installed\x64-windows-static-opt\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dav1d.lib;avif.lib;mimalloc.lib;brotlicommon.lib;brotlidec.lib;brotlienc.lib;hwy.lib;jasper.lib;jpeg.lib;jxl_cms.lib;jxl_threads.lib;jxl.lib;lcms2.lib;libsharpyuv.lib;libwebp.lib;libwebpdecoder.lib;libwebpdemux.lib;libwebpmux.lib;raw_r.lib;turbojpeg.lib;yuv.lib;zlib.lib;dwrite.lib;windowscodecs.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -142,4 +145,5 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <Import Project="..\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets" Condition="Exists('..\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets')" />
 </Project>

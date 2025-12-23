@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libmimalloc
+Description: A compact general purpose allocator with excellent performance
+Version: 2.2
+URL: https://github.com/microsoft/mimalloc/
+
+Libs: "-L${libdir}" -lmimalloc -lpsapi -lshell32 -luser32 -ladvapi32 -lbcrypt
+Cflags: "-I${includedir}"

@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libjxl_threads
+Description: JPEG XL multi-thread runner using std::threads.
+Version: 0.11.1
+
+Libs: "-L${libdir}" -ljxl_threads -lm
+Requires: 
+Cflags: "-I${includedir}" -DJXL_THREADS_STATIC_DEFINE

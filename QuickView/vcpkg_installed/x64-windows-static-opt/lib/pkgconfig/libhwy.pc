@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libhwy
+Description: Efficient and performance-portable SIMD wrapper
+Version: 1.3.0
+
+Libs: "-L${libdir}" -lhwy
+Cflags: "-I${includedir}" -DHWY_STATIC_DEFINE

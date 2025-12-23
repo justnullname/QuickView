@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libavif
+Description: Library for encoding and decoding .avif files
+Version: 1.3.0
+
+Libs: "-L${libdir}" -lavif -lyuv
+Requires: libjpeg dav1d
+Cflags: "-I${includedir}" -UAVIF_DLL
