@@ -19,8 +19,15 @@ public:
         fs::path dir = p.parent_path();
         if (dir.empty()) return;
 
-        // Supported extensions (Basic list for now)
-        const std::vector<std::wstring> extensions = { L".jpg", L".jpeg", L".png", L".webp", L".bmp", L".gif", L".heic", L".avif" };
+        // Supported extensions (comprehensive list including RAW formats)
+        const std::vector<std::wstring> extensions = {
+            // Standard formats
+            L".jpg", L".jpeg", L".png", L".webp", L".bmp", L".gif", L".tif", L".tiff",
+            // Modern formats  
+            L".heic", L".heif", L".avif", L".jxl", L".exr", L".hdr",
+            // RAW formats
+            L".cr2", L".cr3", L".nef", L".arw", L".orf", L".rw2", L".dng", L".raf", L".pef", L".srw", L".raw"
+        };
 
         try {
             for (const auto& entry : fs::directory_iterator(dir)) {
@@ -51,17 +58,29 @@ public:
         }
     }
 
-    std::wstring Next() {
+    std::wstring Next(bool loop = true) {
         if (m_files.empty()) return L"";
+        if (!loop && m_currentIndex >= (int)m_files.size() - 1) {
+            m_hitEnd = true;
+            return L""; // At end, don't loop
+        }
+        m_hitEnd = false;
         m_currentIndex = (m_currentIndex + 1) % m_files.size();
         return m_files[m_currentIndex];
     }
 
-    std::wstring Previous() {
+    std::wstring Previous(bool loop = true) {
         if (m_files.empty()) return L"";
+        if (!loop && m_currentIndex <= 0) {
+            m_hitEnd = true;
+            return L""; // At start, don't loop
+        }
+        m_hitEnd = false;
         m_currentIndex = (m_currentIndex - 1 + m_files.size()) % m_files.size();
         return m_files[m_currentIndex];
     }
+    
+    bool HitEnd() const { return m_hitEnd; }
 
     std::wstring PeekNext() const {
         if (m_files.empty()) return L"";
@@ -99,4 +118,5 @@ public:
 private:
     std::vector<std::wstring> m_files;
     int m_currentIndex = -1;
+    bool m_hitEnd = false;
 };

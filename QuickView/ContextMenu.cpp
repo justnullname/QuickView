@@ -7,7 +7,7 @@
 // ContextMenu.cpp - Right-click Context Menu Implementation
 // ============================================================
 
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool alwaysOnTop, bool renderRaw, bool isRawFile) {
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen) {
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
 
@@ -17,7 +17,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hMenu, MF_STRING, IDM_OPEN, L"Open...\tCtrl+O");
     AppendMenuW(hMenu, hasImage ? MF_STRING : MF_GRAYED, IDM_OPENWITH_DEFAULT, L"Open With...");
     AppendMenuW(hMenu, MF_STRING, IDM_EDIT, L"Edit (Default App)\tE");
-    AppendMenuW(hMenu, MF_STRING, IDM_SHOW_IN_EXPLORER, L"Show in Explorer\tEnter");
+    AppendMenuW(hMenu, MF_STRING, IDM_SHOW_IN_EXPLORER, L"Show in Explorer");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING, IDM_COPY_IMAGE, L"Copy Image\tCtrl+C");
     AppendMenuW(hMenu, MF_STRING, IDM_COPY_PATH, L"Copy Path\tCtrl+Alt+C");
@@ -49,10 +49,11 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hViewMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hViewMenu, MF_STRING, IDM_HUD_GALLERY, L"HUD Gallery\tT");
     
-    // Check states: 
-    // Lite Info -> showInfoPanel && !infoPanelExpanded
-    AppendMenuW(hViewMenu, MF_STRING, IDM_LITE_INFO, L"Lite Info Panel\tTab");
-    AppendMenuW(hViewMenu, MF_STRING | (showInfoPanel ? MF_CHECKED : 0), IDM_SHOW_INFO_PANEL, L"Show Info Panel\tI");
+    // Info Panel with check states
+    UINT liteFlags = MF_STRING | ((showInfoPanel && !infoPanelExpanded) ? MF_CHECKED : 0);
+    UINT fullFlags = MF_STRING | ((showInfoPanel && infoPanelExpanded) ? MF_CHECKED : 0);
+    AppendMenuW(hViewMenu, liteFlags, IDM_LITE_INFO, L"Lite Info Panel\tTab");
+    AppendMenuW(hViewMenu, fullFlags, IDM_FULL_INFO, L"Full Info Panel\tI");
     AppendMenuW(hViewMenu, MF_SEPARATOR, 0, nullptr);
     
     UINT rawFlags = MF_STRING;
@@ -60,7 +61,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     if (renderRaw) rawFlags |= MF_CHECKED;
     AppendMenuW(hViewMenu, rawFlags, IDM_RENDER_RAW, L"Render RAW");
     
-    AppendMenuW(hViewMenu, MF_STRING, IDM_FULLSCREEN, L"Fullscreen\tF11");
+    AppendMenuW(hViewMenu, MF_STRING | (isFullscreen ? MF_CHECKED : 0), IDM_FULLSCREEN, L"Fullscreen\tF11");
 
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hViewMenu, L"View");
     

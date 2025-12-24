@@ -43,6 +43,7 @@ public:
     // actually, we can just set a target state and let UpdateAnimation be called by Timer.
     bool IsPinned() const { return m_isPinned; }
     void TogglePin() { m_isPinned = !m_isPinned; }
+    void SetPinned(bool pinned) { m_isPinned = pinned; }
     
     // Animation Step (returns true if still animating)
     bool UpdateAnimation(); 

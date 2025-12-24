@@ -65,27 +65,59 @@ enum class MouseAction {
 /// Application configuration (for future settings menu)
 /// </summary>
 struct AppConfig {
-    bool AutoSaveOnSwitch = false;       // Auto-save when switching images
-    bool AlwaysSaveLossless = false;     // Always save lossless transforms
-    bool AlwaysSaveEdgeAdapted = false;  // Always save edge-adapted transforms
-    bool AlwaysSaveLossy = false;        // Always save lossy transforms
-    bool ShowSavePrompt = true;          // Show save prompt
-    float DialogAlpha = 0.95f;           // OSD Dialog transparency
-    
-    // Interaction
+    // --- General ---
+    int Language = 0;                   // 0=Auto, 1=EN, 2=CN
+    bool SingleInstance = false;
+    bool CheckUpdates = true;
+    bool LoopNavigation = true;
+    bool ConfirmDelete = true;
+    bool PortableMode = false;
+
+    // --- View ---
+    int CanvasColor = 0;                // 0=Black, 1=White, 2=Grid, 3=Custom
+    float CanvasCustomR = 0.2f;         // Custom color RGB (0.0-1.0)
+    float CanvasCustomG = 0.2f;
+    float CanvasCustomB = 0.2f;
+    bool CanvasShowGrid = false; // Overlay grid
+    bool AlwaysOnTop = false;
     bool ResizeWindowOnZoom = true;
-    bool RenderRAW = false; // Sync RAW preview state
+    bool AutoHideWindowControls = true;
+    bool LockBottomToolbar = false;
+    int ExifPanelMode = 0;              // 0=Off, 1=Lite, 2=Full (startup default)
+    int ToolbarInfoDefault = 0;         // 0=Lite, 1=Full (toolbar button default)
+    wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
+
+    // --- Control ---
+    bool InvertWheel = false;
+    bool InvertXButton = false;          // Invert mouse forward/back buttons for navigation
     MouseAction LeftDragAction = MouseAction::WindowDrag;
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;
-    bool AutoHideWindowControls = true;
+    // Helper indices for Segment controls (synced with actual enum values)
+    int LeftDragIndex = 0;   // 0=Window, 1=Pan
+    int MiddleDragIndex = 1; // 0=Window, 1=Pan
+    int MiddleClickIndex = 1; // 0=None, 1=Exit (default Exit)
+    bool EdgeNavClick = true;
+    int NavIndicator = 0;               // 0=Arrow
     
-    // View options
-    bool LockWindowSize = false;         // Prevent window auto-resize
-    bool ShowInfoPanel = false;          // Master Toggle
-    bool InfoPanelExpanded = false;      // Compact vs Full
-    bool ForceRawDecode = false;         // Force full RAW decoding (slower but high res)
-    bool AlwaysOnTop = false;            // Window always on top
+    // --- Image & Edit ---
+    bool AutoRotate = true;
+    bool ColorManagement = false;
+
+    // Existing / Internal (Defaults for Runtime)
+    bool AutoSaveOnSwitch = false;       
+    bool AlwaysSaveLossless = false;     
+    bool AlwaysSaveEdgeAdapted = false;  
+    bool AlwaysSaveLossy = false;        
+    bool ShowSavePrompt = true;          
+    float DialogAlpha = 0.95f;           
+    
+    // Default States (User Preference)
+    bool LockWindowSize = false;         
+    bool ShowInfoPanel = false;          
+    bool InfoPanelExpanded = false;      
+    bool ForceRawDecode = false;         
+    bool RenderRAW = false;
     
     /// <summary>
     /// Should auto-save for given quality?
@@ -105,3 +137,26 @@ struct AppConfig {
         }
     }
 };
+
+// Runtime State (Reset on Restart)
+struct RuntimeConfig {
+    bool LockWindowSize = false;
+    bool ShowInfoPanel = false;
+    bool InfoPanelExpanded = false;  // false=Lite, true=Full
+    bool ForceRawDecode = false;
+    bool RenderRAW = false;
+    
+    // Sync Helper
+    void SyncFrom(const AppConfig& cfg) {
+        LockWindowSize = cfg.LockWindowSize;
+        ShowInfoPanel = (cfg.ExifPanelMode > 0); // 0=Off, 1=Lite, 2=Full
+        InfoPanelExpanded = (cfg.ExifPanelMode == 2); // 2=Full
+        ForceRawDecode = cfg.ForceRawDecode;
+        RenderRAW = cfg.RenderRAW;
+    }
+};
+
+extern RuntimeConfig g_runtime;
+bool CheckWritePermission(const std::wstring& dir);
+void SaveConfig(); // Ensure visible
+void LoadConfig(); // Ensure visible

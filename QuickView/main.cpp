@@ -88,16 +88,20 @@ struct ViewState {
     float PanY = 0.0f;
     bool IsDragging = false;
     bool IsInteracting = false;  // True during drag/zoom/resize for dynamic interpolation
+    bool IsMiddleDragWindow = false;  // True when middle button is dragging window
     POINT LastMousePos = { 0, 0 };
     POINT DragStartPos = { 0, 0 };  // For click vs drag detection
     DWORD DragStartTime = 0;        // For click vs drag detection
+    POINT WindowDragStart = { 0, 0 }; // Window position at drag start
+    POINT CursorDragStart = { 0, 0 }; // Cursor screen position at drag start
 
-    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; }
+    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; }
 };
 
 #include "FileNavigator.h"
 #include "GalleryOverlay.h"
 #include "Toolbar.h"
+#include "SettingsOverlay.h"
 
 // --- Globals ---
 
@@ -111,12 +115,14 @@ OSDState g_osd; // Removed static, explicitly Global
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
 static DialogState g_dialog;
 static EditState g_editState;
-static AppConfig g_config;
+AppConfig g_config;
+RuntimeConfig g_runtime;
 static ViewState g_viewState;
 static FileNavigator g_navigator; // New Navigator
 static ThumbnailManager g_thumbMgr;
 static GalleryOverlay g_gallery;
 static Toolbar g_toolbar;
+static SettingsOverlay g_settingsOverlay;
 static CImageLoader::ImageMetadata g_currentMetadata;
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
@@ -152,6 +158,45 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
         insertPos -= 3;
     }
     return num + L" B";
+}
+
+// --- Persistence Helpers ---
+
+bool CheckWritePermission(const std::wstring& dir) {
+    std::wstring testFile = dir + L"\\write_test.tmp";
+    HANDLE hFile = CreateFileW(testFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(hFile);
+    return true;
+}
+
+std::wstring GetConfigPath(bool forcePortableCheck = false) {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring exeDir = exePath;
+    size_t lastSlash = exeDir.find_last_of(L"\\/");
+    if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+    
+    std::wstring portablePath = exeDir + L"\\QuickView.ini";
+    
+    // If forcing check (for saving), return portable path
+    if (forcePortableCheck) return portablePath;
+
+    // Detection Logic:
+    // 1. If Portable INI exists, use it.
+    if (GetFileAttributesW(portablePath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        return portablePath;
+    }
+
+    // 2. Default to AppData
+    wchar_t appDataPath[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
+        std::wstring configDir = std::wstring(appDataPath) + L"\\QuickView";
+        CreateDirectoryW(configDir.c_str(), nullptr);
+        return configDir + L"\\QuickView.ini";
+    }
+
+    return portablePath; // Fallback
 }
 
 // ============================================================================
@@ -1044,6 +1089,152 @@ bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format
     return false;
 }
 
+// --- Persistence ---
+// --- Persistence ---
+void SaveConfig() {
+    std::wstring iniPath;
+    
+    if (g_config.PortableMode) {
+        // Force path to Exe Dir
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        std::wstring exeDir = exePath;
+        size_t lastSlash = exeDir.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+        iniPath = exeDir + L"\\QuickView.ini";
+    } else {
+        // AppData Logic (GetConfigPath handles default logic but we want explicit here)
+        // If switching OFF Portable, we should ensure we save to AppData.
+        wchar_t appDataPath[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath))) {
+            std::wstring configDir = std::wstring(appDataPath) + L"\\QuickView";
+            CreateDirectoryW(configDir.c_str(), nullptr);
+            iniPath = configDir + L"\\QuickView.ini";
+        } else {
+            iniPath = L"QuickView.ini"; // Fallback
+        }
+    }
+
+    // General
+    WritePrivateProfileStringW(L"General", L"Language", std::to_wstring(g_config.Language).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"SingleInstance", g_config.SingleInstance ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"CheckUpdates", g_config.CheckUpdates ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"LoopNavigation", g_config.LoopNavigation ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"ConfirmDelete", g_config.ConfirmDelete ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"PortableMode", g_config.PortableMode ? L"1" : L"0", iniPath.c_str());
+
+    // View
+    WritePrivateProfileStringW(L"View", L"CanvasColor", std::to_wstring(g_config.CanvasColor).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"CanvasCustomR", std::to_wstring(g_config.CanvasCustomR).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"CanvasCustomG", std::to_wstring(g_config.CanvasCustomG).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"CanvasCustomB", std::to_wstring(g_config.CanvasCustomB).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"CanvasShowGrid", g_config.CanvasShowGrid ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"AlwaysOnTop", g_config.AlwaysOnTop ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"ResizeWindowOnZoom", g_config.ResizeWindowOnZoom ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"ExifPanelMode", std::to_wstring(g_config.ExifPanelMode).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"ToolbarInfoDefault", std::to_wstring(g_config.ToolbarInfoDefault).c_str(), iniPath.c_str());
+    // DialogAlpha (Slider)
+    WritePrivateProfileStringW(L"View", L"DialogAlpha", std::to_wstring(g_config.DialogAlpha).c_str(), iniPath.c_str());
+
+    // Control
+    WritePrivateProfileStringW(L"Controls", L"InvertWheel", g_config.InvertWheel ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"InvertXButton", g_config.InvertXButton ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"LeftDragAction", std::to_wstring((int)g_config.LeftDragAction).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"MiddleDragAction", std::to_wstring((int)g_config.MiddleDragAction).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"MiddleClickAction", std::to_wstring((int)g_config.MiddleClickAction).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"NavIndicator", std::to_wstring(g_config.NavIndicator).c_str(), iniPath.c_str());
+
+    // Image
+    WritePrivateProfileStringW(L"Image", L"AutoRotate", g_config.AutoRotate ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossy", g_config.AlwaysSaveLossy ? L"1" : L"0", iniPath.c_str());
+    
+    // Internal
+    WritePrivateProfileStringW(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"AutoSaveOnSwitch", g_config.AutoSaveOnSwitch ? L"1" : L"0", iniPath.c_str());
+}
+
+void LoadConfig() {
+    std::wstring iniPath = GetConfigPath();
+    
+    // Auto-detect Portable Mode state based on where we found the config
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring exeDir = exePath;
+    size_t lastSlash = exeDir.find_last_of(L"\\/");
+    if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+    
+    // Check if loaded path starts with exeDir
+    if (iniPath.find(exeDir) == 0) {
+        g_config.PortableMode = true;
+    } else {
+        g_config.PortableMode = false;
+    }
+    
+    if (GetFileAttributesW(iniPath.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+
+    // General
+    g_config.Language = GetPrivateProfileIntW(L"General", L"Language", 0, iniPath.c_str());
+    g_config.SingleInstance = GetPrivateProfileIntW(L"General", L"SingleInstance", 1, iniPath.c_str()) != 0;
+    g_config.CheckUpdates = GetPrivateProfileIntW(L"General", L"CheckUpdates", 1, iniPath.c_str()) != 0;
+    g_config.LoopNavigation = GetPrivateProfileIntW(L"General", L"LoopNavigation", 1, iniPath.c_str()) != 0;
+    g_config.ConfirmDelete = GetPrivateProfileIntW(L"General", L"ConfirmDelete", 1, iniPath.c_str()) != 0;
+    g_config.PortableMode = GetPrivateProfileIntW(L"General", L"PortableMode", 0, iniPath.c_str()) != 0;
+
+    // View
+    g_config.CanvasColor = GetPrivateProfileIntW(L"View", L"CanvasColor", 0, iniPath.c_str());
+    wchar_t bufR[32], bufG[32], bufB[32];
+    GetPrivateProfileStringW(L"View", L"CanvasCustomR", L"0.2", bufR, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"View", L"CanvasCustomG", L"0.2", bufG, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"View", L"CanvasCustomB", L"0.2", bufB, 32, iniPath.c_str());
+    g_config.CanvasCustomR = (float)_wtof(bufR);
+    g_config.CanvasCustomG = (float)_wtof(bufG);
+    g_config.CanvasCustomB = (float)_wtof(bufB);
+    g_config.CanvasShowGrid = GetPrivateProfileIntW(L"View", L"CanvasShowGrid", 0, iniPath.c_str()) != 0;
+    g_config.AlwaysOnTop = GetPrivateProfileIntW(L"View", L"AlwaysOnTop", 0, iniPath.c_str()) != 0;
+    g_config.ResizeWindowOnZoom = GetPrivateProfileIntW(L"View", L"ResizeWindowOnZoom", 1, iniPath.c_str()) != 0;
+    g_config.AutoHideWindowControls = GetPrivateProfileIntW(L"View", L"AutoHideWindowControls", 1, iniPath.c_str()) != 0;
+    g_config.LockBottomToolbar = GetPrivateProfileIntW(L"View", L"LockBottomToolbar", 0, iniPath.c_str()) != 0;
+    g_config.ExifPanelMode = GetPrivateProfileIntW(L"View", L"ExifPanelMode", 0, iniPath.c_str());
+    g_config.ToolbarInfoDefault = GetPrivateProfileIntW(L"View", L"ToolbarInfoDefault", 0, iniPath.c_str());
+    
+    wchar_t buf[32];
+    GetPrivateProfileStringW(L"View", L"DialogAlpha", L"0.95", buf, 32, iniPath.c_str());
+    g_config.DialogAlpha = (float)_wtof(buf);
+
+    // Control
+    g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
+    g_config.InvertXButton = GetPrivateProfileIntW(L"Controls", L"InvertXButton", 0, iniPath.c_str()) != 0;
+    g_config.LeftDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"LeftDragAction", (int)MouseAction::WindowDrag, iniPath.c_str());
+    g_config.MiddleDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleDragAction", (int)MouseAction::PanImage, iniPath.c_str());
+    g_config.MiddleClickAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleClickAction", (int)MouseAction::ExitApp, iniPath.c_str());
+    // Sync helper indices from loaded action values
+    g_config.LeftDragIndex = (g_config.LeftDragAction == MouseAction::WindowDrag) ? 0 : 1;
+    g_config.MiddleDragIndex = (g_config.MiddleDragAction == MouseAction::WindowDrag) ? 0 : 1;
+    g_config.MiddleClickIndex = (g_config.MiddleClickAction == MouseAction::ExitApp) ? 1 : 0;
+    g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
+    g_config.NavIndicator = GetPrivateProfileIntW(L"Controls", L"NavIndicator", 0, iniPath.c_str());
+    
+    // Image
+    g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;
+    g_config.ColorManagement = GetPrivateProfileIntW(L"Image", L"ColorManagement", 0, iniPath.c_str()) != 0;
+    g_config.ForceRawDecode = GetPrivateProfileIntW(L"Image", L"ForceRawDecode", 0, iniPath.c_str()) != 0;
+    g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
+    g_config.AlwaysSaveEdgeAdapted = GetPrivateProfileIntW(L"Image", L"AlwaysSaveEdgeAdapted", 0, iniPath.c_str()) != 0;
+    g_config.AlwaysSaveLossy = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossy", 0, iniPath.c_str()) != 0;
+    
+    // Internal
+    g_config.ShowSavePrompt = GetPrivateProfileIntW(L"General", L"ShowSavePrompt", 1, iniPath.c_str()) != 0;
+    g_config.AutoSaveOnSwitch = GetPrivateProfileIntW(L"General", L"AutoSaveOnSwitch", 0, iniPath.c_str()) != 0;
+}
+
+
 void DiscardChanges() {
     // Save original path BEFORE reset (Reset clears it)
     std::wstring originalPath = g_editState.OriginalFilePath;
@@ -1103,7 +1294,7 @@ bool CheckUnsavedChanges(HWND hwnd) {
 
 void AdjustWindowToImage(HWND hwnd) {
     if (!g_currentBitmap) return;
-    if (g_config.LockWindowSize) return;  // Don't auto-resize when locked
+    if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
 
     D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
     
@@ -1218,10 +1409,39 @@ void PerformTransform(HWND hwnd, TransformType type) {
     }
 }
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
     // Enable Per-Monitor DPI Awareness V2 for proper multi-monitor support
     // This enables WM_DPICHANGED messages when window is dragged across monitors
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    
+    // Single Instance Check (Early, before any initialization)
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"QuickView_SingleInstance_Mutex");
+    bool alreadyRunning = (GetLastError() == ERROR_ALREADY_EXISTS);
+    
+    // Load config early to check SingleInstance setting
+    LoadConfig();
+    
+    if (g_config.SingleInstance && alreadyRunning) {
+        // Find existing window and send file path
+        HWND hExisting = FindWindowW(L"QuickViewClass", nullptr);
+        if (hExisting) {
+            // Parse command line for file path
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            if (argc > 1 && argv[1]) {
+                // Send file path via WM_COPYDATA
+                COPYDATASTRUCT cds = {};
+                cds.dwData = 0x5156; // "QV" magic
+                cds.cbData = (DWORD)((wcslen(argv[1]) + 1) * sizeof(wchar_t));
+                cds.lpData = argv[1];
+                SendMessageW(hExisting, WM_COPYDATA, 0, (LPARAM)&cds);
+            }
+            LocalFree(argv);
+            SetForegroundWindow(hExisting);
+        }
+        if (hMutex) CloseHandle(hMutex);
+        return 0;
+    }
     
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     WNDCLASSEXW wcex = {};
@@ -1239,13 +1459,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
     
+    // Note: LoadConfig was already called early for SingleInstance check
+    // Just sync runtime state
+    g_runtime.SyncFrom(g_config);
+
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
     
     // Init Gallery
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
     g_gallery.Initialize(&g_thumbMgr, &g_navigator);
+    g_settingsOverlay.Init(g_renderEngine->GetDeviceContext());
     DragAcceptFiles(hwnd, TRUE);
+    
+    // Apply Always on Top
+    if (g_config.AlwaysOnTop) {
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+    
+    // Sync toolbar button states from runtime config (which was synced from AppConfig)
+    g_toolbar.SetLockState(g_runtime.LockWindowSize);
+    g_toolbar.SetExifState(g_runtime.ShowInfoPanel);
+    g_toolbar.SetPinned(g_config.LockBottomToolbar); // Lock toolbar from config
+    
     ShowWindow(hwnd, nCmdShow); UpdateWindow(hwnd);
     
     int argc = 0; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -1271,6 +1507,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+    
+    SaveConfig();
     DiscardChanges(); CoUninitialize(); return (int)msg.wParam;
 }
 
@@ -1292,6 +1530,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         auto handle = std::coroutine_handle<>::from_address((void*)lParam);
         handle.resume();
         return 0;
+    }
+    case WM_COPYDATA: {
+        // Receive file path from second instance (Single Instance mode)
+        COPYDATASTRUCT* pCDS = (COPYDATASTRUCT*)lParam;
+        if (pCDS && pCDS->dwData == 0x5156 && pCDS->lpData) {
+            std::wstring filePath = (wchar_t*)pCDS->lpData;
+            if (!filePath.empty()) {
+                g_navigator.Initialize(filePath);
+                LoadImageAsync(hwnd, filePath.c_str());
+            }
+        }
+        return TRUE;
     }
     case WM_TIMER: {
         static const UINT_PTR INTERACTION_TIMER_ID = 1001;
@@ -1340,6 +1590,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             } else {
                 KillTimer(hwnd, 997);
             }
+        }
+        return 0;
+    }
+    case WM_GETMINMAXINFO: {
+        // Limit minimum window size when Settings HUD is visible
+        if (g_settingsOverlay.IsVisible()) {
+            MINMAXINFO* pMMI = (MINMAXINFO*)lParam;
+            pMMI->ptMinTrackSize.x = 820; // HUD_WIDTH + margin
+            pMMI->ptMinTrackSize.y = 670; // HUD_HEIGHT + margin
         }
         return 0;
     }
@@ -1401,6 +1660,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
      case WM_MOUSEMOVE: {
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
           
+          if (g_settingsOverlay.IsVisible()) {
+              if (g_settingsOverlay.OnMouseMove((float)pt.x, (float)pt.y)) {
+                   InvalidateRect(hwnd, nullptr, FALSE);
+              }
+              // Allow pass-through for now, or block?
+          }
+          
           if (g_gallery.IsVisible()) {
 
               g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
@@ -1442,7 +1708,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           
           SetTimer(hwnd, 997, 16, nullptr); // Drive animation/latency logic
           // Force redraw for hover effects when toolbar is visible
-          if (g_toolbar.IsVisible() || g_config.ShowInfoPanel) {
+          if (g_toolbar.IsVisible() || g_runtime.ShowInfoPanel) {
               InvalidateRect(hwnd, nullptr, FALSE);
           }
          // Update Button Hover
@@ -1489,6 +1755,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              InvalidateRect(hwnd, nullptr, FALSE);
          }
          
+         // Middle button window drag
+         if (g_viewState.IsMiddleDragWindow) {
+             POINT cursorPos;
+             GetCursorPos(&cursorPos);
+             int newX = g_viewState.WindowDragStart.x + (cursorPos.x - g_viewState.CursorDragStart.x);
+             int newY = g_viewState.WindowDragStart.y + (cursorPos.y - g_viewState.CursorDragStart.y);
+             SetWindowPos(hwnd, nullptr, newX, newY, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+             return 0;
+         }
+         
          if (g_viewState.IsDragging) {
              g_viewState.PanX += (pt.x - g_viewState.LastMousePos.x); 
              g_viewState.PanY += (pt.y - g_viewState.LastMousePos.y); 
@@ -1497,7 +1773,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
          }
          
          // Hand cursor for info panel clickable areas
-         if (g_config.ShowInfoPanel) {
+         if (g_runtime.ShowInfoPanel) {
              float mx = (float)pt.x, my = (float)pt.y;
              bool onClickable = false;
              
@@ -1508,7 +1784,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
              
              // Info grid rows (when expanded)
-             if (g_config.InfoPanelExpanded) {
+             if (g_runtime.InfoPanelExpanded) {
                  for (const auto& row : g_infoGrid) {
                      if (mx >= row.hitRect.left && mx <= row.hitRect.right && my >= row.hitRect.top && my <= row.hitRect.bottom) {
                          onClickable = true; break;
@@ -1542,43 +1818,93 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         g_viewState.DragStartPos = g_viewState.LastMousePos;
         g_viewState.DragStartTime = GetTickCount();
         
-        // Only allow panning if image exceeds window bounds
-        if (CanPan(hwnd)) {
+        // Check MiddleDragAction config
+        if (g_config.MiddleDragAction == MouseAction::WindowDrag) {
+            // Start manual window drag with middle button
+            RECT rc;
+            GetWindowRect(hwnd, &rc);
+            POINT cursorPos;
+            GetCursorPos(&cursorPos);
+            g_viewState.WindowDragStart = { rc.left, rc.top };
+            g_viewState.CursorDragStart = cursorPos;
+            g_viewState.IsMiddleDragWindow = true;
             SetCapture(hwnd);
-            g_viewState.IsDragging = true;
-            g_viewState.IsInteracting = true;  // Start interaction mode
-        } else {
-            // Not dragging, but still need to track for click detection
-            g_viewState.IsDragging = false; // Will check on MBUTTONUP
+            return 0;
+        } else if (g_config.MiddleDragAction == MouseAction::PanImage) {
+            // Pan Image with middle button
+            if (CanPan(hwnd)) {
+                SetCapture(hwnd);
+                g_viewState.IsDragging = true;
+                g_viewState.IsInteracting = true;
+            } else {
+                g_viewState.IsDragging = false;
+            }
         }
         return 0;
     }
     case WM_MBUTTONUP: {
-        // Release capture if we were dragging
-        if (g_viewState.IsDragging) {
+        // Release capture if we were dragging window with middle button
+        if (g_viewState.IsMiddleDragWindow) {
             ReleaseCapture();
-            g_viewState.IsDragging = false;
+            g_viewState.IsMiddleDragWindow = false;
+            
+            // Use screen coordinates to detect click (client coords change when window moves)
+            POINT cursorPos;
+            GetCursorPos(&cursorPos);
+            DWORD elapsed = GetTickCount() - g_viewState.DragStartTime;
+            int dx = abs(cursorPos.x - g_viewState.CursorDragStart.x);
+            int dy = abs(cursorPos.y - g_viewState.CursorDragStart.y);
+            
+            // Check if this was a "click" (short duration, minimal movement)
+            if (elapsed < 300 && dx < 5 && dy < 5) {
+                if (g_config.MiddleClickAction == MouseAction::ExitApp) {
+                    if (CheckUnsavedChanges(hwnd)) {
+                        PostMessage(hwnd, WM_CLOSE, 0, 0);
+                    }
+                }
+            }
+            return 0;
         }
         
-        // FIRST: Check if this was a "click" (short duration, minimal movement)
-        // Must check BEFORE setting IsInteracting=false to avoid triggering HIGH_QUALITY repaint
+        // For image drag mode, use client coordinates
         POINT currentPos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         DWORD elapsed = GetTickCount() - g_viewState.DragStartTime;
         int dx = abs(currentPos.x - g_viewState.DragStartPos.x);
         int dy = abs(currentPos.y - g_viewState.DragStartPos.y);
         
+        // Release capture if we were dragging image
+        if (g_viewState.IsDragging) {
+            ReleaseCapture();
+            g_viewState.IsDragging = false;
+        }
+        
         // Click threshold: <300ms and <5px movement
         if (elapsed < 300 && dx < 5 && dy < 5) {
-            if (g_config.MiddleClickAction == MouseAction::ExitApp) {
-                // CRITICAL FIX: Use WM_CLOSE instead of PostQuitMessage
-                // PostQuitMessage kills the message loop immediately, causing DXGI 
-                // cleanup deadlock (SwapChain needs to communicate with HWND during Release)
-                // WM_CLOSE triggers proper destruction: WM_CLOSE -> DestroyWindow -> WM_DESTROY
-                // This allows DXGI to clean up while message loop is still active
-                if (CheckUnsavedChanges(hwnd)) {
-                    PostMessage(hwnd, WM_CLOSE, 0, 0);
-                    return 0;
-                }
+            switch (g_config.MiddleClickAction) {
+                case MouseAction::None:
+                    break;
+                case MouseAction::WindowDrag:
+                    // Start window drag (not applicable for click)
+                    break;
+                case MouseAction::PanImage:
+                    // Reset pan to center
+                    g_viewState.PanX = 0;
+                    g_viewState.PanY = 0;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+                case MouseAction::ExitApp:
+                    if (CheckUnsavedChanges(hwnd)) {
+                        PostMessage(hwnd, WM_CLOSE, 0, 0);
+                        return 0;
+                    }
+                    break;
+                case MouseAction::FitWindow:
+                    // Reset zoom to fit
+                    g_viewState.Zoom = 1.0f;
+                    g_viewState.PanX = 0;
+                    g_viewState.PanY = 0;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
             }
         }
         
@@ -1586,6 +1912,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         g_viewState.IsInteracting = false;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    }
+    
+    case WM_XBUTTONDOWN: {
+        // Mouse forward/back buttons for navigation
+        int button = GET_XBUTTON_WPARAM(wParam);
+        int direction = 0;
+        if (button == XBUTTON1) direction = -1; // Back button = previous
+        else if (button == XBUTTON2) direction = 1; // Forward button = next
+        
+        // Invert if configured
+        if (g_config.InvertXButton) direction = -direction;
+        
+        if (direction != 0) Navigate(hwnd, direction);
+        return TRUE;
     }
         
     case WM_LBUTTONDBLCLK:
@@ -1626,6 +1966,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
+        if (g_settingsOverlay.IsVisible()) {
+            if (g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0; 
+            } else {
+                // Click outside - close
+                g_settingsOverlay.SetVisible(false);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0; // Consume close click
+            }
+        }
+        
         // Window control buttons click handling
         if (g_showControls && g_winControls.HoverState != WindowHit::None) {
             switch (g_winControls.HoverState) {
@@ -1665,13 +2017,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         
-        if (g_config.ShowInfoPanel) {
+        if (g_runtime.ShowInfoPanel) {
              // 1. Toggle Button
              if (pt.x >= g_panelToggleRect.left && pt.x <= g_panelToggleRect.right &&
                  pt.y >= g_panelToggleRect.top && pt.y <= g_panelToggleRect.bottom) {
-                 g_config.InfoPanelExpanded = !g_config.InfoPanelExpanded;
+                 g_runtime.InfoPanelExpanded = !g_runtime.InfoPanelExpanded;
                  // Lazy Load Histogram if expanding and data missing
-                 if (g_config.InfoPanelExpanded && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                 if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
                      UpdateHistogramAsync(hwnd, g_imagePath);
                  }
                  InvalidateRect(hwnd, nullptr, FALSE);
@@ -1681,14 +2033,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              // 2. Close Button
              if (pt.x >= g_panelCloseRect.left && pt.x <= g_panelCloseRect.right &&
                  pt.y >= g_panelCloseRect.top && pt.y <= g_panelCloseRect.bottom) {
-                 g_config.ShowInfoPanel = false;
+                 g_runtime.ShowInfoPanel = false;
                  g_toolbar.SetExifState(false); // Sync toolbar icon state
                  InvalidateRect(hwnd, nullptr, FALSE);
                  return 0;
              }
              
              // 3. Grid Row Click (Copy to Clipboard)
-             if (g_config.InfoPanelExpanded) {
+             if (g_runtime.InfoPanelExpanded) {
                  float mx = (float)pt.x;
                  float my = (float)pt.y;
                  for (const auto& row : g_infoGrid) {
@@ -1719,7 +2071,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
              
              // 3. GPS Coordinates (Click to Copy)
-             if (g_config.InfoPanelExpanded && g_currentMetadata.HasGPS) {
+             if (g_runtime.InfoPanelExpanded && g_currentMetadata.HasGPS) {
                  if (pt.x >= g_gpsCoordRect.left && pt.x <= g_gpsCoordRect.right &&
                      pt.y >= g_gpsCoordRect.top && pt.y <= g_gpsCoordRect.bottom) {
                      wchar_t coordBuf[128];
@@ -1733,7 +2085,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
              
              // 4. GPS Link (Bing Maps) - Only if Expanded
-             if (g_config.InfoPanelExpanded && g_currentMetadata.HasGPS) {
+             if (g_runtime.InfoPanelExpanded && g_currentMetadata.HasGPS) {
                  if (pt.x >= g_gpsLinkRect.left && pt.x <= g_gpsLinkRect.right &&
                      pt.y >= g_gpsLinkRect.top && pt.y <= g_gpsLinkRect.bottom) {
                      wchar_t url[256];
@@ -1745,7 +2097,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
              
              // 5. Filename (Click to Copy) - Only if Expanded
-             if (g_config.InfoPanelExpanded) {
+             if (g_runtime.InfoPanelExpanded) {
                  if (pt.x >= g_filenameRect.left && pt.x <= g_filenameRect.right &&
                      pt.y >= g_filenameRect.top && pt.y <= g_filenameRect.bottom) {
                      std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
@@ -1791,6 +2143,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_LBUTTONUP: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
+        if (g_settingsOverlay.IsVisible()) {
+             if (g_settingsOverlay.OnLButtonUp((float)pt.x, (float)pt.y)) {
+                 InvalidateRect(hwnd, nullptr, FALSE);
+                 return 0;
+             }
+        }
+        
         // Toolbar Click
         ToolbarButtonID tbId;
         if (g_toolbar.OnClick((float)pt.x, (float)pt.y, tbId)) {
@@ -1804,6 +2163,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ToolbarButtonID::Exif:    SendMessage(hwnd, WM_COMMAND, IDM_SHOW_INFO_PANEL, 0); break;
                 case ToolbarButtonID::RawToggle: {
                     g_config.ForceRawDecode = !g_config.ForceRawDecode;
+                    g_runtime.ForceRawDecode = g_config.ForceRawDecode; // Sync runtime
+                    g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
                     // Reload
                     ReleaseImageResources(); // Free current
                     LoadImageAsync(hwnd, g_imagePath);
@@ -1862,6 +2223,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         float delta = GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
         
+        // Invert Wheel direction if configured
+        if (g_config.InvertWheel) delta = -delta;
+        
         // Calc Current Total Scale (Fit * Zoom)
         RECT rc; GetClientRect(hwnd, &rc);
         D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
@@ -1898,7 +2262,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (newTotalScale < 0.1f * fitScale) newTotalScale = 0.1f * fitScale; // Min 10% of FIT
         if (newTotalScale > 20.0f) newTotalScale = 20.0f;
 
-        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_config.LockWindowSize) {
+        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
             // Calculate Desired Window Size to achieve NewTotalScale with Zoom=1.0 (Fit)
             // DesiredCanvasW = ImageW * NewTotalScale
             // But FitScale logic is Window / Image.
@@ -2051,33 +2415,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             break;
         case VK_TAB: // Tab: Toggle compact info panel
-            if (!g_config.ShowInfoPanel) {
-                g_config.ShowInfoPanel = true;
-                g_config.InfoPanelExpanded = false;
+            if (!g_runtime.ShowInfoPanel) {
+                g_runtime.ShowInfoPanel = true;
+                g_runtime.InfoPanelExpanded = false;
                 g_toolbar.SetExifState(true);
-            } else if (g_config.InfoPanelExpanded) {
-                g_config.InfoPanelExpanded = false;
+            } else if (g_runtime.InfoPanelExpanded) {
+                g_runtime.InfoPanelExpanded = false;
             } else {
-                g_config.ShowInfoPanel = false;
+                g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         case 'I': // I: Toggle full info panel
-            if (!g_config.ShowInfoPanel) {
-                g_config.ShowInfoPanel = true;
-                g_config.InfoPanelExpanded = true;
+            if (!g_runtime.ShowInfoPanel) {
+                g_runtime.ShowInfoPanel = true;
+                g_runtime.InfoPanelExpanded = true;
                 if (g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
                     UpdateHistogramAsync(hwnd, g_imagePath);
                 }
                 g_toolbar.SetExifState(true);
-            } else if (!g_config.InfoPanelExpanded) {
-                g_config.InfoPanelExpanded = true;
+            } else if (!g_runtime.InfoPanelExpanded) {
+                g_runtime.InfoPanelExpanded = true;
                 if (g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
                     UpdateHistogramAsync(hwnd, g_imagePath);
                 }
             } else {
-                g_config.ShowInfoPanel = false;
+                g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -2096,7 +2460,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
                 if (imgSize.width > 0 && imgSize.height > 0) {
                     // Logic to resize window to wrap image at 100% if allowed
-                    if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_config.LockWindowSize) {
+                    if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
                          // Target is 100% of image size
                          int targetW = (int)imgSize.width;
                          int targetH = (int)imgSize.height;
@@ -2200,20 +2564,73 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
         case VK_SUBTRACT: case VK_OEM_MINUS: { // Zoom Out
+            if (!g_currentBitmap) break;
+            
             bool isZoomIn = (wParam == VK_ADD || wParam == VK_OEM_PLUS);
             bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-            float step = ctrl ? 0.01f : 0.1f; // 1% or 10%
             
-            if (isZoomIn) g_viewState.Zoom += step;
-            else g_viewState.Zoom -= step;
+            // Get image size
+            D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+            RECT rc; GetClientRect(hwnd, &rc);
+            float fitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+            float currentTotalScale = fitScale * g_viewState.Zoom;
             
-            if (g_viewState.Zoom < 0.01f) g_viewState.Zoom = 0.01f;
-            if (g_viewState.Zoom > 50.0f) g_viewState.Zoom = 50.0f;
-
-            // Show OSD
-            wchar_t buf[32];
-            swprintf_s(buf, L"Zoom: %.0f%%", g_viewState.Zoom * 100.0f);
-            g_osd.Show(hwnd, buf, false);
+            // Calculate zoom step: Ctrl = 1%, otherwise 10%
+            float step = ctrl ? 0.01f : 0.1f;
+            float multiplier = isZoomIn ? (1.0f + step) : (1.0f / (1.0f + step));
+            float newTotalScale = currentTotalScale * multiplier;
+            
+            // Limits
+            if (newTotalScale < 0.1f * fitScale) newTotalScale = 0.1f * fitScale;
+            if (newTotalScale > 20.0f) newTotalScale = 20.0f;
+            
+            // Apply zoom with window resize if enabled
+            if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+                // Get Monitor Info
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                int maxW = (mi.rcWork.right - mi.rcWork.left);
+                int maxH = (mi.rcWork.bottom - mi.rcWork.top);
+                
+                int targetW = (int)(imgSize.width * newTotalScale);
+                int targetH = (int)(imgSize.height * newTotalScale);
+                
+                // Clamp
+                bool capped = false;
+                if (targetW > maxW) { targetW = maxW; capped = true; }
+                if (targetH > maxH) { targetH = maxH; capped = true; }
+                if (targetW < 400) { targetW = 400; capped = true; }
+                if (targetH < 300) { targetH = 300; capped = true; }
+                
+                // Apply Window Resize (keep center)
+                RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
+                int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
+                
+                SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+                
+                // Recalculate Zoom
+                float newFitScale = std::min((float)targetW / imgSize.width, (float)targetH / imgSize.height);
+                g_viewState.Zoom = newTotalScale / newFitScale;
+                
+                if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+            } else {
+                // Standard Zoom (Window size fixed)
+                float newFitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+                float oldZoom = g_viewState.Zoom;
+                float newZoom = newTotalScale / newFitScale;
+                
+                float zoomRatio = newZoom / oldZoom;
+                g_viewState.PanX *= zoomRatio;
+                g_viewState.PanY *= zoomRatio;
+                g_viewState.Zoom = newZoom;
+            }
+            
+            // Show Zoom OSD
+            int percent = (int)(std::round(newTotalScale * 100.0f));
+            wchar_t zoomBuf[32];
+            swprintf_s(zoomBuf, L"Zoom: %d%%", percent);
+            g_osd.Show(hwnd, zoomBuf, false, (abs(newTotalScale - 1.0f) < 0.001f), D2D1::ColorF(D2D1::ColorF::White));
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -2249,7 +2666,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              isRaw = IsRawFile(g_imagePath);
         }
         
-        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_config.LockWindowSize, g_config.ShowInfoPanel, g_config.AlwaysOnTop, g_config.RenderRAW, isRaw);
+        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, g_runtime.ForceRawDecode, isRaw, IsZoomed(hwnd) != 0);
         return 0;
     }
     
@@ -2368,17 +2785,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 size_t lastSlash = g_imagePath.find_last_of(L"\\/");
                 std::wstring filename = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
                 
-                // OSD-style confirmation dialog (consistent with rotation save dialog)
-                std::wstring dlgMessage = L"Move to Recycle Bin?";
-                std::vector<DialogButton> dlgButtons;
-                dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
-                dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                bool confirmed = true; // Default to confirmed if ConfirmDelete is off
                 
-                // Red accent color for delete warning
-                DialogResult dlgResult = ShowQuickViewDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
-                                                             D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
+                // Show confirmation dialog only if ConfirmDelete is enabled
+                if (g_config.ConfirmDelete) {
+                    std::wstring dlgMessage = L"Move to Recycle Bin?";
+                    std::vector<DialogButton> dlgButtons;
+                    dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
+                    dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                    
+                    DialogResult dlgResult = ShowQuickViewDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
+                                                                 D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
+                    confirmed = (dlgResult == DialogResult::Yes);
+                }
                 
-                if (dlgResult == DialogResult::Yes) {
+                if (confirmed) {
                     std::wstring nextPath = g_navigator.PeekNext();
                     if (nextPath == g_imagePath) nextPath = g_navigator.PeekPrevious();
                     
@@ -2407,29 +2828,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_LOCK_WINDOW_SIZE: {
-            g_config.LockWindowSize = !g_config.LockWindowSize;
-            g_toolbar.SetLockState(g_config.LockWindowSize);
-            g_osd.Show(hwnd, g_config.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
+            g_runtime.LockWindowSize = !g_runtime.LockWindowSize;
+            g_toolbar.SetLockState(g_runtime.LockWindowSize);
+            g_osd.Show(hwnd, g_runtime.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
         case IDM_SHOW_INFO_PANEL: {
-            g_config.ShowInfoPanel = !g_config.ShowInfoPanel;
-            if (g_config.ShowInfoPanel && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
-                 UpdateHistogramAsync(hwnd, g_imagePath);
-            }
+            g_runtime.ShowInfoPanel = !g_runtime.ShowInfoPanel;
             
-            // Refresh Title (Just simple name now, Overlay handles info)
-            {
-                 std::wstring title = L"QuickView";
-                 if (!g_imagePath.empty()) {
-                     size_t lastSlash = g_imagePath.find_last_of(L"\\/");
-                     std::wstring rname = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
-                     title = rname + L" - " + title;
-                 }
-                 }
+            // When turning on, set expanded state based on ToolbarInfoDefault config
+            if (g_runtime.ShowInfoPanel) {
+                g_runtime.InfoPanelExpanded = (g_config.ToolbarInfoDefault == 1); // 0=Lite, 1=Full
+                if (g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                    UpdateHistogramAsync(hwnd, g_imagePath);
+                }
+            }
  
-            g_toolbar.SetExifState(g_config.ShowInfoPanel);
+            g_toolbar.SetExifState(g_runtime.ShowInfoPanel);
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -2448,7 +2864,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              break;
 
         case IDM_LITE_INFO:
-             SendMessage(hwnd, WM_KEYDOWN, VK_TAB, 0);
+             g_runtime.ShowInfoPanel = true;
+             g_runtime.InfoPanelExpanded = false; // Lite = not expanded
+             g_toolbar.SetExifState(true);
+             InvalidateRect(hwnd, nullptr, FALSE);
+             break;
+
+        case IDM_FULL_INFO:
+             g_runtime.ShowInfoPanel = true;
+             g_runtime.InfoPanelExpanded = true; // Full = expanded
+             if (g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                 UpdateHistogramAsync(hwnd, g_imagePath);
+             }
+             g_toolbar.SetExifState(true);
+             InvalidateRect(hwnd, nullptr, FALSE);
              break;
 
         case IDM_ZOOM_100:
@@ -2480,14 +2909,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              PerformTransform(hwnd, TransformType::FlipVertical);
              break;
 
-        case IDM_RENDER_RAW:
-             g_config.RenderRAW = !g_config.RenderRAW;
-             g_toolbar.SetRawState(g_config.RenderRAW, false); 
+        case IDM_RENDER_RAW: {
+             // Toggle Force RAW Decode (same as toolbar RawToggle)
+             g_config.ForceRawDecode = !g_config.ForceRawDecode;
+             g_runtime.ForceRawDecode = g_config.ForceRawDecode; // Sync runtime
+             g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
+             
              if (!g_imagePath.empty()) {
+                 ReleaseImageResources();
                  LoadImageAsync(hwnd, g_imagePath.c_str()); 
              }
+             
+             std::wstring msg = g_config.ForceRawDecode ? L"RAW: Full Decode (High Quality)" : L"RAW: Embedded Preview (Fast)";
+             g_osd.Show(hwnd, msg, false);
              InvalidateRect(hwnd, nullptr, FALSE);
              break;
+        }
 
         case IDM_WALLPAPER_FILL:
         case IDM_WALLPAPER_FIT:
@@ -2614,20 +3051,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_SETTINGS: {
-            // Simple Settings / Help Dialog
-            std::wstring msg = L"Shortcuts:\n"
-                               L"Double Click: Full Screen\n"
-                               L"Wheel: Zoom\n"
-                               L"Drag: Pan\n"
-                               L"Hold Shift + R: Rotate Left\n"
-                               L"R, H, V: Rotate/Flip\n"
-                               L"Arrows/Space: Navigate\n"
-                               L"Esc/MButton: Exit";
-                               
-            std::vector<DialogButton> buttons = {
-                { DialogResult::Yes, L"OK", true }
-            };
-            ShowQuickViewDialog(hwnd, L"QuickView Settings", msg, D2D1::ColorF(D2D1::ColorF::DodgerBlue), buttons);
+            // Elastic HUD: Expand window if too small
+            if (!g_settingsOverlay.IsVisible()) {
+                 RECT rcClient;
+                 if (GetClientRect(hwnd, &rcClient)) {
+                     int w = rcClient.right - rcClient.left;
+                     int h = rcClient.bottom - rcClient.top;
+                     
+                     // Target HUD Size (must match SettingsOverlay::HUD_WIDTH/HEIGHT)
+                     int minW = 800;
+                     int minH = 650;
+                     
+                     if (w < minW || h < minH) {
+                         int targetW = std::max(w, minW);
+                         int targetH = std::max(h, minH);
+                         
+                         // Calculate Window Rect for desired Client Area
+                         RECT rcWin = {0, 0, targetW, targetH};
+                         DWORD style = GetWindowLong(hwnd, GWL_STYLE);
+                         AdjustWindowRect(&rcWin, style, FALSE); 
+                         
+                         SetWindowPos(hwnd, nullptr, 0, 0, 
+                                      rcWin.right - rcWin.left, 
+                                      rcWin.bottom - rcWin.top, 
+                                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                     }
+                 }
+            }
+
+            g_settingsOverlay.Toggle();
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
@@ -2712,7 +3164,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
              g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
              
              // Compute Histogram if needed (Expanded Mode only)
-             if (g_config.ShowInfoPanel && g_config.InfoPanelExpanded && wicMemoryBitmap) {
+             if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded && wicMemoryBitmap) {
                  g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
              }
         }
@@ -2769,7 +3221,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         
         // Compute Histogram if needed (Offload to background to avoid jank)
         // Optimization: Only if Expanded
-        if (g_config.ShowInfoPanel && g_config.InfoPanelExpanded && wicMemoryBitmap) {
+        if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded && wicMemoryBitmap) {
              co_await ResumeBackground{};
              g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
              co_await ResumeMainThread(hwnd);
@@ -2817,7 +3269,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
     RECT rc; GetClientRect(hwnd, &rc);
     g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
     
-    g_toolbar.SetRawState(g_config.RenderRAW && isRaw, g_config.ForceRawDecode);
+    g_toolbar.SetRawState(isRaw, g_runtime.ForceRawDecode);
      
     // Redraw
     InvalidateRect(hwnd, nullptr, FALSE);
@@ -2857,11 +3309,21 @@ FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path) {
 void Navigate(HWND hwnd, int direction) {
     if (g_navigator.Count() <= 0) return;
     if (CheckUnsavedChanges(hwnd)) {
-        std::wstring path = (direction > 0) ? g_navigator.Next() : g_navigator.Previous();
+        std::wstring path = (direction > 0) 
+            ? g_navigator.Next(g_config.LoopNavigation) 
+            : g_navigator.Previous(g_config.LoopNavigation);
+        
         if (!path.empty()) {
             g_editState.Reset();
             g_viewState.Reset();
             LoadImageAsync(hwnd, path);
+        } else if (g_navigator.HitEnd()) {
+            // Show OSD when reaching end without looping
+            if (direction > 0) {
+                g_osd.Show(hwnd, L"Last image", false);
+            } else {
+                g_osd.Show(hwnd, L"First image", false);
+            }
         }
     }
 }
@@ -3161,7 +3623,7 @@ void DrawGridTooltip(ID2D1DeviceContext* context) {
 }
 
 void DrawInfoPanel(ID2D1DeviceContext* context) {
-    if (!g_config.ShowInfoPanel) return;
+    if (!g_runtime.ShowInfoPanel) return;
     
     // Init Font
     if (!g_pPanelTextFormat) {
@@ -3186,7 +3648,7 @@ void DrawInfoPanel(ID2D1DeviceContext* context) {
     float startY = 40.0f; 
     
     if (g_currentMetadata.HasGPS) height += 50.0f;
-    if (g_config.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f;
+    if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f;
     if (!g_currentMetadata.Software.empty()) height += 20.0f;
 
     D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
@@ -3269,7 +3731,7 @@ void OnPaint(HWND hwnd) {
     
     // Check which grid row is being hovered
     g_hoverRowIndex = -1;
-    if (g_config.InfoPanelExpanded && g_config.ShowInfoPanel) {
+    if (g_runtime.InfoPanelExpanded && g_runtime.ShowInfoPanel) {
         float x = (float)cursorPos.x;
         float y = (float)cursorPos.y;
         for (size_t i = 0; i < g_infoGrid.size(); i++) {
@@ -3286,7 +3748,45 @@ void OnPaint(HWND hwnd) {
     auto context = g_renderEngine->GetDeviceContext();
     if (context) {
         context->SetTransform(D2D1::Matrix3x2F::Identity());
-        context->Clear(D2D1::ColorF(0.18f, 0.18f, 0.18f));
+        
+        // Canvas Color: 0=Black, 1=White, 2=Grid, 3=Custom
+        D2D1_COLOR_F bgColor;
+        switch (g_config.CanvasColor) {
+            case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break; // Black (dark gray)
+            case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break; // White (light gray)
+            case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break; // Grid (will draw checker)
+            case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break; // Custom
+            default: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
+        }
+        context->Clear(bgColor);
+        
+        // Draw checkerboard grid (Overlay)
+        // If CanvasColor == 2 (Grid), FORCE grid. Or if CanvasShowGrid is enabled.
+        if (g_config.CanvasColor == 2 || g_config.CanvasShowGrid) {
+            D2D1_SIZE_F rtSize = context->GetSize();
+            
+            // Adaptive Grid Color:
+            // Calculate Background Brightness
+            float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
+            
+            // If background is dark (< 0.5), use White Overlay. Else use Black Overlay.
+            D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f);
+
+            ComPtr<ID2D1SolidColorBrush> brushOverlay;
+            context->CreateSolidColorBrush(overlayColor, &brushOverlay);
+            
+            const float gridSize = 16.0f;
+            for (float y = 0; y < rtSize.height; y += gridSize) {
+                for (float x = 0; x < rtSize.width; x += gridSize) {
+                    int cx = (int)(x / gridSize);
+                    int cy = (int)(y / gridSize);
+                    // Draw every other tile
+                    if ((cx + cy) % 2 != 0) {
+                       context->FillRectangle(D2D1::RectF(x, y, x + gridSize, y + gridSize), brushOverlay.Get());
+                    }
+                }
+            }
+        }
         
         if (g_currentBitmap) {
             D2D1_SIZE_F size = g_currentBitmap->GetSize();
@@ -3332,8 +3832,8 @@ void OnPaint(HWND hwnd) {
         
         // Draw Info Panel
         // Draw Info Panel OR Compact Overlay
-        if (g_config.ShowInfoPanel) {
-             if (g_config.InfoPanelExpanded) {
+        if (g_runtime.ShowInfoPanel) {
+             if (g_runtime.InfoPanelExpanded) {
                  DrawInfoPanel(context);
              } else {
                  DrawCompactInfo(context);
@@ -3354,6 +3854,9 @@ void OnPaint(HWND hwnd) {
         g_toolbar.Render(context);
 
         DrawDialog(context, rect);
+        
+        // Settings Overlay (Top Most)
+        g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
