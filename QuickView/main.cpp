@@ -94,8 +94,9 @@ struct ViewState {
     DWORD DragStartTime = 0;        // For click vs drag detection
     POINT WindowDragStart = { 0, 0 }; // Window position at drag start
     POINT CursorDragStart = { 0, 0 }; // Cursor screen position at drag start
+    int EdgeHoverState = 0; // -1=Left, 0=None, 1=Right
 
-    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; }
+    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; EdgeHoverState = 0; }
 };
 
 #include "FileNavigator.h"
@@ -1513,9 +1514,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_SETCURSOR && g_isLoading) {
-        SetCursor(LoadCursor(nullptr, IDC_WAIT));
-        return TRUE;
+    if (message == WM_SETCURSOR) {
+        if (g_isLoading) {
+            SetCursor(LoadCursor(nullptr, IDC_WAIT));
+            return TRUE;
+        }
+        // Edge Nav Cursor: Only for Cursor mode (NavIndicator == 1)
+        if (g_config.EdgeNavClick && g_config.NavIndicator == 1) {
+            if (!g_gallery.IsVisible() && !g_settingsOverlay.IsVisible()) {
+                if (g_viewState.EdgeHoverState != 0) {
+                    SetCursor(LoadCursor(nullptr, IDC_HAND));
+                    return TRUE;
+                }
+            }
+        }
     }
     static bool isTracking = false;
     switch (message) {
@@ -1668,9 +1680,44 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           }
           
           if (g_gallery.IsVisible()) {
-
               g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
               InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
+          }
+          
+          // Edge Navigation Hover Detection
+          if (g_config.EdgeNavClick && !g_gallery.IsVisible()) {
+              RECT rcv; GetClientRect(hwnd, &rcv);
+              int w = rcv.right - rcv.left;
+              int h = rcv.bottom - rcv.top;
+              int oldState = g_viewState.EdgeHoverState; // Record old state
+              
+              if (w > 50 && h > 100) {
+                  bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+                  bool inVRange;
+                  
+                  // Arrow mode (0): Full vertical range 30%-70%
+                  // Cursor/None mode (1,2): Smaller central range 40%-60%
+                  if (g_config.NavIndicator == 0) {
+                      inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                  } else {
+                      inVRange = (pt.y > h * 0.40) && (pt.y < h * 0.60);
+                  }
+                  
+                  if (inHRange && inVRange) {
+                      g_viewState.EdgeHoverState = (pt.x < w * 0.15) ? -1 : 1;
+                  } else {
+                      g_viewState.EdgeHoverState = 0;
+                  }
+              }
+              
+              if (g_viewState.EdgeHoverState != oldState) {
+                   InvalidateRect(hwnd, nullptr, FALSE);
+              }
+          } else {
+              if (g_viewState.EdgeHoverState != 0) {
+                   g_viewState.EdgeHoverState = 0;
+                   InvalidateRect(hwnd, nullptr, FALSE);
+              }
           }
 
           // Toolbar Trigger
@@ -2125,6 +2172,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0; // Handled by LBUTTONUP
         }
         
+        // Edge Navigation Zone Check - Record start, handle in LBUTTONUP
+        // Zone: Left/Right 15%, Vertical range depends on NavIndicator mode
+        RECT rcCheck; GetClientRect(hwnd, &rcCheck);
+        int w = rcCheck.right - rcCheck.left;
+        int h = rcCheck.bottom - rcCheck.top;
+        bool inEdgeZone = false;
+        if (g_config.EdgeNavClick && !g_gallery.IsVisible() && w > 50 && h > 100) {
+            bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+            bool inVRange;
+            // Arrow mode (0): Full vertical range 30%-70%
+            // Cursor/None mode (1,2): Smaller central range 40%-60%
+            if (g_config.NavIndicator == 0) {
+                inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+            } else {
+                inVRange = (pt.y > h * 0.40) && (pt.y < h * 0.60);
+            }
+            inEdgeZone = inHRange && inVRange;
+        }
+        
+        // Record Drag Start for click detection
+        g_viewState.DragStartPos = pt;
+        g_viewState.DragStartTime = GetTickCount();
+        
+        // If in Edge Zone, skip WindowDrag and let LBUTTONUP handle nav
+        if (inEdgeZone) {
+            SetCapture(hwnd); // Capture so we receive LBUTTONUP
+            return 0;
+        }
+        
         if (g_config.LeftDragAction == MouseAction::WindowDrag) {
             ReleaseCapture();
             SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
@@ -2191,10 +2267,66 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
 
         if (g_viewState.IsDragging) { 
+            // Only consider it a drag if moved significantly or held long
+            POINT currentPos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+            DWORD elapsed = GetTickCount() - g_viewState.DragStartTime;
+            int dx = abs(currentPos.x - g_viewState.DragStartPos.x);
+            int dy = abs(currentPos.y - g_viewState.DragStartPos.y);
+            
             ReleaseCapture(); 
             g_viewState.IsDragging = false; 
+            g_viewState.IsInteracting = false;  // End interaction mode
+
+            // If it was a real drag, return
+            if (elapsed > 300 || dx > 5 || dy > 5) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            // Fallthrough: Treat as Click
         }
         g_viewState.IsInteracting = false;  // End interaction mode
+
+        // Edge Navigation Click
+        if (g_config.EdgeNavClick && !g_gallery.IsVisible()) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            int width = rc.right - rc.left;
+            int height = rc.bottom - rc.top;
+            
+            if (width > 50 && height > 100) {
+                bool clickValid = false;
+                int direction = 0;
+                
+                // Arrow mode (0): Click only on icon hitbox
+                if (g_config.NavIndicator == 0) {
+                    // Check against g_navArrowHitbox (set by DrawNavIndicators)
+                    extern D2D1_ELLIPSE g_navArrowHitbox;
+                    if (g_navArrowHitbox.radiusX > 0) {
+                        float dx = (float)pt.x - g_navArrowHitbox.point.x;
+                        float dy = (float)pt.y - g_navArrowHitbox.point.y;
+                        float dist = sqrtf(dx*dx + dy*dy);
+                        if (dist <= g_navArrowHitbox.radiusX) {
+                            clickValid = true;
+                            direction = (pt.x < width / 2) ? -1 : 1;
+                        }
+                    }
+                } else {
+                    // Cursor/None mode (1,2): Smaller central range 40%-60%
+                    bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
+                    bool inVRange = (pt.y > height * 0.40) && (pt.y < height * 0.60);
+                    if (inHRange && inVRange) {
+                        clickValid = true;
+                        direction = (pt.x < width * 0.15) ? -1 : 1;
+                    }
+                }
+                
+                if (clickValid && direction != 0) {
+                    ReleaseCapture();
+                    Navigate(hwnd, direction);
+                    return 0;
+                }
+            }
+        }
+        
         InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
         return 0;
     }
@@ -3622,6 +3754,68 @@ void DrawGridTooltip(ID2D1DeviceContext* context) {
     context->DrawTextW(row.fullText.c_str(), (UINT32)row.fullText.length(), g_pPanelTextFormat.Get(), textRect, brushText.Get());
 }
 
+// Edge Navigation Indicators - Stylized Arrow Icons
+// Global hitbox for Arrow mode click detection
+D2D1_ELLIPSE g_navArrowHitbox = {};
+
+void DrawNavIndicators(ID2D1DeviceContext* context) {
+    // Only draw for Arrow mode (NavIndicator == 0)
+    if (!g_config.EdgeNavClick || g_viewState.EdgeHoverState == 0 || g_config.NavIndicator != 0) {
+        g_navArrowHitbox = {}; // Clear hitbox
+        return;
+    }
+
+    D2D1_SIZE_F size = context->GetSize();
+    
+    // Arrow Zone: 15% of width, centered vertically
+    float zoneWidth = size.width * 0.15f;
+    float arrowCenterY = size.height * 0.5f;
+    float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (size.width - zoneWidth / 2.0f);
+    
+    // Smaller, refined Circle + Arrow Design
+    float circleRadius = 20.0f;
+    float arrowSize = 10.0f;
+    float strokeWidth = 3.0f;
+    
+    // Store hitbox for click detection
+    g_navArrowHitbox = D2D1::Ellipse(D2D1::Point2F(arrowCenterX, arrowCenterY), circleRadius, circleRadius);
+    
+    // Draw semi-transparent circle background
+    ComPtr<ID2D1SolidColorBrush> brushCircle, brushArrow;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &brushCircle);
+    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f), &brushArrow);
+    
+    context->FillEllipse(g_navArrowHitbox, brushCircle.Get());
+    
+    // Create Path Geometry for Chevron - Centered in circle
+    ComPtr<ID2D1PathGeometry> path;
+    g_renderEngine->m_d2dFactory->CreatePathGeometry(&path);
+    ComPtr<ID2D1GeometrySink> sink;
+    path->Open(&sink);
+    
+    if (g_viewState.EdgeHoverState == -1) { // < Prev (Left Arrow)
+        sink->BeginFigure(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY));
+        sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
+    } else { // > Next (Right Arrow)
+        sink->BeginFigure(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY));
+        sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
+    }
+    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    sink->Close();
+    
+    // Draw arrow with rounded ends
+    ComPtr<ID2D1StrokeStyle> strokeStyle;
+    D2D1_STROKE_STYLE_PROPERTIES strokeProps = {};
+    strokeProps.startCap = D2D1_CAP_STYLE_ROUND;
+    strokeProps.endCap = D2D1_CAP_STYLE_ROUND;
+    strokeProps.lineJoin = D2D1_LINE_JOIN_ROUND;
+    g_renderEngine->m_d2dFactory->CreateStrokeStyle(strokeProps, nullptr, 0, &strokeStyle);
+    
+    context->DrawGeometry(path.Get(), brushArrow.Get(), strokeWidth, strokeStyle.Get());
+}
+
 void DrawInfoPanel(ID2D1DeviceContext* context) {
     if (!g_runtime.ShowInfoPanel) return;
     
@@ -3829,6 +4023,9 @@ void OnPaint(HWND hwnd) {
         
         // Draw OSD
         g_renderEngine->DrawOSD(g_osd);
+        
+        // Draw Edge Navigation Indicators (Before Panels/Overlay)
+        DrawNavIndicators(context);
         
         // Draw Info Panel
         // Draw Info Panel OR Compact Overlay

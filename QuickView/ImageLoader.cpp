@@ -14,6 +14,8 @@
 #include "WuffsLoader.h"
 #include "StbLoader.h"
 #include "TinyExrLoader.h"
+#include <immintrin.h> // SIMD
+#include "SIMDUtils.h"
 #include <thread>
 #include "PreviewExtractor.h"
 
@@ -45,9 +47,12 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
     if (magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
              magic[8] == 'W' && magic[9] == 'E' && magic[10] == 'B' && magic[11] == 'P') return L"WebP";
         
-    // Check AVIF: ftypavif
-    if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p' &&
-             magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 'f') return L"AVIF";
+    // Check AVIF: ftypavif OR ftypavis (AVIF Sequence)
+    if (magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p') {
+        bool isAvif = (magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 'f');
+        bool isAvis = (magic[8] == 'a' && magic[9] == 'v' && magic[10] == 'i' && magic[11] == 's');
+        if (isAvif || isAvis) return L"AVIF";
+    }
 
     // Check HEIC/HEIF: ftyp + brand
     // Common brands: heic, heix, hevc, heim, heis, hevm, hevs, mif1, msf1
@@ -686,6 +691,9 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     int stride = config.output.u.RGBA.stride;
     int size = stride * height;
 
+    // Manual Premultiplication (SIMD)
+    SIMDUtils::PremultiplyAlpha_BGRA(output, width, height);
+
     HRESULT hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA, stride, size, output, ppBitmap);
     
     // Extract format details (VP8 = Lossy, VP8L/Lossless Flag = Lossless)
@@ -727,6 +735,9 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         decoder->maxThreads = 4; // Fallback sensible default
     }
     
+    // Disable strict flags to improve compatibility with non-compliant or experimental files
+    decoder->strictFlags = AVIF_STRICT_DISABLED;
+    
     // Set Memory Source
     if (avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size()) != AVIF_RESULT_OK) {
         avifDecoderDestroy(decoder);
@@ -752,6 +763,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     // Configure for WIC (BGRA, 8-bit)
     rgb.format = AVIF_RGB_FORMAT_BGRA;
     rgb.depth = 8;
+    rgb.alphaPremultiplied = AVIF_TRUE; // Re-enabled native premul as per user request
     
     // Calculate stride and size
     rgb.rowBytes = rgb.width * 4;
@@ -988,7 +1000,8 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         HRESULT hr = LoadWebP(filePath, ppBitmap);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libwebp"; return S_OK; }
     }
-    else if (detectedFmt == L"AVIF") {
+    else if (detectedFmt == L"AVIF" || 
+             ((detectedFmt == L"HEIC" || detectedFmt == L"Unknown") && (path.ends_with(L".avif") || path.ends_with(L".avifs")))) {
         HRESULT hr = LoadAVIF(filePath, ppBitmap);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libavif"; return S_OK; }
     }

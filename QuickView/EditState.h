@@ -74,7 +74,7 @@ struct AppConfig {
     bool PortableMode = false;
 
     // --- View ---
-    int CanvasColor = 0;                // 0=Black, 1=White, 2=Grid, 3=Custom
+    int CanvasColor = 2;                // 0=Black, 1=White, 2=Grid, 3=Custom
     float CanvasCustomR = 0.2f;         // Custom color RGB (0.0-1.0)
     float CanvasCustomG = 0.2f;
     float CanvasCustomB = 0.2f;
@@ -97,12 +97,15 @@ struct AppConfig {
     int LeftDragIndex = 0;   // 0=Window, 1=Pan
     int MiddleDragIndex = 1; // 0=Window, 1=Pan
     int MiddleClickIndex = 1; // 0=None, 1=Exit (default Exit)
-    bool EdgeNavClick = true;
+    bool EdgeNavClick = false;
     int NavIndicator = 0;               // 0=Arrow
     
     // --- Image & Edit ---
     bool AutoRotate = true;
     bool ColorManagement = false;
+    
+    // --- Save Options --- (Functional options removed, fully automated/smart)
+
 
     // Existing / Internal (Defaults for Runtime)
     bool AutoSaveOnSwitch = false;       

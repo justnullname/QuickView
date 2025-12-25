@@ -251,7 +251,7 @@ void SettingsOverlay::BuildMenu() {
     
     tabControl.items.push_back({ L"Edge", OptionType::Header });
     tabControl.items.push_back({ L"Edge Nav Click", OptionType::Toggle, &g_config.EdgeNavClick });
-    tabControl.items.push_back({ L"Nav Indicator", OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {L"Arrow", L"Glow"} });
+    tabControl.items.push_back({ L"Nav Indicator", OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {L"Arrow", L"Cursor", L"None"} });
 
     m_tabs.push_back(tabControl);
 
@@ -268,7 +268,7 @@ void SettingsOverlay::BuildMenu() {
     itemRaw.onChange = []() { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
     tabImage.items.push_back(itemRaw);
     
-    tabImage.items.push_back({ L"Save", OptionType::Header });
+    tabImage.items.push_back({ L"Prompts", OptionType::Header });
     tabImage.items.push_back({ L"Auto Save (Lossless)", OptionType::Toggle, &g_config.AlwaysSaveLossless });
     tabImage.items.push_back({ L"Auto Save (Edge Adapted)", OptionType::Toggle, &g_config.AlwaysSaveEdgeAdapted });
     tabImage.items.push_back({ L"Auto Save (Lossy)", OptionType::Toggle, &g_config.AlwaysSaveLossy });
