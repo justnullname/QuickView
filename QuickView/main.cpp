@@ -2454,7 +2454,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Calc Current Total Scale (Fit * Zoom)
         RECT rc; GetClientRect(hwnd, &rc);
         D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
-        float fitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+        
+        // EXIF Rotation correct for logic dimensions for Fit Scale calculation
+        float logicInitW = imgSize.width;
+        float logicInitH = imgSize.height;
+        int initOrientation = g_viewState.ExifOrientation;
+        if (initOrientation == 5 || initOrientation == 6 || initOrientation == 7 || initOrientation == 8) {
+            std::swap(logicInitW, logicInitH);
+        }
+        
+        float fitScale = std::min((float)rc.right / logicInitW, (float)rc.bottom / logicInitH);
         float currentTotalScale = fitScale * g_viewState.Zoom;
         
         float zoomFactor = (delta > 0) ? 1.1f : 0.90909f;
@@ -2500,8 +2509,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              int maxW = (mi.rcWork.right - mi.rcWork.left);
              int maxH = (mi.rcWork.bottom - mi.rcWork.top);
              
-             int targetW = (int)(imgSize.width * newTotalScale);
-             int targetH = (int)(imgSize.height * newTotalScale);
+             // EXIF Rotation correct for logic dimensions
+             float logicImgW = imgSize.width;
+             float logicImgH = imgSize.height;
+             int orientation = g_viewState.ExifOrientation;
+             if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
+                 std::swap(logicImgW, logicImgH);
+             }
+             
+             int targetW = (int)(logicImgW * newTotalScale);
+             int targetH = (int)(logicImgH * newTotalScale);
              
              // Clamp
              bool capped = false;
@@ -2525,7 +2542,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
              
              // Recalculate Zoom
-             float newFitScale = std::min((float)targetW / imgSize.width, (float)targetH / imgSize.height);
+             float newFitScale = std::min((float)targetW / logicImgW, (float)targetH / logicImgH);
              g_viewState.Zoom = newTotalScale / newFitScale;
              
              // Reset Pan when window adapting (optional, keeps image centered)
@@ -2535,7 +2552,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              // Zoom centered on window center
              RECT rcNew; GetClientRect(hwnd, &rcNew);
              
-             float newFitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
+             // EXIF Rotation correct for logic dimensions
+             float logicImgW = imgSize.width;
+             float logicImgH = imgSize.height;
+             int orientation = g_viewState.ExifOrientation;
+             if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
+                 std::swap(logicImgW, logicImgH);
+             }
+             
+             float newFitScale = std::min((float)rcNew.right / logicImgW, (float)rcNew.bottom / logicImgH);
              float oldZoom = g_viewState.Zoom;
              float newZoom = newTotalScale / newFitScale;
              
