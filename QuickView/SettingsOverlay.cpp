@@ -184,6 +184,8 @@ void SettingsOverlay::BuildMenu() {
     tabGeneral.items.push_back({ L"Loop Navigation", OptionType::Toggle, &g_config.LoopNavigation });
     tabGeneral.items.push_back({ L"Confirm Delete", OptionType::Toggle, &g_config.ConfirmDelete });
     
+
+    
     // Portable Mode with file move logic
     SettingsItem itemPortable = { L"Portable Mode", OptionType::Toggle, &g_config.PortableMode };
     itemPortable.onChange = [this]() {
@@ -300,7 +302,7 @@ void SettingsOverlay::BuildMenu() {
     // Toolbar Info Button Default (Lite/Full)
     tabView.items.push_back({ L"Toolbar Info Default", OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {L"Lite", L"Full"} });
     
-    tabView.items.push_back({ L"UI Transparency", OptionType::Slider, nullptr, &g_config.DialogAlpha, nullptr, nullptr, 0.1f, 1.0f });
+
 
     m_tabs.push_back(tabView);
 
@@ -397,7 +399,59 @@ void SettingsOverlay::BuildMenu() {
 
     m_tabs.push_back(tabImage);
 
-    // --- 5. About (关于) ---
+    // --- 5. Advanced (高级) ---
+    SettingsTab tabAdv;
+    tabAdv.name = L"Advanced";
+    tabAdv.icon = L"\xE71C"; // Equalizer/Settings icon
+    
+    // Transparency
+    tabAdv.items.push_back({ L"Transparency", OptionType::Header });
+    tabAdv.items.push_back({ L"Info Panel", OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdv.items.push_back({ L"Toolbar", OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdv.items.push_back({ L"Settings", OptionType::Slider, nullptr, &g_config.SettingsAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    
+    // System Helpers
+    tabAdv.items.push_back({ L"System", OptionType::Header });
+    
+    // Reset Settings
+    SettingsItem itemReset = { L"Reset All Settings", OptionType::ActionButton };
+    itemReset.buttonText = L"Restore";
+    itemReset.buttonActivatedText = L"Done";
+    itemReset.onChange = [this]() {
+         // 1. Delete Config Files (Both Locations Unconditionally)
+         wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+         std::wstring exeDir = exePath;
+         size_t lastSlash = exeDir.find_last_of(L"\\/");
+         if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+         
+         wchar_t appDataPath[MAX_PATH];
+         SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataPath);
+         std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
+         
+         DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
+         DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
+         
+         // 2. Reset In-Memory Config
+         g_config = AppConfig(); 
+         
+         // 3. Reset Runtime
+         g_runtime.ShowInfoPanel = (g_config.ExifPanelMode != 0);
+         g_runtime.InfoPanelExpanded = (g_config.ExifPanelMode == 2);
+         // Reset Transparency Defaults immediately (visual feedback)
+         g_config.InfoPanelAlpha = 0.85f;
+         g_config.ToolbarAlpha = 0.85f;
+         
+         // 4. Force UI refresh
+         this->BuildMenu();
+         
+         // 5. Visual Feedback
+         SetItemStatus(L"Reset All Settings", L"Config Initialized", D2D1::ColorF(0.1f, 0.8f, 0.1f));
+    };
+    tabAdv.items.push_back(itemReset);
+
+    m_tabs.push_back(tabAdv);
+
+    // --- 6. About (关于) ---
     SettingsTab tabAbout;
     tabAbout.name = L"About";
     tabAbout.icon = L"\xE946"; 
@@ -438,16 +492,44 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
     // 3. Draw HUD Panel Background (Opaque Dark)
     ComPtr<ID2D1SolidColorBrush> brushPanelBg;
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f), &brushPanelBg);
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(hudRect, 8.0f, 8.0f), brushPanelBg.Get());
+    pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.SettingsAlpha), &brushPanelBg);
+    D2D1_ROUNDED_RECT hudRounded = D2D1::RoundedRect(hudRect, 8.0f, 8.0f);
+    pRT->FillRoundedRectangle(hudRounded, brushPanelBg.Get());
 
     // 4. Draw Border
-    pRT->DrawRoundedRectangle(D2D1::RoundedRect(hudRect, 8.0f, 8.0f), m_brushBorder.Get(), 1.0f);
+    pRT->DrawRoundedRectangle(hudRounded, m_brushBorder.Get(), 1.0f);
 
     // --- All subsequent drawing is RELATIVE to hudX, hudY ---
+    
+    // Clip to HUD Rounded Rect to ensure Sidebar respects corners
+    // Push Layer with HUD Rounded Rect Geometry Mask to clip sidebar
+    ComPtr<ID2D1Factory> factory;
+    pRT->GetFactory(&factory);
+    
+    ComPtr<ID2D1RoundedRectangleGeometry> hudGeo;
+    factory->CreateRoundedRectangleGeometry(hudRounded, &hudGeo);
+    
+    ComPtr<ID2D1Layer> pLayer;
+    
+    // Push Layer with HUD Geometry Mask
+    D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
+        D2D1::InfiniteRect(),
+        hudGeo.Get(),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+        D2D1::IdentityMatrix(),
+        1.0f,
+        nullptr,
+        D2D1_LAYER_OPTIONS_NONE
+    );
+    
+    pRT->CreateLayer(nullptr, &pLayer);
+    pRT->PushLayer(layerParams, pLayer.Get());
+
     // Sidebar (Left portion of HUD)
     D2D1_RECT_F sidebarRect = D2D1::RectF(hudX, hudY, hudX + SIDEBAR_WIDTH, hudY + HUD_HEIGHT);
     pRT->FillRectangle(sidebarRect, m_brushControlBg.Get());
+
+    pRT->PopLayer();
 
     // Sidebar Border (Right edge)
     pRT->DrawLine(D2D1::Point2F(hudX + SIDEBAR_WIDTH, hudY), D2D1::Point2F(hudX + SIDEBAR_WIDTH, hudY + HUD_HEIGHT), m_brushTextDim.Get(), 0.5f);
