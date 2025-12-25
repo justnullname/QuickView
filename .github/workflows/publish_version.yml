@@ -1,0 +1,46 @@
+name: Update Version JSON
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate version.json
+        run: |
+          # 1. 获取 Tag 名称 (例如 v1.2.0)
+          TAG_NAME=${{ github.event.release.tag_name }}
+          
+          # 2. 去掉前面的 'v' (变成 1.2.0)，如果你的 tag 没有 v，这行也不影响
+          VERSION=${TAG_NAME#v}
+          
+          # 3. 获取下载链接 (取第一个 asset 的链接，或者直接指向 Release 页面)
+          # 这里我们简单指向 Release 页面，方便用户看更新日志
+          DOWNLOAD_URL="${{ github.event.release.html_url }}"
+          
+          # 4. 生成 JSON 文件
+          # 格式: {"version": "1.2.0", "url": "https://...", "date": "2023-12-25"}
+          echo "{\"version\": \"$VERSION\", \"url\": \"$DOWNLOAD_URL\", \"date\": \"$(date +'%Y-%m-%d')\"}" > version.json
+          
+          # 打印一下看看 (调试用)
+          cat version.json
+
+      - name: Deploy to GitHub Pages branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
+          # 关键：只发布 version.json 这个文件，不要把源码发布出去
+          keep_files: false
+          # 目标分支：自动创建 gh-pages 分支
+          publish_branch: gh-pages
+          # 提交信息
+          commit_message: "Auto-update version.json to ${{ github.event.release.tag_name }}"

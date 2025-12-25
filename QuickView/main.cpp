@@ -95,8 +95,9 @@ struct ViewState {
     POINT WindowDragStart = { 0, 0 }; // Window position at drag start
     POINT CursorDragStart = { 0, 0 }; // Cursor screen position at drag start
     int EdgeHoverState = 0; // -1=Left, 0=None, 1=Right
+    int ExifOrientation = 1; // EXIF Orientation (1-8, 1=Normal)
 
-    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; EdgeHoverState = 0; }
+    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; EdgeHoverState = 0; ExifOrientation = 1; }
 };
 
 #include "FileNavigator.h"
@@ -1299,6 +1300,14 @@ void AdjustWindowToImage(HWND hwnd) {
 
     D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
     
+    // EXIF Orientation: swap dimensions for 90/270 rotations
+    float imgWidth = size.width;
+    float imgHeight = size.height;
+    int orientation = g_viewState.ExifOrientation;
+    if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
+        std::swap(imgWidth, imgHeight);
+    }
+    
     // Get DPI
     float dpi = 96.0f;
     UINT dpiX = 96, dpiY = 96;
@@ -1306,9 +1315,9 @@ void AdjustWindowToImage(HWND hwnd) {
         dpi = (float)dpiX;
     }
     
-    // Convert to Pixels
-    int imgW = static_cast<int>(size.width * (dpi / 96.0f));
-    int imgH = static_cast<int>(size.height * (dpi / 96.0f));
+    // Convert to Pixels (using EXIF-adjusted dimensions)
+    int imgW = static_cast<int>(imgWidth * (dpi / 96.0f));
+    int imgH = static_cast<int>(imgHeight * (dpi / 96.0f));
     
     // Add margin for borderless look (optional, but good for shadow)
     // Actually our client area IS the window size now in borderless.
@@ -3418,6 +3427,13 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
             g_currentMetadata.FormatDetails = g_imageLoader->GetLastFormatDetails();
             g_currentMetadata.LoaderName = loaderName;
             g_currentMetadata.LoadTimeMs = duration;
+            
+            // Get EXIF Orientation (for Auto-Rotate)
+            if (g_config.AutoRotate) {
+                g_viewState.ExifOrientation = g_imageLoader->GetLastExifOrientation();
+            } else {
+                g_viewState.ExifOrientation = 1; // Ignore EXIF when disabled
+            }
         }
 
         // Update Title with Performance Info AND Compact Metadata
@@ -3446,6 +3462,20 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
         g_currentMetadata.LoaderName = L"Prefetch Cache";
         g_currentMetadata.LoadTimeMs = 0;
         g_currentMetadata.FormatDetails.clear(); // Prefetch doesn't preserve format details
+        
+        // Get EXIF Orientation for cache path too - need to re-read from file
+        if (g_config.AutoRotate) {
+            // Read EXIF from file for prefetch cache
+            ComPtr<IWICBitmap> tempBitmap;
+            std::wstring loaderName;
+            if (SUCCEEDED(g_imageLoader->LoadToMemory(path.c_str(), &tempBitmap, &loaderName))) {
+                g_viewState.ExifOrientation = g_imageLoader->GetLastExifOrientation();
+            } else {
+                g_viewState.ExifOrientation = 1;
+            }
+        } else {
+            g_viewState.ExifOrientation = 1;
+        }
         
         size_t lastSlash = path.find_last_of(L"\\/");
         std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
@@ -4070,22 +4100,76 @@ void OnPaint(HWND hwnd) {
             D2D1_SIZE_F size = g_currentBitmap->GetSize();
             D2D1_SIZE_F rtSize = context->GetSize();
             
-            // Calculate fit scale (to fit image in window at Zoom=1.0)
-            float fitScale = std::min(rtSize.width / size.width, rtSize.height / size.height);
+            int orientation = g_viewState.ExifOrientation;
+            
+            // Determine logical dimensions after rotation
+            float logicW = size.width;
+            float logicH = size.height;
+            bool isRotated90or270 = (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8);
+            if (isRotated90or270) {
+                std::swap(logicW, logicH);
+            }
+            
+            // Calculate fit scale using LOGIC dimensions
+            float fitScale = std::min(rtSize.width / logicW, rtSize.height / logicH);
             float finalScale = fitScale * g_viewState.Zoom;
             
-            // Calculate centering offset based on FINAL scaled size
-            float scaledW = size.width * finalScale;
-            float scaledH = size.height * finalScale;
-            float offsetX = (rtSize.width - scaledW) / 2.0f;
-            float offsetY = (rtSize.height - scaledH) / 2.0f;
+            // Screen center where image should be placed
+            float screenCenterX = rtSize.width / 2.0f + g_viewState.PanX;
+            float screenCenterY = rtSize.height / 2.0f + g_viewState.PanY;
             
-            // Apply pan offset
-            float totalX = offsetX + g_viewState.PanX;
-            float totalY = offsetY + g_viewState.PanY;
-             
-            D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Scale(finalScale, finalScale, D2D1::Point2F(0, 0)) 
-                                         * D2D1::Matrix3x2F::Translation(totalX, totalY);
+            // Bitmap center (in bitmap coordinates)
+            float bmpCenterX = size.width / 2.0f;
+            float bmpCenterY = size.height / 2.0f;
+            
+            // Build transform: 
+            // 1. Translate bitmap center to origin
+            // 2. Apply rotation
+            // 3. Apply scale
+            // 4. Translate to screen center
+            D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Translation(-bmpCenterX, -bmpCenterY);
+            
+            // EXIF Rotation
+            float rotAngle = 0.0f;
+            float scaleX = 1.0f, scaleY = 1.0f;
+            bool mirrorAfterRotate = false; // For 5/7: mirror after rotation
+            switch (orientation) {
+                case 1: break; // Normal
+                case 2: scaleX = -1.0f; break; // Mirror horizontal
+                case 3: rotAngle = 180.0f; break; // Rotate 180
+                case 4: scaleY = -1.0f; break; // Mirror vertical
+                case 5: rotAngle = 270.0f; mirrorAfterRotate = true; scaleY = -1.0f; break; // Transpose: rotate 270, then flip vertical
+                case 6: rotAngle = 90.0f; break; // Rotate 90 CW
+                case 7: rotAngle = 90.0f; mirrorAfterRotate = true; scaleY = -1.0f; break; // Transverse: rotate 90, then flip vertical
+                case 8: rotAngle = 270.0f; break; // Rotate 270 CW
+                default: break;
+            }
+            
+            // Apply rotation first
+            if (rotAngle != 0.0f) {
+                transform = transform * D2D1::Matrix3x2F::Rotation(rotAngle);
+            }
+            
+            // Apply mirror (after rotation for 5/7, before for 2/4)
+            if (!mirrorAfterRotate && (scaleX != 1.0f || scaleY != 1.0f)) {
+                // Normal mirror for 2/4 - shouldn't reach here with current logic
+            }
+            if (mirrorAfterRotate && (scaleX != 1.0f || scaleY != 1.0f)) {
+                transform = transform * D2D1::Matrix3x2F::Scale(scaleX, scaleY);
+            } else if (!mirrorAfterRotate && (scaleX != 1.0f || scaleY != 1.0f)) {
+                // For 2/4: mirror without rotation, need to apply at bitmap level
+                transform = D2D1::Matrix3x2F::Translation(-bmpCenterX, -bmpCenterY)
+                          * D2D1::Matrix3x2F::Scale(scaleX, scaleY);
+                if (rotAngle != 0.0f) {
+                    transform = transform * D2D1::Matrix3x2F::Rotation(rotAngle);
+                }
+            }
+            
+            // Apply final scale
+            transform = transform * D2D1::Matrix3x2F::Scale(finalScale, finalScale);
+            
+            // Translate to screen center
+            transform = transform * D2D1::Matrix3x2F::Translation(screenCenterX, screenCenterY);
             
             context->SetTransform(transform);
             

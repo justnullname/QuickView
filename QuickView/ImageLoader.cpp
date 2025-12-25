@@ -165,6 +165,83 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 
 // Global storage for format details (set by loaders, read by main)
 static std::wstring g_lastFormatDetails;
+static int g_lastExifOrientation = 1; // EXIF Orientation (1-8, 1=Normal)
+
+// Read EXIF Orientation from JPEG file (Tag 0x0112)
+// Returns 1-8, or 1 if not found/error
+static int ReadJpegExifOrientation(const uint8_t* data, size_t size) {
+    if (size < 12) return 1;
+    
+    // Check JPEG SOI marker
+    if (data[0] != 0xFF || data[1] != 0xD8) return 1;
+    
+    size_t offset = 2;
+    while (offset + 4 < size) {
+        if (data[offset] != 0xFF) break;
+        uint8_t marker = data[offset + 1];
+        
+        // Skip padding
+        if (marker == 0xFF) { offset++; continue; }
+        
+        // End markers
+        if (marker == 0xD9 || marker == 0xDA) break;
+        
+        uint16_t segLen = (data[offset + 2] << 8) | data[offset + 3];
+        
+        // APP1 (EXIF)
+        if (marker == 0xE1 && segLen > 8) {
+            const uint8_t* exif = data + offset + 4;
+            size_t exifLen = segLen - 2;
+            
+            // Check "Exif\0\0" header
+            if (exifLen > 6 && memcmp(exif, "Exif\0\0", 6) == 0) {
+                const uint8_t* tiff = exif + 6;
+                size_t tiffLen = exifLen - 6;
+                
+                if (tiffLen < 8) return 1;
+                
+                // Byte order
+                bool littleEndian = (tiff[0] == 'I' && tiff[1] == 'I');
+                bool bigEndian = (tiff[0] == 'M' && tiff[1] == 'M');
+                if (!littleEndian && !bigEndian) return 1;
+                
+                auto read16 = [&](const uint8_t* p) -> uint16_t {
+                    return littleEndian ? (p[0] | (p[1] << 8)) : ((p[0] << 8) | p[1]);
+                };
+                auto read32 = [&](const uint8_t* p) -> uint32_t {
+                    return littleEndian 
+                        ? (p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24))
+                        : ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
+                };
+                
+                // IFD0 offset
+                uint32_t ifdOffset = read32(tiff + 4);
+                if (ifdOffset + 2 > tiffLen) return 1;
+                
+                const uint8_t* ifd = tiff + ifdOffset;
+                uint16_t numEntries = read16(ifd);
+                ifd += 2;
+                
+                for (uint16_t i = 0; i < numEntries && (ifd + 12 <= tiff + tiffLen); i++, ifd += 12) {
+                    uint16_t tag = read16(ifd);
+                    if (tag == 0x0112) { // Orientation tag
+                        uint16_t type = read16(ifd + 2);
+                        if (type == 3) { // SHORT
+                            uint16_t orientation = read16(ifd + 8);
+                            if (orientation >= 1 && orientation <= 8) {
+                                return orientation;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
+        offset += 2 + segLen;
+    }
+    return 1;
+}
 
 // Helper to read file to vector
 bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
@@ -299,6 +376,9 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
                      } else {
                          g_lastFormatDetails = subsamp;
                      }
+                     
+                     // Read EXIF Orientation
+                     g_lastExifOrientation = ReadJpegExifOrientation(jpegBuf.data(), jpegBuf.size());
                  }
             }
         }
@@ -970,8 +1050,9 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forc
 HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName, bool forceFullDecode) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
     
-    // Clear previous format details to avoid residue when switching formats
+    // Clear previous state to avoid residue when switching formats
     g_lastFormatDetails.clear();
+    g_lastExifOrientation = 1; // Reset to default (Normal)
     
     std::wstring path = filePath;
     std::transform(path.begin(), path.end(), path.begin(), ::towlower);
@@ -1163,6 +1244,10 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
 
 std::wstring CImageLoader::GetLastFormatDetails() const {
     return g_lastFormatDetails;
+}
+
+int CImageLoader::GetLastExifOrientation() const {
+    return g_lastExifOrientation;
 }
 
 HRESULT CImageLoader::GetImageSize(LPCWSTR filePath, UINT* width, UINT* height) {

@@ -116,6 +116,11 @@ public:
     std::wstring GetLastFormatDetails() const;
 
     /// <summary>
+    /// Get EXIF Orientation from last load (1-8, 1=Normal)
+    /// </summary>
+    int GetLastExifOrientation() const;
+
+    /// <summary>
     /// Get image size without full decode
     /// </summary>
     HRESULT GetImageSize(LPCWSTR filePath, UINT* width, UINT* height);
