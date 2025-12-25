@@ -1422,6 +1422,90 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // Load config early to check SingleInstance setting
     LoadConfig();
     
+    // Smart Lazy Registration: Check and self-repair file associations
+    {
+        wchar_t currentExe[MAX_PATH];
+        GetModuleFileNameW(nullptr, currentExe, MAX_PATH);
+        
+        // Read registered path from registry
+        std::wstring regPath;
+        HKEY hKey;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, 
+            L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
+            0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            wchar_t buffer[MAX_PATH * 2] = {0};
+            DWORD bufSize = sizeof(buffer);
+            if (RegGetValueW(hKey, NULL, NULL, RRF_RT_REG_SZ, NULL, buffer, &bufSize) == ERROR_SUCCESS) {
+                regPath = buffer;
+                // Extract path from "\"path\" \"%1\"" format
+                if (regPath.size() > 2 && regPath[0] == L'"') {
+                    size_t endQuote = regPath.find(L'"', 1);
+                    if (endQuote != std::wstring::npos) {
+                        regPath = regPath.substr(1, endQuote - 1);
+                    }
+                }
+            }
+            RegCloseKey(hKey);
+        }
+        
+        // Check if registration needed
+        bool needsRegister = regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
+        if (needsRegister) {
+            // Silent register/repair
+            const wchar_t* exts[] = {
+                L".jpg", L".jpeg", L".png", L".gif", L".bmp", L".webp", 
+                L".avif", L".heic", L".heif", L".jxl", L".svg", L".ico",
+                L".tif", L".tiff", L".psd", L".exr", L".hdr"
+            };
+            
+            // Register ProgID
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
+                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                std::wstring cmd = L"\"" + std::wstring(currentExe) + L"\" \"%1\"";
+                RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
+                RegCloseKey(hKey);
+            }
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\DefaultIcon",
+                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                std::wstring icon = std::wstring(currentExe) + L",0";
+                RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
+                RegCloseKey(hKey);
+            }
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image",
+                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                std::wstring name = L"QuickView Image Viewer";
+                RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)name.c_str(), (DWORD)(name.size()+1)*2);
+                RegCloseKey(hKey);
+            }
+            
+            // Register extensions
+            for (const auto& ext : exts) {
+                std::wstring keyPath = L"Software\\Classes\\" + std::wstring(ext) + L"\\OpenWithProgids";
+                if (RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                    RegSetValueExW(hKey, L"QuickView.Image", 0, REG_SZ, NULL, 0);
+                    RegCloseKey(hKey);
+                }
+            }
+            
+            // Register in Applications for proper display name
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe",
+                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                std::wstring friendlyName = L"QuickView";
+                RegSetValueExW(hKey, L"FriendlyAppName", 0, REG_SZ, (BYTE*)friendlyName.c_str(), (DWORD)(friendlyName.size()+1)*2);
+                RegCloseKey(hKey);
+            }
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command",
+                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                std::wstring cmd = L"\"" + std::wstring(currentExe) + L"\" \"%1\"";
+                RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
+                RegCloseKey(hKey);
+            }
+            
+            // Refresh Shell
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+        }
+    }
+    
     if (g_config.SingleInstance && alreadyRunning) {
         // Find existing window and send file path
         HWND hExisting = FindWindowW(L"QuickViewClass", nullptr);

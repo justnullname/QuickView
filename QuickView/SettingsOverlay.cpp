@@ -4,6 +4,114 @@
 #include <Shlobj.h>
 #include <commdlg.h>
 
+// --- File Associations (HKCU, no admin required) ---
+
+// Read registered EXE path from registry
+static std::wstring ReadRegisteredExePath() {
+    HKEY hKey;
+    std::wstring result;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
+        0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        wchar_t buffer[MAX_PATH * 2] = {0};
+        DWORD bufSize = sizeof(buffer);
+        if (RegGetValueW(hKey, NULL, NULL, RRF_RT_REG_SZ, NULL, buffer, &bufSize) == ERROR_SUCCESS) {
+            result = buffer;
+            // Extract path from "\"path\" \"%1\"" format
+            if (result.size() > 2 && result[0] == L'"') {
+                size_t endQuote = result.find(L'"', 1);
+                if (endQuote != std::wstring::npos) {
+                    result = result.substr(1, endQuote - 1);
+                }
+            }
+        }
+        RegCloseKey(hKey);
+    }
+    return result;
+}
+
+// Register file associations (silent, no MessageBox)
+static bool RegisterFileAssociationsSilent() {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    
+    HKEY hKey;
+    LONG r;
+    
+    // 1. Register ProgID command
+    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (r == ERROR_SUCCESS) {
+        std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" \"%1\"";
+        RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
+        RegCloseKey(hKey);
+    }
+    
+    // 2. Register DefaultIcon
+    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\QuickView.Image\\DefaultIcon",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (r == ERROR_SUCCESS) {
+        std::wstring icon = std::wstring(exePath) + L",0";
+        RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
+        RegCloseKey(hKey);
+    }
+    
+    // 3. Register FriendlyTypeName
+    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\QuickView.Image",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (r == ERROR_SUCCESS) {
+        std::wstring name = L"QuickView Image Viewer";
+        RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)name.c_str(), (DWORD)(name.size()+1)*2);
+        RegCloseKey(hKey);
+    }
+    
+    // 4. Register extensions in OpenWithProgids
+    const wchar_t* exts[] = {
+        L".jpg", L".jpeg", L".png", L".gif", L".bmp", L".webp", 
+        L".avif", L".heic", L".heif", L".jxl", L".svg", L".ico",
+        L".tif", L".tiff", L".psd", L".exr", L".hdr"
+    };
+    for (const auto& ext : exts) {
+        std::wstring keyPath = L"Software\\Classes\\" + std::wstring(ext) + L"\\OpenWithProgids";
+        r = RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+        if (r == ERROR_SUCCESS) {
+            RegSetValueExW(hKey, L"QuickView.Image", 0, REG_SZ, NULL, 0);
+            RegCloseKey(hKey);
+        }
+    }
+    
+    // 5. Register in Applications for proper display name
+    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\Applications\\QuickView.exe",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (r == ERROR_SUCCESS) {
+        std::wstring friendlyName = L"QuickView";
+        RegSetValueExW(hKey, L"FriendlyAppName", 0, REG_SZ, (BYTE*)friendlyName.c_str(), (DWORD)(friendlyName.size()+1)*2);
+        RegCloseKey(hKey);
+    }
+    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (r == ERROR_SUCCESS) {
+        std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" \"%1\"";
+        RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
+        RegCloseKey(hKey);
+    }
+    
+    // 6. Refresh Shell
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+    return true;
+}
+
+// Manual repair (silent, no MessageBox)
+static bool RepairFileAssociations() {
+    RegisterFileAssociationsSilent();
+    return true;
+}
+
 SettingsOverlay::SettingsOverlay() {
 }
 
@@ -262,7 +370,12 @@ void SettingsOverlay::BuildMenu() {
     
     tabImage.items.push_back({ L"Render", OptionType::Header });
     tabImage.items.push_back({ L"Auto Rotate (EXIF)", OptionType::Toggle, &g_config.AutoRotate });
-    tabImage.items.push_back({ L"Color Mgmt (CMS)", OptionType::Toggle, &g_config.ColorManagement });
+    
+    // CMS - Disabled (开发中)
+    SettingsItem itemCms = { L"Color Mgmt (CMS)", OptionType::Toggle, &g_config.ColorManagement };
+    itemCms.isDisabled = true;
+    itemCms.disabledText = L"Coming Soon";
+    tabImage.items.push_back(itemCms);
     
     SettingsItem itemRaw = { L"Force RAW Decode", OptionType::Toggle, &g_config.ForceRawDecode };
     itemRaw.onChange = []() { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
@@ -274,7 +387,13 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ L"Auto Save (Lossy)", OptionType::Toggle, &g_config.AlwaysSaveLossy });
     
     tabImage.items.push_back({ L"System", OptionType::Header });
-    tabImage.items.push_back({ L"File Associations", OptionType::ActionButton });
+    SettingsItem itemFileAssoc = { L"Add to Open With", OptionType::ActionButton };
+    itemFileAssoc.buttonText = L"Add";
+    itemFileAssoc.buttonActivatedText = L"Added";
+    itemFileAssoc.onChange = [&itemFileAssoc]() {
+        RepairFileAssociations();
+    };
+    tabImage.items.push_back(itemFileAssoc);
 
     m_tabs.push_back(tabImage);
 
@@ -416,13 +535,27 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
             switch (item.type) {
                 case OptionType::Toggle:
-                    DrawToggle(pRT, controlRect, (item.pBoolVal ? *item.pBoolVal : false), isHovered);
-                    // Status text (e.g., "Restart required")
-                    if (!item.statusText.empty()) {
-                        ComPtr<ID2D1SolidColorBrush> statusBrush;
-                        pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
-                        D2D1_RECT_F statusR = D2D1::RectF(controlX + 60, contentY, controlX + controlW, contentY + rowHeight);
-                        pRT->DrawTextW(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    if (item.isDisabled) {
+                        // Disabled: Draw gray toggle background + disabled text
+                        ComPtr<ID2D1SolidColorBrush> brushDisabled;
+                        pRT->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f), &brushDisabled);
+                        D2D1_RECT_F toggleBg = D2D1::RectF(controlRect.left, controlRect.top + 5, controlRect.left + 44, controlRect.top + 27);
+                        pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleBg, 11, 11), brushDisabled.Get());
+                        
+                        // Disabled text
+                        if (!item.disabledText.empty()) {
+                            D2D1_RECT_F textRect = D2D1::RectF(controlRect.left + 50, contentY, controlRect.right, contentY + rowHeight);
+                            pRT->DrawTextW(item.disabledText.c_str(), (UINT32)item.disabledText.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                        }
+                    } else {
+                        DrawToggle(pRT, controlRect, (item.pBoolVal ? *item.pBoolVal : false), isHovered);
+                        // Status text (e.g., "Restart required")
+                        if (!item.statusText.empty()) {
+                            ComPtr<ID2D1SolidColorBrush> statusBrush;
+                            pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
+                            D2D1_RECT_F statusR = D2D1::RectF(controlX + 60, contentY, controlX + controlW, contentY + rowHeight);
+                            pRT->DrawTextW(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                        }
                     }
                     break;
                 case OptionType::Slider:
@@ -434,11 +567,36 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                     DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options);
                     break;
                 case OptionType::ActionButton: {
-                     // Draw Button
-                     ComPtr<ID2D1SolidColorBrush> bg = isHovered ? m_brushAccent : m_brushControlBg;
-                     pRT->FillRoundedRectangle(D2D1::RoundedRect(controlRect, 4, 4), bg.Get());
-                     pRT->DrawRoundedRectangle(D2D1::RoundedRect(controlRect, 4, 4), m_brushBorder.Get());
-                     pRT->DrawTextW(L"Select", 6, m_textFormatItem.Get(), controlRect, m_brushText.Get());
+                     // Button aligned to right side of control area (like other controls)
+                     float btnWidth = 60.0f;
+                     float btnX = controlX + controlW - btnWidth; // Right-aligned
+                     D2D1_RECT_F btnRect = D2D1::RectF(btnX, contentY + 7, btnX + btnWidth, contentY + rowHeight - 7);
+                     
+                     // Button color: Blue (lighter on hover)
+                     ComPtr<ID2D1SolidColorBrush> btnBrush;
+                     if (isHovered) {
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.55f, 0.95f), &btnBrush); // Light blue
+                     } else {
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.84f), &btnBrush); // Blue
+                     }
+                     
+                     pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4, 4), btnBrush.Get());
+                     
+                     // Show green "Added" text on the LEFT of button when activated
+                     if (item.isActivated) {
+                         ComPtr<ID2D1SolidColorBrush> greenBrush;
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.8f, 0.3f), &greenBrush);
+                         D2D1_RECT_F statusRect = D2D1::RectF(controlX, contentY, btnX - 16, contentY + rowHeight);
+                         pRT->DrawTextW(L"Added", 5, m_textFormatItem.Get(), statusRect, greenBrush.Get());
+                     }
+                     
+                     // Centered button text using text format with center alignment
+                     std::wstring btnText = item.buttonText.empty() ? L"Add" : item.buttonText;
+                     ComPtr<IDWriteTextFormat> centerFormat;
+                     m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &centerFormat);
+                     centerFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                     centerFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawTextW(btnText.c_str(), (UINT32)btnText.length(), centerFormat.Get(), btnRect, m_brushText.Get());
                      break;
                 }
                 case OptionType::CustomColorRow: {
@@ -718,6 +876,7 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
         // Button
         if (m_pHoverItem->type == OptionType::ActionButton) {
             if (m_pHoverItem->onChange) m_pHoverItem->onChange();
+            m_pHoverItem->isActivated = true; // Mark as activated for visual feedback
             return true;
         }
         // Custom Color Row: Checkbox vs Button

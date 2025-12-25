@@ -39,6 +39,15 @@ struct SettingsItem {
     // Runtime Layout (Hit Testing)
     D2D1_RECT_F rect; 
     bool isHovered = false;
+    
+    // Disabled State
+    bool isDisabled = false;
+    std::wstring disabledText; // e.g. "Coming Soon"
+    
+    // ActionButton specific
+    std::wstring buttonText = L"Select";  // Default button text
+    std::wstring buttonActivatedText;     // Text after action (e.g. "Added")
+    bool isActivated = false;             // Whether action has been performed
 
     // Runtime Feedback (New)
     std::wstring statusText;
