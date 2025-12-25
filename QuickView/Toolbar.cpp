@@ -1,5 +1,8 @@
 #include "pch.h"
 #include "Toolbar.h"
+#include "EditState.h"
+
+extern AppConfig g_config;
 
 // Icon Codes (Segoe Fluent Icons)
 #define ICON_PREV L"\uE76B"
@@ -144,7 +147,7 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
         pRT->PushLayer(params, layer.Get());
         
         // Background
-        m_brushBg->SetOpacity(0.85f); // Base opacity
+        m_brushBg->SetOpacity(g_config.ToolbarAlpha); // Base opacity from config
         pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
         
         // Buttons

@@ -113,7 +113,9 @@ struct AppConfig {
     bool AlwaysSaveEdgeAdapted = false;  
     bool AlwaysSaveLossy = false;        
     bool ShowSavePrompt = true;          
-    float DialogAlpha = 0.95f;           
+    float InfoPanelAlpha = 0.85f;
+    float ToolbarAlpha = 0.85f;
+    float SettingsAlpha = 0.95f;
     
     // Default States (User Preference)
     bool LockWindowSize = false;         

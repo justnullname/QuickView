@@ -596,7 +596,7 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     
     // Box Background (with configurable alpha)
     ComPtr<ID2D1SolidColorBrush> pBgBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.18f, 0.18f, g_config.DialogAlpha), &pBgBrush);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.18f, 0.18f, g_config.SettingsAlpha), &pBgBrush);
     context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f, 10.0f), pBgBrush.Get());
     
     // Border
@@ -1137,8 +1137,9 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"ExifPanelMode", std::to_wstring(g_config.ExifPanelMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"ToolbarInfoDefault", std::to_wstring(g_config.ToolbarInfoDefault).c_str(), iniPath.c_str());
-    // DialogAlpha (Slider)
-    WritePrivateProfileStringW(L"View", L"DialogAlpha", std::to_wstring(g_config.DialogAlpha).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"InfoPanelAlpha", std::to_wstring(g_config.InfoPanelAlpha).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"ToolbarAlpha", std::to_wstring(g_config.ToolbarAlpha).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"SettingsAlpha", std::to_wstring(g_config.SettingsAlpha).c_str(), iniPath.c_str());
 
     // Control
     WritePrivateProfileStringW(L"Controls", L"InvertWheel", g_config.InvertWheel ? L"1" : L"0", iniPath.c_str());
@@ -1207,8 +1208,14 @@ void LoadConfig() {
     g_config.ToolbarInfoDefault = GetPrivateProfileIntW(L"View", L"ToolbarInfoDefault", 0, iniPath.c_str());
     
     wchar_t buf[32];
-    GetPrivateProfileStringW(L"View", L"DialogAlpha", L"0.95", buf, 32, iniPath.c_str());
-    g_config.DialogAlpha = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"View", L"InfoPanelAlpha", L"0.85", buf, 32, iniPath.c_str());
+    g_config.InfoPanelAlpha = (float)_wtof(buf);
+    
+    GetPrivateProfileStringW(L"View", L"ToolbarAlpha", L"0.85", buf, 32, iniPath.c_str());
+    g_config.ToolbarAlpha = (float)_wtof(buf);
+    
+    GetPrivateProfileStringW(L"View", L"SettingsAlpha", L"0.95", buf, 32, iniPath.c_str());
+    g_config.SettingsAlpha = (float)_wtof(buf);
 
     // Control
     g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
@@ -3334,7 +3341,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_ABOUT: {
-            MessageBoxW(hwnd, L"QuickView\n\nHigh Performance Image Viewer\n\n(c) 2024-2026", L"About QuickView", MB_ICONINFORMATION);
+            g_settingsOverlay.OpenTab(5); // Open About Tab
+            InvalidateRect(hwnd, nullptr, FALSE); // Force redraw to show overlay immediately
             break;
         }
         case IDM_EXIT: {
@@ -3988,7 +3996,7 @@ void DrawInfoPanel(ID2D1DeviceContext* context) {
     
     // Background
     ComPtr<ID2D1SolidColorBrush> brushBg;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f), &brushBg);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, g_config.InfoPanelAlpha), &brushBg);
     context->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f, 8.0f), brushBg.Get());
     
     ComPtr<ID2D1SolidColorBrush> brushWhite;

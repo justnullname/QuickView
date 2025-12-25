@@ -52,6 +52,7 @@ struct SettingsItem {
     // Runtime Feedback (New)
     std::wstring statusText;
     D2D1::ColorF statusColor = D2D1::ColorF(D2D1::ColorF::White);
+    DWORD statusSetTime = 0; // For auto-hide logic
 };
 
 struct SettingsTab {
@@ -84,6 +85,7 @@ public:
     
     // Status Feedback
     void SetItemStatus(const std::wstring& label, const std::wstring& status, D2D1::ColorF color); 
+    void OpenTab(int index); 
 
 private:
     void CreateResources(ID2D1RenderTarget* pRT);
