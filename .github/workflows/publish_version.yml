@@ -17,7 +17,9 @@ jobs:
       - name: Generate version.json with Changelog
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
-          DOWNLOAD_URL: ${{ github.event.release.html_url }}
+          
+          DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/QuickView.exe
+          
           RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           VERSION=${TAG_NAME#v}
