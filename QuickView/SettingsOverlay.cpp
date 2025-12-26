@@ -5,6 +5,7 @@
 #include <commdlg.h>
 #include <functional>
 #include "UpdateManager.h"
+#include <sstream>
 #include <vector>
 #include <shellapi.h>
 #include <wincodec.h>
@@ -225,6 +226,17 @@ void SettingsOverlay::ShowUpdateToast(const std::wstring& version, const std::ws
     m_showUpdateToast = true;
     m_updateVersion = version;
     m_updateLog = changelog;
+    m_toastScrollY = 0.0f; // Reset scroll
+    
+    // Auto-resize window if too small for toast
+    RECT rc; 
+    GetClientRect(m_hwnd, &rc);
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+    if (w < 520 || h < 320) {
+        SetWindowPos(m_hwnd, NULL, 0, 0, std::max(w, 520), std::max(h, 320), SWP_NOMOVE | SWP_NOZORDER);
+    }
+    
     BuildMenu(); // Refresh About tab state
 }
 
@@ -236,15 +248,40 @@ struct ToastLayout {
     D2D1_RECT_F btnClose;
 };
 
-static ToastLayout GetToastLayout(float hudX, float hudY, float hudW, float hudH) {
-    float w = 360.0f;
-    float h = 100.0f;
-    // Position: Bottom Center of HUD in Screen Coords
-    float cx = hudX + hudW / 2.0f;
-    float cy = hudY + hudH - h - 30.0f; // 30px from bottom
+// Helper to strip Markdown
+static std::wstring CleanMarkdown(const std::wstring& md) {
+    std::wstring out;
+    std::wstringstream ss(md);
+    std::wstring line;
+    while (std::getline(ss, line)) {
+        size_t start = 0;
+        while (start < line.size() && (line[start] == L'#' || line[start] == L' ')) start++;
+        if (start < line.size()) {
+            std::wstring clean = line.substr(start);
+            // Replace * with bullet
+            if (clean.size() > 1 && clean[0] == L'*' && clean[1] == L' ') {
+                clean[0] = L'-';
+            }
+            // Remove ** or *
+            std::wstring formattingRemoved;
+            for (wchar_t c : clean) { if (c != L'*' && c != L'`') formattingRemoved += c; }
+            out += formattingRemoved + L"\n";
+        }
+    }
+    return out;
+}
+
+static ToastLayout GetToastLayout(float winW, float winH) {
+    float w = 500.0f; // Wide for logs
+    float h = 300.0f; // Tall for scrolling
+    // Position: Centered on Window
+    float cx = (winW - w) / 2.0f;
+    float cy = (winH - h) / 2.0f;
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
     
     ToastLayout l;
-    l.bg = D2D1::RectF(cx - w/2.0f, cy, cx + w/2.0f, cy + h);
+    l.bg = D2D1::RectF(cx, cy, cx + w, cy + h);
     
     // Buttons
     float by = l.bg.bottom - 40.0f;
@@ -265,27 +302,82 @@ static ToastLayout GetToastLayout(float hudX, float hudY, float hudW, float hudH
     return l;
 }
 
+
+
 void SettingsOverlay::RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, float hudY, float hudW, float hudH) {
     if (!m_showUpdateToast) return;
-    
-    ToastLayout l = GetToastLayout(hudX, hudY, hudW, hudH);
+
+    ToastLayout l = GetToastLayout(m_windowWidth, m_windowHeight);
     m_toastRect = l.bg; // Store for hit test
     
+    // Dimmer (if main menu hidden, dim window for modal focus)
+    if (!m_visible) {
+        pRT->FillRectangle(D2D1::RectF(0, 0, m_windowWidth, m_windowHeight), m_brushBg.Get());
+    }
+
     // Background
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(l.bg, 12.0f, 12.0f), m_brushControlBg.Get()); // Dark Gray
-    pRT->DrawRoundedRectangle(D2D1::RoundedRect(l.bg, 12.0f, 12.0f), m_brushBorder.Get(), 1.0f); // White Border
+    pRT->FillRoundedRectangle(D2D1::RoundedRect(l.bg, 8.0f, 8.0f), m_brushControlBg.Get()); // Dark Gray
+    pRT->DrawRoundedRectangle(D2D1::RoundedRect(l.bg, 8.0f, 8.0f), m_brushBorder.Get(), 1.0f); // White Border
     
     // Header Text
-    std::wstring title = L"New Version Available: " + m_updateVersion;
-    D2D1_RECT_F titleR = D2D1::RectF(l.bg.left + 20, l.bg.top + 15, l.bg.right - 30, l.bg.top + 40);
+    std::wstring title = L"New Version Available!";
+    D2D1_RECT_F titleR = D2D1::RectF(l.bg.left + 20, l.bg.top + 15, l.bg.right - 30, l.bg.top + 35);
     
-    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    pRT->DrawText(title.c_str(), (UINT32)title.length(), m_textFormatItem.Get(), titleR, m_brushText.Get());
+    m_textFormatHeader->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    pRT->DrawText(title.c_str(), (UINT32)title.length(), m_textFormatHeader.Get(), titleR, m_brushText.Get());
+
+    // Version Subheader
+    std::wstring verTxt = L"v" + m_updateVersion + L" is ready.";
+    D2D1_RECT_F verR = D2D1::RectF(l.bg.left + 20, l.bg.top + 40, l.bg.right - 20, l.bg.top + 60);
+    pRT->DrawText(verTxt.c_str(), (UINT32)verTxt.length(), m_textFormatItem.Get(), verR, m_brushSuccess.Get());
+    
+    // Changelog Body (Scrollable)
+    D2D1_RECT_F logR = D2D1::RectF(l.bg.left + 20, l.bg.top + 65, l.bg.right - 20, l.btnRestart.top - 10);
+    
+    // Draw Box for Log
+    pRT->FillRectangle(logR, m_brushBg.Get()); // Darker background for log
+    
+    std::wstring cleanLog = CleanMarkdown(m_updateLog);
+    
+    // Measure Text Height
+    ComPtr<IDWriteTextLayout> pLayout;
+    m_dwriteFactory->CreateTextLayout(cleanLog.c_str(), (UINT32)cleanLog.length(), m_textFormatItem.Get(), logR.right - logR.left - 25.0f, 10000.0f, &pLayout); // -25 for padding (Avoid scrollbar)
+    
+    DWRITE_TEXT_METRICS metrics;
+    pLayout->GetMetrics(&metrics);
+    m_toastTotalHeight = metrics.height;
+    
+    // Clamp Scroll
+    float visibleH = logR.bottom - logR.top;
+    float maxScroll = std::max(0.0f, m_toastTotalHeight - visibleH + 20.0f); // +20 padding
+    if (m_toastScrollY < 0.0f) m_toastScrollY = 0.0f;
+    if (m_toastScrollY > maxScroll) m_toastScrollY = maxScroll;
+    
+    pRT->PushAxisAlignedClip(logR, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    
+    // Draw Text with Offset
+    D2D1_POINT_2F origin = D2D1::Point2F(logR.left + 5, logR.top + 5 - m_toastScrollY);
+    pRT->DrawTextLayout(origin, pLayout.Get(), m_brushTextDim.Get());
+    
+    pRT->PopAxisAlignedClip();
+    
+    // Scrollbar
+    if (maxScroll > 0) {
+        float ratio = visibleH / (m_toastTotalHeight + 20.0f);
+        float barH = visibleH * ratio;
+        if (barH < 30.0f) barH = 30.0f;
+        
+        float scrollRatio = m_toastScrollY / maxScroll; // 0..1
+        float barY = logR.top + scrollRatio * (visibleH - barH);
+        
+        D2D1_RECT_F barR = D2D1::RectF(logR.right - 6, barY, logR.right - 2, barY + barH);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(barR, 2, 2), m_brushTextDim.Get());
+    }
     
     // Restart Button
     D2D1_ROUNDED_RECT rRestart = D2D1::RoundedRect(l.btnRestart, 4.0f, 4.0f);
-    pRT->FillRoundedRectangle(rRestart, m_brushSuccess.Get()); 
+    pRT->FillRoundedRectangle(rRestart, (m_toastHoverBtn == 1) ? m_brushSuccess.Get() : m_brushAccent.Get()); 
     // Manual Center Text
     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -293,13 +385,15 @@ void SettingsOverlay::RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, floa
     
     // Later Button
     D2D1_ROUNDED_RECT rLater = D2D1::RoundedRect(l.btnLater, 4.0f, 4.0f);
-    // Draw Border Only for Later
+    pRT->FillRoundedRectangle(rLater, (m_toastHoverBtn == 2) ? m_brushControlBg.Get() : m_brushBg.Get());
     pRT->DrawRoundedRectangle(rLater, m_brushTextDim.Get(), 1.0f);
     pRT->DrawText(L"Later", 5, m_textFormatItem.Get(), l.btnLater, m_brushTextDim.Get());
 
     // Close X
     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    pRT->DrawText(L"x", 1, m_textFormatItem.Get(), l.btnClose, m_brushTextDim.Get());
+    // Hit test visual feedback
+    if (m_toastHoverBtn == 3) pRT->FillRoundedRectangle(D2D1::RoundedRect(l.btnClose, 4,4), m_brushControlBg.Get());
+    pRT->DrawText(L"X", 1, m_textFormatItem.Get(), l.btnClose, m_brushTextDim.Get());
     
     // Restore Default Align
     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -759,7 +853,7 @@ void SettingsOverlay::BuildMenu() {
     UpdateStatus status = UpdateManager::Get().GetStatus();
     if (status == UpdateStatus::NewVersionFound) {
         std::string v = UpdateManager::Get().GetRemoteVersion().version;
-        itemUpdate.buttonText = L"Update Available!";
+        itemUpdate.buttonText = L"View Update";
         itemUpdate.statusText = std::wstring(v.begin(), v.end());
     } else if (status == UpdateStatus::Checking) {
         itemUpdate.buttonText = L"Checking...";
@@ -771,27 +865,20 @@ void SettingsOverlay::BuildMenu() {
     }
 
     itemUpdate.onChange = [this]() {
-         UpdateManager::Get().StartBackgroundCheck(0); 
-         // Force slight visual feedback
-         SetItemStatus(L"Check for Updates", L"Checking...", D2D1::ColorF(0.5f, 0.5f, 0.5f));
-         // Note: Callback will eventually trigger ShowUpdateToast -> BuildMenu
+         if (UpdateManager::Get().GetStatus() == UpdateStatus::NewVersionFound) {
+             m_showUpdateToast = true;
+             SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
+         } else {
+             UpdateManager::Get().StartBackgroundCheck(0); 
+             // Force slight visual feedback
+             SetItemStatus(L"Check for Updates", L"Checking...", D2D1::ColorF(0.5f, 0.5f, 0.5f));
+         }
     };
     tabAbout.items.push_back(itemUpdate);
 
-    // 2.1 Release Logs (If Update Available)
-    if (status == UpdateStatus::NewVersionFound) {
-         std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
-         if (!log.empty()) {
-             // Convert to Wide
-             int size_needed = MultiByteToWideChar(CP_UTF8, 0, &log[0], (int)log.size(), NULL, 0);
-             std::wstring wlog(size_needed, 0);
-             MultiByteToWideChar(CP_UTF8, 0, &log[0], (int)log.size(), &wlog[0], size_needed);
-             
-             tabAbout.items.push_back({ L"Release Notes", OptionType::Header });
-             SettingsItem itemLog = { wlog, OptionType::InfoLabel };
-             tabAbout.items.push_back(itemLog);
-         }
-    }
+    // 2.1 Release Logs REMOVED (Unified with Toast)
+    
+    // 3. Links Row (GitHub, Issues, Hotkeys)
     
     // 3. Links Row (GitHub, Issues, Hotkeys)
     SettingsItem itemLinks = { L"", OptionType::AboutLinks }; 
@@ -813,7 +900,8 @@ void SettingsOverlay::BuildMenu() {
     tabAbout.items.push_back(itemSys);
 
     // 6. Copyright Footer
-    SettingsItem itemCopy = { L"Copyright (c) 2025 justnullname\nLicensed under the GNU GPL v3.0", OptionType::InfoLabel };
+    // 6. Copyright Footer
+    SettingsItem itemCopy = { L"Copyright (c) 2025 justnullname\nLicensed under the GNU GPL v3.0", OptionType::CopyrightLabel };
     tabAbout.items.push_back(itemCopy);
 
     m_tabs.push_back(tabAbout);
@@ -850,6 +938,8 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     if (!m_brushBg) CreateResources(pRT);
 
     D2D1_SIZE_F size = pRT->GetSize();
+    m_windowWidth = size.width;
+    m_windowHeight = size.height;
 
     // 1. Draw Dimmer (Semi-transparent overlay over entire window)
     D2D1_RECT_F dimmerRect = D2D1::RectF(0, 0, size.width, size.height);
@@ -864,117 +954,123 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     m_lastHudX = hudX;
     m_lastHudY = hudY;
 
-    // Toast (Always Top)
-    if (m_showUpdateToast) {
-        RenderUpdateToast(pRT, hudX, hudY, HUD_WIDTH, HUD_HEIGHT);
-    }
-    
-    if (!m_visible) return; // Stop here if main menu is hidden
 
-    D2D1_RECT_F hudRect = D2D1::RectF(hudX, hudY, hudX + HUD_WIDTH, hudY + HUD_HEIGHT);
 
-    // 3. Draw HUD Panel Background (Opaque Dark)
-    ComPtr<ID2D1SolidColorBrush> brushPanelBg;
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.SettingsAlpha), &brushPanelBg);
-    D2D1_ROUNDED_RECT hudRounded = D2D1::RoundedRect(hudRect, 8.0f, 8.0f);
-    pRT->FillRoundedRectangle(hudRounded, brushPanelBg.Get());
+    // Helper: Draw Main HUD only if visible
+    if (m_visible) {
+        D2D1_RECT_F hudRect = D2D1::RectF(hudX, hudY, hudX + HUD_WIDTH, hudY + HUD_HEIGHT);
 
-    // 4. Draw Border
-    pRT->DrawRoundedRectangle(hudRounded, m_brushBorder.Get(), 1.0f);
+        // 3. Draw HUD Panel Background (Opaque Dark)
+        ComPtr<ID2D1SolidColorBrush> brushPanelBg;
+        pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.SettingsAlpha), &brushPanelBg);
+        D2D1_ROUNDED_RECT hudRounded = D2D1::RoundedRect(hudRect, 8.0f, 8.0f);
+        pRT->FillRoundedRectangle(hudRounded, brushPanelBg.Get());
 
-    // --- All subsequent drawing is RELATIVE to hudX, hudY ---
-    
-    // Clip to HUD Rounded Rect to ensure Sidebar respects corners
-    // Push Layer with HUD Rounded Rect Geometry Mask to clip sidebar
-    ComPtr<ID2D1Factory> factory;
-    pRT->GetFactory(&factory);
-    
-    ComPtr<ID2D1RoundedRectangleGeometry> hudGeo;
-    factory->CreateRoundedRectangleGeometry(hudRounded, &hudGeo);
-    
-    ComPtr<ID2D1Layer> pLayer;
-    
-    // Push Layer with HUD Geometry Mask
-    D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
-        D2D1::InfiniteRect(),
-        hudGeo.Get(),
-        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-        D2D1::IdentityMatrix(),
-        1.0f,
-        nullptr,
-        D2D1_LAYER_OPTIONS_NONE
-    );
-    
-    pRT->CreateLayer(nullptr, &pLayer);
-    pRT->PushLayer(layerParams, pLayer.Get());
+        // 4. Draw Border
+        pRT->DrawRoundedRectangle(hudRounded, m_brushBorder.Get(), 1.0f);
 
-    // Sidebar (Left portion of HUD)
-    D2D1_RECT_F sidebarRect = D2D1::RectF(hudX, hudY, hudX + SIDEBAR_WIDTH, hudY + HUD_HEIGHT);
-    pRT->FillRectangle(sidebarRect, m_brushControlBg.Get());
-
-    pRT->PopLayer();
-
-    // Sidebar Border (Right edge)
-    pRT->DrawLine(D2D1::Point2F(hudX + SIDEBAR_WIDTH, hudY), D2D1::Point2F(hudX + SIDEBAR_WIDTH, hudY + HUD_HEIGHT), m_brushTextDim.Get(), 0.5f);
-
-    // Back Button (Top of Sidebar)
-    D2D1_RECT_F backIconRect = D2D1::RectF(hudX + 15, hudY, hudX + 45, hudY + 50);
-    pRT->DrawTextW(L"\xE72B", 1, m_textFormatIcon.Get(), backIconRect, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-    D2D1_RECT_F backTextRect = D2D1::RectF(hudX + 55, hudY, hudX + SIDEBAR_WIDTH, hudY + 50);
-    pRT->DrawTextW(L"Back", 4, m_textFormatItem.Get(), backTextRect, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-
-    // Draw Tabs
-    float tabY = hudY + 50.0f;
-    for (int i = 0; i < (int)m_tabs.size(); ++i) {
-        const auto& tab = m_tabs[i];
+        // --- All subsequent drawing is RELATIVE to hudX, hudY ---
         
-        D2D1_RECT_F tabRect = D2D1::RectF(hudX, tabY, hudX + SIDEBAR_WIDTH, tabY + 40.0f);
+        // Clip to HUD Rounded Rect to ensure Sidebar respects corners
+        ComPtr<ID2D1Factory> factory;
+        pRT->GetFactory(&factory);
         
-        bool isActive = (i == m_activeTab);
-        bool isHover = false; 
+        ComPtr<ID2D1RoundedRectangleGeometry> hudGeo;
+        factory->CreateRoundedRectangleGeometry(hudRounded, &hudGeo);
         
-        // Highlight active
-        if (isActive) {
-            // Indicator Line
-            pRT->FillRectangle(D2D1::RectF(hudX, tabY + 10, hudX + 3, tabY + 30), m_brushAccent.Get());
+        ComPtr<ID2D1Layer> pLayer;
+        D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
+            D2D1::InfiniteRect(), hudGeo.Get(),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            D2D1::IdentityMatrix(), 1.0f, nullptr, D2D1_LAYER_OPTIONS_NONE
+        );
+        
+        pRT->CreateLayer(nullptr, &pLayer);
+        pRT->PushLayer(layerParams, pLayer.Get());
+
+        // Sidebar (Left portion of HUD)
+        D2D1_RECT_F sidebarRect = D2D1::RectF(hudX, hudY, hudX + SIDEBAR_WIDTH, hudY + HUD_HEIGHT);
+        pRT->FillRectangle(sidebarRect, m_brushControlBg.Get());
+
+        pRT->PopLayer();
+
+        // Sidebar Border (Right edge)
+        pRT->DrawLine(D2D1::Point2F(hudX + SIDEBAR_WIDTH, hudY), D2D1::Point2F(hudX + SIDEBAR_WIDTH, hudY + HUD_HEIGHT), m_brushTextDim.Get(), 0.5f);
+
+        // Back Button (Top of Sidebar)
+        D2D1_RECT_F backIconRect = D2D1::RectF(hudX + 15, hudY, hudX + 45, hudY + 50);
+        pRT->DrawTextW(L"\xE72B", 1, m_textFormatIcon.Get(), backIconRect, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        D2D1_RECT_F backTextRect = D2D1::RectF(hudX + 55, hudY, hudX + SIDEBAR_WIDTH, hudY + 50);
+        pRT->DrawTextW(L"Back", 4, m_textFormatItem.Get(), backTextRect, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+        // Draw Tabs
+        float tabY = hudY + 50.0f;
+        for (int i = 0; i < (int)m_tabs.size(); ++i) {
+            const auto& tab = m_tabs[i];
             
-            // Background tint
-            ComPtr<ID2D1SolidColorBrush> tint;
-            pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f), &tint);
-            pRT->FillRectangle(tabRect, tint.Get());
+            D2D1_RECT_F tabRect = D2D1::RectF(hudX, tabY, hudX + SIDEBAR_WIDTH, tabY + 40.0f);
+            
+            bool isActive = (i == m_activeTab);
+            
+            // Highlight active
+            if (isActive) {
+                pRT->FillRectangle(D2D1::RectF(hudX, tabY + 10, hudX + 3, tabY + 30), m_brushAccent.Get());
+                ComPtr<ID2D1SolidColorBrush> tint;
+                pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f), &tint);
+                pRT->FillRectangle(tabRect, tint.Get());
+            }
+
+            // Icon
+            D2D1_RECT_F iconRect = D2D1::RectF(hudX + 15, tabY, hudX + 15 + 40, tabY + 40);
+            m_textFormatIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_textFormatIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            pRT->DrawTextW(tab.icon.c_str(), 1, m_textFormatIcon.Get(), iconRect, isActive ? m_brushAccent.Get() : m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+            // Text
+            D2D1_RECT_F textRect = D2D1::RectF(hudX + 65, tabY, hudX + SIDEBAR_WIDTH - 10, tabY + 40);
+            m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            pRT->DrawTextW(tab.name.c_str(), (UINT32)tab.name.length(), m_textFormatItem.Get(), textRect, isActive ? m_brushText.Get() : m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+            tabY += 45.0f;
         }
 
-        // Icon
-        D2D1_RECT_F iconRect = D2D1::RectF(hudX + 15, tabY, hudX + 15 + 40, tabY + 40);
-        m_textFormatIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        m_textFormatIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        pRT->DrawTextW(tab.icon.c_str(), 1, m_textFormatIcon.Get(), iconRect, isActive ? m_brushAccent.Get() : m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-
-        // Text
-        D2D1_RECT_F textRect = D2D1::RectF(hudX + 65, tabY, hudX + SIDEBAR_WIDTH - 10, tabY + 40);
-        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        pRT->DrawTextW(tab.name.c_str(), (UINT32)tab.name.length(), m_textFormatItem.Get(), textRect, isActive ? m_brushText.Get() : m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-
-        tabY += 45.0f;
-    }
-
-    // 3. Content Area (Right portion of HUD)
-    float contentX = hudX + SIDEBAR_WIDTH + PADDING;
-    float contentY = hudY + 50.0f + m_scrollOffset;
-    float contentW = HUD_WIDTH - SIDEBAR_WIDTH - PADDING * 2; // Remaining width
-
-    // Draw Active Tab Content
-    if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
-        auto& currentTab = m_tabs[m_activeTab];
+        // 3. Content Area (Right portion of HUD)
+        float contentX = hudX + SIDEBAR_WIDTH + PADDING;
+        float contentY = hudY + 50.0f + m_scrollOffset;
+        float contentW = HUD_WIDTH - SIDEBAR_WIDTH - PADDING * 2; // Remaining width
         
-        // Content Title (Optional)
-        // D2D1_RECT_F titleRect = D2D1::RectF(contentX, hudY + 20.0f, contentX + 300, hudY + 60.0f);
+        // Track content height for scrolling
+        float startContentY = contentY; 
+        m_settingsContentHeight = 0.0f; // Reset
 
-        for (auto& item : currentTab.items) {
-            float rowHeight = ITEM_HEIGHT;
-            
+        // Draw Active Tab Content
+        if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
+            auto& currentTab = m_tabs[m_activeTab];
+
+            for (auto& item : currentTab.items) {
+                float rowHeight = ITEM_HEIGHT;
+                
+                // Pinned Check
+                bool isPinned = (item.type == OptionType::AboutSystemInfo || item.type == OptionType::CopyrightLabel);
+                // Note: Logic continues...
+                // Only replacing the START of the function up to content logic loop start
+                // Actually I need to be careful not to cut off the function body.
+                // The loop is HUGE. I should only replace the TOP part.
+                
+                // Let's use ReplacementChunks to only swap the Header check
+                if (!isPinned) {
+                 // We can simply track contentY at start of loop iteration? 
+                 // No, contentY is top of CURRENT item.
+                 // Wait, loop renders item then adds to contentY. 
+                 // So at start of NEXT iteration, contentY is bottom of PREVIOUS item.
+                 // So we can just update height at start of iteration using current contentY?
+                 m_settingsContentHeight = contentY - startContentY;
+            }
+
             // Calculate Rect for Hit Testing
             item.rect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + rowHeight);
+
+
 
             // 1. Header Type
             if (item.type == OptionType::Header) {
@@ -983,6 +1079,8 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                 m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 pRT->DrawTextW(item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(), headerRect, m_brushText.Get());
                 contentY += 50.0f; // More spacing for header
+                
+                m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
                 continue;
             }
             else if (item.type == OptionType::AboutHeader) {
@@ -1211,18 +1309,35 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                  contentY = sysY; // Sync flow just in case
                  continue;
              }
-             else if (item.type == OptionType::InfoLabel) {
-                 // Copyright Absolute Bottom
+             else if (item.type == OptionType::CopyrightLabel) {
+                 // Copyright Absolute Bottom (Pinned)
                  float bottomY = hudY + HUD_HEIGHT;
                  float copyY = bottomY - 60.0f; 
                  
                  // Copyright (Centered)
                  D2D1_RECT_F infoRect = D2D1::RectF(contentX, copyY, contentX + contentW, copyY + 50);
                  m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                 // Allow multi-line
                  pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), infoRect, m_brushTextDim.Get());
                  m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                 contentY = copyY + 60.0f;
+                 continue;
+             }
+             else if (item.type == OptionType::InfoLabel) {
+                 // Flow Text (e.g. Release Notes)
+                 ComPtr<IDWriteTextLayout> textLayout;
+                 HRESULT hr = m_dwriteFactory->CreateTextLayout(
+                     item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
+                     contentW, 5000.0f, &textLayout); // 5000px max height
+                 
+                 if (SUCCEEDED(hr)) {
+                     DWRITE_TEXT_METRICS metrics;
+                     textLayout->GetMetrics(&metrics);
+                     pRT->DrawTextLayout(D2D1::Point2F(contentX, contentY), textLayout.Get(), m_brushTextDim.Get());
+                     contentY += metrics.height + 20.0f;
+                 } else {
+                     contentY += 30.0f; // Fallback
+                 }
+                 
+                 m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
                  continue;
              }
 
@@ -1370,12 +1485,42 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                 default: break;
             }
 
-            contentY += rowHeight + 10.0f;
-        }
-    }
+            contentY += rowHeight; // Advance Y for next item
 
-    // Draw Update Toast on Top
-    RenderUpdateToast(pRT, hudX, hudY, HUD_WIDTH, HUD_HEIGHT);
+            float currentH = contentY - startContentY;
+            if (currentH > m_settingsContentHeight) m_settingsContentHeight = currentH;
+        } // End Item Loop
+    } // End Active Tab Check
+    } // End if (m_visible)
+
+    // Draw Update Toast on Top (Always check)
+    if (m_showUpdateToast) {
+        RenderUpdateToast(pRT, hudX, hudY, HUD_WIDTH, HUD_HEIGHT);
+    }
+} 
+
+bool SettingsOverlay::OnMouseWheel(float delta) {
+    if (m_showUpdateToast && m_toastTotalHeight > 0) {
+        // Scroll Logic inverted: wheel down (negative) -> scroll down (increase Y)
+        float scrollSpeed = 30.0f;
+        m_toastScrollY -= delta * scrollSpeed;
+        return true; // Consume
+    }
+    
+    // Fallback to Settings Scroll
+    if (!m_visible) return false;
+    
+    m_scrollOffset += delta * 20.0f;
+    if (m_scrollOffset > 0.0f) m_scrollOffset = 0.0f;
+    
+    // Bottom Limit
+    float visibleH = HUD_HEIGHT - 60.0f;
+    float overflow = m_settingsContentHeight - visibleH;
+    if (overflow < 0) overflow = 0;
+    float minScroll = -overflow;
+    if (m_scrollOffset < minScroll) m_scrollOffset = minScroll;
+    
+    return true;
 }
 
 // ----------------------------------------------------------------------------
@@ -1482,14 +1627,12 @@ void SettingsOverlay::DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rec
 // ----------------------------------------------------------------------------
 
 bool SettingsOverlay::OnMouseMove(float x, float y) {
-    if (!m_visible) return false;
-
-    // Toast Hit Test (Priority)
-    m_toastHoverBtn = -1;
+    // Toast Hit Test (Priority - Even if not visible)
     if (m_showUpdateToast) {
-        ToastLayout l = GetToastLayout(m_lastHudX, m_lastHudY, HUD_WIDTH, HUD_HEIGHT);
+        m_toastHoverBtn = -1;
+        ToastLayout l = GetToastLayout(m_windowWidth, m_windowHeight);
         if (x >= l.bg.left && x <= l.bg.right && y >= l.bg.top && y <= l.bg.bottom) {
-            // Inside Toast
+            // Inside Toast (Modal: Consume event)
             if (x >= l.btnRestart.left && x <= l.btnRestart.right && y >= l.btnRestart.top && y <= l.btnRestart.bottom) {
                 m_toastHoverBtn = 0;
                 ::SetCursor(::LoadCursor(NULL, IDC_HAND));
@@ -1501,10 +1644,16 @@ bool SettingsOverlay::OnMouseMove(float x, float y) {
             else if (x >= l.btnClose.left && x <= l.btnClose.right && y >= l.btnClose.top && y <= l.btnClose.bottom) {
                 m_toastHoverBtn = 2;
                 ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+            } else {
+                 ::SetCursor(::LoadCursor(NULL, IDC_ARROW)); // Standard pointer over text
             }
-            return true; // Consume event if over toast
+            return true; 
         }
+        // If Modal, maybe block interaction with rest? 
+        // For now, allow passthrough if outside toast (dimmer handles visual block)
     }
+
+    if (!m_visible) return false;
 
     // Calculate HUD bounds (must match Render)
     // NOTE: We need window size. For now, use cached/known values or assume calling code passes them.
@@ -1564,11 +1713,9 @@ bool SettingsOverlay::OnMouseMove(float x, float y) {
 }
 
 bool SettingsOverlay::OnLButtonDown(float x, float y) {
-    if (!m_visible) return false;
-
-    // Toast Click (Priority)
+    // Toast Click (Priority - Modal)
     if (m_showUpdateToast) {
-        ToastLayout l = GetToastLayout(m_lastHudX, m_lastHudY, HUD_WIDTH, HUD_HEIGHT);
+        ToastLayout l = GetToastLayout(m_windowWidth, m_windowHeight);
         if (x >= l.bg.left && x <= l.bg.right && y >= l.bg.top && y <= l.bg.bottom) {
              if (x >= l.btnRestart.left && x <= l.btnRestart.right && y >= l.btnRestart.top && y <= l.btnRestart.bottom) {
                  UpdateManager::Get().OnUserRestart();
@@ -1587,7 +1734,10 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
              }
              return true; // Consume click on bg
         }
+
     }
+
+    if (!m_visible) return false;
 
     // NOTE: We need to check if click is inside HUD bounds.
     // item.rect stores screen coords, so we can infer HUD bounds from them.
@@ -1727,14 +1877,7 @@ bool SettingsOverlay::OnLButtonUp(float x, float y) {
     return m_visible; // Consume if visible
 }
 
-bool SettingsOverlay::OnMouseWheel(float delta) {
-    if (!m_visible) return false;
-    // Scroll content
-    m_scrollOffset += delta * 20.0f;
-    if (m_scrollOffset > 0.0f) m_scrollOffset = 0.0f;
-    // Limit bottom? Need total height. Lazy for now.
-    return true;
-}
+
 
 void SettingsOverlay::SetItemStatus(const std::wstring& label, const std::wstring& status, D2D1::ColorF color) {
     for (auto& tab : m_tabs) {

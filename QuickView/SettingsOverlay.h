@@ -22,7 +22,8 @@ enum class OptionType {
     AboutLinks,       // GitHub/Issues/Keys Buttons
     AboutTechBadges,  // Tech Stack Badges
     AboutSystemInfo,  // System Info + AVX2 Badge
-    InfoLabel         // Restored: Small gray text
+    InfoLabel,        // Restored: Small gray text
+    CopyrightLabel    // Exclusive for footer
 };
 
 struct SettingsItem {
@@ -173,4 +174,11 @@ private:
     // Cached Layout for Input
     float m_lastHudX = 0.0f;
     float m_lastHudY = 0.0f;
+    float m_windowWidth = 0.0f;
+    float m_windowHeight = 0.0f;
+    float m_settingsContentHeight = 0.0f;
+    
+    // Toast Scrolling
+    float m_toastScrollY = 0.0f;
+    float m_toastTotalHeight = 0.0f;
 };
