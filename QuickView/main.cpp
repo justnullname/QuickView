@@ -105,8 +105,36 @@ struct ViewState {
 #include "Toolbar.h"
 #include "SettingsOverlay.h"
 #include "UpdateManager.h"
+#pragma comment(lib, "version.lib")
+
+static std::string GetAppVersionUTF8() {
+    wchar_t fileName[MAX_PATH];
+    GetModuleFileNameW(NULL, fileName, MAX_PATH);
+    DWORD dummy;
+    DWORD size = GetFileVersionInfoSizeW(fileName, &dummy);
+    if (size > 0) {
+        std::vector<BYTE> data(size);
+        if (GetFileVersionInfoW(fileName, dummy, size, data.data())) {
+            VS_FIXEDFILEINFO* pFileInfo;
+            UINT len;
+            if (VerQueryValueW(data.data(), L"\\", (void**)&pFileInfo, &len)) {
+                std::wstring ver = std::to_wstring(HIWORD(pFileInfo->dwProductVersionMS)) + L"." +
+                                   std::to_wstring(LOWORD(pFileInfo->dwProductVersionMS)) + L"." +
+                                   std::to_wstring(HIWORD(pFileInfo->dwProductVersionLS));
+                
+                int size_needed = WideCharToMultiByte(CP_UTF8, 0, ver.c_str(), (int)ver.length(), NULL, 0, NULL, NULL);
+                std::string strTo(size_needed, 0);
+                WideCharToMultiByte(CP_UTF8, 0, ver.c_str(), (int)ver.length(), &strTo[0], size_needed, NULL, NULL);
+                return strTo;
+            }
+        }
+    }
+    return "2.1.0";
+}
 
 // --- Globals ---
+
+#define WM_UPDATE_FOUND (WM_APP + 2)
 
 static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView 2026";
@@ -1608,17 +1636,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     LocalFree(argv);
     
     // --- Auto Update Integration ---
-    UpdateManager::Get().Init("2.0.0");
-    UpdateManager::Get().SetCallback([](bool found, const VersionInfo& info) {
+    UpdateManager::Get().Init(GetAppVersionUTF8());
+    UpdateManager::Get().SetCallback([hwnd](bool found, const VersionInfo& info) {
         if (found) {
-            auto ToWide = [](const std::string& str) -> std::wstring {
-                if (str.empty()) return L"";
-                int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
-                std::wstring wstrTo(size_needed, 0);
-                MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
-                return wstrTo;
-            };
-            g_settingsOverlay.ShowUpdateToast(ToWide(info.version), ToWide(info.changelog));
+            PostMessage(hwnd, WM_UPDATE_FOUND, 0, 0);
         }
     });
     UpdateManager::Get().StartBackgroundCheck();
@@ -1673,6 +1694,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         return TRUE;
+    }
+    case WM_UPDATE_FOUND: {
+        const auto& info = UpdateManager::Get().GetRemoteVersion();
+        auto ToWide = [](const std::string& str) -> std::wstring {
+            if (str.empty()) return L"";
+            int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+            std::wstring wstrTo(size_needed, 0);
+            MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+            return wstrTo;
+        };
+        g_settingsOverlay.ShowUpdateToast(ToWide(info.version), ToWide(info.changelog));
+        return 0;
     }
     case WM_TIMER: {
         static const UINT_PTR INTERACTION_TIMER_ID = 1001;

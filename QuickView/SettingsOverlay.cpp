@@ -846,7 +846,7 @@ void SettingsOverlay::SetVisible(bool visible) {
 // ----------------------------------------------------------------------------
 
 void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
-    if (!m_visible) return;
+    if (!m_visible && !m_showUpdateToast) return;
     if (!m_brushBg) CreateResources(pRT);
 
     D2D1_SIZE_F size = pRT->GetSize();
@@ -863,6 +863,13 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     
     m_lastHudX = hudX;
     m_lastHudY = hudY;
+
+    // Toast (Always Top)
+    if (m_showUpdateToast) {
+        RenderUpdateToast(pRT, hudX, hudY, HUD_WIDTH, HUD_HEIGHT);
+    }
+    
+    if (!m_visible) return; // Stop here if main menu is hidden
 
     D2D1_RECT_F hudRect = D2D1::RectF(hudX, hudY, hudX + HUD_WIDTH, hudY + HUD_HEIGHT);
 
