@@ -224,6 +224,7 @@ SettingsOverlay::~SettingsOverlay() {
 
 void SettingsOverlay::ShowUpdateToast(const std::wstring& version, const std::wstring& changelog) {
     m_showUpdateToast = true;
+    SetVisible(false); // Ensure Settings closes to focus on Toast (and avoid layout shift on resize)
     m_updateVersion = version;
     m_updateLog = changelog;
     m_toastScrollY = 0.0f; // Reset scroll

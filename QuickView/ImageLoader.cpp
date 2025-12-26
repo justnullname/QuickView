@@ -884,14 +884,17 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     JxlDecoder* dec = JxlDecoderCreate(NULL);
     if (!dec) return E_OUTOFMEMORY;
 
-    // Use max threads (default to system CPU count)
-    void* runner = JxlResizableParallelRunnerCreate(NULL);
+    // Use max threads
+    size_t num_threads = std::thread::hardware_concurrency();
+    if (num_threads < 1) num_threads = 1;
+
+    void* runner = JxlThreadParallelRunnerCreate(NULL, num_threads);
     if (!runner) {
         JxlDecoderDestroy(dec);
         return E_OUTOFMEMORY;
     }
     
-    JxlDecoderSetParallelRunner(dec, JxlResizableParallelRunner, runner);
+    JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
 
     // 2. Subscribe to events
     if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE)) {
@@ -952,7 +955,7 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         hr = CreateWICBitmapFromMemory(info.xsize, info.ysize, GUID_WICPixelFormat32bppRGBA, info.xsize * 4, (UINT)pixels.size(), pixels.data(), ppBitmap);
     }
 
-    JxlResizableParallelRunnerDestroy(runner);
+    JxlThreadParallelRunnerDestroy(runner);
     JxlDecoderDestroy(dec);
     return hr;
 }

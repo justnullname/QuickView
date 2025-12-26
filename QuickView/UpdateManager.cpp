@@ -146,6 +146,9 @@ void UpdateManager::CheckThread(int delaySeconds) {
                            // Point m_tempPath to the extracted EXE for installation
                            m_tempPath = exeInZip;
                            extracted = true;
+                           
+                           // Clean up the source ZIP to save space/confusion
+                           DeleteFileW(dest.c_str());
                        }
                    }
                    
