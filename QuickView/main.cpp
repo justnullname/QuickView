@@ -104,6 +104,7 @@ struct ViewState {
 #include "GalleryOverlay.h"
 #include "Toolbar.h"
 #include "SettingsOverlay.h"
+#include "UpdateManager.h"
 
 // --- Globals ---
 
@@ -1570,7 +1571,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // Init Gallery
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
     g_gallery.Initialize(&g_thumbMgr, &g_navigator);
-    g_settingsOverlay.Init(g_renderEngine->GetDeviceContext());
+    g_settingsOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
     DragAcceptFiles(hwnd, TRUE);
     
     // Apply Always on Top
@@ -1606,8 +1607,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     }
     LocalFree(argv);
     
+    // --- Auto Update Integration ---
+    UpdateManager::Get().Init("2.0.0");
+    UpdateManager::Get().SetCallback([](bool found, const VersionInfo& info) {
+        if (found) {
+            auto ToWide = [](const std::string& str) -> std::wstring {
+                if (str.empty()) return L"";
+                int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+                std::wstring wstrTo(size_needed, 0);
+                MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+                return wstrTo;
+            };
+            g_settingsOverlay.ShowUpdateToast(ToWide(info.version), ToWide(info.changelog));
+        }
+    });
+    UpdateManager::Get().StartBackgroundCheck();
+
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+    
+    UpdateManager::Get().HandleExit();
     
     SaveConfig();
     DiscardChanges(); CoUninitialize(); return (int)msg.wParam;

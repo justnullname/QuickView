@@ -15,7 +15,14 @@ enum class OptionType {
     ActionButton,
     CustomColorRow, // Custom UI: Grid Checkbox + Color Preview Button
     Input,
-    Header // New: Section Header
+    Header, // Section Header
+    // About Tab Specialized Types
+    AboutHeader,      // Icon + AppName
+    AboutVersionCard, // Version + Update Button
+    AboutLinks,       // GitHub/Issues/Keys Buttons
+    AboutTechBadges,  // Tech Stack Badges
+    AboutSystemInfo,  // System Info + AVX2 Badge
+    InfoLabel         // Restored: Small gray text
 };
 
 struct SettingsItem {
@@ -66,7 +73,7 @@ public:
     SettingsOverlay();
     ~SettingsOverlay();
 
-    void Init(ID2D1RenderTarget* pRT);
+    void Init(ID2D1RenderTarget* pRT, HWND hwnd);
     void Render(ID2D1RenderTarget* pRT, float winW, float winH);
     
     // Interaction
@@ -84,8 +91,13 @@ public:
     void BuildMenu(); 
     
     // Status Feedback
+    // Status Feedback
     void SetItemStatus(const std::wstring& label, const std::wstring& status, D2D1::ColorF color); 
     void OpenTab(int index); 
+    
+    // Update System UI
+    void ShowUpdateToast(const std::wstring& version, const std::wstring& changelog);
+    bool IsUpdateToastVisible() const { return m_showUpdateToast; } 
 
 private:
     void CreateResources(ID2D1RenderTarget* pRT);
@@ -94,6 +106,7 @@ private:
     void DrawToggle(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
     void DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered);
     void DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options);
+    void RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, float hudY, float hudW, float hudH);
 
 
 
@@ -121,6 +134,7 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushBorder;
     ComPtr<ID2D1SolidColorBrush> m_brushSuccess;
     ComPtr<ID2D1SolidColorBrush> m_brushError;
+    ComPtr<ID2D1Bitmap> m_bitmapIcon;
     
     ComPtr<IDWriteFactory> m_dwriteFactory;
     ComPtr<IDWriteTextFormat> m_textFormatHeader;
@@ -132,7 +146,31 @@ private:
     const float ITEM_HEIGHT = 40.0f;
     const float PADDING = 20.0f;
     
-    // Fixed HUD Panel Size
+    std::wstring m_debugInfo; // Debugging Icon Loading
     const float HUD_WIDTH = 800.0f;
     const float HUD_HEIGHT = 650.0f;
+
+    HWND m_hwnd = nullptr; // For Resize Logic
+    ComPtr<IDWriteTextFormat> m_textFormatSymbol; // Segoe MDL2 Assets
+    
+    // Interaction State for About Tab
+    int m_hoverLinkIndex = -1; // 0=GitHub, 1=Issues, 2=Keys
+    bool m_isHoveringCopyright = false;
+    
+    // Internal Helpers
+    // Internal Helpers
+    std::wstring GetRealWindowsVersion();
+
+    // Update State
+    bool m_showUpdateToast = false;
+    std::wstring m_updateVersion;
+    std::wstring m_updateLog;
+    D2D1_RECT_F m_toastRect; // For hit testing
+    int m_toastHoverBtn = -1; // 0=Restart, 1=Later, 2=Close
+    // Scroll for Log in About Tab?
+    bool m_showFullLog = false; // Toggle inside About Tab?
+    
+    // Cached Layout for Input
+    float m_lastHudX = 0.0f;
+    float m_lastHudY = 0.0f;
 };

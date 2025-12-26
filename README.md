@@ -178,5 +178,5 @@ We are moving fast. Here is our current progress:
 
 ## ⚖️ License & Credits
 
-This project is licensed under the **GPL-2.0 License**.
+This project is licensed under the **GPL-3.0 License**.
 QuickView stands on the shoulders of giants. We salute **David Kleiner** (original JPEGView) and the open-source community behind **LibRaw, LibJpeg-Turbo, Google Wuffs, dav1d, and TinyEXR**.

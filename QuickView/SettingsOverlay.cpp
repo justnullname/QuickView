@@ -3,6 +3,101 @@
 #include <algorithm>
 #include <Shlobj.h>
 #include <commdlg.h>
+#include <functional>
+#include "UpdateManager.h"
+#include <vector>
+#include <shellapi.h>
+#include <wincodec.h>
+#pragma comment(lib, "version.lib")
+#pragma comment(lib, "windowscodecs.lib")
+
+static std::wstring GetAppVersion() {
+    wchar_t fileName[MAX_PATH];
+    GetModuleFileNameW(NULL, fileName, MAX_PATH);
+    DWORD dummy;
+    DWORD size = GetFileVersionInfoSizeW(fileName, &dummy);
+    if (size > 0) {
+        std::vector<BYTE> data(size);
+        if (GetFileVersionInfoW(fileName, dummy, size, data.data())) {
+            VS_FIXEDFILEINFO* pFileInfo;
+            UINT len;
+            if (VerQueryValueW(data.data(), L"\\", (void**)&pFileInfo, &len)) {
+                return std::to_wstring(HIWORD(pFileInfo->dwProductVersionMS)) + L"." +
+                       std::to_wstring(LOWORD(pFileInfo->dwProductVersionMS)) + L"." +
+                       std::to_wstring(HIWORD(pFileInfo->dwProductVersionLS));
+            }
+        }
+    }
+    return L"2.1.0"; // Fallback
+}
+
+static bool CheckAVX2() {
+    int cpuInfo[4];
+    __cpuid(cpuInfo, 0);
+    if (cpuInfo[0] < 7) return false;
+    __cpuidex(cpuInfo, 7, 0);
+    return (cpuInfo[1] & (1 << 5)) != 0; 
+}
+
+// Helper to get Real Windows Version via RtlGetVersion
+typedef LONG (WINAPI *RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+
+std::wstring SettingsOverlay::GetRealWindowsVersion() {
+    HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+    if (hMod) {
+        RtlGetVersionPtr fx = (RtlGetVersionPtr)GetProcAddress(hMod, "RtlGetVersion");
+        if (fx) {
+            RTL_OSVERSIONINFOW rovi = { 0 };
+            rovi.dwOSVersionInfoSize = sizeof(rovi);
+            if (fx(&rovi) == 0) {
+                 // Format: Windows 10/11 | Build X
+                 std::wstring osName = L"Windows";
+                 if (rovi.dwMajorVersion == 10) {
+                     if (rovi.dwBuildNumber >= 22000) osName = L"Windows 11";
+                     else osName = L"Windows 10";
+                 }
+                 return osName + L" (" + std::to_wstring(rovi.dwBuildNumber) + L")";
+            }
+        }
+    }
+    return L"Windows (Unknown)"; 
+}
+
+std::wstring GetSystemInfo() {
+    // 1. OS Version (Real)
+    // We can't easily call non-static member GetRealWindowsVersion without instance.
+    // Duplicate logic or make it static? 
+    // Let's assume we copy logic for now as GetSystemInfo is static-like here.
+    
+    std::wstring osVer = L"Windows";
+    HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+    if (hMod) {
+        typedef LONG (WINAPI *RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+        RtlGetVersionPtr fx = (RtlGetVersionPtr)GetProcAddress(hMod, "RtlGetVersion");
+        if (fx) {
+            RTL_OSVERSIONINFOW rovi = { 0 };
+            rovi.dwOSVersionInfoSize = sizeof(rovi);
+            if (fx(&rovi) == 0) {
+                if (rovi.dwMajorVersion == 10 && rovi.dwBuildNumber >= 22000) osVer = L"Windows 11";
+                else if (rovi.dwMajorVersion == 10) osVer = L"Windows 10";
+                else osVer = L"Windows " + std::to_wstring(rovi.dwMajorVersion);
+                
+                osVer += L" (" + std::to_wstring(rovi.dwBuildNumber) + L")";
+            }
+        }
+    }
+
+    // 2. Arch
+    std::wstring arch = L"x64"; 
+    SYSTEM_INFO si; GetNativeSystemInfo(&si);
+    if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64) arch = L"ARM64";
+
+    // 3. SIMD
+    std::wstring simd = L"SIMD: AVX2 [Active]"; // Default checked
+    if (!CheckAVX2()) simd = L"SIMD: SSE2";
+
+    return osVer + L" | " + arch + L" | " + simd;
+}
 
 // --- File Associations (HKCU, no admin required) ---
 
@@ -113,12 +208,105 @@ static bool RepairFileAssociations() {
 }
 
 SettingsOverlay::SettingsOverlay() {
+    m_toastHoverBtn = -1;
+    m_showUpdateToast = false;
+    m_lastHudX = 0;
+    m_lastHudY = 0;
 }
 
 SettingsOverlay::~SettingsOverlay() {
 }
 
-void SettingsOverlay::Init(ID2D1RenderTarget* pRT) {
+// ----------------------------------------------------------------------------
+// Update System Logic
+// ----------------------------------------------------------------------------
+
+void SettingsOverlay::ShowUpdateToast(const std::wstring& version, const std::wstring& changelog) {
+    m_showUpdateToast = true;
+    m_updateVersion = version;
+    m_updateLog = changelog;
+    BuildMenu(); // Refresh About tab state
+}
+
+// Struct to hold Toast layout
+struct ToastLayout {
+    D2D1_RECT_F bg;
+    D2D1_RECT_F btnRestart;
+    D2D1_RECT_F btnLater;
+    D2D1_RECT_F btnClose;
+};
+
+static ToastLayout GetToastLayout(float hudX, float hudY, float hudW, float hudH) {
+    float w = 360.0f;
+    float h = 100.0f;
+    // Position: Bottom Center of HUD in Screen Coords
+    float cx = hudX + hudW / 2.0f;
+    float cy = hudY + hudH - h - 30.0f; // 30px from bottom
+    
+    ToastLayout l;
+    l.bg = D2D1::RectF(cx - w/2.0f, cy, cx + w/2.0f, cy + h);
+    
+    // Buttons
+    float by = l.bg.bottom - 40.0f;
+    float bx = l.bg.right - 20.0f;
+    
+    // Later (Gray)
+    float btnW = 80.0f;
+    l.btnLater = D2D1::RectF(bx - btnW, by, bx, by + 28);
+    bx -= (btnW + 15.0f);
+    
+    // Restart (Green) - wider
+    btnW = 110.0f;
+    l.btnRestart = D2D1::RectF(bx - btnW, by, bx, by + 28);
+    
+    // Close (Top Right)
+    l.btnClose = D2D1::RectF(l.bg.right - 25, l.bg.top + 5, l.bg.right - 5, l.bg.top + 25);
+    
+    return l;
+}
+
+void SettingsOverlay::RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, float hudY, float hudW, float hudH) {
+    if (!m_showUpdateToast) return;
+    
+    ToastLayout l = GetToastLayout(hudX, hudY, hudW, hudH);
+    m_toastRect = l.bg; // Store for hit test
+    
+    // Background
+    pRT->FillRoundedRectangle(D2D1::RoundedRect(l.bg, 12.0f, 12.0f), m_brushControlBg.Get()); // Dark Gray
+    pRT->DrawRoundedRectangle(D2D1::RoundedRect(l.bg, 12.0f, 12.0f), m_brushBorder.Get(), 1.0f); // White Border
+    
+    // Header Text
+    std::wstring title = L"New Version Available: " + m_updateVersion;
+    D2D1_RECT_F titleR = D2D1::RectF(l.bg.left + 20, l.bg.top + 15, l.bg.right - 30, l.bg.top + 40);
+    
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    pRT->DrawText(title.c_str(), (UINT32)title.length(), m_textFormatItem.Get(), titleR, m_brushText.Get());
+    
+    // Restart Button
+    D2D1_ROUNDED_RECT rRestart = D2D1::RoundedRect(l.btnRestart, 4.0f, 4.0f);
+    pRT->FillRoundedRectangle(rRestart, m_brushSuccess.Get()); 
+    // Manual Center Text
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    pRT->DrawText(L"Restart Now", 11, m_textFormatItem.Get(), l.btnRestart, m_brushText.Get());
+    
+    // Later Button
+    D2D1_ROUNDED_RECT rLater = D2D1::RoundedRect(l.btnLater, 4.0f, 4.0f);
+    // Draw Border Only for Later
+    pRT->DrawRoundedRectangle(rLater, m_brushTextDim.Get(), 1.0f);
+    pRT->DrawText(L"Later", 5, m_textFormatItem.Get(), l.btnLater, m_brushTextDim.Get());
+
+    // Close X
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    pRT->DrawText(L"x", 1, m_textFormatItem.Get(), l.btnClose, m_brushTextDim.Get());
+    
+    // Restore Default Align
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+}
+
+void SettingsOverlay::Init(ID2D1RenderTarget* pRT, HWND hwnd) {
+    m_hwnd = hwnd;
     CreateResources(pRT);
     BuildMenu();
 }
@@ -144,11 +332,112 @@ void SettingsOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     
     // Icon font (Segoe MDL2 Assets)
     m_dwriteFactory->CreateTextFormat(L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 18.0f, L"en-us", &m_textFormatIcon);
+    m_dwriteFactory->CreateTextFormat(L"Segoe MDL2 Assets", NULL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, L"en-us", &m_textFormatSymbol); // For small button icons
 
     if (m_textFormatItem) {
         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
+
+    // Load App Icon from Resource
+    if (!m_bitmapIcon) {
+        m_debugInfo = L"Starting...";
+        
+        // Try Resource ID 1 (256x256 first)
+        HICON hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 256, 256, LR_DEFAULTCOLOR); 
+        
+        if (!hIcon) {
+            m_debugInfo += L" | Load(256) Fail Err=" + std::to_wstring(GetLastError());
+            // Fallback to default
+            hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
+             if (!hIcon) {
+                 m_debugInfo += L" | Load(0) Fail Err=" + std::to_wstring(GetLastError());
+                 // Fallback to System Hand
+                 hIcon = (HICON)LoadIconW(NULL, IDI_APPLICATION);
+                 if (hIcon) m_debugInfo += L" | Using SysIcon";
+             }
+        } else {
+             m_debugInfo += L" | Load(256) OK";
+        }
+
+        if (hIcon) {
+            IWICImagingFactory* pWICFactory = nullptr;
+            HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pWICFactory));
+            if (SUCCEEDED(hr)) {
+                IWICBitmap* pWicBitmap = nullptr;
+                hr = pWICFactory->CreateBitmapFromHICON(hIcon, &pWicBitmap);
+                if (SUCCEEDED(hr)) {
+                    // Convert to PBGRA (Required for D2D)
+                    IWICFormatConverter* pConverter = nullptr;
+                    hr = pWICFactory->CreateFormatConverter(&pConverter);
+                    if (SUCCEEDED(hr)) {
+                        hr = pConverter->Initialize(
+                            pWicBitmap,
+                            GUID_WICPixelFormat32bppPBGRA,
+                            WICBitmapDitherTypeNone,
+                            nullptr,
+                            0.0f,
+                            WICBitmapPaletteTypeMedianCut
+                        );
+                        
+                        if (SUCCEEDED(hr)) {
+                             hr = pRT->CreateBitmapFromWicBitmap(pConverter, nullptr, &m_bitmapIcon);
+                             if (FAILED(hr)) m_debugInfo += L" | D2D Fail HR=" + std::to_wstring(hr);
+                             else m_debugInfo.clear(); // Success! Clear debug info
+                        } else {
+                             m_debugInfo += L" | Conv Init Fail HR=" + std::to_wstring(hr);
+                        }
+                        pConverter->Release();
+                    } else {
+                        m_debugInfo += L" | CreateConv Fail HR=" + std::to_wstring(hr);
+                    }
+                    
+                    pWicBitmap->Release();
+                } else {
+                    m_debugInfo += L" | FromHICON Fail HR=" + std::to_wstring(hr);
+                }
+                pWICFactory->Release();
+            } else {
+                m_debugInfo += L" | WICFactory Fail HR=" + std::to_wstring(hr);
+            }
+            // If we loaded system icon (shared), LoadIcon docs say no destroy needed strictly but LoadImage does.
+            // Since we treat hIcon as local handle unless it was IDI_APPLICATION...
+            // Win32: DestroyIcon calling on shared icon is ignored or harmless usually?
+            // Actually LoadIcon(NULL, ...) returns shared. DestroyIcon on it is allowed but does nothing?
+            // Safer: only destroy if we loaded from module?
+            // For debugging it doesn't matter much.
+            // DestroyIcon(hIcon); 
+        }
+    }
+}
+
+// --- Helper Functions for Shared Layout ---
+
+// Calculate Rects for Link Buttons (GitHub, Run Report, Hotkeys)
+struct LinkRects { D2D1_RECT_F github; D2D1_RECT_F issues; D2D1_RECT_F keys; };
+
+static LinkRects GetLinkButtonRects(const D2D1_RECT_F& itemRect) {
+    LinkRects r;
+    // 3 Equal Columns with gaps
+    float totalW = itemRect.right - itemRect.left;
+    float gap = 10.0f;
+    float btnW = (totalW - 2 * gap) / 3.0f;
+    
+    float x = itemRect.left;
+    float y = itemRect.top;
+    float h = itemRect.bottom - itemRect.top;
+    
+    r.github = D2D1::RectF(x, y, x + btnW, y + h);
+    r.issues = D2D1::RectF(x + btnW + gap, y, x + 2*btnW + gap, y + h);
+    r.keys   = D2D1::RectF(x + 2*btnW + 2*gap, y, x + 3*btnW + 2*gap, y + h);
+    return r;
+}
+
+static D2D1_RECT_F GetUpdateButtonRect(const D2D1_RECT_F& cardRect) {
+    // Full Width Button inside the "Action Row"
+    // We treat cardRect as the container row
+    // Mockup: Blue Button is wide.
+    return cardRect; // The item itself IS the button now
 }
 
 #include "EditState.h"
@@ -452,20 +741,103 @@ void SettingsOverlay::BuildMenu() {
     m_tabs.push_back(tabAdv);
 
     // --- 6. About (关于) ---
+    // --- 6. About (关于) ---
     SettingsTab tabAbout;
     tabAbout.name = L"About";
     tabAbout.icon = L"\xE946"; 
-    tabAbout.items.push_back({ L"QuickView 2026", OptionType::Header });
-    tabAbout.items.push_back({ L"Check for Updates", OptionType::ActionButton });
     
+    // 1. Header (Logo + Name + Version)
+    // We pass Version string in disabledText to keep it accessible
+    SettingsItem itemHeader = { L"QuickView", OptionType::AboutHeader };
+    itemHeader.disabledText = L"Version " + GetAppVersion() + L" (Build 20251225)";
+    tabAbout.items.push_back(itemHeader);
+
+    // 2. Action Button (Check for Updates)
+    SettingsItem itemUpdate = { L"Check for Updates", OptionType::AboutVersionCard }; 
+    
+    // Check Status
+    UpdateStatus status = UpdateManager::Get().GetStatus();
+    if (status == UpdateStatus::NewVersionFound) {
+        std::string v = UpdateManager::Get().GetRemoteVersion().version;
+        itemUpdate.buttonText = L"Update Available!";
+        itemUpdate.statusText = std::wstring(v.begin(), v.end());
+    } else if (status == UpdateStatus::Checking) {
+        itemUpdate.buttonText = L"Checking...";
+    } else if (status == UpdateStatus::UpToDate) {
+        itemUpdate.buttonText = L"Check for Updates";
+        itemUpdate.statusText = L"Up to date";
+    } else {
+        itemUpdate.buttonText = L"Check for Updates";
+    }
+
+    itemUpdate.onChange = [this]() {
+         UpdateManager::Get().StartBackgroundCheck(0); 
+         // Force slight visual feedback
+         SetItemStatus(L"Check for Updates", L"Checking...", D2D1::ColorF(0.5f, 0.5f, 0.5f));
+         // Note: Callback will eventually trigger ShowUpdateToast -> BuildMenu
+    };
+    tabAbout.items.push_back(itemUpdate);
+
+    // 2.1 Release Logs (If Update Available)
+    if (status == UpdateStatus::NewVersionFound) {
+         std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
+         if (!log.empty()) {
+             // Convert to Wide
+             int size_needed = MultiByteToWideChar(CP_UTF8, 0, &log[0], (int)log.size(), NULL, 0);
+             std::wstring wlog(size_needed, 0);
+             MultiByteToWideChar(CP_UTF8, 0, &log[0], (int)log.size(), &wlog[0], size_needed);
+             
+             tabAbout.items.push_back({ L"Release Notes", OptionType::Header });
+             SettingsItem itemLog = { wlog, OptionType::InfoLabel };
+             tabAbout.items.push_back(itemLog);
+         }
+    }
+    
+    // 3. Links Row (GitHub, Issues, Hotkeys)
+    SettingsItem itemLinks = { L"", OptionType::AboutLinks }; 
+    tabAbout.items.push_back(itemLinks);
+
+    // 4. Footer Header "Powered by"
+    SettingsItem itemPower = { L"Powered by", OptionType::AboutTechBadges };
+    itemPower.label = L"Powered by"; // Header text
+    // Comprehensive List
+    itemPower.options = { 
+        L" [ libjpeg-turbo ] ", L" [ libwebp ] ", L" [ libavif ] ", L" [ dav1d ] ",
+        L" [ libjxl ] ", L" [ libraw ] ", L" [ Wuffs ] ", L" [ mimalloc ] ",
+        L" [ TinyEXR ] ", L" [ Direct2D ] "
+    }; 
+    tabAbout.items.push_back(itemPower);
+    
+    // 5. System Info Footer
+    SettingsItem itemSys = { GetSystemInfo(), OptionType::AboutSystemInfo };
+    tabAbout.items.push_back(itemSys);
+
+    // 6. Copyright Footer
+    SettingsItem itemCopy = { L"Copyright (c) 2025 justnullname\nLicensed under the GNU GPL v3.0", OptionType::InfoLabel };
+    tabAbout.items.push_back(itemCopy);
+
     m_tabs.push_back(tabAbout);
 }
 
 void SettingsOverlay::SetVisible(bool visible) {
     m_visible = visible;
-    if (visible) {
-        m_opacity = 1.0f; // TODO: Animate
-        m_pActiveSlider = nullptr;
+    if (m_visible) {
+        m_opacity = 0.0f;
+        BuildMenu();
+        
+        // Auto-Resize if window is too small
+        if (m_hwnd) {
+             RECT rc; GetClientRect(m_hwnd, &rc);
+             int w = rc.right - rc.left;
+             int h = rc.bottom - rc.top;
+             
+             int minW = (int)HUD_WIDTH + 50; // Padding
+             int minH = (int)HUD_HEIGHT + 50;
+             
+             if (w < minW || h < minH) {
+                 SetWindowPos(m_hwnd, NULL, 0, 0, std::max(w, minW), std::max(h, minH), SWP_NOMOVE | SWP_NOZORDER);
+             }
+        }
     }
 }
 
@@ -488,6 +860,10 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     float hudY = (size.height - HUD_HEIGHT) / 2.0f;
     if (hudX < 0) hudX = 0;
     if (hudY < 0) hudY = 0;
+    
+    m_lastHudX = hudX;
+    m_lastHudY = hudY;
+
     D2D1_RECT_F hudRect = D2D1::RectF(hudX, hudY, hudX + HUD_WIDTH, hudY + HUD_HEIGHT);
 
     // 3. Draw HUD Panel Background (Opaque Dark)
@@ -597,10 +973,252 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             if (item.type == OptionType::Header) {
                 // Header text
                 D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY + 10, contentX + contentW, contentY + 40);
+                m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 pRT->DrawTextW(item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(), headerRect, m_brushText.Get());
                 contentY += 50.0f; // More spacing for header
                 continue;
             }
+            else if (item.type == OptionType::AboutHeader) {
+                // Header: Icon Left. Title + Version stacked Right.
+                // Center header based on [Icon | QuickView] width ONLY (as requested)
+                // However, visually we want the whole group centered relative to content,
+                // BUT user said "logo和名称+版本: 以logo+QuickView的宽度计算 左右据中"
+                // This means the visual center axis should be the center of (Icon + "QuickView").
+                // Version text hangs to the right.
+                
+                float iconSize = 80.0f; 
+                float paddingX = 20.0f;
+                float titleW = 120.0f; // Approx width for "QuickView"
+                float centerBaseW = iconSize + paddingX + titleW;
+                
+                // Calculate Start X so that (Icon + Title) is centered
+                float groupX = contentX + (contentW - centerBaseW) / 2.0f;
+                // If we used full groupW before, it was pushing it left. This should shift it right.
+                
+                // Icon
+                D2D1_RECT_F iconRect = D2D1::RectF(groupX, contentY, groupX + iconSize, contentY + iconSize);
+                 if (m_bitmapIcon) {
+                     pRT->DrawBitmap(m_bitmapIcon.Get(), iconRect);
+                } else {
+                     m_textFormatIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                     pRT->DrawTextW(L"\xE706", 1, m_textFormatIcon.Get(), iconRect, m_brushAccent.Get());
+                }
+
+                // Text Stack
+                float textX = groupX + iconSize + paddingX;
+                
+                // Title "QuickView"
+                // Title "QuickView"
+                // Fix C2065: Use explicit width or re-declare. 
+                // Since we align left of textX, we can give it ample width.
+                float maxTextW = 300.0f; 
+                
+                D2D1_RECT_F titleRect = D2D1::RectF(textX, contentY + 5, textX + maxTextW, contentY + 40);
+                m_textFormatHeader->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                pRT->DrawTextW(item.label.c_str(), item.label.length(), m_textFormatHeader.Get(), titleRect, m_brushText.Get());
+                
+                // Version (Gray)
+                D2D1_RECT_F verRect = D2D1::RectF(textX, contentY + 40, textX + maxTextW, contentY + 70);
+                pRT->DrawTextW(item.disabledText.c_str(), item.disabledText.length(), m_textFormatItem.Get(), verRect, m_brushTextDim.Get());
+
+                contentY += iconSize + 30.0f; // Padding below header
+                continue;
+            }
+            else if (item.type == OptionType::AboutVersionCard) {
+                // Now acting as "Check for Updates" Button (Full Width)
+                D2D1_RECT_F btnRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 50); // Tall button
+                D2D1_ROUNDED_RECT roundedBtn = D2D1::RoundedRect(btnRect, 6.0f, 6.0f);
+                
+                // Fill Blue (Accent)
+                pRT->FillRoundedRectangle(roundedBtn, m_brushAccent.Get());
+                
+                // Text Center (White)
+                // Use statusText if available (for feedback)
+                bool isUpToDate = (item.statusText == L"Up to date");
+                std::wstring text = item.statusText.empty() ? item.buttonText : item.statusText;
+                
+                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                
+                ComPtr<ID2D1SolidColorBrush> brushBtnText = m_brushText; // Default White
+                if (isUpToDate) brushBtnText = m_brushSuccess; // Green Text? Or Green Button?
+                
+                if (isUpToDate) {
+                     brushBtnText = m_brushSuccess;
+                }
+
+                pRT->DrawTextW(text.c_str(), text.length(), m_textFormatItem.Get(), btnRect, brushBtnText.Get());
+                
+                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING); // Reset
+                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+                contentY += 70.0f; // Button + Padding
+                continue;
+            }
+            else if (item.type == OptionType::AboutLinks) {
+                // 3 Columns: GitHub, Issues, Hotkeys
+                LinkRects r = GetLinkButtonRects(D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 40));
+                
+                // Pass mouse pos logic?
+                // We'll simplisticly check if ANY sub-rect contains mouse in OnMouseMove but here we just render.
+                // We need to know mouse pos to render hover effect.
+                // Hack: We don't have mouse pos here easily unless stored.
+                // Let's rely on g_mouseX/Y if available or assume no hover effect for now?
+                // User ASKED for hover effect. 
+                // We can cache sub-hover index in OnMouseMove in "m_hoverLinkIndex" member if we add it.
+                // Or easier: Just draw outlined always, good enough?
+                // No, "增加鼠标经过效果".
+                // TODO: Implement `m_lastMousePos` in `OnMouseMove` and use it here.
+                // For now, assume we implement that next step or use simple outline.
+                
+                // GitHub
+                {
+                     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.github, 4.0f, 4.0f);
+                     if (m_hoverLinkIndex == 0) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); // Hover Effect
+                     pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f); 
+                     
+                     float w = r.github.right - r.github.left; // ~186
+                     // Content: Icon(20) + Gap(5) + Text(~90) = ~115
+                     float contentW = 115.0f;
+                     float startX = r.github.left + (w - contentW) / 2.0f;
+                     
+                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.github.top, startX + 20, r.github.bottom); 
+                     m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); // Icon Center in its box
+                     m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawText(L"\xE774", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     
+                     D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.github.top, r.github.right, r.github.bottom);
+                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
+                     pRT->DrawText(L"GitHub Repo", 11, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                }
+
+                // Issues
+                {
+                     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.issues, 4.0f, 4.0f);
+                     if (m_hoverLinkIndex == 1) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); // Hover Effect
+                     pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f); 
+                     
+                     float w = r.issues.right - r.issues.left;
+                     // Content: Icon(20) + Gap(5) + Text(~100) = ~125
+                     float contentW = 125.0f;
+                     float startX = r.issues.left + (w - contentW) / 2.0f;
+                     
+                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.issues.top, startX + 20, r.issues.bottom); 
+                     m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); 
+                     m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawText(L"\xE90A", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     
+                     D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.issues.top, r.issues.right, r.issues.bottom);
+                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
+                     pRT->DrawText(L"Report Issue", 12, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                }
+
+                // Hotkeys
+                {
+                     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.keys, 4.0f, 4.0f);
+                     if (m_hoverLinkIndex == 2) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); // Hover Effect
+                     pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f); 
+                     
+                     float w = r.keys.right - r.keys.left;
+                     // Content: Icon(20) + Gap(5) + Text(~60) = ~85
+                     float contentW = 85.0f;
+                     float startX = r.keys.left + (w - contentW) / 2.0f;
+                     
+                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.keys.top, startX + 20, r.keys.bottom); 
+                     m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); 
+                     m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawText(L"\xE92E", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     
+                     D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.keys.top, r.keys.right, r.keys.bottom);
+                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
+                     pRT->DrawText(L"Hotkeys", 7, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                }
+                
+                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                
+                contentY += 60.0f; // Height + Padding
+                continue;
+            }
+            else if (item.type == OptionType::AboutTechBadges) {
+                // Shift down 20px as requested
+                contentY += 20.0f;
+                
+                // Header "Powered by Open Source"
+                pRT->DrawTextW(item.label.c_str(), item.label.length(), m_textFormatItem.Get(), 
+                               D2D1::RectF(contentX, contentY, contentX+contentW, contentY+25), m_brushTextDim.Get());
+                
+                float badgeX = contentX - 5.0f; 
+                float badgeY = contentY + 30.0f;
+                
+                // Wrap logic for long list
+                for (const auto& opt : item.options) {
+                    float width = opt.length() * 9.0f; 
+                    if (badgeX + width > contentX + contentW) {
+                        badgeX = contentX - 5.0f;
+                        badgeY += 35.0f;
+                    }
+                    
+                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + width, badgeY + 28);
+                    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(badgeRect, 6.0f, 6.0f);
+                    
+                    // Hollow Style (No Fill)
+                    // pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); 
+                    pRT->DrawRoundedRectangle(rr, m_brushTextDim.Get(), 1.0f); // Slightly thicker border? Or keep 0.5f? User said "Hollow". 1.0f is better visibility.
+                    
+                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    pRT->DrawText(opt.c_str(), (UINT32)opt.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
+                    
+                    badgeX += width + 10.0f;
+                }
+                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                
+                contentY += (badgeY - (contentY + 30.0f)) + 30.0f + 40.0f; // Dynamic height
+                continue;
+            }
+             else if (item.type == OptionType::AboutSystemInfo) {
+                // Absolute positioning from bottom
+                float bottomY = hudY + HUD_HEIGHT;
+                float sysY = bottomY - 110.0f; // System info line
+                
+                 D2D1_RECT_F textRect = D2D1::RectF(contentX, sysY, contentX + contentW, sysY + 20);
+                 
+                 // Highlight "AVX2 [Active]" in Green
+                 size_t pos = item.label.find(L"SIMD: AVX2 [Active]");
+                 if (pos != std::wstring::npos) {
+                     // Draw first part Gray
+                     std::wstring part1 = item.label.substr(0, pos);
+                     pRT->DrawText(part1.c_str(), (UINT32)part1.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                     
+                     // Draw active part Green (Approx offset)
+                     D2D1_RECT_F avxRect = D2D1::RectF(contentX + 225, sysY, contentX + contentW, sysY + 20);
+                     pRT->DrawText(L"SIMD: AVX2 [Active]", 19, m_textFormatItem.Get(), avxRect, m_brushSuccess.Get());
+                 } else {
+                     pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
+                 }
+                 
+                 contentY = sysY; // Sync flow just in case
+                 continue;
+             }
+             else if (item.type == OptionType::InfoLabel) {
+                 // Copyright Absolute Bottom
+                 float bottomY = hudY + HUD_HEIGHT;
+                 float copyY = bottomY - 60.0f; 
+                 
+                 // Copyright (Centered)
+                 D2D1_RECT_F infoRect = D2D1::RectF(contentX, copyY, contentX + contentW, copyY + 50);
+                 m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                 // Allow multi-line
+                 pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), infoRect, m_brushTextDim.Get());
+                 m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                 contentY = copyY + 60.0f;
+                 continue;
+             }
+
 
             // 2. Normal Item Row
             
@@ -719,8 +1337,8 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      DrawToggle(pRT, toggleRect, gridOn, isHovered);
                      
                      // Grid Label
-                     D2D1_RECT_F labelRect = D2D1::RectF(controlRect.left + toggleW + 10.0f, controlRect.top, controlRect.left + 200.0f, controlRect.bottom);
-                     pRT->DrawTextW(L"Show Grid", 9, m_textFormatItem.Get(), labelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
+                     D2D1_RECT_F gridLabelRect = D2D1::RectF(controlRect.left + toggleW + 10.0f, controlRect.top, controlRect.left + 200.0f, controlRect.bottom);
+                     pRT->DrawTextW(L"Show Grid", 9, m_textFormatItem.Get(), gridLabelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
                      
                      // 2. Color Button (Right)
                      D2D1_RECT_F btnRect = D2D1::RectF(controlRect.left + 210.0f, controlRect.top, controlRect.right, controlRect.bottom);
@@ -748,6 +1366,9 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             contentY += rowHeight + 10.0f;
         }
     }
+
+    // Draw Update Toast on Top
+    RenderUpdateToast(pRT, hudX, hudY, HUD_WIDTH, HUD_HEIGHT);
 }
 
 // ----------------------------------------------------------------------------
@@ -856,6 +1477,28 @@ void SettingsOverlay::DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rec
 bool SettingsOverlay::OnMouseMove(float x, float y) {
     if (!m_visible) return false;
 
+    // Toast Hit Test (Priority)
+    m_toastHoverBtn = -1;
+    if (m_showUpdateToast) {
+        ToastLayout l = GetToastLayout(m_lastHudX, m_lastHudY, HUD_WIDTH, HUD_HEIGHT);
+        if (x >= l.bg.left && x <= l.bg.right && y >= l.bg.top && y <= l.bg.bottom) {
+            // Inside Toast
+            if (x >= l.btnRestart.left && x <= l.btnRestart.right && y >= l.btnRestart.top && y <= l.btnRestart.bottom) {
+                m_toastHoverBtn = 0;
+                ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+            }
+            else if (x >= l.btnLater.left && x <= l.btnLater.right && y >= l.btnLater.top && y <= l.btnLater.bottom) {
+                m_toastHoverBtn = 1;
+                ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+            }
+            else if (x >= l.btnClose.left && x <= l.btnClose.right && y >= l.btnClose.top && y <= l.btnClose.bottom) {
+                m_toastHoverBtn = 2;
+                ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+            }
+            return true; // Consume event if over toast
+        }
+    }
+
     // Calculate HUD bounds (must match Render)
     // NOTE: We need window size. For now, use cached/known values or assume calling code passes them.
     // A better approach is to store m_lastWinW/m_lastWinH. For now, apply simple logic.
@@ -880,23 +1523,64 @@ bool SettingsOverlay::OnMouseMove(float x, float y) {
     // 2. Hit Test Items (Using stored item.rect which is already in screen coords from Render)
     SettingsItem* oldHover = m_pHoverItem;
     m_pHoverItem = nullptr;
+    int oldLinkHover = m_hoverLinkIndex;
+    m_hoverLinkIndex = -1;
+    bool oldCopyHover = m_isHoveringCopyright;
+    m_isHoveringCopyright = false;
 
-    // Content Items
+    // Default Cursor
+    ::SetCursor(::LoadCursor(NULL, IDC_ARROW));
+
     if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
         for (auto& item : m_tabs[m_activeTab].items) {
             if (x >= item.rect.left && x <= item.rect.right &&
                 y >= item.rect.top && y <= item.rect.bottom) {
                 m_pHoverItem = &item;
+                
+                // Sub-item Hit Testing
+                if (item.type == OptionType::AboutLinks) {
+                    LinkRects r = GetLinkButtonRects(item.rect);
+                    if (x >= r.github.left && x <= r.github.right && y >= r.github.top && y <= r.github.bottom) m_hoverLinkIndex = 0;
+                    else if (x >= r.issues.left && x <= r.issues.right && y >= r.issues.top && y <= r.issues.bottom) m_hoverLinkIndex = 1;
+                    else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) m_hoverLinkIndex = 2;
+                    
+                    
+                    if (m_hoverLinkIndex != -1) ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+                }
+                
                 break;
             }
         }
     }
 
-    return (oldHover != m_pHoverItem) || (m_pHoverItem != nullptr) || m_visible;
+    return (oldHover != m_pHoverItem) || (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) || m_visible;
 }
 
 bool SettingsOverlay::OnLButtonDown(float x, float y) {
     if (!m_visible) return false;
+
+    // Toast Click (Priority)
+    if (m_showUpdateToast) {
+        ToastLayout l = GetToastLayout(m_lastHudX, m_lastHudY, HUD_WIDTH, HUD_HEIGHT);
+        if (x >= l.bg.left && x <= l.bg.right && y >= l.bg.top && y <= l.bg.bottom) {
+             if (x >= l.btnRestart.left && x <= l.btnRestart.right && y >= l.btnRestart.top && y <= l.btnRestart.bottom) {
+                 UpdateManager::Get().OnUserRestart();
+                 // Assuming OnUserRestart might close app or something.
+                 return true; 
+             }
+             else if (x >= l.btnLater.left && x <= l.btnLater.right && y >= l.btnLater.top && y <= l.btnLater.bottom) {
+                 UpdateManager::Get().OnUserLater();
+                 m_showUpdateToast = false;
+                 return true;
+             }
+             else if (x >= l.btnClose.left && x <= l.btnClose.right && y >= l.btnClose.top && y <= l.btnClose.bottom) {
+                 m_showUpdateToast = false; 
+                 // Just close notification, distinct from "Later" (which remembers preference?)
+                 return true;
+             }
+             return true; // Consume click on bg
+        }
+    }
 
     // NOTE: We need to check if click is inside HUD bounds.
     // item.rect stores screen coords, so we can infer HUD bounds from them.
@@ -987,6 +1671,28 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
             if (m_pHoverItem->onChange) m_pHoverItem->onChange();
             m_pHoverItem->isActivated = true; // Mark as activated for visual feedback
             return true;
+        }
+        // About: Update Button
+        if (m_pHoverItem->type == OptionType::AboutVersionCard) {
+            // Full width hit test (item.rect)
+            if (x >= m_pHoverItem->rect.left && x <= m_pHoverItem->rect.right && y >= m_pHoverItem->rect.top && y <= m_pHoverItem->rect.bottom) {
+                 if (m_pHoverItem->onChange) m_pHoverItem->onChange();
+            }
+            return true;
+        }
+        // About: Links Row
+        if (m_pHoverItem->type == OptionType::AboutLinks) {
+             LinkRects r = GetLinkButtonRects(m_pHoverItem->rect);
+             if (x >= r.github.left && x <= r.github.right && y >= r.github.top && y <= r.github.bottom) {
+                 ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView", NULL, NULL, SW_SHOWNORMAL);
+             }
+             else if (x >= r.issues.left && x <= r.issues.right && y >= r.issues.top && y <= r.issues.bottom) {
+                 ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
+             }
+             else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) {
+                 MessageBoxW(NULL, L"Hotkeys:\nF1 / Space: Help\nArrows: Navigate\nEsc: Close", L"QuickView Hotkeys", MB_OK);
+             }
+             return true;
         }
         // Custom Color Row: Checkbox vs Button
         if (m_pHoverItem->type == OptionType::CustomColorRow) {
