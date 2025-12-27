@@ -34,7 +34,7 @@
 <h3>
     <a href="https://github.com/justnullname/QuickView/releases/latest">📥 Download Latest Release</a>
     <span> • </span>
-    <a href="#-shortcuts">⌨️ Shortcuts</a>
+    <a href="https://github.com/justnullname/QuickView/tree/main/ScreenShot">📸 Screenshots</a>
     <span> • </span>
     <a href="https://github.com/justnullname/QuickView/issues">🐛 Report Bug</a>
 </h3>
