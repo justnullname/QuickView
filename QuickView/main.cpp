@@ -1641,7 +1641,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         // Post status (found = 1, not found = 0)
         PostMessage(hwnd, WM_UPDATE_FOUND, (WPARAM)found, 0); 
     });
-    UpdateManager::Get().StartBackgroundCheck();
+    if (g_config.CheckUpdates) {
+        UpdateManager::Get().StartBackgroundCheck();
+    }
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
