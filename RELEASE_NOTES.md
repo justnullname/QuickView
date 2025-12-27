@@ -17,7 +17,7 @@ We didn't just add a settings window; we unlocked the engine. You can now define
 *   **Smart Layouts**: Toggle "Always on Top," "Auto-Hide Title Bar," and configure the behavior of the new EXIF Panel.
 
 #### ⚙️ Core Logic
-*   **Portable Mode**: A dedicated toggle to switch between Registry-based and `.ini` file storage—perfect for USB drives.
+*   **Portable Mode**: Choose where your config.ini lives. Toggle between the global User Directory or the Local Program Folder to make QuickView truly portable.
 *   **Startup Habits**: Customize "Single Instance" logic and loop navigation rules.
 
 #### 🖼️ Image Pipeline Control

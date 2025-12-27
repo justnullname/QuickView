@@ -1,182 +1,162 @@
 <div align="center">
 
-<img src="ScreenShot/ScreenShot_2025-12-23_102812_617.png" alt="QuickView Banner" width="100%">
+<img src="ScreenShot/main_ui.png" alt="QuickView Hero" width="100%" style="border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5);">
 
-# ⚡ QuickView 2.0
+<br><br>
 
-### The Rebirth: Built for Speed, Engineered for Geeks.
+# ⚡ QuickView
+
+### The High-Performance Image Viewer for Windows.
+**Built for Speed. Engineered for Geeks.**
 
 <p>
     <strong>Direct2D Rendering</strong> • 
-    <strong>AVX2/SIMD Optimized</strong> • 
-    <strong>Dynamic Island UI</strong>
+    <strong>Modern C++23</strong> • 
+    <strong>SIMD Accelerated</strong> • 
+    <strong>Portable</strong>
 </p>
 
 <p>
     <a href="LICENSE">
-        <img src="https://img.shields.io/badge/license-GPL--2.0-blue.svg?style=flat-square&logo=github" alt="License">
+        <img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg?style=flat-square&logo=github" alt="License">
     </a>
     <a href="#">
         <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64)-0078D6.svg?style=flat-square&logo=windows" alt="Platform">
     </a>
-    <a href="https://github.com/justnullname/QuickView/releases">
-        <img src="https://img.shields.io/badge/release-v2.0_Preview-orange.svg?style=flat-square&logo=rocket" alt="Release">
+    <a href="https://github.com/justnullname/QuickView/releases/latest">
+        <img src="https://img.shields.io/github/v/release/justnullname/QuickView?style=flat-square&label=latest&color=2ea44f&logo=rocket" alt="Latest Release">
+    </a>
+    <a href="#">
+         <img src="https://img.shields.io/badge/arch-AVX2%20Optimized-critical?style=flat-square&logo=intel" alt="AVX2">
     </a>
 </p>
 
-<p>
-    <a href="https://github.com/justnullname/QuickView/releases"><b>📥 Download Latest Release</b></a> • 
-    <a href="https://github.com/justnullname/QuickView/issues">Report Bug</a> • 
-    <a href="https://github.com/justnullname/QuickView/issues">Request Feature</a>
-</p>
+<h3>
+    <a href="https://github.com/justnullname/QuickView/releases/latest">📥 Download Latest Release</a>
+    <span> • </span>
+    <a href="#-shortcuts">⌨️ Shortcuts</a>
+    <span> • </span>
+    <a href="https://github.com/justnullname/QuickView/issues">🐛 Report Bug</a>
+</h3>
 
 </div>
 
 ---
 
-## 💥 2.0 Preview: The Rebirth
+## 🧐 Why QuickView?
 
-**QuickView 2.0 represents a complete break from the past.**
+Most image viewers today are either **bloated** (slow startup, huge size) or **outdated** (GDI rendering, poor high-DPI support).
 
-This is not a simple iteration. It is a ground-up rewrite based on **Modern C++ (C++23)** and **Direct2D**. We have discarded the legacy GDI rendering baggage and integrated the industry's most cutting-edge decoding technologies (Google Wuffs, TurboJPEG v3, dav1d) with one goal in mind: **To build the fastest, most hardcore image viewer on the Windows platform.**
+**QuickView is different.** It is a ground-up rewrite using **Direct2D** and **Modern C++**, discarding legacy baggage. We integrate the industry's fastest decoding engines—**Google Wuffs, libjpeg-turbo, dav1d, libjxl**—to deliver:
+
+* **Instant Start:** Opens in milliseconds.
+* **60 FPS Rendering:** Silky smooth zooming and panning on 4K/8K monitors.
+* **Technical Transparency:** See the *real* data behind your images (Subsampling, Q-Factor).
 
 ---
 
-## 🚀 Key Features
+## ✨ Features Showcase
 
-### 🏎️ Extreme Performance Engine
+### 1. 🏎️ Extreme Performance
+> *"Speed is a feature."*
 
-> *"Speed is a feature."* We squeeze every ounce of performance out of your hardware.
+QuickView leverages **Multi-Threaded Decoding** for modern formats like **JXL** and **AVIF**, delivering up to **6x faster** load times on 8-core CPUs compared to standard viewers.
+* **Zero-Latency Preview:** Smart extraction for massive RAW (ARW, CR2) and PSD files.
+* **Dual-Lane Scheduling:** Background loading never freezes the UI.
+
+### 2. 🎛️ Visual Control Center
+> *No more manual .ini editing.*
+
+<img src="ScreenShot/settings_ui.png" alt="Settings UI" width="100%" style="border-radius: 6px;">
+
+A fully hardware-accelerated **Settings Dashboard**.
+* **Granular Control:** Tweak mouse behaviors (Pan vs. Drag), zoom sensitivity, and loop rules.
+* **Visual Personalization:** Adjust UI transparency and background grid in real-time.
+* **Portable Mode:** One-click toggle to switch config storage between AppData (System) and Program Folder (USB Stick).
+
+### 3. 📊 Geek Visualization
+> *Don't just view the image; understand the data.*
 
 <div align="center">
-    <img src="ScreenShot/ScreenShot_2025-12-23_101934.png" alt="Task Manager Proof" width="800">
-    <br>
-    <em>Figure: 18.6MB RAM usage while rendering high-res content with Real-time Histogram.</em>
+  <img src="ScreenShot/geek_info.png" alt="Geek Info" width="48%">
+  <img src="ScreenShot/photo_wall.png" alt="Photo Wall" width="48%">
 </div>
 
-<br>
+* **Real-time RGB Histogram:** Translucent waveform overlay.
+* **Reverse Q-Factor:** Algorithmically estimates original JPEG quality (e.g., `Q~98`).
+* **HUD Photo Wall:** Press `T` to summon a high-performance gallery overlay capable of virtualizing 10,000+ images.
 
-* **Direct2D Pipeline:** Fully GPU-accelerated. Panning, zooming, and rendering on 4K high-refresh displays run at a silky smooth **60fps+**.
-* **Dual-Lane Scheduling:** Unique "Fast/Slow" thread pools ensure that loading massive RAW files in the background **never** blocks UI responsiveness.
-* **Instant Preview:** For RAW (ARW, CR2, DNG...), HEIC, and PSD, we extract embedded preview streams for **zero-latency** opening of 200MB+ files.
-
-### 🏝️ Dynamic Island Toolbar (New!)
-
-*A UI that breathes with you.*
-
-* **Immersive Interaction:** The toolbar floats elegantly at the bottom, mimicking the "Dynamic Island" aesthetic.
-* **Hover-Reactive:** It remains invisible to maximize viewing area and seamlessly expands when your mouse approaches the bottom edge.
-* **Geek Tools:** Instant access to Format Repair, RAW Toggle, and Exif data without cluttering the screen.
-
-### 🖼️ HUD Photo Wall
-
-*Browse visually, not just sequentially.*
-
-<div align="center">
-    <img src="ScreenShot/ScreenShot_2025-12-23_102543_642.png" alt="HUD Photo Wall" width="800">
-    <br>
-    <em>Figure: HUD Photo Wall.</em>
-</div>
-
-* **"T" to Toggle:** Press `T` to summon the Photo Wall overlay in a Heads-Up Display style.
-* **Virtualization:** Effortlessly handles folders with **10,000+ images**. We only render what is currently visible on screen.
-* **Smart Caching:** Dual-layer RAM (L1) + VRAM (L2) architecture with strict memory capping.
-
-### 📊 Geek Visualization
-
-*Don't just view the image; understand the data.*
-
-
-* **Real-time RGB Histogram:** Translucent waveform overlay for exposure analysis.
-* **Reverse Q-Factor:** Algorithmically estimates the original JPEG quality (e.g., `Q~98`), seeing through "100% Quality" saves.
-* **Chroma Subsampling:** Instantly identify **4:4:4** (Lossless/Design) vs **4:2:0** (Compressed).
+### 4. 📡 Native Auto-Update
+* **Silent OTA:** Updates are detected and downloaded quietly in the background.
+* **Zero Interruption:** Installs instantly when you exit the app.
 
 ---
 
-## ⚙️ The Engine Room: Format Support
+## ⚙️ The Engine Room
 
-QuickView 2.0 doesn't just "open" images; it uses the fastest, most secure libraries available for each format.
+We don't use generic codecs. We use the **State-of-the-Art** libraries for each format.
 
-| Category | Format | Backend Engine | Why it rocks (Architecture) |
-| :--- | :--- | :--- | :--- |
-| **Standard** | **JPEG** | **libjpeg-turbo v3** | AVX2 SIMD acceleration. The king of decompression speed. |
-| | **PNG** | **Google Wuffs** | Memory-safe, outperforms libpng, handles massive dimensions. |
-| | **GIF** | **Google Wuffs** | Extremely low CPU usage for playback (Better than WIC). |
-| | **WebP** | **libwebp** | Google's official library. Supports Lossless, Animation, & Alpha. |
-| | **BMP / TGA**| **Google Wuffs** | Replaces WIC for robust handling of malformed files. |
-| **Modern** | **AVIF** | **libavif + dav1d** | Assembly-level AV1 decoding. Opens AVIFs instantly. |
-| | **JXL** | **libjxl + highway** | Next-gen JPEG XL standard with multi-threaded decoding. |
-| | **QOI** | **Google Wuffs** | Memory-safe, outperforms libpng, handles massive dimensions. |
-| **Pro / RAW**| **RAW** | **LibRaw** | Prioritizes "Instant Preview" extraction for speed. |
-| | **EXR** | **TinyEXR** | Lightweight, industrial-grade OpenEXR support. |
-| | **HDR** | **stb_image** | Radiance HDR format support. |
-| | **PSD** | **stb_image** | Reads composite preview layer for instant viewing. |
-| **Vector** | **SVG** | **NanoSVG** | Rasterizes vector to bitmap for infinite scaling. |
-| **System** | **HEIC / More** | **Windows WIC** | Hardware accelerated (Requires Windows  Extension). |
+| Format | Backend Engine | Why it rocks (Architecture) |
+| :--- | :--- | :--- |
+| **JPEG** | **libjpeg-turbo v3** | **AVX2 SIMD**. The absolute king of decompression speed. |
+| **PNG / QOI** | **Google Wuffs** | **Memory-safe**. Outperforms libpng, handles massive dimensions. |
+| **JXL** | **libjxl + threads** | **Parallelized**. Instant decoding for high-res JPEG XL. |
+| **AVIF** | **dav1d + threads** | **Assembly-optimized** AV1 decoding. |
+| **WebP** | **libwebp** | Google's official library. Supports Lossless & Alpha. |
+| **RAW** | **LibRaw** | Optimized for "Instant Preview" extraction. |
+| **EXR** | **TinyEXR** | Lightweight, industrial-grade OpenEXR support. |
+| **SVG** | **NanoSVG** | Vector rasterization for infinite scaling. |
+| **HEIC / TIFF**| **Windows WIC** | Hardware accelerated (Requires system extensions). |
+| **Other**| **Windows WIC** | Hardware accelerated (Requires system extensions). |
 
 ---
 
 ## ⌨️ Shortcuts
-Master these shortcuts to navigate QuickView at the speed of thought:
 
-### 👁️ Viewing & NavigationS
-| Key | Action | Description |
+Master these to navigate at the speed of thought:
+
+| Category | Key | Action |
 | :--- | :--- | :--- |
-| **`T`** | **Photo Wall** | Toggle the HUD Gallery overlay. |
-| **`1`** / **`Z`** | **100% View** | Pixel-perfect inspection (Actual Size). |
-| **`0`** / **`F`** | **Fit to Screen** | Fit the entire image to the screen. |
-| **`Enter`** / **`F11`** | **Fullscreen** | Toggle immersive fullscreen mode. |
-| **`Esc`** | **Exit** | Exit fullscreen or close the application. |
-| **`Tab`** | **Lite Info** | Cycle through basic OSD overlays. |
-| **`I`** | **Full Info** | Toggle the detailed EXIF/Histogram panel. |
-| **`Ctrl + T`** | **Always on Top** | Pin the window to the foreground. |
-
-### 🔄 Transform & Edit
-| Key | Action | Description |
-| :--- | :--- | :--- |
-| **`R`** | **Rotate CW** | Rotate 90° Clockwise. |
-| **`Shift + R`** | **Rotate CCW** | Rotate 90° Counter-Clockwise. |
-| **`H`** | **Flip Horizontal** | Mirror the image horizontally. |
-| **`V`** | **Flip Vertical** | Mirror the image vertically. |
-| **`E`** | **Edit** | Open image in default external editor. |
-
-### 📁 File Operations
-| Key | Action | Description |
-| :--- | :--- | :--- |
-| **`O`** / **`Ctrl + O`** | **Open File** | Open file dialog. |
-| **`F2`** | **Rename** | Rename the current file on disk. |
-| **`Del`** | **Delete** | Move current file to Recycle Bin. |
-| **`Ctrl + C`** | **Copy Image** | Copy image data to Clipboard. |
-| **`Ctrl + Alt + C`** | **Copy Path** | Copy full file path text. |
-| **`Ctrl + P`** | **Print** | Open system print dialog. |
-
----
-
-## 📥 Download & Install
-
-**QuickView is Portable.** No installers, no registry bloat.
-
-1. Go to the [**Releases Page**](https://github.com/justnullname/QuickView/releases).
-2. Download the latest `QuickView_2.0_Preview_x64.zip`.
-3. Unzip and run `QuickView.exe`.
+| **Navigation** | `Space` / `PgDn` | Next Image |
+| | `Bksp` / `PgUp` | Previous Image |
+| | `T` | **Photo Wall (HUD)** |
+| **View** | `1` / `Z` | **100% Actual Size** |
+| | `0` / `F` | Fit to Screen |
+| | `Enter` | Fullscreen |
+| **Info** | `I` | **Toggle Info/Histogram** |
+| | `Tab` | Lite OSD Info |
+| **Control** | `Ctrl + P` | **Settings Panel** |
+| | `Ctrl + T` | Toggle "Always on Top" |
+| **Edit** | `R` | Rotate |
+| | `Del` | Delete File |
 
 ---
 
 ## 🗺️ Roadmap
 
-We are moving fast. Here is our current progress:
+We are constantly evolving. Here is what's currently in development:
 
-- [x] **Core Engine 2.0** (D2D, Wuffs, TurboJPEG)
-- [x] **HUD Photo Wall** (Virtualization, Smart Cache)
-- [x] **Geek Panel** (Histogram, Q-Estimator)
-- [x] **Dynamic Island Toolbar** (Hover-reactive UI)
-- [x] **Full Format Support** (SVG, EXR, PSD, JXL, AVIF)
-- [ ] **Visual Settings UI** (Replacing manual .ini editing)
-- [ ] **Gif/WebP Frame Inspector** (Frame-by-frame analysis)
+* [ ] **Animation Support**: Full playback for GIF/WebP/APNG.
+* [ ] **Frame Inspector**: Pause and analyze animations frame-by-frame.
+* [ ] **Color Management (CMS)**: ICC Profile support.
+* [ ] **Dual-View Compare**: Side-by-side image comparison.
+* [ ] **Smart Background**: Auto-dimming / Acrylic effect.
 
 ---
 
-## ⚖️ License & Credits
+## 📥 Installation
 
-This project is licensed under the **GPL-3.0 License**.
-QuickView stands on the shoulders of giants. We salute **David Kleiner** (original JPEGView) and the open-source community behind **LibRaw, LibJpeg-Turbo, Google Wuffs, dav1d, and TinyEXR**.
+**QuickView is 100% Portable.**
+
+1. Go to [**Releases**](https://github.com/justnullname/QuickView/releases).
+2. Download `QuickView.zip`.
+3. Unzip anywhere and run `QuickView.exe`.
+4. *(Optional)* Use the in-app Settings to register as default viewer.
+
+---
+
+## ⚖️ Credits
+
+**QuickView** stands on the shoulders of giants.
+Licensed under **GPL-3.0**.
+Special thanks to **David Kleiner** (original JPEGView) and the maintainers of **LibRaw, Google Wuffs, dav1d, and libjxl**.

@@ -9,7 +9,7 @@ All notable changes to QuickView will be documented in this file.
 -   **Configuration Overhaul**: Complete unlocking of engine settings via new Settings UI.
     -   **Input Mapping**: Customizable Mouse actions (Middle Click, Wheel, Side Buttons) and separation of Drag/Pan logic.
     -   **Viewport**: Professional background options (Black, White, Grid, Custom) and Smart Layouts (Always on Top, Auto-Hide).
-    -   **Portable Mode**: Integrated toggle for Registry vs INI storage.
+    -   **Portable Mode**: Toggle between the global User Directory or the Local Program Folder to make QuickView truly portable..
     -   **Image Control**: Options for Force RAW Decode and Transparency Tuning.
 -   **Native Auto-Update System**:
     -   **Zero-Interruption**: Silent background detection and download.
