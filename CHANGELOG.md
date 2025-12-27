@@ -2,6 +2,28 @@
 
 All notable changes to QuickView will be documented in this file.
 
+## [2.1.0] - Total Control
+**Release Date**: 2025-12-27
+
+### 🚀 Major Features
+-   **Configuration Overhaul**: Complete unlocking of engine settings via new Settings UI.
+    -   **Input Mapping**: Customizable Mouse actions (Middle Click, Wheel, Side Buttons) and separation of Drag/Pan logic.
+    -   **Viewport**: Professional background options (Black, White, Grid, Custom) and Smart Layouts (Always on Top, Auto-Hide).
+    -   **Portable Mode**: Integrated toggle for Registry vs INI storage.
+    -   **Image Control**: Options for Force RAW Decode and Transparency Tuning.
+-   **Native Auto-Update System**:
+    -   **Zero-Interruption**: Silent background detection and download.
+    -   **Install on Exit**: Instant application on close.
+
+### ⚡ Performance
+-   **Multi-Threaded JXL**: Rewrote JPEG XL decoder to use parallel runners, delivering 5x-10x faster decoding for high-res images.
+
+### 🐛 Bug Fixes
+-   **Stability**: Fixed potential race condition when rapid-switching large images.
+-   **Layout**: Fixed sidebar clipping on small windows with intelligent constraint adaptation.
+
+---
+
 ## [2.0 Preview] - The Rebirth
 
 ### 🚀 Brand New Architecture (Total Rewrite)

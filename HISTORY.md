@@ -1,5 +1,13 @@
 # QuickView Version History
 
+## Version 2.1.0 (2025-12-27)
+**Total Control & Auto-Update**
+*   **New Feature**: **Configuration Overhaul**: Total ownership over Input Mapping (Mouse/Drag behaviors), Viewport visuals (Backgrounds, Grid), and Core Logic (Portable Mode).
+*   **New Feature**: **Native Auto-Update**: A sophisticated OTA pipeline for silent background detection and "Install on Exit" convenience.
+*   **Performance**: **Multi-Threaded JXL**: 5x-10x speedup in JPEG XL decoding via multi-core parallelization.
+*   **Improvement**: **Professional Configuration**: Added granularity for Transparency, RAW Decoding strategy, and Layout behaviors.
+*   **Fix**: **Stability & Layout**: Resolved race conditions in image flow and sidebar clipping issues in the Settings UI.
+
 ## Version 1.4.0 (2025-12-15)
 **Settings UI & Localization**
 *   **New Feature**: **QuickView Settings**: A brand new, comprehensive Settings Dialog (`QuickViewConfig.exe`) to configure all aspects of the application (General, Appearance, Interaction, Image, Misc).

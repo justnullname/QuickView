@@ -166,6 +166,7 @@ private:
     bool m_showUpdateToast = false;
     std::wstring m_updateVersion;
     std::wstring m_updateLog;
+    std::wstring m_dismissedVersion; // Track dismissed notification
     D2D1_RECT_F m_toastRect; // For hit testing
     int m_toastHoverBtn = -1; // 0=Restart, 1=Later, 2=Close
     // Scroll for Log in About Tab?

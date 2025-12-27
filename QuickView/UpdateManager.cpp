@@ -94,7 +94,8 @@ void UpdateManager::CheckThread(int delaySeconds) {
         } else {
             // 2. Download to .part (Atomic Protection)
             m_status = UpdateStatus::Downloading;
-            if (m_callback) m_callback(true, m_remoteInfo);
+            // Silent download - notify only when ready
+            // if (m_callback) m_callback(true, m_remoteInfo);
             
             std::wstring partPath = dest + L".part";
             
@@ -328,6 +329,7 @@ bool UpdateManager::CompareVersions(const std::string& current, const std::strin
 }
 
 void UpdateManager::OnUserRestart() {
+    if (m_status != UpdateStatus::ReadyToInstall) return; // Ignore if not ready
     m_shouldRestartNow = true;
     m_isUpdatePending = true;
     // Trigger Main Window Close?
@@ -344,7 +346,7 @@ void UpdateManager::OnUserLater() {
 }
 
 void UpdateManager::HandleExit() {
-    if (IsUpdatePending() && !m_tempPath.empty()) {
+    if (IsUpdatePending() && !m_tempPath.empty() && m_status == UpdateStatus::ReadyToInstall) {
         // Generate UpdateScript.bat
         wchar_t batPath[MAX_PATH];
         GetTempPathW(MAX_PATH, batPath);
@@ -356,11 +358,15 @@ void UpdateManager::HandleExit() {
         
         std::wofstream bat(batFile);
         bat << L"@echo off" << std::endl;
-        bat << L":loop" << std::endl;
+        bat << L":loop_del" << std::endl;
         bat << L"timeout /t 1 /nobreak > NUL" << std::endl;
         bat << L"del \"" << currentExe << L"\"" << std::endl;
-        bat << L"if exist \"" << currentExe << L"\" goto loop" << std::endl;
-        bat << L"move \"" << m_tempPath << L"\" \"" << currentExe << L"\"" << std::endl;
+        bat << L"if exist \"" << currentExe << L"\" goto loop_del" << std::endl;
+        
+        bat << L":loop_move" << std::endl;
+        bat << L"move /Y \"" << m_tempPath << L"\" \"" << currentExe << L"\"" << std::endl;
+        bat << L"if not exist \"" << currentExe << L"\" goto loop_move" << std::endl;
+        
         if (m_shouldRestartNow) {
             bat << L"start \"\" \"" << currentExe << L"\"" << std::endl;
         }

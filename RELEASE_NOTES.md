@@ -1,3 +1,45 @@
+# QuickView v2.1.0 - Total Control
+
+**Power is nothing without control.**
+If v2.0.1 was about the *visual experience*, **v2.1.0** is about *ownership*. We have completed the QuickView ecosystem with a comprehensive Configuration System, allowing you to tailor the engine's behavior to your exact workflow. Combined with the debut of our Native Auto-Update System, this is a milestone release.
+
+## ✨ Major Features
+
+### 🎛️ The Configuration Overhaul
+We didn't just add a settings window; we unlocked the engine. You can now define exactly how QuickView interacts with your mouse, your screen, and your files.
+
+#### �️ Input Mapping (New)
+*   **Mouse Customization**: You decide what the Middle Click, Wheel, and Side Buttons do.
+*   **Drag Behaviors**: Split "Window Drag" and "Image Pan" logic between Left and Middle buttons.
+
+#### 👁️ Viewport Personalization
+*   **Professional Backgrounds**: Switch between Black, White, Grid Overlay (for transparency checking), or Custom colors.
+*   **Smart Layouts**: Toggle "Always on Top," "Auto-Hide Title Bar," and configure the behavior of the new EXIF Panel.
+
+#### ⚙️ Core Logic
+*   **Portable Mode**: A dedicated toggle to switch between Registry-based and `.ini` file storage—perfect for USB drives.
+*   **Startup Habits**: Customize "Single Instance" logic and loop navigation rules.
+
+#### 🖼️ Image Pipeline Control
+*   **Force RAW Decode**: Toggle between embedded previews (speed) and full sensor data decoding (quality).
+*   **Transparency Tuner**: Granular alpha sliders for the HUD, Toolbar, and Settings window.
+
+### 📡 Native Auto-Update System (Debut)
+The last manual update you'll ever perform. We have deployed a sophisticated Over-The-Air (OTA) pipeline directly into the viewer.
+*   **Zero-Interruption**: Updates are detected and downloaded silently in the background while you work.
+*   **Install on Exit**: No waiting bars. The update applies instantly when you close the app, ensuring you are always on the bleeding edge next time you launch.
+
+### 🚀 Performance: Multi-Threaded JXL
+90MP? Instant. We rewrote the JPEG XL (JXL) implementation to utilize Parallel Runners.
+*   **The Change**: Shifted from single-threaded to multi-core decoding.
+*   **The Impact**: Decoding high-resolution JXL files is now **5x-10x faster**, eliminating the "rendering lag" on large assets.
+
+## 🐛 Bug Fixes
+*   **Stability**: Fixed a potential race condition when switching rapidly between large images.
+*   **Layout**: Resolved an issue where the sidebar could be clipped on small windows; the window now intelligently adapts its constraints.
+
+---
+
 # QuickView v1.3.0 Release Notes
 
 **Context Menu Modernization & OSD Fixes**

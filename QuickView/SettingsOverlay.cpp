@@ -223,6 +223,7 @@ SettingsOverlay::~SettingsOverlay() {
 // ----------------------------------------------------------------------------
 
 void SettingsOverlay::ShowUpdateToast(const std::wstring& version, const std::wstring& changelog) {
+    if (version == m_dismissedVersion) return; // User already dismissed this version
     m_showUpdateToast = true;
     SetVisible(false); // Ensure Settings closes to focus on Toast (and avoid layout shift on resize)
     m_updateVersion = version;
@@ -844,7 +845,12 @@ void SettingsOverlay::BuildMenu() {
     // 1. Header (Logo + Name + Version)
     // We pass Version string in disabledText to keep it accessible
     SettingsItem itemHeader = { L"QuickView", OptionType::AboutHeader };
-    itemHeader.disabledText = L"Version " + GetAppVersion() + L" (Build 20251225)";
+    // Use __DATE__ for dynamic build date (Simple conversion)
+    auto GetBuildDate = []() -> std::wstring {
+        std::string s = __DATE__; // "Mmm dd yyyy"
+        return std::wstring(s.begin(), s.end());
+    };
+    itemHeader.disabledText = L"Version " + GetAppVersion() + L" (Build " + GetBuildDate() + L")";
     tabAbout.items.push_back(itemHeader);
 
     // 2. Action Button (Check for Updates)
@@ -1725,10 +1731,12 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
              }
              else if (x >= l.btnLater.left && x <= l.btnLater.right && y >= l.btnLater.top && y <= l.btnLater.bottom) {
                  UpdateManager::Get().OnUserLater();
+                 m_dismissedVersion = m_updateVersion; // Don't show again this session
                  m_showUpdateToast = false;
                  return true;
              }
              else if (x >= l.btnClose.left && x <= l.btnClose.right && y >= l.btnClose.top && y <= l.btnClose.bottom) {
+                 m_dismissedVersion = m_updateVersion; // Don't show again this session
                  m_showUpdateToast = false; 
                  // Just close notification, distinct from "Later" (which remembers preference?)
                  return true;
