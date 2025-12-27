@@ -4,8 +4,8 @@ const translations = {
         "nav.ui": "UI / UX",
         "nav.visuals": "Visuals",
         "nav.features": "Features",
-        "nav.download": "Download v2.1.0",
-        "hero.tag": "New Release v2.1.0",
+        "nav.download": "Download {version}",
+        "hero.tag": "New Release {version}",
         "hero.title": "The Performance Monster.",
         "hero.subtitle": "Built on a <strong>vcpkg + Static Linking</strong> hybrid architecture.<br><span class='highlight'>~6.2MB</span> Single EXE. <span class='highlight'>0 DLL Hell</span>. <span class='highlight'>LTO Enabled</span>.",
         "cta.getting_started": "Get Started",
@@ -54,8 +54,8 @@ const translations = {
         "nav.ui": "交互体验",
         "nav.visuals": "视觉数据",
         "nav.features": "功能配置",
-        "nav.download": "下载 v2.1.0",
-        "hero.tag": "新版本 v2.1.0 发布",
+        "nav.download": "下载 {version}",
+        "hero.tag": "新版本 {version} 发布",
         "hero.title": "性能怪兽",
         "hero.subtitle": "基于 <strong>vcpkg + 静态链接</strong> 混合架构打造。<br><span class='highlight'>~6.2MB</span> 单文件 EXE。 <span class='highlight'>0 DLL 依赖</span>。 <span class='highlight'>启用 LTO 优化</span>。",
         "cta.getting_started": "立即开始",
@@ -104,8 +104,8 @@ const translations = {
         "nav.ui": "交互體驗",
         "nav.visuals": "視覺數據",
         "nav.features": "功能配置",
-        "nav.download": "下載 v2.1.0",
-        "hero.tag": "新版本 v2.1.0 發布",
+        "nav.download": "下載 {version}",
+        "hero.tag": "新版本 {version} 發布",
         "hero.title": "效能怪獸",
         "hero.subtitle": "基於 <strong>vcpkg + 靜態連結</strong> 混合架構打造。<br><span class='highlight'>~6.2MB</span> 單一 EXE。<span class='highlight'>0 DLL 依賴</span>。<span class='highlight'>啟動 LTO 優化</span>。",
         "cta.getting_started": "立即開始",
@@ -154,8 +154,8 @@ const translations = {
         "nav.ui": "UI / UX",
         "nav.visuals": "ビジュアル",
         "nav.features": "機能",
-        "nav.download": "v2.1.0 をダウンロード",
-        "hero.tag": "新リリース v2.1.0",
+        "nav.download": "ダウンロード {version}",
+        "hero.tag": "新リリース {version}",
         "hero.title": "パフォーマンスの怪物。",
         "hero.subtitle": "<strong>vcpkg + 静的リンク</strong> ハイブリッドアーキテクチャ。<br><span class='highlight'>~6.2MB</span> 単一EXE。<span class='highlight'>DLL依存なし</span>。<span class='highlight'>LTO 有効化</span>。",
         "cta.getting_started": "始める",
@@ -204,8 +204,8 @@ const translations = {
         "nav.ui": "Интерфейс",
         "nav.visuals": "Визуализация",
         "nav.features": "Функции",
-        "nav.download": "Скачать v2.1.0",
-        "hero.tag": "Новый релиз v2.1.0",
+        "nav.download": "Скачать {version}",
+        "hero.tag": "Новый релиз {version}",
         "hero.title": "Монстр производительности.",
         "hero.subtitle": "Построено на гибридной архитектуре <strong>vcpkg + Static Linking</strong>.<br><span class='highlight'>~6.2MB</span> Один EXE. <span class='highlight'>0 зависимостей DLL</span>. <span class='highlight'>LTO включен</span>.",
         "cta.getting_started": "Начать",
@@ -254,8 +254,8 @@ const translations = {
         "nav.ui": "UI / UX",
         "nav.visuals": "Visuales",
         "nav.features": "Funciones",
-        "nav.download": "Descargar v2.1.0",
-        "hero.tag": "Lanzamiento v2.1.0",
+        "nav.download": "Descargar {version}",
+        "hero.tag": "Lanzamiento {version}",
         "hero.title": "El Monstruo del Rendimiento.",
         "hero.subtitle": "Construido sobre una arquitectura híbrida <strong>vcpkg + Enlace Estático</strong>.<br><span class='highlight'>~6.2MB</span> EXE único. <span class='highlight'>0 Dependencias DLL</span>. <span class='highlight'>LTO Habilitado</span>.",
         "cta.getting_started": "Empezar",
@@ -304,8 +304,8 @@ const translations = {
         "nav.ui": "UI / UX",
         "nav.visuals": "Visuals",
         "nav.features": "Funktionen",
-        "nav.download": "Download v2.1.0",
-        "hero.tag": "Neues Release v2.1.0",
+        "nav.download": "Download {version}",
+        "hero.tag": "Neues Release {version}",
         "hero.title": "Das Performance-Monster.",
         "hero.subtitle": "Basiert auf einer hybriden <strong>vcpkg + Static Linking</strong> Architektur.<br><span class='highlight'>~6.2MB</span> Einzelne EXE. <span class='highlight'>0 DLL-Abhängigkeiten</span>. <span class='highlight'>LTO Aktiviert</span>.",
         "cta.getting_started": "Loslegen",
@@ -361,6 +361,25 @@ Object.keys(translations).forEach(lang => {
     });
 });
 
+let currentVersion = 'v2.1.0'; // Default fallback
+
+async function fetchVersion() {
+    try {
+        const response = await fetch('https://api.github.com/repos/justnullname/QuickView/releases/latest');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.tag_name) {
+                currentVersion = data.tag_name;
+                // Refresh current language to apply new version
+                const lang = detectLanguage();
+                setLanguage(lang);
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to fetch version:', e);
+    }
+}
+
 function setLanguage(lang) {
     if (!translations[lang]) lang = 'en';
     localStorage.setItem('qv_lang', lang);
@@ -371,7 +390,10 @@ function setLanguage(lang) {
     elements.forEach(el => {
         const key = el.getAttribute('data-i18n');
         if (translations[lang][key]) {
-            el.innerHTML = translations[lang][key];
+            let text = translations[lang][key];
+            // Dynamic replacement
+            text = text.replace('{version}', currentVersion);
+            el.innerHTML = text;
         }
     });
 
@@ -403,8 +425,12 @@ function detectLanguage() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Initial load with default version
     const lang = detectLanguage();
     setLanguage(lang);
+
+    // Fetch real version
+    fetchVersion();
 
     document.querySelectorAll('.lang-option').forEach(btn => {
         btn.addEventListener('click', (e) => {
