@@ -1772,6 +1772,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_NCCALCSIZE: if (wParam) return 0; break;
+    case WM_ERASEBKGND: return 1;  // Prevent system background erase (D2D handles this)
     case WM_APP + 1: {
         auto handle = std::coroutine_handle<>::from_address((void*)lParam);
         handle.resume();
@@ -1890,7 +1891,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         RECT rc; GetWindowRect(hwnd, &rc);
         int border = 8; 
+        int captionHeight = 32;  // Custom title bar height
         
+        // Edge resize detection
         if (pt.y < rc.top + border) {
             if (pt.x < rc.left + border) return HTTOPLEFT;
             if (pt.x > rc.right - border) return HTTOPRIGHT;
@@ -1905,9 +1908,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (pt.x > rc.right - border) return HTRIGHT;
         
         ScreenToClient(hwnd, &pt);
-        D2D1_POINT_2F localPt = D2D1::Point2F((float)pt.x, (float)pt.y);
         
-        // Buttons always HTCLIENT (handled in LBUTTONUP/DOWN)
+        // Custom title bar area (top captionHeight pixels)
+        // Exclude window control buttons (right side)
+        int btnWidth = 46 * 3;  // 3 buttons: min/max/close
+        RECT clientRc; GetClientRect(hwnd, &clientRc);
+        
+        if (pt.y < captionHeight) {
+            // Check if over window control buttons
+            if (pt.x > clientRc.right - btnWidth) {
+                return HTCLIENT;  // Let button handlers process this
+            }
+            return HTCAPTION;  // Title bar drag area
+        }
         
         return HTCLIENT;
     }
