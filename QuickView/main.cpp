@@ -4383,7 +4383,7 @@ void OnPaint(HWND hwnd) {
         RECT rect; GetClientRect(hwnd, &rect);
         D2D1_SIZE_F size = context->GetSize();
         CalculateWindowControls(size);
-        DrawWindowControls(hwnd, context);
+        // DrawWindowControls(hwnd, context);  // MOVED TO UIRenderer (DComp Surface)
         
         // Draw OSD
         g_renderEngine->DrawOSD(g_osd);
@@ -4419,8 +4419,8 @@ void OnPaint(HWND hwnd) {
         // Settings Overlay (Top Most)
         g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);
         
-        // Debug HUD (Ctrl+D to toggle)
-        RenderDebugHUD(context, (float)rect.right, (float)rect.bottom);
+        // Debug HUD - MOVED TO UIRenderer (DComp Surface)
+        // RenderDebugHUD(context, (float)rect.right, (float)rect.bottom);
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
