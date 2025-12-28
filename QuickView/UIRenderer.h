@@ -28,6 +28,8 @@ public:
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDirty(); }
     void SetDebugStats(float fps, size_t memMB, int scoutQueue, int heavyState);
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkDirty(); }
+    void SetControlsVisible(bool visible) { m_showControls = visible; MarkDirty(); }
+    void SetPinActive(bool active) { m_pinActive = active; MarkDirty(); }
     void OnResize(UINT width, UINT height);
 
 private:
@@ -52,6 +54,8 @@ private:
     
     // Window Controls
     int m_winCtrlHover = -1;  // -1=none, 0=close, 1=max, 2=min, 3=pin
+    bool m_showControls = true;  // Auto-hide state
+    bool m_pinActive = false;    // AlwaysOnTop state
     
     bool m_isDirty = true;
     UINT m_width = 0;

@@ -4427,15 +4427,45 @@ void OnPaint(HWND hwnd) {
     
     // Render UI to independent DComp Surface
     if (g_uiRenderer) {
-        // Sync state from main.cpp
-        g_uiRenderer->SetDebugHUDVisible(g_showDebugHUD);
+        // === FPS Calculation (moved from RenderDebugHUD) ===
+        static LARGE_INTEGER lastFpsTime = {};
+        static LARGE_INTEGER fpsFreq = {};
+        static int fpsFrameCount = 0;
+        if (fpsFreq.QuadPart == 0) QueryPerformanceFrequency(&fpsFreq);
+        LARGE_INTEGER fpsNow; QueryPerformanceCounter(&fpsNow);
+        fpsFrameCount++;
+        if (lastFpsTime.QuadPart > 0 && fpsFreq.QuadPart > 0) {
+            double elapsed = (double)(fpsNow.QuadPart - lastFpsTime.QuadPart) / fpsFreq.QuadPart;
+            if (elapsed >= 0.5) {
+                g_fps = fpsFrameCount / (float)elapsed;
+                fpsFrameCount = 0;
+                lastFpsTime = fpsNow;
+            }
+        } else {
+            lastFpsTime = fpsNow;
+        }
         
-        // Sync FPS stats
+        // === Sync all state from main.cpp ===
+        g_uiRenderer->SetDebugHUDVisible(g_showDebugHUD);
         g_uiRenderer->SetDebugStats(g_fps, (size_t)0, 0, 0);
         
-        g_uiRenderer->MarkDirty();  // Force update each frame
+        // Sync hover state: convert WindowHit enum to int
+        int hoverIdx = -1;
+        if (g_winControls.HoverState == WindowHit::Close) hoverIdx = 0;
+        else if (g_winControls.HoverState == WindowHit::Max) hoverIdx = 1;
+        else if (g_winControls.HoverState == WindowHit::Min) hoverIdx = 2;
+        else if (g_winControls.HoverState == WindowHit::Pin) hoverIdx = 3;
+        g_uiRenderer->SetWindowControlHover(hoverIdx);
         
-        // Ensure size is set
+        // Sync visibility (auto-hide logic)
+        g_uiRenderer->SetControlsVisible(g_showControls);
+        
+        // Sync pin state
+        g_uiRenderer->SetPinActive(g_config.AlwaysOnTop);
+        
+        g_uiRenderer->MarkDirty();
+        
+        // Ensure size
         RECT rc; GetClientRect(hwnd, &rc);
         if (rc.right > 0 && rc.bottom > 0) {
             g_uiRenderer->OnResize((UINT)rc.right, (UINT)rc.bottom);

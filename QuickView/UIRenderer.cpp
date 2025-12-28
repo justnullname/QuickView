@@ -123,6 +123,8 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
 }
 
 void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
+    // Auto-hide: don't draw if not visible and no hover
+    if (!m_showControls && m_winCtrlHover == -1) return;
     if (m_width < 200) return;
     
     float btnW = 46.0f;
@@ -156,7 +158,11 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
         dc->DrawText(&icon, 1, m_iconFormat.Get(), rect, brush);
     };
     
-    DrawIcon(L'\uE718', pinRect, m_whiteBrush.Get());
+    // Pin icon: different icon and color when active
+    wchar_t pinIcon = m_pinActive ? L'\uE77A' : L'\uE718';  // Pinned vs Unpin
+    ID2D1Brush* pinBrush = m_pinActive ? m_accentBrush.Get() : m_whiteBrush.Get();
+    DrawIcon(pinIcon, pinRect, pinBrush);
+    
     DrawIcon(L'\uE921', minRect, m_whiteBrush.Get());
     DrawIcon(IsZoomed(hwnd) ? L'\uE923' : L'\uE922', maxRect, m_whiteBrush.Get());
     DrawIcon(L'\uE8BB', closeRect, m_whiteBrush.Get());
