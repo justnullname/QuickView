@@ -82,6 +82,18 @@ public:
         uint64_t fileSize = 0;
     };
 
+    // --- NEW: PMR-backed Decoded Image (Zero-Copy) ---
+    struct DecodedImage {
+        std::pmr::vector<uint8_t> pixels;  // BGRA/BGRX pixels in PMR memory
+        UINT width = 0;
+        UINT height = 0;
+        UINT stride = 0;
+        bool isValid = false;
+        
+        DecodedImage() : pixels(std::pmr::get_default_resource()) {}
+        explicit DecodedImage(std::pmr::memory_resource* mr) : pixels(mr) {}
+    };
+
     /// <summary>
     /// Read metadata from file using WIC
     /// </summary>
@@ -100,7 +112,12 @@ public:
     /// <summary>
     /// Load WIC bitmap from file and force decode to memory
     /// </summary>
-    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr, bool forceFullDecode = false); // Force decode to memory
+    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr, bool forceFullDecode = false);
+
+    /// <summary>
+    /// NEW: Load image directly into PMR-backed buffer (Zero-Copy for Heavy Lane)
+    /// </summary>
+    HRESULT LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName = nullptr);
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)

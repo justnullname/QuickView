@@ -3,7 +3,9 @@
 #include "QuickView.h"
 #include "RenderEngine.h"
 #include "ImageLoader.h"
-#include <mimalloc-new-delete.h>
+#include "ImageEngine.h"
+#include <d2d1_1helper.h>
+//#include <mimalloc-new-delete.h>
 #include "LosslessTransform.h"
 #include "EditState.h"
 #include "AppStrings.h"
@@ -18,6 +20,8 @@
 #include <dwrite.h>
 #include <wincodec.h>
 #include "OSDState.h"
+#include <psapi.h>  // For GetProcessMemoryInfo
+#pragma comment(lib, "psapi.lib")
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "d3d11.lib")
@@ -135,13 +139,16 @@ static std::string GetAppVersionUTF8() {
 // --- Globals ---
 
 #define WM_UPDATE_FOUND (WM_APP + 2)
+#define IDT_ENGINE_POLL 990
 
 static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView 2026";
 static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
+static std::unique_ptr<ImageEngine> g_imageEngine;
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
+static bool g_isBlurry = false; // For Motion Blur effect
 OSDState g_osd; // Removed static, explicitly Global
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
 static DialogState g_dialog;
@@ -164,6 +171,80 @@ static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
 static bool g_isLoading = false;           // Show Wait Cursor
+
+// === Debug HUD ===
+static bool g_showDebugHUD = false;  // Toggle with Ctrl+D
+static DWORD g_lastFrameTime = 0;
+static float g_fps = 0.0f;
+
+void RenderDebugHUD(ID2D1DeviceContext* dc, float width, float height) {
+    if (!g_showDebugHUD || !g_imageEngine) return;
+    
+    // Update FPS using high-resolution timer
+    static LARGE_INTEGER lastTime = {};
+    static LARGE_INTEGER freq = {};
+    static int frameCount = 0;
+    static float displayFps = 0.0f;
+    
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    frameCount++;
+    
+    if (lastTime.QuadPart > 0 && freq.QuadPart > 0) {
+        double elapsed = (double)(now.QuadPart - lastTime.QuadPart) / freq.QuadPart;
+        if (elapsed >= 0.5) {  // Update every 0.5 seconds
+            displayFps = frameCount / (float)elapsed;
+            frameCount = 0;
+            lastTime = now;
+        }
+    } else {
+        lastTime = now;
+    }
+    g_fps = displayFps;
+    
+    // Get stats
+    auto stats = g_imageEngine->GetDebugStats();
+    
+    // Get process memory instead of PMR tracking (more reliable)
+    PROCESS_MEMORY_COUNTERS pmc = {};
+    pmc.cb = sizeof(pmc);
+    size_t workingSetMB = 0;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        workingSetMB = pmc.WorkingSetSize / (1024 * 1024);
+    }
+    
+    // Format text
+    wchar_t hudText[512];
+    const wchar_t* heavyStateStr = 
+        stats.heavyState == ImageEngine::HeavyState::IDLE ? L"IDLE" :
+        stats.heavyState == ImageEngine::HeavyState::DECODING ? L"DECODING" : L"CANCELLING";
+    
+    swprintf_s(hudText, 
+        L"=== DEBUG HUD (Ctrl+D) ===\n"
+        L"FPS: %.1f\n"
+        L"Scout Queue: %d | Results: %d | Skipped: %d\n"
+        L"Heavy: %s | Cancels: %d\n"
+        L"Process Memory: %zu MB",
+        g_fps,
+        stats.scoutQueueSize, stats.scoutResultsSize, stats.scoutSkipCount,
+        heavyStateStr, stats.cancelCount,
+        workingSetMB);
+    
+    // Draw background
+    D2D1_RECT_F hudRect = D2D1::RectF(10, 10, 380, 120);
+    ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.7f), &bgBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Lime), &textBrush);
+    
+    dc->FillRectangle(hudRect, bgBrush.Get());
+    
+    // Draw text (use existing format or create simple one)
+    if (g_pPanelTextFormat) {
+        dc->DrawTextW(hudText, (UINT32)wcslen(hudText), g_pPanelTextFormat.Get(), hudRect, textBrush.Get());
+    }
+}
 
 // Helper: Copy text to clipboard
 static bool CopyToClipboard(HWND hwnd, const std::wstring& text) {
@@ -353,6 +434,8 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path);
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
+void RebuildInfoGrid(); // Fwd decl
+void ProcessEngineEvents(HWND hwnd);
 void ReleaseImageResources();
 void DiscardChanges();
 std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName);
@@ -1595,6 +1678,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
+    g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
     
     // Init Gallery
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
@@ -1721,6 +1805,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         static const UINT_PTR INTERACTION_TIMER_ID = 1001;
         static const UINT_PTR OSD_TIMER_ID = 999;
         
+        // Engine Poll Timer (990)
+        if (wParam == IDT_ENGINE_POLL) {
+             ProcessEngineEvents(hwnd);
+        }
+        
         // Interaction Timer (1001)
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
@@ -1763,6 +1852,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 InvalidateRect(hwnd, nullptr, FALSE);
             } else {
                 KillTimer(hwnd, 997);
+            }
+        }
+        
+        // Debug HUD Refresh Timer (996)
+        if (wParam == 996) {
+            if (g_showDebugHUD) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else {
+                KillTimer(hwnd, 996);
             }
         }
         return 0;
@@ -2772,6 +2870,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             InvalidateRect(hwnd, nullptr, FALSE);
             break;
         
+        case 'D': // Ctrl+D: Toggle Debug HUD
+            if (ctrl) {
+                g_showDebugHUD = !g_showDebugHUD;
+                if (g_showDebugHUD) {
+                    if (g_imageEngine) g_imageEngine->ResetDebugCounters();
+                    // Start continuous refresh timer for accurate FPS
+                    SetTimer(hwnd, 996, 16, nullptr);  // ~60Hz refresh
+                } else {
+                    KillTimer(hwnd, 996);
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+        
         // Transforms
         case 'R': PerformTransform(hwnd, shift ? TransformType::Rotate90CCW : TransformType::Rotate90CW); break;
         case 'H': PerformTransform(hwnd, TransformType::FlipHorizontal); break;
@@ -3433,6 +3545,113 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
 }
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
 
+void ProcessEngineEvents(HWND hwnd) {
+    if (!g_imageEngine) return;
+
+    auto events = g_imageEngine->PollState();
+    for (const auto& evt : events) {
+        switch (evt.type) {
+        case EventType::ThumbReady: {
+            if (!g_renderEngine) break;
+            
+            // User requested "Blurred Thumbnail"
+            // We need to create D2D bitmap from the raw bytes (ThumbData)
+            // CImageLoader::ThumbData has BGRA
+            
+            if (evt.thumbData.pixels.empty()) break;
+
+            ComPtr<ID2D1Bitmap1> thumbBitmap;
+            D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED) // Assuming BGRA
+            );
+            
+            // Create directly from memory
+            HRESULT hr = g_renderEngine->GetDeviceContext()->CreateBitmap(
+                D2D1::SizeU(evt.thumbData.width, evt.thumbData.height),
+                evt.thumbData.pixels.data(),
+                evt.thumbData.stride,
+                &props,
+                thumbBitmap.GetAddressOf()
+            );
+
+            if (SUCCEEDED(hr)) {
+                g_currentBitmap = thumbBitmap;
+                g_isBlurry = true; // Trigger blur shader in OnPaint
+                g_imagePath = evt.filePath; // Update path immediately for UI consistency
+                
+                // Update Title (Loading state)
+                wchar_t titleBuf[512];
+                swprintf_s(titleBuf, L"Loading... %s - %s", 
+                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
+                    g_szWindowTitle);
+                SetWindowTextW(hwnd, titleBuf);
+                
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+        }
+        case EventType::FullReady: {
+            // Final High-Res Image
+            if (!g_renderEngine) break;
+            
+            // evt.fullImage is IWICBitmapSource
+            ComPtr<ID2D1Bitmap> fullBitmap;
+            if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
+                g_currentBitmap = fullBitmap;
+                g_isBlurry = false; // Clear blur
+                g_imagePath = evt.filePath;
+                
+                // Use pre-read metadata from Heavy Lane (no UI blocking!)
+                g_currentMetadata = evt.metadata;
+                
+                // Title
+                wchar_t titleBuf[512];
+                swprintf_s(titleBuf, L"%s - %s", 
+                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
+                    g_szWindowTitle);
+                SetWindowTextW(hwnd, titleBuf);
+                
+                // Recalc layout
+                g_toolbar.UpdateLayout(0,0);
+                
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+        }
+        }
+    }
+
+    if (g_imageEngine->IsIdle()) {
+        KillTimer(hwnd, IDT_ENGINE_POLL);
+        if (g_isLoading) {  // Was loading, now finished
+            g_isLoading = false;
+            // Force cursor update immediately
+            POINT pt;
+            if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+                PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+            }
+        }
+    }
+}
+
+void StartNavigation(HWND hwnd, std::wstring path) {
+    if (!g_imageEngine || path.empty()) return;
+
+    g_isLoading = true;
+    
+    // Level 0 Feedback: Immediate OSD before any decode starts
+    std::wstring filename = path.substr(path.find_last_of(L"\\/") + 1);
+    g_osd.Show(hwnd, filename.c_str(), false);
+    PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    
+    // Kick the Engine
+    g_imageEngine->NavigateTo(path);
+    
+    // Start Polling Loop (120Hz)
+    SetTimer(hwnd, IDT_ENGINE_POLL, 8, nullptr);
+}
+
 
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
     if (path.empty() || path != g_imagePath) co_return;
@@ -3458,182 +3677,16 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
 }
 
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
+    // Redirect to New Engine
     if (!g_imageLoader || !g_renderEngine) co_return;
     
-    g_isLoading = true;
-    // Notify cursor update immediately
-    PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    // Maintain checks
+    if (!FileExists(path.c_str())) co_return;
+
+    // Call the synchronous engine starter
+    StartNavigation(hwnd, path);
     
-    // 1. Check Prefetch Cache (Main Thread)
-    ComPtr<IWICBitmap> wicMemoryBitmap;
-    bool usedPrefetchCache = false;
-    if (path == g_prefetchedPath && g_prefetchedBitmap) {
-        wicMemoryBitmap = g_prefetchedBitmap;
-        usedPrefetchCache = true;
-        // Note: FormatDetails from prefetch may be stale, will be cleared later
-    }
-
-    // 2. If Miss, Load from Disk
-    if (!wicMemoryBitmap) {
-        // Switch to Background Thread
-        co_await ResumeBackground{};
-
-        // Decode & Measure Time
-        DWORD startTime = GetTickCount();
-        std::wstring loaderName = L"Unknown";
-        HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &wicMemoryBitmap, &loaderName, g_config.ForceRawDecode);
-        
-        // Read Metadata (Background Thread)
-        // Read Metadata (Background Thread)
-        CImageLoader::ImageMetadata tempMetadata;
-        if (SUCCEEDED(hr)) {
-             g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
-             
-             // Compute Histogram if needed (Expanded Mode only)
-             if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded && wicMemoryBitmap) {
-                 g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
-             }
-        }
-
-        DWORD duration = GetTickCount() - startTime;
-
-        // Switch back
-        co_await ResumeMainThread(hwnd);
-
-        if (FAILED(hr) || !wicMemoryBitmap) {
-            // Error Handling
-            
-            // Check for HEIC/AVIF Missing Codec
-            bool isHEIC = path.ends_with(L".heic") || path.ends_with(L".HEIC") || 
-                          path.ends_with(L".heif") || path.ends_with(L".HEIF") ||
-                          path.ends_with(L".avif") || path.ends_with(L".AVIF");
-                          
-            if (isHEIC && (hr == WINCODEC_ERR_COMPONENTNOTFOUND || hr == E_FAIL)) {
-                // User needs HEVC extension
-                g_osd.Show(hwnd, AppStrings::OSD_HEICCodecMissing, true);
-            } else {
-                g_osd.Show(hwnd, L"Failed to load image", true);
-            }
-            g_isLoading = false;
-            co_return; 
-        }
-        
-        g_currentMetadata = tempMetadata;
-        // FormatDetails: only valid if freshly loaded (not from prefetch cache)
-        if (usedPrefetchCache) {
-            g_currentMetadata.FormatDetails.clear(); // Prefetch doesn't preserve format details
-            g_currentMetadata.LoaderName = L"Prefetch Cache";
-            g_currentMetadata.LoadTimeMs = 0;
-        } else {
-            g_currentMetadata.FormatDetails = g_imageLoader->GetLastFormatDetails();
-            g_currentMetadata.LoaderName = loaderName;
-            g_currentMetadata.LoadTimeMs = duration;
-            
-            // Get EXIF Orientation (for Auto-Rotate)
-            if (g_config.AutoRotate) {
-                g_viewState.ExifOrientation = g_imageLoader->GetLastExifOrientation();
-            } else {
-                g_viewState.ExifOrientation = 1; // Ignore EXIF when disabled
-            }
-        }
-
-        // Update Title with Performance Info AND Compact Metadata
-        // Format: "filename.ext - [Metadata Compact] - QuickView"
-        size_t lastSlash = path.find_last_of(L"\\/");
-        std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
-        
-        wchar_t titleBuf[1024];
-        swprintf_s(titleBuf, L"%s - %s (%lu ms) - %s", filename.c_str(), loaderName.c_str(), duration, g_szWindowTitle);
-        SetWindowTextW(hwnd, titleBuf);
-        // Decoder info now shown in Info Panel instead of OSD
-    }
-    else {
-        // Cache Hit - still need to load metadata
-        CImageLoader::ImageMetadata tempMetadata;
-        g_imageLoader->ReadMetadata(path.c_str(), &tempMetadata);
-        
-        // Compute Histogram if needed (Offload to background to avoid jank)
-        // Optimization: Only if Expanded
-        if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded && wicMemoryBitmap) {
-             co_await ResumeBackground{};
-             g_imageLoader->ComputeHistogram(wicMemoryBitmap.Get(), &tempMetadata);
-             co_await ResumeMainThread(hwnd);
-        }
-        g_currentMetadata = tempMetadata;
-        g_currentMetadata.LoaderName = L"Prefetch Cache";
-        g_currentMetadata.LoadTimeMs = 0;
-        g_currentMetadata.FormatDetails.clear(); // Prefetch doesn't preserve format details
-        
-        // Get EXIF Orientation for cache path too - need to re-read from file
-        if (g_config.AutoRotate) {
-            // Read EXIF from file for prefetch cache
-            ComPtr<IWICBitmap> tempBitmap;
-            std::wstring loaderName;
-            if (SUCCEEDED(g_imageLoader->LoadToMemory(path.c_str(), &tempBitmap, &loaderName))) {
-                g_viewState.ExifOrientation = g_imageLoader->GetLastExifOrientation();
-            } else {
-                g_viewState.ExifOrientation = 1;
-            }
-        } else {
-            g_viewState.ExifOrientation = 1;
-        }
-        
-        size_t lastSlash = path.find_last_of(L"\\/");
-        std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;
-        wchar_t titleBuf[512];
-        swprintf_s(titleBuf, L"%s - Prefetch Cache (0 ms) - %s", filename.c_str(), g_szWindowTitle);
-        SetWindowTextW(hwnd, titleBuf);
-        // Decoder info now shown in Info Panel instead of OSD
-    }
-
-    // 3. Upload to GPU
-    ComPtr<ID2D1Bitmap> d2dBitmap;
-    if (FAILED(g_renderEngine->CreateBitmapFromWIC(wicMemoryBitmap.Get(), &d2dBitmap))) {
-         g_osd.Show(hwnd, L"Failed to upload texture", true);
-         g_isLoading = false;
-         co_return;
-    }
-
-    // 4. Update State
-    g_currentBitmap = d2dBitmap; 
-    g_imagePath = path; 
-
-    // Update Toolbar RAW State
-    bool isRaw = false; // logic existing
-    std::wstring pLower = path;
-    std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::towlower);
-    if (pLower.ends_with(L".arw") || pLower.ends_with(L".cr2") || pLower.ends_with(L".nef") || 
-        pLower.ends_with(L".dng") || pLower.ends_with(L".orf") || pLower.ends_with(L".rw2") || 
-        pLower.ends_with(L".raf") || pLower.ends_with(L".pef") || pLower.ends_with(L".srw") || pLower.ends_with(L".cr3")) {
-        isRaw = true;
-    }
-    
-    // Update Toolbar Mismatch State
-    bool mismatch = CheckExtensionMismatch(path, g_currentMetadata.LoaderName);
-    g_toolbar.SetExtensionWarning(mismatch);
-    
-    // Force Toolbar Layout Update (Visibility change requires re-layout)
-    RECT rc; GetClientRect(hwnd, &rc);
-    g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
-    
-    g_toolbar.SetRawState(isRaw, g_runtime.ForceRawDecode);
-     
-    // Redraw
-    InvalidateRect(hwnd, nullptr, FALSE);
-
-
-
-    // 5. Adjust & Repaint
-    AdjustWindowToImage(hwnd);
-    InvalidateRect(hwnd, nullptr, FALSE);
-    
-    if (g_navigator.Count() > 0) {
-        std::wstring nextPath = g_navigator.PeekNext();
-        if (!nextPath.empty() && nextPath != g_prefetchedPath && nextPath != path) {
-             PrefetchImageAsync(hwnd, nextPath);
-        }
-    }
-    g_isLoading = false;
+    co_return; 
 }
 
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path) {
@@ -4323,6 +4376,9 @@ void OnPaint(HWND hwnd) {
         
         // Settings Overlay (Top Most)
         g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);
+        
+        // Debug HUD (Ctrl+D to toggle)
+        RenderDebugHUD(context, (float)rect.right, (float)rect.bottom);
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();

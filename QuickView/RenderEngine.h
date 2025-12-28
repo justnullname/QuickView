@@ -1,3 +1,4 @@
+#pragma once
 #include "pch.h"
 #include <dxgi1_3.h>
 #include <memory>

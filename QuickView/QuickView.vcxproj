@@ -120,6 +120,8 @@
     <ClInclude Include="SettingsOverlay.h" />
     <ClInclude Include="UpdateManager.h" />
     <ClInclude Include="PreviewExtractor.h" />
+    <ClInclude Include="ImageEngine.h" />
+    <ClInclude Include="MemoryArena.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -143,6 +145,7 @@
     <ClCompile Include="SettingsOverlay.cpp" />
     <ClCompile Include="UpdateManager.cpp" />
     <ClCompile Include="PreviewExtractor.cpp" />
+    <ClCompile Include="ImageEngine.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />

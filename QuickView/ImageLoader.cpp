@@ -392,6 +392,9 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // Step 2: Optimized Thumbnail Loading
 // ----------------------------------------------------------------------------
 
+// Forward declaration
+static void ApplyOrientationToThumbData(CImageLoader::ThumbData* pData, int orientation);
+
 HRESULT CImageLoader::LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData) {
     if (!pData || !pBuf || size == 0) return E_INVALIDARG;
 
@@ -455,8 +458,76 @@ HRESULT CImageLoader::LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, 
         return E_FAIL;
     }
 
+    // Apply EXIF Orientation
+    int orientation = ReadJpegExifOrientation(pBuf, size);
+    if (orientation != 1 && orientation >= 2 && orientation <= 8) {
+        ApplyOrientationToThumbData(pData, orientation);
+    }
+
     pData->isValid = true;
     return S_OK;
+}
+
+// Helper: Apply EXIF Orientation transform to ThumbData
+static void ApplyOrientationToThumbData(CImageLoader::ThumbData* pData, int orientation) {
+    if (!pData || pData->pixels.empty()) return;
+    
+    int w = pData->width;
+    int h = pData->height;
+    int stride = pData->stride;
+    
+    // Need rotation? (5,6,7,8)
+    bool rotate90 = (orientation >= 5 && orientation <= 8);
+    
+    std::vector<uint8_t> temp;
+    if (rotate90) {
+        // Output dimensions swap
+        int newW = h;
+        int newH = w;
+        int newStride = newW * 4;
+        temp.resize(newStride * newH);
+        
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                uint32_t pixel = *reinterpret_cast<uint32_t*>(&pData->pixels[y * stride + x * 4]);
+                int nx, ny;
+                switch (orientation) {
+                    case 5: nx = y; ny = w - 1 - x; break;  // Transpose + Flip V
+                    case 6: nx = h - 1 - y; ny = x; break;  // Rotate 90 CW
+                    case 7: nx = h - 1 - y; ny = w - 1 - x; break; // Rotate 90 CW + Flip H
+                    case 8: nx = y; ny = x; break;          // Rotate 90 CCW
+                    default: nx = x; ny = y; break;
+                }
+                *reinterpret_cast<uint32_t*>(&temp[ny * newStride + nx * 4]) = pixel;
+            }
+        }
+        pData->pixels = std::move(temp);
+        pData->width = newW;
+        pData->height = newH;
+        pData->stride = newStride;
+    } else {
+        // Horizontal/Vertical flip only (2,3,4)
+        temp.resize(stride * h);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                uint32_t pixel = *reinterpret_cast<uint32_t*>(&pData->pixels[y * stride + x * 4]);
+                int nx, ny;
+                switch (orientation) {
+                    case 2: nx = w - 1 - x; ny = y; break;      // Flip H
+                    case 3: nx = w - 1 - x; ny = h - 1 - y; break; // Rotate 180
+                    case 4: nx = x; ny = h - 1 - y; break;      // Flip V
+                    default: nx = x; ny = y; break;
+                }
+                *reinterpret_cast<uint32_t*>(&temp[ny * stride + nx * 4]) = pixel;
+            }
+        }
+        pData->pixels = std::move(temp);
+    }
+    
+    // Swap orig dimensions if rotated 90
+    if (rotate90) {
+        std::swap(pData->origWidth, pData->origHeight);
+    }
 }
 
 HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData) {
@@ -1243,6 +1314,100 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         WICBitmapCacheOnLoad, 
         ppBitmap
     );
+}
+
+// ============================================================================
+// PMR-Backed Loading (Zero-Copy for Heavy Lane)
+// ============================================================================
+HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName) {
+    if (!filePath || !pOutput || !pmr) return E_INVALIDARG;
+    
+    // Reset output
+    pOutput->isValid = false;
+    pOutput->pixels = std::pmr::vector<uint8_t>(pmr); // Re-bind to provided allocator
+    
+    // Detect format
+    std::wstring detectedFmt = DetectFormatFromContent(filePath);
+    
+    // --- JPEG Path (Highest Priority / Most Common) ---
+    if (detectedFmt == L"JPEG") {
+        std::vector<uint8_t> jpegBuf;
+        if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
+        
+        tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+        if (!tj) return E_FAIL;
+        
+        HRESULT hr = E_FAIL;
+        if (tj3DecompressHeader(tj, jpegBuf.data(), jpegBuf.size()) == 0) {
+            int width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+            int height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+            
+            if (width > 0 && height > 0) {
+                UINT stride = width * 4;
+                size_t bufSize = (size_t)stride * height;
+                
+                // Allocate directly from PMR
+                pOutput->pixels.resize(bufSize);
+                pOutput->width = width;
+                pOutput->height = height;
+                pOutput->stride = stride;
+                
+                if (tj3Decompress8(tj, jpegBuf.data(), jpegBuf.size(), 
+                                   pOutput->pixels.data(), stride, TJPF_BGRX) == 0) {
+                    pOutput->isValid = true;
+                    hr = S_OK;
+                    if (pLoaderName) *pLoaderName = L"TurboJPEG (PMR)";
+                }
+            }
+        }
+        tj3Destroy(tj);
+        if (SUCCEEDED(hr)) return hr;
+    }
+    
+    // --- Fallback: Use standard LoadToMemory then copy to PMR ---
+    // This is less efficient but ensures all formats work.
+    ComPtr<IWICBitmap> wicBitmap;
+    HRESULT hr = LoadToMemory(filePath, &wicBitmap, pLoaderName);
+    if (FAILED(hr) || !wicBitmap) return hr;
+    
+    UINT w, h;
+    wicBitmap->GetSize(&w, &h);
+    
+    UINT stride = w * 4;
+    size_t bufSize = (size_t)stride * h;
+    
+    pOutput->pixels.resize(bufSize);
+    pOutput->width = w;
+    pOutput->height = h;
+    pOutput->stride = stride;
+    
+    // Lock and copy
+    ComPtr<IWICBitmapLock> lock;
+    WICRect rcLock = { 0, 0, (INT)w, (INT)h };
+    hr = wicBitmap->Lock(&rcLock, WICBitmapLockRead, &lock);
+    if (SUCCEEDED(hr)) {
+        UINT cbStride = 0;
+        UINT cbBufferSize = 0;
+        BYTE* pData = nullptr;
+        lock->GetStride(&cbStride);
+        lock->GetDataPointer(&cbBufferSize, &pData);
+        
+        if (pData) {
+            // Copy row by row if strides differ
+            if (cbStride == stride) {
+                memcpy(pOutput->pixels.data(), pData, bufSize);
+            } else {
+                for (UINT y = 0; y < h; ++y) {
+                    memcpy(pOutput->pixels.data() + y * stride, 
+                           pData + y * cbStride, 
+                           std::min(stride, cbStride));
+                }
+            }
+            pOutput->isValid = true;
+        }
+    }
+    
+    return pOutput->isValid ? S_OK : E_FAIL;
 }
 
 std::wstring CImageLoader::GetLastFormatDetails() const {
