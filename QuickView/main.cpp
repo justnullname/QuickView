@@ -4385,8 +4385,8 @@ void OnPaint(HWND hwnd) {
         CalculateWindowControls(size);
         // DrawWindowControls(hwnd, context);  // MOVED TO UIRenderer (DComp Surface)
         
-        // Draw OSD
-        g_renderEngine->DrawOSD(g_osd);
+        // Draw OSD - MOVED TO UIRenderer (DComp Surface)
+        // g_renderEngine->DrawOSD(g_osd);
         
         // Draw Edge Navigation Indicators (Before Panels/Overlay)
         DrawNavIndicators(context);
@@ -4462,6 +4462,19 @@ void OnPaint(HWND hwnd) {
         
         // Sync pin state
         g_uiRenderer->SetPinActive(g_config.AlwaysOnTop);
+        
+        // Sync OSD state
+        if (g_osd.IsVisible()) {
+            float elapsed = (GetTickCount() - g_osd.StartTime) / 1000.0f;
+            float opacity = 1.0f - (elapsed / (g_osd.Duration / 1000.0f));
+            if (opacity > 0) {
+                g_uiRenderer->SetOSD(g_osd.Message, opacity);
+            } else {
+                g_uiRenderer->SetOSD(L"", 0);
+            }
+        } else {
+            g_uiRenderer->SetOSD(L"", 0);
+        }
         
         g_uiRenderer->MarkDirty();
         
