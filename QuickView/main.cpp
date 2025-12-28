@@ -5,6 +5,7 @@
 #include "ImageLoader.h"
 #include "ImageEngine.h"
 #include "CompositionEngine.h"
+#include "UIRenderer.h"
 #include <d2d1_1helper.h>
 //#include <mimalloc-new-delete.h>
 #include "LosslessTransform.h"
@@ -148,6 +149,7 @@ static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
 static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
+static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
 static bool g_isBlurry = false; // For Motion Blur effect
@@ -1687,6 +1689,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
         // Bind SwapChain to Image Visual
         g_compEngine->SetImageSwapChain(g_renderEngine->GetSwapChain());
+        
+        // Initialize UI Renderer (renders to independent DComp Surface)
+        g_uiRenderer = std::make_unique<UIRenderer>();
+        g_uiRenderer->Initialize(g_compEngine.get(), g_renderEngine->m_dwriteFactory.Get());
     }
     
     // Init Gallery
@@ -3568,6 +3574,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 void OnResize(HWND hwnd, UINT width, UINT height) { 
     if (g_renderEngine) g_renderEngine->Resize(width, height);
     if (g_compEngine) g_compEngine->Resize(width, height);
+    if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
 }
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
@@ -4417,6 +4424,9 @@ void OnPaint(HWND hwnd) {
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
+    
+    // Render UI to independent DComp Surface
+    if (g_uiRenderer) g_uiRenderer->Render(hwnd);
     
     // Commit DirectComposition
     if (g_compEngine) g_compEngine->Commit();

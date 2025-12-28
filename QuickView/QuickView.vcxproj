@@ -123,6 +123,7 @@
     <ClInclude Include="ImageEngine.h" />
     <ClInclude Include="MemoryArena.h" />
     <ClInclude Include="CompositionEngine.h" />
+    <ClInclude Include="UIRenderer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -148,6 +149,7 @@
     <ClCompile Include="PreviewExtractor.cpp" />
     <ClCompile Include="ImageEngine.cpp" />
     <ClCompile Include="CompositionEngine.cpp" />
+    <ClCompile Include="UIRenderer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />
