@@ -4429,7 +4429,11 @@ void OnPaint(HWND hwnd) {
     if (g_uiRenderer) {
         // Sync state from main.cpp
         g_uiRenderer->SetDebugHUDVisible(g_showDebugHUD);
-        g_uiRenderer->MarkDirty();  // Force update each frame for now
+        
+        // Sync FPS stats
+        g_uiRenderer->SetDebugStats(g_fps, (size_t)0, 0, 0);
+        
+        g_uiRenderer->MarkDirty();  // Force update each frame
         
         // Ensure size is set
         RECT rc; GetClientRect(hwnd, &rc);
