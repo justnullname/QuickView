@@ -4426,7 +4426,19 @@ void OnPaint(HWND hwnd) {
     g_renderEngine->Present();
     
     // Render UI to independent DComp Surface
-    if (g_uiRenderer) g_uiRenderer->Render(hwnd);
+    if (g_uiRenderer) {
+        // Sync state from main.cpp
+        g_uiRenderer->SetDebugHUDVisible(g_showDebugHUD);
+        g_uiRenderer->MarkDirty();  // Force update each frame for now
+        
+        // Ensure size is set
+        RECT rc; GetClientRect(hwnd, &rc);
+        if (rc.right > 0 && rc.bottom > 0) {
+            g_uiRenderer->OnResize((UINT)rc.right, (UINT)rc.bottom);
+        }
+        
+        g_uiRenderer->Render(hwnd);
+    }
     
     // Commit DirectComposition
     if (g_compEngine) g_compEngine->Commit();
