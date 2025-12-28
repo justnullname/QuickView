@@ -163,7 +163,7 @@ static ViewState g_viewState;
 static FileNavigator g_navigator; // New Navigator
 static ThumbnailManager g_thumbMgr;
 static GalleryOverlay g_gallery;
-static Toolbar g_toolbar;
+Toolbar g_toolbar;  // Non-static for extern access from UIRenderer
 static SettingsOverlay g_settingsOverlay;
 static CImageLoader::ImageMetadata g_currentMetadata;
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
@@ -4411,8 +4411,8 @@ void OnPaint(HWND hwnd) {
             g_gallery.Render(context, rtSize);
         }
 
-        // Toolbar (Top of Gallery?)
-        g_toolbar.Render(context);
+        // Toolbar - MOVED TO UIRenderer (DComp Surface)
+        // g_toolbar.Render(context);
 
         DrawDialog(context, rect);
         

@@ -1,8 +1,12 @@
 #include "pch.h"
 #include "UIRenderer.h"
+#include "Toolbar.h"
 #include <psapi.h>
 
 #pragma comment(lib, "psapi.lib")
+
+// External globals
+extern Toolbar g_toolbar;
 
 // ============================================================================
 // UIRenderer Implementation
@@ -90,6 +94,9 @@ bool UIRenderer::Render(HWND hwnd) {
     DrawWindowControls(dc, hwnd);
     DrawOSD(dc);
     if (m_showDebugHUD) DrawDebugHUD(dc);
+    
+    // Render Toolbar (external class)
+    g_toolbar.Render(dc);
     
     m_compEngine->EndUIUpdate();
     m_isDirty = false;
