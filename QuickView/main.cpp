@@ -4,6 +4,7 @@
 #include "RenderEngine.h"
 #include "ImageLoader.h"
 #include "ImageEngine.h"
+#include "CompositionEngine.h"
 #include <d2d1_1helper.h>
 //#include <mimalloc-new-delete.h>
 #include "LosslessTransform.h"
@@ -146,6 +147,7 @@ static const wchar_t* g_szWindowTitle = L"QuickView 2026";
 static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
+static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
 static bool g_isBlurry = false; // For Motion Blur effect
@@ -1679,6 +1681,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
+    
+    // Initialize DirectComposition (hybrid architecture)
+    g_compEngine = std::make_unique<CompositionEngine>();
+    if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
+        // Bind SwapChain to Image Visual
+        g_compEngine->SetImageSwapChain(g_renderEngine->GetSwapChain());
+    }
     
     // Init Gallery
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
@@ -3540,7 +3549,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 }
 
 void OnResize(HWND hwnd, UINT width, UINT height) { 
-    if (g_renderEngine) g_renderEngine->Resize(width, height); 
+    if (g_renderEngine) g_renderEngine->Resize(width, height);
+    if (g_compEngine) g_compEngine->Resize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
 }
 FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
@@ -4382,6 +4392,9 @@ void OnPaint(HWND hwnd) {
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
+    
+    // Commit DirectComposition
+    if (g_compEngine) g_compEngine->Commit();
 
     ValidateRect(hwnd, nullptr);
 }

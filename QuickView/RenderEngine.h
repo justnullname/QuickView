@@ -65,6 +65,11 @@ public:
     /// Get WIC factory
     /// </summary>
     IWICImagingFactory* GetWICFactory() const { return m_wicFactory.Get(); }
+    
+    // === DComp Integration Getters ===
+    ID3D11Device* GetD3DDevice() const { return m_d3dDevice.Get(); }
+    ID2D1Device* GetD2DDevice() const { return m_d2dDevice.Get(); }
+    IDXGISwapChain1* GetSwapChain() const { return m_swapChain.Get(); }
 
 private:
     HRESULT CreateDeviceResources();

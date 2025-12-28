@@ -122,6 +122,7 @@
     <ClInclude Include="PreviewExtractor.h" />
     <ClInclude Include="ImageEngine.h" />
     <ClInclude Include="MemoryArena.h" />
+    <ClInclude Include="CompositionEngine.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -146,6 +147,7 @@
     <ClCompile Include="UpdateManager.cpp" />
     <ClCompile Include="PreviewExtractor.cpp" />
     <ClCompile Include="ImageEngine.cpp" />
+    <ClCompile Include="CompositionEngine.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />
