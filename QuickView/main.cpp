@@ -1910,16 +1910,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         ScreenToClient(hwnd, &pt);
         
         // Custom title bar area (top captionHeight pixels)
-        // Exclude window control buttons (right side)
         int btnWidth = 46 * 4;  // 4 buttons: pin/min/max/close
+        int infoPanelWidth = 350;  // Approximate width of lite info panel
         RECT clientRc; GetClientRect(hwnd, &clientRc);
         
         if (pt.y < captionHeight) {
-            // Check if over window control buttons
+            // Check if over window control buttons (right side)
             if (pt.x > clientRc.right - btnWidth) {
                 return HTCLIENT;  // Let button handlers process this
             }
-            return HTCAPTION;  // Title bar drag area
+            // Check if over Info Panel area (left side) - allow clicks for [+]/[x] buttons
+            if (pt.x < infoPanelWidth) {
+                return HTCLIENT;  // Let info panel button handlers process this
+            }
+            return HTCAPTION;  // Title bar drag area (middle section)
         }
         
         return HTCLIENT;
@@ -3628,12 +3632,20 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Use pre-read metadata from Heavy Lane (no UI blocking!)
                 g_currentMetadata = evt.metadata;
                 
+                // Apply EXIF orientation for view state
+                g_viewState.ExifOrientation = 1;  // Default
+                // Parse EXIF orientation from metadata if available
+                // (The metadata should already include parsed orientation)
+                
                 // Title
                 wchar_t titleBuf[512];
                 swprintf_s(titleBuf, L"%s - %s", 
                     evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
                     g_szWindowTitle);
                 SetWindowTextW(hwnd, titleBuf);
+                
+                // Auto-fit window to image size
+                AdjustWindowToImage(hwnd);
                 
                 // Recalc layout
                 g_toolbar.UpdateLayout(0,0);
