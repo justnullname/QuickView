@@ -1911,7 +1911,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // Custom title bar area (top captionHeight pixels)
         // Exclude window control buttons (right side)
-        int btnWidth = 46 * 3;  // 3 buttons: min/max/close
+        int btnWidth = 46 * 4;  // 4 buttons: pin/min/max/close
         RECT clientRc; GetClientRect(hwnd, &clientRc);
         
         if (pt.y < captionHeight) {
