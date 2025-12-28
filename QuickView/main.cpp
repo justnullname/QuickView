@@ -2294,7 +2294,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
-        // 1. Settings / Update Toast (Always check layout/click first)
+        // 0. Window control buttons - HIGHEST PRIORITY
+        if (g_winControls.HoverState != WindowHit::None) {
+            switch (g_winControls.HoverState) {
+                case WindowHit::Close: SendMessage(hwnd, WM_CLOSE, 0, 0); return 0;
+                case WindowHit::Max: ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); return 0;
+                case WindowHit::Min: ShowWindow(hwnd, SW_MINIMIZE); return 0;
+                case WindowHit::Pin: SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0); return 0;
+                default: break;
+            }
+        }
+        
+        // 1. Settings / Update Toast
         if (g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y)) {
              InvalidateRect(hwnd, nullptr, FALSE);
              return 0; 
@@ -2304,18 +2315,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (g_settingsOverlay.IsVisible()) {
             g_settingsOverlay.SetVisible(false);
             InvalidateRect(hwnd, nullptr, FALSE);
-            return 0; // Consume close click
-        }
-        
-        // Window control buttons click handling
-        if (g_showControls && g_winControls.HoverState != WindowHit::None) {
-            switch (g_winControls.HoverState) {
-                case WindowHit::Close: SendMessage(hwnd, WM_CLOSE, 0, 0); return 0;
-                case WindowHit::Max: ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); return 0;
-                case WindowHit::Min: ShowWindow(hwnd, SW_MINIMIZE); return 0;
-                case WindowHit::Pin: SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0); return 0;
-                default: break;
-            }
+            return 0;
         }
         
         if (g_gallery.IsVisible()) {
