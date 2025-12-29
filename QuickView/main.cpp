@@ -1768,6 +1768,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     
     ShowWindow(hwnd, nCmdShow); UpdateWindow(hwnd);
     
+    // Initialize Toolbar layout with window size (fixes initial rendering issue)
+    {
+        RECT rc; GetClientRect(hwnd, &rc);
+        g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
+        CalculateWindowControls(D2D1::SizeF((float)rc.right, (float)rc.bottom));
+        // Force initial render of all UI layers
+        RequestRepaint(PaintLayer::All);
+    }
+    
     int argc = 0; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argc > 1) {
         g_navigator.Initialize(argv[1]);
