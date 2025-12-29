@@ -179,7 +179,6 @@ HRESULT CompositionEngine::EndLayerUpdate(UILayer layer) {
     
     if (!data.isDrawing) return E_FAIL;
     
-    // 重置变换
     data.context->SetTransform(D2D1::Matrix3x2F::Identity());
     
     HRESULT hr = data.context->EndDraw();

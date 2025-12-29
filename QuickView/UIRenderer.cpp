@@ -91,6 +91,11 @@ void UIRenderer::OnResize(UINT width, UINT height) {
     m_width = width;
     m_height = height;
     
+    // CRITICAL: Resize DComp surfaces - without this, BeginLayerUpdate returns null!
+    if (m_compEngine && width > 0 && height > 0) {
+        m_compEngine->Resize(width, height);
+    }
+    
     g_toolbar.UpdateLayout((float)width, (float)height);
     
     // 大小改变时，所有层都需要重绘

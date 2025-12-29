@@ -81,6 +81,14 @@ void Toolbar::Init(ID2D1RenderTarget* pRT) {
 }
 
 void Toolbar::UpdateLayout(float winW, float winH) {
+    // Skip layout if window has no valid size yet
+    if (winW <= 0 || winH <= 0) return;
+    
+    // Cache last size to avoid redundant layout calculations
+    static float s_lastW = 0, s_lastH = 0;
+    if (winW == s_lastW && winH == s_lastH) return;
+    s_lastW = winW;
+    s_lastH = winH;
     
     // Simpler: Count visible buttons
     int visibleCount = 0;
@@ -172,16 +180,18 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
             
             // Rotate Mirroring check
             if (btn.id == ToolbarButtonID::RotateL) {
-                 // Manual mirror? Or just render. Rotate icon usually implies CW.
-                 // For CCW, we can flip using matrix or just accept it.
-                 // Let's use matrix to flip horizontally for RotateL if needed.
-                 // Center of button
-                 // D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, center)
+                 // Save current transform (includes drawOffset from CompositionEngine)
+                 D2D1::Matrix3x2F originalTransform;
+                 pRT->GetTransform(&originalTransform);
+                 
+                 // Apply flip around button center
                  float cx = (btn.rect.left + btn.rect.right)/2;
                  float cy = (btn.rect.top + btn.rect.bottom)/2;
-                 pRT->SetTransform(D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, D2D1::Point2F(cx, cy)));
+                 pRT->SetTransform(originalTransform * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, D2D1::Point2F(cx, cy)));
                  pRT->DrawText(&icon, 1, m_textFormatIcon.Get(), btn.rect, pBrush);
-                 pRT->SetTransform(D2D1::Matrix3x2F::Identity());
+                 
+                 // Restore original transform
+                 pRT->SetTransform(originalTransform);
                  continue;
             }
             

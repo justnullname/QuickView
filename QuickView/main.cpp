@@ -1908,10 +1908,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Gallery Fade Timer (998)
         if (wParam == 998) {
             if (g_gallery.IsVisible()) {
-                RequestRepaint(PaintLayer::Gallery);  // Gallery layer
-                // Stop timer if opacity reached full
-                if (g_gallery.GetOpacity() >= 1.0f) {
-                     KillTimer(hwnd, 998);
+                // Only repaint while opacity is changing (animation)
+                float opacity = g_gallery.GetOpacity();
+                if (opacity < 1.0f) {
+                    RequestRepaint(PaintLayer::Gallery);  // Still animating
+                } else {
+                    KillTimer(hwnd, 998);  // Animation complete
                 }
             } else {
                 KillTimer(hwnd, 998);
@@ -1927,18 +1929,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             bool animating = g_toolbar.UpdateAnimation();
             
+            // Only refresh when actually animating (opacity changing)
+            if (animating) {
+                MarkStaticLayerDirty();  // Toolbar opacity is changing
+            }
+            
             // Keep timer alive if animating or pending hide
             if (animating || (g_toolbar.IsVisible() && !g_toolbar.IsPinned() && g_toolbarHideTime > 0)) {
-                MarkStaticLayerDirty();  // Toolbar is on Static layer (includes InvalidateRect)
+                // Timer stays alive but only marks dirty during animation
             } else {
                 KillTimer(hwnd, 997);
             }
         }
         
-        // Debug HUD Refresh Timer (996)
+        // Debug HUD Refresh Timer (996) - intentionally high frequency for FPS display
+        // This is acceptable for debug mode, but KillTimer when not needed
         if (wParam == 996) {
             if (g_showDebugHUD) {
-                MarkDynamicLayerDirty();  // Debug HUD (includes InvalidateRect)
+                MarkDynamicLayerDirty();  // Debug HUD needs frequent updates for FPS
             } else {
                 KillTimer(hwnd, 996);
             }
@@ -2071,6 +2079,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           if (inZone || g_toolbar.IsPinned()) {
               if (!g_toolbar.IsVisible()) {  // Only repaint if state actually changes
                   g_toolbar.SetVisible(true);
+                  SetTimer(hwnd, 997, 16, nullptr);  // Start animation timer immediately
                   RequestRepaint(PaintLayer::Static);  // Toolbar visibility changed
               }
               s_hideRequestTime = 0;
@@ -2096,11 +2105,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
               SetCursor(LoadCursor(nullptr, IDC_HAND));
           }
           
-          SetTimer(hwnd, 997, 16, nullptr); // Drive animation/latency logic
-          // Force redraw for hover effects when toolbar is visible
-          if (g_toolbar.IsVisible() || g_runtime.ShowInfoPanel) {
-              MarkStaticLayerDirty();  // Toolbar and InfoPanel (includes InvalidateRect)
-          }
+          SetTimer(hwnd, 997, 16, nullptr); // Drive animation logic
+          // Note: Toolbar.OnMouseMove handles hover state changes and 
+          // WM_TIMER 997 will refresh if animation is active
          // Update Button Hover
          WindowHit oldHit = g_winControls.HoverState;
          g_winControls.HoverState = WindowHit::None;
@@ -4548,8 +4555,8 @@ void OnPaint(HWND hwnd) {
             g_uiRenderer->SetOSD(L"", 0);
         }
         
-        // No longer force MarkDirty every frame - layers only update when state changes
-        // g_uiRenderer->MarkDirty();
+        // Dirty flags are managed by RequestRepaint() system
+        // Static layer only redraws when state actually changes
         
         // Ensure size
         RECT rc; GetClientRect(hwnd, &rc);
