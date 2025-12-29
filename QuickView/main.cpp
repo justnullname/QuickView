@@ -4373,8 +4373,8 @@ void OnPaint(HWND hwnd) {
         // Draw OSD - MOVED TO UIRenderer (DComp Surface)
         // g_renderEngine->DrawOSD(g_osd);
         
-        // Draw Edge Navigation Indicators (Before Panels/Overlay)
-        DrawNavIndicators(context);
+        // Draw Edge Navigation Indicators - MOVED TO UIRenderer (DComp Surface)
+        // DrawNavIndicators(context);
         
         // Draw Info Panel - MOVED TO UIRenderer (DComp Surface)
         // if (g_runtime.ShowInfoPanel) {
@@ -4385,8 +4385,8 @@ void OnPaint(HWND hwnd) {
         //      }
         // }
         
-        // Draw Tooltip (from grid hover)
-        DrawGridTooltip(context);
+        // Draw Tooltip - MOVED TO UIRenderer (DComp Surface)
+        // DrawGridTooltip(context);
         
         // --- Gallery Overlay - MOVED TO UIRenderer (DComp Surface)
         // g_gallery.Update(0.016f);
@@ -4398,7 +4398,8 @@ void OnPaint(HWND hwnd) {
         // Toolbar - MOVED TO UIRenderer (DComp Surface)
         // g_toolbar.Render(context);
 
-        DrawDialog(context, rect);
+        // DrawDialog - MOVED TO UIRenderer (DComp Surface)
+        // DrawDialog(context, rect);
         
         // Settings Overlay - MOVED TO UIRenderer (DComp Surface)
         // g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);

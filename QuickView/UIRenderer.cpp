@@ -16,6 +16,9 @@ extern SettingsOverlay g_settingsOverlay;
 // External functions from main.cpp for Info Panel rendering
 extern void DrawInfoPanel(ID2D1DeviceContext* context);
 extern void DrawCompactInfo(ID2D1DeviceContext* context);
+extern void DrawNavIndicators(ID2D1DeviceContext* context);
+extern void DrawGridTooltip(ID2D1DeviceContext* context);
+extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 
 extern RuntimeConfig g_runtime;
 
@@ -131,6 +134,16 @@ bool UIRenderer::Render(HWND hwnd) {
     
     // Render Settings Overlay (Top Most)
     g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
+    
+    // Draw Edge Navigation Indicators
+    DrawNavIndicators(dc);
+    
+    // Draw Grid Tooltip
+    DrawGridTooltip(dc);
+    
+    // Draw Modal Dialog (Top Most after Settings)
+    RECT clientRect = { 0, 0, (LONG)m_width, (LONG)m_height };
+    DrawDialog(dc, clientRect);
     
     m_compEngine->EndUIUpdate();
     m_isDirty = false;
