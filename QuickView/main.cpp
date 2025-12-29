@@ -870,7 +870,7 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     g_dialog.IsChecked = false;
     g_dialog.FinalResult = DialogResult::None;
     
-    InvalidateRect(hwnd, nullptr, FALSE);
+    RequestRepaint(PaintLayer::Dynamic);
     UpdateWindow(hwnd); 
     
     MSG msgStruct;
@@ -878,14 +878,14 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
         if (msgStruct.message == WM_KEYDOWN) {
             if (msgStruct.wParam == VK_LEFT) {
                 if (g_dialog.SelectedButtonIndex > 0) g_dialog.SelectedButtonIndex--;
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::Dynamic);
             } else if (msgStruct.wParam == VK_RIGHT) {
                 if (g_dialog.SelectedButtonIndex < g_dialog.Buttons.size() - 1) g_dialog.SelectedButtonIndex++;
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::Dynamic);
             } else if (msgStruct.wParam == VK_TAB || msgStruct.wParam == VK_SPACE) { 
                  if (g_dialog.HasCheckbox) {
                      g_dialog.IsChecked = !g_dialog.IsChecked;
-                     InvalidateRect(hwnd, nullptr, FALSE);
+                     RequestRepaint(PaintLayer::Dynamic);
                  }
             } else if (msgStruct.wParam == VK_RETURN) {
                 g_dialog.FinalResult = g_dialog.Buttons[g_dialog.SelectedButtonIndex].Result;
@@ -909,7 +909,7 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
                 D2D1_RECT_F checkHit = D2D1::RectF(layout.Checkbox.left - 5, layout.Checkbox.top - 5, layout.Box.right - 20, layout.Checkbox.bottom + 5); 
                 if (mouseX >= checkHit.left && mouseX <= checkHit.right && mouseY >= checkHit.top && mouseY <= checkHit.bottom) {
                     g_dialog.IsChecked = !g_dialog.IsChecked;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::Dynamic);
                     handled = true;
                 }
             }
@@ -936,7 +936,7 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
         }
     }
     
-    InvalidateRect(hwnd, nullptr, FALSE);
+    RequestRepaint(PaintLayer::Dynamic);
     return g_dialog.FinalResult;
 }
 
@@ -1055,7 +1055,7 @@ LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         else g_hoverBtn = -1;
 
         if (oldHover != g_hoverBtn) {
-            InvalidateRect(hwnd, nullptr, FALSE); // Redraw
+            RequestRepaint(PaintLayer::Dynamic); // Redraw
             
             if (g_hoverBtn != -1) { // Track mouse leave
                 TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -1067,7 +1067,7 @@ LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     case WM_MOUSELEAVE: {
         if (g_hoverBtn != -1) {
             g_hoverBtn = -1;
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::Dynamic);
         }
         return 0;
     }
@@ -1076,7 +1076,7 @@ LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (PtInRect(&g_rcOk, pt) || PtInRect(&g_rcCancel, pt)) {
             g_isMouseDown = true;
             SetCapture(hwnd);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::Dynamic);
         }
         return 0;
     }
@@ -1084,7 +1084,7 @@ LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (g_isMouseDown) {
             g_isMouseDown = false;
             ReleaseCapture();
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::Dynamic);
             
             POINT pt = { LOWORD(lParam), HIWORD(lParam) };
             if (g_hoverBtn == 0 && PtInRect(&g_rcOk, pt)) {
@@ -1863,11 +1863,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 return wstrTo;
             };
             g_settingsOverlay.ShowUpdateToast(ToWide(info.version), ToWide(info.changelog));
-            InvalidateRect(hwnd, nullptr, FALSE); // Redraw immediately
+            RequestRepaint(PaintLayer::Static);  // Settings overlay is on Static layer
         } else {
             // Just refresh UI (e.g. stop spinner)
             g_settingsOverlay.BuildMenu();
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::Static);
         }
         return 0;
     }
@@ -1885,21 +1885,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
             g_viewState.IsInteracting = false;  // End interaction mode
-            InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
+            RequestRepaint(PaintLayer::Image);  // Redraw image with high quality
         }
         
         // OSD Timer (999) - Heartbeat/Expiration check
         if (wParam == OSD_TIMER_ID) {
              if (!g_osd.IsVisible()) {
                  KillTimer(hwnd, OSD_TIMER_ID);
-                 InvalidateRect(hwnd, nullptr, FALSE); // Clear it (redraw without OSD)
+                 RequestRepaint(PaintLayer::Dynamic);  // OSD is on Dynamic layer
              }
         }
         
         // Gallery Fade Timer (998)
         if (wParam == 998) {
             if (g_gallery.IsVisible()) {
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::Gallery);  // Gallery layer
                 // Stop timer if opacity reached full
                 if (g_gallery.GetOpacity() >= 1.0f) {
                      KillTimer(hwnd, 998);
