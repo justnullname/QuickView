@@ -118,21 +118,9 @@ bool UIRenderer::RenderAll(HWND hwnd) {
     
     EnsureTextFormats();
     
-    // Auto-dirty tracking for animated/dynamic content
-    // Gallery has animations (fade, scroll) so needs update when visible
-    if (g_gallery.IsVisible()) {
-        MarkGalleryDirty();
-    }
-    
-    // Settings has animations, mark static when visible
-    if (g_settingsOverlay.IsVisible()) {
-        MarkStaticDirty();
-    }
-    
-    // Toolbar auto-show needs static layer update
-    if (g_toolbar.IsVisible()) {
-        MarkStaticDirty();
-    }
+    // Note: Dirty flags are now managed by RequestRepaint() system.
+    // DO NOT add auto-dirty checks here - they can block initial rendering.
+    // RequestRepaint() should be called when UI state changes.
     
     // ===== Static Layer (低频更新) =====
     if (m_isStaticDirty) {
