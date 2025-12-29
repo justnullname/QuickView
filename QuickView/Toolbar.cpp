@@ -187,7 +187,8 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
                  // Apply flip around button center
                  float cx = (btn.rect.left + btn.rect.right)/2;
                  float cy = (btn.rect.top + btn.rect.bottom)/2;
-                 pRT->SetTransform(originalTransform * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, D2D1::Point2F(cx, cy)));
+                 // Scale * Original (Apply scale in logic space, then transform to surface space)
+                 pRT->SetTransform(D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, D2D1::Point2F(cx, cy)) * originalTransform);
                  pRT->DrawText(&icon, 1, m_textFormatIcon.Get(), btn.rect, pBrush);
                  
                  // Restore original transform

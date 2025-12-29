@@ -2045,7 +2045,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           }
           
           // Edge Navigation Hover Detection
-          if (g_config.EdgeNavClick && !g_gallery.IsVisible()) {
+          if (g_config.EdgeNavClick && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible()) {
               RECT rcv; GetClientRect(hwnd, &rcv);
               int w = rcv.right - rcv.left;
               int h = rcv.bottom - rcv.top;
