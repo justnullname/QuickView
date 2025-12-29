@@ -78,6 +78,9 @@ void UIRenderer::EnsureTextFormats() {
 }
 
 void UIRenderer::OnResize(UINT width, UINT height) {
+    // Early out if size hasn't changed
+    if (width == m_width && height == m_height) return;
+    
     m_width = width;
     m_height = height;
     

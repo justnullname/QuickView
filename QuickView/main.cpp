@@ -4461,7 +4461,8 @@ void OnPaint(HWND hwnd) {
             g_uiRenderer->SetOSD(L"", 0);
         }
         
-        g_uiRenderer->MarkDirty();
+        // No longer force MarkDirty every frame - layers only update when state changes
+        // g_uiRenderer->MarkDirty();
         
         // Ensure size
         RECT rc; GetClientRect(hwnd, &rc);
