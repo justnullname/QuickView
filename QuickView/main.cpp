@@ -3624,6 +3624,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Use pre-read metadata from Heavy Lane (no UI blocking!)
                 g_currentMetadata = evt.metadata;
                 
+                // Trigger histogram calculation if Info Panel is expanded
+                if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty()) {
+                    UpdateHistogramAsync(hwnd, evt.filePath);
+                }
+                
                 // Apply EXIF orientation for view state
                 g_viewState.ExifOrientation = 1;  // Default
                 // Parse EXIF orientation from metadata if available
