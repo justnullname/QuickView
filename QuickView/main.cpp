@@ -578,26 +578,57 @@ struct WindowControls {
 };
 static WindowControls g_winControls;
 
-// Helper: Mark all UI layers dirty when window needs repaint
-// Call this alongside InvalidateRect to ensure UIRenderer updates
-inline void MarkAllUILayersDirty() {
+// ============================================================================
+// Unified Repaint Request System - 统一重绘请求系统
+// ============================================================================
+// 所有重绘请求都通过 RequestRepaint() 统一入口
+// 严禁直接调用 InvalidateRect，必须使用此系统
+// ============================================================================
+
+enum class PaintLayer : uint32_t {
+    None    = 0,
+    Static  = 1 << 0,   // Toolbar, Window Controls, Info Panel, Settings
+    Dynamic = 1 << 1,   // HUD, OSD, Tooltip, Dialog
+    Gallery = 1 << 2,   // Gallery Overlay
+    Image   = 1 << 3,   // Main SwapChain (图片层)
+    All     = 0xFF
+};
+
+// 支持位运算
+inline PaintLayer operator|(PaintLayer a, PaintLayer b) {
+    return static_cast<PaintLayer>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+inline PaintLayer operator&(PaintLayer a, PaintLayer b) {
+    return static_cast<PaintLayer>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+inline bool HasLayer(PaintLayer flags, PaintLayer layer) {
+    return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(layer)) != 0;
+}
+
+// Global window handle for RequestRepaint (set in wWinMain)
+static HWND g_mainHwnd = nullptr;
+
+// ✅ 统一重绘请求入口 - 所有地方只调这个函数
+void RequestRepaint(PaintLayer layer) {
+    // 1. 设置对应层的脏标记
     if (g_uiRenderer) {
-        g_uiRenderer->MarkStaticDirty();
-        g_uiRenderer->MarkDynamicDirty();
-        g_uiRenderer->MarkGalleryDirty();
+        if (HasLayer(layer, PaintLayer::Static))  g_uiRenderer->MarkStaticDirty();
+        if (HasLayer(layer, PaintLayer::Dynamic)) g_uiRenderer->MarkDynamicDirty();
+        if (HasLayer(layer, PaintLayer::Gallery)) g_uiRenderer->MarkGalleryDirty();
+    }
+    
+    // 2. 触发 Windows 消息循环唤醒 WM_PAINT
+    // 在 DComp 架构下，这只是唤醒 OnPaint，实际画什么由脏标记决定
+    if (g_mainHwnd) {
+        ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
     }
 }
 
-// Specific layer dirty markers for optimized updates
-inline void MarkStaticLayerDirty() {
-    if (g_uiRenderer) g_uiRenderer->MarkStaticDirty();
-}
-inline void MarkDynamicLayerDirty() {
-    if (g_uiRenderer) g_uiRenderer->MarkDynamicDirty();
-}
-inline void MarkGalleryLayerDirty() {
-    if (g_uiRenderer) g_uiRenderer->MarkGalleryDirty();
-}
+// 便捷宏 (保持向后兼容)
+#define MarkStaticLayerDirty() RequestRepaint(PaintLayer::Static)
+#define MarkDynamicLayerDirty() RequestRepaint(PaintLayer::Dynamic)
+#define MarkGalleryLayerDirty() RequestRepaint(PaintLayer::Gallery)
+#define MarkAllUILayersDirty() RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic | PaintLayer::Gallery)
 
 void CalculateWindowControls(D2D1_SIZE_F size) {
     float btnW = 46.0f;
@@ -1697,6 +1728,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
     
+    // Set global hwnd for RequestRepaint system
+    g_mainHwnd = hwnd;
+    
     // Note: LoadConfig was already called early for SingleInstance check
     // Just sync runtime state
     g_runtime.SyncFrom(g_config);
@@ -1884,10 +1918,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             bool animating = g_toolbar.UpdateAnimation();
             
-            // Keep timer alive if motivating factor exists (Animation OR Pending Hide)
+            // Keep timer alive if animating or pending hide
             if (animating || (g_toolbar.IsVisible() && !g_toolbar.IsPinned() && g_toolbarHideTime > 0)) {
-                InvalidateRect(hwnd, nullptr, FALSE);
-                MarkStaticLayerDirty();  // Toolbar is on Static layer
+                MarkStaticLayerDirty();  // Toolbar is on Static layer (includes InvalidateRect)
             } else {
                 KillTimer(hwnd, 997);
             }
@@ -1896,8 +1929,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Debug HUD Refresh Timer (996)
         if (wParam == 996) {
             if (g_showDebugHUD) {
-                InvalidateRect(hwnd, nullptr, FALSE);
-                MarkDynamicLayerDirty();  // Debug HUD is on Dynamic layer
+                MarkDynamicLayerDirty();  // Debug HUD (includes InvalidateRect)
             } else {
                 KillTimer(hwnd, 996);
             }
@@ -2055,8 +2087,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           SetTimer(hwnd, 997, 16, nullptr); // Drive animation/latency logic
           // Force redraw for hover effects when toolbar is visible
           if (g_toolbar.IsVisible() || g_runtime.ShowInfoPanel) {
-              InvalidateRect(hwnd, nullptr, FALSE);
-              MarkStaticLayerDirty();  // Toolbar and InfoPanel are on Static layer
+              MarkStaticLayerDirty();  // Toolbar and InfoPanel (includes InvalidateRect)
           }
          // Update Button Hover
          WindowHit oldHit = g_winControls.HoverState;
@@ -2100,8 +2131,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 TrackMouseEvent(&tme);
                 isTracking = true;
              }
-             InvalidateRect(hwnd, nullptr, FALSE);
-             MarkStaticLayerDirty();  // Window Controls hover change
+             MarkStaticLayerDirty();  // Window Controls hover change (includes InvalidateRect)
          }
          
          // Middle button window drag
