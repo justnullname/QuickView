@@ -29,7 +29,7 @@ public:
     bool RenderAll(HWND hwnd);  // 渲染所有需要更新的层
     
     // ===== UI 状态更新 =====
-    void SetOSD(const std::wstring& text, float opacity);
+    void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
     void SetDebugStats(float fps, size_t memMB, int scoutQueue, int heavyState);
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
@@ -58,6 +58,7 @@ private:
     // OSD 状态
     std::wstring m_osdText;
     float m_osdOpacity = 0.0f;
+    D2D1_COLOR_F m_osdColor = D2D1::ColorF(D2D1::ColorF::White);
     
     // Debug HUD
     bool m_showDebugHUD = false;

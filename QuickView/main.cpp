@@ -3647,6 +3647,12 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Recalc layout
                 g_toolbar.UpdateLayout(0,0);
                 
+                // Mark UI layers dirty after image switch
+                if (g_uiRenderer) {
+                    g_uiRenderer->MarkStaticDirty();
+                    g_uiRenderer->MarkGalleryDirty();
+                }
+                
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             break;
@@ -4458,7 +4464,15 @@ void OnPaint(HWND hwnd) {
             float elapsed = (GetTickCount() - g_osd.StartTime) / 1000.0f;
             float opacity = 1.0f - (elapsed / (g_osd.Duration / 1000.0f));
             if (opacity > 0) {
-                g_uiRenderer->SetOSD(g_osd.Message, opacity);
+                // Resolve text color from OSDState
+                D2D1_COLOR_F osdColor = g_osd.CustomColor;
+                if (osdColor.a == 0.0f) {
+                    // No custom color - use default based on type
+                    if (g_osd.IsError) osdColor = D2D1::ColorF(D2D1::ColorF::Red);
+                    else if (g_osd.IsWarning) osdColor = D2D1::ColorF(D2D1::ColorF::Yellow);
+                    else osdColor = D2D1::ColorF(D2D1::ColorF::White);
+                }
+                g_uiRenderer->SetOSD(g_osd.Message, opacity, osdColor);
             } else {
                 g_uiRenderer->SetOSD(L"", 0);
             }

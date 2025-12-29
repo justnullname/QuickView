@@ -35,9 +35,10 @@ HRESULT UIRenderer::Initialize(CompositionEngine* compEngine, IDWriteFactory* dw
     return S_OK;
 }
 
-void UIRenderer::SetOSD(const std::wstring& text, float opacity) {
+void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color) {
     m_osdText = text;
     m_osdOpacity = opacity;
+    m_osdColor = color;
     MarkDynamicDirty();
 }
 
@@ -249,25 +250,49 @@ void UIRenderer::RenderGalleryLayer(ID2D1DeviceContext* dc) {
 void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
     if (m_osdText.empty() || m_osdOpacity <= 0.01f) return;
     
-    float osdW = 300.0f;
-    float osdH = 40.0f;
-    float x = (m_width - osdW) / 2.0f;
-    float y = (m_height - osdH) / 2.0f - 50.0f;
+    // Match original style: bottom position, padding 30/15
+    float paddingH = 30.0f;
+    float paddingV = 15.0f;
+    
+    // Create text layout to measure
+    ComPtr<IDWriteTextLayout> textLayout;
+    if (m_osdFormat && m_dwriteFactory) {
+        m_dwriteFactory->CreateTextLayout(
+            m_osdText.c_str(), (UINT32)m_osdText.length(),
+            m_osdFormat.Get(), 2000.0f, 100.0f, &textLayout
+        );
+    }
+    
+    float toastW = 300.0f, toastH = 50.0f;
+    if (textLayout) {
+        DWRITE_TEXT_METRICS metrics;
+        textLayout->GetMetrics(&metrics);
+        toastW = metrics.width + paddingH * 2;
+        toastH = metrics.height + paddingV * 2;
+    }
+    
+    // Position: center horizontally, 100px from bottom
+    float x = (m_width - toastW) / 2.0f;
+    float y = m_height - toastH - 100.0f;
     
     D2D1_ROUNDED_RECT bgRect = D2D1::RoundedRect(
-        D2D1::RectF(x, y, x + osdW, y + osdH), 8.0f, 8.0f
+        D2D1::RectF(x, y, x + toastW, y + toastH), 8.0f, 8.0f
     );
     
+    // Background: semi-transparent black
     ComPtr<ID2D1SolidColorBrush> bgBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.85f * m_osdOpacity), &bgBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f * m_osdOpacity), &bgBrush);
     dc->FillRoundedRectangle(bgRect, bgBrush.Get());
     
+    // Text: use custom color if set, otherwise white
     ComPtr<ID2D1SolidColorBrush> textBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, m_osdOpacity), &textBrush);
+    D2D1_COLOR_F textColor = m_osdColor;
+    textColor.a *= m_osdOpacity;
+    dc->CreateSolidColorBrush(textColor, &textBrush);
     
-    if (m_osdFormat) {
-        dc->DrawTextW(m_osdText.c_str(), (UINT32)m_osdText.length(), m_osdFormat.Get(),
-            D2D1::RectF(x, y, x + osdW, y + osdH), textBrush.Get());
+    if (textLayout && textBrush) {
+        D2D1_POINT_2F textOrigin = D2D1::Point2F(x + paddingH, y + paddingV);
+        dc->DrawTextLayout(textOrigin, textLayout.Get(), textBrush.Get());
     }
 }
 
