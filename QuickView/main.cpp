@@ -141,7 +141,7 @@ static std::string GetAppVersionUTF8() {
 // --- Globals ---
 
 #define WM_UPDATE_FOUND (WM_APP + 2)
-#define IDT_ENGINE_POLL 990
+#define WM_ENGINE_EVENT (WM_APP + 3)
 
 static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView 2026";
@@ -1738,6 +1738,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
+    g_imageEngine->SetWindow(hwnd);
     
     // Initialize DirectComposition (hybrid architecture)
     g_compEngine = std::make_unique<CompositionEngine>();
@@ -1814,7 +1815,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     UpdateManager::Get().HandleExit();
     
     SaveConfig();
-    DiscardChanges(); CoUninitialize(); return (int)msg.wParam;
+    
+    // Explicitly release globals dependent on COM before CoUninitialize
+    // Destroy in reverse order of dependency
+    g_uiRenderer.reset();
+    g_compEngine.reset(); // Holds DComp device
+    g_imageEngine.reset();
+    g_imageLoader.reset(); // Holds WIC factory
+    g_renderEngine.reset(); // Holds D2D/D3D device
+    
+    DiscardChanges(); 
+    CoUninitialize(); 
+    return (int)msg.wParam;
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -1880,15 +1892,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
+    case WM_ENGINE_EVENT:
+        ProcessEngineEvents(hwnd);
+        return 0;
 
     case WM_TIMER: {
         static const UINT_PTR INTERACTION_TIMER_ID = 1001;
         static const UINT_PTR OSD_TIMER_ID = 999;
         
-        // Engine Poll Timer (990)
-        if (wParam == IDT_ENGINE_POLL) {
-             ProcessEngineEvents(hwnd);
-        }
+        // Engine Poll Timer (990) - REMOVED (Replaced by WM_ENGINE_EVENT)
         
         // Interaction Timer (1001)
         if (wParam == INTERACTION_TIMER_ID) {
@@ -3736,7 +3748,7 @@ void ProcessEngineEvents(HWND hwnd) {
     }
 
     if (g_imageEngine->IsIdle()) {
-        KillTimer(hwnd, IDT_ENGINE_POLL);
+        // KillTimer(hwnd, IDT_ENGINE_POLL); // No timer to kill
         if (g_isLoading) {  // Was loading, now finished
             g_isLoading = false;
             // Force cursor update immediately
@@ -3761,8 +3773,8 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     // Kick the Engine
     g_imageEngine->NavigateTo(path);
     
-    // Start Polling Loop (120Hz)
-    SetTimer(hwnd, IDT_ENGINE_POLL, 8, nullptr);
+    // Start Polling Loop (120Hz) - REMOVED
+    // SetTimer(hwnd, IDT_ENGINE_POLL, 8, nullptr);
 }
 
 

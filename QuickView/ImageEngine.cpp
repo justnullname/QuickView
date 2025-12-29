@@ -9,13 +9,38 @@
 
 ImageEngine::ImageEngine(CImageLoader* loader)
     : m_loader(loader)
-    , m_scout(loader)
-    , m_heavy(loader, &m_memory)
+    , m_scout(this, loader)
+    , m_heavy(this, loader, &m_memory)
 {
 }
 
 ImageEngine::~ImageEngine() {
     // jthreads define implicit stop requests and joins
+}
+
+void ImageEngine::SetWindow(HWND hwnd) {
+    m_hwnd = hwnd;
+}
+
+void ImageEngine::QueueEvent(EngineEvent&& e) {
+    // Post directly if we have a window. 
+    // We still queue into Scout/Heavy result queues for legacy polling if needed,
+    // or we can store them in a unified queue?
+    // Actually, Main Thread calls PollState() to get them.
+    // So we must still store them, but Notify Main Thread.
+    
+    // NOTE: ScoutLane and HeavyLane manage their own result queues.
+    // We don't have a central queue in ImageEngine currently. 
+    // They store in m_results of each lane.
+    
+    // So we just signal the main thread.
+    // BUT we need to know WHICH lane produced it?
+    // PollState checks both. So simple Notify is enough.
+    
+    if (m_hwnd) {
+        // WM_ENGINE_EVENT = WM_APP + 3 (Must match main.cpp)
+        PostMessage(m_hwnd, 0x8000 + 3, 0, 0); 
+    }
 }
 
 void ImageEngine::NavigateTo(const std::wstring& path) {
@@ -110,8 +135,8 @@ void ImageEngine::ResetDebugCounters() {
 // Scout Lane (The Recon)
 // ============================================================================
 
-ImageEngine::ScoutLane::ScoutLane(CImageLoader* loader)
-    : m_loader(loader)
+ImageEngine::ScoutLane::ScoutLane(ImageEngine* parent, CImageLoader* loader)
+    : m_parent(parent), m_loader(loader)
 {
     // Start worker
     m_thread = std::jthread([this]() { QueueWorker(); });
@@ -201,6 +226,9 @@ void ImageEngine::ScoutLane::QueueWorker() {
                     std::lock_guard lock(m_queueMutex);
                     m_results.push_back(std::move(e));
                 }
+                
+                // Signal Main Thread
+                m_parent->QueueEvent(EngineEvent{}); 
             }
         } catch (...) {
             // Silently ignore corrupt file / EXIF parsing crashes
@@ -213,8 +241,8 @@ void ImageEngine::ScoutLane::QueueWorker() {
 // Heavy Lane (The Tank)
 // ============================================================================
 
-ImageEngine::HeavyLane::HeavyLane(CImageLoader* loader, MemoryArena* memory)
-    : m_loader(loader), m_memory(memory)
+ImageEngine::HeavyLane::HeavyLane(ImageEngine* parent, CImageLoader* loader, MemoryArena* memory)
+    : m_parent(parent), m_loader(loader), m_memory(memory)
 {
     // Start the Master Loop
     m_thread = std::jthread([this](std::stop_token st) {
@@ -352,6 +380,7 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
                     m_results.clear();
                     m_results.push_back(std::move(e));
                 }
+                m_parent->QueueEvent(EngineEvent{}); // Signal
             }
         }
     } catch (const std::bad_alloc&) {

@@ -38,6 +38,9 @@ public:
     // The Main Input: "User wants to go here"
     void NavigateTo(const std::wstring& path);
 
+    // Set Window Handle for Push Messaging (WM_ENGINE_EVENT)
+    void SetWindow(HWND hwnd);
+
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
     // This replaces callbacks.
@@ -68,6 +71,9 @@ public:
 private:
     CImageLoader* m_loader;
     MemoryArena m_memory;
+    HWND m_hwnd = nullptr;
+
+    void QueueEvent(EngineEvent&& e);
     
     // Smart skip for fast formats (PNG/GIF/BMP < 16MP)
     bool ShouldSkipScoutForFastFormat(const std::wstring& path);
@@ -75,7 +81,7 @@ private:
     // --- Lane 1: The Scout ---
     class ScoutLane {
     public:
-        ScoutLane(CImageLoader* loader);
+        ScoutLane(ImageEngine* parent, CImageLoader* loader);
         ~ScoutLane();
 
         void Push(const std::wstring& path);
@@ -92,6 +98,7 @@ private:
         void QueueWorker(); // The Scout Thread Function
 
         CImageLoader* m_loader;
+        ImageEngine* m_parent;
         
         std::jthread m_thread; // Auto-join on destruction
         mutable std::mutex m_queueMutex;
@@ -105,7 +112,7 @@ private:
     // --- Lane 2: The Heavy Lifter ---
     class HeavyLane {
     public:
-        HeavyLane(CImageLoader* loader, MemoryArena* memory);
+        HeavyLane(ImageEngine* parent, CImageLoader* loader, MemoryArena* memory);
         ~HeavyLane();
 
         void SetTarget(const std::wstring& path); // The Single Slot
@@ -120,6 +127,7 @@ private:
         // Helper to run the actual decode.
         void PerformDecode(const std::wstring& path, std::stop_token st);
 
+        ImageEngine* m_parent;
         CImageLoader* m_loader;
         MemoryArena* m_memory;
 
