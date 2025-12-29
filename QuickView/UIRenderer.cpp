@@ -1,12 +1,19 @@
 #include "pch.h"
 #include "UIRenderer.h"
 #include "Toolbar.h"
+#include "EditState.h"  // For RuntimeConfig struct
 #include <psapi.h>
 
 #pragma comment(lib, "psapi.lib")
 
 // External globals
 extern Toolbar g_toolbar;
+
+// External functions from main.cpp for Info Panel rendering
+extern void DrawInfoPanel(ID2D1DeviceContext* context);
+extern void DrawCompactInfo(ID2D1DeviceContext* context);
+
+extern RuntimeConfig g_runtime;
 
 // ============================================================================
 // UIRenderer Implementation
@@ -101,6 +108,15 @@ bool UIRenderer::Render(HWND hwnd) {
     
     // Render Toolbar (external class)
     g_toolbar.Render(dc);
+    
+    // Render Info Panel (external functions from main.cpp)
+    if (g_runtime.ShowInfoPanel) {
+        if (g_runtime.InfoPanelExpanded) {
+            DrawInfoPanel(dc);
+        } else {
+            DrawCompactInfo(dc);
+        }
+    }
     
     m_compEngine->EndUIUpdate();
     m_isDirty = false;

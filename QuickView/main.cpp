@@ -4391,15 +4391,14 @@ void OnPaint(HWND hwnd) {
         // Draw Edge Navigation Indicators (Before Panels/Overlay)
         DrawNavIndicators(context);
         
-        // Draw Info Panel
-        // Draw Info Panel OR Compact Overlay
-        if (g_runtime.ShowInfoPanel) {
-             if (g_runtime.InfoPanelExpanded) {
-                 DrawInfoPanel(context);
-             } else {
-                 DrawCompactInfo(context);
-             }
-        }
+        // Draw Info Panel - MOVED TO UIRenderer (DComp Surface)
+        // if (g_runtime.ShowInfoPanel) {
+        //      if (g_runtime.InfoPanelExpanded) {
+        //          DrawInfoPanel(context);
+        //      } else {
+        //          DrawCompactInfo(context);
+        //      }
+        // }
         
         // Draw Tooltip (from grid hover)
         DrawGridTooltip(context);
