@@ -11,13 +11,21 @@
 using Microsoft::WRL::ComPtr;
 
 // ============================================================================
-// CompositionEngine - DirectComposition 双层合成管理器
+// CompositionEngine - DirectComposition 多层合成管理器
 // ============================================================================
-// 架构:
+// 架构 (Z-Order 从后往前):
 //   Root Visual
-//     ├── Image Visual (SwapChain) - 图片层, 60fps 独立刷新
-//     └── UI Visual (Surface) - UI层, 按需局部更新
+//     ├── Image Visual (SwapChain)     - 主图层
+//     ├── Gallery Visual (Surface C)   - 画廊层 (独立滚动/动画)
+//     ├── Static UI Visual (Surface A) - 静态 UI (Toolbar, Controls)
+//     └── Dynamic UI Visual (Surface B)- 动态 UI (HUD, OSD, Tooltip)
 // ============================================================================
+
+enum class UILayer {
+    Static,   // Toolbar, Window Controls, Info Panel, Settings
+    Dynamic,  // Debug HUD, OSD, Tooltip, Dialog
+    Gallery   // Gallery Overlay (独立滚动动画)
+};
 
 class CompositionEngine {
 public:
@@ -30,9 +38,18 @@ public:
     // 设置图片层的 SwapChain
     HRESULT SetImageSwapChain(IDXGISwapChain1* swapChain);
     
-    // UI 层绘制接口
-    ID2D1DeviceContext* BeginUIUpdate(const RECT* dirtyRect = nullptr);
-    HRESULT EndUIUpdate();
+    // ===== 分层绘制接口 =====
+    ID2D1DeviceContext* BeginLayerUpdate(UILayer layer, const RECT* dirtyRect = nullptr);
+    HRESULT EndLayerUpdate(UILayer layer);
+    
+    // 兼容旧接口 (映射到 Dynamic)
+    ID2D1DeviceContext* BeginUIUpdate(const RECT* dirtyRect = nullptr) {
+        return BeginLayerUpdate(UILayer::Dynamic, dirtyRect);
+    }
+    HRESULT EndUIUpdate() { return EndLayerUpdate(UILayer::Dynamic); }
+    
+    // Gallery 滚动控制 (使用 DComp SetOffset)
+    HRESULT SetGalleryOffset(float offsetX, float offsetY);
     
     // 调整大小
     HRESULT Resize(UINT width, UINT height);
@@ -42,9 +59,23 @@ public:
     
     // 状态
     bool IsInitialized() const { return m_device != nullptr; }
+    UINT GetWidth() const { return m_width; }
+    UINT GetHeight() const { return m_height; }
 
 private:
-    HRESULT CreateUISurface(UINT width, UINT height);
+    HRESULT CreateLayerSurface(UILayer layer, UINT width, UINT height);
+    HRESULT CreateAllSurfaces(UINT width, UINT height);
+
+    struct LayerData {
+        ComPtr<IDCompositionVisual> visual;
+        ComPtr<IDCompositionSurface> surface;
+        ComPtr<ID2D1DeviceContext> context;
+        ComPtr<ID2D1Bitmap1> target;
+        bool isDrawing = false;
+        POINT drawOffset = {};
+    };
+    
+    LayerData& GetLayer(UILayer layer);
 
     HWND m_hwnd = nullptr;
     UINT m_width = 0;
@@ -57,17 +88,12 @@ private:
     // Visual 树
     ComPtr<IDCompositionVisual> m_rootVisual;
     ComPtr<IDCompositionVisual> m_imageVisual;
-    ComPtr<IDCompositionVisual> m_uiVisual;
     
-    // UI 层 Surface
-    ComPtr<IDCompositionSurface> m_uiSurface;
+    // 3 层 UI
+    LayerData m_staticLayer;   // Toolbar, Controls
+    LayerData m_dynamicLayer;  // HUD, OSD
+    LayerData m_galleryLayer;  // Gallery
     
-    // D2D 资源
+    // D2D 共享设备
     ComPtr<ID2D1Device> m_d2dDevice;
-    ComPtr<ID2D1DeviceContext> m_uiContext;
-    ComPtr<ID2D1Bitmap1> m_uiTarget;
-    
-    // 绘制状态
-    bool m_isUIDrawing = false;
-    POINT m_uiDrawOffset = {};
 };

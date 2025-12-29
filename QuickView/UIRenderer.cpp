@@ -3,7 +3,7 @@
 #include "Toolbar.h"
 #include "GalleryOverlay.h"
 #include "SettingsOverlay.h"
-#include "EditState.h"  // For RuntimeConfig struct
+#include "EditState.h"
 #include <psapi.h>
 
 #pragma comment(lib, "psapi.lib")
@@ -13,7 +13,7 @@ extern Toolbar g_toolbar;
 extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
 
-// External functions from main.cpp for Info Panel rendering
+// External functions from main.cpp
 extern void DrawInfoPanel(ID2D1DeviceContext* context);
 extern void DrawCompactInfo(ID2D1DeviceContext* context);
 extern void DrawNavIndicators(ID2D1DeviceContext* context);
@@ -23,7 +23,7 @@ extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 extern RuntimeConfig g_runtime;
 
 // ============================================================================
-// UIRenderer Implementation
+// UIRenderer Implementation - 3-Layer Architecture
 // ============================================================================
 
 HRESULT UIRenderer::Initialize(CompositionEngine* compEngine, IDWriteFactory* dwriteFactory) {
@@ -38,7 +38,7 @@ HRESULT UIRenderer::Initialize(CompositionEngine* compEngine, IDWriteFactory* dw
 void UIRenderer::SetOSD(const std::wstring& text, float opacity) {
     m_osdText = text;
     m_osdOpacity = opacity;
-    MarkDirty();
+    MarkDynamicDirty();
 }
 
 void UIRenderer::EnsureTextFormats() {
@@ -81,10 +81,12 @@ void UIRenderer::OnResize(UINT width, UINT height) {
     m_width = width;
     m_height = height;
     
-    // Update Toolbar layout with new size
     g_toolbar.UpdateLayout((float)width, (float)height);
     
-    MarkDirty();
+    // 大小改变时，所有层都需要重绘
+    MarkStaticDirty();
+    MarkDynamicDirty();
+    MarkGalleryDirty();
 }
 
 void UIRenderer::SetDebugStats(float fps, size_t memMB, int scoutQueue, int heavyState) {
@@ -92,31 +94,78 @@ void UIRenderer::SetDebugStats(float fps, size_t memMB, int scoutQueue, int heav
     m_memMB = memMB;
     m_scoutQueue = scoutQueue;
     m_heavyState = heavyState;
-    if (m_showDebugHUD) MarkDirty();
+    if (m_showDebugHUD) MarkDynamicDirty();
 }
 
-bool UIRenderer::Render(HWND hwnd) {
-    if (!m_isDirty || !m_compEngine || !m_compEngine->IsInitialized()) return false;
+// ============================================================================
+// Main Render Entry Point
+// ============================================================================
+
+bool UIRenderer::RenderAll(HWND hwnd) {
+    if (!m_compEngine || !m_compEngine->IsInitialized()) return false;
     
-    ID2D1DeviceContext* dc = m_compEngine->BeginUIUpdate(nullptr);
-    if (!dc) return false;
+    bool rendered = false;
     
     EnsureTextFormats();
     
-    // 创建基础画刷
-    if (!m_whiteBrush) dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_whiteBrush);
-    if (!m_blackBrush) dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &m_blackBrush);
-    if (!m_accentBrush) dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &m_accentBrush);
+    // ===== Static Layer (低频更新) =====
+    if (m_isStaticDirty) {
+        ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Static, nullptr);
+        if (dc) {
+            RenderStaticLayer(dc, hwnd);
+            m_compEngine->EndLayerUpdate(UILayer::Static);
+            m_isStaticDirty = false;
+            rendered = true;
+        }
+    }
     
-    // 绘制所有 UI 元素
+    // ===== Dynamic Layer (高频更新) =====
+    if (m_isDynamicDirty) {
+        ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
+        if (dc) {
+            RenderDynamicLayer(dc, hwnd);
+            m_compEngine->EndLayerUpdate(UILayer::Dynamic);
+            m_isDynamicDirty = false;
+            rendered = true;
+        }
+    }
+    
+    // ===== Gallery Layer =====
+    if (m_isGalleryDirty) {
+        ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Gallery, nullptr);
+        if (dc) {
+            RenderGalleryLayer(dc);
+            m_compEngine->EndLayerUpdate(UILayer::Gallery);
+            m_isGalleryDirty = false;
+            rendered = true;
+        }
+    }
+    
+    return rendered;
+}
+
+// ============================================================================
+// Static Layer: Toolbar, Window Controls, Info Panel, Settings
+// ============================================================================
+
+void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
+    // 创建画刷 (每层独立 context, 需要独立创建)
+    ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    
+    m_whiteBrush = whiteBrush;
+    m_blackBrush = blackBrush;
+    m_accentBrush = accentBrush;
+    
+    // Window Controls
     DrawWindowControls(dc, hwnd);
-    DrawOSD(dc);
-    if (m_showDebugHUD) DrawDebugHUD(dc);
     
-    // Render Toolbar (external class)
+    // Toolbar
     g_toolbar.Render(dc);
     
-    // Render Info Panel (external functions from main.cpp)
+    // Info Panel
     if (g_runtime.ShowInfoPanel) {
         if (g_runtime.InfoPanelExpanded) {
             DrawInfoPanel(dc);
@@ -125,31 +174,58 @@ bool UIRenderer::Render(HWND hwnd) {
         }
     }
     
-    // Render Gallery Overlay
-    g_gallery.Update(0.016f);  // ~60fps delta
+    // Settings Overlay
+    g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
+}
+
+// ============================================================================
+// Dynamic Layer: Debug HUD, OSD, Tooltip, Dialog
+// ============================================================================
+
+void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
+    // 创建画刷
+    ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f), &accentBrush);
+    
+    m_whiteBrush = whiteBrush;
+    m_blackBrush = blackBrush;
+    m_accentBrush = accentBrush;
+    
+    // OSD
+    DrawOSD(dc);
+    
+    // Debug HUD
+    if (m_showDebugHUD) DrawDebugHUD(dc);
+    
+    // Nav Indicators
+    DrawNavIndicators(dc);
+    
+    // Grid Tooltip
+    DrawGridTooltip(dc);
+    
+    // Modal Dialog (最顶层)
+    RECT clientRect = { 0, 0, (LONG)m_width, (LONG)m_height };
+    DrawDialog(dc, clientRect);
+}
+
+// ============================================================================
+// Gallery Layer: Gallery Overlay
+// ============================================================================
+
+void UIRenderer::RenderGalleryLayer(ID2D1DeviceContext* dc) {
+    g_gallery.Update(0.016f);
+    
     if (g_gallery.IsVisible()) {
         D2D1_SIZE_F rtSize = D2D1::SizeF((float)m_width, (float)m_height);
         g_gallery.Render(dc, rtSize);
     }
-    
-    // Render Settings Overlay (Top Most)
-    g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
-    
-    // Draw Edge Navigation Indicators
-    DrawNavIndicators(dc);
-    
-    // Draw Grid Tooltip
-    DrawGridTooltip(dc);
-    
-    // Draw Modal Dialog (Top Most after Settings)
-    RECT clientRect = { 0, 0, (LONG)m_width, (LONG)m_height };
-    DrawDialog(dc, clientRect);
-    
-    m_compEngine->EndUIUpdate();
-    m_isDirty = false;
-    
-    return true;
 }
+
+// ============================================================================
+// Drawing Functions
+// ============================================================================
 
 void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
     if (m_osdText.empty() || m_osdOpacity <= 0.01f) return;
@@ -177,7 +253,6 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
 }
 
 void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
-    // Auto-hide: don't draw if not visible and no hover
     if (!m_showControls && m_winCtrlHover == -1) return;
     if (m_width < 200) return;
     
@@ -212,8 +287,7 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
         dc->DrawText(&icon, 1, m_iconFormat.Get(), rect, brush);
     };
     
-    // Pin icon: different icon and color when active
-    wchar_t pinIcon = m_pinActive ? L'\uE77A' : L'\uE718';  // Pinned vs Unpin
+    wchar_t pinIcon = m_pinActive ? L'\uE77A' : L'\uE718';
     ID2D1Brush* pinBrush = m_pinActive ? m_accentBrush.Get() : m_whiteBrush.Get();
     DrawIcon(pinIcon, pinRect, pinBrush);
     
