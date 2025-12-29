@@ -32,6 +32,11 @@ HRESULT UIRenderer::Initialize(CompositionEngine* compEngine, IDWriteFactory* dw
     m_compEngine = compEngine;
     m_dwriteFactory = dwriteFactory;
     
+    // Mark all layers dirty for initial render
+    m_isStaticDirty = true;
+    m_isDynamicDirty = true;
+    m_isGalleryDirty = true;
+    
     return S_OK;
 }
 
@@ -52,8 +57,9 @@ void UIRenderer::EnsureTextFormats() {
             18.0f, L"en-us", &m_osdFormat
         );
         if (m_osdFormat) {
-            m_osdFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            m_osdFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            // Use LEADING alignment since we use DrawTextLayout with explicit origin
+            m_osdFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            m_osdFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
     }
     
