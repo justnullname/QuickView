@@ -2060,7 +2060,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           static DWORD s_hideRequestTime = 0;
           
           if (inZone || g_toolbar.IsPinned()) {
-              g_toolbar.SetVisible(true);
+              if (!g_toolbar.IsVisible()) {  // Only repaint if state actually changes
+                  g_toolbar.SetVisible(true);
+                  RequestRepaint(PaintLayer::Static);  // Toolbar visibility changed
+              }
               s_hideRequestTime = 0;
           } else {
               // Outside zone and not pinned
