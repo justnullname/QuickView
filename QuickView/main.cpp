@@ -2007,12 +2007,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
           
           if (g_settingsOverlay.OnMouseMove((float)pt.x, (float)pt.y)) {
-               InvalidateRect(hwnd, nullptr, FALSE);
+               RequestRepaint(PaintLayer::Static);  // Settings is on Static layer
           }
           
           if (g_gallery.IsVisible()) {
               g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
-              InvalidateRect(hwnd, nullptr, FALSE); // Always redraw for tooltip
+              RequestRepaint(PaintLayer::Gallery);  // Gallery layer
           }
           
           // Edge Navigation Hover Detection
@@ -2042,12 +2042,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
               }
               
               if (g_viewState.EdgeHoverState != oldState) {
-                   InvalidateRect(hwnd, nullptr, FALSE);
+                   RequestRepaint(PaintLayer::Static);
               }
           } else {
               if (g_viewState.EdgeHoverState != 0) {
                    g_viewState.EdgeHoverState = 0;
-                   InvalidateRect(hwnd, nullptr, FALSE);
+                   RequestRepaint(PaintLayer::Static);
               }
           }
 
@@ -2105,11 +2105,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              // Simpler: Just rely on mouse Y.
              if (inTopArea != g_showControls) {
                  g_showControls = inTopArea;
-                 InvalidateRect(hwnd, nullptr, FALSE);
+                 RequestRepaint(PaintLayer::All);
                  MarkStaticLayerDirty();  // Window Controls are on Static layer
              }
          } else {
-             if (!g_showControls) { g_showControls = true; InvalidateRect(hwnd, nullptr, FALSE); MarkStaticLayerDirty(); }
+             if (!g_showControls) { g_showControls = true; RequestRepaint(PaintLayer::All); MarkStaticLayerDirty(); }
          }
          
          if (g_showControls) {
@@ -2151,7 +2151,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.PanX += (pt.x - g_viewState.LastMousePos.x); 
              g_viewState.PanY += (pt.y - g_viewState.LastMousePos.y); 
              g_viewState.LastMousePos = pt;
-             InvalidateRect(hwnd, nullptr, FALSE);
+             RequestRepaint(PaintLayer::All);
          }
          
          // Hand cursor for info panel clickable areas
@@ -2189,7 +2189,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         g_winControls.HoverState = WindowHit::None;
         if (g_config.AutoHideWindowControls) { g_showControls = false; }
         isTracking = false;
-        InvalidateRect(hwnd, nullptr, FALSE);
+        RequestRepaint(PaintLayer::All);
         return 0;
         
 
@@ -2272,7 +2272,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     // Reset pan to center
                     g_viewState.PanX = 0;
                     g_viewState.PanY = 0;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                     break;
                 case MouseAction::ExitApp:
                     if (CheckUnsavedChanges(hwnd)) {
@@ -2285,14 +2285,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     g_viewState.Zoom = 1.0f;
                     g_viewState.PanX = 0;
                     g_viewState.PanY = 0;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                     break;
             }
         }
         
         // Only end interaction and repaint if NOT exiting
         g_viewState.IsInteracting = false;
-        InvalidateRect(hwnd, nullptr, FALSE);
+        RequestRepaint(PaintLayer::All);
         return 0;
     }
     
@@ -2317,7 +2317,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         g_viewState.Reset();
         AdjustWindowToImage(hwnd); // Reset window size too
-        InvalidateRect(hwnd, nullptr, FALSE);
+        RequestRepaint(PaintLayer::All);
         return 0;
         
     case WM_PAINT:
@@ -2341,7 +2341,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_THUMB_KEY_READY:
         // Redraw only if gallery visible
         if (g_gallery.IsVisible()) {
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
         }
         return 0;
 
@@ -2361,14 +2361,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // 1. Settings / Update Toast
         if (g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y)) {
-             InvalidateRect(hwnd, nullptr, FALSE);
+             RequestRepaint(PaintLayer::All);
              return 0; 
         }
         
         // 2. Click Outside Settings -> Close it
         if (g_settingsOverlay.IsVisible()) {
             g_settingsOverlay.SetVisible(false);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             return 0;
         }
         
@@ -2392,9 +2392,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          g_navigator.Initialize(path); // Update index state
                          LoadImageAsync(hwnd, path.c_str());
                     }
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 } else {
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 }
             }
             return 0;
@@ -2409,7 +2409,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
                      UpdateHistogramAsync(hwnd, g_imagePath);
                  }
-                 InvalidateRect(hwnd, nullptr, FALSE);
+                 RequestRepaint(PaintLayer::All);
                  return 0;
              }
              
@@ -2418,7 +2418,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  pt.y >= g_panelCloseRect.top && pt.y <= g_panelCloseRect.bottom) {
                  g_runtime.ShowInfoPanel = false;
                  g_toolbar.SetExifState(false); // Sync toolbar icon state
-                 InvalidateRect(hwnd, nullptr, FALSE);
+                 RequestRepaint(PaintLayer::All);
                  return 0;
              }
              
@@ -2447,7 +2447,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          if (CopyToClipboard(hwnd, textToCopy)) {
                              g_osd.Show(hwnd, L"Copied!", false);
                          }
-                         InvalidateRect(hwnd, nullptr, FALSE); // For visual feedback if we add click effect later
+                         RequestRepaint(PaintLayer::All); // For visual feedback if we add click effect later
                          return 0;
                      }
                  }
@@ -2462,7 +2462,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      if (CopyToClipboard(hwnd, coordBuf)) {
                          g_osd.Show(hwnd, L"Coordinates copied!", false);
                      }
-                     InvalidateRect(hwnd, nullptr, FALSE);
+                     RequestRepaint(PaintLayer::All);
                      return 0;
                  }
              }
@@ -2487,7 +2487,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      if (CopyToClipboard(hwnd, filename)) {
                          g_osd.Show(hwnd, L"Filename copied!", false);
                      }
-                     InvalidateRect(hwnd, nullptr, FALSE);
+                     RequestRepaint(PaintLayer::All);
                      return 0;
                  }
              }
@@ -2557,7 +2557,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         if (g_settingsOverlay.IsVisible()) {
              if (g_settingsOverlay.OnLButtonUp((float)pt.x, (float)pt.y)) {
-                 InvalidateRect(hwnd, nullptr, FALSE);
+                 RequestRepaint(PaintLayer::All);
                  return 0;
              }
         }
@@ -2591,12 +2591,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     // Refresh layout to update icon
                     RECT rc; GetClientRect(hwnd, &rc);
                     g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                     break;
                 }
                 case ToolbarButtonID::Gallery: 
                     if (g_gallery.IsVisible()) g_gallery.Close(); else g_gallery.Open(g_navigator.Index()); 
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                     break;
             }
             return 0;
@@ -2615,7 +2615,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             // If it was a real drag, return
             if (elapsed > 300 || dx > 5 || dy > 5) {
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
                 return 0;
             }
             // Fallthrough: Treat as Click
@@ -2663,21 +2663,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         
-        InvalidateRect(hwnd, nullptr, FALSE);  // Redraw with high quality
+        RequestRepaint(PaintLayer::All);  // Redraw with high quality
         return 0;
     }
 
     case WM_MOUSEWHEEL: {
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
         if (g_settingsOverlay.OnMouseWheel(wheelDelta)) {
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             return 0;
         }
 
         if (g_gallery.IsVisible()) {
              int delta = GET_WHEEL_DELTA_WPARAM(wParam);
              if (g_gallery.OnMouseWheel(delta)) {
-                 InvalidateRect(hwnd, nullptr, FALSE);
+                 RequestRepaint(PaintLayer::All);
              }
              return 0;
         }
@@ -2831,7 +2831,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         g_osd.Show(hwnd, zoomBuf, false, false, color);
 
-        InvalidateRect(hwnd, nullptr, FALSE);
+        RequestRepaint(PaintLayer::All);
         return 0;
     }
 
@@ -2846,7 +2846,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_navigator.Initialize(path);
             g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
             LoadImageAsync(hwnd, path); // Async
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
         }
         DragFinish(hDrop);
         return 0;
@@ -2863,9 +2863,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          g_navigator.Initialize(path); 
                          LoadImageAsync(hwnd, path.c_str());
                     }
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 } else {
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 }
                 return 0;
             }
@@ -2908,7 +2908,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // Toggle Gallery (Only if not visible, ESC closes it)
                 if (!g_gallery.IsVisible()) {
                     g_gallery.Open(g_navigator.Index());
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                     SetTimer(hwnd, 998, 16, nullptr); // Fade in
                 }
             }
@@ -2924,7 +2924,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         case 'I': // I: Toggle full info panel
             if (!g_runtime.ShowInfoPanel) {
@@ -2943,7 +2943,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         
         case 'D': // Ctrl+D: Toggle Debug HUD
@@ -2956,7 +2956,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 } else {
                     KillTimer(hwnd, 996);
                 }
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
             }
             break;
         
@@ -3014,7 +3014,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     g_osd.Show(hwnd, L"Zoom: 100%", false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
                 }
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
             
         case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
@@ -3071,7 +3071,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // Reset View to Fit
                 g_viewState.Zoom = 1.0f; 
                 g_osd.Show(hwnd, L"Zoom: Fit Screen", false, false, D2D1::ColorF(D2D1::ColorF::White));
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
             }
             break;
 
@@ -3144,7 +3144,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             wchar_t zoomBuf[32];
             swprintf_s(zoomBuf, L"Zoom: %d%%", percent);
             g_osd.Show(hwnd, zoomBuf, false, (abs(newTotalScale - 1.0f) < 0.001f), D2D1::ColorF(D2D1::ColorF::White));
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         }
 
@@ -3244,7 +3244,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 CloseClipboard();
                 g_osd.Show(hwnd, L"Path copied", false);
                 // Ensure UI updates to show OSD
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
             }
             break;
         }
@@ -3268,7 +3268,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 
                 CloseClipboard();
                 g_osd.Show(hwnd, L"File copied to clipboard", false);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
             }
             break;
         }
@@ -3282,7 +3282,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     // Fallback: Open in default app and show OSD instructions
                     ShellExecuteW(hwnd, L"open", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                     g_osd.Show(hwnd, L"Print: Use Ctrl+P in opened app", false);
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 }
             }
             break;
@@ -3328,13 +3328,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
                     if (SHFileOperationW(&op) == 0) {
                         g_osd.Show(hwnd, L"Moved to Recycle Bin", false);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        RequestRepaint(PaintLayer::All);
                         g_editState.Reset();
                         g_viewState.Reset();
                         g_currentBitmap.Reset();
                         g_navigator.Initialize(nextPath.empty() ? L"" : nextPath.c_str());
                         if (!nextPath.empty()) LoadImageAsync(hwnd, nextPath);
-                        else InvalidateRect(hwnd, nullptr, FALSE);
+                        else RequestRepaint(PaintLayer::All);
                     }
                 }
             }
@@ -3344,7 +3344,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_runtime.LockWindowSize = !g_runtime.LockWindowSize;
             g_toolbar.SetLockState(g_runtime.LockWindowSize);
             g_osd.Show(hwnd, g_runtime.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         }
         case IDM_SHOW_INFO_PANEL: {
@@ -3359,7 +3359,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
  
             g_toolbar.SetExifState(g_runtime.ShowInfoPanel);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         }
         case IDM_ALWAYS_ON_TOP: {
@@ -3367,7 +3367,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
                          0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             g_osd.Show(hwnd, g_config.AlwaysOnTop ? L"Always on Top: ON" : L"Always on Top: OFF", false);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         }
         
@@ -3380,7 +3380,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_runtime.ShowInfoPanel = true;
              g_runtime.InfoPanelExpanded = false; // Lite = not expanded
              g_toolbar.SetExifState(true);
-             InvalidateRect(hwnd, nullptr, FALSE);
+             RequestRepaint(PaintLayer::All);
              break;
 
         case IDM_FULL_INFO:
@@ -3390,7 +3390,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  UpdateHistogramAsync(hwnd, g_imagePath);
              }
              g_toolbar.SetExifState(true);
-             InvalidateRect(hwnd, nullptr, FALSE);
+             RequestRepaint(PaintLayer::All);
              break;
 
         case IDM_ZOOM_100:
@@ -3435,7 +3435,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              
              std::wstring msg = g_config.ForceRawDecode ? L"RAW: Full Decode (High Quality)" : L"RAW: Embedded Preview (Fast)";
              g_osd.Show(hwnd, msg, false);
-             InvalidateRect(hwnd, nullptr, FALSE);
+             RequestRepaint(PaintLayer::All);
              break;
         }
 
@@ -3462,7 +3462,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     } else {
                         g_osd.Show(hwnd, L"Failed to set wallpaper", true);
                     }
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 }
                 CoUninitialize();
             }
@@ -3500,7 +3500,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             LoadImageAsync(hwnd, g_imagePath);
                             g_osd.Show(hwnd, L"Rename Failed", true);
                         }
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        RequestRepaint(PaintLayer::All);
                     }
                 }
                 }
@@ -3558,7 +3558,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             g_osd.Show(hwnd, L"Rename Failed", true);
                         }
                     }
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    RequestRepaint(PaintLayer::All);
                 }
             }
             break;
@@ -3593,12 +3593,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
 
             g_settingsOverlay.Toggle();
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RequestRepaint(PaintLayer::All);
             break;
         }
         case IDM_ABOUT: {
             g_settingsOverlay.OpenTab(5); // Open About Tab
-            InvalidateRect(hwnd, nullptr, FALSE); // Force redraw to show overlay immediately
+            RequestRepaint(PaintLayer::All); // Force redraw to show overlay immediately
             break;
         }
         case IDM_EXIT: {
@@ -3665,7 +3665,7 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_szWindowTitle);
                 SetWindowTextW(hwnd, titleBuf);
                 
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
             }
             break;
         }
@@ -3712,7 +3712,7 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_uiRenderer->MarkGalleryDirty();
                 }
                 
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RequestRepaint(PaintLayer::All);
             }
             break;
         }
@@ -3768,7 +3768,7 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
              g_currentMetadata.HistG = histMeta.HistG;
              g_currentMetadata.HistB = histMeta.HistB;
              g_currentMetadata.HistL = histMeta.HistL;
-             InvalidateRect(hwnd, nullptr, FALSE);
+             RequestRepaint(PaintLayer::All);
          }
     }
 }
