@@ -1915,23 +1915,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         ScreenToClient(hwnd, &pt);
         
-        // Custom title bar area (top captionHeight pixels)
-        int btnWidth = 46 * 4;  // 4 buttons: pin/min/max/close
-        int infoPanelWidth = 350;  // Approximate width of lite info panel
-        RECT clientRc; GetClientRect(hwnd, &clientRc);
-        
-        if (pt.y < captionHeight) {
-            // Check if over window control buttons (right side)
-            if (pt.x > clientRc.right - btnWidth) {
-                return HTCLIENT;  // Let button handlers process this
-            }
-            // Check if over Info Panel area (left side) - allow clicks for [+]/[x] buttons
-            if (pt.x < infoPanelWidth) {
-                return HTCLIENT;  // Let info panel button handlers process this
-            }
-            return HTCAPTION;  // Title bar drag area (middle section)
-        }
-        
+        // All client area clicks are HTCLIENT
+        // Window movement is handled by left-click drag in WM_LBUTTONDOWN
         return HTCLIENT;
     }
 
