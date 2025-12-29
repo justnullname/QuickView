@@ -578,6 +578,27 @@ struct WindowControls {
 };
 static WindowControls g_winControls;
 
+// Helper: Mark all UI layers dirty when window needs repaint
+// Call this alongside InvalidateRect to ensure UIRenderer updates
+inline void MarkAllUILayersDirty() {
+    if (g_uiRenderer) {
+        g_uiRenderer->MarkStaticDirty();
+        g_uiRenderer->MarkDynamicDirty();
+        g_uiRenderer->MarkGalleryDirty();
+    }
+}
+
+// Specific layer dirty markers for optimized updates
+inline void MarkStaticLayerDirty() {
+    if (g_uiRenderer) g_uiRenderer->MarkStaticDirty();
+}
+inline void MarkDynamicLayerDirty() {
+    if (g_uiRenderer) g_uiRenderer->MarkDynamicDirty();
+}
+inline void MarkGalleryLayerDirty() {
+    if (g_uiRenderer) g_uiRenderer->MarkGalleryDirty();
+}
+
 void CalculateWindowControls(D2D1_SIZE_F size) {
     float btnW = 46.0f;
     float btnH = 32.0f;
@@ -1866,6 +1887,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Keep timer alive if motivating factor exists (Animation OR Pending Hide)
             if (animating || (g_toolbar.IsVisible() && !g_toolbar.IsPinned() && g_toolbarHideTime > 0)) {
                 InvalidateRect(hwnd, nullptr, FALSE);
+                MarkStaticLayerDirty();  // Toolbar is on Static layer
             } else {
                 KillTimer(hwnd, 997);
             }
@@ -1875,6 +1897,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == 996) {
             if (g_showDebugHUD) {
                 InvalidateRect(hwnd, nullptr, FALSE);
+                MarkDynamicLayerDirty();  // Debug HUD is on Dynamic layer
             } else {
                 KillTimer(hwnd, 996);
             }
@@ -2033,6 +2056,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           // Force redraw for hover effects when toolbar is visible
           if (g_toolbar.IsVisible() || g_runtime.ShowInfoPanel) {
               InvalidateRect(hwnd, nullptr, FALSE);
+              MarkStaticLayerDirty();  // Toolbar and InfoPanel are on Static layer
           }
          // Update Button Hover
          WindowHit oldHit = g_winControls.HoverState;
@@ -2048,9 +2072,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              if (inTopArea != g_showControls) {
                  g_showControls = inTopArea;
                  InvalidateRect(hwnd, nullptr, FALSE);
+                 MarkStaticLayerDirty();  // Window Controls are on Static layer
              }
          } else {
-             if (!g_showControls) { g_showControls = true; InvalidateRect(hwnd, nullptr, FALSE); }
+             if (!g_showControls) { g_showControls = true; InvalidateRect(hwnd, nullptr, FALSE); MarkStaticLayerDirty(); }
          }
          
          if (g_showControls) {
@@ -2076,6 +2101,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 isTracking = true;
              }
              InvalidateRect(hwnd, nullptr, FALSE);
+             MarkStaticLayerDirty();  // Window Controls hover change
          }
          
          // Middle button window drag
