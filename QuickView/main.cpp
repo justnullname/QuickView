@@ -1472,6 +1472,7 @@ bool CheckUnsavedChanges(HWND hwnd) {
 void AdjustWindowToImage(HWND hwnd) {
     if (!g_currentBitmap) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
+    if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
 
     D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
     
@@ -3592,14 +3593,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_SETTINGS: {
-            // Elastic HUD: Expand window if too small
-            if (!g_settingsOverlay.IsVisible()) {
+            // 1. Toggle FIRST to set IsVisible=true
+            // This prevents AdjustWindowToImage from FIGHTING the resize (race condition)
+            g_settingsOverlay.Toggle();
+            
+            // 2. Elastic HUD: Expand window if it was too small
+            // Check visibility (it should be true now if we just opened it)
+            if (g_settingsOverlay.IsVisible()) {
                  RECT rcClient;
                  if (GetClientRect(hwnd, &rcClient)) {
                      int w = rcClient.right - rcClient.left;
                      int h = rcClient.bottom - rcClient.top;
                      
-                     // Target HUD Size (must match SettingsOverlay::HUD_WIDTH/HEIGHT)
+                     // Target HUD Size
                      int minW = 800;
                      int minH = 650;
                      
@@ -3607,20 +3613,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          int targetW = std::max(w, minW);
                          int targetH = std::max(h, minH);
                          
-                         // Calculate Window Rect for desired Client Area
-                         RECT rcWin = {0, 0, targetW, targetH};
-                         DWORD style = GetWindowLong(hwnd, GWL_STYLE);
-                         AdjustWindowRect(&rcWin, style, FALSE); 
+                         // CSD Mode: Client Area == Window Rect
+                         // Do NOT use AdjustWindowRect, it adds OS frame size which we don't render.
+                         // This caused "Up and Down Jitter" (Expand -> Shrink cycle)
                          
                          SetWindowPos(hwnd, nullptr, 0, 0, 
-                                      rcWin.right - rcWin.left, 
-                                      rcWin.bottom - rcWin.top, 
+                                      targetW, 
+                                      targetH, 
                                       SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
                      }
                  }
             }
 
-            g_settingsOverlay.Toggle();
             RequestRepaint(PaintLayer::All);
             break;
         }
@@ -3654,6 +3658,7 @@ FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
 void ProcessEngineEvents(HWND hwnd) {
     if (!g_imageEngine) return;
 
+    bool needsRepaint = false;
     auto events = g_imageEngine->PollState();
     for (const auto& evt : events) {
         switch (evt.type) {
@@ -3693,7 +3698,7 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_szWindowTitle);
                 SetWindowTextW(hwnd, titleBuf);
                 
-                RequestRepaint(PaintLayer::All);
+                needsRepaint = true;
             }
             break;
         }
@@ -3740,7 +3745,7 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_uiRenderer->MarkGalleryDirty();
                 }
                 
-                RequestRepaint(PaintLayer::All);
+                needsRepaint = true;
             }
             break;
         }
@@ -3748,7 +3753,6 @@ void ProcessEngineEvents(HWND hwnd) {
     }
 
     if (g_imageEngine->IsIdle()) {
-        // KillTimer(hwnd, IDT_ENGINE_POLL); // No timer to kill
         if (g_isLoading) {  // Was loading, now finished
             g_isLoading = false;
             // Force cursor update immediately
@@ -3757,6 +3761,10 @@ void ProcessEngineEvents(HWND hwnd) {
                 PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
             }
         }
+    }
+    
+    if (needsRepaint) {
+        RequestRepaint(PaintLayer::All);
     }
 }
 
