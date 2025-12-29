@@ -66,6 +66,10 @@ void UIRenderer::EnsureTextFormats() {
 void UIRenderer::OnResize(UINT width, UINT height) {
     m_width = width;
     m_height = height;
+    
+    // Update Toolbar layout with new size
+    g_toolbar.UpdateLayout((float)width, (float)height);
+    
     MarkDirty();
 }
 
