@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "UIRenderer.h"
 #include "Toolbar.h"
+#include "GalleryOverlay.h"
+#include "SettingsOverlay.h"
 #include "EditState.h"  // For RuntimeConfig struct
 #include <psapi.h>
 
@@ -8,6 +10,8 @@
 
 // External globals
 extern Toolbar g_toolbar;
+extern GalleryOverlay g_gallery;
+extern SettingsOverlay g_settingsOverlay;
 
 // External functions from main.cpp for Info Panel rendering
 extern void DrawInfoPanel(ID2D1DeviceContext* context);
@@ -117,6 +121,16 @@ bool UIRenderer::Render(HWND hwnd) {
             DrawCompactInfo(dc);
         }
     }
+    
+    // Render Gallery Overlay
+    g_gallery.Update(0.016f);  // ~60fps delta
+    if (g_gallery.IsVisible()) {
+        D2D1_SIZE_F rtSize = D2D1::SizeF((float)m_width, (float)m_height);
+        g_gallery.Render(dc, rtSize);
+    }
+    
+    // Render Settings Overlay (Top Most)
+    g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
     
     m_compEngine->EndUIUpdate();
     m_isDirty = false;

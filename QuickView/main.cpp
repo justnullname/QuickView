@@ -162,9 +162,9 @@ RuntimeConfig g_runtime;
 static ViewState g_viewState;
 static FileNavigator g_navigator; // New Navigator
 static ThumbnailManager g_thumbMgr;
-static GalleryOverlay g_gallery;
+GalleryOverlay g_gallery;  // Non-static for extern access from UIRenderer
 Toolbar g_toolbar;  // Non-static for extern access from UIRenderer
-static SettingsOverlay g_settingsOverlay;
+SettingsOverlay g_settingsOverlay;  // Non-static for extern access from UIRenderer
 static CImageLoader::ImageMetadata g_currentMetadata;
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
@@ -4388,20 +4388,20 @@ void OnPaint(HWND hwnd) {
         // Draw Tooltip (from grid hover)
         DrawGridTooltip(context);
         
-        // --- Gallery Overlay ---
-        g_gallery.Update(0.016f);
-        if (g_gallery.IsVisible()) {
-            D2D1_SIZE_F rtSize = context->GetSize();
-            g_gallery.Render(context, rtSize);
-        }
+        // --- Gallery Overlay - MOVED TO UIRenderer (DComp Surface)
+        // g_gallery.Update(0.016f);
+        // if (g_gallery.IsVisible()) {
+        //     D2D1_SIZE_F rtSize = context->GetSize();
+        //     g_gallery.Render(context, rtSize);
+        // }
 
         // Toolbar - MOVED TO UIRenderer (DComp Surface)
         // g_toolbar.Render(context);
 
         DrawDialog(context, rect);
         
-        // Settings Overlay (Top Most)
-        g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);
+        // Settings Overlay - MOVED TO UIRenderer (DComp Surface)
+        // g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);
         
         // Debug HUD - MOVED TO UIRenderer (DComp Surface)
         // RenderDebugHUD(context, (float)rect.right, (float)rect.bottom);
