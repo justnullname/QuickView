@@ -787,9 +787,12 @@ void SettingsOverlay::BuildMenu() {
     // --- 5. Advanced (高级) ---
     SettingsTab tabAdv;
     tabAdv.name = L"Advanced";
+    tabAdv.name = L"Advanced";
     tabAdv.icon = L"\xE71C"; // Equalizer/Settings icon
     
-    // Transparency
+    // Debug
+    tabAdv.items.push_back({ L"Features", OptionType::Header });
+    tabAdv.items.push_back({ L"Enable Debug HUD (F12)", OptionType::Toggle, &g_config.EnableDebugFeatures });
     tabAdv.items.push_back({ L"Transparency", OptionType::Header });
     tabAdv.items.push_back({ L"Info Panel", OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
     tabAdv.items.push_back({ L"Toolbar", OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });

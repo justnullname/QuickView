@@ -295,8 +295,8 @@ HRESULT CRenderEngine::Present() {
     // Check if SwapChain exists before presenting
     if (!m_swapChain) return S_OK;
 
-    // VSync on (1 = wait for 1 vertical sync)
-    return m_swapChain->Present(1, 0);
+    // VSync handled by Waitable Object pacing (SyncInterval=0 to reduce latency/blocking)
+    return m_swapChain->Present(0, 0);
 }
 
 void CRenderEngine::DrawOSD(const OSDState& state) {

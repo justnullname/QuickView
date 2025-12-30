@@ -103,6 +103,7 @@ struct AppConfig {
     // --- Image & Edit ---
     bool AutoRotate = true;
     bool ColorManagement = false;
+    bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
     
     // --- Save Options --- (Functional options removed, fully automated/smart)
 

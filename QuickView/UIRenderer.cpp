@@ -456,8 +456,9 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
 
     // 4. Draw Text Data
     wchar_t buffer[128];
-    swprintf_s(buffer, L"FPS: %d  Q: %llu  Skip: %d  MEM: %llu MB", 
-        g_debugMetrics.fps.load(), 
+    // Use m_fps (passed from main.cpp) for FPS. Use global metrics for others for now.
+    swprintf_s(buffer, L"FPS: %.1f  Q: %llu  Skip: %d  MEM: %llu MB", 
+        m_fps, 
         g_debugMetrics.eventQueueSize.load(),
         g_debugMetrics.skipCount.load(),
         g_debugMetrics.memoryUsage.load() / 1024 / 1024);

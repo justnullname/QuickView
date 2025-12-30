@@ -1263,6 +1263,9 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossy", g_config.AlwaysSaveLossy ? L"1" : L"0", iniPath.c_str());
+
+    // Advanced / Debug
+    WritePrivateProfileStringW(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures ? L"1" : L"0", iniPath.c_str());
     
     // Internal
     WritePrivateProfileStringW(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt ? L"1" : L"0", iniPath.c_str());
@@ -1343,6 +1346,9 @@ void LoadConfig() {
     g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveEdgeAdapted = GetPrivateProfileIntW(L"Image", L"AlwaysSaveEdgeAdapted", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossy = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossy", 0, iniPath.c_str()) != 0;
+
+    // Advanced / Debug
+    g_config.EnableDebugFeatures = GetPrivateProfileIntW(L"Advanced", L"EnableDebugFeatures", 0, iniPath.c_str()) != 0;
     
     // Internal
     g_config.ShowSavePrompt = GetPrivateProfileIntW(L"General", L"ShowSavePrompt", 1, iniPath.c_str()) != 0;
@@ -4613,27 +4619,52 @@ void OnPaint(HWND hwnd) {
     
     // Render UI to independent DComp Surface
     if (g_uiRenderer) {
-        // === FPS Calculation (moved from RenderDebugHUD) ===
-        static LARGE_INTEGER lastFpsTime = {};
-        static LARGE_INTEGER fpsFreq = {};
-        static int fpsFrameCount = 0;
-        if (fpsFreq.QuadPart == 0) QueryPerformanceFrequency(&fpsFreq);
-        LARGE_INTEGER fpsNow; QueryPerformanceCounter(&fpsNow);
-        fpsFrameCount++;
-        if (lastFpsTime.QuadPart > 0 && fpsFreq.QuadPart > 0) {
-            double elapsed = (double)(fpsNow.QuadPart - lastFpsTime.QuadPart) / fpsFreq.QuadPart;
-            if (elapsed >= 0.5) {
-                g_fps = fpsFrameCount / (float)elapsed;
-                fpsFrameCount = 0;
-                lastFpsTime = fpsNow;
+        // === FPS Calculation (Instantaneous) ===
+        // ZERO OVERHEAD OPTIMIZATION:
+        // Run ONLY if Master Switch is ON **AND** HUD is Visible (or F12 pressed).
+        // This ensures strictly zero metric overhead when just browsing (even if feature enabled).
+        bool allowHud = g_config.EnableDebugFeatures;
+        bool shouldCompute = allowHud && g_showDebugHUD;
+
+        if (shouldCompute) {
+            static LARGE_INTEGER lastTick = {};
+            static LARGE_INTEGER freq = {};
+            if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+            LARGE_INTEGER now; QueryPerformanceCounter(&now);
+            
+            if (lastTick.QuadPart > 0) {
+                double dt = (double)(now.QuadPart - lastTick.QuadPart) / freq.QuadPart;
+                if (dt > 0.0) {
+                    float instantaneousFps = (float)(1.0 / dt);
+                    
+                    // Exponential Moving Average for smoothing
+                    if (dt < 0.2) { // active
+                         // If resuming from idle (g_fps near 0), jump immediately to current FPS
+                         if (g_fps < 1.0f) {
+                             g_fps = instantaneousFps;
+                         } else {
+                             // Lower alpha for stability (0.1) - easier to read
+                             g_fps = g_fps * 0.9f + instantaneousFps * 0.1f;
+                         }
+                    } else {
+                         // Idle for > 200ms: Show 0 to indicate static state
+                         g_fps = 0.0f;
+                    }
+                }
             }
+            lastTick = now;
         } else {
-            lastFpsTime = fpsNow;
+            // Ensure metrics are reset if disabled
+            g_fps = 0.0f;
         }
         
         // === Sync all state from main.cpp ===
-        g_uiRenderer->SetDebugHUDVisible(g_showDebugHUD);
-        g_uiRenderer->SetDebugStats(g_fps, (size_t)0, 0, 0);
+        // Only show/update HUD if Master Switch is ON
+        g_uiRenderer->SetDebugHUDVisible(allowHud && g_showDebugHUD);
+        
+        if (shouldCompute) {
+            g_uiRenderer->SetDebugStats(g_fps, (size_t)0, 0, 0);
+        }
         
         // Sync hover state: convert WindowHit enum to int
         int hoverIdx = -1;
