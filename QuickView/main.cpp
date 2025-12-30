@@ -22,6 +22,7 @@
 #include <dwrite.h>
 #include <wincodec.h>
 #include "OSDState.h"
+#include "DebugMetrics.h"
 #include <psapi.h>  // For GetProcessMemoryInfo
 #pragma comment(lib, "psapi.lib")
 
@@ -177,78 +178,12 @@ static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
 static bool g_isLoading = false;           // Show Wait Cursor
 
 // === Debug HUD ===
-static bool g_showDebugHUD = false;  // Toggle with Ctrl+D
+DebugMetrics g_debugMetrics; // Global Metrics Instance
+static bool g_showDebugHUD = false;  // Toggle with F12
 static DWORD g_lastFrameTime = 0;
 static float g_fps = 0.0f;
 
-void RenderDebugHUD(ID2D1DeviceContext* dc, float width, float height) {
-    if (!g_showDebugHUD || !g_imageEngine) return;
-    
-    // Update FPS using high-resolution timer
-    static LARGE_INTEGER lastTime = {};
-    static LARGE_INTEGER freq = {};
-    static int frameCount = 0;
-    static float displayFps = 0.0f;
-    
-    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
-    
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    frameCount++;
-    
-    if (lastTime.QuadPart > 0 && freq.QuadPart > 0) {
-        double elapsed = (double)(now.QuadPart - lastTime.QuadPart) / freq.QuadPart;
-        if (elapsed >= 0.5) {  // Update every 0.5 seconds
-            displayFps = frameCount / (float)elapsed;
-            frameCount = 0;
-            lastTime = now;
-        }
-    } else {
-        lastTime = now;
-    }
-    g_fps = displayFps;
-    
-    // Get stats
-    auto stats = g_imageEngine->GetDebugStats();
-    
-    // Get process memory instead of PMR tracking (more reliable)
-    PROCESS_MEMORY_COUNTERS pmc = {};
-    pmc.cb = sizeof(pmc);
-    size_t workingSetMB = 0;
-    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-        workingSetMB = pmc.WorkingSetSize / (1024 * 1024);
-    }
-    
-    // Format text
-    wchar_t hudText[512];
-    const wchar_t* heavyStateStr = 
-        stats.heavyState == ImageEngine::HeavyState::IDLE ? L"IDLE" :
-        stats.heavyState == ImageEngine::HeavyState::DECODING ? L"DECODING" : L"CANCELLING";
-    
-    swprintf_s(hudText, 
-        L"=== DEBUG HUD (Ctrl+D) ===\n"
-        L"FPS: %.1f\n"
-        L"Scout Queue: %d | Results: %d | Skipped: %d\n"
-        L"Heavy: %s | Cancels: %d\n"
-        L"Process Memory: %zu MB",
-        g_fps,
-        stats.scoutQueueSize, stats.scoutResultsSize, stats.scoutSkipCount,
-        heavyStateStr, stats.cancelCount,
-        workingSetMB);
-    
-    // Draw background
-    D2D1_RECT_F hudRect = D2D1::RectF(10, 10, 380, 120);
-    ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.7f), &bgBrush);
-    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Lime), &textBrush);
-    
-    dc->FillRectangle(hudRect, bgBrush.Get());
-    
-    // Draw text (use existing format or create simple one)
-    if (g_pPanelTextFormat) {
-        dc->DrawTextW(hudText, (UINT32)wcslen(hudText), g_pPanelTextFormat.Get(), hudRect, textBrush.Get());
-    }
-}
+// RenderDebugHUD moved to UIRenderer
 
 // Helper: Copy text to clipboard
 static bool CopyToClipboard(HWND hwnd, const std::wstring& text) {
@@ -612,9 +547,10 @@ static HWND g_mainHwnd = nullptr;
 void RequestRepaint(PaintLayer layer) {
     // 1. 设置对应层的脏标记
     if (g_uiRenderer) {
-        if (HasLayer(layer, PaintLayer::Static))  g_uiRenderer->MarkStaticDirty();
-        if (HasLayer(layer, PaintLayer::Dynamic)) g_uiRenderer->MarkDynamicDirty();
-        if (HasLayer(layer, PaintLayer::Gallery)) g_uiRenderer->MarkGalleryDirty();
+        if (HasLayer(layer, PaintLayer::Static))  { g_uiRenderer->MarkStaticDirty();  g_debugMetrics.dirtyTriggerStatic = 5; }
+        if (HasLayer(layer, PaintLayer::Dynamic)) { g_uiRenderer->MarkDynamicDirty(); g_debugMetrics.dirtyTriggerDynamic = 5; }
+        if (HasLayer(layer, PaintLayer::Gallery)) { g_uiRenderer->MarkGalleryDirty(); g_debugMetrics.dirtyTriggerGallery = 5; }
+        if (HasLayer(layer, PaintLayer::Image))   { g_debugMetrics.dirtyTriggerImage = 5; }
     }
     
     // 2. 触发 Windows 消息循环唤醒 WM_PAINT
@@ -1832,7 +1768,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_SETCURSOR) {
-        if (g_isLoading) {
+        // Don't show Wait cursor when gallery is visible
+        if (g_isLoading && !g_gallery.IsVisible()) {
             SetCursor(LoadCursor(nullptr, IDC_WAIT));
             return TRUE;
         }
@@ -1844,6 +1781,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     return TRUE;
                 }
             }
+        }
+        
+        // Default Client Cursor (Arrow) - Fixes stuck Wait cursor
+        if (LOWORD(lParam) == HTCLIENT) {
+            SetCursor(LoadCursor(nullptr, IDC_ARROW));
+            return TRUE;
         }
     }
     static bool isTracking = false;
@@ -1908,6 +1851,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             KillTimer(hwnd, INTERACTION_TIMER_ID);
             g_viewState.IsInteracting = false;  // End interaction mode
             RequestRepaint(PaintLayer::Image);  // Redraw image with high quality
+        }
+
+        // Debug HUD Refresh (996)
+        if (wParam == 996) {
+             RequestRepaint(PaintLayer::Dynamic);
         }
         
         // OSD Timer (999) - Heartbeat/Expiration check
@@ -2041,8 +1989,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           }
           
           if (g_gallery.IsVisible()) {
-              g_gallery.OnMouseMove((float)pt.x, (float)pt.y);
-              RequestRepaint(PaintLayer::Gallery);  // Gallery layer
+              if (g_gallery.OnMouseMove((float)pt.x, (float)pt.y)) {
+                  RequestRepaint(PaintLayer::Gallery);  // Only if hover changed
+              }
           }
           
           // Edge Navigation Hover Detection
@@ -2081,6 +2030,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
               }
           }
 
+          // Skip UI interactions (Toolbar, Window Controls, etc.) when Gallery covers screen
+          if (!g_gallery.IsVisible()) {
           // Toolbar Trigger
           RECT rc; GetClientRect(hwnd, &rc);
           float winH = (float)(rc.bottom - rc.top);
@@ -2134,11 +2085,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              // Simpler: Just rely on mouse Y.
              if (inTopArea != g_showControls) {
                  g_showControls = inTopArea;
-                 RequestRepaint(PaintLayer::All);
-                 MarkStaticLayerDirty();  // Window Controls are on Static layer
+                 RequestRepaint(PaintLayer::Static);  // WinControls are on Static layer
              }
          } else {
-             if (!g_showControls) { g_showControls = true; RequestRepaint(PaintLayer::All); MarkStaticLayerDirty(); }
+             if (!g_showControls) { g_showControls = true; RequestRepaint(PaintLayer::Static); }
          }
          
          if (g_showControls) {
@@ -2180,7 +2130,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.PanX += (pt.x - g_viewState.LastMousePos.x); 
              g_viewState.PanY += (pt.y - g_viewState.LastMousePos.y); 
              g_viewState.LastMousePos = pt;
-             RequestRepaint(PaintLayer::All);
+             RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Pan affects Image and OSD
          }
          
          // Hand cursor for info panel clickable areas
@@ -2212,13 +2162,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              
              if (onClickable) SetCursor(LoadCursor(nullptr, IDC_HAND));
          }
+         } // End of !g_gallery.IsVisible() guard
          return 0;
     }
     case WM_MOUSELEAVE:
         g_winControls.HoverState = WindowHit::None;
         if (g_config.AutoHideWindowControls) { g_showControls = false; }
         isTracking = false;
-        RequestRepaint(PaintLayer::All);
+        RequestRepaint(PaintLayer::Static);  // WinControls are on Static layer
         return 0;
         
 
@@ -2301,7 +2252,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     // Reset pan to center
                     g_viewState.PanX = 0;
                     g_viewState.PanY = 0;
-                    RequestRepaint(PaintLayer::All);
+                    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Pan reset affects Image + OSD
                     break;
                 case MouseAction::ExitApp:
                     if (CheckUnsavedChanges(hwnd)) {
@@ -2314,14 +2265,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     g_viewState.Zoom = 1.0f;
                     g_viewState.PanX = 0;
                     g_viewState.PanY = 0;
-                    RequestRepaint(PaintLayer::All);
+                    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Zoom reset affects Image + OSD
                     break;
             }
         }
         
         // Only end interaction and repaint if NOT exiting
         g_viewState.IsInteracting = false;
-        RequestRepaint(PaintLayer::All);
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Pan end affects Image + OSD
         return 0;
     }
     
@@ -2368,9 +2319,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
         
     case WM_THUMB_KEY_READY:
-        // Redraw only if gallery visible
+        // Redraw only Gallery layer when thumbnail is ready
         if (g_gallery.IsVisible()) {
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Gallery);
         }
         return 0;
 
@@ -2405,25 +2356,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (g_gallery.OnLButtonDown(pt.x, pt.y)) {
                 // Check if closed with selection
                 if (!g_gallery.IsVisible()) {
+                    SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Fix sticky wait cursor
                     int idx = g_gallery.GetSelectedIndex();
                     if (idx >= 0 && idx < (int)g_navigator.Count()) {
-                         // Sync Navigator? 
-                         // Navigator doesn't have SetIndex. Need to use file path.
                          std::wstring path = g_navigator.GetFile(idx);
-                         g_navigator.Initialize(path); // Re-init to jump to index? (Inefficient but robust)
-                         // Actually Initialize does scanning. FindIndex is better but we don't have SetIndex.
-                         // Let's just LoadImageAsync(path). Navigator usually updates on Load?
-                         // LoadImageAsync helper doesn't update Navigator index explicitly unless it scans?
-                         // Initialize updates index.
-                         // But if we just call LoadImageAsync(hwnd, path), DragDrop does Initialize.
-                         // Let's re-initialize navigator carefully or just assume path loading works.
-                         // Correct flow:
-                         g_navigator.Initialize(path); // Update index state
-                         LoadImageAsync(hwnd, path.c_str());
+                         // Only load if different from current image
+                         if (path != g_imagePath) {
+                             g_navigator.Initialize(path);
+                             LoadImageAsync(hwnd, path.c_str());
+                         }
                     }
                     RequestRepaint(PaintLayer::All);
                 } else {
-                    RequestRepaint(PaintLayer::All);
+                    RequestRepaint(PaintLayer::Gallery); // Only repaint Gallery, not Image!
                 }
             }
             return 0;
@@ -2591,6 +2536,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
         }
         
+        // Gallery Interaction (Fix: Handle Click)
+        if (g_gallery.IsVisible()) {
+            if (g_gallery.OnLButtonDown((int)pt.x, (int)pt.y)) {
+                if (!g_gallery.IsVisible()) { // Closed
+                     SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Restore cursor
+                     int idx = g_gallery.GetSelectedIndex();
+                     if (idx >= 0 && idx < (int)g_navigator.Count()) {
+                         std::wstring path = g_navigator.GetFile(idx);
+                         g_navigator.Initialize(path);
+                         LoadImageAsync(hwnd, path.c_str());
+                     }
+                     RequestRepaint(PaintLayer::All);
+                } else {
+                     RequestRepaint(PaintLayer::Gallery);
+                }
+                return 0;
+            }
+        }
+        
         // Toolbar Click
         ToolbarButtonID tbId;
         if (g_toolbar.OnClick((float)pt.x, (float)pt.y, tbId)) {
@@ -2624,7 +2588,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     break;
                 }
                 case ToolbarButtonID::Gallery: 
-                    if (g_gallery.IsVisible()) g_gallery.Close(); else g_gallery.Open(g_navigator.Index()); 
+                    if (g_gallery.IsVisible()) {
+                        g_gallery.Close();
+                    } else {
+                        // Expand window if too small for 3 columns
+                        const int MIN_GALLERY_WIDTH = 660;  // Ensure 3 columns: (660-80)/192 = 3.02
+                        const int MIN_GALLERY_HEIGHT = 720;  // 3 rows + margin
+                        RECT rc; GetClientRect(hwnd, &rc);
+                        int curW = rc.right - rc.left;
+                        int curH = rc.bottom - rc.top;
+                        if (curW < MIN_GALLERY_WIDTH || curH < MIN_GALLERY_HEIGHT) {
+                            int newW = std::max(curW, MIN_GALLERY_WIDTH);
+                            int newH = std::max(curH, MIN_GALLERY_HEIGHT);
+                            RECT winRect; GetWindowRect(hwnd, &winRect);
+                            int winW = winRect.right - winRect.left;
+                            int winH = winRect.bottom - winRect.top;
+                            int borderW = winW - curW;
+                            int borderH = winH - curH;
+                            int targetW = newW + borderW;
+                            int targetH = newH + borderH;
+                            int cx = (winRect.left + winRect.right) / 2;
+                            int cy = (winRect.top + winRect.bottom) / 2;
+                            SetWindowPos(hwnd, nullptr, cx - targetW/2, cy - targetH/2, targetW, targetH, SWP_NOZORDER);
+                        }
+                        g_gallery.Open(g_navigator.Index());
+                    }
                     RequestRepaint(PaintLayer::All);
                     break;
             }
@@ -2692,21 +2680,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         
-        RequestRepaint(PaintLayer::All);  // Redraw with high quality
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Zoom affects Image + OSD
         return 0;
     }
 
     case WM_MOUSEWHEEL: {
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
         if (g_settingsOverlay.OnMouseWheel(wheelDelta)) {
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static);  // Settings panel is on Static layer
             return 0;
         }
 
         if (g_gallery.IsVisible()) {
              int delta = GET_WHEEL_DELTA_WPARAM(wParam);
              if (g_gallery.OnMouseWheel(delta)) {
-                 RequestRepaint(PaintLayer::All);
+                 RequestRepaint(PaintLayer::Gallery); // Optimization: Only repaint Gallery
              }
              return 0;
         }
@@ -2825,6 +2813,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              
              // Reset Pan when window adapting (optional, keeps image centered)
              if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+             RequestRepaint(PaintLayer::All); // Window Resized -> Full Repaint
         } else {
              // Standard Zoom (Window size fixed or Maxed)
              // Zoom centered on window center
@@ -2837,17 +2826,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
                  std::swap(logicImgW, logicImgH);
              }
-             
              float newFitScale = std::min((float)rcNew.right / logicImgW, (float)rcNew.bottom / logicImgH);
              float oldZoom = g_viewState.Zoom;
              float newZoom = newTotalScale / newFitScale;
              
              // Simple center-based zoom: just scale Pan values proportionally
-             // Since zoom is centered on window center, pan should scale with zoom ratio
              float zoomRatio = newZoom / oldZoom;
              g_viewState.PanX *= zoomRatio;
              g_viewState.PanY *= zoomRatio;
              g_viewState.Zoom = newZoom;
+             RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic); // Window Fixed -> Optimize
         }
         
         // Show Zoom OSD
@@ -2859,8 +2847,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         D2D1_COLOR_F color = is100 ? D2D1::ColorF(0.4f, 1.0f, 0.4f) : D2D1::ColorF(D2D1::ColorF::White); // Green if 100%
         
         g_osd.Show(hwnd, zoomBuf, false, false, color);
-
-        RequestRepaint(PaintLayer::All);
         return 0;
     }
 
@@ -2885,12 +2871,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (g_gallery.IsVisible()) {
             if (g_gallery.OnKeyDown(wParam)) {
                 if (!g_gallery.IsVisible()) {
+                    SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Fix sticky wait cursor
                     // Closed with selection potentially
                     int idx = g_gallery.GetSelectedIndex();
                     if (idx >= 0 && idx < (int)g_navigator.Count()) {
                          std::wstring path = g_navigator.GetFile(idx);
-                         g_navigator.Initialize(path); 
-                         LoadImageAsync(hwnd, path.c_str());
+                         // Only load if different from current image
+                         if (path != g_imagePath) {
+                             g_navigator.Initialize(path); 
+                             LoadImageAsync(hwnd, path.c_str());
+                         }
                     }
                     RequestRepaint(PaintLayer::All);
                 } else {
@@ -2936,6 +2926,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             } else {
                 // Toggle Gallery (Only if not visible, ESC closes it)
                 if (!g_gallery.IsVisible()) {
+                    // Expand window if too small for 3 columns
+                    // Min Width = PADDING*2 + THUMB_SIZE_MIN*3 + GAP*2 = 80 + 540 + 24 = 644
+                    // Min Height = similar calculation, but let's use 480 as reasonable minimum
+                    const int MIN_GALLERY_WIDTH = 660;  // Ensure 3 columns: (660-80)/192 = 3.02
+                    const int MIN_GALLERY_HEIGHT = 720;  // 3 rows + margin
+                    RECT rc; GetClientRect(hwnd, &rc);
+                    int curW = rc.right - rc.left;
+                    int curH = rc.bottom - rc.top;
+                    if (curW < MIN_GALLERY_WIDTH || curH < MIN_GALLERY_HEIGHT) {
+                        // Need to expand - calculate new window size
+                        int newW = std::max(curW, MIN_GALLERY_WIDTH);
+                        int newH = std::max(curH, MIN_GALLERY_HEIGHT);
+                        // Get window rect to maintain center
+                        RECT winRect; GetWindowRect(hwnd, &winRect);
+                        int winW = winRect.right - winRect.left;
+                        int winH = winRect.bottom - winRect.top;
+                        int borderW = winW - curW;
+                        int borderH = winH - curH;
+                        int targetW = newW + borderW;
+                        int targetH = newH + borderH;
+                        int cx = (winRect.left + winRect.right) / 2;
+                        int cy = (winRect.top + winRect.bottom) / 2;
+                        SetWindowPos(hwnd, nullptr, cx - targetW/2, cy - targetH/2, targetW, targetH, SWP_NOZORDER);
+                    }
                     g_gallery.Open(g_navigator.Index());
                     RequestRepaint(PaintLayer::All);
                     SetTimer(hwnd, 998, 16, nullptr); // Fade in
@@ -2953,7 +2967,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static);
             break;
         case 'I': // I: Toggle full info panel
             if (!g_runtime.ShowInfoPanel) {
@@ -2972,21 +2986,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_runtime.ShowInfoPanel = false;
                 g_toolbar.SetExifState(false);
             }
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static);
             break;
         
-        case 'D': // Ctrl+D: Toggle Debug HUD
-            if (ctrl) {
-                g_showDebugHUD = !g_showDebugHUD;
-                if (g_showDebugHUD) {
-                    if (g_imageEngine) g_imageEngine->ResetDebugCounters();
-                    // Start continuous refresh timer for accurate FPS
-                    SetTimer(hwnd, 996, 16, nullptr);  // ~60Hz refresh
-                } else {
-                    KillTimer(hwnd, 996);
-                }
-                RequestRepaint(PaintLayer::All);
+        case VK_F12: // F12: Toggle Performance HUD
+            g_showDebugHUD = !g_showDebugHUD;
+            if (g_uiRenderer) g_uiRenderer->SetDebugHUDVisible(g_showDebugHUD);
+            
+            if (g_showDebugHUD) {
+                if (g_imageEngine) g_imageEngine->ResetDebugCounters();
+                // Start continuous refresh timer for accurate FPS
+                SetTimer(hwnd, 996, 16, nullptr);  // ~60Hz refresh
+            } else {
+                KillTimer(hwnd, 996);
             }
+            RequestRepaint(PaintLayer::Dynamic);
             break;
         
         // Transforms
@@ -3109,7 +3123,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (!g_currentBitmap) break;
             
             bool isZoomIn = (wParam == VK_ADD || wParam == VK_OEM_PLUS);
-            bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            // bool ctrl reused from usage at top of WndProc
             
             // Get image size
             D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
@@ -3156,6 +3170,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_viewState.Zoom = newTotalScale / newFitScale;
                 
                 if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+                RequestRepaint(PaintLayer::All);
             } else {
                 // Standard Zoom (Window size fixed)
                 float newFitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
@@ -3166,6 +3181,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_viewState.PanX *= zoomRatio;
                 g_viewState.PanY *= zoomRatio;
                 g_viewState.Zoom = newZoom;
+                RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
             }
             
             // Show Zoom OSD
@@ -3173,7 +3189,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             wchar_t zoomBuf[32];
             swprintf_s(zoomBuf, L"Zoom: %d%%", percent);
             g_osd.Show(hwnd, zoomBuf, false, (abs(newTotalScale - 1.0f) < 0.001f), D2D1::ColorF(D2D1::ColorF::White));
-            RequestRepaint(PaintLayer::All);
             break;
         }
 
@@ -3273,7 +3288,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 CloseClipboard();
                 g_osd.Show(hwnd, L"Path copied", false);
                 // Ensure UI updates to show OSD
-                RequestRepaint(PaintLayer::All);
+                RequestRepaint(PaintLayer::Dynamic);
             }
             break;
         }
@@ -3297,7 +3312,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 
                 CloseClipboard();
                 g_osd.Show(hwnd, L"File copied to clipboard", false);
-                RequestRepaint(PaintLayer::All);
+                RequestRepaint(PaintLayer::Dynamic);
             }
             break;
         }
@@ -3311,7 +3326,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     // Fallback: Open in default app and show OSD instructions
                     ShellExecuteW(hwnd, L"open", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                     g_osd.Show(hwnd, L"Print: Use Ctrl+P in opened app", false);
-                    RequestRepaint(PaintLayer::All);
+                    RequestRepaint(PaintLayer::Dynamic);
                 }
             }
             break;
@@ -3373,7 +3388,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_runtime.LockWindowSize = !g_runtime.LockWindowSize;
             g_toolbar.SetLockState(g_runtime.LockWindowSize);
             g_osd.Show(hwnd, g_runtime.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             break;
         }
         case IDM_SHOW_INFO_PANEL: {
@@ -3388,7 +3403,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
  
             g_toolbar.SetExifState(g_runtime.ShowInfoPanel);
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static);
             break;
         }
         case IDM_ALWAYS_ON_TOP: {
@@ -3396,7 +3411,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
                          0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             g_osd.Show(hwnd, g_config.AlwaysOnTop ? L"Always on Top: ON" : L"Always on Top: OFF", false);
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             break;
         }
         
@@ -3409,7 +3424,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_runtime.ShowInfoPanel = true;
              g_runtime.InfoPanelExpanded = false; // Lite = not expanded
              g_toolbar.SetExifState(true);
-             RequestRepaint(PaintLayer::All);
+             RequestRepaint(PaintLayer::Static);
              break;
 
         case IDM_FULL_INFO:
@@ -3419,7 +3434,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  UpdateHistogramAsync(hwnd, g_imagePath);
              }
              g_toolbar.SetExifState(true);
-             RequestRepaint(PaintLayer::All);
+             RequestRepaint(PaintLayer::Static);
              break;
 
         case IDM_ZOOM_100:
@@ -3491,7 +3506,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     } else {
                         g_osd.Show(hwnd, L"Failed to set wallpaper", true);
                     }
-                    RequestRepaint(PaintLayer::All);
+                    RequestRepaint(PaintLayer::Dynamic);
                 }
                 CoUninitialize();
             }
@@ -3598,7 +3613,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_settingsOverlay.Toggle();
             
             // 2. Elastic HUD: Expand window if it was too small
-            // Check visibility (it should be true now if we just opened it)
             if (g_settingsOverlay.IsVisible()) {
                  RECT rcClient;
                  if (GetClientRect(hwnd, &rcClient)) {
@@ -3612,10 +3626,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      if (w < minW || h < minH) {
                          int targetW = std::max(w, minW);
                          int targetH = std::max(h, minH);
-                         
-                         // CSD Mode: Client Area == Window Rect
-                         // Do NOT use AdjustWindowRect, it adds OS frame size which we don't render.
-                         // This caused "Up and Down Jitter" (Expand -> Shrink cycle)
+
+                         // Note: We simply resize. 
+                         // Zoom/Scale behavior is handled by main rendering logic (Fit Mode naturally scales image).
                          
                          SetWindowPos(hwnd, nullptr, 0, 0, 
                                       targetW, 
@@ -4123,9 +4136,17 @@ void DrawInfoGrid(ID2D1DeviceContext* context, float startX, float startY, float
 }
 
 // Draw tooltip for hovered row
-void DrawGridTooltip(ID2D1DeviceContext* context) {
+void DrawGridTooltip(ID2D1DeviceContext* context, float winPixelW, float winPixelH) {
     if (g_hoverRowIndex < 0 || g_hoverRowIndex >= (int)g_infoGrid.size()) return;
     
+    // DIMENSION REFACTOR
+    float dpiX, dpiY; context->GetDpi(&dpiX, &dpiY);
+    if (dpiX == 0) dpiX = 96.0f;
+    if (dpiY == 0) dpiY = 96.0f;
+    float logicW = winPixelW * 96.0f / dpiX;
+    float logicH = winPixelH * 96.0f / dpiY;
+    if (winPixelW <= 0) { D2D1_SIZE_F s = context->GetSize(); logicW = s.width; logicH = s.height; }
+
     const auto& row = g_infoGrid[g_hoverRowIndex];
     if (!row.isTruncated || row.fullText.empty()) return;
     
@@ -4137,9 +4158,8 @@ void DrawGridTooltip(ID2D1DeviceContext* context) {
     float boxWidth = textWidth + padding * 2;
     float boxHeight = 20.0f;
     
-    D2D1_SIZE_F size = context->GetSize();
-    if (x + boxWidth > size.width - 10) x = size.width - boxWidth - 10;
-    if (y + boxHeight > size.height - 10) y = size.height - boxHeight - 10;
+    if (x + boxWidth > logicW - 10) x = logicW - boxWidth - 10;
+    if (y + boxHeight > logicH - 10) y = logicH - boxHeight - 10;
     
     D2D1_RECT_F boxRect = D2D1::RectF(x, y, x + boxWidth, y + boxHeight);
     
@@ -4159,19 +4179,25 @@ void DrawGridTooltip(ID2D1DeviceContext* context) {
 // Global hitbox for Arrow mode click detection
 D2D1_ELLIPSE g_navArrowHitbox = {};
 
-void DrawNavIndicators(ID2D1DeviceContext* context) {
+void DrawNavIndicators(ID2D1DeviceContext* context, float winPixelW, float winPixelH) {
     // Only draw for Arrow mode (NavIndicator == 0)
     if (!g_config.EdgeNavClick || g_viewState.EdgeHoverState == 0 || g_config.NavIndicator != 0) {
         g_navArrowHitbox = {}; // Clear hitbox
         return;
     }
 
-    D2D1_SIZE_F size = context->GetSize();
+    // DIMENSION REFACTOR
+    float dpiX, dpiY; context->GetDpi(&dpiX, &dpiY);
+    if (dpiX == 0) dpiX = 96.0f;
+    if (dpiY == 0) dpiY = 96.0f;
+    float logicW = winPixelW * 96.0f / dpiX;
+    float logicH = winPixelH * 96.0f / dpiY;
+    if (winPixelW <= 0) { D2D1_SIZE_F s = context->GetSize(); logicW = s.width; logicH = s.height; }
     
     // Arrow Zone: 15% of width, centered vertically
-    float zoneWidth = size.width * 0.15f;
-    float arrowCenterY = size.height * 0.5f;
-    float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (size.width - zoneWidth / 2.0f);
+    float zoneWidth = logicW * 0.15f;
+    float arrowCenterY = logicH * 0.5f;
+    float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (logicW - zoneWidth / 2.0f);
     
     // Smaller, refined Circle + Arrow Design
     float circleRadius = 20.0f;
@@ -4217,7 +4243,7 @@ void DrawNavIndicators(ID2D1DeviceContext* context) {
     context->DrawGeometry(path.Get(), brushArrow.Get(), strokeWidth, strokeStyle.Get());
 }
 
-void DrawInfoPanel(ID2D1DeviceContext* context) {
+void DrawInfoPanel(ID2D1DeviceContext* context, float winPixelW, float winPixelH) {
     if (!g_runtime.ShowInfoPanel) return;
     
     // Init Font
@@ -4340,8 +4366,65 @@ void OnPaint(HWND hwnd) {
     }
     
     g_renderEngine->BeginDraw();
+    
+    // --- Performance Metrics Update ---
+    {
+        static LARGE_INTEGER lastTime = {};
+        static LARGE_INTEGER freq = {};
+        static int frameCount = 0;
+        static float displayFps = 0.0f;
+        if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        frameCount++;
+        if (lastTime.QuadPart > 0) {
+            double elapsed = (double)(now.QuadPart - lastTime.QuadPart) / freq.QuadPart;
+            if (elapsed >= 0.5) { // 2Hz update
+                displayFps = frameCount / (float)elapsed;
+                frameCount = 0;
+                lastTime = now;
+            }
+        } else { lastTime = now; }
+        g_fps = displayFps; // Global
+        g_debugMetrics.fps = (int)std::round(g_fps);
+        
+        if (g_imageEngine) {
+            auto stats = g_imageEngine->GetDebugStats();
+            g_debugMetrics.eventQueueSize = stats.scoutQueueSize;
+            g_debugMetrics.skipCount = stats.scoutSkipCount; // Populate Skip
+            PROCESS_MEMORY_COUNTERS pmc = {};
+            pmc.cb = sizeof(pmc);
+            if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+                g_debugMetrics.memoryUsage = pmc.WorkingSetSize;
+            }
+        }
+    }
+    // ----------------------------------
+
     auto context = g_renderEngine->GetDeviceContext();
     if (context) {
+        // === DIMENSION LOGIC REFACTOR ===
+        // Fetch explicit Window Dimensions (Pixels) and convert to DIPs
+        // This avoids dependence on DComp Surface size (GetSize) which might be stale/async.
+        RECT rcClient; GetClientRect(hwnd, &rcClient);
+        float winPixelsW = (float)(rcClient.right - rcClient.left);
+        float winPixelsH = (float)(rcClient.bottom - rcClient.top);
+        
+        float dpiX, dpiY;
+        context->GetDpi(&dpiX, &dpiY);
+        if (dpiX == 0) dpiX = 96.0f;
+        if (dpiY == 0) dpiY = 96.0f;
+        
+        float logicW = winPixelsW * 96.0f / dpiX;
+        float logicH = winPixelsH * 96.0f / dpiY;
+        
+        // Fallback for logic size if pixels are suspicious (e.g. minimized)
+        if (logicW <= 0 || logicH <= 0) {
+            D2D1_SIZE_F rtSize = context->GetSize();
+            logicW = rtSize.width;
+            logicH = rtSize.height;
+        }
+
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         
         // Canvas Color: 0=Black, 1=White, 2=Grid, 3=Custom
@@ -4358,7 +4441,7 @@ void OnPaint(HWND hwnd) {
         // Draw checkerboard grid (Overlay)
         // If CanvasColor == 2 (Grid), FORCE grid. Or if CanvasShowGrid is enabled.
         if (g_config.CanvasColor == 2 || g_config.CanvasShowGrid) {
-            D2D1_SIZE_F rtSize = context->GetSize();
+            // Use explicit logic dimensions
             
             // Adaptive Grid Color:
             // Calculate Background Brightness
@@ -4371,8 +4454,8 @@ void OnPaint(HWND hwnd) {
             context->CreateSolidColorBrush(overlayColor, &brushOverlay);
             
             const float gridSize = 16.0f;
-            for (float y = 0; y < rtSize.height; y += gridSize) {
-                for (float x = 0; x < rtSize.width; x += gridSize) {
+            for (float y = 0; y < logicH; y += gridSize) {
+                for (float x = 0; x < logicW; x += gridSize) {
                     int cx = (int)(x / gridSize);
                     int cy = (int)(y / gridSize);
                     // Draw every other tile
@@ -4385,25 +4468,26 @@ void OnPaint(HWND hwnd) {
         
         if (g_currentBitmap) {
             D2D1_SIZE_F size = g_currentBitmap->GetSize();
-            D2D1_SIZE_F rtSize = context->GetSize();
+            // rtSize removed (unused, replaced by logicW/logicH)
             
             int orientation = g_viewState.ExifOrientation;
             
             // Determine logical dimensions after rotation
-            float logicW = size.width;
-            float logicH = size.height;
+            float logicBitmapW = size.width;
+            float logicBitmapH = size.height;
             bool isRotated90or270 = (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8);
             if (isRotated90or270) {
-                std::swap(logicW, logicH);
+                std::swap(logicBitmapW, logicBitmapH);
             }
             
             // Calculate fit scale using LOGIC dimensions
-            float fitScale = std::min(rtSize.width / logicW, rtSize.height / logicH);
+            // Calculate fit scale using LOGIC dimensions (Corrected)
+            float fitScale = std::min(logicW / logicBitmapW, logicH / logicBitmapH);
             float finalScale = fitScale * g_viewState.Zoom;
             
             // Screen center where image should be placed
-            float screenCenterX = rtSize.width / 2.0f + g_viewState.PanX;
-            float screenCenterY = rtSize.height / 2.0f + g_viewState.PanY;
+            float screenCenterX = logicW / 2.0f + g_viewState.PanX;
+            float screenCenterY = logicH / 2.0f + g_viewState.PanY;
             
             // Bitmap center (in bitmap coordinates)
             float bmpCenterX = size.width / 2.0f;
@@ -4472,8 +4556,11 @@ void OnPaint(HWND hwnd) {
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         
         RECT rect; GetClientRect(hwnd, &rect);
-        D2D1_SIZE_F size = context->GetSize();
-        CalculateWindowControls(size);
+        // D2D1_SIZE_F size = context->GetSize(); // Replaced by logicW/logicH
+        // CalculateWindowControls(logicW, logicH); // Actually CalculateWindowControls takes size.
+        // But logicW/logicH IS the size in DIPs.
+        D2D1_SIZE_F logicSize = D2D1::SizeF(logicW, logicH);
+        CalculateWindowControls(logicSize);
         // DrawWindowControls(hwnd, context);  // MOVED TO UIRenderer (DComp Surface)
         
         // Draw OSD - MOVED TO UIRenderer (DComp Surface)

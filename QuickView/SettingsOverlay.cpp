@@ -944,24 +944,41 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     if (!m_visible && !m_showUpdateToast) return;
     if (!m_brushBg) CreateResources(pRT);
 
-    D2D1_SIZE_F size = pRT->GetSize();
-    m_windowWidth = size.width;
-    m_windowHeight = size.height;
+    // Use passed window dimensions (Pixels) converted to DIPs
+    // This ensures we center based on the ACTUAL window size logic in main.cpp,
+    // avoiding potential lag if DComp Surface resize is async/delayed.
+    float dpiX, dpiY;
+    pRT->GetDpi(&dpiX, &dpiY);
+    
+    // Fallback if dpi is 0 (shouldn't happen on valid RT)
+    if (dpiX == 0) dpiX = 96.0f;
+    if (dpiY == 0) dpiY = 96.0f;
+
+    float inputWDips = winW * 96.0f / dpiX;
+    float inputHDips = winH * 96.0f / dpiY;
+    
+    // If input is valid, use it. Otherwise fallback to RT size.
+    if (winW > 0 && winH > 0) {
+        m_windowWidth = inputWDips;
+        m_windowHeight = inputHDips;
+    } else {
+        D2D1_SIZE_F size = pRT->GetSize();
+        m_windowWidth = size.width;
+        m_windowHeight = size.height;
+    }
 
     // 1. Draw Dimmer (Semi-transparent overlay over entire window)
-    D2D1_RECT_F dimmerRect = D2D1::RectF(0, 0, size.width, size.height);
+    D2D1_RECT_F dimmerRect = D2D1::RectF(0, 0, m_windowWidth, m_windowHeight);
     pRT->FillRectangle(dimmerRect, m_brushBg.Get()); // 0.4 Alpha Black
 
     // 2. Calculate HUD Panel Position (Centered)
-    float hudX = (size.width - HUD_WIDTH) / 2.0f;
-    float hudY = (size.height - HUD_HEIGHT) / 2.0f;
+    float hudX = (m_windowWidth - HUD_WIDTH) / 2.0f;
+    float hudY = (m_windowHeight - HUD_HEIGHT) / 2.0f;
     if (hudX < 0) hudX = 0;
     if (hudY < 0) hudY = 0;
     
     m_lastHudX = hudX;
     m_lastHudY = hudY;
-
-
 
     // Helper: Draw Main HUD only if visible
     if (m_visible) {

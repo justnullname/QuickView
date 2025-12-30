@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "UIRenderer.h"
+#include "DebugMetrics.h"
 #include "Toolbar.h"
 #include "GalleryOverlay.h"
 #include "SettingsOverlay.h"
@@ -14,10 +15,10 @@ extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
 
 // External functions from main.cpp
-extern void DrawInfoPanel(ID2D1DeviceContext* context);
+extern void DrawInfoPanel(ID2D1DeviceContext* context, float winPixelW, float winPixelH);
 extern void DrawCompactInfo(ID2D1DeviceContext* context);
-extern void DrawNavIndicators(ID2D1DeviceContext* context);
-extern void DrawGridTooltip(ID2D1DeviceContext* context);
+extern void DrawNavIndicators(ID2D1DeviceContext* context, float winPixelW, float winPixelH);
+extern void DrawGridTooltip(ID2D1DeviceContext* context, float winPixelW, float winPixelH);
 extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 
 extern RuntimeConfig g_runtime;
@@ -138,17 +139,6 @@ bool UIRenderer::RenderAll(HWND hwnd) {
         }
     }
     
-    // ===== Dynamic Layer (高频更新) =====
-    if (m_isDynamicDirty) {
-        ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
-        if (dc) {
-            RenderDynamicLayer(dc, hwnd);
-            m_compEngine->EndLayerUpdate(UILayer::Dynamic);
-            m_isDynamicDirty = false;
-            rendered = true;
-        }
-    }
-    
     // ===== Gallery Layer =====
     if (m_isGalleryDirty) {
         ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Gallery, nullptr);
@@ -156,6 +146,17 @@ bool UIRenderer::RenderAll(HWND hwnd) {
             RenderGalleryLayer(dc);
             m_compEngine->EndLayerUpdate(UILayer::Gallery);
             m_isGalleryDirty = false;
+            rendered = true;
+        }
+    }
+
+    // ===== Dynamic Layer (Topmost, High Freq) =====
+    if (m_isDynamicDirty) {
+        ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
+        if (dc) {
+            RenderDynamicLayer(dc, hwnd);
+            m_compEngine->EndLayerUpdate(UILayer::Dynamic);
+            m_isDynamicDirty = false;
             rendered = true;
         }
     }
@@ -187,7 +188,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Info Panel
     if (g_runtime.ShowInfoPanel) {
         if (g_runtime.InfoPanelExpanded) {
-            DrawInfoPanel(dc);
+            DrawInfoPanel(dc, (float)m_width, (float)m_height);
         } else {
             DrawCompactInfo(dc);
         }
@@ -219,10 +220,10 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     if (m_showDebugHUD) DrawDebugHUD(dc);
     
     // Nav Indicators
-    DrawNavIndicators(dc);
+    DrawNavIndicators(dc, (float)m_width, (float)m_height);
     
     // Grid Tooltip
-    DrawGridTooltip(dc);
+    DrawGridTooltip(dc, (float)m_width, (float)m_height);
     
     // Modal Dialog (最顶层)
     RECT clientRect = { 0, 0, (LONG)m_width, (LONG)m_height };
@@ -341,29 +342,63 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
 
 void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     if (!m_debugFormat) return;
+
+    // 1. Prepare Brushes (Locally created for simplicity/robustness)
+    ComPtr<ID2D1SolidColorBrush> redBrush, yellowBrush, blueBrush, greenBrush, grayBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red), &redBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Yellow), &yellowBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &blueBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Lime), &greenBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f), &grayBrush);
+
+    // 2. Draw Background (First!)
+    // Center HUD: (WinWidth - 300) / 2
+    float hudW = 340.0f; // Wider for extra metric
+    float hudX = (m_width - hudW) / 2.0f;
+    if (hudX < 0) hudX = 10;
+    float hudY = 10.0f;
     
-    float hudW = 200.0f;
-    float hudH = 80.0f;
-    float x = 10.0f;
-    float y = 40.0f;
+    dc->FillRectangle(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + 105), grayBrush.Get());
+
+    // 3. Draw Traffic Lights (Triggers)
+    float x = hudX + 10.0f;
+    float y = hudY + 45.0f; 
+    float size = 14.0f;
+    float gap = 40.0f;
+
+
+    auto DrawLight = [&](const wchar_t* label, std::atomic<int>& counter, ID2D1SolidColorBrush* brightBrush) {
+        int c = counter.load();
+        bool isLit = (c > 0);
+        
+        D2D1_RECT_F rect = D2D1::RectF(x, y, x + size, y + size);
+        if (isLit) {
+            dc->FillRectangle(rect, brightBrush);
+            counter--; // Decay
+        } else {
+            dc->DrawRectangle(rect, grayBrush.Get(), 1.0f);
+        }
+        
+        // Label
+        dc->DrawText(label, (UINT32)wcslen(label), m_debugFormat.Get(), 
+                D2D1::RectF(x, y + size + 2, x + size + 30, y + size + 20), m_whiteBrush.Get());
+
+        x += gap;
+    };
+
+    DrawLight(L"IMG", g_debugMetrics.dirtyTriggerImage, redBrush.Get());
+    DrawLight(L"GAL", g_debugMetrics.dirtyTriggerGallery, yellowBrush.Get());
+    DrawLight(L"STA", g_debugMetrics.dirtyTriggerStatic, blueBrush.Get());
+    DrawLight(L"DYN", g_debugMetrics.dirtyTriggerDynamic, greenBrush.Get());
+
+    // 4. Draw Text Data
+    wchar_t buffer[128];
+    swprintf_s(buffer, L"FPS: %d  Q: %llu  Skip: %d  MEM: %llu MB", 
+        g_debugMetrics.fps.load(), 
+        g_debugMetrics.eventQueueSize.load(),
+        g_debugMetrics.skipCount.load(),
+        g_debugMetrics.memoryUsage.load() / 1024 / 1024);
     
-    ComPtr<ID2D1SolidColorBrush> bgBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.7f), &bgBrush);
-    dc->FillRectangle(D2D1::RectF(x, y, x + hudW, y + hudH), bgBrush.Get());
-    
-    PROCESS_MEMORY_COUNTERS pmc = {};
-    pmc.cb = sizeof(pmc);
-    GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
-    size_t memMB = pmc.WorkingSetSize / (1024 * 1024);
-    
-    wchar_t buf[256];
-    swprintf_s(buf, L"FPS: %.1f\nMem: %zuMB\nScout: %d\nHeavy: %s",
-        m_fps, memMB, m_scoutQueue,
-        m_heavyState == 0 ? L"Idle" : (m_heavyState == 1 ? L"Decode" : L"Cancel"));
-    
-    ComPtr<ID2D1SolidColorBrush> greenBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 1.0f, 0.4f), &greenBrush);
-    
-    dc->DrawTextW(buf, (UINT32)wcslen(buf), m_debugFormat.Get(),
-        D2D1::RectF(x + 8, y + 8, x + hudW - 8, y + hudH - 8), greenBrush.Get());
+    dc->DrawText(buffer, (UINT32)wcslen(buffer), m_debugFormat.Get(), 
+            D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW, hudY + 30), m_whiteBrush.Get());
 }

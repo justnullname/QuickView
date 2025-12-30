@@ -21,19 +21,19 @@ void GalleryOverlay::Open(int currentIndex) {
     m_opacity = 0.0f; // Start fade in
     m_selectedIndex = currentIndex;
     
-    // Smart Reveal: Calculate Scroll Top to center the current item
-    // We need layout info (cell width/height). But we might not have Render size yet.
-    // Assuming Render gets called soon. We can set target index and handle scrolling in Render?
-    // Or just estimating layout if we know window size. 
-    // Let's defer exact scroll calculation to first Render if size is unknown?
-    // Actually, we can pre-calc if we assume full window. But Render passes size.
-    // Let's set a flag "FocusOnNextRender" or handle it in Render logic if first frame.
-    // For now, let's just do a best guess or force EnsureVisible logic in Render.
-    // Actually, OnPaint calls Render.
+    // Reset state for fresh open
+    m_scrollTop = 0.0f;
+    m_hoverIndex = -1;
+    
+    // Layout will be calculated in first Render() call based on window size
+    // Smart Reveal scroll adjustment happens in Render() when m_opacity < 0.2f
 }
 
-void GalleryOverlay::Close() {
+void GalleryOverlay::Close(bool keepSelection) {
     m_isVisible = false;
+    if (!keepSelection) {
+        m_selectedIndex = -1;  // Reset selection when cancelling
+    }
     if (m_pThumbMgr) m_pThumbMgr->ClearQueue(); // Stop loading
 }
 
@@ -139,22 +139,45 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
     }
     
     // Virtualization Range
+    // Safety check: ensure valid cell height for division
+    if (m_cellHeight <= 0) m_cellHeight = THUMB_SIZE_MIN;
+    float stride = m_cellHeight + GAP;
+    
     // Visible Y range: m_scrollTop to m_scrollTop + size.height
-    int startRow = std::max(0, (int)((m_scrollTop - PADDING) / (m_cellHeight + GAP)));
-    int endRow = std::min(rows - 1, (int)((m_scrollTop + size.height - PADDING) / (m_cellHeight + GAP)) + 1);
+    int startRow = std::max(0, (int)((m_scrollTop - PADDING) / stride));
+    int endRow = std::min(rows - 1, (int)((m_scrollTop + size.height - PADDING) / stride) + 1);
+    
+    // Ensure valid range
+    if (startRow > endRow) startRow = 0;
+    if (endRow < 0) endRow = rows - 1;
     
     int startIdx = startRow * m_cols;
     int endIdx = std::min((int)count - 1, (endRow + 1) * m_cols - 1);
     
+    // Final safety: ensure loop can execute
+    if (startIdx > endIdx || endIdx < 0) {
+        startIdx = 0;
+        endIdx = (int)count - 1;
+    }
+    
     int centerIdx = (startIdx + endIdx) / 2;
+    
+    // Notify Manager to clear old tasks
+    // Layout Calculated... prepare render
     
     // Notify Manager to clear old tasks
     m_pThumbMgr->UpdateOptimizedPriority(startIdx, endIdx, centerIdx);
     
-    pDC->SetTransform(D2D1::Matrix3x2F::Translation(0, -m_scrollTop));
-    m_brushBg->SetOpacity(m_opacity); // Reset specific opacity for render? Back to 1 for content?
-    // Actually content opacity should match m_opacity.
+    // SAVE original transform (Contains DComp Atlas Offset!)
+    D2D1_MATRIX_3X2_F originalTransform;
+    pDC->GetTransform(&originalTransform);
     
+    // Apply Scroll Translation ON TOP of original
+    D2D1_MATRIX_3X2_F scrollTransform = D2D1::Matrix3x2F::Translation(0, -m_scrollTop);
+    pDC->SetTransform(scrollTransform * originalTransform);
+    
+    m_brushBg->SetOpacity(m_opacity); 
+
     // Loop Visible Items
     for (int i = startIdx; i <= endIdx; ++i) {
         int r = i / m_cols;
@@ -171,34 +194,25 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         }
         
         // Get Thumbnail
-        const std::wstring& path = m_pNav->GetFile(i);
-        auto bmp = m_pThumbMgr->GetThumbnail(i, path.c_str(), pDC);
-        
-        if (bmp) {
-            D2D1_SIZE_F bmpSize = bmp->GetSize();
-            D2D1_RECT_F src = GetCenterCropRect(bmpSize, cellRect);
-            pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
-        } else {
-            // Placeholder (Gray Box) call QueueRequest
-            D2D1_COLOR_F color = D2D1::ColorF(0.2f, 0.2f, 0.2f, m_opacity);
-            ComPtr<ID2D1SolidColorBrush> phBrush;
-            pDC->CreateSolidColorBrush(color, &phBrush);
-            pDC->FillRectangle(cellRect, phBrush.Get());
+        if (i >= 0 && i < (int)m_pNav->Count()) {
+            const std::wstring& path = m_pNav->GetFile(i);
+            auto bmp = m_pThumbMgr->GetThumbnail(i, path.c_str(), pDC);
             
-            // Queue! (Priority based on distance to center)
-            int prio = std::abs(i - centerIdx);
-            m_pThumbMgr->QueueRequest(i, path.c_str(), prio);
-            
-            // Draw "Loading..." ? Optional.
-        }
-        
-        // Draw Info on Hover (User request)
-        if (m_hoverIndex == i && m_textFormat) {
-             // Draw Hover items on top of EVERYTHING?
-             // Actually inside loop is fine if z-order is managed, but tooltips should be top-most.
-             // We can defer drawing or just assume loop order (later items cover previous).
-             // But if I hover item 5, item 6 might overlap tooltip?
-             // Not if tooltip is drawn AFTER loop.
+            if (bmp) {
+                D2D1_SIZE_F bmpSize = bmp->GetSize();
+                D2D1_RECT_F src = GetCenterCropRect(bmpSize, cellRect);
+                pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+            } else {
+                // Placeholder (Gray Box) call QueueRequest
+                D2D1_COLOR_F color = D2D1::ColorF(0.2f, 0.2f, 0.2f, m_opacity);
+                ComPtr<ID2D1SolidColorBrush> phBrush;
+                pDC->CreateSolidColorBrush(color, &phBrush);
+                if (phBrush) pDC->FillRectangle(cellRect, phBrush.Get());
+                
+                // Queue! (Priority based on distance to center)
+                int prio = std::abs(i - centerIdx);
+                m_pThumbMgr->QueueRequest(i, path.c_str(), prio);
+            }
         }
     }
     
@@ -228,18 +242,18 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         
         D2D1_RECT_F tooltipRect = D2D1::RectF(x + 10, y + 10, x + 10 + tooltipW, y + 10 + tooltipH);
         
-        // Ensure inside screen (optional, skipping for brevity)
-        
+        // Use bright opacity for tooltip
         m_brushBg->SetOpacity(0.9f);
         pDC->FillRoundedRectangle(D2D1::RoundedRect(tooltipRect, 4, 4), m_brushBg.Get());
         
-        m_brushText->SetOpacity(1.0f);
+        m_brushText->SetOpacity(1.0f); // Make sure text is visible
         pDC->DrawText(desc.c_str(), (UINT32)desc.length(), m_textFormat.Get(), 
             D2D1::RectF(tooltipRect.left + 5, tooltipRect.top + 5, tooltipRect.right - 5, tooltipRect.bottom - 5), 
             m_brushText.Get());
     }
 
-    pDC->SetTransform(D2D1::Matrix3x2F::Identity());
+    // RESTORE original transform (Important for subsequent draws if any, or just hygiene)
+    pDC->SetTransform(originalTransform);
 }
 
 bool GalleryOverlay::OnMouseWheel(int delta) {
@@ -258,18 +272,13 @@ bool GalleryOverlay::OnKeyDown(UINT key) {
     switch (key) {
         case VK_ESCAPE: 
         case 'T': 
-            Close(); 
+            Close();  // Cancel without selection
             return true;
             
         case VK_RETURN:
-            if (m_selectedIndex >= 0) Close(); // Main window should pick up selected index from Navigator?
-            // Wait, we need to sync Navigator!
-            // Close() checks m_selectedIndex but we need access to change Navigator index.
-            // Navigator doesn't allow setting arbitrary index easily?
-            // FileNavigator::Initialize(path)?
-            // Or add FileNavigator::SetIndex?
-            // The user plan said "Close and jump". 
-            // We should ensure Navigator is updated.
+            if (m_selectedIndex >= 0) {
+                Close(true);  // Keep selection for loading
+            }
             return true;
             
         case VK_LEFT: m_selectedIndex = std::max(0, m_selectedIndex - 1); break;
@@ -309,18 +318,19 @@ bool GalleryOverlay::OnLButtonDown(int x, int y) {
     int idx = HitTest((float)x, (float)y + m_scrollTop); // Adjust for scroll
     if (idx >= 0) {
         m_selectedIndex = idx;
-        Close(); // Confirm selection
+        Close(true);  // Keep selection for loading
         return true;
     }
-    // Click outside = Close?
-    Close();
+    // Click outside = Close without selection
+    Close();  // Default resets m_selectedIndex
     return true;
 }
 
 bool GalleryOverlay::OnMouseMove(int x, int y) {
     if (!m_isVisible) return false;
+    int oldHover = m_hoverIndex;
     m_hoverIndex = HitTest((float)x, (float)y + m_scrollTop);
-    return true; // Consume? maybe not?
+    return m_hoverIndex != oldHover;  // Only repaint if hover changed
 }
 
 int GalleryOverlay::HitTest(float x, float y) {

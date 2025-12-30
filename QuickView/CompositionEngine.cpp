@@ -59,8 +59,8 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     // Gallery 最顶层，支持覆盖所有 UI 的全屏模式
     m_rootVisual->AddVisual(m_imageVisual.Get(), TRUE, nullptr);
     m_rootVisual->AddVisual(m_staticLayer.visual.Get(), TRUE, m_imageVisual.Get());
-    m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
-    m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_dynamicLayer.visual.Get());
+    m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
+    m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_galleryLayer.visual.Get());
     
     // 6. 设置 Root
     m_target->SetRoot(m_rootVisual.Get());

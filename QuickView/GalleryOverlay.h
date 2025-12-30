@@ -24,7 +24,7 @@ public:
 
     // State Control
     void Open(int currentIndex);
-    void Close();
+    void Close(bool keepSelection = false);  // Default: reset selection
     bool IsVisible() const { return m_isVisible; }
     float GetOpacity() const { return m_opacity; }
     
@@ -33,6 +33,7 @@ public:
     
     // Animation tick (fade in)
     void Update(float deltaTime);
+
 
 private:
     ThumbnailManager* m_pThumbMgr = nullptr;

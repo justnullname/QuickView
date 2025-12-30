@@ -43,8 +43,3 @@ e:\Personal\Coding\QuickView\QuickView\main.cpp(2051,46): warning C4244: ¡°²ÎÊý¡
 e:\Personal\Coding\QuickView\QuickView\main.cpp(2894,37): warning C4244: ¡°²ÎÊý¡±: ´Ó¡°WPARAM¡±×ª»»µ½¡°UINT¡±£¬¿ÉÄÜ¶ªÊ§Êý¾Ý [e:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
   (compiling source file '/main.cpp')
   
-e:\Personal\Coding\QuickView\QuickView\main.cpp(2989,45): error C2039: "SetShowDebug": ²»ÊÇ "UIRenderer" µÄ³ÉÔ± [e:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
-  (compiling source file '/main.cpp')
-      e:\Personal\Coding\QuickView\QuickView\UIRenderer.h(15,7):
-      ²Î¼û¡°UIRenderer¡±µÄÉùÃ÷
-  
