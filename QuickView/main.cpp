@@ -690,7 +690,8 @@ void DrawWindowControls(HWND hwnd, ID2D1DeviceContext* context) {
 void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     if (!g_dialog.IsVisible || !context) return;
     
-    D2D1_SIZE_F size = context->GetSize();
+    // Use clientRect instead of context->GetSize() to avoid Dirty Rect size issue
+    D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
     DialogLayout layout = CalculateDialogLayout(size);
     
     // Overlay (background dimming)

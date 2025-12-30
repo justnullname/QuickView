@@ -22,9 +22,13 @@ public:
     
     // ===== 分层渲染控制 =====
     void MarkStaticDirty() { m_isStaticDirty = true; }
-    void MarkDynamicDirty() { m_isDynamicDirty = true; }
+    void MarkDynamicDirty() { m_isDynamicDirty = true; m_dynamicFullDirty = true; }
     void MarkGalleryDirty() { m_isGalleryDirty = true; }
     void MarkDirty() { MarkDynamicDirty(); }  // 兼容旧接口
+    
+    // 细粒度脏标记 (用于 Dirty Rects 优化)
+    void MarkOSDDirty() { m_isDynamicDirty = true; m_osdDirty = true; }
+    void MarkTooltipDirty() { m_isDynamicDirty = true; m_tooltipDirty = true; }
     
     bool RenderAll(HWND hwnd);  // 渲染所有需要更新的层
     
@@ -52,6 +56,9 @@ private:
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
     
+    // Dirty Rects 计算
+    RECT CalculateOSDDirtyRect();
+    
     CompositionEngine* m_compEngine = nullptr;
     IDWriteFactory* m_dwriteFactory = nullptr;
     
@@ -76,6 +83,14 @@ private:
     bool m_isStaticDirty = true;
     bool m_isDynamicDirty = true;
     bool m_isGalleryDirty = true;
+    
+    // 细粒度脏标记 (Dirty Rects 优化)
+    bool m_osdDirty = false;       // 仅 OSD 需要更新
+    bool m_tooltipDirty = false;   // 仅 Tooltip 需要更新
+    bool m_dynamicFullDirty = true; // 需要全量更新 Dynamic 层
+    
+    // OSD Dirty Rect 计算缓存
+    D2D1_RECT_F m_lastOSDRect = {};
     
     UINT m_width = 0;
     UINT m_height = 0;

@@ -45,8 +45,46 @@ void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F co
     m_osdText = text;
     m_osdOpacity = opacity;
     m_osdColor = color;
-    MarkDynamicDirty();
+    MarkOSDDirty(); // 使用细粒度脏标记
 }
+
+RECT UIRenderer::CalculateOSDDirtyRect() {
+    // OSD 位置: 底部居中，距窗口底部 100px
+    // 计算需要包含上一帧的位置 (清理) 和当前帧的位置 (绘制)
+    
+    float paddingH = 30.0f;
+    float paddingV = 15.0f;
+    float maxOSDWidth = 800.0f;  // 最大宽度估算
+    float maxOSDHeight = 80.0f;  // 最大高度估算
+    
+    // 使用保守估算，确保覆盖整个 OSD 区域
+    float toastW = std::min(maxOSDWidth, (float)m_width * 0.8f);
+    float toastH = maxOSDHeight;
+    
+    float x = (m_width - toastW) / 2.0f;
+    float y = m_height - toastH - 100.0f;
+    
+    // 扩展一点余量以确保完全覆盖
+    const float MARGIN = 10.0f;
+    x = std::max(0.0f, x - MARGIN);
+    y = std::max(0.0f, y - MARGIN);
+    float right = std::min((float)m_width, x + toastW + MARGIN * 2);
+    float bottom = std::min((float)m_height, y + toastH + MARGIN * 2);
+    
+    // 与上一帧的位置合并 (如果窗口大小变化，需要清除旧位置)
+    if (m_lastOSDRect.right > 0) {
+        x = std::min(x, m_lastOSDRect.left);
+        y = std::min(y, m_lastOSDRect.top);
+        right = std::max(right, m_lastOSDRect.right);
+        bottom = std::max(bottom, m_lastOSDRect.bottom);
+    }
+    
+    // 保存当前位置供下次使用
+    m_lastOSDRect = D2D1::RectF(x, y, right, bottom);
+    
+    return RECT{ (LONG)x, (LONG)y, (LONG)right, (LONG)bottom };
+}
+
 
 void UIRenderer::EnsureTextFormats() {
     if (!m_dwriteFactory) return;
@@ -152,13 +190,38 @@ bool UIRenderer::RenderAll(HWND hwnd) {
 
     // ===== Dynamic Layer (Topmost, High Freq) =====
     if (m_isDynamicDirty) {
-        ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
-        if (dc) {
-            RenderDynamicLayer(dc, hwnd);
-            m_compEngine->EndLayerUpdate(UILayer::Dynamic);
-            m_isDynamicDirty = false;
-            rendered = true;
+        // 智能 Dirty Rects: 只有 OSD 变化时使用局部更新
+        bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty;
+        
+        if (useOSDDirtyRect && m_osdOpacity > 0.01f) {
+            // 仅 OSD 需要更新 - 使用 Dirty Rects
+            RECT osdRect = CalculateOSDDirtyRect();
+            ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, &osdRect);
+            if (dc) {
+                // 创建画刷
+                ComPtr<ID2D1SolidColorBrush> whiteBrush;
+                dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
+                m_whiteBrush = whiteBrush;
+                
+                DrawOSD(dc); // 局部绘制
+                m_compEngine->EndLayerUpdate(UILayer::Dynamic);
+                rendered = true;
+            }
+        } else {
+            // 全量更新
+            ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
+            if (dc) {
+                RenderDynamicLayer(dc, hwnd);
+                m_compEngine->EndLayerUpdate(UILayer::Dynamic);
+                rendered = true;
+            }
         }
+        
+        // 重置所有脏标记
+        m_isDynamicDirty = false;
+        m_osdDirty = false;
+        m_tooltipDirty = false;
+        m_dynamicFullDirty = false;
     }
     
     return rendered;
