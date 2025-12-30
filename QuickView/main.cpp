@@ -2612,6 +2612,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             SetWindowPos(hwnd, nullptr, cx - targetW/2, cy - targetH/2, targetW, targetH, SWP_NOZORDER);
                         }
                         g_gallery.Open(g_navigator.Index());
+                        SetTimer(hwnd, 998, 16, nullptr); // Fade in - 与 T 键保持一致
                     }
                     RequestRepaint(PaintLayer::All);
                     break;
