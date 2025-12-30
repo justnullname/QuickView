@@ -153,6 +153,7 @@ static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
+static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
 static bool g_isBlurry = false; // For Motion Blur effect
 OSDState g_osd; // Removed static, explicitly Global
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
@@ -550,7 +551,7 @@ void RequestRepaint(PaintLayer layer) {
         if (HasLayer(layer, PaintLayer::Static))  { g_uiRenderer->MarkStaticDirty();  g_debugMetrics.dirtyTriggerStatic = 5; }
         if (HasLayer(layer, PaintLayer::Dynamic)) { g_uiRenderer->MarkDynamicDirty(); g_debugMetrics.dirtyTriggerDynamic = 5; }
         if (HasLayer(layer, PaintLayer::Gallery)) { g_uiRenderer->MarkGalleryDirty(); g_debugMetrics.dirtyTriggerGallery = 5; }
-        if (HasLayer(layer, PaintLayer::Image))   { g_debugMetrics.dirtyTriggerImage = 5; }
+        if (HasLayer(layer, PaintLayer::Image))   { g_isImageDirty = true; g_debugMetrics.dirtyTriggerImage = 5; } // Set real dirty flag
     }
     
     // 2. 触发 Windows 消息循环唤醒 WM_PAINT
@@ -1985,9 +1986,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
      case WM_MOUSEMOVE: {
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
           
-          if (g_settingsOverlay.OnMouseMove((float)pt.x, (float)pt.y)) {
-               RequestRepaint(PaintLayer::Static);  // Settings is on Static layer
-          }
+          SettingsAction action = g_settingsOverlay.OnMouseMove((float)pt.x, (float)pt.y);
+          if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
+          else if (action == SettingsAction::RepaintStatic) RequestRepaint(PaintLayer::Static);
           
           if (g_gallery.IsVisible()) {
               if (g_gallery.OnMouseMove((float)pt.x, (float)pt.y)) {
@@ -2341,15 +2342,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         
         // 1. Settings / Update Toast
-        if (g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y)) {
-             RequestRepaint(PaintLayer::All);
+        SettingsAction action = g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y);
+        if (action != SettingsAction::None) {
+             if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
+             else RequestRepaint(PaintLayer::Static);
              return 0; 
         }
         
         // 2. Click Outside Settings -> Close it
         if (g_settingsOverlay.IsVisible()) {
             g_settingsOverlay.SetVisible(false);
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static); // Only Static needed to clear overlay
             return 0;
         }
         
@@ -2531,10 +2534,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
         if (g_settingsOverlay.IsVisible()) {
-             if (g_settingsOverlay.OnLButtonUp((float)pt.x, (float)pt.y)) {
-                 RequestRepaint(PaintLayer::All);
-                 return 0;
-             }
+             SettingsAction action = g_settingsOverlay.OnLButtonUp((float)pt.x, (float)pt.y);
+             if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
+             else if (action == SettingsAction::RepaintStatic) RequestRepaint(PaintLayer::Static);
+             return 0; // Consume event (prevent fallthrough to Image Repaint)
         }
         
         // Gallery Interaction (Fix: Handle Click)
@@ -3640,12 +3643,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  }
             }
 
-            RequestRepaint(PaintLayer::All);
+            RequestRepaint(PaintLayer::Static);
             break;
         }
         case IDM_ABOUT: {
             g_settingsOverlay.OpenTab(5); // Open About Tab
-            RequestRepaint(PaintLayer::All); // Force redraw to show overlay immediately
+            RequestRepaint(PaintLayer::Static); // Force redraw to show overlay immediately
             break;
         }
         case IDM_EXIT: {
@@ -4367,6 +4370,7 @@ void OnPaint(HWND hwnd) {
         }
     }
     
+    if (g_isImageDirty) {
     g_renderEngine->BeginDraw();
     
     // --- Performance Metrics Update ---
@@ -4604,6 +4608,8 @@ void OnPaint(HWND hwnd) {
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
+    g_isImageDirty = false; // Reset dirty flag after Present
+    }
     
     // Render UI to independent DComp Surface
     if (g_uiRenderer) {
@@ -4681,3 +4687,4 @@ void OnPaint(HWND hwnd) {
 
     ValidateRect(hwnd, nullptr);
 }
+

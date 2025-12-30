@@ -983,6 +983,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     // Helper: Draw Main HUD only if visible
     if (m_visible) {
         D2D1_RECT_F hudRect = D2D1::RectF(hudX, hudY, hudX + HUD_WIDTH, hudY + HUD_HEIGHT);
+        m_finalHudRect = hudRect;
 
         // 3. Draw HUD Panel Background (Opaque Dark)
         ComPtr<ID2D1SolidColorBrush> brushPanelBg;
@@ -1650,7 +1651,7 @@ void SettingsOverlay::DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rec
 // Interaction
 // ----------------------------------------------------------------------------
 
-bool SettingsOverlay::OnMouseMove(float x, float y) {
+SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // Toast Hit Test (Priority - Even if not visible)
     if (m_showUpdateToast) {
         m_toastHoverBtn = -1;
@@ -1671,13 +1672,13 @@ bool SettingsOverlay::OnMouseMove(float x, float y) {
             } else {
                  ::SetCursor(::LoadCursor(NULL, IDC_ARROW)); // Standard pointer over text
             }
-            return true; 
+            return SettingsAction::RepaintStatic; 
         }
         // If Modal, maybe block interaction with rest? 
         // For now, allow passthrough if outside toast (dimmer handles visual block)
     }
 
-    if (!m_visible) return false;
+    if (!m_visible) return SettingsAction::None;
 
     // Calculate HUD bounds (must match Render)
     // NOTE: We need window size. For now, use cached/known values or assume calling code passes them.
@@ -1697,7 +1698,7 @@ bool SettingsOverlay::OnMouseMove(float x, float y) {
         
         float newVal = m_pActiveSlider->minVal + t * (m_pActiveSlider->maxVal - m_pActiveSlider->minVal);
         *m_pActiveSlider->pFloatVal = newVal;
-        return true;
+        return SettingsAction::RepaintStatic;
     }
 
     // 2. Hit Test Items (Using stored item.rect which is already in screen coords from Render)
@@ -1733,10 +1734,10 @@ bool SettingsOverlay::OnMouseMove(float x, float y) {
         }
     }
 
-    return (oldHover != m_pHoverItem) || (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) || m_visible;
+    return ((oldHover != m_pHoverItem) || (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) || m_visible) ? SettingsAction::RepaintStatic : SettingsAction::None;
 }
 
-bool SettingsOverlay::OnLButtonDown(float x, float y) {
+SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     // Toast Click (Priority - Modal)
     if (m_showUpdateToast) {
         ToastLayout l = GetToastLayout(m_windowWidth, m_windowHeight);
@@ -1744,56 +1745,42 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
              if (x >= l.btnRestart.left && x <= l.btnRestart.right && y >= l.btnRestart.top && y <= l.btnRestart.bottom) {
                  UpdateManager::Get().OnUserRestart();
                  // Assuming OnUserRestart might close app or something.
-                 return true; 
+                 return SettingsAction::RepaintAll; 
              }
              else if (x >= l.btnLater.left && x <= l.btnLater.right && y >= l.btnLater.top && y <= l.btnLater.bottom) {
                  UpdateManager::Get().OnUserLater();
                  m_dismissedVersion = m_updateVersion; // Don't show again this session
                  m_showUpdateToast = false;
-                 return true;
+                 return SettingsAction::RepaintStatic;
              }
              else if (x >= l.btnClose.left && x <= l.btnClose.right && y >= l.btnClose.top && y <= l.btnClose.bottom) {
                  m_dismissedVersion = m_updateVersion; // Don't show again this session
                  m_showUpdateToast = false; 
                  // Just close notification, distinct from "Later" (which remembers preference?)
-                 return true;
+                 return SettingsAction::RepaintStatic;
              }
-             return true; // Consume click on bg
+             return SettingsAction::RepaintStatic; // Consume click on bg
         }
 
     }
 
-    if (!m_visible) return false;
+    if (!m_visible) return SettingsAction::None;
 
     // NOTE: We need to check if click is inside HUD bounds.
     // item.rect stores screen coords, so we can infer HUD bounds from them.
     // For robustness, we'll use first item rect's X to estimate hudX.
     // Alternative: Add member vars m_hudX, m_hudY and set in Render. TODO.
 
-    // Get HUD bounds from known layout constants. Assume we have window size somehow.
-    // HACK: Check if click is within SIDEBAR region by comparing to known item rects.
-    // If m_tabs has items, use the first item's rect to infer hudX.
-    float hudX = 0, hudY = 0;
-    if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size() && !m_tabs[m_activeTab].items.empty()) {
-        // Content item rects are: contentX = hudX + SIDEBAR_WIDTH + PADDING
-        // So hudX = item.rect.left - SIDEBAR_WIDTH - PADDING - some offset. Too complex.
-        // Simpler: Store hudX/hudY in Render. For now, approximate.
-        // If the first content item rect.left is ~(hudX + SIDEBAR_WIDTH + PADDING), we can reverse it.
-        const auto& firstItem = m_tabs[m_activeTab].items[0];
-        hudX = firstItem.rect.left - SIDEBAR_WIDTH - PADDING;
-        hudY = firstItem.rect.top - 50.0f; // Content starts at hudY + 50
-        // Adjust for scrollOffset
-        hudY -= m_scrollOffset;
-    }
-
-    // HUD bounding box
-    float hudRight = hudX + HUD_WIDTH;
-    float hudBottom = hudY + HUD_HEIGHT;
+    // Use cached HUD rect from Render
+    float hudX = m_finalHudRect.left;
+    float hudY = m_finalHudRect.top;
+    float hudRight = m_finalHudRect.right;
+    float hudBottom = m_finalHudRect.bottom;
 
     // Check if click is OUTSIDE HUD -> Close settings
     if (x < hudX || x > hudRight || y < hudY || y > hudBottom) {
         SetVisible(false);
-        return true;
+        return SettingsAction::RepaintStatic;
     }
 
     // 1. Sidebar Click (hudX <= x < hudX + SIDEBAR_WIDTH)
@@ -1804,7 +1791,7 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
         // Back Button (Top 50px)
         if (localY < 50.0f) {
             SetVisible(false);
-            return true;
+            return SettingsAction::RepaintStatic;
         }
 
         // Tab Click
@@ -1813,11 +1800,11 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
             if (localY >= tabY && localY <= tabY + 40.0f) {
                 m_activeTab = i;
                 m_scrollOffset = 0.0f;
-                return true;
+                return SettingsAction::RepaintStatic;
             }
             tabY += 45.0f;
         }
-        return true; // Clicked sidebar blank area
+        return SettingsAction::RepaintStatic; // Clicked sidebar blank area - consume
     }
 
     // 2. Content Click (uses hover item)
@@ -1826,13 +1813,13 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
         if (m_pHoverItem->type == OptionType::Toggle && m_pHoverItem->pBoolVal) {
             *m_pHoverItem->pBoolVal = !(*m_pHoverItem->pBoolVal);
             if (m_pHoverItem->onChange) m_pHoverItem->onChange();
-            return true;
+            return SettingsAction::RepaintAll;
         }
         // Slider
         if (m_pHoverItem->type == OptionType::Slider && m_pHoverItem->pFloatVal) {
             m_pActiveSlider = m_pHoverItem;
             OnMouseMove(x, y);
-            return true;
+            return SettingsAction::RepaintStatic;
         }
         // Segment
         if (m_pHoverItem->type == OptionType::Segment && m_pHoverItem->pIntVal) {
@@ -1847,13 +1834,13 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
                      if (m_pHoverItem->onChange) m_pHoverItem->onChange();
                  }
              }
-             return true;
+             return SettingsAction::RepaintAll;
         }
         // Button
         if (m_pHoverItem->type == OptionType::ActionButton) {
             if (m_pHoverItem->onChange) m_pHoverItem->onChange();
             m_pHoverItem->isActivated = true; // Mark as activated for visual feedback
-            return true;
+            return SettingsAction::RepaintAll;
         }
         // About: Update Button
         if (m_pHoverItem->type == OptionType::AboutVersionCard) {
@@ -1861,7 +1848,7 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
             if (x >= m_pHoverItem->rect.left && x <= m_pHoverItem->rect.right && y >= m_pHoverItem->rect.top && y <= m_pHoverItem->rect.bottom) {
                  if (m_pHoverItem->onChange) m_pHoverItem->onChange();
             }
-            return true;
+            return SettingsAction::RepaintAll;
         }
         // About: Links Row
         if (m_pHoverItem->type == OptionType::AboutLinks) {
@@ -1875,7 +1862,7 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
              else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) {
                  MessageBoxW(NULL, L"Hotkeys:\nF1 / Space: Help\nArrows: Navigate\nEsc: Close", L"QuickView Hotkeys", MB_OK);
              }
-             return true;
+             return SettingsAction::None;
         }
         // Custom Color Row: Checkbox vs Button
         if (m_pHoverItem->type == OptionType::CustomColorRow) {
@@ -1887,20 +1874,21 @@ bool SettingsOverlay::OnLButtonDown(float x, float y) {
                  // Color Button Area (right half)
                  if (m_pHoverItem->onChange) m_pHoverItem->onChange();
              }
-             return true;
+             return SettingsAction::RepaintAll;
         }
     }
 
     // Clicked content background - consume
-    return true; 
+    // Clicked content background - consume
+    return SettingsAction::RepaintStatic; 
 }
 
-bool SettingsOverlay::OnLButtonUp(float x, float y) {
+SettingsAction SettingsOverlay::OnLButtonUp(float x, float y) {
     if (m_pActiveSlider) {
         m_pActiveSlider = nullptr;
-        return true;
+        return SettingsAction::RepaintStatic;
     }
-    return m_visible; // Consume if visible
+    return SettingsAction::None; // Consume if visible
 }
 
 

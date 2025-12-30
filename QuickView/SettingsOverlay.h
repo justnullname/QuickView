@@ -8,6 +8,12 @@
 // Definition of specific color constants (or include theme header if exists)
 // Using standard D2D1 colors for now
 
+enum class SettingsAction {
+    None,
+    RepaintStatic, // Only UI layer needs update (Tab switch, Hover)
+    RepaintAll     // Config changed, partial or full image redraw might be needed
+};
+
 enum class OptionType {
     Toggle,
     Slider,
@@ -78,9 +84,9 @@ public:
     void Render(ID2D1RenderTarget* pRT, float winW, float winH);
     
     // Interaction
-    bool OnMouseMove(float x, float y);
-    bool OnLButtonDown(float x, float y);
-    bool OnLButtonUp(float x, float y);
+    SettingsAction OnMouseMove(float x, float y);
+    SettingsAction OnLButtonDown(float x, float y);
+    SettingsAction OnLButtonUp(float x, float y);
     bool OnMouseWheel(float delta); // For scrolling functionality maybe?
 
     void SetVisible(bool visible);
@@ -177,6 +183,7 @@ private:
     float m_lastHudY = 0.0f;
     float m_windowWidth = 0.0f;
     float m_windowHeight = 0.0f;
+    D2D1_RECT_F m_finalHudRect = {}; // Cache for hit-testing
     float m_settingsContentHeight = 0.0f;
     
     // Toast Scrolling
