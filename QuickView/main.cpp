@@ -6,6 +6,7 @@
 #include "ImageEngine.h"
 #include "CompositionEngine.h"
 #include "UIRenderer.h"
+#include "InputController.h"  // Quantum Stream: Warp Mode
 #include <d2d1_1helper.h>
 //#include <mimalloc-new-delete.h>
 #include "LosslessTransform.h"
@@ -151,6 +152,7 @@ static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
 static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
+static InputController g_inputController;  // Quantum Stream: 输入状态机
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
@@ -3101,6 +3103,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RequestRepaint(PaintLayer::Dynamic);
             break;
         
+        case VK_F10: // F10: Test Warp Mode (Demo Only)
+            {
+                static size_t testIndex = 0;
+                bool shouldLoad = g_inputController.OnUserNavigate(testIndex++);
+                if (!shouldLoad) {
+                    OutputDebugStringA("Warp Mode Active - IO Suppressed\n");
+                } else {
+                    OutputDebugStringA("Static Mode - IO Allowed\n");
+                }
+                RequestRepaint(PaintLayer::Image);
+            }
+            break;
+        
         // Transforms
         case 'R': PerformTransform(hwnd, shift ? TransformType::Rotate90CCW : TransformType::Rotate90CW); break;
         case 'H': PerformTransform(hwnd, TransformType::FlipHorizontal); break;
@@ -4544,6 +4559,16 @@ void OnPaint(HWND hwnd) {
                     }
                 }
             }
+        }
+        
+        // === Quantum Stream: Warp Mode Integration ===
+        // 根据 InputController 状态设置 RenderEngine 模糊效果
+        if (g_inputController.GetState() == ScrollState::Warp) {
+            float blurIntensity = g_inputController.CalculateBlurIntensity();
+            float dimIntensity = g_inputController.CalculateDimIntensity();
+            g_renderEngine->SetWarpMode(blurIntensity, dimIntensity);
+        } else {
+            g_renderEngine->SetWarpMode(0.0f, 0.0f);
         }
         
         if (g_currentBitmap) {
