@@ -35,7 +35,7 @@ public:
     // ===== UI 状态更新 =====
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
-    void SetDebugStats(float fps, size_t memMB, int scoutQueue, int heavyState);
+    void SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount);
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
     void SetPinActive(bool active) { m_pinActive = active; MarkStaticDirty(); }
@@ -70,9 +70,9 @@ private:
     // Debug HUD
     bool m_showDebugHUD = false;
     float m_fps = 0;
-    size_t m_memMB = 0;
-    int m_scoutQueue = 0;
-    int m_heavyState = 0;
+    size_t m_memBytes = 0;
+    size_t m_queueSize = 0;
+    int m_skipCount = 0;
     
     // Window Controls
     int m_winCtrlHover = -1;

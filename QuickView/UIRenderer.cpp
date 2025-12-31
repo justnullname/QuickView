@@ -143,11 +143,11 @@ void UIRenderer::OnResize(UINT width, UINT height) {
     MarkGalleryDirty();
 }
 
-void UIRenderer::SetDebugStats(float fps, size_t memMB, int scoutQueue, int heavyState) {
+void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount) {
     m_fps = fps;
-    m_memMB = memMB;
-    m_scoutQueue = scoutQueue;
-    m_heavyState = heavyState;
+    m_memBytes = memBytes;
+    m_queueSize = queueSize;
+    m_skipCount = skipCount;
     if (m_showDebugHUD) MarkDynamicDirty();
 }
 
@@ -459,9 +459,9 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     // Use m_fps (passed from main.cpp) for FPS. Use global metrics for others for now.
     swprintf_s(buffer, L"FPS: %.1f  Q: %llu  Skip: %d  MEM: %llu MB", 
         m_fps, 
-        g_debugMetrics.eventQueueSize.load(),
-        g_debugMetrics.skipCount.load(),
-        g_debugMetrics.memoryUsage.load() / 1024 / 1024);
+        m_queueSize,
+        m_skipCount,
+        m_memBytes / 1024 / 1024);
     
     dc->DrawText(buffer, (UINT32)wcslen(buffer), m_debugFormat.Get(), 
             D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW, hudY + 30), m_whiteBrush.Get());

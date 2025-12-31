@@ -4477,37 +4477,8 @@ void OnPaint(HWND hwnd) {
     g_renderEngine->BeginDraw();
     
     // --- Performance Metrics Update ---
-    {
-        static LARGE_INTEGER lastTime = {};
-        static LARGE_INTEGER freq = {};
-        static int frameCount = 0;
-        static float displayFps = 0.0f;
-        if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        frameCount++;
-        if (lastTime.QuadPart > 0) {
-            double elapsed = (double)(now.QuadPart - lastTime.QuadPart) / freq.QuadPart;
-            if (elapsed >= 0.5) { // 2Hz update
-                displayFps = frameCount / (float)elapsed;
-                frameCount = 0;
-                lastTime = now;
-            }
-        } else { lastTime = now; }
-        g_fps = displayFps; // Global
-        g_debugMetrics.fps = (int)std::round(g_fps);
-        
-        if (g_imageEngine) {
-            auto stats = g_imageEngine->GetDebugStats();
-            g_debugMetrics.eventQueueSize = stats.scoutQueueSize;
-            g_debugMetrics.skipCount = stats.scoutSkipCount; // Populate Skip
-            PROCESS_MEMORY_COUNTERS pmc = {};
-            pmc.cb = sizeof(pmc);
-            if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-                g_debugMetrics.memoryUsage = pmc.WorkingSetSize;
-            }
-        }
-    }
+    // [Performance] Unguarded metric block removed. 
+    // Metrics are now computed lazily in the Debug HUD block below.
     // ----------------------------------
 
     auto context = g_renderEngine->GetDeviceContext();
@@ -4760,7 +4731,26 @@ void OnPaint(HWND hwnd) {
         g_uiRenderer->SetDebugHUDVisible(allowHud && g_showDebugHUD);
         
         if (shouldCompute) {
-            g_uiRenderer->SetDebugStats(g_fps, (size_t)0, 0, 0);
+            // Collect Metrics (Lazy)
+            if (g_imageEngine) {
+                auto stats = g_imageEngine->GetDebugStats();
+                g_debugMetrics.eventQueueSize = stats.scoutQueueSize;
+                g_debugMetrics.skipCount = stats.scoutSkipCount;
+                
+                PROCESS_MEMORY_COUNTERS pmc = {};
+                pmc.cb = sizeof(pmc);
+                if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+                    g_debugMetrics.memoryUsage = pmc.WorkingSetSize;
+                }
+            }
+            g_debugMetrics.fps = (int)std::round(g_fps);
+
+            g_uiRenderer->SetDebugStats(
+                g_fps, 
+                g_debugMetrics.memoryUsage.load(),       // memBytes
+                g_debugMetrics.eventQueueSize.load(),    // queueSize
+                g_debugMetrics.skipCount.load()          // skipCount
+            );
         }
         
         // Sync hover state: convert WindowHit enum to int
