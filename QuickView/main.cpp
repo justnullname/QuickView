@@ -2991,9 +2991,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Not Visible - Handled in switch below
         }
 
-        bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        // 重复键过滤 (Bit 30: The previous key state)
+        // 注意: Warp 测试逻辑需要处理长按，所以不在这里过滤重复
+        
         bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        
+        // 让 F10 穿透 (F10 通常产生 WM_SYSKEYDOWN)
+        // 其他系统键仍交给 DefWindowProc 处理
+        if (message == WM_SYSKEYDOWN && wParam != VK_F10) {
+            break; // 其他系统键交给默认处理
+        }
         
         switch (wParam) {
         // Navigation
