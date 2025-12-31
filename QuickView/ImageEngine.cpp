@@ -340,7 +340,7 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
         CImageLoader::DecodedImage decoded(arena.GetResource());
         std::wstring loaderName;
         
-        HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, arena.GetResource(), &loaderName);
+        HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, arena.GetResource(), &loaderName, st);
         
         if (st.stop_requested()) {
             // Cancelled during load - discard result

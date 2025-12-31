@@ -1,6 +1,8 @@
 #pragma once
 #include "pch.h"
 #include <vector>
+#include <stop_token>
+#include <memory_resource>
 
 /// <summary>
 /// Image Loader
@@ -117,7 +119,7 @@ public:
     /// <summary>
     /// NEW: Load image directly into PMR-backed buffer (Zero-Copy for Heavy Lane)
     /// </summary>
-    HRESULT LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName = nullptr);
+    HRESULT LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName = nullptr, std::stop_token st = {});
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)

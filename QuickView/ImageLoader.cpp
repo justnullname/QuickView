@@ -1317,9 +1317,49 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
 }
 
 // ============================================================================
-// PMR-Backed Loading (Zero-Copy for Heavy Lane)
+// Helper: Chunked Read with Cancel Check
+static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, std::stop_token st) {
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    LARGE_INTEGER size;
+    if (!GetFileSizeEx(hFile, &size)) { CloseHandle(hFile); return false; }
+    
+    // Deep Regicide: Check before allocation
+    if (st.stop_requested()) { CloseHandle(hFile); return false; }
+
+    try {
+        buffer.clear();
+        buffer.resize(size.QuadPart);
+    } catch (...) {
+        CloseHandle(hFile); return false;
+    }
+    
+    // Chunk size: 256KB (Small enough for responsiveness, large enough for throughput)
+    const DWORD CHUNK_SIZE = 256 * 1024;
+    size_t totalRead = 0;
+    DWORD bytesRead = 0;
+    uint8_t* ptr = buffer.data();
+
+    while (totalRead < size.QuadPart) {
+        // Deep Regicide: Check every chunk
+        if (st.stop_requested()) { CloseHandle(hFile); return false; }
+        
+        DWORD toRead = (DWORD)std::min((uint64_t)CHUNK_SIZE, (uint64_t)(size.QuadPart - totalRead));
+        if (!ReadFile(hFile, ptr + totalRead, toRead, &bytesRead, NULL) || bytesRead == 0) {
+            CloseHandle(hFile);
+            return false;
+        }
+        totalRead += bytesRead;
+    }
+
+    CloseHandle(hFile);
+    return true;
+}
+
+// PMR-Backed Loading (Zero-Copy for Heavy Lane) //
 // ============================================================================
-HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName) {
+HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName, std::stop_token st) {
     if (!filePath || !pOutput || !pmr) return E_INVALIDARG;
     
     // Reset output
@@ -1330,9 +1370,13 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     std::wstring detectedFmt = DetectFormatFromContent(filePath);
     
     // --- JPEG Path (Highest Priority / Most Common) ---
+    // --- JPEG Path (Highest Priority / Most Common) ---
     if (detectedFmt == L"JPEG") {
-        std::vector<uint8_t> jpegBuf;
-        if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
+        // Use PMR vector for Input Buffer (Scratchpad optimization)
+        std::pmr::vector<uint8_t> jpegBuf(pmr);
+        if (!ReadFileToPMR(filePath, jpegBuf, st)) return E_ABORT; // Use Chunked Read
+        
+        if (st.stop_requested()) return E_ABORT;
         
         tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
         if (!tj) return E_FAIL;
@@ -1365,24 +1409,19 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     }
     
     // --- Fallback: Use WIC Source and CopyPixels directly (Zero Intermediate Heap Copy) ---
+    if (st.stop_requested()) return E_ABORT;
+
     ComPtr<IWICBitmapSource> source;
-    // Use LoadFromFile to get lazy source (or decoder)
-    // Note: We need a method that handles format detection logic like LoadToMemory?
-    // Actually LoadToMemory does format detection and specific loader dispatch.
-    // If we duplicate that, it's complex. 
-    // BUT LoadToMemory returns IWICBitmap.
-    // Ideally we modify LoadToMemory to accept a buffer? No, WIC APIs don't work like that easily.
-    
-    // Compromise: Use LoadToMemory (existing logic) but ask it NOT to force encode?
-    // Standard LoadToMemory creates an IWICBitmap (allocated by WIC).
-    
-    // Let's stick to the current implementation for safety in Phase 3.2.
-    // Optimization: If detectedFmt is not JPEG, we accept the double copy for now to ensure we handle all weird formats (HEIC, RAW, etc) correctly via the existing robust LoadToMemory logic.
-    // Refactoring LoadToMemory to support "Direct Write" is Phase 4 material.
-    
+    // ... comments ...
     ComPtr<IWICBitmap> wicBitmap;
+    
+    // Check cancel before expensive LoadToMemory
+    if (st.stop_requested()) return E_ABORT;
+    
     HRESULT hr = LoadToMemory(filePath, &wicBitmap, pLoaderName);
     if (FAILED(hr) || !wicBitmap) return hr;
+    
+    if (st.stop_requested()) return E_ABORT;
     
     UINT w, h;
     wicBitmap->GetSize(&w, &h);
