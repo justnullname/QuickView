@@ -406,27 +406,17 @@ void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& d
         finalEffect = m_brightnessEffect.Get();
     }
     
-    // 计算变换以适应目标矩形
-    D2D1_SIZE_F bmpSize = bitmap->GetSize();
-    float scaleX = (destRect.right - destRect.left) / bmpSize.width;
-    float scaleY = (destRect.bottom - destRect.top) / bmpSize.height;
-    
-    D2D1::Matrix3x2F transform = 
-        D2D1::Matrix3x2F::Scale(scaleX, scaleY) *
-        D2D1::Matrix3x2F::Translation(destRect.left, destRect.top);
-    
-    m_d2dContext->SetTransform(transform);
-    
     // 绘制 Effect 输出
+    // 注意: 不而在内部 SetTransform，而是直接利用调用者设置好的 World Transform
+    // 这样可以保持缩放、旋转和平移上下文
+    D2D1_SIZE_F bmpSize = bitmap->GetSize();
+    
     m_d2dContext->DrawImage(
         finalEffect,
-        D2D1::Point2F(0, 0),
-        D2D1::RectF(0, 0, bmpSize.width, bmpSize.height),
+        D2D1::Point2F(destRect.left, destRect.top), // Offset
+        D2D1::RectF(0, 0, bmpSize.width, bmpSize.height), // Source Rect
         D2D1_INTERPOLATION_MODE_LINEAR,
         D2D1_COMPOSITE_MODE_SOURCE_OVER
     );
-    
-    // 重置变换
-    m_d2dContext->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 
