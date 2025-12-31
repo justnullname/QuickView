@@ -156,7 +156,12 @@ static InputController g_inputController;  // Quantum Stream: 输入状态机
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
-static bool g_isBlurry = false; // For Motion Blur effect
+static bool g_isBlurry = false; // For Motion Blur (Ghost)
+static bool g_isCrossFading = false;
+static DWORD g_crossFadeStart = 0;
+static const DWORD CROSS_FADE_DURATION = 150; // ms
+static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
+
 OSDState g_osd; // Removed static, explicitly Global
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
 static DialogState g_dialog;
@@ -3819,6 +3824,7 @@ void ProcessEngineEvents(HWND hwnd) {
 
             if (SUCCEEDED(hr)) {
                 g_currentBitmap = thumbBitmap;
+                g_ghostBitmap = thumbBitmap; // Save for Cross-Fade
                 g_isBlurry = true; 
                 g_renderEngine->SetWarpMode(0.5f, 0.1f); // Enable Ghost Blur (Intensity 0.5, Dim 0.1)
                 g_imagePath = evt.filePath; // Update path immediately for UI consistency
@@ -3844,6 +3850,13 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_currentBitmap = fullBitmap;
                 g_isBlurry = false; 
                 g_renderEngine->SetWarpMode(0.0f); // Reset Ghost Blur
+                
+                // Start Cross-Fade if we have a Ghost
+                if (g_ghostBitmap) {
+                    g_isCrossFading = true;
+                    g_crossFadeStart = GetTickCount();
+                }
+
                 g_imagePath = evt.filePath;
                 
                 // Use pre-read metadata from Heavy Lane (no UI blocking!)
@@ -3905,6 +3918,9 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     if (!g_imageEngine || path.empty()) return;
 
     g_isLoading = true;
+    g_isCrossFading = false;
+    g_ghostBitmap = nullptr; // Clear previous ghost
+    
     
     // Level 0 Feedback: Immediate OSD before any decode starts
     std::wstring filename = path.substr(path.find_last_of(L"\\/") + 1);
@@ -4659,9 +4675,33 @@ void OnPaint(HWND hwnd) {
             D2D1_RECT_F destRect = D2D1::RectF(0, 0, size.width, size.height);
             
             if (g_renderEngine->IsWarpMode()) {
-                // Warp 模式：使用模糊效果绘制
+                // Warp 模式：使用模糊效果绘制 (High Velocity Scroll)
                 g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
-            } else {
+            } 
+            else if (g_isCrossFading && g_ghostBitmap) {
+                // Cross-Fade Animation (Ghost -> Truth)
+                DWORD elapsed = GetTickCount() - g_crossFadeStart;
+                float alpha = std::min(1.0f, (float)elapsed / (float)CROSS_FADE_DURATION);
+
+                if (alpha >= 1.0f) {
+                    g_isCrossFading = false;
+                    g_ghostBitmap = nullptr; // Cleanup
+                    // Draw Full Final
+                    context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                } else {
+                    // 1. Draw Ghost (Blurry Background)
+                    g_renderEngine->SetWarpMode(0.5f, 0.1f);
+                    g_renderEngine->DrawBitmapWithBlur(g_ghostBitmap.Get(), destRect);
+                    g_renderEngine->SetWarpMode(0.0f); // Restore
+
+                    // 2. Draw Full (Fading In)
+                    context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+                    
+                    // Continue Animation
+                    MarkStaticLayerDirty();
+                }
+            }
+            else {
                 // Static 模式：正常绘制
                 D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
                     ? D2D1_INTERPOLATION_MODE_LINEAR 
