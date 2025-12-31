@@ -3103,14 +3103,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RequestRepaint(PaintLayer::Dynamic);
             break;
         
-        case VK_F10: // F10: Test Warp Mode (Demo Only)
+        case VK_F10: // F10: Test Warp Mode (Simulate rapid navigation)
             {
-                static size_t testIndex = 0;
-                bool shouldLoad = g_inputController.OnUserNavigate(testIndex++);
+                // 模拟快速导航 - 使用相同索引但快速调用
+                static auto lastF10Time = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastF10Time);
+                lastF10Time = now;
+                
+                // 模拟快速滚动（间隔 < 16ms）
+                static size_t navIndex = 0;
+                bool shouldLoad = g_inputController.OnUserNavigate(navIndex);
+                
                 if (!shouldLoad) {
-                    OutputDebugStringA("Warp Mode Active - IO Suppressed\n");
+                    OutputDebugStringA("[Warp] IO Suppressed\n");
                 } else {
-                    OutputDebugStringA("Static Mode - IO Allowed\n");
+                    OutputDebugStringA("[Static] IO Allowed\n");
                 }
                 RequestRepaint(PaintLayer::Image);
             }
@@ -4649,12 +4657,20 @@ void OnPaint(HWND hwnd) {
             
             context->SetTransform(transform);
             
-            // Draw at (0,0) with original size, transform handles placement
-            // Use dynamic interpolation: LINEAR during interaction for responsiveness, CUBIC when static for quality
-            D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
-                ? D2D1_INTERPOLATION_MODE_LINEAR 
-                : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
-            context->DrawBitmap(g_currentBitmap.Get(), D2D1::RectF(0, 0, size.width, size.height), 1.0f, interpMode);
+            // === Quantum Stream: Warp Mode Rendering ===
+            // 根据 Warp 状态选择绘制方法
+            D2D1_RECT_F destRect = D2D1::RectF(0, 0, size.width, size.height);
+            
+            if (g_renderEngine->IsWarpMode()) {
+                // Warp 模式：使用模糊效果绘制
+                g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
+            } else {
+                // Static 模式：正常绘制
+                D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
+                    ? D2D1_INTERPOLATION_MODE_LINEAR 
+                    : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+                context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, interpMode);
+            }
         }
         
         // Reset transform for OSD and UI elements
