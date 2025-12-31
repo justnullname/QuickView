@@ -202,6 +202,15 @@ public:
         GetBack().Reset();
     }
 
+    // Const Accessors for Debug Stats
+    const QuantumArena& GetActive() const noexcept {
+        return m_arenas[m_activeIndex.load(std::memory_order_acquire)];
+    }
+
+    const QuantumArena& GetBack() const noexcept {
+        return m_arenas[1 - m_activeIndex.load(std::memory_order_acquire)];
+    }
+
 private:
     QuantumArena m_arenas[2];
     std::atomic<int> m_activeIndex;

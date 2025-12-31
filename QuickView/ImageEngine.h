@@ -71,7 +71,7 @@ public:
 
 private:
     CImageLoader* m_loader;
-    MemoryArena m_memory;
+    QuantumArenaPool m_pool;
     HWND m_hwnd = nullptr;
 
     void QueueEvent(EngineEvent&& e);
@@ -113,7 +113,7 @@ private:
     // --- Lane 2: The Heavy Lifter ---
     class HeavyLane {
     public:
-        HeavyLane(ImageEngine* parent, CImageLoader* loader, MemoryArena* memory);
+        HeavyLane(ImageEngine* parent, CImageLoader* loader, QuantumArenaPool* pool);
         ~HeavyLane();
 
         void SetTarget(const std::wstring& path); // The Single Slot
@@ -130,7 +130,7 @@ private:
 
         ImageEngine* m_parent;
         CImageLoader* m_loader;
-        MemoryArena* m_memory;
+        QuantumArenaPool* m_pool; // Shared Pool (Thread-safe usage logic required)
 
         std::jthread m_thread; 
         

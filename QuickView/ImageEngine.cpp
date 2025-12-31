@@ -10,7 +10,7 @@
 ImageEngine::ImageEngine(CImageLoader* loader)
     : m_loader(loader)
     , m_scout(this, loader)
-    , m_heavy(this, loader, &m_memory)
+    , m_heavy(this, loader, &m_pool)
 {
 }
 
@@ -106,8 +106,9 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     s.scoutResultsSize = m_scout.GetResultsSize();
     s.scoutSkipCount = m_scout.GetSkipCount();
     s.cancelCount = m_heavy.GetCancelCount();
-    s.memoryUsed = m_memory.GetUsedBytes();
-    s.memoryTotal = m_memory.GetCapacity();
+    // Use Active arena for approximate stats
+    s.memoryUsed = m_pool.GetActive().GetUsedBytes() + m_pool.GetBack().GetUsedBytes();
+    s.memoryTotal = m_pool.GetActive().GetCapacity() * 2;
     
     if (m_heavy.IsCancelling()) {
         s.heavyState = HeavyState::CANCELLING;
@@ -234,8 +235,8 @@ void ImageEngine::ScoutLane::QueueWorker() {
 // Heavy Lane (The Tank)
 // ============================================================================
 
-ImageEngine::HeavyLane::HeavyLane(ImageEngine* parent, CImageLoader* loader, MemoryArena* memory)
-    : m_parent(parent), m_loader(loader), m_memory(memory)
+ImageEngine::HeavyLane::HeavyLane(ImageEngine* parent, CImageLoader* loader, QuantumArenaPool* pool)
+    : m_parent(parent), m_loader(loader), m_pool(pool)
 {
     // Start the Master Loop
     m_thread = std::jthread([this](std::stop_token st) {
@@ -311,9 +312,9 @@ void ImageEngine::HeavyLane::MasterLoop(std::stop_token masterToken) {
             m_isBusy = true;
         }
 
-        // --- 2. Preparation (Memory Reset) ---
+        // --- 2. Preparation ---
         m_isCancelling = false;  // Clear cancel flag
-        m_memory->Reset(); // QuantumArena: 0ns 级重置
+        // Memory reset is handled inside PerformDecode using Pool
 
         // --- 3. Execution (Interruptible) ---
         PerformDecode(workPath, jobToken);
@@ -327,12 +328,19 @@ void ImageEngine::HeavyLane::MasterLoop(std::stop_token masterToken) {
 void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_token st) {
     if (st.stop_requested()) return;
 
+    // Reset Back Buffer (Zero Cost 0ns)
+    // Safe because we copy result to WIC Bitmap (Heap) inside CreateWICBitmapFromMemory
+    // So the Arena is just a fast scratchpad.
+    m_pool->GetBack().Reset();
+
     try {
         // Use PMR-backed loading for Zero-Fragmentation
-        CImageLoader::DecodedImage decoded(m_memory->GetResource());
+        // Arena is 64-byte aligned, optimized for AVX2/AVX512
+        auto& arena = m_pool->GetBack();
+        CImageLoader::DecodedImage decoded(arena.GetResource());
         std::wstring loaderName;
         
-        HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, m_memory->GetResource(), &loaderName);
+        HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, arena.GetResource(), &loaderName);
         
         if (st.stop_requested()) {
             // Cancelled during load - discard result

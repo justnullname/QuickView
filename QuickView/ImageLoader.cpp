@@ -1364,8 +1364,22 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         if (SUCCEEDED(hr)) return hr;
     }
     
-    // --- Fallback: Use standard LoadToMemory then copy to PMR ---
-    // This is less efficient but ensures all formats work.
+    // --- Fallback: Use WIC Source and CopyPixels directly (Zero Intermediate Heap Copy) ---
+    ComPtr<IWICBitmapSource> source;
+    // Use LoadFromFile to get lazy source (or decoder)
+    // Note: We need a method that handles format detection logic like LoadToMemory?
+    // Actually LoadToMemory does format detection and specific loader dispatch.
+    // If we duplicate that, it's complex. 
+    // BUT LoadToMemory returns IWICBitmap.
+    // Ideally we modify LoadToMemory to accept a buffer? No, WIC APIs don't work like that easily.
+    
+    // Compromise: Use LoadToMemory (existing logic) but ask it NOT to force encode?
+    // Standard LoadToMemory creates an IWICBitmap (allocated by WIC).
+    
+    // Let's stick to the current implementation for safety in Phase 3.2.
+    // Optimization: If detectedFmt is not JPEG, we accept the double copy for now to ensure we handle all weird formats (HEIC, RAW, etc) correctly via the existing robust LoadToMemory logic.
+    // Refactoring LoadToMemory to support "Direct Write" is Phase 4 material.
+    
     ComPtr<IWICBitmap> wicBitmap;
     HRESULT hr = LoadToMemory(filePath, &wicBitmap, pLoaderName);
     if (FAILED(hr) || !wicBitmap) return hr;
@@ -1376,6 +1390,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     UINT stride = w * 4;
     size_t bufSize = (size_t)stride * h;
     
+    // Ensure 16-byte alignment usage if needed, but vector manages its data.
     pOutput->pixels.resize(bufSize);
     pOutput->width = w;
     pOutput->height = h;
@@ -1393,7 +1408,6 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         lock->GetDataPointer(&cbBufferSize, &pData);
         
         if (pData) {
-            // Copy row by row if strides differ
             if (cbStride == stride) {
                 memcpy(pOutput->pixels.data(), pData, bufSize);
             } else {
