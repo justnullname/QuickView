@@ -4641,44 +4641,8 @@ void OnPaint(HWND hwnd) {
         // But logicW/logicH IS the size in DIPs.
         D2D1_SIZE_F logicSize = D2D1::SizeF(logicW, logicH);
         CalculateWindowControls(logicSize);
-        // DrawWindowControls(hwnd, context);  // MOVED TO UIRenderer (DComp Surface)
-        
-        // Draw OSD - MOVED TO UIRenderer (DComp Surface)
-        // g_renderEngine->DrawOSD(g_osd);
-        
-        // Draw Edge Navigation Indicators - MOVED TO UIRenderer (DComp Surface)
-        // DrawNavIndicators(context);
-        
-        // Draw Info Panel - MOVED TO UIRenderer (DComp Surface)
-        // if (g_runtime.ShowInfoPanel) {
-        //      if (g_runtime.InfoPanelExpanded) {
-        //          DrawInfoPanel(context);
-        //      } else {
-        //          DrawCompactInfo(context);
-        //      }
-        // }
-        
-        // Draw Tooltip - MOVED TO UIRenderer (DComp Surface)
-        // DrawGridTooltip(context);
-        
-        // --- Gallery Overlay - MOVED TO UIRenderer (DComp Surface)
-        // g_gallery.Update(0.016f);
-        // if (g_gallery.IsVisible()) {
-        //     D2D1_SIZE_F rtSize = context->GetSize();
-        //     g_gallery.Render(context, rtSize);
-        // }
-
-        // Toolbar - MOVED TO UIRenderer (DComp Surface)
-        // g_toolbar.Render(context);
-
-        // DrawDialog - MOVED TO UIRenderer (DComp Surface)
-        // DrawDialog(context, rect);
-        
-        // Settings Overlay - MOVED TO UIRenderer (DComp Surface)
-        // g_settingsOverlay.Render(context, (float)rect.right, (float)rect.bottom);
-        
-        // Debug HUD - MOVED TO UIRenderer (DComp Surface)
-        // RenderDebugHUD(context, (float)rect.right, (float)rect.bottom);
+        // DrawWindowControls, OSD, InfoPanel, etc moved to UIRenderer (DComp Surface)
+        // Legacy SwapChain rendering logic removed.
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();

@@ -3,7 +3,7 @@
 #include <dxgi1_3.h>
 #include <memory>
 #include <dwrite.h>
-#include "OSDState.h"
+
 #pragma comment(lib, "dwrite.lib")
 
 /// <summary>
@@ -89,7 +89,7 @@ private:
 public:
     void WaitForGPU();
     bool IsWaitable() const { return m_frameLatencyWaitableObject != nullptr; }
-    void DrawOSD(const OSDState& state);
+
 
 
     // D2D resources
@@ -100,7 +100,7 @@ public:
 
     // DirectWrite resources
     ComPtr<IDWriteFactory> m_dwriteFactory;
-    ComPtr<IDWriteTextFormat> m_textFormat;
+
 
     // WIC resources
     ComPtr<IWICImagingFactory> m_wicFactory;
