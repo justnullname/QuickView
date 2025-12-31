@@ -1,5 +1,11 @@
 #include "pch.h"
 #include "RenderEngine.h"
+#include <algorithm>  // for std::clamp
+
+// 核心修复：引入 DirectX GUID 定义库
+#pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "d3d11.lib")
 
 CRenderEngine::~CRenderEngine() {
     // ComPtr automatically releases resources
@@ -40,6 +46,13 @@ HRESULT CRenderEngine::Initialize(HWND hwnd) {
     // 4. Create render target
     hr = CreateRenderTarget();
     if (FAILED(hr)) return hr;
+
+    // 5. Warp Effect 预热 (避免首次使用时的卡顿)
+    hr = CreateWarpEffects();
+    // 非致命错误 - 降级到无模糊模式
+    if (FAILED(hr)) {
+        OutputDebugStringA("Warning: Failed to create Warp effects, blur disabled.\n");
+    }
 
     return S_OK;
 }
@@ -315,3 +328,105 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
 
     return hr;
 }
+
+// ============================================================================
+// Warp Mode (Motion Blur) 实现
+// ============================================================================
+
+HRESULT CRenderEngine::CreateWarpEffects() {
+    if (!m_d2dContext) return E_FAIL;
+    
+    HRESULT hr = S_OK;
+    
+    // 1. 创建方向性模糊效果 (垂直方向 - 模拟滚动)
+    hr = m_d2dContext->CreateEffect(CLSID_D2D1DirectionalBlur, &m_blurEffect);
+    if (FAILED(hr)) {
+        // 降级: 尝试高斯模糊
+        hr = m_d2dContext->CreateEffect(CLSID_D2D1GaussianBlur, &m_blurEffect);
+    }
+    if (FAILED(hr)) return hr;
+    
+    // 设置默认属性
+    if (m_blurEffect) {
+        // DirectionalBlur: Angle = 90 度 (垂直方向)
+        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_ANGLE, 90.0f);
+        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_STANDARD_DEVIATION, 0.0f);
+        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_SOFT);
+    }
+    
+    // 2. 创建亮度效果 (压暗)
+    hr = m_d2dContext->CreateEffect(CLSID_D2D1Brightness, &m_brightnessEffect);
+    if (SUCCEEDED(hr) && m_brightnessEffect) {
+        // 默认不压暗
+        D2D1_VECTOR_2F blackPoint = { 0.0f, 0.0f };
+        D2D1_VECTOR_2F whitePoint = { 1.0f, 1.0f };
+        m_brightnessEffect->SetValue(D2D1_BRIGHTNESS_PROP_BLACK_POINT, blackPoint);
+        m_brightnessEffect->SetValue(D2D1_BRIGHTNESS_PROP_WHITE_POINT, whitePoint);
+    }
+    
+    return S_OK;
+}
+
+void CRenderEngine::SetWarpMode(float intensity, float dimming) {
+    m_warpIntensity = std::clamp(intensity, 0.0f, 1.0f);
+    m_warpDimming = std::clamp(dimming, 0.0f, 0.5f);
+    
+    // 更新模糊强度
+    if (m_blurEffect) {
+        // 最大模糊半径 = 30 像素 (强烈的动态模糊)
+        float blurRadius = m_warpIntensity * 30.0f;
+        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_STANDARD_DEVIATION, blurRadius);
+    }
+    
+    // 更新压暗强度
+    if (m_brightnessEffect) {
+        // 压暗通过降低白点实现
+        float whiteLevel = 1.0f - m_warpDimming;
+        D2D1_VECTOR_2F whitePoint = { whiteLevel, 1.0f };
+        m_brightnessEffect->SetValue(D2D1_BRIGHTNESS_PROP_WHITE_POINT, whitePoint);
+    }
+}
+
+void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect) {
+    if (!bitmap || !m_d2dContext) return;
+    
+    // 如果没有 Effect 或强度为 0，直接绘制
+    if (!m_blurEffect || m_warpIntensity < 0.01f) {
+        m_d2dContext->DrawBitmap(bitmap, destRect, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+        return;
+    }
+    
+    // 设置模糊输入
+    m_blurEffect->SetInput(0, bitmap);
+    
+    // 如果有压暗效果，链接 Effect
+    ID2D1Effect* finalEffect = m_blurEffect.Get();
+    if (m_brightnessEffect && m_warpDimming > 0.01f) {
+        m_brightnessEffect->SetInputEffect(0, m_blurEffect.Get());
+        finalEffect = m_brightnessEffect.Get();
+    }
+    
+    // 计算变换以适应目标矩形
+    D2D1_SIZE_F bmpSize = bitmap->GetSize();
+    float scaleX = (destRect.right - destRect.left) / bmpSize.width;
+    float scaleY = (destRect.bottom - destRect.top) / bmpSize.height;
+    
+    D2D1::Matrix3x2F transform = 
+        D2D1::Matrix3x2F::Scale(scaleX, scaleY) *
+        D2D1::Matrix3x2F::Translation(destRect.left, destRect.top);
+    
+    m_d2dContext->SetTransform(transform);
+    
+    // 绘制 Effect 输出
+    m_d2dContext->DrawImage(
+        finalEffect,
+        D2D1::Point2F(0, 0),
+        D2D1::RectF(0, 0, bmpSize.width, bmpSize.height),
+        D2D1_INTERPOLATION_MODE_LINEAR,
+        D2D1_COMPOSITE_MODE_SOURCE_OVER
+    );
+    
+    // 重置变换
+    m_d2dContext->SetTransform(D2D1::Matrix3x2F::Identity());
+}
+

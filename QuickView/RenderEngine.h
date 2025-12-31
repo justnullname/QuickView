@@ -6,6 +6,9 @@
 
 #pragma comment(lib, "dwrite.lib")
 
+// Direct2D Effects GUIDs
+#include <d2d1effects.h>
+
 /// <summary>
 /// Direct2D Render Engine (Simplified)
 /// Focuses on accurate image rendering without color adjustments
@@ -56,6 +59,26 @@ public:
     /// </summary>
     HRESULT CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bitmap** d2dBitmap);
 
+    // === Warp Mode (Motion Blur) ===
+    
+    /// <summary>
+    /// 设置 Warp 模式 (高速滚动时的视觉惯性效果)
+    /// </summary>
+    /// <param name="intensity">模糊强度 0.0-1.0</param>
+    /// <param name="dimming">压暗强度 0.0-0.5</param>
+    void SetWarpMode(float intensity, float dimming = 0.0f);
+    
+    /// <summary>
+    /// 检查是否处于 Warp 模式
+    /// </summary>
+    bool IsWarpMode() const { return m_warpIntensity > 0.01f; }
+    
+    /// <summary>
+    /// 绘制带模糊效果的位图 (Warp 模式下使用)
+    /// </summary>
+    void DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect);
+
+
     /// <summary>
     /// Get D2D device context
     /// </summary>
@@ -104,4 +127,12 @@ public:
 
     // WIC resources
     ComPtr<IWICImagingFactory> m_wicFactory;
+    
+    // === Warp Mode Effects (预热) ===
+    ComPtr<ID2D1Effect> m_blurEffect;      // DirectionalBlur
+    ComPtr<ID2D1Effect> m_brightnessEffect; // 压暗效果
+    float m_warpIntensity = 0.0f;           // 当前模糊强度
+    float m_warpDimming = 0.0f;             // 当前压暗强度
+    
+    HRESULT CreateWarpEffects(); // Effect 预热
 };
