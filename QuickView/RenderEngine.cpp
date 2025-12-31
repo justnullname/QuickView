@@ -396,27 +396,29 @@ void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& d
         return;
     }
     
-    // 设置模糊输入
+    // 绘制 Effect 输出 (仅模糊)
+    // 注意: 不而在内部 SetTransform，而是直接利用调用者设置好的 World Transform
     m_blurEffect->SetInput(0, bitmap);
     
-    // 如果有压暗效果，链接 Effect
-    ID2D1Effect* finalEffect = m_blurEffect.Get();
-    if (m_brightnessEffect && m_warpDimming > 0.01f) {
-        m_brightnessEffect->SetInputEffect(0, m_blurEffect.Get());
-        finalEffect = m_brightnessEffect.Get();
-    }
-    
-    // 绘制 Effect 输出
-    // 注意: 不而在内部 SetTransform，而是直接利用调用者设置好的 World Transform
-    // 这样可以保持缩放、旋转和平移上下文
     D2D1_SIZE_F bmpSize = bitmap->GetSize();
     
     m_d2dContext->DrawImage(
-        finalEffect,
+        m_blurEffect.Get(),
         D2D1::Point2F(destRect.left, destRect.top), // Offset
         D2D1::RectF(0, 0, bmpSize.width, bmpSize.height), // Source Rect
         D2D1_INTERPOLATION_MODE_LINEAR,
         D2D1_COMPOSITE_MODE_SOURCE_OVER
     );
+    
+    // === Dimming (压暗) ===
+    // 使用半透明黑色矩形叠加，这比 Brightness Effect 更快且更可靠
+    if (m_warpDimming > 0.01f) {
+        // 创建或获取黑色画刷 (可以缓存，这里为简洁直接创建)
+        ComPtr<ID2D1SolidColorBrush> dimBrush;
+        m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, m_warpDimming), &dimBrush);
+        if (dimBrush) {
+            m_d2dContext->FillRectangle(destRect, dimBrush.Get());
+        }
+    }
 }
 

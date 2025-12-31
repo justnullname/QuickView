@@ -20,8 +20,8 @@ enum class ScrollState {
 class InputController {
 public:
     // 阈值配置
-    static constexpr auto WARP_ENTER_THRESHOLD = std::chrono::milliseconds(16);  // 进入 Warp: < 16ms (60Hz)
-    static constexpr auto WARP_EXIT_THRESHOLD = std::chrono::milliseconds(50);   // 退出 Warp: > 50ms
+    static constexpr auto WARP_ENTER_THRESHOLD = std::chrono::milliseconds(45);  // 进入 Warp: < 45ms (约 22Hz，支持键盘长按)
+    static constexpr auto WARP_EXIT_THRESHOLD = std::chrono::milliseconds(100);   // 退出 Warp: > 100ms
     static constexpr int HYSTERESIS_FRAMES = 3;  // 连续 3 帧慢速才退出
 
     InputController() = default;
