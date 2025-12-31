@@ -184,6 +184,21 @@ static bool g_showDebugHUD = false;  // Toggle with F12
 static DWORD g_lastFrameTime = 0;
 static float g_fps = 0.0f;
 
+// === Overlay Window State Restore ===
+// Saves window state before overlays (Gallery/Settings) resize the window.
+struct SavedWindowState {
+    RECT windowRect = {};       // Window position/size (screen coords)
+    float zoom = 1.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    bool isValid = false;       // True if state was saved
+};
+static SavedWindowState g_savedState;
+
+// Forward declarations for helper functions
+static void SaveOverlayWindowState(HWND hwnd);
+static void RestoreOverlayWindowState(HWND hwnd);
+
 // RenderDebugHUD moved to UIRenderer
 
 // Helper: Copy text to clipboard
@@ -213,6 +228,36 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
 }
 
 // --- Persistence Helpers ---
+
+// === Overlay Window State Helper Functions ===
+// Unified functions for saving/restoring window state when overlays open/close
+
+static void SaveOverlayWindowState(HWND hwnd) {
+    GetWindowRect(hwnd, &g_savedState.windowRect);
+    g_savedState.zoom = g_viewState.Zoom;
+    g_savedState.panX = g_viewState.PanX;
+    g_savedState.panY = g_viewState.PanY;
+    g_savedState.isValid = true;
+}
+
+static void RestoreOverlayWindowState(HWND hwnd) {
+    if (!g_savedState.isValid) return;
+    
+    // Restore exact saved state - no recalculation needed
+    // The saved Zoom was relative to the saved window size, so they work together
+    SetWindowPos(hwnd, nullptr, 
+        g_savedState.windowRect.left, g_savedState.windowRect.top, 
+        g_savedState.windowRect.right - g_savedState.windowRect.left,
+        g_savedState.windowRect.bottom - g_savedState.windowRect.top, 
+        SWP_NOZORDER);
+    
+    g_viewState.Zoom = g_savedState.zoom;
+    g_viewState.PanX = g_savedState.panX;
+    g_viewState.PanY = g_savedState.panY;
+    
+    g_savedState.isValid = false;
+    g_isImageDirty = true; // Force Image layer recalculation
+}
 
 bool CheckWritePermission(const std::wstring& dir) {
     std::wstring testFile = dir + L"\\write_test.tmp";
@@ -2362,7 +2407,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         
         // 1. Settings / Update Toast
+        bool wasSettingsVisible = g_settingsOverlay.IsVisible();
         SettingsAction action = g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y);
+        
+        // Check if Settings closed itself (e.g. Back button)
+        if (wasSettingsVisible && !g_settingsOverlay.IsVisible()) {
+             RestoreOverlayWindowState(hwnd);
+             RequestRepaint(PaintLayer::Static);
+             return 0;
+        }
+
         if (action != SettingsAction::None) {
              if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
              else RequestRepaint(PaintLayer::Static);
@@ -2372,6 +2426,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // 2. Click Outside Settings -> Close it
         if (g_settingsOverlay.IsVisible()) {
             g_settingsOverlay.SetVisible(false);
+            RestoreOverlayWindowState(hwnd); // Restore window state
             RequestRepaint(PaintLayer::Static); // Only Static needed to clear overlay
             return 0;
         }
@@ -2381,6 +2436,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // Check if closed with selection
                 if (!g_gallery.IsVisible()) {
                     SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Fix sticky wait cursor
+                    RestoreOverlayWindowState(hwnd);
                     int idx = g_gallery.GetSelectedIndex();
                     if (idx >= 0 && idx < (int)g_navigator.Count()) {
                          std::wstring path = g_navigator.GetFile(idx);
@@ -2565,6 +2621,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (g_gallery.OnLButtonDown((int)pt.x, (int)pt.y)) {
                 if (!g_gallery.IsVisible()) { // Closed
                      SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Restore cursor
+                     RestoreOverlayWindowState(hwnd);
                      int idx = g_gallery.GetSelectedIndex();
                      if (idx >= 0 && idx < (int)g_navigator.Count()) {
                          std::wstring path = g_navigator.GetFile(idx);
@@ -2614,9 +2671,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ToolbarButtonID::Gallery: 
                     if (g_gallery.IsVisible()) {
                         g_gallery.Close();
+                        RestoreOverlayWindowState(hwnd);
                     } else {
+                        SaveOverlayWindowState(hwnd);
+                        
                         // Expand window if too small for 3 columns
-                        const int MIN_GALLERY_WIDTH = 660;  // Ensure 3 columns: (660-80)/192 = 3.02
+                        const int MIN_GALLERY_WIDTH = 660;  // Ensure 3 columns
                         const int MIN_GALLERY_HEIGHT = 720;  // 3 rows + margin
                         RECT rc; GetClientRect(hwnd, &rc);
                         int curW = rc.right - rc.left;
@@ -2636,7 +2696,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             SetWindowPos(hwnd, nullptr, cx - targetW/2, cy - targetH/2, targetW, targetH, SWP_NOZORDER);
                         }
                         g_gallery.Open(g_navigator.Index());
-                        SetTimer(hwnd, 998, 16, nullptr); // Fade in - 与 T 键保持一致
+                        SetTimer(hwnd, 998, 16, nullptr);
                     }
                     RequestRepaint(PaintLayer::All);
                     break;
@@ -2892,11 +2952,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_KEYDOWN: {
+        // Settings handling
+        if (g_settingsOverlay.IsVisible()) {
+            if (wParam == VK_ESCAPE) {
+                g_settingsOverlay.Toggle(); // Close
+                RestoreOverlayWindowState(hwnd);
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
+        }
+
         // Gallery handling
         if (g_gallery.IsVisible()) {
             if (g_gallery.OnKeyDown(wParam)) {
                 if (!g_gallery.IsVisible()) {
                     SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Fix sticky wait cursor
+                    RestoreOverlayWindowState(hwnd); // Restore window state on ESC close
                     // Closed with selection potentially
                     int idx = g_gallery.GetSelectedIndex();
                     if (idx >= 0 && idx < (int)g_navigator.Count()) {
@@ -2950,20 +3021,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0);
             } else {
                 // Toggle Gallery (Only if not visible, ESC closes it)
-                if (!g_gallery.IsVisible()) {
+                if (g_gallery.IsVisible()) {
+                    g_gallery.Close();
+                    RestoreOverlayWindowState(hwnd);
+                    RequestRepaint(PaintLayer::All);
+                } else {
+                    SaveOverlayWindowState(hwnd);
+                    
                     // Expand window if too small for 3 columns
-                    // Min Width = PADDING*2 + THUMB_SIZE_MIN*3 + GAP*2 = 80 + 540 + 24 = 644
-                    // Min Height = similar calculation, but let's use 480 as reasonable minimum
-                    const int MIN_GALLERY_WIDTH = 660;  // Ensure 3 columns: (660-80)/192 = 3.02
-                    const int MIN_GALLERY_HEIGHT = 720;  // 3 rows + margin
+                    const int MIN_GALLERY_WIDTH = 660;
+                    const int MIN_GALLERY_HEIGHT = 720;
                     RECT rc; GetClientRect(hwnd, &rc);
                     int curW = rc.right - rc.left;
                     int curH = rc.bottom - rc.top;
                     if (curW < MIN_GALLERY_WIDTH || curH < MIN_GALLERY_HEIGHT) {
-                        // Need to expand - calculate new window size
                         int newW = std::max(curW, MIN_GALLERY_WIDTH);
                         int newH = std::max(curH, MIN_GALLERY_HEIGHT);
-                        // Get window rect to maintain center
                         RECT winRect; GetWindowRect(hwnd, &winRect);
                         int winW = winRect.right - winRect.left;
                         int winH = winRect.bottom - winRect.top;
@@ -3633,41 +3706,51 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_SETTINGS: {
-            // 1. Toggle FIRST to set IsVisible=true
-            // This prevents AdjustWindowToImage from FIGHTING the resize (race condition)
-            g_settingsOverlay.Toggle();
-            
-            // 2. Elastic HUD: Expand window if it was too small
             if (g_settingsOverlay.IsVisible()) {
-                 RECT rcClient;
-                 if (GetClientRect(hwnd, &rcClient)) {
-                     int w = rcClient.right - rcClient.left;
-                     int h = rcClient.bottom - rcClient.top;
-                     
-                     // Target HUD Size
-                     int minW = 800;
-                     int minH = 650;
-                     
-                     if (w < minW || h < minH) {
-                         int targetW = std::max(w, minW);
-                         int targetH = std::max(h, minH);
-
-                         // Note: We simply resize. 
-                         // Zoom/Scale behavior is handled by main rendering logic (Fit Mode naturally scales image).
+                g_settingsOverlay.Toggle(); // Close
+                RestoreOverlayWindowState(hwnd);
+            } else {
+                SaveOverlayWindowState(hwnd);
+                g_settingsOverlay.Toggle(); // Open
+                
+                // 2. Elastic HUD: Expand window if it was too small
+                if (g_settingsOverlay.IsVisible()) {
+                     RECT rcClient;
+                     if (GetClientRect(hwnd, &rcClient)) {
+                         int w = rcClient.right - rcClient.left;
+                         int h = rcClient.bottom - rcClient.top;
                          
-                         SetWindowPos(hwnd, nullptr, 0, 0, 
-                                      targetW, 
-                                      targetH, 
-                                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                         // Target HUD Size
+                         int minW = 800;
+                         int minH = 650;
+                         
+                         if (w < minW || h < minH) {
+                             int targetW = std::max(w, minW);
+                             int targetH = std::max(h, minH);
+    
+                             // Note: We simply resize. 
+                             // Zoom/Scale behavior is handled by main rendering logic (Fit Mode naturally scales image).
+                             
+                             SetWindowPos(hwnd, nullptr, 0, 0, 
+                                          targetW, 
+                                          targetH, 
+                                          SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                         }
                      }
-                 }
+                }
             }
-
             RequestRepaint(PaintLayer::Static);
             break;
         }
         case IDM_ABOUT: {
-            g_settingsOverlay.OpenTab(5); // Open About Tab
+            if (g_settingsOverlay.IsVisible()) {
+                // If already visible, just switch tab? Or toggle off?
+                // Standard behavior: bring to front / switch tab
+                g_settingsOverlay.OpenTab(5);
+            } else {
+                SaveOverlayWindowState(hwnd);
+                g_settingsOverlay.OpenTab(5); // Open About Tab
+            }
             RequestRepaint(PaintLayer::Static); // Force redraw to show overlay immediately
             break;
         }
