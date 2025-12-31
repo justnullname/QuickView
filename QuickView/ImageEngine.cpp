@@ -320,8 +320,7 @@ void ImageEngine::HeavyLane::MasterLoop(std::stop_token masterToken) {
 
         // --- 2. Preparation (Memory Reset) ---
         m_isCancelling = false;  // Clear cancel flag
-        m_memory->ReleaseAll();
-        m_memory->ResetUsedBytes();
+        m_memory->Reset(); // QuantumArena: 0ns 级重置
 
         // --- 3. Execution (Interruptible) ---
         PerformDecode(workPath, jobToken);

@@ -1,114 +1,216 @@
 #pragma once
 #include "pch.h"
 #include <memory_resource>
-#include <vector>
-#include <mutex>
 #include <atomic>
-#include <thread>
-#include <iostream>
+#include <cstdlib>
 
 // ============================================================================
-// Memory Arena
-// High-performance, pre-allocated memory resource for the Heavy Lane.
+// QuantumArena - 量子流架构核心内存池
 // ============================================================================
-class MemoryArena {
+// 设计目标:
+//   1. 0ns 级 Reset() - 通过指针重置而非释放
+//   2. 64 字节对齐 - SIMD/AVX 友好 (Cache Line Alignment)
+//   3. 双缓冲支持 - Active/Back 交换
+//   4. 无锁设计 - 单线程独占使用 (HeavyLane 专用)
+//   5. 溢出保护 - 超大图自动溢出到系统堆
+// ============================================================================
+
+class QuantumArena {
 public:
-    MemoryArena(size_t initialSize = 250 * 1024 * 1024) 
-        : m_initialSize(initialSize) 
+    // 默认 512MB 预分配 (足够 8K x 8K RGBA)
+    static constexpr size_t DEFAULT_SIZE = 512 * 1024 * 1024;
+    static constexpr size_t ALIGNMENT = 64; // Cache Line
+
+    QuantumArena(size_t capacity = DEFAULT_SIZE) 
+        : m_capacity(capacity) 
     {
-        // Lazy layout - do nothing in constructor
+        // 延迟初始化 - 构造函数不分配内存
     }
 
-    ~MemoryArena() {
-        // Resources are automatically released when members are destroyed
-        // But we explicitly release the underlying buffer
+    ~QuantumArena() {
         if (m_buffer) {
             _aligned_free(m_buffer);
+            m_buffer = nullptr;
         }
     }
 
-    // Helper to get access to the PMR resource
-    // NOT Thread-Safe for allocation - HeavyLane must own the arena exclusively during decode
-    std::pmr::memory_resource* GetResource() {
-        std::lock_guard<std::mutex> lock(m_initMutex);
-        EnsureInitialized();
-        return m_monotonic.get();
+    // 禁止拷贝
+    QuantumArena(const QuantumArena&) = delete;
+    QuantumArena& operator=(const QuantumArena&) = delete;
+
+    // 允许移动
+    QuantumArena(QuantumArena&& other) noexcept 
+        : m_buffer(other.m_buffer)
+        , m_capacity(other.m_capacity)
+        , m_offset(other.m_offset.load())
+        , m_peakUsage(other.m_peakUsage.load())
+        , m_resource(std::move(other.m_resource))
+    {
+        other.m_buffer = nullptr;
+        other.m_capacity = 0;
+        other.m_offset = 0;
     }
 
-    // Reset the memory pointer to the beginning.
-    // DANGER: Must only be called when NO threads are using the memory.
-    // HeavyLane ensures this by being single-threaded.
-    void ReleaseAll() {
-        std::lock_guard<std::mutex> lock(m_initMutex);
-        if (m_monotonic) {
-            // Full destroy and rebuild to reclaim any upstream (heap) allocations
-            m_monotonic.reset();
-            if (m_buffer) {
-                m_monotonic = std::make_unique<std::pmr::monotonic_buffer_resource>(
-                    m_buffer, m_currentSize, std::pmr::new_delete_resource()
-                );
+    // ========== 核心操作 ==========
+
+    /// <summary>
+    /// 获取 PMR 资源 (用于 std::pmr 容器)
+    /// 注意: 首次调用会触发内存分配
+    /// </summary>
+    std::pmr::memory_resource* GetResource() {
+        EnsureInitialized();
+        return m_resource.get();
+    }
+
+    /// <summary>
+    /// 极速重置 - 0ns 级操作
+    /// 不释放内存，仅重置分配指针
+    /// 警告: 调用后，之前分配的所有内存变为无效！
+    /// </summary>
+    void Reset() noexcept {
+        m_offset = 0;
+        // 重建 PMR 资源 (指向同一块 buffer)
+        if (m_buffer && m_resource) {
+            m_resource = std::make_unique<std::pmr::monotonic_buffer_resource>(
+                m_buffer, m_capacity, std::pmr::new_delete_resource()
+            );
+        }
+    }
+
+    /// <summary>
+    /// 线性分配 (Arena 语义)
+    /// 返回对齐的内存块，失败返回 nullptr
+    /// </summary>
+    void* Allocate(size_t size, size_t alignment = ALIGNMENT) noexcept {
+        EnsureInitialized();
+        if (!m_buffer) return nullptr;
+
+        // 计算对齐后的偏移
+        size_t current = m_offset.load(std::memory_order_relaxed);
+        size_t aligned = (current + alignment - 1) & ~(alignment - 1);
+        size_t newOffset = aligned + size;
+
+        // 检查是否溢出
+        if (newOffset > m_capacity) {
+            // 溢出到系统堆 (防爆仓)
+            return _aligned_malloc(size, alignment);
+        }
+
+        // CAS 更新 (虽然设计为单线程，但保持原子性以防万一)
+        while (!m_offset.compare_exchange_weak(current, newOffset,
+            std::memory_order_release, std::memory_order_relaxed)) 
+        {
+            aligned = (current + alignment - 1) & ~(alignment - 1);
+            newOffset = aligned + size;
+            if (newOffset > m_capacity) {
+                return _aligned_malloc(size, alignment);
             }
         }
+
+        // 更新峰值统计
+        size_t peak = m_peakUsage.load(std::memory_order_relaxed);
+        while (newOffset > peak && !m_peakUsage.compare_exchange_weak(peak, newOffset));
+
+        return m_buffer + aligned;
     }
 
-    // Current capacity stats
-    size_t GetCapacity() const {
-        return m_currentSize;
+    /// <summary>
+    /// 检查指针是否属于此 Arena (用于判断是否需要 free)
+    /// </summary>
+    bool Owns(void* ptr) const noexcept {
+        if (!m_buffer || !ptr) return false;
+        char* p = static_cast<char*>(ptr);
+        return p >= m_buffer && p < m_buffer + m_capacity;
     }
-    
-    // Used bytes (approximate - PMR doesn't track this natively)
-    // We return capacity since monotonic uses all-or-nothing semantics
-    size_t GetUsedBytes() const {
-        return m_usedBytes.load();
+
+    // ========== 统计信息 ==========
+
+    size_t GetCapacity() const noexcept { return m_capacity; }
+    size_t GetUsedBytes() const noexcept { return m_offset.load(std::memory_order_relaxed); }
+    size_t GetPeakUsage() const noexcept { return m_peakUsage.load(std::memory_order_relaxed); }
+    size_t GetFreeBytes() const noexcept { 
+        size_t used = m_offset.load(std::memory_order_relaxed);
+        return used < m_capacity ? m_capacity - used : 0; 
     }
-    
-    void TrackAllocation(size_t bytes) {
-        m_usedBytes.fetch_add(bytes);
-    }
-    
-    void ResetUsedBytes() {
-        m_usedBytes = 0;
-    }
+    bool IsInitialized() const noexcept { return m_buffer != nullptr; }
 
 private:
     void EnsureInitialized() {
-        if (m_buffer != nullptr) return;
+        if (m_buffer) return;
 
-        // 1. Allocate the giant block (Hardware/Config aware)
-        // Use 500MB for 8K+ images (8192x8192x4 = 268MB per image)
-        m_initialSize = 500 * 1024 * 1024; // Increased from 250MB
-        
-        // Use _aligned_malloc for SIMD friendliness
-        m_buffer = static_cast<char*>(_aligned_malloc(m_initialSize, 64)); 
+        // 分配对齐内存
+        m_buffer = static_cast<char*>(_aligned_malloc(m_capacity, ALIGNMENT));
         if (!m_buffer) {
-            // Fallback: Use default resource if allocation fails
-            m_monotonic = std::make_unique<std::pmr::monotonic_buffer_resource>(
+            // 分配失败，降级到纯堆模式
+            m_resource = std::make_unique<std::pmr::monotonic_buffer_resource>(
                 std::pmr::new_delete_resource()
             );
             return;
         }
-        m_currentSize = m_initialSize;
 
-        // 2. Setup the monotonic resource using this buffer
-        // Use new_delete_resource as upstream - graceful degradation to heap if arena exhausted
-        m_monotonic = std::make_unique<std::pmr::monotonic_buffer_resource>(
-            m_buffer, 
-            m_currentSize, 
-            std::pmr::new_delete_resource()  // Changed from null_memory_resource
+        // 创建 PMR 资源
+        m_resource = std::make_unique<std::pmr::monotonic_buffer_resource>(
+            m_buffer, m_capacity, std::pmr::new_delete_resource()
         );
     }
 
-    std::mutex m_initMutex;
-    size_t m_initialSize;
-    size_t m_currentSize = 0;
-    char* m_buffer = nullptr; // Raw buffer ownership
-    std::unique_ptr<std::pmr::monotonic_buffer_resource> m_monotonic;
-    std::atomic<size_t> m_usedBytes = 0;
+    char* m_buffer = nullptr;
+    size_t m_capacity;
+    std::atomic<size_t> m_offset{0};
+    std::atomic<size_t> m_peakUsage{0};
+    std::unique_ptr<std::pmr::monotonic_buffer_resource> m_resource;
 };
 
 // ============================================================================
-// Allocator Helper
-// Wraps the Arena into a standard PmrAllocator
+// QuantumArenaPool - 双缓冲 Arena 管理器
 // ============================================================================
+// 用于 Ping-Pong 模式：一个 Arena 供当前显示，另一个供后台解码
+// ============================================================================
+
+class QuantumArenaPool {
+public:
+    QuantumArenaPool(size_t arenaSize = QuantumArena::DEFAULT_SIZE)
+        : m_arenas{QuantumArena(arenaSize), QuantumArena(arenaSize)}
+        , m_activeIndex(0)
+    {}
+
+    /// <summary>
+    /// 获取当前活跃的 Arena (屏幕显示中)
+    /// </summary>
+    QuantumArena& GetActive() noexcept {
+        return m_arenas[m_activeIndex.load(std::memory_order_acquire)];
+    }
+
+    /// <summary>
+    /// 获取后台 Arena (解码用)
+    /// </summary>
+    QuantumArena& GetBack() noexcept {
+        return m_arenas[1 - m_activeIndex.load(std::memory_order_acquire)];
+    }
+
+    /// <summary>
+    /// 交换 Active 和 Back Arena (解码完成后调用)
+    /// </summary>
+    void Swap() noexcept {
+        m_activeIndex.fetch_xor(1, std::memory_order_acq_rel);
+    }
+
+    /// <summary>
+    /// 重置后台 Arena (新任务开始前调用)
+    /// </summary>
+    void ResetBack() noexcept {
+        GetBack().Reset();
+    }
+
+private:
+    QuantumArena m_arenas[2];
+    std::atomic<int> m_activeIndex;
+};
+
+// ============================================================================
+// 别名 - 保持向后兼容
+// ============================================================================
+using MemoryArena = QuantumArena;
+
 template <typename T>
 using ArenaAllocator = std::pmr::polymorphic_allocator<T>;

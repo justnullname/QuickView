@@ -124,6 +124,7 @@
     <ClInclude Include="MemoryArena.h" />
     <ClInclude Include="CompositionEngine.h" />
     <ClInclude Include="UIRenderer.h" />
+    <ClInclude Include="InputController.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
