@@ -4571,10 +4571,20 @@ void OnPaint(HWND hwnd) {
         
         // === Quantum Stream: Warp Mode Integration ===
         // 根据 InputController 状态设置 RenderEngine 模糊效果
-        if (g_inputController.GetState() == ScrollState::Warp) {
-            float blurIntensity = g_inputController.CalculateBlurIntensity();
-            float dimIntensity = g_inputController.CalculateDimIntensity();
+        
+        // DEBUG: 强制测试 Warp 模式（按住 Ctrl 键）
+        bool forceWarp = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        
+        if (g_inputController.GetState() == ScrollState::Warp || forceWarp) {
+            float blurIntensity = forceWarp ? 1.0f : g_inputController.CalculateBlurIntensity();
+            float dimIntensity = forceWarp ? 0.3f : g_inputController.CalculateDimIntensity();
             g_renderEngine->SetWarpMode(blurIntensity, dimIntensity);
+            
+            // DEBUG 输出
+            char debugBuf[256];
+            sprintf_s(debugBuf, "[Warp Active] Blur: %.2f, Dim: %.2f, State: %s\n", 
+                blurIntensity, dimIntensity, forceWarp ? "FORCE" : "Auto");
+            OutputDebugStringA(debugBuf);
         } else {
             g_renderEngine->SetWarpMode(0.0f, 0.0f);
         }
