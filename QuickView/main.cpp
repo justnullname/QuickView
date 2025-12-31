@@ -3805,24 +3805,22 @@ void ProcessEngineEvents(HWND hwnd) {
             
             if (evt.thumbData.pixels.empty()) break;
 
-            ComPtr<ID2D1Bitmap1> thumbBitmap;
-            D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_NONE,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED) // Assuming BGRA
-            );
+
             
-            // Create directly from memory
-            HRESULT hr = g_renderEngine->GetDeviceContext()->CreateBitmap(
-                D2D1::SizeU(evt.thumbData.width, evt.thumbData.height),
+            // Create directly from memory (BGRX - using RenderEngine helper)
+            ComPtr<ID2D1Bitmap> thumbBitmap;
+            HRESULT hr = g_renderEngine->CreateBitmapFromMemory(
                 evt.thumbData.pixels.data(),
+                evt.thumbData.width,
+                evt.thumbData.height,
                 evt.thumbData.stride,
-                &props,
-                thumbBitmap.GetAddressOf()
+                &thumbBitmap
             );
 
             if (SUCCEEDED(hr)) {
                 g_currentBitmap = thumbBitmap;
-                g_isBlurry = true; // Trigger blur shader in OnPaint
+                g_isBlurry = true; 
+                g_renderEngine->SetWarpMode(0.5f, 0.1f); // Enable Ghost Blur (Intensity 0.5, Dim 0.1)
                 g_imagePath = evt.filePath; // Update path immediately for UI consistency
                 
                 // Update Title (Loading state)
@@ -3844,7 +3842,8 @@ void ProcessEngineEvents(HWND hwnd) {
             ComPtr<ID2D1Bitmap> fullBitmap;
             if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
                 g_currentBitmap = fullBitmap;
-                g_isBlurry = false; // Clear blur
+                g_isBlurry = false; 
+                g_renderEngine->SetWarpMode(0.0f); // Reset Ghost Blur
                 g_imagePath = evt.filePath;
                 
                 // Use pre-read metadata from Heavy Lane (no UI blocking!)

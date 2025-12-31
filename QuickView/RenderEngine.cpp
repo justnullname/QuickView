@@ -329,6 +329,19 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
     return hr;
 }
 
+HRESULT CRenderEngine::CreateBitmapFromMemory(const void* data, UINT width, UINT height, UINT stride, ID2D1Bitmap** ppBitmap) {
+    if (!m_d2dContext) return E_POINTER;
+
+    // Assume BGRX (32bpp) as standard
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+        96.0f, 96.0f
+    );
+
+    return m_d2dContext->CreateBitmap(D2D1::SizeU(width, height), data, stride, &props, reinterpret_cast<ID2D1Bitmap1**>(ppBitmap));
+}
+
 // ============================================================================
 // Warp Mode (Motion Blur) 实现
 // ============================================================================

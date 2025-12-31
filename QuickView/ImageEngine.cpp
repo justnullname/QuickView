@@ -46,14 +46,16 @@ void ImageEngine::QueueEvent(EngineEvent&& e) {
 // The Main Input: "User wants to go here"
 void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize) {
     if (path.empty()) return;
-    // std::lock_guard<std::mutex> lock(m_queueMutex); // reuse queue mutex for shared state safety if needed? 
-    // Actually m_currentNavPath needs protection or atomic? It's just for tracking.
+    // Track State
     m_currentNavPath = path;
     m_lastInputTime = std::chrono::steady_clock::now();
 
-    // 2. Dispatch to Heavy (The "Quality" Lane)
-    // Heavy lane is "Single Slot" - it cancels whatever is running and switches.
+    // 1. Heavy Lane (The Tank) - Full Quality Decode
+    // Regicide is handled internally by HeavyLane::SetTarget
     m_heavy.SetTarget(path);
+
+    // 2. Scout Lane (The Recon) - Ghost Image (Thumbnail)
+    m_scout.Push(path);
 }
 
 bool ImageEngine::ShouldSkipScoutForFastFormat(const std::wstring& path) {

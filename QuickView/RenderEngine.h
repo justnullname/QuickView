@@ -59,6 +59,11 @@ public:
     /// </summary>
     HRESULT CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bitmap** d2dBitmap);
 
+    /// <summary>
+    /// Create D2D bitmap from raw memory (BGRX)
+    /// </summary>
+    HRESULT CreateBitmapFromMemory(const void* data, UINT width, UINT height, UINT stride, ID2D1Bitmap** ppBitmap);
+
     // === Warp Mode (Motion Blur) ===
     
     /// <summary>
