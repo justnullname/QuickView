@@ -43,20 +43,13 @@ void ImageEngine::QueueEvent(EngineEvent&& e) {
     }
 }
 
-void ImageEngine::NavigateTo(const std::wstring& path) {
+// The Main Input: "User wants to go here"
+void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize) {
     if (path.empty()) return;
-    if (path == m_currentNavPath) return; // Debounce same file
-
+    // std::lock_guard<std::mutex> lock(m_queueMutex); // reuse queue mutex for shared state safety if needed? 
+    // Actually m_currentNavPath needs protection or atomic? It's just for tracking.
     m_currentNavPath = path;
     m_lastInputTime = std::chrono::steady_clock::now();
-
-    // Smart Skip: PNG/GIF/BMP < 16MP skip Scout (Wuffs is fast enough)
-    bool skipScout = ShouldSkipScoutForFastFormat(path);
-    
-    if (!skipScout) {
-        // 1. Dispatch to Scout (The "Visual Continuity" Lane)
-        m_scout.Push(path);
-    }
 
     // 2. Dispatch to Heavy (The "Quality" Lane)
     // Heavy lane is "Single Slot" - it cancels whatever is running and switches.

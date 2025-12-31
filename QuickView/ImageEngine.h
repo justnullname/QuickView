@@ -36,7 +36,8 @@ public:
     ~ImageEngine();
 
     // The Main Input: "User wants to go here"
-    void NavigateTo(const std::wstring& path);
+    // fileSize: Used for Threshold Dispatch (Scout/Heavy/Express)
+    void NavigateTo(const std::wstring& path, uintmax_t fileSize = 0);
 
     // Set Window Handle for Push Messaging (WM_ENGINE_EVENT)
     void SetWindow(HWND hwnd);

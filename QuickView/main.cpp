@@ -3112,26 +3112,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RequestRepaint(PaintLayer::Dynamic);
             break;
         
-        case VK_F10: // F10: Test Warp Mode (Simulate rapid navigation)
-            {
-                // 模拟快速导航 - 使用相同索引但快速调用
-                static auto lastF10Time = std::chrono::steady_clock::now();
-                auto now = std::chrono::steady_clock::now();
-                auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastF10Time);
-                lastF10Time = now;
-                
-                // 模拟快速滚动（间隔 < 16ms）
-                static size_t navIndex = 0;
-                bool shouldLoad = g_inputController.OnUserNavigate(navIndex);
-                
-                if (!shouldLoad) {
-                    OutputDebugStringA("[Warp] IO Suppressed\n");
-                } else {
-                    OutputDebugStringA("[Static] IO Allowed\n");
-                }
-                RequestRepaint(PaintLayer::Image);
-            }
-            break;
+
         
         // Transforms
         case 'R': PerformTransform(hwnd, shift ? TransformType::Rotate90CCW : TransformType::Rotate90CW); break;
@@ -3931,8 +3912,16 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     g_osd.Show(hwnd, filename.c_str(), false);
     PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
     
-    // Kick the Engine
-    g_imageEngine->NavigateTo(path);
+// Kick the Engine
+    // Phase 3.1: Pass file size for Treshold Lane Decision
+    uintmax_t fileSize = 0;
+    // Fast lookup if path matches current navigator state (most likely)
+    int idx = g_navigator.FindIndex(path);
+    if (idx != -1) {
+        fileSize = g_navigator.GetFileSize(idx);
+    }
+    
+    g_imageEngine->NavigateTo(path, fileSize);
     
     // Start Polling Loop (120Hz) - REMOVED
     // SetTimer(hwnd, IDT_ENGINE_POLL, 8, nullptr);
@@ -4580,20 +4569,10 @@ void OnPaint(HWND hwnd) {
         
         // === Quantum Stream: Warp Mode Integration ===
         // 根据 InputController 状态设置 RenderEngine 模糊效果
-        
-        // DEBUG: 强制测试 Warp 模式（按住 Ctrl 键）
-        bool forceWarp = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        
-        if (g_inputController.GetState() == ScrollState::Warp || forceWarp) {
-            float blurIntensity = forceWarp ? 1.0f : g_inputController.CalculateBlurIntensity();
-            float dimIntensity = forceWarp ? 0.3f : g_inputController.CalculateDimIntensity();
+        if (g_inputController.GetState() == ScrollState::Warp) {
+            float blurIntensity = g_inputController.CalculateBlurIntensity();
+            float dimIntensity = g_inputController.CalculateDimIntensity();
             g_renderEngine->SetWarpMode(blurIntensity, dimIntensity);
-            
-            // DEBUG 输出
-            char debugBuf[256];
-            sprintf_s(debugBuf, "[Warp Active] Blur: %.2f, Dim: %.2f, State: %s\n", 
-                blurIntensity, dimIntensity, forceWarp ? "FORCE" : "Auto");
-            OutputDebugStringA(debugBuf);
         } else {
             g_renderEngine->SetWarpMode(0.0f, 0.0f);
         }
