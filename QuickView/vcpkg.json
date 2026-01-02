@@ -1,18 +1,19 @@
 {
-    "name": "quickview",
-    "version-string": "2.0.0",
-    "dependencies": [
-        "libjpeg-turbo",
-        "libwebp",
-        {
-            "name": "libavif",
-            "default-features": false,
-            "features": [
-                "dav1d"
-            ]
-        },
-        "libjxl",
-        "libraw",
-        "mimalloc"
-    ]
+  "name": "quickview",
+  "version-string": "2.0.0",
+  "dependencies": [
+    "libjpeg-turbo",
+    "libwebp",
+    {
+      "name": "libavif",
+      "default-features": false,
+      "features": [
+        "dav1d"
+      ]
+    },
+    "libjxl",
+    "libraw",
+    "mimalloc"
+  ],
+  "builtin-baseline": "14bb451131ccf6be50a63a8d9dfe7980e46b5958"
 }

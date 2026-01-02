@@ -77,6 +77,23 @@ public:
     }
 
     /// <summary>
+    /// 时间驱动的状态更新 (防止 Warp 卡死)
+    /// 返回: true = 状态已改变 (例如从 Warp 退出到 Static)，需要重绘
+    /// </summary>
+    bool Update() {
+        if (m_state == ScrollState::Warp) {
+            auto now = std::chrono::steady_clock::now();
+            auto delta =  std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastInputTime);
+            
+            if (delta > WARP_EXIT_THRESHOLD) {
+                ExitWarp();
+                return true; // State changed
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// 获取当前状态
     /// </summary>
     ScrollState GetState() const noexcept { return m_state; }

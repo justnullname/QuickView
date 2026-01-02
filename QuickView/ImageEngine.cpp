@@ -2,6 +2,9 @@
 #include "ImageEngine.h"
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <filesystem>
+#include <algorithm> // transform
 
 // ============================================================================
 // ImageEngine Implementation
@@ -20,6 +23,10 @@ ImageEngine::~ImageEngine() {
 
 void ImageEngine::SetWindow(HWND hwnd) {
     m_hwnd = hwnd;
+}
+
+void ImageEngine::SetHighPriorityMode(bool enabled) {
+    m_isHighPriority = enabled;
 }
 
 void ImageEngine::QueueEvent(EngineEvent&& e) {
@@ -44,18 +51,25 @@ void ImageEngine::QueueEvent(EngineEvent&& e) {
 }
 
 // The Main Input: "User wants to go here"
+void ImageEngine::UpdateConfig(const RuntimeConfig& cfg) {
+    m_config = cfg;
+}
+
 void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize) {
     if (path.empty()) return;
     // Track State
     m_currentNavPath = path;
     m_lastInputTime = std::chrono::steady_clock::now();
 
-    // 1. Heavy Lane (The Tank) - Full Quality Decode
-    // Regicide is handled internally by HeavyLane::SetTarget
-    m_heavy.SetTarget(path);
+    // 1. Heavy Lane (The Tank)
+    if (m_config.EnableHeavy) {
+        m_heavy.SetTarget(path);
+    }
 
-    // 2. Scout Lane (The Recon) - Ghost Image (Thumbnail)
-    m_scout.Push(path);
+    // 2. Scout Lane (The Recon)
+    if (m_config.EnableScout) {
+        m_scout.Push(path);
+    }
 }
 
 bool ImageEngine::ShouldSkipScoutForFastFormat(const std::wstring& path) {
@@ -103,22 +117,25 @@ bool ImageEngine::IsIdle() const {
 }
 
 ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
-    DebugStats s;
+    DebugStats s = {};
     s.scoutQueueSize = m_scout.GetQueueSize();
     s.scoutResultsSize = m_scout.GetResultsSize();
-    s.scoutSkipCount = m_scout.GetSkipCount();
-    s.cancelCount = m_heavy.GetCancelCount();
-    // Use Active arena for approximate stats
-    s.memoryUsed = m_pool.GetActive().GetUsedBytes() + m_pool.GetBack().GetUsedBytes();
-    s.memoryTotal = m_pool.GetActive().GetCapacity() * 2;
+    s.heavyState = (HeavyState)m_heavy.GetState();
     
-    if (m_heavy.IsCancelling()) {
-        s.heavyState = HeavyState::CANCELLING;
-    } else if (m_heavy.IsBusy()) {
-        s.heavyState = HeavyState::DECODING;
-    } else {
-        s.heavyState = HeavyState::IDLE;
-    }
+    // Memory
+    s.memoryUsed = m_pool.GetUsedMemory();
+    s.memoryTotal = m_pool.GetTotalMemory();
+    
+    s.cancelCount = m_heavy.GetCancelCount();
+    s.scoutSkipCount = m_scout.GetSkipCount();
+    s.scoutLoadTimeMs = m_scout.m_lastLoadTimeMs.load();
+
+    s.heavyDecodeTimeMs = m_heavy.GetLastDecodeTime();
+    s.loaderName = m_heavy.GetLastLoaderName();
+    
+    // Const cast needed because GetPendingCount locks mutex
+    s.heavyPendingCount = const_cast<HeavyLane&>(m_heavy).GetPendingCount();
+
     return s;
 }
 
@@ -126,6 +143,64 @@ void ImageEngine::ResetDebugCounters() {
     m_scout.ResetSkipCount();
     m_heavy.ResetCancelCount();
 }
+
+// ============================================================================
+// Phase 6: Fast Pass Helper
+// ============================================================================
+static bool IsFastPassCandidate(const std::wstring& path, CImageLoader* loader) {
+    // [Phase 6] Specialized Thumbnail Engine (STE) - Global Funnel
+    // Use fast header parsing to make quick decisions
+    
+    CImageLoader::ImageInfo info;
+    if (FAILED(loader->GetImageInfoFast(path.c_str(), &info))) {
+        return false;
+    }
+    
+    uint64_t pixels = (uint64_t)info.width * (uint64_t)info.height;
+    uint64_t fileSize = info.fileSize;
+    const std::wstring& format = info.format;
+    
+    // Decision Matrix (STE)
+    
+    // JPEG: W*H <= 2MP (1080p ~ 2.1MP). Liberal.
+    if (format == L"JPEG") {
+        return pixels <= 2100000;
+    }
+    
+    // PNG: W*H <= 1MP (< 720p) AND FileSize < 3MB. Strict (Deflate is slow).
+    if (format == L"PNG") {
+        return (pixels <= 1000000) && (fileSize < 3 * 1024 * 1024);
+    }
+    
+    // WebP: W*H <= 2MP. Wuffs is fast.
+    if (format == L"WebP") {
+        return pixels <= 2100000;
+    }
+    
+    // AVIF / HEIC: W*H <= 1080p AND FileSize < 3MB. Software decode cost is high.
+    if (format == L"AVIF" || format == L"HEIC") {
+        return (pixels <= 2100000) && (fileSize < 3 * 1024 * 1024);
+    }
+    
+    // JXL: W*H <= 1080p.
+    if (format == L"JXL") {
+        return pixels <= 2100000;
+    }
+
+    // GIF/BMP: Conservative 1080p
+    if (format == L"GIF" || format == L"BMP") {
+        return pixels <= 2100000;
+    }
+    
+    // RAW: Never fast pass (always needs extraction)
+    if (format == L"RAW") {
+        return false;
+    }
+
+    return false;
+}
+
+
 
 // ============================================================================
 // Scout Lane (The Recon)
@@ -207,10 +282,42 @@ void ImageEngine::ScoutLane::QueueWorker() {
             m_queue.pop_front();
         }
 
-        // --- Work Stage (Unlocked, with EXIF/Exception Protection) ---
+        // --- Work Stage (Unlocked) ---
+        auto start = std::chrono::high_resolution_clock::now();
         try {
             CImageLoader::ThumbData thumb;
-            HRESULT hr = m_loader->LoadThumbnail(path.c_str(), 512, &thumb);
+            HRESULT hr = E_FAIL;
+            bool fastPass = false;
+
+            // [Phase 6] Fast Pass (Small Images -> Full Decode)
+            if (IsFastPassCandidate(path, m_loader)) {
+                 hr = m_loader->LoadFastPass(path.c_str(), &thumb);
+                 if (SUCCEEDED(hr) && thumb.isValid) {
+                     thumb.isBlurry = false; // Clear!
+                     fastPass = true;
+                 }
+            }
+
+            // [Phase 7] Express Lane - Strict 50ms Budget
+            // Strategy:
+            // 1. Fast Pass (small files) -> Clear image, done.
+            // 2. Fallback: Try quick thumbnail (Exif/embedded) with allowSlow=false.
+            // 3. If still failed within budget, ABORT cleanly.
+            //    Let Main Lane handle it - don't block Express Lane.
+            
+            if (FAILED(hr)) {
+                // Check elapsed time
+                auto now = std::chrono::high_resolution_clock::now();
+                double elapsedMs = std::chrono::duration<double, std::milli>(now - start).count();
+                
+                // Only attempt thumbnail if we have budget remaining (< 40ms used)
+                if (elapsedMs < 40.0) {
+                    // allowSlow = false: Only extract embedded thumbs, no heavy decode
+                    hr = m_loader->LoadThumbnail(path.c_str(), 256, &thumb, false);
+                    if (SUCCEEDED(hr)) thumb.isBlurry = true;
+                }
+                // else: Budget exhausted, skip thumbnail attempt
+            }
 
             if (SUCCEEDED(hr) && thumb.isValid) {
                 EngineEvent e;
@@ -222,14 +329,16 @@ void ImageEngine::ScoutLane::QueueWorker() {
                     std::lock_guard lock(m_queueMutex);
                     m_results.push_back(std::move(e));
                 }
-                
-                // Signal Main Thread
                 m_parent->QueueEvent(EngineEvent{}); 
             }
+            // else: Express Lane aborted. Main Lane will provide the image.
+            // No "black square" fallback - UI keeps previous image or shows spinner.
+                // This prevents "Black Square" flash.
         } catch (...) {
             // Silently ignore corrupt file / EXIF parsing crashes
-            // OutputDebugStringA("ScoutLane: Exception caught, skipping file.\n");
         }
+        auto end = std::chrono::high_resolution_clock::now();
+        m_lastLoadTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
     }
 }
 
@@ -342,7 +451,20 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
         CImageLoader::DecodedImage decoded(arena.GetResource());
         std::wstring loaderName;
         
-        HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, arena.GetResource(), &loaderName, st);
+        auto decodeStart = std::chrono::high_resolution_clock::now();
+        
+        // [Phase 7] Fit Stage: Decode to screen size for faster response
+        int targetW = m_parent->m_config.screenWidth;
+        int targetH = m_parent->m_config.screenHeight;
+        
+        HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, arena.GetResource(), targetW, targetH, &loaderName, st);
+        auto decodeEnd = std::chrono::high_resolution_clock::now();
+        
+        m_lastDecodeTimeMs = std::chrono::duration<double, std::milli>(decodeEnd - decodeStart).count();
+        {
+            std::lock_guard lock(m_debugMutex);
+            m_lastLoaderName = loaderName;
+        }
         
         if (st.stop_requested()) {
             // Cancelled during load - discard result
@@ -352,6 +474,8 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
         if (SUCCEEDED(hr) && decoded.isValid) {
             // Create WIC Bitmap from PMR buffer for D2D compatibility
             ComPtr<IWICBitmap> wicBitmap;
+            // ZERO COPY: Wrap PMR Arena memory in WIC Bitmap.
+            // WARNING: Arena memory must remain valid until Main Thread uploads to GPU!
             hr = m_loader->CreateWICBitmapFromMemory(
                 decoded.width, decoded.height,
                 GUID_WICPixelFormat32bppPBGRA,
@@ -360,8 +484,14 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
                 decoded.pixels.data(),
                 &wicBitmap
             );
+            if (FAILED(hr)) {
+                wchar_t err[128];
+                swprintf_s(err, L"[ImageEngine] HeavyLane: CreateWICBitmapFromMemory Failed! HR=0x%X\n", hr);
+                OutputDebugStringW(err);
+            }
             
             if (SUCCEEDED(hr) && wicBitmap) {
+                OutputDebugStringW(L"[ImageEngine] HeavyLane: WIC Bitmap Created Successfully.\n");
                 // Check cancellation before metadata read
                 if (st.stop_requested()) return;
                 
@@ -391,3 +521,5 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
         // Catch any other exceptions to prevent thread crash
     }
 }
+
+

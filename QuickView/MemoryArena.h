@@ -211,6 +211,9 @@ public:
         return m_arenas[1 - m_activeIndex.load(std::memory_order_acquire)];
     }
 
+    size_t GetUsedMemory() const noexcept { return GetActive().GetUsedBytes() + GetBack().GetUsedBytes(); }
+    size_t GetTotalMemory() const noexcept { return GetActive().GetCapacity() + GetBack().GetCapacity(); }
+
 private:
     QuantumArena m_arenas[2];
     std::atomic<int> m_activeIndex;

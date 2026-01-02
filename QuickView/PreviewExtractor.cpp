@@ -242,3 +242,113 @@ bool PreviewExtractor::ExtractFromPSD(const uint8_t* data, size_t size, Extracte
     
     return false;
 }
+
+// --- JPEG (EXIF Thumbnail) ---
+
+bool PreviewExtractor::ExtractFromJPEG(const uint8_t* data, size_t size, ExtractedData& out) {
+    // JPEG files have APP1 marker (0xFF 0xE1) containing EXIF
+    // EXIF contains a TIFF structure with embedded JPEG thumbnail
+    
+    if (size < 20) return false;
+    
+    // Check JPEG signature
+    if (data[0] != 0xFF || data[1] != 0xD8) return false;
+    
+    // Scan for APP1 marker
+    size_t pos = 2;
+    while (pos < size - 10) {
+        if (data[pos] != 0xFF) {
+            pos++;
+            continue;
+        }
+        
+        uint8_t marker = data[pos + 1];
+        
+        // Skip to next if padding
+        if (marker == 0xFF) {
+            pos++;
+            continue;
+        }
+        
+        // End markers
+        if (marker == 0xD9 || marker == 0xDA) break;
+        
+        // Get segment length
+        uint16_t segLen = (data[pos + 2] << 8) | data[pos + 3];
+        
+        // APP1 marker (0xE1) - EXIF data
+        if (marker == 0xE1) {
+            // Check for "Exif\0\0"
+            if (pos + 10 < size && 
+                data[pos + 4] == 'E' && data[pos + 5] == 'x' && 
+                data[pos + 6] == 'i' && data[pos + 7] == 'f' &&
+                data[pos + 8] == 0 && data[pos + 9] == 0) {
+                
+                // TIFF header starts at pos + 10
+                const uint8_t* tiffStart = data + pos + 10;
+                size_t tiffSize = segLen - 8; // Subtract "Exif\0\0" and length bytes
+                
+                if (tiffSize < 8 || pos + 10 + tiffSize > size) {
+                    pos += 2 + segLen;
+                    continue;
+                }
+                
+                // Check TIFF byte order
+                bool isLE = (tiffStart[0] == 'I' && tiffStart[1] == 'I');
+                
+                if ((tiffStart[0] != 'I' && tiffStart[0] != 'M') || 
+                    (tiffStart[0] == 'I' && tiffStart[1] != 'I') ||
+                    (tiffStart[0] == 'M' && tiffStart[1] != 'M')) {
+                    pos += 2 + segLen;
+                    continue;
+                }
+                
+                // Get IFD0 offset
+                uint32_t ifd0Offset = isLE ? 
+                    (tiffStart[4] | (tiffStart[5] << 8) | (tiffStart[6] << 16) | (tiffStart[7] << 24)) :
+                    ((tiffStart[4] << 24) | (tiffStart[5] << 16) | (tiffStart[6] << 8) | tiffStart[7]);
+                
+                // Parse TIFF IFD for thumbnail
+                uint64_t jpgOff = 0, jpgSz = 0;
+                if (ParseTiffIFD(tiffStart, tiffSize, ifd0Offset, isLE, jpgOff, jpgSz)) {
+                    if (jpgOff > 0 && jpgSz > 100 && jpgOff + jpgSz <= tiffSize) {
+                        out.pData = tiffStart + jpgOff;
+                        out.size = (size_t)jpgSz;
+                        return true;
+                    }
+                }
+                
+                // Try IFD1 (often contains the thumbnail)
+                // After IFD0 entries, there's a pointer to IFD1
+                if (ifd0Offset < tiffSize) {
+                    uint16_t numEntries = isLE ? 
+                        (tiffStart[ifd0Offset] | (tiffStart[ifd0Offset + 1] << 8)) :
+                        ((tiffStart[ifd0Offset] << 8) | tiffStart[ifd0Offset + 1]);
+                    
+                    size_t ifd1PtrPos = ifd0Offset + 2 + numEntries * 12;
+                    if (ifd1PtrPos + 4 <= tiffSize) {
+                        uint32_t ifd1Offset = isLE ?
+                            (tiffStart[ifd1PtrPos] | (tiffStart[ifd1PtrPos + 1] << 8) | 
+                             (tiffStart[ifd1PtrPos + 2] << 16) | (tiffStart[ifd1PtrPos + 3] << 24)) :
+                            ((tiffStart[ifd1PtrPos] << 24) | (tiffStart[ifd1PtrPos + 1] << 16) | 
+                             (tiffStart[ifd1PtrPos + 2] << 8) | tiffStart[ifd1PtrPos + 3]);
+                        
+                        if (ifd1Offset > 0 && ifd1Offset < tiffSize) {
+                            if (ParseTiffIFD(tiffStart, tiffSize, ifd1Offset, isLE, jpgOff, jpgSz)) {
+                                if (jpgOff > 0 && jpgSz > 100 && jpgOff + jpgSz <= tiffSize) {
+                                    out.pData = tiffStart + jpgOff;
+                                    out.size = (size_t)jpgSz;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        pos += 2 + segLen;
+    }
+    
+    return false;
+}

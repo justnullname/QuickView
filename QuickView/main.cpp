@@ -157,12 +157,13 @@ static ComPtr<ID2D1Bitmap> g_currentBitmap;
 static std::wstring g_imagePath;
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
 static bool g_isBlurry = false; // For Motion Blur (Ghost)
+static bool g_transitionFromThumb = false; // Flag: Did we transition from a thumbnail?
 static bool g_isCrossFading = false;
 static DWORD g_crossFadeStart = 0;
 static const DWORD CROSS_FADE_DURATION = 150; // ms
 static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
-
 OSDState g_osd; // Removed static, explicitly Global
+
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
 static DialogState g_dialog;
 static EditState g_editState;
@@ -1790,10 +1791,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.avif;*.jxl;*.heic;*.heif;*.tga;*.psd;*.hdr;*.exr;*.svg;*.qoi;*.pcx;*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef;*.pgm;*.ppm\0JPEG\0*.jpg;*.jpeg\0PNG\0*.png\0WebP\0*.webp\0AVIF\0*.avif\0JPEG XL\0*.jxl\0HEIC/HEIF\0*.heic;*.heif\0RAW\0*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef\0All Files\0*.*\0";
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
         if (GetOpenFileNameW(&ofn)) {
+            OutputDebugStringW(L"[Main] File Selected\n");
             g_navigator.Initialize(szFile);
             LoadImageAsync(hwnd, szFile);
         }
     }
+    
     LocalFree(argv);
     
     // --- Auto Update Integration ---
@@ -1904,13 +1907,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         static const UINT_PTR INTERACTION_TIMER_ID = 1001;
         static const UINT_PTR OSD_TIMER_ID = 999;
         
-        // Engine Poll Timer (990) - REMOVED (Replaced by WM_ENGINE_EVENT)
+
         
         // Interaction Timer (1001)
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
             g_viewState.IsInteracting = false;  // End interaction mode
-            RequestRepaint(PaintLayer::Image);  // Redraw image with high quality
         }
 
         // Debug HUD Refresh (996)
@@ -2019,6 +2021,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam != SIZE_MINIMIZED) {
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
             CalculateWindowControls(D2D1::SizeF((float)LOWORD(lParam), (float)HIWORD(lParam)));
+            
+            // [Phase 7] Fit Stage: Update screen dimensions for decode-to-scale
+            g_runtime.screenWidth = LOWORD(lParam);
+            g_runtime.screenHeight = HIWORD(lParam);
+            if (g_imageEngine) g_imageEngine->UpdateConfig(g_runtime);
         }
         return 0;
     
@@ -2959,6 +2966,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_KEYDOWN: {
+        // Verification Control (Phase 5 - Ctrl+1..5)
+        if (GetKeyState(VK_CONTROL) & 0x8000) {
+            bool handled = false;
+            switch(wParam) {
+                case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
+                case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
+                case '3': g_runtime.EnableCrossFade = !g_runtime.EnableCrossFade; handled = true; break;
+                case '4': g_runtime.SlowMotion = !g_runtime.SlowMotion; handled = true; break;
+                case '5': g_runtime.ForceWarp = !g_runtime.ForceWarp; handled = true; break;
+            }
+            if (handled) {
+                g_imageEngine->UpdateConfig(g_runtime); // Push to engine
+                g_uiRenderer->SetRuntimeConfig(g_runtime); // Push to HUD
+                RequestRepaint(PaintLayer::All); // Repaint to show HUD changes or Effect changes
+                return 0;
+            }
+        }
+
         // Settings handling
         if (g_settingsOverlay.IsVisible()) {
             if (wParam == VK_ESCAPE) {
@@ -3804,6 +3829,18 @@ void ProcessEngineEvents(HWND hwnd) {
         case EventType::ThumbReady: {
             if (!g_renderEngine) break;
             
+            wchar_t buf[256];
+            swprintf_s(buf, L"[Main] ThumbReady: %s\n", evt.filePath.c_str());
+            OutputDebugStringW(buf);
+
+            // RACING CONDITION FIX:
+            // If we already have the Full Image (Clear) for this path, IGNORE the thumbnail.
+            // This prevents "Clear -> Blurry" overwrite if Thumb arrives late.
+            if (!g_isBlurry && g_currentBitmap && evt.filePath == g_imagePath) {
+                 // Discard late thumbnail
+                 break; 
+            }
+
             // User requested "Blurred Thumbnail"
             // We need to create D2D bitmap from the raw bytes (ThumbData)
             // CImageLoader::ThumbData has BGRA
@@ -3826,7 +3863,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_currentBitmap = thumbBitmap;
                 g_ghostBitmap = thumbBitmap; // Save for Cross-Fade
                 g_isBlurry = true; 
-                g_renderEngine->SetWarpMode(0.5f, 0.1f); // Enable Ghost Blur (Intensity 0.5, Dim 0.1)
+                // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
                 g_imagePath = evt.filePath; // Update path immediately for UI consistency
                 
                 // Update Title (Loading state)
@@ -3844,17 +3881,32 @@ void ProcessEngineEvents(HWND hwnd) {
             // Final High-Res Image
             if (!g_renderEngine) break;
             
+            wchar_t buf[256];
+            swprintf_s(buf, L"[Main] FullReady: %s\n", evt.filePath.c_str());
+            OutputDebugStringW(buf);
+
             // evt.fullImage is IWICBitmapSource
             ComPtr<ID2D1Bitmap> fullBitmap;
             if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
+                
+                // 1. Capture OLD image as Ghost (Thumbnail or Previous Image)
+                g_ghostBitmap = g_currentBitmap; 
+                g_transitionFromThumb = g_isBlurry; // Capture: Was the ghost a blurry thumbnail?
+                
+                // 2. Set NEW image as Current (Truth)
                 g_currentBitmap = fullBitmap;
                 g_isBlurry = false; 
-                g_renderEngine->SetWarpMode(0.0f); // Reset Ghost Blur
                 
-                // Start Cross-Fade if we have a Ghost
-                if (g_ghostBitmap) {
-                    g_isCrossFading = true;
-                    g_crossFadeStart = GetTickCount();
+                // 3. Start Arrival Transition (ALWAYS, even if Fade disabled)
+                // This ensures we enter the "Priority Render Block" in OnPaint, 
+                // overriding any Warp/Blur effects for the new image.
+                g_isCrossFading = true;
+                g_crossFadeStart = GetTickCount();
+
+                // Validation for actual animation
+                if (!g_ghostBitmap || !g_runtime.EnableCrossFade) {
+                   // If we can't or shouldn't fade, we will just hold the "Clear" state
+                   // for a frame in OnPaint before releasing to Scrolling logic.
                 }
 
                 g_imagePath = evt.filePath;
@@ -3863,6 +3915,9 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_currentMetadata = evt.metadata;
                 
                 // Trigger histogram calculation if Info Panel is expanded
+                if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty()) {
+                    UpdateHistogramAsync(hwnd, evt.filePath);
+                }
                 if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty()) {
                     UpdateHistogramAsync(hwnd, evt.filePath);
                 }
@@ -3938,8 +3993,7 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     
     g_imageEngine->NavigateTo(path, fileSize);
     
-    // Start Polling Loop (120Hz) - REMOVED
-    // SetTimer(hwnd, IDT_ENGINE_POLL, 8, nullptr);
+
 }
 
 
@@ -4510,6 +4564,7 @@ void OnPaint(HWND hwnd) {
     }
     
     if (g_isImageDirty) {
+    g_isImageDirty = false; // Reset dirty flag BEFORE drawing (Consume flag)
     g_renderEngine->BeginDraw();
     
     // --- Performance Metrics Update ---
@@ -4674,32 +4729,53 @@ void OnPaint(HWND hwnd) {
             // 根据 Warp 状态选择绘制方法
             D2D1_RECT_F destRect = D2D1::RectF(0, 0, size.width, size.height);
             
-            if (g_renderEngine->IsWarpMode()) {
-                // Warp 模式：使用模糊效果绘制 (High Velocity Scroll)
-                g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
-            } 
-            else if (g_isCrossFading && g_ghostBitmap) {
-                // Cross-Fade Animation (Ghost -> Truth)
-                DWORD elapsed = GetTickCount() - g_crossFadeStart;
-                float alpha = std::min(1.0f, (float)elapsed / (float)CROSS_FADE_DURATION);
-
-                if (alpha >= 1.0f) {
-                    g_isCrossFading = false;
-                    g_ghostBitmap = nullptr; // Cleanup
-                    // Draw Full Final
-                    context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                } else {
-                    // 1. Draw Ghost (Blurry Background)
-                    g_renderEngine->SetWarpMode(0.5f, 0.1f);
-                    g_renderEngine->DrawBitmapWithBlur(g_ghostBitmap.Get(), destRect);
-                    g_renderEngine->SetWarpMode(0.0f); // Restore
-
-                    // 2. Draw Full (Fading In)
-                    context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
-                    
-                    // Continue Animation
-                    MarkStaticLayerDirty();
+            if (g_isCrossFading) {
+                // === Arrival Priority Block ===
+                // Determines what happens when a new image lands.
+                // This overrides Warp/Scroll blur to ensure the user SEES the new image clearly.
+                // ONLY Animate if we have a Ghost AND CrossFade enabled AND we are coming from a Thumbnail.
+                bool canAnimate = (g_ghostBitmap != nullptr) && g_runtime.EnableCrossFade && g_transitionFromThumb;
+                
+                if (!canAnimate) {
+                     // Instant Cut (No Fade)
+                     // Draw CLEAR Target (Static)
+                     context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                     
+                     // End transition immediately (next frame will return to standard/warp logic)
+                     g_isCrossFading = false;
+                     g_ghostBitmap = nullptr;
                 }
+                else {
+                    // Cross-Fade Animation (Ghost -> Truth)
+                    DWORD duration = g_runtime.SlowMotion ? 2000 : CROSS_FADE_DURATION;
+                    DWORD elapsed = GetTickCount() - g_crossFadeStart;
+                    float alpha = std::min(1.0f, (float)elapsed / (float)duration);
+
+                    if (alpha >= 1.0f) {
+                        g_isCrossFading = false;
+                        g_ghostBitmap = nullptr; // Cleanup
+                        // Draw Full Final
+                        context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                    } else {
+                        // 1. Draw Ghost (Stretched Thumbnail)
+                        context->DrawBitmap(g_ghostBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+
+                        // 2. Draw Full (Fading In)
+                        context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+                        
+                        // Continue Animation
+                        RequestRepaint(PaintLayer::Image);
+                    }
+                }
+            } 
+            else if (g_renderEngine->IsWarpMode() || g_runtime.ForceWarp) {
+                // Warp Mode (Blur) - PRIORITY 2
+                // Force Warp Effect for Debug
+                if (g_runtime.ForceWarp) g_renderEngine->SetWarpMode(0.5f, 0.1f);
+
+                g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
+                
+                if (g_runtime.ForceWarp) g_renderEngine->SetWarpMode(0.0f); // Restore
             }
             else {
                 // Static 模式：正常绘制
@@ -4713,6 +4789,12 @@ void OnPaint(HWND hwnd) {
         // Reset transform for OSD and UI elements
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         
+        // === Input State Decay ===
+        // Check if Warp state should expire (e.g. user stopped scrolling)
+        if (g_inputController.Update()) {
+            RequestRepaint(PaintLayer::Image); // State changed (Warp -> Static), redraw
+        }
+
         RECT rect; GetClientRect(hwnd, &rect);
         // D2D1_SIZE_F size = context->GetSize(); // Replaced by logicW/logicH
         // CalculateWindowControls(logicW, logicH); // Actually CalculateWindowControls takes size.
@@ -4724,7 +4806,7 @@ void OnPaint(HWND hwnd) {
     }
     g_renderEngine->EndDraw();
     g_renderEngine->Present();
-    g_isImageDirty = false; // Reset dirty flag after Present
+    // g_isImageDirty = false; // MOVED TO TOP to allow re-entrant RequestRepaint
     }
     
     // Render UI to independent DComp Surface
@@ -4773,9 +4855,28 @@ void OnPaint(HWND hwnd) {
         g_uiRenderer->SetDebugHUDVisible(allowHud && g_showDebugHUD);
         
         if (shouldCompute) {
+            // [Phase 6] Dynamic Gating
+            // Tell ImageEngine if we are Warping (High Priority Mode)
+            bool isWarping = (g_inputController.GetState() == ScrollState::Warp);
+            if (g_imageEngine) {
+                g_imageEngine->SetHighPriorityMode(isWarping);
+            }
+
             // Collect Metrics (Lazy)
+            double currentThumbTime = 0.0;
+            double currentHeavyTime = 0.0;
+            int currentCancelCount = 0;
+            int currentHeavyPending = 0;
+            std::wstring currentLoaderName;
+
             if (g_imageEngine) {
                 auto stats = g_imageEngine->GetDebugStats();
+                currentThumbTime = stats.scoutLoadTimeMs;
+                currentHeavyTime = stats.heavyDecodeTimeMs;
+                currentCancelCount = stats.cancelCount;
+                currentLoaderName = stats.loaderName;
+                currentHeavyPending = stats.heavyPendingCount;
+
                 g_debugMetrics.eventQueueSize = stats.scoutQueueSize;
                 g_debugMetrics.skipCount = stats.scoutSkipCount;
                 
@@ -4791,7 +4892,12 @@ void OnPaint(HWND hwnd) {
                 g_fps, 
                 g_debugMetrics.memoryUsage.load(),       // memBytes
                 g_debugMetrics.eventQueueSize.load(),    // queueSize
-                g_debugMetrics.skipCount.load()          // skipCount
+                g_debugMetrics.skipCount.load(),         // skipCount
+                currentThumbTime,                        // thumbTimeMs
+                currentCancelCount,
+                currentHeavyTime,
+                currentLoaderName,
+                currentHeavyPending
             );
         }
         

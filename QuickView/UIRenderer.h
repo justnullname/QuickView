@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "CompositionEngine.h"
 #include <dwrite.h>
+#include "EditState.h"
 
 // ============================================================================
 // UIRenderer - 多层 UI 渲染器
@@ -35,7 +36,9 @@ public:
     // ===== UI 状态更新 =====
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
-    void SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount);
+    void SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount, double thumbTimeMs = 0.0,
+        int cancelCount = 0, double heavyTimeMs = 0.0, const std::wstring& loaderName = L"", int heavyPending = 0);
+    void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkDynamicDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
     void SetPinActive(bool active) { m_pinActive = active; MarkStaticDirty(); }
@@ -73,6 +76,12 @@ private:
     size_t m_memBytes = 0;
     size_t m_queueSize = 0;
     int m_skipCount = 0;
+    double m_thumbTimeMs = 0.0;
+    int m_cancelCount = 0;       // New: Regicide Count
+    double m_heavyTimeMs = 0.0;  // New: Heavy Decode Time
+    std::wstring m_loaderName;   // New: Decoder Name
+    int m_heavyPending = 0;      // New: Heavy Queue
+    RuntimeConfig m_runtime; // Verification Flags
     
     // Window Controls
     int m_winCtrlHover = -1;

@@ -82,6 +82,7 @@ public:
         int origWidth = 0;
         int origHeight = 0;
         uint64_t fileSize = 0;
+        bool isBlurry = true; // Phase 6: Fast Pass (false = Clear, true = Blur)
     };
 
     // --- NEW: PMR-backed Decoded Image (Zero-Copy) ---
@@ -118,15 +119,18 @@ public:
 
     /// <summary>
     /// NEW: Load image directly into PMR-backed buffer (Zero-Copy for Heavy Lane)
+    /// Support specialized "Decode-to-Scale" based on target dimensions.
     /// </summary>
-    HRESULT LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, std::wstring* pLoaderName = nullptr, std::stop_token st = {});
+    HRESULT LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, 
+                           int targetWidth, int targetHeight, /* 0 for full decode */
+                           std::wstring* pLoaderName = nullptr, std::stop_token st = {});
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)
     /// Optimizes for speed using TurboJPEG scaling where possible.
     /// Returns raw BGRA buffer.
     /// </summary>
-    HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData* pData);
+
 
 
     /// <summary>
@@ -139,13 +143,46 @@ public:
     /// </summary>
     int GetLastExifOrientation() const;
 
+    // --- NEW: Fast Image Info (Header-Only Parsing) ---
+    struct ImageInfo {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint64_t fileSize = 0;
+        std::wstring format;      // "JPEG", "PNG", "WebP", "AVIF", "JXL", "RAW", etc.
+        std::wstring colorSpace;  // Optional: "sRGB", "Display P3", etc.
+        int bitDepth = 0;         // Optional: 8, 10, 12, 16
+        int channels = 0;         // Optional: 3 (RGB), 4 (RGBA)
+        bool hasAlpha = false;
+        bool isAnimated = false;  // For GIF, WebP, AVIF animations
+    };
+
     /// <summary>
-    /// Get image size without full decode
+    /// Fast header-only parsing using native decoders (< 5ms for most formats)
+    /// Only reads first ~64KB of file, uses format-specific optimized parsers.
+    /// </summary>
+    HRESULT GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo);
+
+    /// <summary>
+    /// Get image size without full decode (Legacy, uses WIC)
     /// </summary>
     HRESULT GetImageSize(LPCWSTR filePath, UINT* width, UINT* height);
 
     // Helper: Create WIC bitmap from raw bits
     HRESULT CreateWICBitmapFromMemory(UINT width, UINT height, REFGUID format, UINT stride, UINT size, BYTE* data, IWICBitmap** ppBitmap);
+    
+    /// <summary>
+    /// Creates a WIC Bitmap by DEEP COPYING memory. Safe for cross-thread Arena usage.
+    /// </summary>
+    HRESULT CreateWICBitmapCopy(UINT width, UINT height, REFGUID format, UINT stride, UINT size, BYTE* data, IWICBitmap** ppBitmap);
+
+    /// <summary>
+    /// Try to load a "Fast Pass" image (Full Decode, Timeout 15ms)
+    /// </summary>
+    HRESULT LoadFastPass(LPCWSTR filePath, ThumbData* pData);
+    
+    // Core Thumbnail API
+    HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData* pData, bool allowSlow = true);
+
 
 private:
     ComPtr<IWICImagingFactory> m_wicFactory;
@@ -155,6 +192,18 @@ private:
     HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
     HRESULT LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for in-memory buffers
     HRESULT LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for WebP buffers
+
+    /// <summary>
+    /// Specialized Thumbnail Loaders (Phase 6)
+    /// </summary>
+    HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData);
+    HRESULT LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow = true);
+    HRESULT LoadThumbWebP_Limited(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, int timeoutMs);
+    HRESULT LoadThumbWebP_Scaled(const uint8_t* data, size_t size, int targetSize, ThumbData* pData);
+
+
+
+
 
     // LoadPNG REMOVED - replaced by LoadPngWuffs
     HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libwebp

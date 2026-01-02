@@ -28,6 +28,9 @@ public:
     // Resource block based.
     static bool ExtractFromPSD(const uint8_t* fileData, size_t fileSize, ExtractedData& out);
 
+    // JPEG (Extract EXIF thumbnail from APP1 segment)
+    static bool ExtractFromJPEG(const uint8_t* fileData, size_t fileSize, ExtractedData& out);
+
 private:
     // TIFF Parsing Helpers
     static bool ParseTiffIFD(const uint8_t* start, size_t size, size_t offset, bool isLittleEndian, uint64_t& jpegOffset, uint64_t& jpegSize);

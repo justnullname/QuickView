@@ -143,11 +143,18 @@ void UIRenderer::OnResize(UINT width, UINT height) {
     MarkGalleryDirty();
 }
 
-void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount) {
+// Update SetDebugStats in cpp
+void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount, double thumbTimeMs,
+    int cancelCount, double heavyTimeMs, const std::wstring& loaderName, int heavyPending) {
     m_fps = fps;
     m_memBytes = memBytes;
     m_queueSize = queueSize;
     m_skipCount = skipCount;
+    m_thumbTimeMs = thumbTimeMs;
+    m_cancelCount = cancelCount;
+    m_heavyTimeMs = heavyTimeMs;
+    m_loaderName = loaderName;
+    m_heavyPending = heavyPending;
     if (m_showDebugHUD) MarkDynamicDirty();
 }
 
@@ -421,20 +428,24 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     if (hudX < 0) hudX = 10;
     float hudY = 10.0f;
     
-    dc->FillRectangle(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + 105), grayBrush.Get());
-
     // 3. Draw Traffic Lights (Triggers)
     float x = hudX + 10.0f;
     float y = hudY + 45.0f; 
     float size = 14.0f;
     float gap = 40.0f;
 
+    // Use larger background for Verification Info + More Stats
+    float bgHeight = 230.0f;
+    float trafficY = hudY + 90.0f;
+    float verifyY = trafficY + 35.0f;
+    dc->FillRectangle(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + bgHeight), grayBrush.Get());
+
 
     auto DrawLight = [&](const wchar_t* label, std::atomic<int>& counter, ID2D1SolidColorBrush* brightBrush) {
         int c = counter.load();
         bool isLit = (c > 0);
         
-        D2D1_RECT_F rect = D2D1::RectF(x, y, x + size, y + size);
+        D2D1_RECT_F rect = D2D1::RectF(x, trafficY, x + size, trafficY + size);
         if (isLit) {
             dc->FillRectangle(rect, brightBrush);
             counter--; // Decay
@@ -444,7 +455,7 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         
         // Label
         dc->DrawText(label, (UINT32)wcslen(label), m_debugFormat.Get(), 
-                D2D1::RectF(x, y + size + 2, x + size + 30, y + size + 20), m_whiteBrush.Get());
+                D2D1::RectF(x, trafficY + size + 2, x + size + 30, trafficY + size + 20), m_whiteBrush.Get());
 
         x += gap;
     };
@@ -455,14 +466,32 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     DrawLight(L"DYN", g_debugMetrics.dirtyTriggerDynamic, greenBrush.Get());
 
     // 4. Draw Text Data
-    wchar_t buffer[128];
-    // Use m_fps (passed from main.cpp) for FPS. Use global metrics for others for now.
-    swprintf_s(buffer, L"FPS: %.1f  Q: %llu  Skip: %d  MEM: %llu MB", 
-        m_fps, 
-        m_queueSize,
-        m_skipCount,
-        m_memBytes / 1024 / 1024);
+    wchar_t buffer[256];
+    swprintf_s(buffer, 
+        L"FPS: %.1f  SQ: %llu HQ: %d MEM: %llu MB\n"
+        L"Scout: %.0fms  Skip: %d\n"
+        L"Heavy: %.0fms  Cancel: %d\n"
+        L"Loader: %s", 
+        m_fps, m_queueSize, m_heavyPending, m_memBytes / 1024 / 1024,
+        m_thumbTimeMs, m_skipCount,
+        m_heavyTimeMs, m_cancelCount,
+        m_loaderName.empty() ? L"-" : m_loaderName.c_str());
     
+    // Adjusted layout for multi-line stats
     dc->DrawText(buffer, (UINT32)wcslen(buffer), m_debugFormat.Get(), 
-            D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW, hudY + 30), m_whiteBrush.Get());
+            D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW - 10, hudY + 75), m_whiteBrush.Get());
+
+    // 5. Verification Flags (Phase 5)
+    std::wstring vMsg = L"[VERIFICATION]\n";
+    vMsg += m_runtime.EnableScout ? L"Scout: ON   " : L"Scout: OFF  ";
+    vMsg += m_runtime.EnableHeavy ? L"Heavy: ON   " : L"Heavy: OFF  ";
+    vMsg += L"\n";
+    vMsg += m_runtime.EnableCrossFade ? L"Fade:  ON   " : L"Fade:  OFF  ";
+    vMsg += m_runtime.SlowMotion ? L"SlowMo: ON " : L"SlowMo: OFF";
+    if (m_runtime.ForceWarp) vMsg += L" WARP";
+
+    float vy = verifyY;
+    dc->DrawText(vMsg.c_str(), (UINT32)vMsg.length(), m_debugFormat.Get(),
+        D2D1::RectF(hudX + 10, vy, hudX + hudW - 10, vy + 80),
+        m_whiteBrush.Get());
 }
