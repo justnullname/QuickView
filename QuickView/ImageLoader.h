@@ -83,6 +83,9 @@ public:
         int origHeight = 0;
         uint64_t fileSize = 0;
         bool isBlurry = true; // Phase 6: Fast Pass (false = Clear, true = Blur)
+        
+        // [v3.2] Debug: 记录实际使用的 Loader
+        std::wstring loaderName;
     };
 
     // --- NEW: PMR-backed Decoded Image (Zero-Copy) ---
@@ -96,6 +99,33 @@ public:
         DecodedImage() : pixels(std::pmr::get_default_resource()) {}
         explicit DecodedImage(std::pmr::memory_resource* mr) : pixels(mr) {}
     };
+
+    // --- NEW: Pre-flight Check Types (v3.1) ---
+    enum class ImageType {
+        TypeA_Sprint,  // Express Lane: Small files, embedded thumbs
+        TypeB_Heavy,   // Main Lane: Large files requiring Fit decode
+        Invalid        // Unsupported or corrupt
+    };
+
+    // --- NEW: Header Info for Pre-flight Check ---
+    struct ImageHeaderInfo {
+        std::wstring format;      // JPEG/PNG/WEBP/RAW/JXL/AVIF
+        int width = 0;
+        int height = 0;
+        uintmax_t fileSize = 0;
+        bool hasEmbeddedThumb = false;
+        ImageType type = ImageType::Invalid;
+        
+        int64_t GetPixelCount() const { return (int64_t)width * height; }
+        // [v3.1] Reverted to 2MB/2.1MP per user request
+        bool IsSmall() const { return width > 0 && fileSize < 2 * 1024 * 1024 && GetPixelCount() < 2100000; }
+    };
+
+    // --- Pre-flight Check API ---
+    /// <summary>
+    /// Fast header peek (reads ~512 bytes) to classify image without full decode.
+    /// </summary>
+    ImageHeaderInfo PeekHeader(LPCWSTR filePath);
 
     /// <summary>
     /// Read metadata from file using WIC

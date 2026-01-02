@@ -9,10 +9,13 @@
 
 #pragma comment(lib, "psapi.lib")
 
+#include "ImageEngine.h" // [v3.1] Access for HasEmbeddedThumb
+
 // External globals
 extern Toolbar g_toolbar;
 extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
+extern ImageEngine* g_pImageEngine; // [v3.1] Accessor (renamed from g_imageEngine)
 
 // External functions from main.cpp
 extern void DrawInfoPanel(ID2D1DeviceContext* context, float winPixelW, float winPixelH);
@@ -471,10 +474,12 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         L"FPS: %.1f  SQ: %llu HQ: %d MEM: %llu MB\n"
         L"Scout: %.0fms  Skip: %d\n"
         L"Heavy: %.0fms  Cancel: %d\n"
+        L"Thumb: %s\n"
         L"Loader: %s", 
         m_fps, m_queueSize, m_heavyPending, m_memBytes / 1024 / 1024,
         m_thumbTimeMs, m_skipCount,
         m_heavyTimeMs, m_cancelCount,
+        g_pImageEngine ? (g_pImageEngine->HasEmbeddedThumb() ? L"YES" : L"NO") : L"-",
         m_loaderName.empty() ? L"-" : m_loaderName.c_str());
     
     // Adjusted layout for multi-line stats

@@ -29,6 +29,9 @@ struct EngineEvent {
     ComPtr<IWICBitmapSource> fullImage;    // For FullReady
     CImageLoader::ImageMetadata metadata;  // Pre-read metadata (avoids UI blocking)
     std::wstring loaderName;               // Which decoder was used
+    
+    // [Phase 7] Truth Stage
+    bool isScaled = false; // true = Fit Stage (scaled), false = Truth Stage (full res)
 };
 
 class ImageEngine {
@@ -49,6 +52,9 @@ public:
     // fileSize: Used for Threshold Dispatch (Scout/Heavy/Express)
     void NavigateTo(const std::wstring& path, uintmax_t fileSize = 0);
     void SetWindow(HWND hwnd);
+    
+    // [v3.1] Cancel Heavy Lane when Fast Pass succeeds
+    void CancelHeavy() { m_heavy.SetTarget(L""); }
 
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
@@ -114,6 +120,12 @@ private:
         int GetSkipCount() const { return m_skipCount.load(); }
         void ResetSkipCount() { m_skipCount = 0; }
         
+        // [v3.2] Scout Loader Name (for HUD)
+        std::wstring GetLastLoaderName() const {
+            std::lock_guard lock(m_debugMutex);
+            return m_lastLoaderName;
+        }
+        
         std::atomic<double> m_lastLoadTimeMs{ 0.0 }; // Public atomic for easy access
 
     private:
@@ -124,11 +136,13 @@ private:
         
         std::jthread m_thread; 
         mutable std::mutex m_queueMutex;
+        mutable std::mutex m_debugMutex; // [v3.2] For loader name
         std::deque<std::wstring> m_queue; 
         std::deque<EngineEvent> m_results; 
         std::atomic<bool> m_stopSignal = false;
         std::condition_variable m_cv;
-        std::atomic<int> m_skipCount = 0; 
+        std::atomic<int> m_skipCount = 0;
+        std::wstring m_lastLoaderName; // [v3.2] Scout Loader Record
     } m_scout;
 
     // --- Lane 2: The Heavy Lifter ---
@@ -198,4 +212,10 @@ private:
     // Tracking
     std::wstring m_currentNavPath;
     std::chrono::steady_clock::time_point m_lastInputTime;
+    
+    // [v3.1]
+    std::atomic<bool> m_hasEmbeddedThumb = false;
+
+public:
+    bool HasEmbeddedThumb() const { return m_hasEmbeddedThumb.load(); }
 };

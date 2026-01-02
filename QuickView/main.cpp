@@ -150,6 +150,7 @@ static const wchar_t* g_szWindowTitle = L"QuickView 2026";
 static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
+ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
 static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static InputController g_inputController;  // Quantum Stream: 输入状态机
@@ -1736,6 +1737,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_renderEngine = std::make_unique<CRenderEngine>(); g_renderEngine->Initialize(hwnd);
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
+    g_pImageEngine = g_imageEngine.get(); // [v3.1] Init Global Accessor
     g_imageEngine->SetWindow(hwnd);
     
     // Initialize DirectComposition (hybrid architecture)
@@ -3862,16 +3864,46 @@ void ProcessEngineEvents(HWND hwnd) {
             if (SUCCEEDED(hr)) {
                 g_currentBitmap = thumbBitmap;
                 g_ghostBitmap = thumbBitmap; // Save for Cross-Fade
-                g_isBlurry = true; 
+                g_isBlurry = evt.thumbData.isBlurry; // [v3.1] Use actual flag from Express Lane 
                 // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
                 g_imagePath = evt.filePath; // Update path immediately for UI consistency
                 
-                // Update Title (Loading state)
-                wchar_t titleBuf[512];
-                swprintf_s(titleBuf, L"Loading... %s - %s", 
-                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
-                    g_szWindowTitle);
-                SetWindowTextW(hwnd, titleBuf);
+                // [v3.2] If Fast Pass produced CLEAR image, adjust window now
+                // (Heavy Lane won't run, so FullReady won't trigger)
+                if (!evt.thumbData.isBlurry) {
+                    AdjustWindowToImage(hwnd);
+                    
+                    // Mark as NOT loading (we have the final image)
+                    g_isLoading = false;
+                    
+                    // [v3.2] Read Metadata for Info Panel (Heavy Lane was skipped!)
+                    if (g_imageLoader) {
+                        g_imageLoader->ReadMetadata(evt.filePath.c_str(), &g_currentMetadata);
+                        g_currentMetadata.Width = evt.thumbData.origWidth > 0 ? evt.thumbData.origWidth : evt.thumbData.width;
+                        g_currentMetadata.Height = evt.thumbData.origHeight > 0 ? evt.thumbData.origHeight : evt.thumbData.height;
+                        g_currentMetadata.LoaderName = evt.thumbData.loaderName;
+                    }
+                    
+                    // Title (Final, not "Loading...")
+                    wchar_t titleBuf[512];
+                    swprintf_s(titleBuf, L"%s - %s", 
+                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
+                        g_szWindowTitle);
+                    SetWindowTextW(hwnd, titleBuf);
+                    
+                    // [v3.2] Force cursor update (fix stuck wait cursor)
+                    POINT pt;
+                    if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+                        PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+                    }
+                } else {
+                    // Update Title (Loading state for blurry thumbnail)
+                    wchar_t titleBuf[512];
+                    swprintf_s(titleBuf, L"Loading... %s - %s", 
+                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
+                        g_szWindowTitle);
+                    SetWindowTextW(hwnd, titleBuf);
+                }
                 
                 needsRepaint = true;
             }
@@ -4261,12 +4293,14 @@ void BuildInfoGrid() {
         g_infoGrid.push_back({L"\U0001F3A8", L"Color", g_currentMetadata.ColorSpace, L"", L"", TruncateMode::None, false});
     }
     
-    // Row 10: Decoder
+    // Row 10: Decoder (Removed as per user request - duplicate of HUD)
+    /*
     if (!g_currentMetadata.LoaderName.empty()) {
         wchar_t timeBuf[32];
         swprintf_s(timeBuf, L"(%llu ms)", (UINT64)g_currentMetadata.LoadTimeMs);
         g_infoGrid.push_back({L"\U00002699", L"Decode", g_currentMetadata.LoaderName, timeBuf, L"", TruncateMode::None, false});
     }
+    */
     
     // Row 11: Software
     if (!g_currentMetadata.Software.empty()) {

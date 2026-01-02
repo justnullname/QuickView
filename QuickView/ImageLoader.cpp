@@ -1600,7 +1600,9 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
 
 
     // 3. Robust Fallback to WIC (Standard Loading)
-    if (pLoaderName) *pLoaderName = L"WIC (Fallback)";
+    if (pLoaderName && pLoaderName->empty()) *pLoaderName = L"WIC (Fallback)";
+
+
     
     // If High-Perf loader failed (e.g. malformed specific header, unsupported feature) OR format verified but unimplemented (stub),
     // OR format unknown.
@@ -1638,11 +1640,21 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
     if (FAILED(hr)) return hr;
 
     // 3. Force Decode to Memory
-    return m_wicFactory->CreateBitmapFromSource(
+    // 3. Force Decode to Memory
+    HRESULT hrBitmap = m_wicFactory->CreateBitmapFromSource(
         converter.Get(),
         WICBitmapCacheOnLoad, 
         ppBitmap
     );
+
+    if (SUCCEEDED(hrBitmap) && pLoaderName && *pLoaderName == L"WIC (Fallback)") {
+         UINT w = 0, h = 0;
+         (*ppBitmap)->GetSize(&w, &h);
+         wchar_t buf[32]; swprintf_s(buf, L" [%ux%u]", w, h);
+         *pLoaderName += buf;
+    }
+
+    return hrBitmap;
 }
 
 // ============================================================================
@@ -1765,9 +1777,18 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                             *pLoaderName = L"TurboJPEG (PMR)";
                             if (width < tj3Get(tj, TJPARAM_JPEGWIDTH)) *pLoaderName += L" [Scaled]";
                         }
+                    } else {
+                        // Decode Failed
+                         if (pLoaderName) *pLoaderName = L"TJ Decode Fail"; 
+                         hr = E_FAIL;
                     }
-                } catch(...) { hr = E_OUTOFMEMORY; }
+                } catch(...) { 
+                    hr = E_OUTOFMEMORY; 
+                    if (pLoaderName) *pLoaderName = L"TJ OOM";
+                }
             }
+        } else {
+             if (pLoaderName) *pLoaderName = L"TJ Header Fail";
         }
         tj3Destroy(tj);
         if (SUCCEEDED(hr)) return hr;
@@ -1828,7 +1849,147 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
          }
     }
     
-    // --- Fallback: Use WIC Source and CopyPixels directly (Zero Intermediate Heap Copy) ---
+    // --- PNG Path (Wuffs - Safety & Speed) ---
+    if (detectedFmt == L"PNG") {
+        std::pmr::vector<uint8_t> pngBuf(pmr);
+        if (!ReadFileToPMR(filePath, pngBuf, st)) return E_ABORT;
+
+        uint32_t w = 0, h = 0;
+        std::vector<uint8_t> pixelData; // Wuffs wrapper returns std::vector (Heap)
+        
+        if (WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &w, &h, pixelData)) {
+            UINT stride = w * 4;
+            // Copy to PMR
+            try {
+                pOutput->pixels.resize(pixelData.size());
+                pOutput->width = w;
+                pOutput->height = h;
+                pOutput->stride = stride;
+                memcpy(pOutput->pixels.data(), pixelData.data(), pixelData.size());
+                pOutput->isValid = true;
+                
+                if (pLoaderName) *pLoaderName = L"Wuffs PNG (PMR)";
+                return S_OK;
+            } catch(...) { return E_OUTOFMEMORY; }
+        }
+    }
+
+    // --- RAW Path (LibRaw - Performance & Thumbnails) ---
+    if (detectedFmt == L"RAW" || detectedFmt == L"TIFF") {
+        // Double check extension to ensure it is a Camera RAW
+        std::wstring path = filePath;
+        std::transform(path.begin(), path.end(), path.begin(), ::towlower);
+        
+        bool isRaw = path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || 
+                     path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || 
+                     path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw") || 
+                     path.ends_with(L".cr3") || path.ends_with(L".nrw");
+                     
+        if (isRaw) {
+             std::pmr::vector<uint8_t> rawBuf(pmr);
+             if (!ReadFileToPMR(filePath, rawBuf, st)) return E_ABORT;
+             
+             LibRaw processor;
+             if (processor.open_buffer(rawBuf.data(), rawBuf.size()) == LIBRAW_SUCCESS) {
+                 // 1. Try Embedded JPEG (Fastest)
+                 bool thumbSuccess = false;
+                 if (processor.unpack_thumb() == LIBRAW_SUCCESS) {
+                     int err = 0;
+                     libraw_processed_image_t* thumb = processor.dcraw_make_mem_thumb(&err);
+                     if (thumb) {
+                         if (thumb->type == LIBRAW_IMAGE_JPEG) {
+                             // Decode the embedded JPEG using TurboJPEG Logic!
+                             tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+                             if (tj) {
+                                 int width = 0, height = 0;
+                                 if (tj3DecompressHeader(tj, (uint8_t*)thumb->data, thumb->data_size) == 0) {
+                                     width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+                                     height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+                                     
+                                     // IDCT Scaling for Thumb
+                                     tjscalingfactor bestFactor = {1, 1};
+                                     if (targetWidth > 0 && targetHeight > 0) {
+                                          int numFactors = 0;
+                                          const tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+                                          for (int i = 0; i < numFactors; ++i) {
+                                              int scaledW = TJSCALED(width, factors[i]);
+                                              int scaledH = TJSCALED(height, factors[i]);
+                                              if (scaledW >= targetWidth && scaledH >= targetHeight) {
+                                                  if (scaledW < TJSCALED(width, bestFactor)) bestFactor = factors[i];
+                                              }
+                                          }
+                                     }
+                                     
+                                     if (bestFactor.num != 1) {
+                                         tj3SetScalingFactor(tj, bestFactor);
+                                         width = TJSCALED(width, bestFactor);
+                                         height = TJSCALED(height, bestFactor);
+                                     }
+                                     
+                                     UINT stride = width * 4;
+                                     try {
+                                         pOutput->pixels.resize((size_t)stride * height);
+                                         if (tj3Decompress8(tj, (uint8_t*)thumb->data, thumb->data_size, 
+                                                            pOutput->pixels.data(), stride, TJPF_BGRX) == 0) {
+                                             pOutput->width = width;
+                                             pOutput->height = height;
+                                             pOutput->stride = stride;
+                                             pOutput->isValid = true;
+                                             if (pLoaderName) {
+                                                 *pLoaderName = L"LibRaw (Embedded JPEG)";
+                                                 if (bestFactor.num != 1) *pLoaderName += L" [Scaled]";
+                                             }
+                                             thumbSuccess = true;
+                                         }
+                                     } catch(...) {}
+                                 }
+                                 tj3Destroy(tj);
+                             }
+                         }
+                         processor.dcraw_clear_mem(thumb);
+                     }
+                 }
+                 
+                 // 2. Fallback to Full Decode (Slow)
+                 if (!thumbSuccess && !st.stop_requested()) {
+                     processor.imgdata.params.use_camera_wb = 1;
+                     processor.imgdata.params.use_auto_wb = 0;
+                     processor.imgdata.params.user_qual = 2; // AHD
+                     
+                     if (processor.unpack() == LIBRAW_SUCCESS && processor.dcraw_process() == LIBRAW_SUCCESS) {
+                         libraw_processed_image_t* image = processor.dcraw_make_mem_image();
+                         if (image) {
+                             if (image->type == LIBRAW_IMAGE_BITMAP && image->bits == 8 && image->colors == 3) {
+                                 // Convert RGB to BGRA
+                                 UINT w = image->width;
+                                 UINT h = image->height;
+                                 UINT stride = w * 4;
+                                 try {
+                                     pOutput->pixels.resize((size_t)stride * h);
+                                     uint8_t* src = image->data;
+                                     uint8_t* dst = pOutput->pixels.data();
+                                     for (UINT i = 0; i < w * h; ++i) {
+                                         dst[i*4+0] = src[i*3+2]; // B
+                                         dst[i*4+1] = src[i*3+1]; // G
+                                         dst[i*4+2] = src[i*3+0]; // R
+                                         dst[i*4+3] = 255;        // A
+                                     }
+                                     pOutput->width = w;
+                                     pOutput->height = h;
+                                     pOutput->stride = stride;
+                                     pOutput->isValid = true;
+                                     if (pLoaderName) *pLoaderName = L"LibRaw (Full PMR)";
+                                 } catch(...) {}
+                             }
+                             processor.dcraw_clear_mem(image);
+                         }
+                     }
+                 }
+                 
+                 if (pOutput->isValid) return S_OK;
+             }
+        }
+    }
     if (st.stop_requested()) return E_ABORT;
 
     ComPtr<IWICBitmapSource> source;
@@ -1877,6 +2038,12 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                 }
             }
             pOutput->isValid = true;
+            
+            // [v3.1] Append resolution to confirm we got the real deal
+            if (pLoaderName) {
+                wchar_t buf[32]; swprintf_s(buf, L" [%ux%u]", w, h);
+                *pLoaderName += buf;
+            }
         }
     }
     
@@ -3399,6 +3566,77 @@ HRESULT CImageLoader::LoadThumbWebP_Limited(const uint8_t* data, size_t size, in
     return LoadThumbWebP_Scaled(data, size, targetSize, pData);
 }
 
+// [v3.1] Robust TurboJPEG Helper (Replaces elusive LoadThumbJPEG)
+// [v3.1] Robust TurboJPEG Helper (Replaces elusive LoadThumbJPEG)
+static HRESULT LoadThumbJPEG_Robust(LPCWSTR filePath, int targetSize, CImageLoader::ThumbData* pData) {
+    if (!pData) return E_INVALIDARG;
+    pData->isValid = false;
+
+    // 1. Read File
+    std::vector<uint8_t> buf;
+    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+
+    // 2. Init TJ
+    tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+    if (!tj) return E_FAIL;
+
+    // 3. Parse Header
+    if (tj3DecompressHeader(tj, buf.data(), buf.size()) != 0) {
+        tj3Destroy(tj);
+        return E_FAIL;
+    }
+
+    int width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+    int height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+    
+    // Save original dims
+    pData->origWidth = width;
+    pData->origHeight = height;
+
+    // 4. Determine Scaling
+    tjscalingfactor scaling = {1, 1}; // Default 1:1
+    
+    if (targetSize > 0 && targetSize < 60000) {
+        // Only scale DOWN if strictly requested and image is larger
+        if (width > targetSize || height > targetSize) {
+            int numFactors = 0;
+            const tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+            for (int i = 0; i < numFactors; i++) {
+                int sw = TJSCALED(width, factors[i]);
+                int sh = TJSCALED(height, factors[i]);
+                if (sw <= targetSize && sh <= targetSize) {
+                   scaling = factors[i]; 
+                   break;
+                }
+            }
+        }
+    }
+
+    if (scaling.num != 1 || scaling.denom != 1) {
+        tj3SetScalingFactor(tj, scaling);
+        width = TJSCALED(width, scaling);
+        height = TJSCALED(height, scaling);
+    }
+
+    // 5. Allocate Output
+    pData->width = width;
+    pData->height = height;
+    pData->stride = width * 4; // BGRA
+    pData->pixels.resize((size_t)pData->stride * height);
+
+    // 6. Decode
+    // TJPF_BGRA is safer for Windows (D2D compatible)
+    if (tj3Decompress8(tj, buf.data(), buf.size(), pData->pixels.data(), pData->stride, TJPF_BGRA) != 0) {
+        tj3Destroy(tj);
+        return E_FAIL;
+    }
+
+    tj3Destroy(tj);
+    pData->isValid = true;
+    pData->loaderName = L"TurboJPEG (Scout)"; // [v3.2] Debug
+    return S_OK;
+}
+
 HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
     if (!pData) return E_INVALIDARG;
     pData->isValid = false;
@@ -3415,12 +3653,16 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
          if (!ReadFileToVector(filePath, buf)) return E_FAIL;
          // Call Proxy with 0 targetSize for FULL RES
          HRESULT hr = LoadThumbAVIF_Proxy(buf.data(), buf.size(), 0, pData);
-         if (SUCCEEDED(hr)) pData->isBlurry = false; // Enforce Clear
+         if (SUCCEEDED(hr)) {
+             pData->isBlurry = false;
+             pData->loaderName = L"libavif (Scout)";
+         }
          return hr;
     }
     
-    if (format == L"JPEG") {
-        HRESULT hr = LoadThumbJPEG(filePath, 65535, pData);
+    // [v3.2] JPEG Detection: Content Magic OR Extension (fallback for non-standard files)
+    if (format == L"JPEG" || ((format == L"Unknown") && (ext.ends_with(L".jpg") || ext.ends_with(L".jpeg")))) {
+        HRESULT hr = LoadThumbJPEG_Robust(filePath, 65535, pData);
         if (SUCCEEDED(hr)) pData->isBlurry = false;
         return hr;
     } 
@@ -3428,7 +3670,10 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
         std::vector<uint8_t> buf;
         if (!ReadFileToVector(filePath, buf)) return E_FAIL;
         HRESULT hr = LoadThumbWebPFromMemory(buf.data(), buf.size(), 65535, pData);
-        if (SUCCEEDED(hr)) pData->isBlurry = false; // Enforce Clear
+        if (SUCCEEDED(hr)) {
+            pData->isBlurry = false;
+            pData->loaderName = L"libwebp (Scout)";
+        }
         return hr;
     }
     else if (format == L"BMP" || format == L"TGA" || format == L"GIF") {
@@ -3445,11 +3690,93 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
               pData->width = w; pData->height = h; pData->stride = w*4;
               pData->origWidth = w; pData->origHeight = h;
               pData->isValid = true; 
-              pData->isBlurry = false; // Enforce Clear
+              pData->isBlurry = false;
+              pData->loaderName = L"Wuffs (Scout)";
               return S_OK;
          }
     }
     
     return E_FAIL;
+}
+
+// ============================================================================
+// Pre-flight Check (v3.1) - Fast header classification
+// ============================================================================
+CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
+    ImageHeaderInfo result;
+    if (!filePath) return result;
+    
+    // Get file size
+    try {
+        result.fileSize = std::filesystem::file_size(filePath);
+    } catch (...) {
+        return result; // Invalid
+    }
+    
+    // Use existing fast header parsing
+    ImageInfo info;
+    if (FAILED(GetImageInfoFast(filePath, &info))) {
+        // Try format detection only
+        result.format = DetectFormatFromContent(filePath);
+        if (result.format == L"Unknown") return result;
+    } else {
+        result.format = info.format;
+        result.width = info.width;
+        result.height = info.height;
+    }
+    
+    // Check for embedded thumbnail (RAW files always have, JPEG may have)
+    result.hasEmbeddedThumb = (result.format == L"RAW" || result.format == L"TIFF");
+    if (result.format == L"JPEG" && result.fileSize > 100 * 1024) { // >100KB JPEG likely has Exif
+        result.hasEmbeddedThumb = true;
+    }
+    
+    // === Classification Matrix (v3.2) ===
+    int64_t pixels = result.GetPixelCount();
+    
+    // Type A (Express Lane ONLY): Small enough for fast full decode
+    // Type B (Heavy Lane): Large images needing scaled decode
+    if (result.format == L"JPEG" || result.format == L"JXL" || result.format == L"BMP") {
+        // JPEG/JXL/BMP: ≤8.5MP → Express (full decode is fast)
+        // >8.5MP → Heavy (needs scaled decode, Scout extracts thumb if hasEmbeddedThumb)
+        // [v3.2] If pixels unknown (0), default to Express (safe fallback)
+        if (pixels == 0 || pixels <= 8500000) {
+            result.type = ImageType::TypeA_Sprint;
+        } else {
+            result.type = ImageType::TypeB_Heavy;
+        }
+    }
+    else if (result.format == L"PNG" || result.format == L"WebP" || result.format == L"GIF") {
+        // PNG/WebP/GIF: ≤4MP → Express, otherwise Heavy
+        if (pixels <= 4000000) {
+            result.type = ImageType::TypeA_Sprint;
+        } else {
+            result.type = ImageType::TypeB_Heavy;
+        }
+    }
+    else if (result.format == L"RAW" || result.format == L"TIFF") {
+        // RAW/TIFF: Always has thumb → Express (Extraction only)
+        result.type = ImageType::TypeA_Sprint;
+        result.hasEmbeddedThumb = true;
+    }
+    else if (result.format == L"AVIF" || result.format == L"HEIC") {
+        // AVIF/HEIC: ≤4MP → Express Fast Pass
+        if (pixels <= 4000000) {
+            result.type = ImageType::TypeA_Sprint;
+        } else {
+            result.type = ImageType::TypeB_Heavy;
+        }
+    }
+    else {
+        // Unknown format: Try Express if small
+        if (result.fileSize < 2 * 1024 * 1024 && pixels < 2100000) {
+            result.type = ImageType::TypeA_Sprint;
+        } else if (result.width > 0) {
+            result.type = ImageType::TypeB_Heavy;
+        }
+        // else: Invalid (default)
+    }
+    
+    return result;
 }
 
