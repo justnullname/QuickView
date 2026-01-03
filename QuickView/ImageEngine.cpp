@@ -216,12 +216,16 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     }
     
     // Phase 4: Arena Water Levels
-    // Use Peak instead of Current (Current is 0 after Reset)
-    s.arena.activeUsed = m_pool.GetActive().GetPeakUsage();
-    s.arena.activePeak = m_pool.GetActive().GetPeakUsage();
+    // Use GetLastArenaBytes() which tracks decoded.pixels.size()
+    size_t lastArenaBytes = m_heavy.GetLastArenaBytes();
+    s.arena.activeUsed = lastArenaBytes; // Last decoded image size
+    s.arena.activePeak = lastArenaBytes;
     s.arena.activeCapacity = m_pool.GetActive().GetCapacity();
-    s.arena.backUsed = m_pool.GetBack().GetPeakUsage();
-    s.arena.backPeak = m_pool.GetBack().GetPeakUsage();
+    s.arena.backUsed = 0; // Reset when not decoding
+    if (s.heavyState == HeavyState::DECODING) {
+        s.arena.backUsed = lastArenaBytes; // Estimate: similar to last image
+    }
+    s.arena.backPeak = lastArenaBytes;
     s.arena.backCapacity = m_pool.GetBack().GetCapacity();
 
     return s;
@@ -537,6 +541,9 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
             if (st.stop_requested()) return;
     
             if (SUCCEEDED(hr) && decoded.isValid) {
+                // Record arena usage for HUD
+                m_lastArenaBytes = decoded.pixels.size();
+                
                 // Create WIC Bitmap from PMR buffer for D2D compatibility
                 ComPtr<IWICBitmap> wicBitmap;
                 // [v3.1 Deep Copy] Safe arena release.

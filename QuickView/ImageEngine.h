@@ -216,6 +216,7 @@ private:
 
         // Debug Access (Called by parent)
         double GetLastDecodeTime() const { return m_lastDecodeTimeMs.load(); }
+        size_t GetLastArenaBytes() const { return m_lastArenaBytes.load(); }
         std::wstring GetLastLoaderName() const { 
             std::lock_guard lock(m_debugMutex);
             return m_lastLoaderName; 
@@ -253,6 +254,7 @@ private:
         
         // Debug
         std::atomic<double> m_lastDecodeTimeMs = 0.0;
+        std::atomic<size_t> m_lastArenaBytes = 0; // Phase 4: Track decoded image size
         std::wstring m_lastLoaderName;
 
         mutable std::mutex m_debugMutex; // Protect string access
