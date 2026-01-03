@@ -258,23 +258,20 @@ ImageEngine::ScoutLane::~ScoutLane() {
     // m_thread destructor joins
 }
 
+// [v3.1] Ruthless Purge: Clear pending queue but keep results
+void ImageEngine::ScoutLane::Clear() {
+    std::lock_guard lock(m_queueMutex);
+    m_queue.clear();
+    // CRITICAL: Do NOT clear m_results. Completed thumbnails should remain.
+    // m_skipCount is not reset here, it accumulates for debug stats.
+}
+
 void ImageEngine::ScoutLane::Push(const std::wstring& path) {
     {
         std::lock_guard lock(m_queueMutex);
         m_queue.push_back(path);
-
-        // --- Anti-Explosion Strategy ---
-        // If user scrolls wildly (>5 pending items), we skip the middle.
-        // We keep the FRONT (Next continuity) and BACK (Latest target).
-        if (m_queue.size() > 5) {
-            std::wstring head = m_queue.front();
-            std::wstring tail = m_queue.back();
-            int skipped = (int)m_queue.size() - 2;
-            m_queue.clear();
-            m_queue.push_back(head);
-            m_queue.push_back(tail);
-            m_skipCount.fetch_add(skipped);  // Track skips
-        }
+        // [v3.1] Simplified Push: No complex anti-explosion here.
+        // UpdateView()'s "Ruthless Purge" handles queue depth.
     }
     m_cv.notify_one();
 }
@@ -688,7 +685,17 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     // 1. Prune: Cancel old tasks not in visible range
     PruneQueue(currentIndex, dir);
     
-    // 2. Current: Highest priority
+    // ------------------------------------------------------------------------
+    // [v3.1] Cancellation Strategy: Ruthless Purge -> Reschedule
+    // ------------------------------------------------------------------------
+    
+    // 1. Purge Phase: Clear all pending Scout tasks
+    // This removes "Old Neighbors" that are no longer relevant.
+    // Scout running state is Atomic (Gatekeeper), so running tasks finish naturally.
+    m_scout.Clear();
+    
+    // 2. Reschedule Phase: LIFO / Critical First
+    // Even if 'currentIndex' was just purged, it's re-queued immediately here.
     ScheduleJob(currentIndex, Priority::Critical);
     
     int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;

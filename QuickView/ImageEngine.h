@@ -160,6 +160,8 @@ private:
         ScoutLane(ImageEngine* parent, CImageLoader* loader);
         ~ScoutLane();
 
+        // [v3.1] Ruthless Purge: Clear pending queue
+        void Clear();
         void Push(const std::wstring& path);
         std::optional<EngineEvent> TryPopResult();
         bool IsQueueEmpty() const;

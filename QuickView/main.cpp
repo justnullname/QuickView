@@ -3906,6 +3906,10 @@ void ProcessEngineEvents(HWND hwnd) {
                     SetWindowTextW(hwnd, titleBuf);
                 }
                 
+                // [Fix] Always clear loading state after thumbnail - user sees something
+                // Heavy Lane will continue in background, but no more wait cursor
+                g_isLoading = false;
+                
                 needsRepaint = true;
             }
             break;
