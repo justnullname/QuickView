@@ -685,11 +685,13 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
         // Small image: push to Scout Lane
         m_scout.Push(path);
-    } else {
-        // Large image: push to Heavy Lane (will be low priority)
-        // Note: Heavy Lane uses single-slot replacement, 
-        // so this may get cancelled if user navigates again
-        // TODO: Implement prefetch priority queue in Heavy Lane
+    } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
+        // Large image: only prefetch if Heavy Lane is idle
+        // This prevents prefetch from blocking current image decode
+        if (!m_heavy.IsBusy() && m_heavy.GetPendingCount() == 0) {
+            m_heavy.SetTarget(path);
+        }
+        // If Heavy is busy, skip prefetch - user might navigate again
     }
 }
 
