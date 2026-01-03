@@ -148,7 +148,9 @@ void UIRenderer::OnResize(UINT width, UINT height) {
 
 // Update SetDebugStats in cpp
 void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount, double thumbTimeMs,
-    int cancelCount, double heavyTimeMs, const std::wstring& loaderName, int heavyPending) {
+    int cancelCount, double heavyTimeMs, const std::wstring& loaderName, int heavyPending,
+    const ImageEngine::CacheTopology& topology, size_t cacheMemory,
+    const ImageEngine::ArenaStats& arena) {
     m_fps = fps;
     m_memBytes = memBytes;
     m_queueSize = queueSize;
@@ -158,6 +160,9 @@ void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int
     m_heavyTimeMs = heavyTimeMs;
     m_loaderName = loaderName;
     m_heavyPending = heavyPending;
+    m_topology = topology;
+    m_cacheMemory = cacheMemory;
+    m_arena = arena;
     if (m_showDebugHUD) MarkDynamicDirty();
 }
 
@@ -437,8 +442,8 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     float size = 14.0f;
     float gap = 40.0f;
 
-    // Use larger background for Verification Info + More Stats
-    float bgHeight = 230.0f;
+    // Use larger background for Verification Info + More Stats + Topology Strip + Arena Bars
+    float bgHeight = 360.0f;
     float trafficY = hudY + 90.0f;
     float verifyY = trafficY + 35.0f;
     dc->FillRectangle(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + bgHeight), grayBrush.Get());
@@ -499,4 +504,93 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     dc->DrawText(vMsg.c_str(), (UINT32)vMsg.length(), m_debugFormat.Get(),
         D2D1::RectF(hudX + 10, vy, hudX + hudW - 10, vy + 80),
         m_whiteBrush.Get());
+    
+    // 6. Cache Topology Strip (Phase 4)
+    // Draw 5 slots: [-2, -1, CUR, +1, +2]
+    float stripY = vy + 70.0f;
+    float slotW = 50.0f;
+    float slotH = 20.0f;
+    float slotGap = 5.0f;
+    float stripX = hudX + 20.0f;
+    
+    // Labels
+    const wchar_t* slotLabels[] = { L"-2", L"-1", L"CUR", L"+1", L"+2" };
+    
+    for (int i = 0; i < 5; ++i) {
+        D2D1_RECT_F slotRect = D2D1::RectF(
+            stripX + i * (slotW + slotGap),
+            stripY,
+            stripX + i * (slotW + slotGap) + slotW,
+            stripY + slotH
+        );
+        
+        // Color based on cache status
+        ID2D1SolidColorBrush* fillBrush = grayBrush.Get(); // Default: EMPTY
+        if (g_pImageEngine) {
+            switch (m_topology.slots[i]) {
+                case ImageEngine::CacheStatus::SCOUT:  fillBrush = yellowBrush.Get(); break;
+                case ImageEngine::CacheStatus::HEAVY:  fillBrush = greenBrush.Get(); break;
+                case ImageEngine::CacheStatus::PENDING: fillBrush = redBrush.Get(); break;
+                default: break;
+            }
+        }
+        
+        dc->FillRectangle(slotRect, fillBrush);
+        
+        // Current slot highlight
+        if (i == 2) {
+            dc->DrawRectangle(slotRect, m_whiteBrush.Get(), 2.0f);
+        }
+        
+        // Label
+        dc->DrawText(slotLabels[i], (UINT32)wcslen(slotLabels[i]), m_debugFormat.Get(),
+            D2D1::RectF(slotRect.left, slotRect.top + 2, slotRect.right, slotRect.bottom),
+            m_whiteBrush.Get());
+    }
+    
+    // Cache memory label
+    wchar_t cacheBuf[64];
+    swprintf_s(cacheBuf, L"Cache: %.1f MB", m_cacheMemory / 1024.0f / 1024.0f);
+    dc->DrawText(cacheBuf, (UINT32)wcslen(cacheBuf), m_debugFormat.Get(),
+        D2D1::RectF(stripX, stripY + slotH + 2, stripX + 150, stripY + slotH + 20),
+        m_whiteBrush.Get());
+    
+    // 7. Arena Water Level Bars (PMR Memory Monitor)
+    float arenaY = stripY + slotH + 25.0f;
+    float barW = 200.0f;
+    float barH = 12.0f;
+    float labelW = 80.0f;
+    
+    // Active Arena (Green)
+    {
+        float ratio = m_arena.activeCapacity > 0 
+            ? (float)m_arena.activeUsed / m_arena.activeCapacity 
+            : 0.0f;
+        
+        // Background bar
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW, arenaY + barH), grayBrush.Get());
+        // Fill bar
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW * ratio, arenaY + barH), greenBrush.Get());
+        // Label
+        wchar_t buf[64];
+        swprintf_s(buf, L"Active: %.0f MB", m_arena.activeUsed / 1024.0f / 1024.0f);
+        dc->DrawText(buf, (UINT32)wcslen(buf), m_debugFormat.Get(),
+            D2D1::RectF(stripX, arenaY, stripX + labelW, arenaY + barH), m_whiteBrush.Get());
+    }
+    
+    // Back Arena (Yellow)
+    {
+        arenaY += barH + 3.0f;
+        float ratio = m_arena.backCapacity > 0 
+            ? (float)m_arena.backUsed / m_arena.backCapacity 
+            : 0.0f;
+        
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW, arenaY + barH), grayBrush.Get());
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW * ratio, arenaY + barH), yellowBrush.Get());
+        
+        wchar_t buf[64];
+        swprintf_s(buf, L"Back: %.0f MB", m_arena.backUsed / 1024.0f / 1024.0f);
+        dc->DrawText(buf, (UINT32)wcslen(buf), m_debugFormat.Get(),
+            D2D1::RectF(stripX, arenaY, stripX + labelW, arenaY + barH), m_whiteBrush.Get());
+    }
 }

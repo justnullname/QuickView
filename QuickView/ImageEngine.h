@@ -101,6 +101,23 @@ public:
     
     // === Debug/Instrumentation API ===
     enum class HeavyState { IDLE, DECODING, CANCELLING };
+    enum class CacheStatus { EMPTY, SCOUT, HEAVY, PENDING };
+    
+    static constexpr int TOPOLOGY_RANGE = 2; // [-2, -1, CUR, +1, +2]
+    static constexpr int HISTORY_SIZE = 60;  // 60 frames of history
+    
+    struct CacheTopology {
+        CacheStatus slots[5]; // [-2, -1, 0, +1, +2]
+    };
+    
+    struct ArenaStats {
+        size_t activeUsed = 0;
+        size_t activePeak = 0;
+        size_t activeCapacity = 0;
+        size_t backUsed = 0;
+        size_t backPeak = 0;
+        size_t backCapacity = 0;
+    };
     
     struct DebugStats {
         int scoutQueueSize = 0;
@@ -115,6 +132,11 @@ public:
 
         std::wstring loaderName;   // Last used decoder name
         int heavyPendingCount = 0; // New: Heavy Lane Pending Count
+        
+        // Phase 4: HUD Enhancements
+        CacheTopology topology;    // Cache strip [-2..+2]
+        size_t cacheMemoryUsed = 0; // Cache memory usage
+        ArenaStats arena;          // Arena water levels
     };
     
     DebugStats GetDebugStats() const;

@@ -4926,20 +4926,24 @@ void OnPaint(HWND hwnd) {
                 if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
                     g_debugMetrics.memoryUsage = pmc.WorkingSetSize;
                 }
-            }
-            g_debugMetrics.fps = (int)std::round(g_fps);
+            
+                g_debugMetrics.fps = (int)std::round(g_fps);
 
-            g_uiRenderer->SetDebugStats(
-                g_fps, 
-                g_debugMetrics.memoryUsage.load(),       // memBytes
-                g_debugMetrics.eventQueueSize.load(),    // queueSize
-                g_debugMetrics.skipCount.load(),         // skipCount
-                currentThumbTime,                        // thumbTimeMs
-                currentCancelCount,
-                currentHeavyTime,
-                currentLoaderName,
-                currentHeavyPending
-            );
+                g_uiRenderer->SetDebugStats(
+                    g_fps, 
+                    g_debugMetrics.memoryUsage.load(),       // memBytes
+                    g_debugMetrics.eventQueueSize.load(),    // queueSize
+                    g_debugMetrics.skipCount.load(),         // skipCount
+                    currentThumbTime,                        // thumbTimeMs
+                    currentCancelCount,
+                    currentHeavyTime,
+                    currentLoaderName,
+                    currentHeavyPending,
+                    stats.topology,                          // Phase 4: Cache Topology
+                    stats.cacheMemoryUsed,                   // Phase 4: Cache Memory
+                    stats.arena                              // Phase 4: Arena Stats
+                );
+            }
         }
         
         // Sync hover state: convert WindowHit enum to int

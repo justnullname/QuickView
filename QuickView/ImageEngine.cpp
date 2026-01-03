@@ -172,6 +172,42 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     if (s.loaderName.empty()) {
         s.loaderName = L"[Unknown]";
     }
+    
+    // Phase 4: Cache Topology [-2..+2]
+    {
+        std::lock_guard lock(m_cacheMutex);
+        s.cacheMemoryUsed = m_currentCacheBytes;
+        
+        for (int i = -TOPOLOGY_RANGE; i <= TOPOLOGY_RANGE; ++i) {
+            int slotIndex = i + TOPOLOGY_RANGE; // Convert to 0-4 array index
+            int targetIndex = m_currentViewIndex + i;
+            
+            if (!m_navigator || targetIndex < 0 || targetIndex >= (int)m_navigator->Count()) {
+                s.topology.slots[slotIndex] = CacheStatus::EMPTY;
+                continue;
+            }
+            
+            const std::wstring& path = m_navigator->GetFile(targetIndex);
+            auto it = m_cache.find(path);
+            
+            if (it != m_cache.end()) {
+                // Check if it's a full image or scout thumbnail
+                // For now, assume cache = HEAVY (full image ready)
+                s.topology.slots[slotIndex] = CacheStatus::HEAVY;
+            } else {
+                // Check if in scout queue
+                s.topology.slots[slotIndex] = CacheStatus::EMPTY;
+            }
+        }
+    }
+    
+    // Phase 4: Arena Water Levels
+    s.arena.activeUsed = m_pool.GetActive().GetUsedBytes();
+    s.arena.activePeak = m_pool.GetActive().GetPeakUsage();
+    s.arena.activeCapacity = m_pool.GetActive().GetCapacity();
+    s.arena.backUsed = m_pool.GetBack().GetUsedBytes();
+    s.arena.backPeak = m_pool.GetBack().GetPeakUsage();
+    s.arena.backCapacity = m_pool.GetBack().GetCapacity();
 
     return s;
 }
