@@ -1,10 +1,9 @@
 #include "pch.h"
 #include "ImageEngine.h"
+#include "FileNavigator.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <filesystem>
-#include <algorithm> // transform
 
 // ============================================================================
 // ImageEngine Implementation
@@ -602,4 +601,177 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
     }
 }
 
+// ============================================================================
+// Phase 3: Prefetch System Implementation
+// ============================================================================
 
+void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
+    m_prefetchPolicy = policy;
+}
+
+size_t ImageEngine::GetCacheMemoryUsage() const {
+    std::lock_guard lock(m_cacheMutex);
+    return m_currentCacheBytes;
+}
+
+ComPtr<IWICBitmapSource> ImageEngine::GetCachedImage(const std::wstring& path) {
+    std::lock_guard lock(m_cacheMutex); // Thread-safe copy
+    auto it = m_cache.find(path);
+    if (it != m_cache.end()) {
+        return it->second.bitmap; // Returns copy, ref count +1
+    }
+    return nullptr;
+}
+
+void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
+    m_currentViewIndex = currentIndex;
+    m_lastDirection = dir;
+    
+    // 1. Prune: Cancel old tasks not in visible range
+    PruneQueue(currentIndex, dir);
+    
+    // 2. Current: Highest priority
+    ScheduleJob(currentIndex, Priority::Critical);
+    
+    int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
+    
+    // 3. Adjacent: Must-have for fluid navigation
+    ScheduleJob(currentIndex + step, Priority::High);
+    
+    // 4. If prefetch disabled, stop here (Eco mode)
+    if (!m_prefetchPolicy.enablePrefetch) return;
+    
+    // 5. Anti-regret: One in opposite direction
+    ScheduleJob(currentIndex - step, Priority::Low);
+    
+    // 6. Look-ahead: Based on policy
+    for (int i = 2; i <= m_prefetchPolicy.lookAheadCount; ++i) {
+        ScheduleJob(currentIndex + step * i, Priority::Idle);
+    }
+}
+
+void ImageEngine::ScheduleJob(int index, Priority pri) {
+    // 1. Bounds check
+    if (!m_navigator) return;
+    if (index < 0 || index >= (int)m_navigator->Count()) return;
+    
+    // 2. Get file path
+    const std::wstring& path = m_navigator->GetFile(index);
+    if (path.empty()) return;
+    
+    // 3. Check if already in cache
+    {
+        std::lock_guard lock(m_cacheMutex);
+        if (m_cache.count(path)) return; // Already cached
+    }
+    
+    // 4. Critical priority = current image, already handled by NavigateTo
+    if (pri == Priority::Critical) {
+        return;
+    }
+    
+    // 5. For prefetch: only queue High priority (adjacent +1)
+    // Low and Idle will be done on idle (future enhancement)
+    if (pri != Priority::High) {
+        return; // For now, only prefetch immediate neighbor
+    }
+    
+    // 6. Pre-flight check for classification
+    auto info = m_loader->PeekHeader(path.c_str());
+    
+    // 7. Dispatch based on classification
+    uintmax_t fileSize = m_navigator->GetFileSize(index);
+    
+    if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
+        // Small image: push to Scout Lane
+        m_scout.Push(path);
+    } else {
+        // Large image: push to Heavy Lane (will be low priority)
+        // Note: Heavy Lane uses single-slot replacement, 
+        // so this may get cancelled if user navigates again
+        // TODO: Implement prefetch priority queue in Heavy Lane
+    }
+}
+
+void ImageEngine::PruneQueue(int currentIndex, BrowseDirection dir) {
+    // Calculate valid range based on direction
+    int minValid = currentIndex - 2;
+    int maxValid = currentIndex + m_prefetchPolicy.lookAheadCount + 1;
+    
+    // Scout lane already has skip-middle logic
+    // Heavy lane has single-slot replacement
+    // Cache eviction handles the rest
+    EvictCache(currentIndex);
+}
+
+void ImageEngine::AddToCache(int index, const std::wstring& path, IWICBitmapSource* bitmap) {
+    if (!bitmap) return;
+    
+    // 1. Calculate size (RGBA: W * H * 4)
+    UINT w = 0, h = 0;
+    bitmap->GetSize(&w, &h);
+    size_t newSize = (size_t)w * h * 4;
+    
+    std::lock_guard lock(m_cacheMutex);
+    
+    // 2. Check if already cached
+    if (m_cache.count(path)) return;
+    
+    bool isCritical = (index == m_currentViewIndex);
+    
+    // 3. Memory limit check with eviction
+    while (m_currentCacheBytes + newSize > m_prefetchPolicy.maxCacheMemory && !m_lruOrder.empty()) {
+        // Find victim from LRU tail
+        std::wstring victimPath = m_lruOrder.back();
+        auto vit = m_cache.find(victimPath);
+        
+        if (vit != m_cache.end()) {
+            int victimIndex = vit->second.sourceIndex;
+            
+            // Keep Zone: Cannot evict current ±1
+            if (abs(victimIndex - m_currentViewIndex) <= 1) {
+                // All remaining are protected
+                break;
+            }
+            
+            // Evict victim
+            m_currentCacheBytes -= vit->second.sizeBytes;
+            m_cache.erase(vit);
+        }
+        m_lruOrder.pop_back();
+    }
+    
+    // 4. Add to cache (Critical can exceed limit)
+    if (m_currentCacheBytes + newSize <= m_prefetchPolicy.maxCacheMemory || isCritical) {
+        CacheEntry entry;
+        entry.bitmap = bitmap;
+        entry.sourceIndex = index;
+        entry.sizeBytes = newSize;
+        
+        m_cache[path] = std::move(entry);
+        m_lruOrder.push_front(path);
+        m_currentCacheBytes += newSize;
+    }
+}
+
+void ImageEngine::EvictCache(int currentIndex) {
+    std::lock_guard lock(m_cacheMutex);
+    
+    // Evict entries far from current view
+    auto it = m_lruOrder.begin();
+    while (it != m_lruOrder.end()) {
+        auto cit = m_cache.find(*it);
+        if (cit != m_cache.end()) {
+            int idx = cit->second.sourceIndex;
+            
+            // Keep if within ± lookAheadCount
+            if (abs(idx - currentIndex) > m_prefetchPolicy.lookAheadCount + 1) {
+                m_currentCacheBytes -= cit->second.sizeBytes;
+                m_cache.erase(cit);
+                it = m_lruOrder.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}

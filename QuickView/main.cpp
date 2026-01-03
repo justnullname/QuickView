@@ -1739,6 +1739,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
     g_pImageEngine = g_imageEngine.get(); // [v3.1] Init Global Accessor
     g_imageEngine->SetWindow(hwnd);
+    g_imageEngine->SetNavigator(&g_navigator); // [Phase 3] Enable prefetch
     
     // Initialize DirectComposition (hybrid architecture)
     g_compEngine = std::make_unique<CompositionEngine>();
@@ -4093,6 +4094,12 @@ void Navigate(HWND hwnd, int direction) {
             g_editState.Reset();
             g_viewState.Reset();
             LoadImageAsync(hwnd, path);
+            
+            // [Phase 3] Notify prefetch system of navigation direction
+            BrowseDirection browseDir = (direction > 0) 
+                ? BrowseDirection::FORWARD 
+                : BrowseDirection::BACKWARD;
+            g_imageEngine->UpdateView(g_navigator.Index(), browseDir);
         } else if (g_navigator.HitEnd()) {
             // Show OSD when reaching end without looping
             if (direction > 0) {
