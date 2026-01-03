@@ -23,6 +23,7 @@ enum class EventType {
 struct EngineEvent {
     EventType type = EventType::None;
     std::wstring filePath; // Which file is this event for?
+    uint64_t navToken = 0; // [Phase 3] Navigation session token for event filtering
     
     // Payload (Optional parts)
     CImageLoader::ThumbData thumbData;     // For ThumbReady
@@ -50,7 +51,8 @@ public:
     /// Navigate to a new image
     /// </summary>
     // fileSize: Used for Threshold Dispatch (Scout/Heavy/Express)
-    void NavigateTo(const std::wstring& path, uintmax_t fileSize = 0);
+    // navToken: [Phase 3] Navigation session token for event filtering
+    void NavigateTo(const std::wstring& path, uintmax_t fileSize = 0, uint64_t navToken = 0);
     void SetWindow(HWND hwnd);
     
     // [v3.1] Cancel Heavy Lane when Fast Pass succeeds
@@ -215,6 +217,9 @@ private:
     
     // [v3.1]
     std::atomic<bool> m_hasEmbeddedThumb = false;
+    
+    // [Phase 3] Navigation Token for event filtering
+    std::atomic<uint64_t> m_currentNavToken = 0;
 
 public:
     bool HasEmbeddedThumb() const { return m_hasEmbeddedThumb.load(); }

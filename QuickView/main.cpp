@@ -186,6 +186,7 @@ static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
 static bool g_isLoading = false;           // Show Wait Cursor
+static std::atomic<uint64_t> g_currentNavToken = 0; // [Phase 3] Navigation Token for event filtering
 
 // === Debug HUD ===
 DebugMetrics g_debugMetrics; // Global Metrics Instance
@@ -3831,14 +3832,21 @@ void ProcessEngineEvents(HWND hwnd) {
         case EventType::ThumbReady: {
             if (!g_renderEngine) break;
             
+            // [Phase 3] TOKEN-BASED FILTERING - Core of Navigation Token architecture
+            // Only process events that match the current navigation session
+            if (evt.navToken != g_currentNavToken.load()) {
+                OutputDebugStringW(L"[Main] ThumbReady IGNORED: stale token\n");
+                break; // Discard event from previous navigation
+            }
+            
             wchar_t buf[256];
-            swprintf_s(buf, L"[Main] ThumbReady: %s\n", evt.filePath.c_str());
+            swprintf_s(buf, L"[Main] ThumbReady ACCEPTED: %s\n", evt.filePath.c_str());
             OutputDebugStringW(buf);
 
             // RACING CONDITION FIX:
             // If we already have the Full Image (Clear) for this path, IGNORE the thumbnail.
             // This prevents "Clear -> Blurry" overwrite if Thumb arrives late.
-            if (!g_isBlurry && g_currentBitmap && evt.filePath == g_imagePath) {
+            if (!g_isBlurry && g_currentBitmap) {
                  // Discard late thumbnail
                  break; 
             }
@@ -3913,8 +3921,14 @@ void ProcessEngineEvents(HWND hwnd) {
             // Final High-Res Image
             if (!g_renderEngine) break;
             
+            // [Phase 3] TOKEN-BASED FILTERING
+            if (evt.navToken != g_currentNavToken.load()) {
+                OutputDebugStringW(L"[Main] FullReady IGNORED: stale token\n");
+                break; // Discard event from cancelled navigation
+            }
+            
             wchar_t buf[256];
-            swprintf_s(buf, L"[Main] FullReady: %s\n", evt.filePath.c_str());
+            swprintf_s(buf, L"[Main] FullReady ACCEPTED: %s\n", evt.filePath.c_str());
             OutputDebugStringW(buf);
 
             // evt.fullImage is IWICBitmapSource
@@ -3978,6 +3992,11 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_uiRenderer->MarkGalleryDirty();
                 }
                 
+                // [Phase 3] Clear wait cursor immediately when ANY image is shown
+                // Don't wait for Truth Stage - Fit Stage is good enough for cursor
+                g_isLoading = false;
+                PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+                
                 needsRepaint = true;
             }
             break;
@@ -4004,9 +4023,14 @@ void ProcessEngineEvents(HWND hwnd) {
 void StartNavigation(HWND hwnd, std::wstring path) {
     if (!g_imageEngine || path.empty()) return;
 
+    // [Phase 3] Increment token FIRST - this is the Commander declaring target
+    uint64_t myToken = ++g_currentNavToken;
+    g_imagePath = path; // Set target path immediately for UI consistency
+    
     g_isLoading = true;
     g_isCrossFading = false;
     g_ghostBitmap = nullptr; // Clear previous ghost
+    g_isBlurry = true; // Reset for new image
     
     
     // Level 0 Feedback: Immediate OSD before any decode starts
@@ -4023,7 +4047,7 @@ void StartNavigation(HWND hwnd, std::wstring path) {
         fileSize = g_navigator.GetFileSize(idx);
     }
     
-    g_imageEngine->NavigateTo(path, fileSize);
+    g_imageEngine->NavigateTo(path, fileSize, myToken); // [Phase 3] Pass token
     
 
 }

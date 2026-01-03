@@ -55,8 +55,12 @@ void ImageEngine::UpdateConfig(const RuntimeConfig& cfg) {
     m_config = cfg;
 }
 
-void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize) {
+void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint64_t navToken) {
     if (path.empty()) return;
+    
+    // [Phase 3] Store the navigation token for event filtering
+    m_currentNavToken.store(navToken);
+    
     // Track State
     m_currentNavPath = path;
     m_lastInputTime = std::chrono::steady_clock::now();
@@ -323,6 +327,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 EngineEvent e;
                 e.type = EventType::ThumbReady;
                 e.filePath = path;
+                e.navToken = m_parent->m_currentNavToken.load(); // [Phase 3] Carry token
                 e.thumbData = std::move(thumb);
 
                 {
@@ -510,6 +515,7 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
                     EngineEvent e;
                     e.type = EventType::FullReady;
                     e.filePath = path;
+                    e.navToken = m_parent->m_currentNavToken.load(); // [Phase 3]
                     e.fullImage = wicBitmap;
                     e.metadata = std::move(meta);
                     e.loaderName = loaderName;
@@ -570,6 +576,7 @@ void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_t
                         EngineEvent e;
                         e.type = EventType::FullReady;
                         e.filePath = path; 
+                        e.navToken = m_parent->m_currentNavToken.load(); // [Phase 3]
                         e.fullImage = truthBitmap;
                         e.loaderName = truthLoader + L" [Truth]";
                         e.isScaled = false; // Full Res
