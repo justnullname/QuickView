@@ -186,6 +186,7 @@ static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
 static bool g_isLoading = false;           // Show Wait Cursor
+static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2: Truth/Heavy
 
 // === Debug HUD ===
 DebugMetrics g_debugMetrics; // Global Metrics Instance
@@ -3837,10 +3838,12 @@ void ProcessEngineEvents(HWND hwnd) {
             OutputDebugStringW(buf);
 
             // RACING CONDITION FIX:
-            // If we already have the Full Image (Clear) for this path, IGNORE the thumbnail.
-            // This prevents "Clear -> Blurry" overwrite if Thumb arrives late.
-            if (!g_isBlurry && g_currentBitmap && evt.filePath == g_imagePath) {
-                 // Discard late thumbnail
+            // [v3.1] Texture Promotion Mechanism
+            // Only accept if current level is < 1 (Void)
+            // If we are already at Level 1 (Scout) or Level 2 (Truth), ignore this.
+            // Also ensure path matches (safety).
+            if (g_imageQualityLevel >= 1 || (g_imagePath != evt.filePath && !g_imagePath.empty())) {
+                 // Discard late/duplicate thumbnail or level downgrade
                  break; 
             }
 
@@ -3867,11 +3870,14 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_ghostBitmap = thumbBitmap; // Save for Cross-Fade
                 g_isBlurry = evt.thumbData.isBlurry; // [v3.1] Use actual flag from Express Lane 
                 // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
+                // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
                 g_imagePath = evt.filePath; // Update path immediately for UI consistency
+                g_imageQualityLevel = 1;    // [v3.1] Promoted to Level 1 (Proxy)
                 
                 // [v3.2] If Fast Pass produced CLEAR image, adjust window now
                 // (Heavy Lane won't run, so FullReady won't trigger)
                 if (!evt.thumbData.isBlurry) {
+                    g_imageQualityLevel = 2; // [v3.1] Fast Pass is effectively Truth
                     AdjustWindowToImage(hwnd);
                     
                     // Mark as NOT loading (we have the final image)
@@ -3923,6 +3929,11 @@ void ProcessEngineEvents(HWND hwnd) {
             OutputDebugStringW(buf);
 
             // evt.fullImage is IWICBitmapSource
+            
+            // [v3.1] Texture Promotion Mechanism
+            // Only accept if current level is < 2
+            if (g_imageQualityLevel >= 2) break; 
+            
             ComPtr<ID2D1Bitmap> fullBitmap;
             if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
                 
@@ -3933,6 +3944,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 // 2. Set NEW image as Current (Truth)
                 g_currentBitmap = fullBitmap;
                 g_isBlurry = false; 
+                g_imageQualityLevel = 2; // [v3.1] Promoted to Level 2 (Truth) 
                 
                 // 3. Start Arrival Transition (ALWAYS, even if Fade disabled)
                 // This ensures we enter the "Priority Render Block" in OnPaint, 
@@ -4012,6 +4024,8 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     g_isLoading = true;
     g_isCrossFading = false;
     g_ghostBitmap = nullptr; // Clear previous ghost
+    g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
+    g_imagePath = path;      // [v3.1] Set target path immediately just in case
     
     
     // Level 0 Feedback: Immediate OSD before any decode starts
