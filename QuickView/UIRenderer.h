@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "CompositionEngine.h"
 #include <dwrite.h>
+#include <array>
 #include "EditState.h"
 #include "ImageEngine.h" // For CacheTopology
 
@@ -87,6 +88,13 @@ private:
     ImageEngine::CacheTopology m_topology; // Phase 4: Cache Topology
     size_t m_cacheMemory = 0;    // Phase 4: Cache Memory Usage
     ImageEngine::ArenaStats m_arena; // Phase 4: Arena Water Levels
+    
+    // Phase 4: Oscilloscope Ring Buffer (60 frames history)
+    static constexpr int OSCILLOSCOPE_SIZE = 60;
+    std::array<float, OSCILLOSCOPE_SIZE> m_scoutHistory{};
+    std::array<float, OSCILLOSCOPE_SIZE> m_heavyHistory{};
+    int m_historyOffset = 0;
+    
     RuntimeConfig m_runtime; // Verification Flags
     
     // Window Controls

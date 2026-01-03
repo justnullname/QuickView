@@ -163,6 +163,12 @@ void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int
     m_topology = topology;
     m_cacheMemory = cacheMemory;
     m_arena = arena;
+    
+    // Update Oscilloscope Ring Buffer
+    m_scoutHistory[m_historyOffset] = (float)thumbTimeMs;
+    m_heavyHistory[m_historyOffset] = (float)heavyTimeMs;
+    m_historyOffset = (m_historyOffset + 1) % OSCILLOSCOPE_SIZE;
+    
     if (m_showDebugHUD) MarkDynamicDirty();
 }
 
@@ -442,8 +448,8 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     float size = 14.0f;
     float gap = 40.0f;
 
-    // Use larger background for Verification Info + More Stats + Topology Strip + Arena Bars
-    float bgHeight = 360.0f;
+    // Use larger background for Verification Info + More Stats + Topology Strip + Arena Bars + Oscilloscope
+    float bgHeight = 430.0f;
     float trafficY = hudY + 90.0f;
     float verifyY = trafficY + 35.0f;
     dc->FillRectangle(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + bgHeight), grayBrush.Get());
@@ -593,4 +599,62 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         dc->DrawText(buf, (UINT32)wcslen(buf), m_debugFormat.Get(),
             D2D1::RectF(stripX, arenaY, stripX + labelW, arenaY + barH), m_whiteBrush.Get());
     }
+    
+    // 8. Dual-Lane Oscilloscope (Phase 4)
+    // Draw time history as two line graphs
+    float oscY = arenaY + barH + 20.0f;
+    float oscW = 280.0f; // Reduced width
+    float oscH = 35.0f;
+    float maxTime = 100.0f; // 100ms max scale
+    
+    // Background
+    dc->FillRectangle(D2D1::RectF(stripX, oscY, stripX + oscW, oscY + oscH), grayBrush.Get());
+    
+    // Find max for auto-scaling
+    float maxScout = 1.0f, maxHeavy = 1.0f;
+    for (int i = 0; i < OSCILLOSCOPE_SIZE; ++i) {
+        if (m_scoutHistory[i] > maxScout) maxScout = m_scoutHistory[i];
+        if (m_heavyHistory[i] > maxHeavy) maxHeavy = m_heavyHistory[i];
+    }
+    float scale = std::max(maxScout, maxHeavy);
+    if (scale < 10.0f) scale = 10.0f; // Minimum 10ms scale
+    
+    float stepX = oscW / (OSCILLOSCOPE_SIZE - 1);
+    
+    // Draw Scout line (green, top half)
+    for (int i = 1; i < OSCILLOSCOPE_SIZE; ++i) {
+        int prev = (m_historyOffset + i - 1) % OSCILLOSCOPE_SIZE;
+        int curr = (m_historyOffset + i) % OSCILLOSCOPE_SIZE;
+        
+        float x1 = stripX + (i - 1) * stepX;
+        float x2 = stripX + i * stepX;
+        float y1 = oscY + oscH / 2 - (m_scoutHistory[prev] / scale) * (oscH / 2);
+        float y2 = oscY + oscH / 2 - (m_scoutHistory[curr] / scale) * (oscH / 2);
+        
+        dc->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), greenBrush.Get(), 1.0f);
+    }
+    
+    // Draw Heavy line (yellow, bottom half)
+    for (int i = 1; i < OSCILLOSCOPE_SIZE; ++i) {
+        int prev = (m_historyOffset + i - 1) % OSCILLOSCOPE_SIZE;
+        int curr = (m_historyOffset + i) % OSCILLOSCOPE_SIZE;
+        
+        float x1 = stripX + (i - 1) * stepX;
+        float x2 = stripX + i * stepX;
+        float y1 = oscY + oscH / 2 + (m_heavyHistory[prev] / scale) * (oscH / 2);
+        float y2 = oscY + oscH / 2 + (m_heavyHistory[curr] / scale) * (oscH / 2);
+        
+        dc->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), yellowBrush.Get(), 1.0f);
+    }
+    
+    // Center line
+    dc->DrawLine(D2D1::Point2F(stripX, oscY + oscH / 2), 
+                 D2D1::Point2F(stripX + oscW, oscY + oscH / 2), 
+                 m_whiteBrush.Get(), 0.5f);
+    
+    // Labels
+    dc->DrawText(L"Scout", 5, m_debugFormat.Get(),
+        D2D1::RectF(stripX + oscW + 5, oscY, stripX + oscW + 60, oscY + 12), greenBrush.Get());
+    dc->DrawText(L"Heavy", 5, m_debugFormat.Get(),
+        D2D1::RectF(stripX + oscW + 5, oscY + oscH - 12, stripX + oscW + 60, oscY + oscH), yellowBrush.Get());
 }
