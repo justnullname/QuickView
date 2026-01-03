@@ -187,25 +187,40 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
                 continue;
             }
             
+            // Special handling for CUR (current image)
+            if (i == 0) {
+                // Check Heavy Lane state for current image
+                if (s.heavyState == HeavyState::IDLE && s.heavyDecodeTimeMs > 0) {
+                    // Heavy finished = full image ready
+                    s.topology.slots[slotIndex] = CacheStatus::HEAVY;
+                } else if (s.heavyState == HeavyState::DECODING) {
+                    // Heavy in progress = pending
+                    s.topology.slots[slotIndex] = CacheStatus::PENDING;
+                } else {
+                    // Scout only mode or not yet loaded
+                    s.topology.slots[slotIndex] = CacheStatus::SCOUT;
+                }
+                continue;
+            }
+            
+            // For neighbors, check prefetch cache
             const std::wstring& path = m_navigator->GetFile(targetIndex);
             auto it = m_cache.find(path);
             
             if (it != m_cache.end()) {
-                // Check if it's a full image or scout thumbnail
-                // For now, assume cache = HEAVY (full image ready)
                 s.topology.slots[slotIndex] = CacheStatus::HEAVY;
             } else {
-                // Check if in scout queue
                 s.topology.slots[slotIndex] = CacheStatus::EMPTY;
             }
         }
     }
     
     // Phase 4: Arena Water Levels
-    s.arena.activeUsed = m_pool.GetActive().GetUsedBytes();
+    // Use Peak instead of Current (Current is 0 after Reset)
+    s.arena.activeUsed = m_pool.GetActive().GetPeakUsage();
     s.arena.activePeak = m_pool.GetActive().GetPeakUsage();
     s.arena.activeCapacity = m_pool.GetActive().GetCapacity();
-    s.arena.backUsed = m_pool.GetBack().GetUsedBytes();
+    s.arena.backUsed = m_pool.GetBack().GetPeakUsage();
     s.arena.backPeak = m_pool.GetBack().GetPeakUsage();
     s.arena.backCapacity = m_pool.GetBack().GetCapacity();
 
