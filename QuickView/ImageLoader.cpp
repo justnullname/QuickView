@@ -2072,8 +2072,11 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         return E_FAIL;
     }
 
-    // 2. Read first 512KB for header parsing (Increased from 64KB to cover large EXIF/ICC profiles)
-    std::vector<uint8_t> header(512 * 1024);
+    // 2. Read first 64KB for initial detection
+    size_t chunkStep = 64 * 1024;
+    std::vector<uint8_t> header(chunkStep);
+    
+    // Scoped file handle for incremental reading
     {
         HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, 
                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -2081,34 +2084,76 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         
         DWORD bytesRead = 0;
         DWORD toRead = (DWORD)std::min((uint64_t)header.size(), pInfo->fileSize);
-        ReadFile(hFile, header.data(), toRead, &bytesRead, nullptr);
-        CloseHandle(hFile);
+        if (!ReadFile(hFile, header.data(), toRead, &bytesRead, nullptr)) {
+            CloseHandle(hFile);
+            return E_FAIL;
+        }
         
-        if (bytesRead < 12) return E_FAIL;
-        header.resize(bytesRead);
-    }
+        if (bytesRead < 12) {
+            CloseHandle(hFile);
+            return E_FAIL;
+        }
+        header.resize(bytesRead); // Clamp to actual read
+        
+        const uint8_t* data = header.data();
+        size_t size = header.size();
 
+        // 3. Detect format and parse header
+        
+        // --- JPEG: Iterative Header Parsing (Streaming) ---
+        if (size >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
+            pInfo->format = L"JPEG";
+            
+            tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+            if (!tj) { CloseHandle(hFile); return E_FAIL; }
+
+            bool found = false;
+            // Loop until found or limit reached (e.g. 16MB safety)
+            while (!found && header.size() < 16 * 1024 * 1024) {
+                 // Try to parse current buffer
+                 if (tj3DecompressHeader(tj, header.data(), header.size()) == 0) {
+                     pInfo->width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+                     pInfo->height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+                     int subsamp = tj3Get(tj, TJPARAM_SUBSAMP);
+                     pInfo->channels = (subsamp == TJSAMP_GRAY) ? 1 : 3;
+                     pInfo->bitDepth = 8;
+                     found = true;
+                     break;
+                 }
+                 
+                 // Not found yet. Scan for SOS (Start of Scan - FF DA) manually?
+                 // If we hit SOS, and TurboJPEG still hasn't found headers, then it's effectively corrupted or unsupported.
+                 // TurboJPEG parses markers internally. If it returns -1, it means "Error" or "Incomplete".
+                 // We will trust reading MORE data might help.
+                 
+                 // Read next chunk
+                 if (header.size() >= pInfo->fileSize) break; // EOF
+                 
+                 size_t oldSize = header.size();
+                 size_t nextRead = std::min((size_t)chunkStep, (size_t)(pInfo->fileSize - oldSize));
+                 if (nextRead == 0) break;
+                 
+                 header.resize(oldSize + nextRead);
+                 // Need to seek? ReadFile advances pointer automatically.
+                 DWORD chunkBytes = 0;
+                 if (!ReadFile(hFile, header.data() + oldSize, (DWORD)nextRead, &chunkBytes, nullptr) || chunkBytes == 0) {
+                     break;
+                 }
+                 header.resize(oldSize + chunkBytes);
+            }
+            
+            tj3Destroy(tj);
+            CloseHandle(hFile); // Done with file
+            return (pInfo->width > 0) ? S_OK : E_FAIL;
+        }
+        
+        // For other formats, close handle now (buffer is sufficient)
+        CloseHandle(hFile); 
+    }
+    
+    // Re-check pointers since vector might have moved during resize (if inside loop, but here okay)
     const uint8_t* data = header.data();
     size_t size = header.size();
-
-    // 3. Detect format and parse header
-    
-    // --- JPEG: TurboJPEG header parsing (< 1ms) ---
-    if (size >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
-        pInfo->format = L"JPEG";
-        tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
-        if (tj) {
-            if (tj3DecompressHeader(tj, data, size) == 0) {
-                pInfo->width = tj3Get(tj, TJPARAM_JPEGWIDTH);
-                pInfo->height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
-                int subsamp = tj3Get(tj, TJPARAM_SUBSAMP);
-                pInfo->channels = (subsamp == TJSAMP_GRAY) ? 1 : 3;
-                pInfo->bitDepth = 8;
-            }
-            tj3Destroy(tj);
-        }
-        return (pInfo->width > 0) ? S_OK : E_FAIL;
-    }
     
     // --- PNG: Parse IHDR chunk directly (< 1ms) ---
     if (size >= 24 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) {
