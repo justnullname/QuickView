@@ -148,7 +148,9 @@ void UIRenderer::OnResize(UINT width, UINT height) {
 
 // Update SetDebugStats in cpp
 void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount, double thumbTimeMs,
-    int cancelCount, double heavyTimeMs, const std::wstring& loaderName, int heavyPending) {
+    int cancelCount, double heavyTimeMs, const std::wstring& loaderName, int heavyPending,
+    const ImageEngine::CacheTopology& topology, size_t cacheMemory,
+    const ImageEngine::ArenaStats& arena) {
     m_fps = fps;
     m_memBytes = memBytes;
     m_queueSize = queueSize;
@@ -158,6 +160,15 @@ void UIRenderer::SetDebugStats(float fps, size_t memBytes, size_t queueSize, int
     m_heavyTimeMs = heavyTimeMs;
     m_loaderName = loaderName;
     m_heavyPending = heavyPending;
+    m_topology = topology;
+    m_cacheMemory = cacheMemory;
+    m_arena = arena;
+    
+    // Update Oscilloscope Ring Buffer
+    m_scoutHistory[m_historyOffset] = (float)thumbTimeMs;
+    m_heavyHistory[m_historyOffset] = (float)heavyTimeMs;
+    m_historyOffset = (m_historyOffset + 1) % OSCILLOSCOPE_SIZE;
+    
     if (m_showDebugHUD) MarkDynamicDirty();
 }
 
@@ -437,8 +448,8 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     float size = 14.0f;
     float gap = 40.0f;
 
-    // Use larger background for Verification Info + More Stats
-    float bgHeight = 230.0f;
+    // Use larger background for Verification Info + More Stats + Topology Strip + Arena Bars + Oscilloscope
+    float bgHeight = 430.0f;
     float trafficY = hudY + 90.0f;
     float verifyY = trafficY + 35.0f;
     dc->FillRectangle(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + bgHeight), grayBrush.Get());
@@ -499,4 +510,151 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     dc->DrawText(vMsg.c_str(), (UINT32)vMsg.length(), m_debugFormat.Get(),
         D2D1::RectF(hudX + 10, vy, hudX + hudW - 10, vy + 80),
         m_whiteBrush.Get());
+    
+    // 6. Cache Topology Strip (Phase 4)
+    // Draw 5 slots: [-2, -1, CUR, +1, +2]
+    float stripY = vy + 70.0f;
+    float slotW = 50.0f;
+    float slotH = 20.0f;
+    float slotGap = 5.0f;
+    float stripX = hudX + 20.0f;
+    
+    // Labels
+    const wchar_t* slotLabels[] = { L"-2", L"-1", L"CUR", L"+1", L"+2" };
+    
+    for (int i = 0; i < 5; ++i) {
+        D2D1_RECT_F slotRect = D2D1::RectF(
+            stripX + i * (slotW + slotGap),
+            stripY,
+            stripX + i * (slotW + slotGap) + slotW,
+            stripY + slotH
+        );
+        
+        // Color based on cache status
+        ID2D1SolidColorBrush* fillBrush = grayBrush.Get(); // Default: EMPTY
+        if (g_pImageEngine) {
+            switch (m_topology.slots[i]) {
+                case ImageEngine::CacheStatus::SCOUT:  fillBrush = yellowBrush.Get(); break;
+                case ImageEngine::CacheStatus::HEAVY:  fillBrush = greenBrush.Get(); break;
+                case ImageEngine::CacheStatus::PENDING: fillBrush = redBrush.Get(); break;
+                default: break;
+            }
+        }
+        
+        dc->FillRectangle(slotRect, fillBrush);
+        
+        // Current slot highlight
+        if (i == 2) {
+            dc->DrawRectangle(slotRect, m_whiteBrush.Get(), 2.0f);
+        }
+        
+        // Label
+        dc->DrawText(slotLabels[i], (UINT32)wcslen(slotLabels[i]), m_debugFormat.Get(),
+            D2D1::RectF(slotRect.left, slotRect.top + 2, slotRect.right, slotRect.bottom),
+            m_whiteBrush.Get());
+    }
+    
+    // Cache memory label
+    wchar_t cacheBuf[64];
+    swprintf_s(cacheBuf, L"Cache: %.1f MB", m_cacheMemory / 1024.0f / 1024.0f);
+    dc->DrawText(cacheBuf, (UINT32)wcslen(cacheBuf), m_debugFormat.Get(),
+        D2D1::RectF(stripX, stripY + slotH + 2, stripX + 150, stripY + slotH + 20),
+        m_whiteBrush.Get());
+    
+    // 7. Arena Water Level Bars (PMR Memory Monitor)
+    float arenaY = stripY + slotH + 25.0f;
+    float barW = 200.0f;
+    float barH = 12.0f;
+    float labelW = 80.0f;
+    
+    // Active Arena (Green)
+    {
+        float ratio = m_arena.activeCapacity > 0 
+            ? (float)m_arena.activeUsed / m_arena.activeCapacity 
+            : 0.0f;
+        
+        // Background bar
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW, arenaY + barH), grayBrush.Get());
+        // Fill bar
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW * ratio, arenaY + barH), greenBrush.Get());
+        // Label
+        wchar_t buf[64];
+        swprintf_s(buf, L"Active: %.0f MB", m_arena.activeUsed / 1024.0f / 1024.0f);
+        dc->DrawText(buf, (UINT32)wcslen(buf), m_debugFormat.Get(),
+            D2D1::RectF(stripX, arenaY, stripX + labelW, arenaY + barH), m_whiteBrush.Get());
+    }
+    
+    // Back Arena (Yellow)
+    {
+        arenaY += barH + 3.0f;
+        float ratio = m_arena.backCapacity > 0 
+            ? (float)m_arena.backUsed / m_arena.backCapacity 
+            : 0.0f;
+        
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW, arenaY + barH), grayBrush.Get());
+        dc->FillRectangle(D2D1::RectF(stripX + labelW, arenaY, stripX + labelW + barW * ratio, arenaY + barH), yellowBrush.Get());
+        
+        wchar_t buf[64];
+        swprintf_s(buf, L"Back: %.0f MB", m_arena.backUsed / 1024.0f / 1024.0f);
+        dc->DrawText(buf, (UINT32)wcslen(buf), m_debugFormat.Get(),
+            D2D1::RectF(stripX, arenaY, stripX + labelW, arenaY + barH), m_whiteBrush.Get());
+    }
+    
+    // 8. Dual-Lane Oscilloscope (Phase 4)
+    // Draw time history as two line graphs
+    float oscY = arenaY + barH + 20.0f;
+    float oscW = 280.0f; // Reduced width
+    float oscH = 35.0f;
+    float maxTime = 100.0f; // 100ms max scale
+    
+    // Background
+    dc->FillRectangle(D2D1::RectF(stripX, oscY, stripX + oscW, oscY + oscH), grayBrush.Get());
+    
+    // Find max for auto-scaling
+    float maxScout = 1.0f, maxHeavy = 1.0f;
+    for (int i = 0; i < OSCILLOSCOPE_SIZE; ++i) {
+        if (m_scoutHistory[i] > maxScout) maxScout = m_scoutHistory[i];
+        if (m_heavyHistory[i] > maxHeavy) maxHeavy = m_heavyHistory[i];
+    }
+    float scale = std::max(maxScout, maxHeavy);
+    if (scale < 10.0f) scale = 10.0f; // Minimum 10ms scale
+    
+    float stepX = oscW / (OSCILLOSCOPE_SIZE - 1);
+    
+    // Draw Scout line (green, top half)
+    for (int i = 1; i < OSCILLOSCOPE_SIZE; ++i) {
+        int prev = (m_historyOffset + i - 1) % OSCILLOSCOPE_SIZE;
+        int curr = (m_historyOffset + i) % OSCILLOSCOPE_SIZE;
+        
+        float x1 = stripX + (i - 1) * stepX;
+        float x2 = stripX + i * stepX;
+        float y1 = oscY + oscH / 2 - (m_scoutHistory[prev] / scale) * (oscH / 2);
+        float y2 = oscY + oscH / 2 - (m_scoutHistory[curr] / scale) * (oscH / 2);
+        
+        dc->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), greenBrush.Get(), 1.0f);
+    }
+    
+    // Draw Heavy line (yellow, bottom half)
+    for (int i = 1; i < OSCILLOSCOPE_SIZE; ++i) {
+        int prev = (m_historyOffset + i - 1) % OSCILLOSCOPE_SIZE;
+        int curr = (m_historyOffset + i) % OSCILLOSCOPE_SIZE;
+        
+        float x1 = stripX + (i - 1) * stepX;
+        float x2 = stripX + i * stepX;
+        float y1 = oscY + oscH / 2 + (m_heavyHistory[prev] / scale) * (oscH / 2);
+        float y2 = oscY + oscH / 2 + (m_heavyHistory[curr] / scale) * (oscH / 2);
+        
+        dc->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), yellowBrush.Get(), 1.0f);
+    }
+    
+    // Center line
+    dc->DrawLine(D2D1::Point2F(stripX, oscY + oscH / 2), 
+                 D2D1::Point2F(stripX + oscW, oscY + oscH / 2), 
+                 m_whiteBrush.Get(), 0.5f);
+    
+    // Labels
+    dc->DrawText(L"Scout", 5, m_debugFormat.Get(),
+        D2D1::RectF(stripX + oscW + 5, oscY, stripX + oscW + 60, oscY + 12), greenBrush.Get());
+    dc->DrawText(L"Heavy", 5, m_debugFormat.Get(),
+        D2D1::RectF(stripX + oscW + 5, oscY + oscH - 12, stripX + oscW + 60, oscY + oscH), yellowBrush.Get());
 }

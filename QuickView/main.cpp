@@ -186,7 +186,9 @@ static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
 static bool g_isLoading = false;           // Show Wait Cursor
-static std::atomic<uint64_t> g_currentNavToken = 0; // [Phase 3] Navigation Token for event filtering
+static std::atomic<uint64_t> g_currentNavToken = 0; // [Phase 3] Navigation Token (deprecated)
+static std::atomic<ImageID> g_currentImageId{0}; // [ImageID] Stable path hash for event filtering
+static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2: Truth/Heavy
 
 // === Debug HUD ===
 DebugMetrics g_debugMetrics; // Global Metrics Instance
@@ -1740,6 +1742,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
     g_pImageEngine = g_imageEngine.get(); // [v3.1] Init Global Accessor
     g_imageEngine->SetWindow(hwnd);
+    g_imageEngine->SetNavigator(&g_navigator); // [Phase 3] Enable prefetch
     
     // Initialize DirectComposition (hybrid architecture)
     g_compEngine = std::make_unique<CompositionEngine>();
@@ -3832,22 +3835,28 @@ void ProcessEngineEvents(HWND hwnd) {
         case EventType::ThumbReady: {
             if (!g_renderEngine) break;
             
-            // [Phase 3] TOKEN-BASED FILTERING - Core of Navigation Token architecture
-            // Only process events that match the current navigation session
-            if (evt.navToken != g_currentNavToken.load()) {
-                OutputDebugStringW(L"[Main] ThumbReady IGNORED: stale token\n");
-                break; // Discard event from previous navigation
+            // [ImageID] Validate using stable path hash
+            ImageID currentId = g_currentImageId.load();
+            if (evt.imageId != currentId) {
+                wchar_t buf[256];
+                swprintf_s(buf, L"[Main] ThumbReady REJECTED: ImageID=%zu vs Current=%zu, Path=%s\n",
+                    evt.imageId, currentId,
+                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
+                OutputDebugStringW(buf);
+                break; // Discard event not matching current image
             }
             
             wchar_t buf[256];
-            swprintf_s(buf, L"[Main] ThumbReady ACCEPTED: %s\n", evt.filePath.c_str());
+            swprintf_s(buf, L"[Main] ThumbReady ACCEPTED: ImageID=%zu, Path=%s\n",
+                evt.imageId, evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
             OutputDebugStringW(buf);
 
             // RACING CONDITION FIX:
-            // If we already have the Full Image (Clear) for this path, IGNORE the thumbnail.
-            // This prevents "Clear -> Blurry" overwrite if Thumb arrives late.
-            if (!g_isBlurry && g_currentBitmap) {
-                 // Discard late thumbnail
+            // [v3.1] Texture Promotion Mechanism
+            // Only accept if current level is < 1 (Void)
+            // If we are already at Level 1 (Scout) or Level 2 (Truth), ignore this.
+            if (g_imageQualityLevel >= 1) {
+                 // Discard late/duplicate thumbnail or level downgrade
                  break; 
             }
 
@@ -3874,11 +3883,14 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_ghostBitmap = thumbBitmap; // Save for Cross-Fade
                 g_isBlurry = evt.thumbData.isBlurry; // [v3.1] Use actual flag from Express Lane 
                 // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
+                // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
                 g_imagePath = evt.filePath; // Update path immediately for UI consistency
+                g_imageQualityLevel = 1;    // [v3.1] Promoted to Level 1 (Proxy)
                 
                 // [v3.2] If Fast Pass produced CLEAR image, adjust window now
                 // (Heavy Lane won't run, so FullReady won't trigger)
                 if (!evt.thumbData.isBlurry) {
+                    g_imageQualityLevel = 2; // [v3.1] Fast Pass is effectively Truth
                     AdjustWindowToImage(hwnd);
                     
                     // Mark as NOT loading (we have the final image)
@@ -3913,6 +3925,10 @@ void ProcessEngineEvents(HWND hwnd) {
                     SetWindowTextW(hwnd, titleBuf);
                 }
                 
+                // [Fix] Always clear loading state after thumbnail - user sees something
+                // Heavy Lane will continue in background, but no more wait cursor
+                g_isLoading = false;
+                
                 needsRepaint = true;
             }
             break;
@@ -3921,17 +3937,29 @@ void ProcessEngineEvents(HWND hwnd) {
             // Final High-Res Image
             if (!g_renderEngine) break;
             
-            // [Phase 3] TOKEN-BASED FILTERING
-            if (evt.navToken != g_currentNavToken.load()) {
-                OutputDebugStringW(L"[Main] FullReady IGNORED: stale token\n");
-                break; // Discard event from cancelled navigation
+            // [ImageID] SIMPLIFIED VALIDATION - Single stable hash check
+            // ImageID = hash(path), so this implicitly validates both identity and content
+            ImageID currentId = g_currentImageId.load();
+            if (evt.imageId != currentId) {
+                wchar_t buf[256];
+                swprintf_s(buf, L"[Main] FullReady REJECTED: ImageID=%zu vs Current=%zu, Path=%s\n",
+                    evt.imageId, currentId, 
+                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
+                OutputDebugStringW(buf);
+                break; // Discard event not matching current image
             }
             
             wchar_t buf[256];
-            swprintf_s(buf, L"[Main] FullReady ACCEPTED: %s\n", evt.filePath.c_str());
+            swprintf_s(buf, L"[Main] FullReady ACCEPTED: ImageID=%zu, Path=%s\n",
+                evt.imageId, evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
             OutputDebugStringW(buf);
 
             // evt.fullImage is IWICBitmapSource
+            
+            // [v3.1] Texture Promotion Mechanism
+            // Only accept if current level is < 2
+            if (g_imageQualityLevel >= 2) break; 
+            
             ComPtr<ID2D1Bitmap> fullBitmap;
             if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
                 
@@ -3942,6 +3970,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 // 2. Set NEW image as Current (Truth)
                 g_currentBitmap = fullBitmap;
                 g_isBlurry = false; 
+                g_imageQualityLevel = 2; // [v3.1] Promoted to Level 2 (Truth) 
                 
                 // 3. Start Arrival Transition (ALWAYS, even if Fade disabled)
                 // This ensures we enter the "Priority Render Block" in OnPaint, 
@@ -4023,14 +4052,20 @@ void ProcessEngineEvents(HWND hwnd) {
 void StartNavigation(HWND hwnd, std::wstring path) {
     if (!g_imageEngine || path.empty()) return;
 
-    // [Phase 3] Increment token FIRST - this is the Commander declaring target
+    // [Phase 3] Increment token FIRST (deprecated, kept for backward compatibility)
     uint64_t myToken = ++g_currentNavToken;
+    
+    // [ImageID] Compute stable hash from path - this is the new primary identifier
+    ImageID myImageId = ComputePathHash(path);
+    g_currentImageId.store(myImageId);
+    
     g_imagePath = path; // Set target path immediately for UI consistency
     
     g_isLoading = true;
     g_isCrossFading = false;
     g_ghostBitmap = nullptr; // Clear previous ghost
     g_isBlurry = true; // Reset for new image
+    g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
     
     
     // Level 0 Feedback: Immediate OSD before any decode starts
@@ -4116,6 +4151,17 @@ void Navigate(HWND hwnd, int direction) {
         if (!path.empty()) {
             g_editState.Reset();
             g_viewState.Reset();
+            
+            // [Fix Race Condition] 
+            // Call UpdateView FIRST to clear old queue and set direction.
+            // THEN call LoadImageAsync (which calls NavigateTo -> Push) to queue the new critical job.
+            
+            // [Phase 3] Notify prefetch system of navigation direction
+            BrowseDirection browseDir = (direction > 0) 
+                ? BrowseDirection::FORWARD 
+                : BrowseDirection::BACKWARD;
+            g_imageEngine->UpdateView(g_navigator.Index(), browseDir);
+            
             LoadImageAsync(hwnd, path);
         } else if (g_navigator.HitEnd()) {
             // Show OSD when reaching end without looping
@@ -4943,20 +4989,24 @@ void OnPaint(HWND hwnd) {
                 if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
                     g_debugMetrics.memoryUsage = pmc.WorkingSetSize;
                 }
-            }
-            g_debugMetrics.fps = (int)std::round(g_fps);
+            
+                g_debugMetrics.fps = (int)std::round(g_fps);
 
-            g_uiRenderer->SetDebugStats(
-                g_fps, 
-                g_debugMetrics.memoryUsage.load(),       // memBytes
-                g_debugMetrics.eventQueueSize.load(),    // queueSize
-                g_debugMetrics.skipCount.load(),         // skipCount
-                currentThumbTime,                        // thumbTimeMs
-                currentCancelCount,
-                currentHeavyTime,
-                currentLoaderName,
-                currentHeavyPending
-            );
+                g_uiRenderer->SetDebugStats(
+                    g_fps, 
+                    g_debugMetrics.memoryUsage.load(),       // memBytes
+                    g_debugMetrics.eventQueueSize.load(),    // queueSize
+                    g_debugMetrics.skipCount.load(),         // skipCount
+                    currentThumbTime,                        // thumbTimeMs
+                    currentCancelCount,
+                    currentHeavyTime,
+                    currentLoaderName,
+                    currentHeavyPending,
+                    stats.topology,                          // Phase 4: Cache Topology
+                    stats.cacheMemoryUsed,                   // Phase 4: Cache Memory
+                    stats.arena                              // Phase 4: Arena Stats
+                );
+            }
         }
         
         // Sync hover state: convert WindowHit enum to int

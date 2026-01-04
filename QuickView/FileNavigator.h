@@ -4,6 +4,17 @@
 #include <filesystem>
 #include <algorithm>
 #include <cwctype>
+#include <functional>  // for std::hash
+
+// [ImageID Architecture] Stable content-based unique identifier
+using ImageID = size_t;  // 64-bit path hash
+
+// Helper: Compute normalized path hash (case-insensitive for Windows)
+inline ImageID ComputePathHash(const std::wstring& path) {
+    std::wstring normalized = path;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::towlower);
+    return std::hash<std::wstring>{}(normalized);
+}
 
 class FileNavigator {
 public:
@@ -73,6 +84,13 @@ public:
         for(const auto& e : entries) {
             m_files.push_back(e.p);
             m_sizes.push_back(e.s);
+        }
+        
+        // [ImageID] Compute stable hash IDs for all files
+        m_ids.clear();
+        m_ids.reserve(m_files.size());
+        for (const auto& f : m_files) {
+            m_ids.push_back(ComputePathHash(f));
         }
 
         // Find current index
@@ -145,10 +163,27 @@ public:
         if (index < 0 || index >= (int)m_sizes.size()) return 0;
         return m_sizes[index];
     }
+    
+    // [ImageID] Get stable hash ID for image at index
+    ImageID GetImageID(int index) const {
+        if (index < 0 || index >= (int)m_ids.size()) return 0;
+        return m_ids[index];
+    }
+    
+    // [ImageID] Get hash ID for current image
+    ImageID GetCurrentImageID() const {
+        return GetImageID(m_currentIndex);
+    }
+    
+    // [ImageID] Compute hash from path (for external use)
+    static ImageID PathToImageID(const std::wstring& path) {
+        return ComputePathHash(path);
+    }
 
 private:
     std::vector<std::wstring> m_files;
     std::vector<uintmax_t> m_sizes;
+    std::vector<ImageID> m_ids;  // [ImageID] Precomputed path hashes
     int m_currentIndex = -1;
     bool m_hitEnd = false;
 };

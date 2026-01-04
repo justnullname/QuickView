@@ -125,6 +125,8 @@
     <ClInclude Include="CompositionEngine.h" />
     <ClInclude Include="UIRenderer.h" />
     <ClInclude Include="InputController.h" />
+    <ClInclude Include="SystemInfo.h" />
+    <ClInclude Include="HeavyLanePool.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -151,6 +153,7 @@
     <ClCompile Include="ImageEngine.cpp" />
     <ClCompile Include="CompositionEngine.cpp" />
     <ClCompile Include="UIRenderer.cpp" />
+    <ClCompile Include="HeavyLanePool.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />

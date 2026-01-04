@@ -2,7 +2,9 @@
 #include "pch.h"
 #include "CompositionEngine.h"
 #include <dwrite.h>
+#include <array>
 #include "EditState.h"
+#include "ImageEngine.h" // For CacheTopology
 
 // ============================================================================
 // UIRenderer - 多层 UI 渲染器
@@ -37,7 +39,9 @@ public:
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
     void SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount, double thumbTimeMs = 0.0,
-        int cancelCount = 0, double heavyTimeMs = 0.0, const std::wstring& loaderName = L"", int heavyPending = 0);
+        int cancelCount = 0, double heavyTimeMs = 0.0, const std::wstring& loaderName = L"", int heavyPending = 0,
+        const ImageEngine::CacheTopology& topology = {}, size_t cacheMemory = 0,
+        const ImageEngine::ArenaStats& arena = {});
     void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkDynamicDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
@@ -81,6 +85,16 @@ private:
     double m_heavyTimeMs = 0.0;  // New: Heavy Decode Time
     std::wstring m_loaderName;   // New: Decoder Name
     int m_heavyPending = 0;      // New: Heavy Queue
+    ImageEngine::CacheTopology m_topology; // Phase 4: Cache Topology
+    size_t m_cacheMemory = 0;    // Phase 4: Cache Memory Usage
+    ImageEngine::ArenaStats m_arena; // Phase 4: Arena Water Levels
+    
+    // Phase 4: Oscilloscope Ring Buffer (60 frames history)
+    static constexpr int OSCILLOSCOPE_SIZE = 60;
+    std::array<float, OSCILLOSCOPE_SIZE> m_scoutHistory{};
+    std::array<float, OSCILLOSCOPE_SIZE> m_heavyHistory{};
+    int m_historyOffset = 0;
+    
     RuntimeConfig m_runtime; // Verification Flags
     
     // Window Controls

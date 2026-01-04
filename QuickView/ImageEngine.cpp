@@ -1,10 +1,10 @@
 #include "pch.h"
 #include "ImageEngine.h"
+#include "FileNavigator.h"
+#include "HeavyLanePool.h"  // [N+1] Include pool implementation
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <filesystem>
-#include <algorithm> // transform
 
 // ============================================================================
 // ImageEngine Implementation
@@ -13,8 +13,19 @@
 ImageEngine::ImageEngine(CImageLoader* loader)
     : m_loader(loader)
     , m_scout(this, loader)
-    , m_heavy(this, loader, &m_pool)
 {
+    // [N+1] Detect hardware and create pool
+    SystemInfo sysInfo = SystemInfo::Detect();
+    m_engineConfig = EngineConfig::FromHardware(sysInfo);
+    m_heavyPool = std::make_unique<HeavyLanePool>(this, loader, &m_pool, m_engineConfig);
+    
+    // Debug output
+    wchar_t buf[256];
+    swprintf_s(buf, L"[ImageEngine] N+1 Pool: Tier=%s, MaxWorkers=%d, RAM=%.1fGB\n",
+        m_engineConfig.GetTierName(), 
+        m_engineConfig.maxHeavyWorkers,
+        (double)sysInfo.totalRAM / (1024.0 * 1024.0 * 1024.0));
+    OutputDebugStringW(buf);
 }
 
 ImageEngine::~ImageEngine() {
@@ -55,11 +66,22 @@ void ImageEngine::UpdateConfig(const RuntimeConfig& cfg) {
     m_config = cfg;
 }
 
+// [v3.1] Cancel Heavy Lane when Fast Pass succeeds - prevents unnecessary decode
+void ImageEngine::CancelHeavy() {
+    if (m_heavyPool) {
+        m_heavyPool->CancelAll();
+    }
+}
+
 void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint64_t navToken) {
     if (path.empty()) return;
     
-    // [Phase 3] Store the navigation token for event filtering
+    // [Phase 3] Store the navigation token for event filtering (deprecated)
     m_currentNavToken.store(navToken);
+    
+    // [ImageID Architecture] Compute and store stable hash ID for current image
+    ImageID imageId = ComputePathHash(path);
+    m_currentImageId.store(imageId);
     
     // Track State
     m_currentNavPath = path;
@@ -68,6 +90,21 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     // [v3.1] Pre-flight Check & Shunting Matrix
     // Intelligent dispatch based on file header analysis
     CImageLoader::ImageHeaderInfo info = m_loader->PeekHeader(path.c_str());
+    
+    // [DEBUG] Classification logging
+    {
+        wchar_t buf[512];
+        const wchar_t* typeName = L"Invalid";
+        if (info.type == CImageLoader::ImageType::TypeA_Sprint) typeName = L"TypeA_Sprint";
+        else if (info.type == CImageLoader::ImageType::TypeB_Heavy) typeName = L"TypeB_Heavy";
+        swprintf_s(buf, L"[NavigateTo] %s: %dx%d (%.1f MP), Format=%s, Type=%s\n",
+            path.substr(path.find_last_of(L"\\/") + 1).c_str(),
+            info.width, info.height,
+            (double)(info.width * info.height) / 1000000.0,
+            info.format.c_str(),
+            typeName);
+        OutputDebugStringW(buf);
+    }
     
     // Update State for UI
     m_hasEmbeddedThumb = info.hasEmbeddedThumb;
@@ -90,11 +127,22 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     }
     // else: Invalid/Unknown -> Parallel fallback
     
+    // [ImageID] ALWAYS cancel stale tasks BEFORE dispatching new one
+    // Use ImageID (path hash) instead of navToken for stable identification
+    m_heavyPool->CancelOthers(imageId);
+    
+    wchar_t tokenBuf[256];
+    swprintf_s(tokenBuf, L"[Dispatch] ImageID=%zu (Token=%llu deprecated)\n", imageId, navToken);
+    OutputDebugStringW(tokenBuf);
+    
     // DISPATCH
     if (useHeavy) {
-        m_heavy.SetTarget(path);
+        // [N+1] Submit to elastic pool with ImageID
+        OutputDebugStringW(L"[Dispatch] -> Heavy Pool\n");
+        m_heavyPool->Submit(path, imageId);
     } else {
-        m_heavy.SetTarget(L""); // Cancel Heavy if not needed
+        OutputDebugStringW(L"[Dispatch] -> Scout Only (TypeA)\n");
+        // CancelOthers already called above, no need to call again
     }
 
     if (useScout) {
@@ -135,7 +183,8 @@ std::vector<EngineEvent> ImageEngine::PollState() {
     }
 
     // 2. Harvest Heavy Events
-    while (auto e = m_heavy.TryPopResult()) {
+    // 2. Harvest Heavy Events
+    while (auto e = m_heavyPool->TryPopResult()) {
          batch.push_back(std::move(*e));
     }
 
@@ -143,47 +192,89 @@ std::vector<EngineEvent> ImageEngine::PollState() {
 }
 
 bool ImageEngine::IsIdle() const {
-    return m_scout.IsQueueEmpty() && !m_heavy.IsBusy();
+    return m_scout.IsQueueEmpty() && m_heavyPool->IsIdle();
 }
 
 ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     DebugStats s = {};
     s.scoutQueueSize = m_scout.GetQueueSize();
     s.scoutResultsSize = m_scout.GetResultsSize();
-    s.heavyState = (HeavyState)m_heavy.GetState();
+    
+    auto poolStats = m_heavyPool->GetStats();
+    s.heavyState = m_heavyPool->IsBusy() ? HeavyState::DECODING : HeavyState::IDLE;
+    s.cancelCount = poolStats.cancelCount;
+    s.heavyPendingCount = poolStats.pendingJobs;
+    // TODO: Add pool stats to DebugStats (busyWorkers, standbyWorkers, etc.)
     
     // Memory
     s.memoryUsed = m_pool.GetUsedMemory();
     s.memoryTotal = m_pool.GetTotalMemory();
     
-    s.cancelCount = m_heavy.GetCancelCount();
     s.scoutSkipCount = m_scout.GetSkipCount();
     s.scoutLoadTimeMs = m_scout.m_lastLoadTimeMs.load();
 
-    s.heavyDecodeTimeMs = m_heavy.GetLastDecodeTime();
-    
-    // Const cast needed because GetPendingCount locks mutex
-    s.heavyPendingCount = const_cast<HeavyLane&>(m_heavy).GetPendingCount();
-    
-    // [v3.2] Loader Priority:
-    // - If Heavy ran (decodeTime > 0): Heavy Loader (it produced the final image)
-    // - Otherwise: Scout Loader (Type A, or Scout-only mode)
-    if (s.heavyDecodeTimeMs > 0) {
-        s.loaderName = m_heavy.GetLastLoaderName();
-    }
+
+    // Fallback loader name
     if (s.loaderName.empty()) {
         s.loaderName = m_scout.GetLastLoaderName();
     }
     if (s.loaderName.empty()) {
         s.loaderName = L"[Unknown]";
     }
+    
+    {
+        std::lock_guard lock(m_cacheMutex);
+        s.cacheMemoryUsed = m_currentCacheBytes;
+        
+        for (int i = -TOPOLOGY_RANGE; i <= TOPOLOGY_RANGE; ++i) {
+            int slotIndex = i + TOPOLOGY_RANGE; // Convert to 0-4 array index
+            int targetIndex = m_currentViewIndex + i;
+            
+            if (!m_navigator || targetIndex < 0 || targetIndex >= (int)m_navigator->Count()) {
+                s.topology.slots[slotIndex] = CacheStatus::EMPTY;
+                continue;
+            }
+            
+            // Special handling for CUR (current image)
+            if (i == 0) {
+                // Check Heavy Lane state for current image
+                if (s.heavyState == HeavyState::IDLE && s.heavyDecodeTimeMs > 0) {
+                    // Heavy finished = full image ready
+                    s.topology.slots[slotIndex] = CacheStatus::HEAVY;
+                } else if (s.heavyState == HeavyState::DECODING) {
+                    // Heavy in progress = pending
+                    s.topology.slots[slotIndex] = CacheStatus::PENDING;
+                } else {
+                    // Scout only mode or not yet loaded
+                    s.topology.slots[slotIndex] = CacheStatus::SCOUT;
+                }
+                continue;
+            }
+            
+            // For neighbors, check prefetch cache
+            const std::wstring& path = m_navigator->GetFile(targetIndex);
+            auto it = m_cache.find(path);
+            
+            if (it != m_cache.end()) {
+                s.topology.slots[slotIndex] = CacheStatus::HEAVY;
+            } else {
+                s.topology.slots[slotIndex] = CacheStatus::EMPTY;
+            }
+        }
+    }
+    
+    // Phase 4: Arena Water Levels
+    // Use GetLastArenaBytes() which tracks decoded.pixels.size()
+    // TODO: Get arena stats from pool workers
+    s.arena.activeCapacity = m_pool.GetActive().GetCapacity();
+    s.arena.backCapacity = m_pool.GetBack().GetCapacity();
 
     return s;
 }
 
 void ImageEngine::ResetDebugCounters() {
     m_scout.ResetSkipCount();
-    m_heavy.ResetCancelCount();
+    m_scout.ResetSkipCount();
 }
 
 // Note: IsFastPassCandidate removed in v3.1 - replaced by PeekHeader() classification
@@ -208,24 +299,30 @@ ImageEngine::ScoutLane::~ScoutLane() {
     // m_thread destructor joins
 }
 
+// [v3.1] Ruthless Purge: Clear pending queue but keep results
+void ImageEngine::ScoutLane::Clear() {
+    std::lock_guard lock(m_queueMutex);
+    m_queue.clear();
+    // CRITICAL: Do NOT clear m_results. Completed thumbnails should remain.
+    // m_skipCount is not reset here, it accumulates for debug stats.
+}
+
 void ImageEngine::ScoutLane::Push(const std::wstring& path) {
     {
         std::lock_guard lock(m_queueMutex);
         m_queue.push_back(path);
-
-        // --- Anti-Explosion Strategy ---
-        // If user scrolls wildly (>5 pending items), we skip the middle.
-        // We keep the FRONT (Next continuity) and BACK (Latest target).
-        if (m_queue.size() > 5) {
-            std::wstring head = m_queue.front();
-            std::wstring tail = m_queue.back();
-            int skipped = (int)m_queue.size() - 2;
-            m_queue.clear();
-            m_queue.push_back(head);
-            m_queue.push_back(tail);
-            m_skipCount.fetch_add(skipped);  // Track skips
-        }
+        // [v3.1] Simplified Push: No complex anti-explosion here.
+        // UpdateView()'s "Ruthless Purge" handles queue depth.
     }
+    
+    // [DEBUG] Log Push notification
+    {
+        wchar_t buf[512];
+        swprintf_s(buf, L"[Scout] Push: %s (queue size=%d)\n",
+            path.substr(path.find_last_of(L"\\/") + 1).c_str(), (int)m_queue.size());
+        OutputDebugStringW(buf);
+    }
+    
     m_cv.notify_one();
 }
 
@@ -259,44 +356,53 @@ int ImageEngine::ScoutLane::GetResultsSize() const {
 }
 
 void ImageEngine::ScoutLane::QueueWorker() {
+    OutputDebugStringW(L"[Scout] Worker Thread Started\n");
     while (!m_stopSignal) {
         std::wstring path;
-        {
-            std::unique_lock lock(m_queueMutex);
-            m_cv.wait(lock, [this] { return m_stopSignal || !m_queue.empty(); });
-
-            if (m_stopSignal) break;
-
-            path = m_queue.front();
-            m_queue.pop_front();
-        }
-
-        // --- Work Stage (v3.1 Express Lane) ---
-        auto start = std::chrono::high_resolution_clock::now();
-        constexpr double EXPRESS_BUDGET_MS = 30.0; // Hard red line
-        
+        // Standard C++ Try-Catch for Robustness
         try {
-            CImageLoader::ThumbData thumb;
-            HRESULT hr = E_FAIL;
-            
-            // [v3.1] Pre-flight Check: Classify before any heavy work
-            auto header = m_loader->PeekHeader(path.c_str());
-            
-            // === Fast Pass: Type A images → Full Decode ===
-            // [v3.2] All Type A images use Fast Pass (JPEG ≤8.5MP, PNG ≤4MP, etc.)
-            if (header.type == CImageLoader::ImageType::TypeA_Sprint) {
-                hr = m_loader->LoadFastPass(path.c_str(), &thumb);
-                if (SUCCEEDED(hr) && thumb.isValid) {
-                    thumb.isBlurry = false; // Clear! No need for Main Lane.
-                    // [v3.2] Ensure loaderName is set (fallback if LoadFastPass didn't set it)
-                    if (thumb.loaderName.empty()) {
-                        thumb.loaderName = L"FastPass (Scout)";
-                    }
+            {
+                std::unique_lock lock(m_queueMutex);
+                m_cv.wait(lock, [this] { return m_stopSignal || !m_queue.empty(); });
+
+                if (m_stopSignal && m_queue.empty()) break;
+
+                // [v3.2] Robustness: Check again for empty to be safe
+                if (!m_queue.empty()) {
+                    path = m_queue.front();
+                    m_queue.pop_front();
                 }
             }
             
-            // === Extract: Embedded thumbnail (RAW/JPEG Exif) ===
-            if (FAILED(hr) && header.hasEmbeddedThumb) {
+            if (path.empty()) continue;
+            
+            std::wstring debugMsg = L"[Scout] Processing: " + path.substr(path.find_last_of(L"\\/") + 1) + L"\n";
+            OutputDebugStringW(debugMsg.c_str());
+
+            // --- Work Stage (v3.1 Express Lane) ---
+            auto start = std::chrono::high_resolution_clock::now();
+            constexpr double EXPRESS_BUDGET_MS = 30.0; // Hard red line (Re-enabled)
+            
+            CImageLoader::ThumbData thumb;
+            HRESULT hr = E_FAIL;
+            
+            // [v3.2] Optimization: Removed redundant PeekHeader. 
+            // We assume if it's in Scout Lane, we should try FastPass first.
+            
+            // 1. Try Fast Pass (Type A optimization)
+            hr = m_loader->LoadFastPass(path.c_str(), &thumb);
+            if (SUCCEEDED(hr) && thumb.isValid) {
+                thumb.isBlurry = false; // Clear! No need for Main Lane.
+                if (thumb.loaderName.empty()) {
+                    thumb.loaderName = L"FastPass (Scout)";
+                }
+            }
+            
+            // 2. Fallback: Embedded thumbnail (RAW/JPEG Exif)
+            if (FAILED(hr)) {
+                // Only try if we have budget? Or just try WIC GetThumbnail?
+                // LoadThumbnail handles validation internally usually.
+                
                 auto now = std::chrono::high_resolution_clock::now();
                 double elapsed = std::chrono::duration<double, std::milli>(now - start).count();
                 
@@ -304,15 +410,11 @@ void ImageEngine::ScoutLane::QueueWorker() {
                     hr = m_loader->LoadThumbnail(path.c_str(), 256, &thumb, false); // allowSlow=false
                     if (SUCCEEDED(hr)) {
                         thumb.isBlurry = true; // Ghost image
-                        thumb.loaderName = L"WIC (Scout Thumb)"; // [v3.2] Set loader name for fallback
+                        thumb.loaderName = L"WIC (Scout Thumb)";
                     }
                 }
             }
             
-            // === Abort: Large file without embedded thumb ===
-            // Don't try to decode - let Main Lane handle it.
-            // UI will keep previous image (Warp residual).
-
             if (SUCCEEDED(hr) && thumb.isValid) {
                 // [v3.2] Save values BEFORE move
                 std::wstring loaderName = thumb.loaderName;
@@ -327,7 +429,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 EngineEvent e;
                 e.type = EventType::ThumbReady;
                 e.filePath = path;
-                e.navToken = m_parent->m_currentNavToken.load(); // [Phase 3] Carry token
+                e.imageId = ComputePathHash(path); 
                 e.thumbData = std::move(thumb);
 
                 {
@@ -337,276 +439,208 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 m_parent->QueueEvent(EngineEvent{}); 
                 
                 // [v3.1] If Fast Pass produced clear image, cancel Heavy Lane
-                // No need for Main Lane decode - we already have the full image!
                 if (isClear) {
                     m_parent->CancelHeavy();
                 }
             }
-            // else: Express Lane aborted. Main Lane will provide the image.
-            // No "black square" - UI keeps previous image.
+            
+            auto end = std::chrono::high_resolution_clock::now();
+            m_lastLoadTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
+
+        } catch (const std::exception& ex) {
+            OutputDebugStringW(L"[Scout] CRITICAL EXCEPTION in QueueWorker: ");
+            OutputDebugStringA(ex.what());
+            OutputDebugStringW(L"\n");
         } catch (...) {
-            // Silently ignore corrupt file / EXIF parsing crashes
+            OutputDebugStringW(L"[Scout] CRITICAL UNKNOWN EXCEPTION in QueueWorker\n");
         }
-        auto end = std::chrono::high_resolution_clock::now();
-        m_lastLoadTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
+    }
+    OutputDebugStringW(L"[Scout] Worker Thread Exiting\n");
+}
+
+void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
+    m_prefetchPolicy = policy;
+}
+
+size_t ImageEngine::GetCacheMemoryUsage() const {
+    std::lock_guard lock(m_cacheMutex);
+    return m_currentCacheBytes;
+}
+
+ComPtr<IWICBitmapSource> ImageEngine::GetCachedImage(const std::wstring& path) {
+    std::lock_guard lock(m_cacheMutex); // Thread-safe copy
+    auto it = m_cache.find(path);
+    if (it != m_cache.end()) {
+        return it->second.bitmap; // Returns copy, ref count +1
+    }
+    return nullptr;
+}
+
+void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
+    m_currentViewIndex = currentIndex;
+    m_lastDirection = dir;
+    
+    // 1. Prune: Cancel old tasks not in visible range
+    PruneQueue(currentIndex, dir);
+    
+    // ------------------------------------------------------------------------
+    // [v3.1] Cancellation Strategy: Ruthless Purge -> Reschedule
+    // ------------------------------------------------------------------------
+    
+    // 1. Purge Phase: Clear all pending Scout tasks
+    // This removes "Old Neighbors" that are no longer relevant.
+    // Scout running state is Atomic (Gatekeeper), so running tasks finish naturally.
+    m_scout.Clear();
+    
+    // 2. Reschedule Phase: LIFO / Critical First
+    // Even if 'currentIndex' was just purged, it's re-queued immediately here.
+    ScheduleJob(currentIndex, Priority::Critical);
+    
+    int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
+    
+    // 3. Adjacent: Must-have for fluid navigation
+    ScheduleJob(currentIndex + step, Priority::High);
+    
+    // 4. If prefetch disabled, stop here (Eco mode)
+    if (!m_prefetchPolicy.enablePrefetch) return;
+    
+    // 5. Anti-regret: One in opposite direction
+    ScheduleJob(currentIndex - step, Priority::Low);
+    
+    // 6. Look-ahead: Based on policy
+    for (int i = 2; i <= m_prefetchPolicy.lookAheadCount; ++i) {
+        ScheduleJob(currentIndex + step * i, Priority::Idle);
     }
 }
 
-// ============================================================================
-// Heavy Lane (The Tank)
-// ============================================================================
-
-ImageEngine::HeavyLane::HeavyLane(ImageEngine* parent, CImageLoader* loader, QuantumArenaPool* pool)
-    : m_parent(parent), m_loader(loader), m_pool(pool)
-{
-    // Start the Master Loop
-    m_thread = std::jthread([this](std::stop_token st) {
-        MasterLoop(st);
-    });
-}
-
-ImageEngine::HeavyLane::~HeavyLane() {
-    // 1. Cancel any pending job logic
+void ImageEngine::ScheduleJob(int index, Priority pri) {
+    // 1. Bounds check
+    if (!m_navigator) return;
+    if (index < 0 || index >= (int)m_navigator->Count()) return;
+    
+    // 2. Get file path
+    const std::wstring& path = m_navigator->GetFile(index);
+    if (path.empty()) return;
+    
+    // 3. Check if already in cache
     {
-        std::lock_guard lock(m_jobMutex);
-        m_hasPendingJob = true; // Force wake/exit logic if needed
-        if (m_currentJobStopSource.stop_possible()) {
-            m_currentJobStopSource.request_stop();
-        }
-    }
-    m_jobCv.notify_all();
-    // 2. jthread dtor will request stop on the MasterLoop token and Join.
-}
-
-void ImageEngine::HeavyLane::SetTarget(const std::wstring& path) {
-    std::lock_guard lock(m_jobMutex);
-    
-    // 1. Update the pending target
-    m_pendingPath = path;
-    m_hasPendingJob = true;
-    
-    // [v3.1] Clear debug stats to prevent stale info (e.g. from previous WIC fallback)
-    // If Heavy Lane is skipped, we want to see "Pending..." or 0ms, not old data.
-    m_lastDecodeTimeMs.store(0.0); // [v3.2] Explicit atomic store
-    {
-        std::lock_guard debugLock(m_debugMutex);
-        m_lastLoaderName = L""; 
-    }
-
-    
-    // 2. Cancel the currently running decode (if any)
-    if (m_currentJobStopSource.stop_possible()) {
-        m_currentJobStopSource.request_stop();
-        if (m_isBusy) {
-            m_isCancelling = true;
-            m_cancelCount.fetch_add(1);  // Track cancellation
-        }
+        std::lock_guard lock(m_cacheMutex);
+        if (m_cache.count(path)) return; // Already cached
     }
     
-    // 3. Kick the loop
-    m_jobCv.notify_one();
-}
-
-std::optional<EngineEvent> ImageEngine::HeavyLane::TryPopResult() {
-    std::lock_guard lock(m_resultMutex);
-    if (m_results.empty()) return std::nullopt;
-    auto e = std::move(m_results.front());
-    m_results.pop_front();
-    return e;
-}
-
-void ImageEngine::HeavyLane::MasterLoop(std::stop_token masterToken) {
-    while (!masterToken.stop_requested()) {
-        std::wstring workPath;
-        std::stop_token jobToken;
-        EngineEvent resultEvent;
-
-        // --- 1. Wait for Work ---
-        {
-            std::unique_lock lock(m_jobMutex);
-            m_jobCv.wait(lock, [this, &masterToken] {
-                // Wake if master stop, or we have a new job
-                return masterToken.stop_requested() || m_hasPendingJob;
-            });
-
-            if (masterToken.stop_requested()) break;
-
-            // Pick up the job
-            workPath = m_pendingPath;
-            m_hasPendingJob = false;
-            
-            // Create a new stop source for this specific job
-            m_currentJobStopSource = std::stop_source();
-            jobToken = m_currentJobStopSource.get_token();
-            
-            m_isBusy = true;
+    // 4. Critical priority = current image, already handled by NavigateTo
+    if (pri == Priority::Critical) {
+        return;
+    }
+    
+    // 5. For prefetch: only queue High priority (adjacent +1)
+    // Low and Idle will be done on idle (future enhancement)
+    if (pri != Priority::High) {
+        return; // For now, only prefetch immediate neighbor
+    }
+    
+    // [TEMP DISABLED] Prefetch system disabled during N+1 lane testing
+    // TODO: Re-enable after core navigation is stable
+    return;
+    
+    // 6. Pre-flight check for classification
+    auto info = m_loader->PeekHeader(path.c_str());
+    
+    // 7. Dispatch based on classification
+    uintmax_t fileSize = m_navigator->GetFileSize(index);
+    
+    if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
+        // Small image: push to Scout Lane
+        m_scout.Push(path);
+    } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
+        // Large image: only prefetch if Heavy Lane is idle
+        // This prevents prefetch from blocking current image decode
+        if (m_heavyPool->IsIdle()) {
+            m_heavyPool->Submit(path, ComputePathHash(path)); // [ImageID]
         }
-
-        // --- 2. Preparation ---
-        m_isCancelling = false;  // Clear cancel flag
-        // Memory reset is handled inside PerformDecode using Pool
-
-        // --- 3. Execution (Interruptible) ---
-        // [v3.2] Skip if path is empty (Heavy Lane was cancelled/skipped)
-        if (!workPath.empty()) {
-            PerformDecode(workPath, jobToken);
-        } else {
-            // Empty path: Heavy Lane was cancelled/skipped
-        }
-
-        // --- 4. Cleanup ---
-        m_isBusy = false;
-        m_isCancelling = false;
+        // If Heavy is busy, skip prefetch - user might navigate again
     }
 }
 
-void ImageEngine::HeavyLane::PerformDecode(const std::wstring& path, std::stop_token st) {
-    if (st.stop_requested()) return;
+void ImageEngine::PruneQueue(int currentIndex, BrowseDirection dir) {
+    // Calculate valid range based on direction
+    int minValid = currentIndex - 2;
+    int maxValid = currentIndex + m_prefetchPolicy.lookAheadCount + 1;
+    
+    // Scout lane already has skip-middle logic
+    // Heavy lane has single-slot replacement
+    // Cache eviction handles the rest
+    EvictCache(currentIndex);
+}
 
-    try {
-        // [v3.1] Scoped block to ensure 'decoded' is destroyed BEFORE Arena Reset for Truth Stage
-        bool triggerTruth = false; 
-        {
-            // Reset Arena for Fit Stage
-            m_pool->GetBack().Reset();
-            auto& arena = m_pool->GetBack();
+void ImageEngine::AddToCache(int index, const std::wstring& path, IWICBitmapSource* bitmap) {
+    if (!bitmap) return;
+    
+    // 1. Calculate size (RGBA: W * H * 4)
+    UINT w = 0, h = 0;
+    bitmap->GetSize(&w, &h);
+    size_t newSize = (size_t)w * h * 4;
+    
+    std::lock_guard lock(m_cacheMutex);
+    
+    // 2. Check if already cached
+    if (m_cache.count(path)) return;
+    
+    bool isCritical = (index == m_currentViewIndex);
+    
+    // 3. Memory limit check with eviction
+    while (m_currentCacheBytes + newSize > m_prefetchPolicy.maxCacheMemory && !m_lruOrder.empty()) {
+        // Find victim from LRU tail
+        std::wstring victimPath = m_lruOrder.back();
+        auto vit = m_cache.find(victimPath);
+        
+        if (vit != m_cache.end()) {
+            int victimIndex = vit->second.sourceIndex;
             
-            CImageLoader::DecodedImage decoded(arena.GetResource());
-            std::wstring loaderName;
-            
-            auto decodeStart = std::chrono::high_resolution_clock::now();
-            
-            // [Phase 7] Fit Stage: Decode to screen size for faster response
-            int targetW = m_parent->m_config.screenWidth;
-            int targetH = m_parent->m_config.screenHeight;
-            
-            HRESULT hr = m_loader->LoadToMemoryPMR(path.c_str(), &decoded, arena.GetResource(), targetW, targetH, &loaderName, st);
-            auto decodeEnd = std::chrono::high_resolution_clock::now();
-            
-            m_lastDecodeTimeMs = std::chrono::duration<double, std::milli>(decodeEnd - decodeStart).count();
-            {
-                std::lock_guard lock(m_debugMutex);
-                m_lastLoaderName = loaderName;
+            // Keep Zone: Cannot evict current ±1
+            if (abs(victimIndex - m_currentViewIndex) <= 1) {
+                // All remaining are protected
+                break;
             }
             
-            if (st.stop_requested()) return;
-    
-            if (SUCCEEDED(hr) && decoded.isValid) {
-                // Create WIC Bitmap from PMR buffer for D2D compatibility
-                ComPtr<IWICBitmap> wicBitmap;
-                // [v3.1 Deep Copy] Safe arena release.
-                hr = m_loader->CreateWICBitmapCopy(
-                    decoded.width, decoded.height,
-                    GUID_WICPixelFormat32bppPBGRA,
-                    decoded.stride,
-                    (UINT)decoded.pixels.size(),
-                    decoded.pixels.data(),
-                    &wicBitmap
-                );
-                
-                if (SUCCEEDED(hr) && wicBitmap) {
-                    if (st.stop_requested()) return;
-                    
-                    // Metadata & Event
-                    CImageLoader::ImageMetadata meta;
-                    m_loader->ReadMetadata(path.c_str(), &meta);
-                    meta.LoaderName = loaderName;
-                    
-                    EngineEvent e;
-                    e.type = EventType::FullReady;
-                    e.filePath = path;
-                    e.navToken = m_parent->m_currentNavToken.load(); // [Phase 3]
-                    e.fullImage = wicBitmap;
-                    e.metadata = std::move(meta);
-                    e.loaderName = loaderName;
-                    
-                    bool isFitPixelPerfect = (decoded.width >= (UINT)targetW && decoded.height >= (UINT)targetH);
-                    bool wasScaled = (targetW > 0 && targetH > 0 && !isFitPixelPerfect);
-                    e.isScaled = wasScaled;
-    
-                    {
-                        std::lock_guard lock(m_resultMutex);
-                        m_results.clear();
-                        m_results.push_back(std::move(e));
-                    }
-                    m_parent->QueueEvent(EngineEvent{}); 
-                    
-                    // Decide if Truth Stage is needed
-                    // [v3.1] Robust scaling detection: Rely on loader reporting "[Scaled]"
-                    bool wasLoaderScaled = (loaderName.find(L"[Scaled]") != std::wstring::npos);
-                    
-                    if (wasLoaderScaled && !st.stop_requested()) {
-                        triggerTruth = true;
-                    }
-                }
-            }
-        } // <--- 'decoded' Destroyed Here. Arena is safe to Reset.
-
-        // --- Truth Stage (High Quality) ---
-        if (triggerTruth && !st.stop_requested()) {
-            // Wait for idle (Debounce)
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            
-            // Check if still on same image and no new navigation
-            if (!st.stop_requested() && m_parent->m_currentNavPath == path) {
-                // Reset Arena for Truth Stage (Reuse same memory)
-                // Safe: Fit Stage 'decoded' object is destroyed, releasing its hold on arena.
-                m_pool->GetBack().Reset(); 
-                
-                auto& arena = m_pool->GetBack();
-                CImageLoader::DecodedImage truthDecoded(arena.GetResource());
-                std::wstring truthLoader;
-                
-                // Full Resolution Decode (0, 0)
-                HRESULT truthHr = m_loader->LoadToMemoryPMR(path.c_str(), &truthDecoded, arena.GetResource(), 0, 0, &truthLoader, st);
-                
-                if (SUCCEEDED(truthHr) && truthDecoded.isValid && !st.stop_requested()) {
-                    ComPtr<IWICBitmap> truthBitmap;
-                    // Deep Copy Result (Safety)
-                    m_loader->CreateWICBitmapCopy(
-                        truthDecoded.width, truthDecoded.height,
-                        GUID_WICPixelFormat32bppPBGRA,
-                        truthDecoded.stride,
-                        (UINT)truthDecoded.pixels.size(),
-                        truthDecoded.pixels.data(),
-                        &truthBitmap
-                    );
-                    
-                    if (truthBitmap && !st.stop_requested()) {
-                        EngineEvent e;
-                        e.type = EventType::FullReady;
-                        e.filePath = path; 
-                        e.navToken = m_parent->m_currentNavToken.load(); // [Phase 3]
-                        e.fullImage = truthBitmap;
-                        e.loaderName = truthLoader + L" [Truth]";
-                        e.isScaled = false; // Full Res
-                        
-                        // Re-read metadata to ensure correctness
-                        CImageLoader::ImageMetadata meta;
-                        m_loader->ReadMetadata(path.c_str(), &meta);
-                        meta.LoaderName = e.loaderName;
-                        e.metadata = std::move(meta);
-                        
-                        // Update Debug Stats
-                        {
-                            std::lock_guard lock(m_debugMutex);
-                            m_lastLoaderName = e.loaderName;
-                        }
-
-                        {
-                            std::lock_guard lock(m_resultMutex);
-                            m_results.push_back(std::move(e));
-                        }
-                        m_parent->QueueEvent(EngineEvent{});
-                    }
-                }
-            }
+            // Evict victim
+            m_currentCacheBytes -= vit->second.sizeBytes;
+            m_cache.erase(vit);
         }
-    } catch (const std::bad_alloc&) {
-        // Memory exhausted - silently fail this decode
-    } catch (...) {
-        // Catch any other exceptions to prevent thread crash
+        m_lruOrder.pop_back();
+    }
+    
+    // 4. Add to cache (Critical can exceed limit)
+    if (m_currentCacheBytes + newSize <= m_prefetchPolicy.maxCacheMemory || isCritical) {
+        CacheEntry entry;
+        entry.bitmap = bitmap;
+        entry.sourceIndex = index;
+        entry.sizeBytes = newSize;
+        
+        m_cache[path] = std::move(entry);
+        m_lruOrder.push_front(path);
+        m_currentCacheBytes += newSize;
     }
 }
 
-
+void ImageEngine::EvictCache(int currentIndex) {
+    std::lock_guard lock(m_cacheMutex);
+    
+    // Evict entries far from current view
+    auto it = m_lruOrder.begin();
+    while (it != m_lruOrder.end()) {
+        auto cit = m_cache.find(*it);
+        if (cit != m_cache.end()) {
+            int idx = cit->second.sourceIndex;
+            
+            // Keep if within ± lookAheadCount
+            if (abs(idx - currentIndex) > m_prefetchPolicy.lookAheadCount + 1) {
+                m_currentCacheBytes -= cit->second.sizeBytes;
+                m_cache.erase(cit);
+                it = m_lruOrder.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}
