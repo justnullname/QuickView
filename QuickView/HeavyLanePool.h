@@ -61,6 +61,8 @@ public:
         int standbyWorkers;    // Hot-spare waiting
         int pendingJobs;       // Jobs in queue
         int cancelCount;       // Total cancellations
+        double lastDecodeTimeMs; // Last successful decode duration
+        ImageID lastDecodeId;    // Match against current to avoid stale data
     };
     PoolStats GetStats() const;
     
@@ -99,6 +101,8 @@ private:
     std::atomic<int> m_activeCount = 0;  // STANDBY + BUSY
     std::atomic<int> m_busyCount = 0;    // Only BUSY
     std::atomic<int> m_cancelCount = 0;
+    std::atomic<double> m_lastDecodeTimeMs = 0.0;
+    std::atomic<ImageID> m_lastDecodeId = 0; // [HUD Fix] Track which image was decoded
     
     // Job queue
     mutable std::mutex m_poolMutex;

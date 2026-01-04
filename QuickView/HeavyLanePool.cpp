@@ -409,6 +409,8 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     
     auto end = std::chrono::high_resolution_clock::now();
     auto elapsed = std::chrono::duration<double, std::milli>(end - start).count();
+    m_lastDecodeTimeMs.store(elapsed);
+    m_lastDecodeId.store(imageId); // [HUD Fix]
     
     wchar_t buf[256];
     swprintf_s(buf, L"[HeavyPool] Worker %d decoded in %.1fms\n", workerId, elapsed);
@@ -453,6 +455,8 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     PoolStats stats = {};
     stats.totalWorkers = static_cast<int>(m_workers.size());
     stats.cancelCount = m_cancelCount.load();
+    stats.lastDecodeTimeMs = m_lastDecodeTimeMs.load();
+    stats.lastDecodeId = m_lastDecodeId.load();
     
     for (const auto& w : m_workers) {
         auto state = w.state;

@@ -138,6 +138,8 @@ public:
         int scoutSkipCount = 0;    // Scout skip-middle count
         double scoutLoadTimeMs = 0.0; // Last Scout Load Time
         double heavyDecodeTimeMs = 0.0; // Last Heavy Decode Time
+        ImageID scoutLastImageId = 0;   // [HUD Fix] Match against current
+        ImageID heavyLastImageId = 0;   // [HUD Fix] Match against current
 
         std::wstring loaderName;   // Last used decoder name
         int heavyPendingCount = 0; // New: Heavy Lane Pending Count
@@ -190,6 +192,7 @@ private:
         }
         
         std::atomic<double> m_lastLoadTimeMs{ 0.0 }; // Public atomic for easy access
+        std::atomic<ImageID> m_lastLoadId{ 0 };      // [HUD Fix] Track ImageID
 
     private:
         void QueueWorker(); // The Scout Thread Function

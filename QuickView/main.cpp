@@ -4975,8 +4975,13 @@ void OnPaint(HWND hwnd) {
 
             if (g_imageEngine) {
                 auto stats = g_imageEngine->GetDebugStats();
-                currentThumbTime = stats.scoutLoadTimeMs;
-                currentHeavyTime = stats.heavyDecodeTimeMs;
+                
+                // [HUD Fix] Only show stats if they belong to current image
+                ImageID curId = ComputePathHash(g_imagePath);
+
+                currentThumbTime = (stats.scoutLastImageId == curId) ? stats.scoutLoadTimeMs : 0.0;
+                currentHeavyTime = (stats.heavyLastImageId == curId) ? stats.heavyDecodeTimeMs : 0.0;
+                
                 currentCancelCount = stats.cancelCount;
                 currentLoaderName = stats.loaderName;
                 currentHeavyPending = stats.heavyPendingCount;

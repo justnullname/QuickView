@@ -204,6 +204,8 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     s.heavyState = m_heavyPool->IsBusy() ? HeavyState::DECODING : HeavyState::IDLE;
     s.cancelCount = poolStats.cancelCount;
     s.heavyPendingCount = poolStats.pendingJobs;
+    s.heavyDecodeTimeMs = poolStats.lastDecodeTimeMs; 
+    s.heavyLastImageId = poolStats.lastDecodeId; // [HUD Fix]
     // TODO: Add pool stats to DebugStats (busyWorkers, standbyWorkers, etc.)
     
     // Memory
@@ -212,6 +214,7 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     
     s.scoutSkipCount = m_scout.GetSkipCount();
     s.scoutLoadTimeMs = m_scout.m_lastLoadTimeMs.load();
+    s.scoutLastImageId = m_scout.m_lastLoadId.load(); // [HUD Fix]
 
 
     // Fallback loader name
@@ -446,6 +449,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
             
             auto end = std::chrono::high_resolution_clock::now();
             m_lastLoadTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
+            m_lastLoadId.store(ComputePathHash(path)); // [HUD Fix]
 
         } catch (const std::exception& ex) {
             OutputDebugStringW(L"[Scout] CRITICAL EXCEPTION in QueueWorker: ");

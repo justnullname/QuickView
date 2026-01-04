@@ -2072,8 +2072,8 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         return E_FAIL;
     }
 
-    // 2. Read first 64KB for header parsing (sufficient for all formats)
-    std::vector<uint8_t> header(64 * 1024);
+    // 2. Read first 512KB for header parsing (Increased from 64KB to cover large EXIF/ICC profiles)
+    std::vector<uint8_t> header(512 * 1024);
     {
         HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, 
                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -3739,8 +3739,8 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     if (result.format == L"JPEG" || result.format == L"JXL" || result.format == L"BMP") {
         // JPEG/JXL/BMP: ≤8.5MP → Express (full decode is fast)
         // >8.5MP → Heavy (needs scaled decode, Scout extracts thumb if hasEmbeddedThumb)
-        // [v3.2] If pixels unknown (0), default to Express (safe fallback)
-        if (pixels == 0 || pixels <= 8500000) {
+        // [v3.3] Safety: If pixels unknown (0), default to Heavy (Scout might choke on huge image)
+        if (pixels > 0 && pixels <= 8500000) {
             result.type = ImageType::TypeA_Sprint;
         } else {
             result.type = ImageType::TypeB_Heavy;
