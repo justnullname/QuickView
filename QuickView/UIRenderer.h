@@ -38,10 +38,10 @@ public:
     // ===== UI 状态更新 =====
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
-    void SetDebugStats(float fps, size_t memBytes, size_t queueSize, int skipCount, double thumbTimeMs = 0.0,
-        int cancelCount = 0, double heavyTimeMs = 0.0, const std::wstring& loaderName = L"", int heavyPending = 0,
-        const ImageEngine::CacheTopology& topology = {}, size_t cacheMemory = 0,
-        const ImageEngine::ArenaStats& arena = {});
+    
+    // [HUD V4] Zero-Cost Telemetry
+    void SetTelemetry(const ImageEngine::TelemetrySnapshot& s) { m_telemetry = s; if (m_showDebugHUD) MarkDynamicDirty(); }
+    
     void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkDynamicDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
@@ -74,26 +74,11 @@ private:
     float m_osdOpacity = 0.0f;
     D2D1_COLOR_F m_osdColor = D2D1::ColorF(D2D1::ColorF::White);
     
-    // Debug HUD
+    // Debug HUD V4 State
     bool m_showDebugHUD = false;
-    float m_fps = 0;
-    size_t m_memBytes = 0;
-    size_t m_queueSize = 0;
-    int m_skipCount = 0;
-    double m_thumbTimeMs = 0.0;
-    int m_cancelCount = 0;       // New: Regicide Count
-    double m_heavyTimeMs = 0.0;  // New: Heavy Decode Time
-    std::wstring m_loaderName;   // New: Decoder Name
-    int m_heavyPending = 0;      // New: Heavy Queue
-    ImageEngine::CacheTopology m_topology; // Phase 4: Cache Topology
-    size_t m_cacheMemory = 0;    // Phase 4: Cache Memory Usage
-    ImageEngine::ArenaStats m_arena; // Phase 4: Arena Water Levels
+    ImageEngine::TelemetrySnapshot m_telemetry;
     
-    // Phase 4: Oscilloscope Ring Buffer (60 frames history)
-    static constexpr int OSCILLOSCOPE_SIZE = 60;
-    std::array<float, OSCILLOSCOPE_SIZE> m_scoutHistory{};
-    std::array<float, OSCILLOSCOPE_SIZE> m_heavyHistory{};
-    int m_historyOffset = 0;
+    // Legacy members removed (m_fps, m_memBytes, history buffers etc.)
     
     RuntimeConfig m_runtime; // Verification Flags
     

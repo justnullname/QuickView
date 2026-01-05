@@ -4966,51 +4966,33 @@ void OnPaint(HWND hwnd) {
                 g_imageEngine->SetHighPriorityMode(isWarping);
             }
 
-            // Collect Metrics (Lazy)
-            double currentThumbTime = 0.0;
-            double currentHeavyTime = 0.0;
-            int currentCancelCount = 0;
-            int currentHeavyPending = 0;
-            std::wstring currentLoaderName;
-
+            // [HUD V4] Telemetry Gathering
             if (g_imageEngine) {
-                auto stats = g_imageEngine->GetDebugStats();
+                auto s = g_imageEngine->GetTelemetry();
                 
-                // [HUD Fix] Only show stats if they belong to current image
-                ImageID curId = ComputePathHash(g_imagePath);
+                // Fill UI-side Metrics
+                s.fps = g_fps;
+                s.renderHash = ComputePathHash(g_imagePath);
+                
+                // Sync Logic: Green if ID matches.
+                // UIRenderer handles Yellow/Red based on this.
+                s.syncStatus = (s.targetHash == s.renderHash);
 
-                currentThumbTime = (stats.scoutLastImageId == curId) ? stats.scoutLoadTimeMs : 0.0;
-                currentHeavyTime = (stats.heavyLastImageId == curId) ? stats.heavyDecodeTimeMs : 0.0;
-                
-                currentCancelCount = stats.cancelCount;
-                currentLoaderName = stats.loaderName;
-                currentHeavyPending = stats.heavyPendingCount;
-
-                g_debugMetrics.eventQueueSize = stats.scoutQueueSize;
-                g_debugMetrics.skipCount = stats.scoutSkipCount;
-                
-                PROCESS_MEMORY_COUNTERS pmc = {};
-                pmc.cb = sizeof(pmc);
-                if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-                    g_debugMetrics.memoryUsage = pmc.WorkingSetSize;
+                // Inject Image Specs
+                if (g_currentBitmap) {
+                    auto size = g_currentBitmap->GetPixelSize();
+                    auto fmt = g_currentBitmap->GetPixelFormat();
+                    const char* fmtStr = "Unknown";
+                    if (fmt.format == DXGI_FORMAT_B8G8R8A8_UNORM) fmtStr = "BGRA 32bpp";
+                    else if (fmt.format == DXGI_FORMAT_R8G8B8A8_UNORM) fmtStr = "RGBA 32bpp";
+                    else if (fmt.format == DXGI_FORMAT_A8_UNORM) fmtStr = "Alpha 8bpp";
+                    
+                    snprintf(s.imageSpecs, 64, "%.0fx%.0f %s", size.width, size.height, fmtStr);
+                } else {
+                    strcpy_s(s.imageSpecs, "No Image");
                 }
-            
-                g_debugMetrics.fps = (int)std::round(g_fps);
 
-                g_uiRenderer->SetDebugStats(
-                    g_fps, 
-                    g_debugMetrics.memoryUsage.load(),       // memBytes
-                    g_debugMetrics.eventQueueSize.load(),    // queueSize
-                    g_debugMetrics.skipCount.load(),         // skipCount
-                    currentThumbTime,                        // thumbTimeMs
-                    currentCancelCount,
-                    currentHeavyTime,
-                    currentLoaderName,
-                    currentHeavyPending,
-                    stats.topology,                          // Phase 4: Cache Topology
-                    stats.cacheMemoryUsed,                   // Phase 4: Cache Memory
-                    stats.arena                              // Phase 4: Arena Stats
-                );
+                g_uiRenderer->SetTelemetry(s);
             }
         }
         

@@ -66,6 +66,14 @@ public:
     };
     PoolStats GetStats() const;
     
+    // [HUD V4] Zero-Cost Snapshot
+    struct WorkerSnapshot {
+        bool alive;
+        bool busy;
+        int lastTimeMs;
+    };
+    void GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const;
+    
     // Check if any worker is busy (for wait cursor logic)
     bool IsBusy() const { return m_busyCount.load() > 0; }
     bool IsIdle() const { return m_busyCount.load() == 0 && m_pendingJobs.empty(); }
@@ -79,6 +87,8 @@ private:
         ImageID currentId = 0;  // [ImageID] Path hash of current task
         std::stop_source stopSource;
         std::chrono::steady_clock::time_point lastActiveTime;
+        int lastDurationMs = 0; // [HUD V4] Persist last decode time
+        ImageID lastImageId = 0; // [Phase 10] For sync (clear on nav)
         
         // Each worker has its own arena for isolation
         // Allocated lazily when task is received, released when idle

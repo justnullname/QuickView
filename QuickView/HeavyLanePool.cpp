@@ -212,11 +212,15 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         }
         
         // Perform decode
+        auto t0 = std::chrono::steady_clock::now();
         PerformDecode(workerId, path, imageId, self.stopSource.get_token());
+        auto t1 = std::chrono::steady_clock::now();
         
         // Decode complete
         m_busyCount.fetch_sub(1);
-        self.lastActiveTime = std::chrono::steady_clock::now();
+        self.lastActiveTime = t1;
+        self.lastDurationMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        self.lastImageId = imageId; // [Phase 10] Save ID for sync
         
         // [User Feedback] Decision: become hot-spare or destroy?
         if (ShouldBecomeHotSpare(workerId)) {
@@ -473,4 +477,32 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     stats.pendingJobs = static_cast<int>(m_pendingJobs.size());
     
     return stats;
+}
+
+void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const {
+    if (!outBuffer || !outCount) return;
+    
+    std::lock_guard lock(m_poolMutex);
+    int count = 0;
+    
+    // Return max up to capacity
+    for (const auto& w : m_workers) {
+        if (count >= capacity) break;
+        
+        WorkerSnapshot& ws = outBuffer[count];
+        ws.alive = (w.state != WorkerState::SLEEPING);
+        // State interpretation
+        ws.busy = (w.state == WorkerState::BUSY);
+        
+        // Time logic: [Phase 9] User wants static "last duration" only
+        // [Phase 10] Clear if from previous image
+        if (w.lastImageId == currentId) {
+             ws.lastTimeMs = w.lastDurationMs; 
+        } else {
+             ws.lastTimeMs = 0; // Clear old times
+        }
+        
+        count++;
+    }
+    *outCount = count;
 }

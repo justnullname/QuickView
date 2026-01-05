@@ -128,6 +128,48 @@ public:
         size_t backCapacity = 0;
     };
     
+    // [HUD V4] Zero-Cost TelemetrySnapshot (POD)
+    struct TelemetrySnapshot {
+        // Zone A: Vitals
+        float fps = 0.0f;
+        ImageID targetHash = 0;
+        ImageID renderHash = 0;
+        wchar_t loaderName[64] = { 0 };
+        char imageSpecs[64] = { 0 }; // [Phase 7] Restored
+        bool syncStatus = false; // Green/Yellow/Red logic helper
+        
+        // Zone A2: Legacy DComp
+        bool layerImg = false;
+        bool layerGal = false;
+        bool layerSta = false;
+        bool layerDyn = false;
+        bool slowMo = false;
+
+        // Zone B: Matrix
+        int scoutQueue = 0;
+        int scoutDropped = 0;
+        bool scoutWorking = false;
+        int scoutLoadTime = 0; // [Phase 9] ms
+        
+        struct HeavyWorkerInfo {
+            bool alive = false;
+            bool busy = false; // True = Red, False = Yellow
+            int lastTimeMs = 0;
+        } heavyWorkers[16]; // Fixed size for snapshot
+        int heavyWorkerCount = 0;
+        
+        // Zone C: Logic
+        CacheStatus cacheSlots[5]; // [-2, -1, CUR, +1, +2]
+        
+        // Zone D: Memory
+        size_t pmrUsed = 0;
+        size_t pmrCapacity = 0;
+        size_t sysMemory = 0;    // [Phase 6] Working Set
+    };
+    
+    TelemetrySnapshot GetTelemetry() const;
+    
+    // Legacy Debug API (Deprecated, to be removed)
     struct DebugStats {
         int scoutQueueSize = 0;
         int scoutResultsSize = 0;
@@ -193,6 +235,8 @@ private:
         
         std::atomic<double> m_lastLoadTimeMs{ 0.0 }; // Public atomic for easy access
         std::atomic<ImageID> m_lastLoadId{ 0 };      // [HUD Fix] Track ImageID
+        std::atomic<int> m_droppedCount{ 0 };        // [HUD V4] Dropped tasks
+        std::atomic<bool> m_isWorking{ false };      // [HUD V4] Active State
 
     private:
         void QueueWorker(); // The Scout Thread Function

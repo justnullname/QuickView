@@ -3,6 +3,8 @@
 #include "FileNavigator.h"
 #include "HeavyLanePool.h"  // [N+1] Include pool implementation
 #include <algorithm>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
 #include <cctype>
 #include <filesystem>
 
@@ -275,6 +277,78 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     return s;
 }
 
+// [HUD V4] Zero-Cost Telemetry Gathering (Pull Mode)
+ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
+    TelemetrySnapshot s = {};
+    
+    // 1. Vitals (Zone A & A2)
+    s.targetHash = m_currentImageId.load();
+    // RenderHash is filled by UI (main.cpp)
+    // FPS is filled by UI
+    // Loader Name
+    wcscpy_s(s.loaderName, m_scout.GetLastLoaderName().c_str());
+    
+    // Legacy DComp Lights: Filled by UI
+    
+    // SlowMo (Runtime Config)
+    s.slowMo = m_config.SlowMotion;
+    
+    // Zone B: Matrix (Scout)
+    s.scoutQueue = m_scout.GetQueueSize();
+    s.scoutDropped = m_scout.m_droppedCount.load();
+    s.scoutWorking = m_scout.m_isWorking.load();
+    // [Phase 10] Filter Scout Time by ImageID
+    if (m_scout.m_lastLoadId == s.targetHash) {
+        s.scoutLoadTime = (int)m_scout.m_lastLoadTimeMs.load();
+    } else {
+        s.scoutLoadTime = 0;
+    }
+    
+    // [Phase 10] Pass targetHash to filter stale times
+    m_heavyPool->GetWorkerSnapshots((HeavyLanePool::WorkerSnapshot*)s.heavyWorkers, 16, &s.heavyWorkerCount, s.targetHash);
+    
+    // 3. Logic (Zone C)
+    // Reconstruct topology from cache
+    {
+        std::lock_guard lock(m_cacheMutex);
+        for (int i = -2; i <= 2; ++i) {
+             int slotIdx = i + 2; // 0..4
+             int targetIndex = m_currentViewIndex + i;
+             
+             if (!m_navigator || targetIndex < 0 || targetIndex >= (int)m_navigator->Count()) {
+                 s.cacheSlots[slotIdx] = CacheStatus::EMPTY;
+                 continue;
+             }
+             
+             std::wstring path = m_navigator->GetFile(targetIndex);
+             if (m_cache.count(path)) {
+                 s.cacheSlots[slotIdx] = CacheStatus::HEAVY; // Green (Mem)
+             } else {
+                 s.cacheSlots[slotIdx] = CacheStatus::EMPTY; 
+                 // If we had a queue check in Dispatcher, could allow BLUE status.
+                 // For now MEM vs OTHER.
+             }
+        }
+        
+        // Override Center if Heavy is working on it
+        // Check local state vs heavy pool state?
+        // Actually HUD logic handles "Cur" specifically often.
+        // Let's stick to Cache Status.
+    }
+    
+    // 4. Memory (Zone D)
+    s.pmrUsed = m_pool.GetUsedMemory();
+    s.pmrCapacity = m_pool.GetTotalMemory();
+    
+    // System Memory
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        s.sysMemory = pmc.WorkingSetSize;
+    }
+    
+    return s;
+}
+
 void ImageEngine::ResetDebugCounters() {
     m_scout.ResetSkipCount();
     m_scout.ResetSkipCount();
@@ -305,6 +379,7 @@ ImageEngine::ScoutLane::~ScoutLane() {
 // [v3.1] Ruthless Purge: Clear pending queue but keep results
 void ImageEngine::ScoutLane::Clear() {
     std::lock_guard lock(m_queueMutex);
+    m_droppedCount += (int)m_queue.size(); // [HUD V4] Count drops
     m_queue.clear();
     // CRITICAL: Do NOT clear m_results. Completed thumbnails should remain.
     // m_skipCount is not reset here, it accumulates for debug stats.
@@ -325,6 +400,9 @@ void ImageEngine::ScoutLane::Push(const std::wstring& path) {
             path.substr(path.find_last_of(L"\\/") + 1).c_str(), (int)m_queue.size());
         OutputDebugStringW(buf);
     }
+
+    // [Phase 10] Reset timer logic
+    m_lastLoadTimeMs = 0.0;
     
     m_cv.notify_one();
 }
@@ -378,6 +456,8 @@ void ImageEngine::ScoutLane::QueueWorker() {
             }
             
             if (path.empty()) continue;
+            
+            m_isWorking = true; // [HUD V4] Active
             
             std::wstring debugMsg = L"[Scout] Processing: " + path.substr(path.find_last_of(L"\\/") + 1) + L"\n";
             OutputDebugStringW(debugMsg.c_str());
@@ -450,8 +530,11 @@ void ImageEngine::ScoutLane::QueueWorker() {
             auto end = std::chrono::high_resolution_clock::now();
             m_lastLoadTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
             m_lastLoadId.store(ComputePathHash(path)); // [HUD Fix]
+            
+            m_isWorking = false; // [HUD V4] Idle
 
         } catch (const std::exception& ex) {
+            m_isWorking = false; // [HUD V4] Safety reset
             OutputDebugStringW(L"[Scout] CRITICAL EXCEPTION in QueueWorker: ");
             OutputDebugStringA(ex.what());
             OutputDebugStringW(L"\n");
