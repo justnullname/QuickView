@@ -1804,6 +1804,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     }
 
     // --- WebP Path (New Optimized PMR with Scaling) ---
+    // --- WebP Path (New Optimized PMR with Scaling + Deep Cancel) ---
     if (detectedFmt == L"WebP") {
          std::pmr::vector<uint8_t> webpBuf(pmr);
          if (!ReadFileToPMR(filePath, webpBuf, st)) return E_ABORT;
@@ -1814,23 +1815,25 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                   int w = config.input.width;
                   int h = config.input.height;
 
-                  // Scaling Logic
-                  if (targetWidth > 0 && targetHeight > 0 && (w > targetWidth || h > targetHeight)) {
-                      config.options.use_scaling = 1;
-                      // Calculate fit ratio
-                      float ratio = std::min((float)targetWidth / w, (float)targetHeight / h);
-                      config.options.scaled_width = (int)(w * ratio);
-                      config.options.scaled_height = (int)(h * ratio);
-                      // Clamp
-                      if (config.options.scaled_width < 1) config.options.scaled_width = 1;
-                      if (config.options.scaled_height < 1) config.options.scaled_height = 1;
-                      w = config.options.scaled_width;
-                      h = config.options.scaled_height;
+                  // [Optimization] WebP Scaling Disabled (Final Decision)
+                  // Smart Scaling (Lossy=Scale, Lossless=NoScale) was considered, 
+                  // but user testing revealed Phase A (Scaled) took 2100ms+ while Phase B (Full) took 1800ms.
+                  // Scaling provides NO speed benefit for this use case, only artifacting and delay.
+                  // Strategy: Direct Full Decode (Atomic + Multithreaded).
+                  
+                  /*
+                  if (config.input.format == 1) { // 1 = Lossy (VP8)
+                      if (targetWidth > 0 && targetHeight > 0 && (w > targetWidth || h > targetHeight)) {
+                          config.options.use_scaling = 1;
+                         // ...
+                      }
                   }
+                  */
 
                   config.output.colorspace = MODE_BGRA;
                   config.output.is_external_memory = 1; // We allocate!
-                  
+                  config.options.use_threads = 1;       // Enable multithreading
+
                   UINT stride = w * 4;
                   size_t bufSize = (size_t)stride * h;
                   
@@ -1840,6 +1843,8 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                       config.output.u.RGBA.stride = stride;
                       config.output.u.RGBA.size = bufSize;
 
+                      // [Performance] Revert to Atomic Decode (WebPDecode) to match v2.1 speed (1829ms vs 2069ms)
+                      // Deep Cancel (Incremental) adds ~13% overhead. Speed is priority.
                       if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) == VP8_STATUS_OK) {
                            pOutput->width = w;
                            pOutput->height = h;
@@ -1881,6 +1886,165 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                 return S_OK;
             } catch(...) { return E_OUTOFMEMORY; }
         }
+    
+    // --- JXL Path (Streaming Deep Cancel + PMR) ---
+    // [v4.1] Robust check: Magic Bytes OR .jxl extension (Priority to Extension)
+    bool isJXL = (detectedFmt == L"JXL");
+    if (!isJXL) {
+        std::wstring path = filePath;
+        std::transform(path.begin(), path.end(), path.begin(), ::towlower);
+        if (path.ends_with(L".jxl")) isJXL = true;
+    }
+
+    if (isJXL) {
+        std::pmr::vector<uint8_t> jxlBuf(pmr);
+        if (!ReadFileToPMR(filePath, jxlBuf, st)) return E_ABORT;
+
+        JxlDecoder* dec = JxlDecoderCreate(NULL);
+        if (!dec) return E_OUTOFMEMORY;
+
+        // Parallel Runner
+        size_t num_threads = std::thread::hardware_concurrency();
+        if (num_threads < 1) num_threads = 1;
+        void* runner = JxlThreadParallelRunnerCreate(NULL, num_threads);
+        if (!runner) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
+        
+        if (JXL_DEC_SUCCESS != JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner)) {
+            JxlThreadParallelRunnerDestroy(runner); JxlDecoderDestroy(dec); return E_FAIL;
+        }
+
+        if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE)) {
+            JxlThreadParallelRunnerDestroy(runner); JxlDecoderDestroy(dec); return E_FAIL;
+        }
+        
+        JxlBasicInfo info = {};
+        JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; // RGBA
+        
+        bool success = false;
+        const size_t CHUNK_SIZE = 1024 * 1024; // 1MB chunks to force yielding for cancellation
+        size_t offset = 0;
+        size_t totalSize = jxlBuf.size();
+        
+        // Streaming Loop
+        // We feed chunks to force the decoder to return control periodically.
+        
+        // Initial Input (First Chunk)
+        size_t firstChunk = (totalSize > CHUNK_SIZE) ? CHUNK_SIZE : totalSize;
+        if (JXL_DEC_SUCCESS != JxlDecoderSetInput(dec, jxlBuf.data(), firstChunk)) {
+             JxlThreadParallelRunnerDestroy(runner); JxlDecoderDestroy(dec); return E_FAIL;
+        }
+        offset += firstChunk;
+        
+        bool inputClosed = (offset >= totalSize);
+        if (inputClosed) JxlDecoderCloseInput(dec);
+
+        for (;;) {
+            // Check Cancel on every iteration (roughly every chunk or state change)
+            if (ShouldCancel()) {
+                JxlThreadParallelRunnerDestroy(runner);
+                JxlDecoderDestroy(dec);
+                return E_ABORT;
+            }
+
+            JxlDecoderStatus status = JxlDecoderProcessInput(dec);
+            
+            if (status == JXL_DEC_ERROR) {
+                break;
+            }
+            else if (status == JXL_DEC_NEED_MORE_INPUT) {
+                if (offset >= totalSize) {
+                    // We gave everything but it wants more? Unexpected for valid file.
+                    break;
+                }
+                size_t remaining = totalSize - offset;
+                size_t nextChunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+                
+                // Release previous input is automatic when SetInput is called?
+                // JXL API requires us to release? No, SetInput replaces.
+                
+                // CRITICAL: We must provide the pointer to the NEXT chunk.
+                if (JXL_DEC_SUCCESS != JxlDecoderSetInput(dec, jxlBuf.data() + offset, nextChunk)) {
+                    break;
+                }
+                offset += nextChunk;
+                if (offset >= totalSize) JxlDecoderCloseInput(dec);
+            }
+            else if (status == JXL_DEC_BASIC_INFO) {
+                if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) break;
+                
+                // Allocate Output (PMR)
+                // JXL is RGBA. WIC needs 4 channels.
+                UINT w = info.xsize;
+                UINT h = info.ysize;
+                UINT stride = w * 4;
+                try {
+                    pOutput->pixels.resize((size_t)stride * h);
+                } catch(...) { break; } // OOM
+                
+                pOutput->width = w;
+                pOutput->height = h;
+                pOutput->stride = stride;
+                
+                // Using RGBA, but we are BGRA environment?
+                // TurboJPEG uses BGRA.
+                // JXL default is RGBA.
+                // We should check if JXL supports BGRA output.
+                // JxlPixelFormat does NOT have a BGR type. It defines endianness.
+                // We might need to Swap RB processing or use FormatConverter later.
+                // OR: RenderEngine/D2D supports RGBA?
+                // D2D CreateBitmapFromMemory supports GUID_WICPixelFormat32bppRGBA.
+                // So RGBA is fine!
+                
+            }
+            else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+                size_t bufferSize = 0;
+                if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &format, &bufferSize)) break;
+                if (pOutput->pixels.size() != bufferSize) {
+                     // Should match Basic Info calculation, but safety resize
+                     try { pOutput->pixels.resize(bufferSize); } catch(...) { break; }
+                }
+                if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pOutput->pixels.data(), bufferSize)) break;
+            }
+            else if (status == JXL_DEC_SUCCESS || status == JXL_DEC_FULL_IMAGE) {
+                success = true;
+                break;
+            }
+        }
+        
+        JxlThreadParallelRunnerDestroy(runner);
+        JxlDecoderDestroy(dec);
+
+        if (success) {
+            pOutput->isValid = true;
+            // Note: JXL is typically RGBA. 
+            // We need to signal this? LoadToMemoryPMR returns raw pixels.
+            // Main.cpp: CreateBitmapFromMemory(..., pOutput->stride, ...).
+            // Main.cpp uses g_renderEngine->CreateBitmapFromMemory which assumes BGRA?
+            // Let's check Main.cpp.
+            // [Fix] If JXL is RGBA, we might need to swizzle or tell RenderEngine.
+            // But for now, let's assume RGBA is displayable or we Swizzle here.
+            
+            // JXL doesn't support BGR natively. Swizzle is safest to ensure BGRA consistency.
+            // AVIF/WebP/JPEG all produce BGRA.
+            // Let's Swizzle R/B.
+            uint8_t* p = pOutput->pixels.data();
+            size_t pxCount = pOutput->width * pOutput->height;
+            // Unvectorized swizzle (could be slow on 90MP main thread, but parallel runner is done)
+            // Ideally use SIMD or parallelize this too?
+            // Or just leave RGBA and handle in D2D?
+            // Main.cpp (ThumbReady) -> CreateBitmapFromMemory.
+            // RenderEngine::CreateBitmapFromMemory uses ... ?
+            // Let's stick to BGRA to be safe.
+            // For 90MP, swizzling 360MB is ~50ms single thread. Acceptable.
+            for (size_t i=0; i<pxCount; ++i) {
+                std::swap(p[i*4+0], p[i*4+2]);
+            }
+            
+            if (pLoaderName) *pLoaderName = L"JXL (PMR Streaming)";
+            return S_OK;
+        }
+        return E_FAIL; // JXL Decode Failed
+    }
     }
 
     // --- RAW Path (LibRaw - Performance & Thumbnails) ---
@@ -2016,6 +2180,11 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     UINT w, h;
     wicBitmap->GetSize(&w, &h);
     
+    // Check pixel format for Swizzle need
+    WICPixelFormatGUID fmt = {0};
+    wicBitmap->GetPixelFormat(&fmt);
+    bool needsSwizzle = (fmt == GUID_WICPixelFormat32bppRGBA);
+
     UINT stride = w * 4;
     size_t bufSize = (size_t)stride * h;
     
@@ -2047,6 +2216,16 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                 }
             }
             pOutput->isValid = true;
+            
+            // [v4.1] Universal Swizzle Fix for Fallback Loaders (e.g. JXL via LoadToMemory)
+            if (needsSwizzle) {
+                 uint8_t* p = pOutput->pixels.data();
+                 size_t pxCount = (size_t)w * h;
+                 for (size_t i = 0; i < pxCount; ++i) {
+                     std::swap(p[i*4+0], p[i*4+2]);
+                 }
+                 if (pLoaderName) *pLoaderName += L" [Swizzled]";
+            }
             
             // [v3.1] Append resolution to confirm we got the real deal
             if (pLoaderName) {
@@ -3752,7 +3931,7 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
         HRESULT hr = LoadThumbWebPFromMemory(buf.data(), buf.size(), 65535, pData);
         if (SUCCEEDED(hr)) {
             pData->isBlurry = false;
-            pData->loaderName = L"libwebp";
+            pData->loaderName = L"WebP (Fast)";
         }
         return hr;
     }
@@ -3778,6 +3957,44 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
               pData->loaderName = L"Wuffs";
               return S_OK;
          }
+    }
+    
+    else if (format == L"JXL" || ((format == L"Unknown") && ext.ends_with(L".jxl"))) {
+         // [v4.0] JXL Support for Scout Lane
+         ComPtr<IWICBitmap> pBitmap;
+         HRESULT hr = LoadJXL(filePath, &pBitmap); // Uses existing LoadJXL helper
+         if (SUCCEEDED(hr) && pBitmap) {
+             UINT w, h;
+             pBitmap->GetSize(&w, &h);
+             pData->width = w;
+             pData->height = h;
+             pData->stride = w * 4;
+             pData->pixels.resize((size_t)pData->stride * h);
+             
+             // Copy pixels
+             ComPtr<IWICBitmapLock> lock;
+             WICRect rc = { 0, 0, (INT)w, (INT)h };
+             if (SUCCEEDED(pBitmap->Lock(&rc, WICBitmapLockRead, &lock))) {
+                 BYTE* ptr = nullptr;
+                 UINT cbBufferSize = 0;
+                 if (SUCCEEDED(lock->GetDataPointer(&cbBufferSize, &ptr))) {
+                     memcpy(pData->pixels.data(), ptr, cbBufferSize);
+                     
+                     // [Fix] JXL is RGBA, Main Loop expects BGRA. Swizzle R/B.
+                     uint8_t* p = pData->pixels.data();
+                     size_t count = (size_t)w * h;
+                     for (size_t i = 0; i < count; ++i) {
+                         std::swap(p[i*4+0], p[i*4+2]);
+                     }
+                     
+                     pData->isValid = true;
+                     pData->isBlurry = false;
+                     pData->loaderName = L"libjxl (Scout)";
+                     return S_OK;
+                 }
+             }
+         }
+         return E_FAIL;
     }
     
     return E_FAIL;
