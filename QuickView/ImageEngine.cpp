@@ -75,6 +75,26 @@ void ImageEngine::CancelHeavy() {
     }
 }
 
+// [Two-Stage] Request full resolution decode for current image
+// Called after 300ms idle when viewing a scaled image
+void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
+    if (path.empty()) return;
+    if (!m_heavyPool) return;
+    
+    // Only proceed if this is still the current image
+    if (imageId != m_currentImageId.load()) {
+        OutputDebugStringW(L"[Two-Stage] RequestFullDecode cancelled - image changed\n");
+        return;
+    }
+    
+    // Submit to Heavy Lane with targetWidth=0 to force full resolution decode
+    m_heavyPool->SubmitFullDecode(path, imageId);
+    
+    wchar_t buf[256];
+    swprintf_s(buf, L"[Two-Stage] Full decode requested: ImageID=%zu\n", imageId);
+    OutputDebugStringW(buf);
+}
+
 void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint64_t navToken) {
     if (path.empty()) return;
     
@@ -310,11 +330,22 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     m_heavyPool->GetWorkerSnapshots((HeavyLanePool::WorkerSnapshot*)s.heavyWorkers, 16, &s.heavyWorkerCount, s.targetHash);
     
     // [Phase 11] Bubble up Heavy Lane Loader Name
+    bool hasFullDecode = false;
     for (int i = 0; i < s.heavyWorkerCount; ++i) {
-        // If worker has a valid result (lastTimeMs > 0 means it passed the ID check in GetWorkerSnapshots)
+        // If worker has a valid result
         if (s.heavyWorkers[i].lastTimeMs > 0 && s.heavyWorkers[i].loaderName[0] != 0) {
-            wcscpy_s(s.loaderName, s.heavyWorkers[i].loaderName);
-            break; // First winner is enough
+            
+            // Priority: Full Decode > Scaled Decode > Scout
+            if (s.heavyWorkers[i].isFullDecode) {
+                wcscpy_s(s.loaderName, s.heavyWorkers[i].loaderName);
+                hasFullDecode = true;
+                break; // Found the best quality, stop searching
+            }
+            
+            // If we haven't found a full decode yet, take this (likely scaled) result
+            if (!hasFullDecode) {
+                wcscpy_s(s.loaderName, s.heavyWorkers[i].loaderName);
+            }
         }
     }
     

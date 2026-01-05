@@ -45,6 +45,9 @@ public:
     // [ImageID] Uses stable path hash instead of incrementing token
     void Submit(const std::wstring& path, ImageID imageId);
     
+    // [Two-Stage] Submit for full resolution decode (no scaling)
+    void SubmitFullDecode(const std::wstring& path, ImageID imageId);
+    
     // === Cancellation ===
     // [ImageID] Cancel tasks that don't match the current imageId
     void CancelOthers(ImageID currentId);
@@ -72,6 +75,7 @@ public:
         bool busy;
         int lastTimeMs;
         wchar_t loaderName[64] = { 0 }; // [Phase 11]
+        bool isFullDecode = false;      // [Two-Stage]
     };
     void GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const;
     
@@ -91,6 +95,7 @@ private:
         int lastDurationMs = 0; // [HUD V4] Persist last decode time
         ImageID lastImageId = 0; // [Phase 10] For sync (clear on nav)
         std::wstring loaderName; // [Phase 11] Capture actual decoder name
+        bool isFullDecode = false; // [Two-Stage] Records if last decode was full res
         
         // [Crash Fix] Per-worker arena for true memory isolation
         // Each worker has its own arena to prevent race conditions
@@ -119,7 +124,12 @@ private:
     // Job queue
     mutable std::mutex m_poolMutex;
     std::condition_variable m_poolCv;
-    std::deque<std::pair<std::wstring, uint64_t>> m_pendingJobs;
+    struct JobInfo {
+        std::wstring path;
+        ImageID imageId;
+        bool isFullDecode = false;  // [Two-Stage] true = full resolution, false = scaled
+    };
+    std::deque<JobInfo> m_pendingJobs;
     
     // Results queue
     mutable std::mutex m_resultMutex;
@@ -133,7 +143,8 @@ private:
     void ShrinkerLoop(std::stop_token st);
     
     // Perform actual decode (calls into ImageLoader)
-    void PerformDecode(int workerId, const std::wstring& path, ImageID imageId, std::stop_token st, std::wstring* outLoaderName);
+    // [Two-Stage] isFullDecode=true for full resolution, false for fit-to-screen IDCT scaling
+    void PerformDecode(int workerId, const std::wstring& path, ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode = false);
     
     // Expansion/Shrink logic
     void TryExpand();  // Called when job submitted

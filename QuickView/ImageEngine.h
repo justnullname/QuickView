@@ -84,6 +84,10 @@ public:
     
     // [v3.1] Cancel Heavy Lane when Fast Pass succeeds
     void CancelHeavy();  // Implementation in ImageEngine.cpp
+    
+    // [Two-Stage] Request full resolution decode for current image
+    // Called after 300ms idle when viewing a scaled image
+    void RequestFullDecode(const std::wstring& path, ImageID imageId);
 
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
@@ -159,6 +163,7 @@ public:
             bool busy = false; // True = Red, False = Yellow
             int lastTimeMs = 0;
             wchar_t loaderName[64] = { 0 }; // [Phase 11]
+            bool isFullDecode = false;      // [Two-Stage] Match WorkerSnapshot layout
         } heavyWorkers[16]; // Fixed size for snapshot
         int heavyWorkerCount = 0;
         

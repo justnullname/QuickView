@@ -189,6 +189,9 @@ static bool g_isLoading = false;           // Show Wait Cursor
 static std::atomic<uint64_t> g_currentNavToken = 0; // [Phase 3] Navigation Token (deprecated)
 static std::atomic<ImageID> g_currentImageId{0}; // [ImageID] Stable path hash for event filtering
 static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2: Truth/Heavy
+static bool g_isImageScaled = false;         // [Two-Stage] True if current image is IDCT scaled
+static DWORD g_scaledDecodeTime = 0;         // [Two-Stage] Tick when scaled image was shown
+static constexpr UINT_PTR IDT_FULL_DECODE = 42;  // Timer ID for 300ms full decode trigger
 
 // === Debug HUD ===
 DebugMetrics g_debugMetrics; // Global Metrics Instance
@@ -1915,6 +1918,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
 
         
+        // [Two-Stage Decode] Full Resolution Trigger (IDT_FULL_DECODE = 42)
+        if (wParam == IDT_FULL_DECODE) {
+            KillTimer(hwnd, IDT_FULL_DECODE);
+            
+            // Only trigger if still showing a scaled image AND not navigating
+            if (g_isImageScaled && g_imageEngine && !g_imagePath.empty()) {
+                OutputDebugStringW(L"[Two-Stage] 300ms idle - Requesting full resolution decode\n");
+                
+                // Re-submit current image for full decode (targetWidth=0 means no scaling)
+                g_imageEngine->RequestFullDecode(g_imagePath, g_currentImageId.load());
+            }
+        }
+
         // Interaction Timer (1001)
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
@@ -3957,8 +3973,9 @@ void ProcessEngineEvents(HWND hwnd) {
             // evt.fullImage is IWICBitmapSource
             
             // [v3.1] Texture Promotion Mechanism
-            // Only accept if current level is < 2
-            if (g_imageQualityLevel >= 2) break; 
+            // Only accept if current level is < 2 OR if we are upgrading from specific Scaled state
+            // If we are already at Level 2 (Full/Heavy) AND not scaled, we don't need update.
+            if (g_imageQualityLevel >= 2 && !g_isImageScaled) break; 
             
             ComPtr<ID2D1Bitmap> fullBitmap;
             if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
@@ -3970,7 +3987,18 @@ void ProcessEngineEvents(HWND hwnd) {
                 // 2. Set NEW image as Current (Truth)
                 g_currentBitmap = fullBitmap;
                 g_isBlurry = false; 
-                g_imageQualityLevel = 2; // [v3.1] Promoted to Level 2 (Truth) 
+                g_imageQualityLevel = 2; // [v3.1] Promoted to Level 2 (Truth/Fit)
+                
+                // [Two-Stage] Track if image was scaled (IDCT downscaled)
+                g_isImageScaled = evt.isScaled;
+                if (evt.isScaled) {
+                    // Start 300ms idle timer for full resolution decode
+                    g_scaledDecodeTime = GetTickCount();
+                    SetTimer(hwnd, IDT_FULL_DECODE, 300, nullptr);
+                } else {
+                    // Already full resolution, no need for timer
+                    KillTimer(hwnd, IDT_FULL_DECODE);
+                } 
                 
                 // 3. Start Arrival Transition (ALWAYS, even if Fade disabled)
                 // This ensures we enter the "Priority Render Block" in OnPaint, 
@@ -4980,14 +5008,17 @@ void OnPaint(HWND hwnd) {
 
                 // Inject Image Specs
                 if (g_currentBitmap) {
-                    auto size = g_currentBitmap->GetPixelSize();
+                    auto size = g_currentBitmap->GetSize(); // Logical size
+                    auto pixelSize = g_currentBitmap->GetPixelSize(); // Physical size
                     auto fmt = g_currentBitmap->GetPixelFormat();
                     const char* fmtStr = "Unknown";
-                    if (fmt.format == DXGI_FORMAT_B8G8R8A8_UNORM) fmtStr = "BGRA 32bpp";
-                    else if (fmt.format == DXGI_FORMAT_R8G8B8A8_UNORM) fmtStr = "RGBA 32bpp";
-                    else if (fmt.format == DXGI_FORMAT_A8_UNORM) fmtStr = "Alpha 8bpp";
+                    if (fmt.format == DXGI_FORMAT_B8G8R8A8_UNORM) fmtStr = "BGRA";
+                    else if (fmt.format == DXGI_FORMAT_R8G8B8A8_UNORM) fmtStr = "RGBA";
+                    else if (fmt.format == DXGI_FORMAT_A8_UNORM) fmtStr = "Alpha";
                     
-                    snprintf(s.imageSpecs, 64, "%.0fx%.0f %s", size.width, size.height, fmtStr);
+                    // [Debug] Append Flags to Specs
+                    snprintf(s.imageSpecs, 64, "%.0fx%.0f %s", 
+                        (double)size.width, (double)size.height, fmtStr);
                 } else {
                     strcpy_s(s.imageSpecs, "No Image");
                 }

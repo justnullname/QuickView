@@ -70,13 +70,32 @@ HeavyLanePool::~HeavyLanePool() {
 void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId) {
     std::lock_guard lock(m_poolMutex);
     
-    // Add to queue
-    m_pendingJobs.push_back({path, imageId});
+    // Add to queue (isFullDecode = false for normal scaled decode)
+    m_pendingJobs.push_back({path, imageId, false});
     
     wchar_t buf[256];
     swprintf_s(buf, L"[HeavyPool] Submit: path=%s, ImageID=%zu, pendingJobs=%d\n",
         path.substr(path.find_last_of(L"\\/") + 1).c_str(),
         imageId, (int)m_pendingJobs.size());
+    OutputDebugStringW(buf);
+    
+    // Try to expand if all workers are busy
+    TryExpand();
+    
+    // Wake up a waiting worker
+    m_poolCv.notify_one();
+}
+
+// [Two-Stage] Submit for full resolution decode (no scaling)
+void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId) {
+    std::lock_guard lock(m_poolMutex);
+    
+    // Add to queue with isFullDecode = true
+    m_pendingJobs.push_back({path, imageId, true});
+    
+    wchar_t buf[256];
+    swprintf_s(buf, L"[HeavyPool] SubmitFullDecode: path=%s, ImageID=%zu\n",
+        path.substr(path.find_last_of(L"\\/") + 1).c_str(), imageId);
     OutputDebugStringW(buf);
     
     // Try to expand if all workers are busy
@@ -140,7 +159,7 @@ void HeavyLanePool::CancelOthers(ImageID currentId) {
     auto oldSize = m_pendingJobs.size();
     m_pendingJobs.erase(
         std::remove_if(m_pendingJobs.begin(), m_pendingJobs.end(),
-            [currentId](const auto& job) { return job.second != currentId; }),
+            [currentId](const auto& job) { return job.imageId != currentId; }),
         m_pendingJobs.end()
     );
     
@@ -187,6 +206,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
     while (!st.stop_requested()) {
         std::wstring path;
         ImageID imageId = 0;  // [ImageID]
+        bool isFullDecode = false;  // [Two-Stage] 
         
         // Wait for job
         {
@@ -201,8 +221,9 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             // Take job
             auto job = m_pendingJobs.front();
             m_pendingJobs.pop_front();
-            path = job.first;
-            imageId = job.second;
+            path = job.path;
+            imageId = job.imageId;
+            isFullDecode = job.isFullDecode;  // [Two-Stage]
             
             self.currentPath = path;
             self.currentId = imageId;  // [ImageID]
@@ -213,7 +234,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         
         // Perform decode
         auto t0 = std::chrono::steady_clock::now();
-        PerformDecode(workerId, path, imageId, self.stopSource.get_token(), &self.loaderName);
+        PerformDecode(workerId, path, imageId, st, &self.loaderName, isFullDecode);
         auto t1 = std::chrono::steady_clock::now();
         
         // Decode complete
@@ -221,6 +242,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         self.lastActiveTime = t1;
         self.lastDurationMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
         self.lastImageId = imageId; // [Phase 10] Save ID for sync
+        self.isFullDecode = isFullDecode; // [Two-Stage] Save status
         
         // [User Feedback] Decision: become hot-spare or destroy?
         if (ShouldBecomeHotSpare(workerId)) {
@@ -335,7 +357,7 @@ void HeavyLanePool::ShrinkerLoop(std::stop_token st) {
 // ============================================================================
 
 void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
-                                   ImageID imageId, std::stop_token st, std::wstring* outLoaderName) {
+                                   ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode) {
     if (path.empty()) return;
     
     auto start = std::chrono::high_resolution_clock::now();
@@ -355,9 +377,11 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         auto& arena = *m_workers[workerId].arena;
         arena.Reset();  // Safe: only this worker uses this arena
         
-        // Calculate target size (fit to screen)
-        int targetW = GetSystemMetrics(SM_CXSCREEN);
-        int targetH = GetSystemMetrics(SM_CYSCREEN);
+        // [Two-Stage] Calculate target size
+        // If isFullDecode, use 0 (forces full resolution decode)
+        // Otherwise, fit to screen (enables IDCT scaling)
+        int targetW = isFullDecode ? 0 : GetSystemMetrics(SM_CXSCREEN);
+        int targetH = isFullDecode ? 0 : GetSystemMetrics(SM_CYSCREEN);
         
         // Create decoded image with PMR allocator
         CImageLoader::DecodedImage decoded(arena.GetResource());
@@ -410,20 +434,26 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
                 evt.filePath = path;
                 evt.imageId = imageId;  // [ImageID] Stable hash instead of navToken
                 evt.fullImage = wicBitmap;
-                evt.loaderName = loaderName;
                 evt.metadata = std::move(meta);
                 
                 // Determine if scaled
-                bool isFitPixelPerfect = (decoded.width >= (UINT)targetW && decoded.height >= (UINT)targetH);
-                bool wasScaled = (targetW > 0 && targetH > 0 && !isFitPixelPerfect);
+                // [Fix V3] Compare against original dimensions from metadata, not targetW.
+                // Previously, if 4500px result >= 3840px target, we thought it was "full", 
+                // preventing Stage B upgrade for 6000px images.
+                // Allow small fuzz factor for jpeg alignment.
+                bool wasScaled = (decoded.width < (UINT)(evt.metadata.Width - 8) || decoded.height < (UINT)(evt.metadata.Height - 8));
                 evt.isScaled = wasScaled;
                 
                 QueueResult(std::move(evt));
             }
         }
+        
+        // [Fix V2] Always update loader name (even on failure) to prevent stale "[Scaled]"
+        if (outLoaderName) *outLoaderName = loaderName;
     }
     catch (...) {
         // Silently ignore decode errors
+        if (outLoaderName) *outLoaderName = L"Worker Exception";
     }
     
     auto end = std::chrono::high_resolution_clock::now();
@@ -516,9 +546,11 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
              ws.lastTimeMs = w.lastDurationMs; 
              // [Phase 11] Copy Loader Name
              wcsncpy_s(ws.loaderName, w.loaderName.c_str(), 63);
+             ws.isFullDecode = w.isFullDecode; // [Two-Stage]
         } else {
              ws.lastTimeMs = 0; // Clear old times
              ws.loaderName[0] = 0; // Clear old name
+             ws.isFullDecode = false;
         }
         
         count++;
