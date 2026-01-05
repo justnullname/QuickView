@@ -1450,7 +1450,7 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forc
     return hr;
 }
 
-HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName, bool forceFullDecode) {
+HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName, bool forceFullDecode, CancelPredicate checkCancel) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
     
     // Clear previous state to avoid residue when switching formats
@@ -1477,7 +1477,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libjpeg-turbo"; return S_OK; }
     }
     else if (detectedFmt == L"PNG") {
-        HRESULT hr = LoadPngWuffs(filePath, ppBitmap); // Wuffs is faster/safer
+        HRESULT hr = LoadPngWuffs(filePath, ppBitmap, checkCancel); // Wuffs is faster/safer
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs PNG"; return S_OK; }
     }
     else if (detectedFmt == L"WebP") {
@@ -1494,19 +1494,19 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libjxl"; return S_OK; }
     }
     else if (detectedFmt == L"GIF") {
-        HRESULT hr = LoadGifWuffs(filePath, ppBitmap);
+        HRESULT hr = LoadGifWuffs(filePath, ppBitmap, checkCancel);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs GIF"; return S_OK; }
     }
     else if (detectedFmt == L"BMP") {
-         HRESULT hr = LoadBmpWuffs(filePath, ppBitmap);
+         HRESULT hr = LoadBmpWuffs(filePath, ppBitmap, checkCancel);
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs BMP"; return S_OK; }
     }
     else if (detectedFmt == L"TGA") {
-         HRESULT hr = LoadTgaWuffs(filePath, ppBitmap);
+         HRESULT hr = LoadTgaWuffs(filePath, ppBitmap, checkCancel);
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs TGA"; return S_OK; }
     }
      else if (detectedFmt == L"WBMP") {
-         HRESULT hr = LoadWbmpWuffs(filePath, ppBitmap);
+         HRESULT hr = LoadWbmpWuffs(filePath, ppBitmap, checkCancel);
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs WBMP"; return S_OK; }
     }
     else if (detectedFmt == L"PSD") {
@@ -1702,12 +1702,21 @@ static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, s
 // ============================================================================
 HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, 
                                       int targetWidth, int targetHeight, 
-                                      std::wstring* pLoaderName, std::stop_token st) {
+                                      std::wstring* pLoaderName, 
+                                      std::stop_token st,
+                                      CancelPredicate checkCancel) {
     if (!filePath || !pOutput || !pmr) return E_INVALIDARG;
     
     // Reset output
     pOutput->isValid = false;
     pOutput->pixels = std::pmr::vector<uint8_t>(pmr); // Re-bind to provided allocator
+    
+    // Convenience lambda combining all cancel sources
+    auto ShouldCancel = [&]() {
+        return st.stop_requested() || (checkCancel && checkCancel());
+    };
+    
+    if (ShouldCancel()) return E_ABORT;
     
     // Detect format
     std::wstring detectedFmt = DetectFormatFromContent(filePath);
@@ -1857,7 +1866,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         uint32_t w = 0, h = 0;
         std::vector<uint8_t> pixelData; // Wuffs wrapper returns std::vector (Heap)
         
-        if (WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &w, &h, pixelData)) {
+        if (WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &w, &h, pixelData, ShouldCancel)) {
             UINT stride = w * 4;
             // Copy to PMR
             try {
@@ -1999,7 +2008,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     // Check cancel before expensive LoadToMemory
     if (st.stop_requested()) return E_ABORT;
     
-    HRESULT hr = LoadToMemory(filePath, &wicBitmap, pLoaderName);
+    HRESULT hr = LoadToMemory(filePath, &wicBitmap, pLoaderName, false, ShouldCancel);
     if (FAILED(hr) || !wicBitmap) return hr;
     
     if (st.stop_requested()) return E_ABORT;
@@ -2333,95 +2342,115 @@ HRESULT CImageLoader::GetImageSize(LPCWSTR filePath, UINT* width, UINT* height) 
 // ----------------------------------------------------------------------------
 // Wuffs PNG Decoder (Google's memory-safe decoder)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel) {
+    if (!filePath || !ppBitmap) return E_POINTER;
     std::vector<uint8_t> pngBuf;
     if (!ReadFileToVector(filePath, pngBuf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
     std::vector<uint8_t> pixelData;
     
-    if (!WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &width, &height, pixelData)) {
+    if (!WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
     }
 
+    // [v4.0] Native Premul via Wuffs
+    // SIMD call removed to avoid double-premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                       (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
 }
 
 // ----------------------------------------------------------------------------
 // Wuffs GIF Decoder (First frame only for now)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel) {
+    if (!filePath || !ppBitmap) return E_POINTER;
     std::vector<uint8_t> gifBuf;
     if (!ReadFileToVector(filePath, gifBuf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
     std::vector<uint8_t> pixelData;
 
-    if (!WuffsLoader::DecodeGIF(gifBuf.data(), gifBuf.size(), &width, &height, pixelData)) {
+    if (!WuffsLoader::DecodeGIF(gifBuf.data(), gifBuf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
     }
 
+    // [v4.0] Restore SIMD Premultiplication
+    // [v4.0] Native Premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                       (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
 }
 
 // ----------------------------------------------------------------------------
 // Wuffs BMP Decoder
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadBmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadBmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel) {
+    if (!filePath || !ppBitmap) return E_POINTER;
     std::vector<uint8_t> buf;
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
     std::vector<uint8_t> pixelData;
 
-    if (!WuffsLoader::DecodeBMP(buf.data(), buf.size(), &width, &height, pixelData)) {
+    if (!WuffsLoader::DecodeBMP(buf.data(), buf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
     }
 
+    // [v4.0] Restore SIMD Premultiplication
+    // [v4.0] Native Premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                       (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
 }
 
 // ----------------------------------------------------------------------------
 // Wuffs TGA Decoder
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadTgaWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadTgaWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel) {
+    if (!filePath || !ppBitmap) return E_POINTER;
     std::vector<uint8_t> buf;
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
     std::vector<uint8_t> pixelData;
 
-    if (!WuffsLoader::DecodeTGA(buf.data(), buf.size(), &width, &height, pixelData)) {
+    if (!WuffsLoader::DecodeTGA(buf.data(), buf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
     }
 
+    // [v4.0] Restore SIMD Premultiplication
+    // [v4.0] Native Premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                       (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
 }
 
 // ----------------------------------------------------------------------------
 // Wuffs WBMP Decoder
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel) {
+    if (!filePath || !ppBitmap) return E_POINTER;
     std::vector<uint8_t> buf;
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
     std::vector<uint8_t> pixelData;
 
-    if (!WuffsLoader::DecodeWBMP(buf.data(), buf.size(), &width, &height, pixelData)) {
+    if (!WuffsLoader::DecodeWBMP(buf.data(), buf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
     }
 
+    // [v4.0] Restore SIMD Premultiplication
+    // [v4.0] Native Premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                       (UINT)stride, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
 }
 
@@ -2560,8 +2589,11 @@ HRESULT CImageLoader::LoadNetpbmWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         return E_FAIL;
     }
 
+    // [v4.0] Restore SIMD Premultiplication
+    // [v4.0] Native Premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                      (UINT)stride, (UINT)(stride * height), pixelData.data(), ppBitmap);
 }
 
@@ -2579,8 +2611,11 @@ HRESULT CImageLoader::LoadQoiWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         return E_FAIL;
     }
 
+    // [v4.0] Restore SIMD Premultiplication
+    // [v4.0] Native Premul
+
     size_t stride = width * 4;
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA,
+    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
                                      (UINT)stride, (UINT)(stride * height), pixelData.data(), ppBitmap);
 }
 
@@ -3678,7 +3713,7 @@ static HRESULT LoadThumbJPEG_Robust(LPCWSTR filePath, int targetSize, CImageLoad
 
     tj3Destroy(tj);
     pData->isValid = true;
-    pData->loaderName = L"TurboJPEG (Scout)"; // [v3.2] Debug
+    pData->loaderName = L"TurboJPEG"; // [v3.2] Debug
     return S_OK;
 }
 
@@ -3700,7 +3735,7 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
          HRESULT hr = LoadThumbAVIF_Proxy(buf.data(), buf.size(), 0, pData);
          if (SUCCEEDED(hr)) {
              pData->isBlurry = false;
-             pData->loaderName = L"libavif (Scout)";
+             pData->loaderName = L"libavif";
          }
          return hr;
     }
@@ -3717,11 +3752,11 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
         HRESULT hr = LoadThumbWebPFromMemory(buf.data(), buf.size(), 65535, pData);
         if (SUCCEEDED(hr)) {
             pData->isBlurry = false;
-            pData->loaderName = L"libwebp (Scout)";
+            pData->loaderName = L"libwebp";
         }
         return hr;
     }
-    else if (format == L"BMP" || format == L"TGA" || format == L"GIF") {
+    else if (format == L"BMP" || format == L"TGA" || format == L"GIF" || format == L"PNG" || format == L"QOI" || format == L"PNM" || format == L"WBMP") {
          std::vector<uint8_t> buf;
          if (!ReadFileToVector(filePath, buf)) return E_FAIL;
          
@@ -3730,13 +3765,17 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
          if (format == L"GIF") ok = WuffsLoader::DecodeGIF(buf.data(), buf.size(), &w, &h, pData->pixels);
          else if (format == L"BMP") ok = WuffsLoader::DecodeBMP(buf.data(), buf.size(), &w, &h, pData->pixels);
          else if (format == L"TGA") ok = WuffsLoader::DecodeTGA(buf.data(), buf.size(), &w, &h, pData->pixels);
+         else if (format == L"PNG") ok = WuffsLoader::DecodePNG(buf.data(), buf.size(), &w, &h, pData->pixels);
+         else if (format == L"QOI") ok = WuffsLoader::DecodeQOI(buf.data(), buf.size(), &w, &h, pData->pixels);
+         else if (format == L"PNM") ok = WuffsLoader::DecodeNetpbm(buf.data(), buf.size(), &w, &h, pData->pixels);
+         else if (format == L"WBMP") ok = WuffsLoader::DecodeWBMP(buf.data(), buf.size(), &w, &h, pData->pixels);
          
          if (ok) {
               pData->width = w; pData->height = h; pData->stride = w*4;
               pData->origWidth = w; pData->origHeight = h;
               pData->isValid = true; 
               pData->isBlurry = false;
-              pData->loaderName = L"Wuffs (Scout)";
+              pData->loaderName = L"Wuffs";
               return S_OK;
          }
     }
@@ -3824,4 +3863,6 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     
     return result;
 }
+
+
 

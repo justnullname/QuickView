@@ -7,8 +7,11 @@
 
 #include <cstdint>
 #include <vector>
+#include <functional>
 
 namespace WuffsLoader {
+
+using CancelPredicate = std::function<bool()>;
 
 /// <summary>
 /// Decode PNG image to BGRA pixels
@@ -21,7 +24,8 @@ namespace WuffsLoader {
 /// <returns>true on success</returns>
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 /// <summary>
 /// Decode GIF image (first frame) to BGRA pixels
@@ -34,41 +38,47 @@ bool DecodePNG(const uint8_t* data, size_t size,
 /// <returns>true on success</returns>
 bool DecodeGIF(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 /// <summary>
 /// Decode BMP image to BGRA pixels
 /// </summary>
 bool DecodeBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 /// <summary>
 /// Decode TGA (Targa) image to BGRA pixels
 /// </summary>
 bool DecodeTGA(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 /// <summary>
 /// Decode WBMP image to BGRA pixels
 /// </summary>
 bool DecodeWBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 /// <summary>
 /// Decode NetPBM (PAM, PBM, PGM, PPM) image to BGRA pixels
 /// </summary>
 bool DecodeNetpbm(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 /// <summary>
 /// Decode QOI (Quite OK Image) to BGRA pixels
 /// </summary>
 bool DecodeQOI(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               std::vector<uint8_t>& outPixels);
+               std::vector<uint8_t>& outPixels,
+               CancelPredicate checkCancel = nullptr);
 
 } // namespace WuffsLoader

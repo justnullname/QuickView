@@ -2,6 +2,8 @@
 #include "pch.h"
 #include <vector>
 #include <stop_token>
+#include <functional>
+#include "WuffsLoader.h"
 #include <memory_resource>
 
 /// <summary>
@@ -17,6 +19,9 @@ public:
     /// Initialize loader
     /// </summary>
     HRESULT Initialize(IWICImagingFactory* wicFactory);
+    
+    // [v4.0] Infrastructure: Atomic Cancellation Predicate
+    using CancelPredicate = std::function<bool()>;
     
     // --- Metadata Structure ---
     struct ImageMetadata {
@@ -145,15 +150,17 @@ public:
     /// <summary>
     /// Load WIC bitmap from file and force decode to memory
     /// </summary>
-    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr, bool forceFullDecode = false);
+    HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName = nullptr, bool forceFullDecode = false, CancelPredicate checkCancel = nullptr);
 
     /// <summary>
     /// NEW: Load image directly into PMR-backed buffer (Zero-Copy for Heavy Lane)
     /// Support specialized "Decode-to-Scale" based on target dimensions.
     /// </summary>
     HRESULT LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, 
-                           int targetWidth, int targetHeight, /* 0 for full decode */
-                           std::wstring* pLoaderName = nullptr, std::stop_token st = {});
+                            int targetWidth, int targetHeight, /* 0 for full decode */
+                            std::wstring* pLoaderName = nullptr, 
+                            std::stop_token st = {},
+                            CancelPredicate checkCancel = nullptr);
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)
@@ -242,11 +249,12 @@ private:
     HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forceFullDecode);   // libraw
     
     // Wuffs (Google's memory-safe decoder) - Ultimate Performance
-    HRESULT LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs PNG (replaces libpng)
-    HRESULT LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs GIF (replaces WIC)
-    HRESULT LoadBmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs BMP (Safer than WIC)
-    HRESULT LoadTgaWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);  // Wuffs TGA (New support)
-    HRESULT LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap); // Wuffs WBMP (Fix sample)
+    // [v4.0] Cancellation Support
+    HRESULT LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel = nullptr);
+    HRESULT LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel = nullptr);
+    HRESULT LoadBmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel = nullptr);
+    HRESULT LoadTgaWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel = nullptr);
+    HRESULT LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, CancelPredicate checkCancel = nullptr);
     
     // Stb Image (Legacy/Special Formats: PSD, HDR, PIC, PNM)
     HRESULT LoadStbImage(LPCWSTR filePath, IWICBitmap** ppBitmap, bool floatFormat = false);

@@ -162,7 +162,9 @@ bool ImageEngine::ShouldSkipScoutForFastFormat(const std::wstring& path) {
     std::transform(e.begin(), e.end(), e.begin(), ::towlower);
     
     // Fast formats where Wuffs decode is faster than WIC thumbnail
-    bool isFastFormat = (e == L".png" || e == L".gif" || e == L".bmp");
+    bool isFastFormat = (e == L".png" || e == L".gif" || e == L".bmp" ||
+                         e == L".tga" || e == L".wbmp" || e == L".qoi" ||
+                         e == L".ppm" || e == L".pgm" || e == L".pbm" || e == L".pam");
     if (!isFastFormat) return false;
     
     // Check image size - skip Scout only for small images
@@ -306,6 +308,15 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     
     // [Phase 10] Pass targetHash to filter stale times
     m_heavyPool->GetWorkerSnapshots((HeavyLanePool::WorkerSnapshot*)s.heavyWorkers, 16, &s.heavyWorkerCount, s.targetHash);
+    
+    // [Phase 11] Bubble up Heavy Lane Loader Name
+    for (int i = 0; i < s.heavyWorkerCount; ++i) {
+        // If worker has a valid result (lastTimeMs > 0 means it passed the ID check in GetWorkerSnapshots)
+        if (s.heavyWorkers[i].lastTimeMs > 0 && s.heavyWorkers[i].loaderName[0] != 0) {
+            wcscpy_s(s.loaderName, s.heavyWorkers[i].loaderName);
+            break; // First winner is enough
+        }
+    }
     
     // 3. Logic (Zone C)
     // Reconstruct topology from cache
@@ -477,7 +488,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
             if (SUCCEEDED(hr) && thumb.isValid) {
                 thumb.isBlurry = false; // Clear! No need for Main Lane.
                 if (thumb.loaderName.empty()) {
-                    thumb.loaderName = L"FastPass (Scout)";
+                    thumb.loaderName = L"FastPass";
                 }
             }
             
@@ -493,7 +504,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
                     hr = m_loader->LoadThumbnail(path.c_str(), 256, &thumb, false); // allowSlow=false
                     if (SUCCEEDED(hr)) {
                         thumb.isBlurry = true; // Ghost image
-                        thumb.loaderName = L"WIC (Scout Thumb)";
+                        thumb.loaderName = L"WIC (Thumb)";
                     }
                 }
             }

@@ -71,6 +71,7 @@ public:
         bool alive;
         bool busy;
         int lastTimeMs;
+        wchar_t loaderName[64] = { 0 }; // [Phase 11]
     };
     void GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const;
     
@@ -89,10 +90,11 @@ private:
         std::chrono::steady_clock::time_point lastActiveTime;
         int lastDurationMs = 0; // [HUD V4] Persist last decode time
         ImageID lastImageId = 0; // [Phase 10] For sync (clear on nav)
+        std::wstring loaderName; // [Phase 11] Capture actual decoder name
         
-        // Each worker has its own arena for isolation
-        // Allocated lazily when task is received, released when idle
-        bool arenaAllocated = false;
+        // [Crash Fix] Per-worker arena for true memory isolation
+        // Each worker has its own arena to prevent race conditions
+        std::unique_ptr<QuantumArena> arena;
         
         Worker() = default;
         Worker(Worker&&) = default;
@@ -131,8 +133,7 @@ private:
     void ShrinkerLoop(std::stop_token st);
     
     // Perform actual decode (calls into ImageLoader)
-    void PerformDecode(int workerId, const std::wstring& path, 
-                       uint64_t token, std::stop_token st);
+    void PerformDecode(int workerId, const std::wstring& path, ImageID imageId, std::stop_token st, std::wstring* outLoaderName);
     
     // Expansion/Shrink logic
     void TryExpand();  // Called when job submitted

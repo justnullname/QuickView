@@ -151,7 +151,7 @@ HRESULT CRenderEngine::CreateSwapChain(HWND hwnd) {
     swapChainDesc.BufferCount = 2;  // Double buffering
     swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
     swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-    swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_IGNORE; 
+    swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_IGNORE; // [Fix] Force Opaque Window
     swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
     // Create SwapChain (try with Waitable Object first)
@@ -208,7 +208,7 @@ HRESULT CRenderEngine::CreateRenderTarget() {
     // Create D2D bitmap properties
     D2D1_BITMAP_PROPERTIES1 bitmapProperties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
 
     // Create D2D bitmap from DXGI surface
@@ -319,11 +319,17 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
     );
     if (FAILED(hr)) return hr;
 
+    // [All-Premul-Pipeline] Explicitly declare as PREMULTIPLIED to match Wuffs/WIC output
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+    );
+
     // Create D2D bitmap from WIC
     hr = m_d2dContext->CreateBitmapFromWicBitmap(
         converter.Get(),
-        nullptr,
-        d2dBitmap
+        &props,
+        reinterpret_cast<ID2D1Bitmap1**>(d2dBitmap)
     );
 
     return hr;
@@ -335,7 +341,7 @@ HRESULT CRenderEngine::CreateBitmapFromMemory(const void* data, UINT width, UINT
     // Assume BGRX (32bpp) as standard
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
         96.0f, 96.0f
     );
 

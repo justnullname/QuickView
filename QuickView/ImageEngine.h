@@ -96,6 +96,9 @@ public:
     // Stats
     bool IsIdle() const;
     
+    // [v4.0] Infrastructure: Global Token Access
+    ImageID GetGlobalToken() const { return m_currentImageId.load(); }
+    
     // [Phase 6] Dynamic Gating
     // High Priority = Warp Mode (Skip Slow Decodes)
     void SetHighPriorityMode(bool enabled);
@@ -155,6 +158,7 @@ public:
             bool alive = false;
             bool busy = false; // True = Red, False = Yellow
             int lastTimeMs = 0;
+            wchar_t loaderName[64] = { 0 }; // [Phase 11]
         } heavyWorkers[16]; // Fixed size for snapshot
         int heavyWorkerCount = 0;
         

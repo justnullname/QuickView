@@ -213,7 +213,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         
         // Perform decode
         auto t0 = std::chrono::steady_clock::now();
-        PerformDecode(workerId, path, imageId, self.stopSource.get_token());
+        PerformDecode(workerId, path, imageId, self.stopSource.get_token(), &self.loaderName);
         auto t1 = std::chrono::steady_clock::now();
         
         // Decode complete
@@ -335,7 +335,7 @@ void HeavyLanePool::ShrinkerLoop(std::stop_token st) {
 // ============================================================================
 
 void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
-                                   ImageID imageId, std::stop_token st) {
+                                   ImageID imageId, std::stop_token st, std::wstring* outLoaderName) {
     if (path.empty()) return;
     
     auto start = std::chrono::high_resolution_clock::now();
@@ -344,9 +344,16 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         // Check if cancelled before starting
         if (st.stop_requested()) return;
         
-        // Get Arena from pool (lazy allocation - only when task received)
-        m_pool->GetBack().Reset();
-        auto& arena = m_pool->GetBack();
+        // [Crash Fix] Use per-worker arena for memory isolation
+        // Lazy allocate arena if not yet created (256MB per worker, sufficient for 4K images)
+        {
+            std::lock_guard lock(m_poolMutex);
+            if (!m_workers[workerId].arena) {
+                m_workers[workerId].arena = std::make_unique<QuantumArena>(256 * 1024 * 1024);
+            }
+        }
+        auto& arena = *m_workers[workerId].arena;
+        arena.Reset();  // Safe: only this worker uses this arena
         
         // Calculate target size (fit to screen)
         int targetW = GetSystemMetrics(SM_CXSCREEN);
@@ -357,13 +364,19 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         std::wstring loaderName;
         
         // [User Feedback] Deep cancellation: pass stop_token to decoder
+        // [v4.0] Atomic Cancellation Predicate
+        auto checkCancel = [this, imageId]() {
+             return m_parent->GetGlobalToken() != imageId;
+        };
+
         HRESULT hr = m_loader->LoadToMemoryPMR(
             path.c_str(), 
             &decoded, 
             arena.GetResource(), 
             targetW, targetH, 
             &loaderName, 
-            st  // Pass stop token for deep cancellation
+            st,  // Pass stop token for deep cancellation
+            checkCancel // [v4.0] Pass atomic check
         );
         
         if (st.stop_requested()) return;
@@ -388,6 +401,8 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
                 CImageLoader::ImageMetadata meta;
                 m_loader->ReadMetadata(path.c_str(), &meta);
                 meta.LoaderName = loaderName;
+                
+                if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
                 
                 // Build event
                 EngineEvent evt;
@@ -496,10 +511,14 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
         
         // Time logic: [Phase 9] User wants static "last duration" only
         // [Phase 10] Clear if from previous image
+        // [Phase 10] Clear if from previous image
         if (w.lastImageId == currentId) {
              ws.lastTimeMs = w.lastDurationMs; 
+             // [Phase 11] Copy Loader Name
+             wcsncpy_s(ws.loaderName, w.loaderName.c_str(), 63);
         } else {
              ws.lastTimeMs = 0; // Clear old times
+             ws.loaderName[0] = 0; // Clear old name
         }
         
         count++;
