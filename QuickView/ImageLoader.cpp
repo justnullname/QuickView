@@ -672,6 +672,11 @@ HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, 
         }
     }
     
+
+    
+    // MANUAL PREMULTIPLY (Required for D2D/WIC compatibility to checkboard correctly)
+    SIMDUtils::PremultiplyAlpha_BGRA(pData->pixels.data(), pData->width, pData->height, pData->stride);
+
     pData->isValid = true;
     WebPFreeDecBuffer(&config.output);
     return S_OK;
@@ -1161,7 +1166,8 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     int size = stride * height;
 
     // Manual Premultiplication (SIMD)
-    SIMDUtils::PremultiplyAlpha_BGRA(output, width, height);
+    // Pass stride to ensure correct row alignment
+    SIMDUtils::PremultiplyAlpha_BGRA(output, width, height, stride);
 
     HRESULT hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA, stride, size, output, ppBitmap);
     

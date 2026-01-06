@@ -170,11 +170,7 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     }
 
     if (useScout) {
-        // [Fix] JXL Scout causes infinite decode loop - disable for now
-        // TODO: Debug LoadThumbJXL_DC thoroughly
-        if (info.format != L"JXL") {
-            m_scout.Push(path);
-        }
+        m_scout.Push(path);
     }
 }
 
