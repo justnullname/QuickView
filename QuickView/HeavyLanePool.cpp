@@ -240,8 +240,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         // Decode complete
         m_busyCount.fetch_sub(1);
         self.lastActiveTime = t1;
-        self.lastDurationMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        self.lastImageId = imageId; // [Phase 10] Save ID for sync
+        // [Dual Timing] Times are now set inside PerformDecode
         self.isFullDecode = isFullDecode; // [Two-Stage] Save status
         
         // [User Feedback] Decision: become hot-spare or destroy?
@@ -393,6 +392,9 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
              return m_parent->GetGlobalToken() != imageId;
         };
 
+        // [Dual Timing] Measure pure decode time
+        auto decodeStart = std::chrono::high_resolution_clock::now();
+        
         HRESULT hr = m_loader->LoadToMemoryPMR(
             path.c_str(), 
             &decoded, 
@@ -403,17 +405,19 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             checkCancel // [v4.0] Pass atomic check
         );
         
+        auto decodeEnd = std::chrono::high_resolution_clock::now();
+        int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+        
         if (st.stop_requested()) return;
         
         if (SUCCEEDED(hr) && decoded.isValid) {
             // Create WIC Bitmap from PMR buffer for D2D compatibility
             // [Deep Copy] Safe arena release
             ComPtr<IWICBitmap> wicBitmap;
-            // [Fix] Use straight BGRA, not PBGRA. LoadToMemoryPMR outputs straight alpha.
-            // PBGRA causes transparency issues because WIC interprets incorrectly.
+            // [Fix] Use PBGRA (premultiplied) because LoadToMemoryPMR applies premultiply.
             hr = m_loader->CreateWICBitmapCopy(
                 decoded.width, decoded.height,
-                GUID_WICPixelFormat32bppBGRA,  // Changed from PBGRA
+                GUID_WICPixelFormat32bppPBGRA,  // Premultiplied alpha
                 decoded.stride,
                 (UINT)decoded.pixels.size(),
                 decoded.pixels.data(),
@@ -450,6 +454,12 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             }
         }
         
+        // [Dual Timing] Store decode time in worker
+        {
+            std::lock_guard lock(m_poolMutex);
+            m_workers[workerId].lastDecodeMs = decodeMs;
+        }
+        
         // [Fix V2] Always update loader name (even on failure) to prevent stale "[Scaled]"
         if (outLoaderName) *outLoaderName = loaderName;
     }
@@ -459,12 +469,21 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     }
     
     auto end = std::chrono::high_resolution_clock::now();
-    auto elapsed = std::chrono::duration<double, std::milli>(end - start).count();
-    m_lastDecodeTimeMs.store(elapsed);
-    m_lastDecodeId.store(imageId); // [HUD Fix]
+    int totalMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    
+    // Store times in worker (only if HUD might use it later)
+    {
+        std::lock_guard lock(m_poolMutex);
+        // decodeMs was captured earlier inside try block, use lastDecodeMs as temp storage
+        m_workers[workerId].lastTotalMs = totalMs;
+        m_workers[workerId].lastImageId = imageId;
+    }
+    
+    m_lastDecodeTimeMs.store((double)totalMs); // Legacy compatibility
+    m_lastDecodeId.store(imageId);
     
     wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] Worker %d decoded in %.1fms\n", workerId, elapsed);
+    swprintf_s(buf, L"[HeavyPool] Worker %d: total=%dms\n", workerId, totalMs);
     OutputDebugStringW(buf);
 }
 
@@ -543,14 +562,16 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
         
         // Time logic: [Phase 9] User wants static "last duration" only
         // [Phase 10] Clear if from previous image
-        // [Phase 10] Clear if from previous image
+        // [Dual Timing] Return both decode and total times
         if (w.lastImageId == currentId) {
-             ws.lastTimeMs = w.lastDurationMs; 
+             ws.lastDecodeMs = w.lastDecodeMs; 
+             ws.lastTotalMs = w.lastTotalMs;
              // [Phase 11] Copy Loader Name
              wcsncpy_s(ws.loaderName, w.loaderName.c_str(), 63);
              ws.isFullDecode = w.isFullDecode; // [Two-Stage]
         } else {
-             ws.lastTimeMs = 0; // Clear old times
+             ws.lastDecodeMs = 0; // Clear old times
+             ws.lastTotalMs = 0;
              ws.loaderName[0] = 0; // Clear old name
              ws.isFullDecode = false;
         }

@@ -220,9 +220,16 @@ public:
     // Core Thumbnail API
     HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData* pData, bool allowSlow = true);
 
+    // [JXL Global Runner] 全局线程池单例，避免每次解码创建开销
+    static void* GetJxlRunner();
+    static void ReleaseJxlRunner();
 
 private:
     ComPtr<IWICImagingFactory> m_wicFactory;
+    
+    // [JXL Global Runner] Static singleton
+    static void* s_jxlRunner;
+    static std::mutex s_jxlRunnerMutex;
 
     // Specialized High-Performance Loaders
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo

@@ -69,11 +69,11 @@ public:
     };
     PoolStats GetStats() const;
     
-    // [HUD V4] Zero-Cost Snapshot
     struct WorkerSnapshot {
         bool alive;
         bool busy;
-        int lastTimeMs;
+        int lastDecodeMs;         // Pure decode time
+        int lastTotalMs;          // Total processing time (decode + WIC + metadata)
         wchar_t loaderName[64] = { 0 }; // [Phase 11]
         bool isFullDecode = false;      // [Two-Stage]
     };
@@ -92,7 +92,8 @@ private:
         ImageID currentId = 0;  // [ImageID] Path hash of current task
         std::stop_source stopSource;
         std::chrono::steady_clock::time_point lastActiveTime;
-        int lastDurationMs = 0; // [HUD V4] Persist last decode time
+        int lastDecodeMs = 0;    // [Dual Timing] Pure decode time
+        int lastTotalMs = 0;     // [Dual Timing] Total processing time
         ImageID lastImageId = 0; // [Phase 10] For sync (clear on nav)
         std::wstring loaderName; // [Phase 11] Capture actual decoder name
         bool isFullDecode = false; // [Two-Stage] Records if last decode was full res

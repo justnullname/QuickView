@@ -419,11 +419,11 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     const auto& s = m_telemetry;
     
     // ------------------------------------------------------------------------
-    // Refined HUD V4 Layout (Top-Center) [Phase 9] Width +10px
+    // Refined HUD V4 Layout (Top-Center) [Dual Timing] Width expanded
     // ------------------------------------------------------------------------
 
     // 1. Layout & Background
-    float hudW = 350.0f; // [Phase 9] Wider
+    float hudW = 400.0f; // [Dual Timing] Wider for Dec/Tot display
     float hudX = (m_width - hudW) / 2.0f;
     if (hudX < 0) hudX = 10;
     float hudY = 20.0f; 
@@ -432,6 +432,27 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     float bgHeight = 500.0f; 
     
     dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(hudX, hudY, hudX + hudW, hudY + bgHeight), 8.0f, 8.0f), blackTransBrush.Get());
+    
+    // 2b. Toggle Indicators (Ctrl+1/2/3) - MOVED TO TOP-RIGHT
+    float toggleX = hudX + hudW - 90.0f;
+    float toggleY = hudY + 10.0f;
+    float toggleSize = 10.0f;
+    
+    auto DrawToggle = [&](const wchar_t* label, bool enabled) {
+        D2D1_RECT_F rect = D2D1::RectF(toggleX, toggleY, toggleX + toggleSize, toggleY + toggleSize);
+        if (enabled) {
+            dc->FillRectangle(rect, greenBrush.Get());
+        } else {
+            dc->FillRectangle(rect, redBrush.Get());
+        }
+        dc->DrawText(label, (UINT32)wcslen(label), m_debugFormat.Get(), 
+                D2D1::RectF(toggleX + toggleSize + 4, toggleY - 2, toggleX + 90, toggleY + 14), m_whiteBrush.Get());
+        toggleY += 16.0f;
+    };
+    
+    DrawToggle(L"Scout [1]", g_runtime.EnableScout);
+    DrawToggle(L"Heavy [2]", g_runtime.EnableHeavy);
+    DrawToggle(L"Fade [3]", g_runtime.EnableCrossFade);
 
     // 2. Traffic Lights (Triggers)
     float x = hudX + 10.0f;
@@ -464,26 +485,8 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     DrawLight(L"STA", g_debugMetrics.dirtyTriggerStatic, blueBrush.Get()); 
     DrawLight(L"DYN", g_debugMetrics.dirtyTriggerDynamic, greenBrush.Get());
 
-    // 2b. Toggle Indicators (Ctrl+1/2/3)
-    x = hudX + 200.0f;
-    float toggleY = trafficY;
-    float toggleSize = 10.0f;
-    
-    auto DrawToggle = [&](const wchar_t* label, bool enabled) {
-        D2D1_RECT_F rect = D2D1::RectF(x, toggleY, x + toggleSize, toggleY + toggleSize);
-        if (enabled) {
-            dc->FillRectangle(rect, greenBrush.Get());
-        } else {
-            dc->FillRectangle(rect, redBrush.Get());
-        }
-        dc->DrawText(label, (UINT32)wcslen(label), m_debugFormat.Get(), 
-                D2D1::RectF(x + toggleSize + 4, toggleY - 2, x + 80, toggleY + 14), m_whiteBrush.Get());
-        toggleY += 16.0f;
-    };
-    
-    DrawToggle(L"Scout [1]", g_runtime.EnableScout);
-    DrawToggle(L"Heavy [2]", g_runtime.EnableHeavy);
-    DrawToggle(L"Fade [3]", g_runtime.EnableCrossFade);
+    // Traffic Lights (Triggers)
+    // (Toggle indicators already drawn above)
 
     wchar_t buffer[256];
     wchar_t buf[256]; 
@@ -504,7 +507,13 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     float px = hudX + 10.0f;
     float py = hudY + 130.0f; 
 
-    D2D1_RECT_F scoutStatusRect = D2D1::RectF(px + 280, py, px + 330, py + 16);
+    // Scout Stats + Time [Dual Timing] - Use full width, status moved below
+    swprintf_s(buffer, L"[ SCOUT ] Queue:%d  Drop:%d  Dec: %dms   Tot: %dms", 
+        s.scoutQueue, s.scoutDropped, s.scoutDecodeTime, s.scoutTotalTime);
+    dc->DrawText(buffer, wcslen(buffer), m_debugFormat.Get(), D2D1::RectF(px, py, px + hudW - 20, py+20), whiteBrush.Get());
+    
+    // Scout Status Indicator (moved to right side of same line)
+    D2D1_RECT_F scoutStatusRect = D2D1::RectF(px + hudW - 70, py, px + hudW - 20, py + 16);
     if (s.scoutWorking) {
         dc->FillRectangle(scoutStatusRect, greenBrush.Get());
         dc->DrawText(L"WORK", 4, m_debugFormat.Get(), D2D1::RectF(scoutStatusRect.left+5, scoutStatusRect.top, scoutStatusRect.right, scoutStatusRect.bottom), blackTransBrush.Get());
@@ -513,10 +522,6 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         dc->DrawText(L"IDLE", 4, m_debugFormat.Get(), D2D1::RectF(scoutStatusRect.left+5, scoutStatusRect.top, scoutStatusRect.right, scoutStatusRect.bottom), grayBrush.Get());
     }
     
-    // Scout Stats + Time [Phase 9]
-    swprintf_s(buffer, L"[ SCOUT ] Queue: %d   Drop: %d   %d ms", s.scoutQueue, s.scoutDropped, s.scoutLoadTime);
-    dc->DrawText(buffer, wcslen(buffer), m_debugFormat.Get(), D2D1::RectF(px, py, px+280, py+20), whiteBrush.Get());
-    
     // Heavy
     py += 25.0f;
     swprintf_s(buffer, L"[ HEAVY ] Pool: %d", s.heavyWorkerCount);
@@ -524,7 +529,7 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     
     py += 20.0f;
     // Draw dynamic slots based on actual count
-    float boxSize = 36.0f; 
+    float boxSize = 42.0f; 
     float boxGap = 6.0f;
     
     int count = s.heavyWorkerCount;
@@ -543,14 +548,14 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         auto& w = s.heavyWorkers[i];
         if (w.busy) {
             dc->FillRectangle(box, redBrush.Get());
-            if (w.lastTimeMs > 0) {
-                 wchar_t tBuf[16]; swprintf_s(tBuf, L"%d\nms", w.lastTimeMs); // [Phase 9] Unit + Newline
+            if (w.lastDecodeMs > 0 || w.lastTotalMs > 0) {
+                 wchar_t tBuf[24]; swprintf_s(tBuf, L"D:%d\nT:%d", w.lastDecodeMs, w.lastTotalMs); // [Dual Timing]
                  dc->DrawText(tBuf, wcslen(tBuf), m_debugFormat.Get(), box, whiteBrush.Get());
             }
         } else if (w.alive) {
             dc->FillRectangle(box, yellowBrush.Get()); 
-            if (w.lastTimeMs > 0) {
-                 wchar_t tBuf[16]; swprintf_s(tBuf, L"%d\nms", w.lastTimeMs); // [Phase 9] Unit + Newline
+            if (w.lastDecodeMs > 0 || w.lastTotalMs > 0) {
+                 wchar_t tBuf[24]; swprintf_s(tBuf, L"D:%d\nT:%d", w.lastDecodeMs, w.lastTotalMs); // [Dual Timing]
                  dc->DrawText(tBuf, wcslen(tBuf), m_debugFormat.Get(), box, blackTransBrush.Get()); 
             }
         } else {

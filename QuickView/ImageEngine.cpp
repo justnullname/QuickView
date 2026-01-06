@@ -160,13 +160,37 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     OutputDebugStringW(tokenBuf);
     
     // DISPATCH
-    if (useHeavy) {
-        // [N+1] Submit to elastic pool with ImageID
-        OutputDebugStringW(L"[Dispatch] -> Heavy Pool\n");
+    bool isJXL = (info.format == L"JXL");
+    
+    // [JXL Sequential] Clear any pending Heavy from previous image
+    m_pendingJxlHeavyPath.clear();
+    m_pendingJxlHeavyId = 0;
+    
+    if (useHeavy && !isJXL) {
+        // Non-JXL: Parallel dispatch (Scout + Heavy simultaneously)
+        OutputDebugStringW(L"[Dispatch] -> Heavy Pool (Parallel)\n");
         m_heavyPool->Submit(path, imageId);
+    } else if (useHeavy && isJXL) {
+        // JXL-specific dispatch logic
+        uint64_t pixels = (uint64_t)info.width * info.height;
+        
+        if (pixels < 2'000'000) {
+            // [小图跳过] <2MP: 直接 Heavy，不走 Scout (DC 预览太小没意义)
+            OutputDebugStringW(L"[Dispatch] -> JXL Small (<2MP): Heavy Only\n");
+            m_heavyPool->Submit(path, imageId);
+            useScout = false;  // Disable Scout for this image
+        } else if (!useScout || !m_config.EnableScout) {
+            // [Scout 禁用] 大图但 Scout 被禁用，直接 Heavy
+            OutputDebugStringW(L"[Dispatch] -> JXL Large, Scout Disabled: Heavy Direct\n");
+            m_heavyPool->Submit(path, imageId);
+        } else {
+            // [大图串行] >=2MP: Scout 先行，Heavy 等待
+            OutputDebugStringW(L"[Dispatch] -> JXL Large (>=2MP): Scout First, Heavy Pending\n");
+            m_pendingJxlHeavyPath = path;
+            m_pendingJxlHeavyId = imageId;
+        }
     } else {
         OutputDebugStringW(L"[Dispatch] -> Scout Only (TypeA)\n");
-        // CancelOthers already called above, no need to call again
     }
 
     if (useScout) {
@@ -239,7 +263,7 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     s.memoryTotal = m_pool.GetTotalMemory();
     
     s.scoutSkipCount = m_scout.GetSkipCount();
-    s.scoutLoadTimeMs = m_scout.m_lastLoadTimeMs.load();
+    s.scoutLoadTimeMs = m_scout.m_lastTotalTimeMs.load(); // [Dual Timing] Use total time for legacy
     s.scoutLastImageId = m_scout.m_lastLoadId.load(); // [HUD Fix]
 
 
@@ -319,10 +343,13 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     s.scoutDropped = m_scout.m_droppedCount.load();
     s.scoutWorking = m_scout.m_isWorking.load();
     // [Phase 10] Filter Scout Time by ImageID
+    // [Dual Timing] Return both decode and total times
     if (m_scout.m_lastLoadId == s.targetHash) {
-        s.scoutLoadTime = (int)m_scout.m_lastLoadTimeMs.load();
+        s.scoutDecodeTime = (int)m_scout.m_lastDecodeTimeMs.load();
+        s.scoutTotalTime = (int)m_scout.m_lastTotalTimeMs.load();
     } else {
-        s.scoutLoadTime = 0;
+        s.scoutDecodeTime = 0;
+        s.scoutTotalTime = 0;
     }
     
     // [Phase 10] Pass targetHash to filter stale times
@@ -332,7 +359,8 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     bool hasFullDecode = false;
     for (int i = 0; i < s.heavyWorkerCount; ++i) {
         // If worker has a valid result
-        if (s.heavyWorkers[i].lastTimeMs > 0 && s.heavyWorkers[i].loaderName[0] != 0) {
+        // [Dual Timing] Check both times
+        if ((s.heavyWorkers[i].lastDecodeMs > 0 || s.heavyWorkers[i].lastTotalMs > 0) && s.heavyWorkers[i].loaderName[0] != 0) {
             
             // Priority: Full Decode > Scaled Decode > Scout
             if (s.heavyWorkers[i].isFullDecode) {
@@ -443,7 +471,8 @@ void ImageEngine::ScoutLane::Push(const std::wstring& path) {
     }
 
     // [Phase 10] Reset timer logic
-    m_lastLoadTimeMs = 0.0;
+    m_lastDecodeTimeMs = 0.0;
+    m_lastTotalTimeMs = 0.0;
     
     m_cv.notify_one();
 }
@@ -514,7 +543,12 @@ void ImageEngine::ScoutLane::QueueWorker() {
             // We assume if it's in Scout Lane, we should try FastPass first.
             
             // 1. Try Fast Pass (Type A optimization)
+            // [Dual Timing] Measure decode time
+            auto decodeStart = std::chrono::high_resolution_clock::now();
             hr = m_loader->LoadFastPass(path.c_str(), &thumb);
+            auto decodeEnd = std::chrono::high_resolution_clock::now();
+            int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+            
             if (SUCCEEDED(hr) && thumb.isValid) {
                 thumb.isBlurry = false; // Clear! No need for Main Lane.
                 if (thumb.loaderName.empty()) {
@@ -524,18 +558,25 @@ void ImageEngine::ScoutLane::QueueWorker() {
             
             // 2. Fallback: Embedded thumbnail (RAW/JPEG Exif)
             if (FAILED(hr)) {
-                // Only try if we have budget? Or just try WIC GetThumbnail?
-                // LoadThumbnail handles validation internally usually.
-                
                 auto now = std::chrono::high_resolution_clock::now();
                 double elapsed = std::chrono::duration<double, std::milli>(now - start).count();
                 
                 if (elapsed < EXPRESS_BUDGET_MS - 5.0) { // Reserve 5ms margin
+                    OutputDebugStringW(L"[Scout] Trying LoadThumbnail...\n");
+                    auto thumbDecodeStart = std::chrono::high_resolution_clock::now();
                     hr = m_loader->LoadThumbnail(path.c_str(), 256, &thumb, false); // allowSlow=false
+                    auto thumbDecodeEnd = std::chrono::high_resolution_clock::now();
+                    decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(thumbDecodeEnd - thumbDecodeStart).count();
+                    
                     if (SUCCEEDED(hr)) {
+                        OutputDebugStringW(L"[Scout] LoadThumbnail OK\n");
                         thumb.isBlurry = true; // Ghost image
                         thumb.loaderName = L"WIC (Thumb)";
+                    } else {
+                        wchar_t buf[64]; swprintf_s(buf, L"[Scout] LoadThumbnail FAILED hr=0x%08X\n", hr); OutputDebugStringW(buf);
                     }
+                } else {
+                     OutputDebugStringW(L"[Scout] Budget Exhausted (Skipping Thumb)\n");
                 }
             }
             
@@ -566,10 +607,25 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 if (isClear) {
                     m_parent->CancelHeavy();
                 }
+            } else {
+                // [JXL Fallback] Scout 失败（如 Modular E_ABORT），仍需触发 pending Heavy
+                // 检查是否为 JXL 并且有 pending Heavy
+                std::wstring ext = path;
+                size_t dot = ext.find_last_of(L'.');
+                if (dot != std::wstring::npos) {
+                    std::wstring e = ext.substr(dot);
+                    std::transform(e.begin(), e.end(), e.begin(), ::towlower);
+                    if (e == L".jxl") {
+                        OutputDebugStringW(L"[Scout] JXL Failed, triggering pending Heavy\n");
+                        m_parent->TriggerPendingJxlHeavy();
+                    }
+                }
             }
             
             auto end = std::chrono::high_resolution_clock::now();
-            m_lastLoadTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
+            int totalMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+            m_lastDecodeTimeMs.store(decodeMs);
+            m_lastTotalTimeMs.store(totalMs);
             m_lastLoadId.store(ComputePathHash(path)); // [HUD Fix]
             
             m_isWorking = false; // [HUD V4] Idle
@@ -588,6 +644,15 @@ void ImageEngine::ScoutLane::QueueWorker() {
 
 void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
     m_prefetchPolicy = policy;
+}
+
+void ImageEngine::TriggerPendingJxlHeavy() {
+    if (!m_pendingJxlHeavyPath.empty() && m_pendingJxlHeavyId != 0) {
+        OutputDebugStringW(L"[JXL Sequential] Scout done, triggering Heavy\n");
+        m_heavyPool->Submit(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
+        m_pendingJxlHeavyPath.clear();
+        m_pendingJxlHeavyId = 0;
+    }
 }
 
 size_t ImageEngine::GetCacheMemoryUsage() const {

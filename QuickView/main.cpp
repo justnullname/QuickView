@@ -3894,23 +3894,20 @@ void ProcessEngineEvents(HWND hwnd) {
 
             if (SUCCEEDED(hr)) {
                 g_currentBitmap = thumbBitmap;
-                g_ghostBitmap = thumbBitmap; // Save for Cross-Fade
-                g_isBlurry = evt.thumbData.isBlurry; // [v3.1] Use actual flag from Express Lane 
-                // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
-                // REMOVED: g_renderEngine->SetWarpMode(0.5f, 0.1f); // Do NOT force blur. Let InputController decide.
-                g_imagePath = evt.filePath; // Update path immediately for UI consistency
-                g_imageQualityLevel = 1;    // [v3.1] Promoted to Level 1 (Proxy)
+                g_ghostBitmap = thumbBitmap; 
+                g_isBlurry = evt.thumbData.isBlurry; 
                 
-                // [v3.2] If Fast Pass produced CLEAR image, adjust window now
-                // (Heavy Lane won't run, so FullReady won't trigger)
+                g_imagePath = evt.filePath; 
+                g_imageQualityLevel = 1;    
+                
+                // Force INSTANT SHOW
+                g_isCrossFading = false;
+                g_ghostBitmap = nullptr; 
+                
                 if (!evt.thumbData.isBlurry) {
-                    g_imageQualityLevel = 2; // [v3.1] Fast Pass is effectively Truth
+                    g_imageQualityLevel = 2; 
                     AdjustWindowToImage(hwnd);
                     
-                    // Mark as NOT loading (we have the final image)
-                    g_isLoading = false;
-                    
-                    // [v3.2] Read Metadata for Info Panel (Heavy Lane was skipped!)
                     if (g_imageLoader) {
                         g_imageLoader->ReadMetadata(evt.filePath.c_str(), &g_currentMetadata);
                         g_currentMetadata.Width = evt.thumbData.origWidth > 0 ? evt.thumbData.origWidth : evt.thumbData.width;
@@ -3918,20 +3915,17 @@ void ProcessEngineEvents(HWND hwnd) {
                         g_currentMetadata.LoaderName = evt.thumbData.loaderName;
                     }
                     
-                    // Title (Final, not "Loading...")
                     wchar_t titleBuf[512];
                     swprintf_s(titleBuf, L"%s - %s", 
                         evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
                         g_szWindowTitle);
                     SetWindowTextW(hwnd, titleBuf);
                     
-                    // [v3.2] Force cursor update (fix stuck wait cursor)
                     POINT pt;
                     if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
                         PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
                     }
                 } else {
-                    // Update Title (Loading state for blurry thumbnail)
                     wchar_t titleBuf[512];
                     swprintf_s(titleBuf, L"Loading... %s - %s", 
                         evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
@@ -3939,9 +3933,20 @@ void ProcessEngineEvents(HWND hwnd) {
                     SetWindowTextW(hwnd, titleBuf);
                 }
                 
-                // [Fix] Always clear loading state after thumbnail - user sees something
-                // Heavy Lane will continue in background, but no more wait cursor
+                // [Fix] Always clear loading state immediately for Scout/Thumb
+                // This ensures cursor returns to Arrow and user knows "Something happened"
                 g_isLoading = false;
+                
+                // Force cursor update
+                POINT pt;
+                if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+                     PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+                }
+                
+                // [JXL Sequential] Scout done - trigger Heavy if pending
+                if (evt.thumbData.loaderName.find(L"libjxl") != std::wstring::npos) {
+                    g_pImageEngine->TriggerPendingJxlHeavy();
+                }
                 
                 needsRepaint = true;
             }
@@ -4004,6 +4009,13 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_isCrossFading = true;
                 g_crossFadeStart = GetTickCount();
 
+                // [JXL Sequential] Force instant replacement (no crossfade) for JXL
+                // This ensures smooth Scout->Heavy transition without visual artifacts
+                if (evt.metadata.LoaderName.find(L"libjxl") != std::wstring::npos) {
+                    g_isCrossFading = false;
+                    g_ghostBitmap = nullptr;
+                }
+                
                 // Validation for actual animation
                 if (!g_ghostBitmap || !g_runtime.EnableCrossFade) {
                    // If we can't or shouldn't fade, we will just hold the "Clear" state

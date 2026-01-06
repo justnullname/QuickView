@@ -88,6 +88,9 @@ public:
     // [Two-Stage] Request full resolution decode for current image
     // Called after 300ms idle when viewing a scaled image
     void RequestFullDecode(const std::wstring& path, ImageID imageId);
+    
+    // [JXL Sequential] Trigger pending Heavy task after Scout completes
+    void TriggerPendingJxlHeavy();
 
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
@@ -155,12 +158,14 @@ public:
         int scoutQueue = 0;
         int scoutDropped = 0;
         bool scoutWorking = false;
-        int scoutLoadTime = 0; // [Phase 9] ms
+        int scoutDecodeTime = 0;  // [Dual Timing] Pure decode ms
+        int scoutTotalTime = 0;   // [Dual Timing] Total processing ms
         
         struct HeavyWorkerInfo {
             bool alive = false;
             bool busy = false; // True = Red, False = Yellow
-            int lastTimeMs = 0;
+            int lastDecodeMs = 0;  // [Dual Timing] Pure decode
+            int lastTotalMs = 0;   // [Dual Timing] Total processing
             wchar_t loaderName[64] = { 0 }; // [Phase 11]
             bool isFullDecode = false;      // [Two-Stage] Match WorkerSnapshot layout
         } heavyWorkers[16]; // Fixed size for snapshot
@@ -241,10 +246,11 @@ private:
             return m_lastLoaderName;
         }
         
-        std::atomic<double> m_lastLoadTimeMs{ 0.0 }; // Public atomic for easy access
-        std::atomic<ImageID> m_lastLoadId{ 0 };      // [HUD Fix] Track ImageID
-        std::atomic<int> m_droppedCount{ 0 };        // [HUD V4] Dropped tasks
-        std::atomic<bool> m_isWorking{ false };      // [HUD V4] Active State
+        std::atomic<double> m_lastDecodeTimeMs{ 0.0 }; // [Dual Timing] Pure decode
+        std::atomic<double> m_lastTotalTimeMs{ 0.0 };  // [Dual Timing] Total processing
+        std::atomic<ImageID> m_lastLoadId{ 0 };       // [HUD Fix] Track ImageID
+        std::atomic<int> m_droppedCount{ 0 };         // [HUD V4] Dropped tasks
+        std::atomic<bool> m_isWorking{ false };       // [HUD V4] Active State
 
     private:
         void QueueWorker(); // The Scout Thread Function
@@ -279,6 +285,10 @@ private:
     
     // [ImageID Architecture] Stable content-based ID for current image
     std::atomic<ImageID> m_currentImageId{0};
+    
+    // [JXL Sequential] Pending Heavy task - waits for Scout completion
+    std::wstring m_pendingJxlHeavyPath;
+    ImageID m_pendingJxlHeavyId = 0;
 
     // === Phase 3: Prefetch System ===
     FileNavigator* m_navigator = nullptr;
