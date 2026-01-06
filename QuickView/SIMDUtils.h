@@ -147,4 +147,83 @@ namespace SIMDUtils {
             }
         }
     }
+
+    // SIMD Swizzle RGBA→BGRA with Alpha Premultiplication (for JXL)
+    // libjxl outputs RGBA straight alpha, D2D needs BGRA premultiplied
+    inline void SwizzleRGBA_to_BGRA_Premul(uint8_t* pData, size_t pixelCount) {
+        uint8_t* p = pData;
+        size_t i = 0;
+
+        // AVX2 path: process 8 pixels (32 bytes) at a time
+        // Shuffle mask to swap R and B (in each 128-bit lane)
+        // RGBA byte order: R G B A R G B A...
+        // Want BGRA:       B G R A B G R A...
+        // Swap positions 0↔2 for each pixel
+        const __m256i swizzleMask = _mm256_setr_epi8(
+            2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15,   // Low 128-bit lane
+            2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15    // High 128-bit lane
+        );
+        
+        // Mask to broadcast alpha to all channels per pixel
+        const __m256i alphaBroadcastMask = _mm256_setr_epi8(
+            3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
+            3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15
+        );
+
+        for (; i + 8 <= pixelCount; i += 8) {
+            __m256i src = _mm256_loadu_si256((__m256i*)(p + i * 4));
+            
+            // Step 1: Swizzle RGBA → BGRA
+            __m256i swizzled = _mm256_shuffle_epi8(src, swizzleMask);
+            
+            // Step 2: Extract and broadcast alpha
+            __m256i alphas8 = _mm256_shuffle_epi8(src, alphaBroadcastMask);
+            
+            // Step 3: Expand to 16-bit for multiplication
+            __m128i sw_lo = _mm256_castsi256_si128(swizzled);
+            __m128i sw_hi = _mm256_extracti128_si256(swizzled, 1);
+            __m128i al_lo = _mm256_castsi256_si128(alphas8);
+            __m128i al_hi = _mm256_extracti128_si256(alphas8, 1);
+            
+            __m256i pLo = _mm256_cvtepu8_epi16(sw_lo);
+            __m256i pHi = _mm256_cvtepu8_epi16(sw_hi);
+            __m256i aLo = _mm256_cvtepu8_epi16(al_lo);
+            __m256i aHi = _mm256_cvtepu8_epi16(al_hi);
+            
+            // Step 4: Multiply and shift (premultiply)
+            __m256i mulLo = _mm256_mullo_epi16(pLo, aLo);
+            __m256i mulHi = _mm256_mullo_epi16(pHi, aHi);
+            mulLo = _mm256_srli_epi16(mulLo, 8);
+            mulHi = _mm256_srli_epi16(mulHi, 8);
+            
+            // Step 5: Restore original alpha (blend at positions 3,7,11,15 in 16-bit words)
+            // Word indices per 128-bit half: 3 and 7 are alphas (0x88 mask)
+            mulLo = _mm256_blend_epi16(mulLo, pLo, 0x88);
+            mulHi = _mm256_blend_epi16(mulHi, pHi, 0x88);
+            
+            // Step 6: Pack back to 8-bit
+            __m256i packed = _mm256_packus_epi16(mulLo, mulHi);
+            packed = _mm256_permute4x64_epi64(packed, _MM_SHUFFLE(3, 1, 2, 0));
+            
+            _mm256_storeu_si256((__m256i*)(p + i * 4), packed);
+        }
+        
+        // Scalar fallback for remaining pixels
+        for (; i < pixelCount; ++i) {
+            uint8_t r = p[i*4+0];
+            uint8_t g = p[i*4+1];
+            uint8_t b = p[i*4+2];
+            uint8_t a = p[i*4+3];
+            if (a == 255) {
+                p[i*4+0] = b;
+                p[i*4+2] = r;
+            } else if (a == 0) {
+                p[i*4+0] = p[i*4+1] = p[i*4+2] = 0;
+            } else {
+                p[i*4+0] = (uint8_t)((b * a + 127) / 255);
+                p[i*4+1] = (uint8_t)((g * a + 127) / 255);
+                p[i*4+2] = (uint8_t)((r * a + 127) / 255);
+            }
+        }
+    }
 }

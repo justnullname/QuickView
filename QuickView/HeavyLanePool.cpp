@@ -409,9 +409,11 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             // Create WIC Bitmap from PMR buffer for D2D compatibility
             // [Deep Copy] Safe arena release
             ComPtr<IWICBitmap> wicBitmap;
+            // [Fix] Use straight BGRA, not PBGRA. LoadToMemoryPMR outputs straight alpha.
+            // PBGRA causes transparency issues because WIC interprets incorrectly.
             hr = m_loader->CreateWICBitmapCopy(
                 decoded.width, decoded.height,
-                GUID_WICPixelFormat32bppPBGRA,
+                GUID_WICPixelFormat32bppBGRA,  // Changed from PBGRA
                 decoded.stride,
                 (UINT)decoded.pixels.size(),
                 decoded.pixels.data(),

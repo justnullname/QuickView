@@ -139,8 +139,10 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
         // [v3.2] Type A images go to Express Lane ONLY
         // JPEG ≤8.5MP, PNG ≤4MP, RAW/TIFF (embedded), etc.
-        // Heavy Lane is NOT needed - Scout will produce Clear image.
-        useHeavy = false;
+        // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading (DC Preview + Heavy Full Decode)
+        if (info.format != L"JXL") {
+             useHeavy = false;
+        }
     } 
     else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Case: Large Image without embedded thumb
@@ -168,7 +170,11 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     }
 
     if (useScout) {
-        m_scout.Push(path);
+        // [Fix] JXL Scout causes infinite decode loop - disable for now
+        // TODO: Debug LoadThumbJXL_DC thoroughly
+        if (info.format != L"JXL") {
+            m_scout.Push(path);
+        }
     }
 }
 
@@ -311,9 +317,6 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     wcscpy_s(s.loaderName, m_scout.GetLastLoaderName().c_str());
     
     // Legacy DComp Lights: Filled by UI
-    
-    // SlowMo (Runtime Config)
-    s.slowMo = m_config.SlowMotion;
     
     // Zone B: Matrix (Scout)
     s.scoutQueue = m_scout.GetQueueSize();

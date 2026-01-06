@@ -150,7 +150,6 @@ public:
         bool layerGal = false;
         bool layerSta = false;
         bool layerDyn = false;
-        bool slowMo = false;
 
         // Zone B: Matrix
         int scoutQueue = 0;

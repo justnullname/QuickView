@@ -2995,8 +2995,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
                 case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
                 case '3': g_runtime.EnableCrossFade = !g_runtime.EnableCrossFade; handled = true; break;
-                case '4': g_runtime.SlowMotion = !g_runtime.SlowMotion; handled = true; break;
-                case '5': g_runtime.ForceWarp = !g_runtime.ForceWarp; handled = true; break;
             }
             if (handled) {
                 g_imageEngine->UpdateConfig(g_runtime); // Push to engine
@@ -4879,7 +4877,7 @@ void OnPaint(HWND hwnd) {
                 }
                 else {
                     // Cross-Fade Animation (Ghost -> Truth)
-                    DWORD duration = g_runtime.SlowMotion ? 2000 : CROSS_FADE_DURATION;
+                    DWORD duration = CROSS_FADE_DURATION;
                     DWORD elapsed = GetTickCount() - g_crossFadeStart;
                     float alpha = std::min(1.0f, (float)elapsed / (float)duration);
 
@@ -4900,14 +4898,9 @@ void OnPaint(HWND hwnd) {
                     }
                 }
             } 
-            else if (g_renderEngine->IsWarpMode() || g_runtime.ForceWarp) {
+            else if (g_renderEngine->IsWarpMode()) {
                 // Warp Mode (Blur) - PRIORITY 2
-                // Force Warp Effect for Debug
-                if (g_runtime.ForceWarp) g_renderEngine->SetWarpMode(0.5f, 0.1f);
-
                 g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
-                
-                if (g_runtime.ForceWarp) g_renderEngine->SetWarpMode(0.0f); // Restore
             }
             else {
                 // Static 模式：正常绘制

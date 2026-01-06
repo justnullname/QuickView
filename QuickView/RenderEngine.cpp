@@ -304,22 +304,36 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
 
     HRESULT hr = S_OK;
 
-    // Convert pixel format
+    // Check source format first
+    WICPixelFormatGUID srcFormat;
+    hr = wicBitmap->GetPixelFormat(&srcFormat);
+    if (FAILED(hr)) return hr;
+
+    IWICBitmapSource* srcToUse = wicBitmap;
     ComPtr<IWICFormatConverter> converter;
-    hr = m_wicFactory->CreateFormatConverter(&converter);
-    if (FAILED(hr)) return hr;
 
-    hr = converter->Initialize(
-        wicBitmap,
-        GUID_WICPixelFormat32bppPBGRA,  // Premultiplied alpha for D2D
-        WICBitmapDitherTypeNone,
-        nullptr,
-        0.0f,
-        WICBitmapPaletteTypeCustom
-    );
-    if (FAILED(hr)) return hr;
+    // Only convert if source is NOT already PBGRA or BGRA
+    bool needConvert = !(srcFormat == GUID_WICPixelFormat32bppPBGRA || 
+                         srcFormat == GUID_WICPixelFormat32bppBGRA);
+    
+    if (needConvert) {
+        hr = m_wicFactory->CreateFormatConverter(&converter);
+        if (FAILED(hr)) return hr;
 
-    // [All-Premul-Pipeline] Explicitly declare as PREMULTIPLIED to match Wuffs/WIC output
+        hr = converter->Initialize(
+            wicBitmap,
+            GUID_WICPixelFormat32bppBGRA,  // Use straight BGRA, not PBGRA
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0f,
+            WICBitmapPaletteTypeCustom
+        );
+        if (FAILED(hr)) return hr;
+        srcToUse = converter.Get();
+    }
+
+    // Use PREMULTIPLIED mode for proper transparency support
+    // This allows transparent images to display with checkerboard background
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
@@ -327,7 +341,7 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
 
     // Create D2D bitmap from WIC
     hr = m_d2dContext->CreateBitmapFromWicBitmap(
-        converter.Get(),
+        srcToUse,
         &props,
         reinterpret_cast<ID2D1Bitmap1**>(d2dBitmap)
     );

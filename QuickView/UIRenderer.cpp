@@ -464,6 +464,27 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     DrawLight(L"STA", g_debugMetrics.dirtyTriggerStatic, blueBrush.Get()); 
     DrawLight(L"DYN", g_debugMetrics.dirtyTriggerDynamic, greenBrush.Get());
 
+    // 2b. Toggle Indicators (Ctrl+1/2/3)
+    x = hudX + 200.0f;
+    float toggleY = trafficY;
+    float toggleSize = 10.0f;
+    
+    auto DrawToggle = [&](const wchar_t* label, bool enabled) {
+        D2D1_RECT_F rect = D2D1::RectF(x, toggleY, x + toggleSize, toggleY + toggleSize);
+        if (enabled) {
+            dc->FillRectangle(rect, greenBrush.Get());
+        } else {
+            dc->FillRectangle(rect, redBrush.Get());
+        }
+        dc->DrawText(label, (UINT32)wcslen(label), m_debugFormat.Get(), 
+                D2D1::RectF(x + toggleSize + 4, toggleY - 2, x + 80, toggleY + 14), m_whiteBrush.Get());
+        toggleY += 16.0f;
+    };
+    
+    DrawToggle(L"Scout [1]", g_runtime.EnableScout);
+    DrawToggle(L"Heavy [2]", g_runtime.EnableHeavy);
+    DrawToggle(L"Fade [3]", g_runtime.EnableCrossFade);
+
     wchar_t buffer[256];
     wchar_t buf[256]; 
 
