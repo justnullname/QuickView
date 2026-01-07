@@ -11,6 +11,11 @@
 #include "../third_party/nanosvg/nanosvgrast.h"
 #pragma warning(pop)
 #include "ImageLoader.h"
+// [Deep Cancel] Use low-level libjpeg API for scanline cancellation
+#include <stdio.h> // jpeglib needs stdio
+#include <setjmp.h> // For error handling
+#define HAVE_BOOLEAN // Prevent conflict with Windows boolean
+#include <jpeglib.h>
 #include <jxl/decode.h> // JXL
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
@@ -1739,6 +1744,107 @@ static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, s
     return true;
 }
 
+// ============================================================================
+// LibJpeg Deep Implementation (Scanline Cancellation)
+// ============================================================================
+struct my_error_mgr {
+  struct jpeg_error_mgr pub;
+  jmp_buf setjmp_buffer;
+};
+
+METHODDEF(void) my_error_exit(j_common_ptr cinfo) {
+  my_error_mgr* myerr = (my_error_mgr*)cinfo->err;
+  longjmp(myerr->setjmp_buffer, 1);
+}
+
+// Low-level decode with scanline cancellation
+static HRESULT LoadJpegDeep(const uint8_t* pBuf, size_t bufSize, 
+                            CImageLoader::DecodedImage* pOut, 
+                            int targetW, int targetH, 
+                            std::wstring* pLoaderName,
+                            CImageLoader::CancelPredicate checkCancel) 
+{
+    struct jpeg_decompress_struct cinfo;
+    struct my_error_mgr jerr;
+    
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = my_error_exit;
+    
+    if (setjmp(jerr.setjmp_buffer)) {
+        jpeg_destroy_decompress(&cinfo);
+        return E_FAIL;
+    }
+    
+    jpeg_create_decompress(&cinfo);
+    jpeg_mem_src(&cinfo, pBuf, (unsigned long)bufSize);
+    
+    if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+        jpeg_destroy_decompress(&cinfo);
+        return E_FAIL;
+    }
+    
+    // IDCT Scaling Logic
+    cinfo.scale_num = 1;
+    cinfo.scale_denom = 1;
+    
+    if (targetW > 0 && targetH > 0) {
+        // Calculate scale factor (M/8)
+        while (cinfo.scale_denom < 8) {
+             int nextDenom = cinfo.scale_denom * 2;
+             int scaledW = (cinfo.image_width + nextDenom - 1) / nextDenom;
+             int scaledH = (cinfo.image_height + nextDenom - 1) / nextDenom;
+             
+             if (scaledW < targetW || scaledH < targetH) break; 
+             cinfo.scale_denom = nextDenom;
+        }
+    }
+    
+    // Output BGRA (libjpeg-turbo extension)
+    cinfo.out_color_space = JCS_EXT_BGRA; 
+    
+    jpeg_start_decompress(&cinfo);
+    
+    int w = cinfo.output_width;
+    int h = cinfo.output_height;
+    UINT stride = w * 4;
+    
+    try {
+        pOut->pixels.resize((size_t)stride * h);
+    } catch(...) {
+        jpeg_abort_decompress(&cinfo);
+        jpeg_destroy_decompress(&cinfo);
+        return E_OUTOFMEMORY;
+    }
+    
+    pOut->width = w;
+    pOut->height = h;
+    pOut->stride = stride;
+    
+    while (cinfo.output_scanline < cinfo.output_height) {
+        // [Deep Check]
+        if (checkCancel && checkCancel()) {
+            jpeg_abort_decompress(&cinfo);
+            jpeg_destroy_decompress(&cinfo);
+            return E_ABORT;
+        }
+        
+        JSAMPROW row_pointer[1];
+        row_pointer[0] = &pOut->pixels[(size_t)cinfo.output_scanline * stride];
+        jpeg_read_scanlines(&cinfo, row_pointer, 1);
+    }
+    
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
+    
+    if (pLoaderName) {
+        *pLoaderName = L"FASTJPEG (Deep Cancel)";
+        if (cinfo.output_width < cinfo.image_width) *pLoaderName += L" [Scaled]";
+    }
+    
+    pOut->isValid = true;
+    return S_OK;
+}
+
 // PMR-Backed Loading (Zero-Copy for Heavy Lane) //
 // ============================================================================
 HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, std::pmr::memory_resource* pmr, 
@@ -1770,78 +1876,17 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         
         if (st.stop_requested()) return E_ABORT;
         
-        tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
-        if (!tj) return E_FAIL;
-        
-        HRESULT hr = E_FAIL;
-        if (tj3DecompressHeader(tj, jpegBuf.data(), jpegBuf.size()) == 0) {
-            int width = tj3Get(tj, TJPARAM_JPEGWIDTH);
-            int height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
-            int subsamp = tj3Get(tj, TJPARAM_SUBSAMP);
-            
-            if (width > 0 && height > 0) {
-                // [Optimization] Decode-to-Scale Logic for JPEG (IDCT Scaling)
-                if (targetWidth > 0 && targetHeight > 0 && (width > targetWidth || height > targetHeight)) {
-                    // Get available scaling factors
-                    int numFactors = 0;
-                    const tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
-                    
-                    if (factors && numFactors > 0) {
-                        // Find best scaling factor (largest that fits within target)
-                        tjscalingfactor bestFactor = {1, 1}; // Default: no scaling
-                        for (int i = 0; i < numFactors; ++i) {
-                            int scaledW = TJSCALED(width, factors[i]);
-                            int scaledH = TJSCALED(height, factors[i]);
-                            if (scaledW >= targetWidth && scaledH >= targetHeight) {
-                                // This factor produces image >= target, pick smallest such image
-                                if (scaledW < TJSCALED(width, bestFactor) || scaledH < TJSCALED(height, bestFactor)) {
-                                    bestFactor = factors[i];
-                                }
-                            }
-                        }
-                        
-                        // Apply scaling factor if beneficial (not 1:1)
-                        if (bestFactor.num != 1 || bestFactor.denom != 1) {
-                            tj3SetScalingFactor(tj, bestFactor);
-                            width = TJSCALED(width, bestFactor);
-                            height = TJSCALED(height, bestFactor);
-                        }
-                    }
-                }
-
-                UINT stride = width * 4;
-                size_t bufSize = (size_t)stride * height;
-                
-                // Allocate directly from PMR
-                try {
-                    pOutput->pixels.resize(bufSize);
-                    pOutput->width = width;
-                    pOutput->height = height;
-                    pOutput->stride = stride;
-                    
-                    if (tj3Decompress8(tj, jpegBuf.data(), jpegBuf.size(), 
-                                       pOutput->pixels.data(), stride, TJPF_BGRX) == 0) {
-                        pOutput->isValid = true;
-                        hr = S_OK;
-                        if (pLoaderName) {
-                            *pLoaderName = L"TurboJPEG (PMR)";
-                            if (width < tj3Get(tj, TJPARAM_JPEGWIDTH)) *pLoaderName += L" [Scaled]";
-                        }
-                    } else {
-                        // Decode Failed
-                         if (pLoaderName) *pLoaderName = L"TJ Decode Fail"; 
-                         hr = E_FAIL;
-                    }
-                } catch(...) { 
-                    hr = E_OUTOFMEMORY; 
-                    if (pLoaderName) *pLoaderName = L"TJ OOM";
-                }
-            }
-        } else {
-             if (pLoaderName) *pLoaderName = L"TJ Header Fail";
-        }
-        tj3Destroy(tj);
+        // [v4.0] DEEP CANCELLATION: Replace TurboJPEG monolithic call with Scanline Loop
+        // This allows aborting decode instantly if user navigates away.
+        // Direct PMR Loading + IDCT Scaling + Cancel Check
+        HRESULT hr = LoadJpegDeep(jpegBuf.data(), jpegBuf.size(), 
+                                 pOutput, targetWidth, targetHeight, 
+                                 pLoaderName, ShouldCancel);
+                                 
+        if (hr == E_ABORT) return E_ABORT;
         if (SUCCEEDED(hr)) return hr;
+
+
     }
 
     // --- WebP Path (New Optimized PMR with Scaling) ---

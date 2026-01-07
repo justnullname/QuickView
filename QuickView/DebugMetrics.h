@@ -8,6 +8,7 @@ struct DebugMetrics {
     std::atomic<size_t> eventQueueSize = 0; // Backlogged messages
     std::atomic<size_t> memoryUsage = 0;    // PMR Usage in bytes
     std::atomic<int> skipCount = 0;         // Skipped frames
+    std::atomic<int> heavyCancellations = 0; // [v4.0] Deep Cancel Count
 
     // Dirty Trigger Counters (for Traffic Light blink)
     // Incremented on RequestRepaint, decremented on Render (decay)

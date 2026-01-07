@@ -170,6 +170,7 @@ public:
             bool isFullDecode = false;      // [Two-Stage] Match WorkerSnapshot layout
         } heavyWorkers[16]; // Fixed size for snapshot
         int heavyWorkerCount = 0;
+        int heavyCancellations = 0; // [HUD V4] Total cancellations
         
         // Zone C: Logic
         CacheStatus cacheSlots[5]; // [-2, -1, CUR, +1, +2]

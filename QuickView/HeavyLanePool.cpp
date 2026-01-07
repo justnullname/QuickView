@@ -408,7 +408,10 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         auto decodeEnd = std::chrono::high_resolution_clock::now();
         int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
         
-        if (st.stop_requested()) return;
+        if (st.stop_requested() || hr == E_ABORT) {
+            m_cancelCount++;
+            return;
+        }
         
         if (SUCCEEDED(hr) && decoded.isValid) {
             // Create WIC Bitmap from PMR buffer for D2D compatibility

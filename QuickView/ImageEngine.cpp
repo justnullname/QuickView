@@ -355,6 +355,10 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     // [Phase 10] Pass targetHash to filter stale times
     m_heavyPool->GetWorkerSnapshots((HeavyLanePool::WorkerSnapshot*)s.heavyWorkers, 16, &s.heavyWorkerCount, s.targetHash);
     
+    // [HUD V4] Get global pool stats for Cancellation Count
+    HeavyLanePool::PoolStats poolStats = m_heavyPool->GetStats();
+    s.heavyCancellations = poolStats.cancelCount;
+
     // [Phase 11] Bubble up Heavy Lane Loader Name
     bool hasFullDecode = false;
     for (int i = 0; i < s.heavyWorkerCount; ++i) {

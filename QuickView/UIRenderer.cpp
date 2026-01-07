@@ -525,8 +525,8 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     
     // Heavy
     py += 25.0f;
-    swprintf_s(buffer, L"[ HEAVY ] Pool: %d", s.heavyWorkerCount);
-    dc->DrawText(buffer, wcslen(buffer), m_debugFormat.Get(), D2D1::RectF(px, py, px+150, py+20), whiteBrush.Get());
+    swprintf_s(buffer, L"[ HEAVY ] Pool: %d  Cncl: %d", s.heavyWorkerCount, g_debugMetrics.heavyCancellations.load());
+    dc->DrawText(buffer, wcslen(buffer), m_debugFormat.Get(), D2D1::RectF(px, py, px + hudW - 20, py+20), whiteBrush.Get());
     
     py += 20.0f;
     // Draw dynamic slots based on actual count

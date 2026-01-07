@@ -5083,6 +5083,7 @@ void OnPaint(HWND hwnd) {
                 // Fill UI-side Metrics
                 s.fps = g_fps;
                 s.renderHash = ComputePathHash(g_imagePath);
+                g_debugMetrics.heavyCancellations = s.heavyCancellations; // [HUD V4] Sync
                 
                 // Sync Logic: Green if ID matches.
                 // UIRenderer handles Yellow/Red based on this.
