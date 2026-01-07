@@ -434,6 +434,13 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
                 
                 if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
                 
+                // [FIX] Ensure metadata dimensions match the actual decoded image
+                // especially if WIC failed to read metadata (e.g. JXL without codec)
+                if (meta.Width == 0 || meta.Height == 0) {
+                     meta.Width = decoded.width;
+                     meta.Height = decoded.height;
+                }
+                
                 // Build event
                 EngineEvent evt;
                 evt.type = EventType::FullReady;

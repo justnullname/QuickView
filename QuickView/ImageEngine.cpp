@@ -550,7 +550,10 @@ void ImageEngine::ScoutLane::QueueWorker() {
             int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
             
             if (SUCCEEDED(hr) && thumb.isValid) {
-                thumb.isBlurry = false; // Clear! No need for Main Lane.
+                // [FIX] Do NOT override thumb.isBlurry here!
+                // LoadThumbJXL_DC sets isBlurry=true for DC preview
+                // LoadFastPass other formats set isBlurry=false for clear image
+                // We must preserve the value set by the decoder!
                 if (thumb.loaderName.empty()) {
                     thumb.loaderName = L"FastPass";
                 }

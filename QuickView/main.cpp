@@ -161,7 +161,9 @@ static bool g_isBlurry = false; // For Motion Blur (Ghost)
 static bool g_transitionFromThumb = false; // Flag: Did we transition from a thumbnail?
 static bool g_isCrossFading = false;
 static DWORD g_crossFadeStart = 0;
-static const DWORD CROSS_FADE_DURATION = 150; // ms
+static const DWORD CROSS_FADE_DURATION = 150; // ms (normal)
+static const DWORD SLOW_MOTION_DURATION = 2000; // ms (debug)
+bool g_slowMotionMode = false; // [Debug] Slow crossfade for timing analysis
 static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
 OSDState g_osd; // Removed static, explicitly Global
 
@@ -1478,11 +1480,16 @@ void AdjustWindowToImage(HWND hwnd) {
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
 
-    D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
-    
-    // EXIF Orientation: swap dimensions for 90/270 rotations
-    float imgWidth = size.width;
-    float imgHeight = size.height;
+    // [Fix] Use Metadata dimensions for window sizing (Scout Preview might be 1/8th size)
+    float imgWidth, imgHeight;
+    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+        imgWidth = (float)g_currentMetadata.Width;
+        imgHeight = (float)g_currentMetadata.Height;
+    } else {
+        D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
+        imgWidth = size.width;
+        imgHeight = size.height;
+    }
     int orientation = g_viewState.ExifOrientation;
     if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
         std::swap(imgWidth, imgHeight);
@@ -2994,7 +3001,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             switch(wParam) {
                 case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
                 case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
-                case '3': g_runtime.EnableCrossFade = !g_runtime.EnableCrossFade; handled = true; break;
+                case '3': g_slowMotionMode = !g_slowMotionMode; handled = true; break;
             }
             if (handled) {
                 g_imageEngine->UpdateConfig(g_runtime); // Push to engine
@@ -3870,7 +3877,9 @@ void ProcessEngineEvents(HWND hwnd) {
             // Only accept if current level is < 1 (Void)
             // If we are already at Level 1 (Scout) or Level 2 (Truth), ignore this.
             if (g_imageQualityLevel >= 1) {
-                 // Discard late/duplicate thumbnail or level downgrade
+                 wchar_t buf2[256];
+                 swprintf_s(buf2, L"[Main] ThumbReady DISCARDED: QualityLevel=%d (already >= 1)\n", g_imageQualityLevel);
+                 OutputDebugStringW(buf2);
                  break; 
             }
 
@@ -3896,6 +3905,10 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_currentBitmap = thumbBitmap;
                 g_ghostBitmap = thumbBitmap; 
                 g_isBlurry = evt.thumbData.isBlurry; 
+                
+                wchar_t blurryBuf[128];
+                swprintf_s(blurryBuf, L"[Main] ThumbReady: isBlurry=%d (from Scout)\n", evt.thumbData.isBlurry ? 1 : 0);
+                OutputDebugStringW(blurryBuf);
                 
                 g_imagePath = evt.filePath; 
                 g_imageQualityLevel = 1;    
@@ -3926,6 +3939,26 @@ void ProcessEngineEvents(HWND hwnd) {
                         PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
                     }
                 } else {
+                    // [Fix] Adjust window size using original dimensions even for blurry preview
+                    // This prevents flash when Heavy loads with correct size
+                    if (evt.thumbData.origWidth > 0 && evt.thumbData.origHeight > 0) {
+                        // Store original dimensions in metadata BEFORE adjusting window
+                        g_currentMetadata.Width = evt.thumbData.origWidth;
+                        g_currentMetadata.Height = evt.thumbData.origHeight;
+                        g_currentMetadata.LoaderName = evt.thumbData.loaderName;
+                        if (g_imageLoader) {
+                            g_imageLoader->ReadMetadata(evt.filePath.c_str(), &g_currentMetadata);
+                            // Restore dimensions (ReadMetadata may overwrite)
+                            g_currentMetadata.Width = evt.thumbData.origWidth;
+                            g_currentMetadata.Height = evt.thumbData.origHeight;
+                        }
+                        
+                        // [Fix] Set Dirty flag BEFORE window adjustment to ensure repaint isn't missed
+                        // even if WM_SIZE triggers an early paint.
+                        g_isImageDirty = true;
+                        AdjustWindowToImage(hwnd);
+                    }
+                    
                     wchar_t titleBuf[512];
                     swprintf_s(titleBuf, L"Loading... %s - %s", 
                         evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
@@ -3948,7 +3981,8 @@ void ProcessEngineEvents(HWND hwnd) {
                     g_pImageEngine->TriggerPendingJxlHeavy();
                 }
                 
-                needsRepaint = true;
+                // Post-adjustment repaint
+                RequestRepaint(PaintLayer::All);
             }
             break;
         }
@@ -4008,13 +4042,9 @@ void ProcessEngineEvents(HWND hwnd) {
                 // overriding any Warp/Blur effects for the new image.
                 g_isCrossFading = true;
                 g_crossFadeStart = GetTickCount();
-
-                // [JXL Sequential] Force instant replacement (no crossfade) for JXL
-                // This ensures smooth Scout->Heavy transition without visual artifacts
-                if (evt.metadata.LoaderName.find(L"libjxl") != std::wstring::npos) {
-                    g_isCrossFading = false;
-                    g_ghostBitmap = nullptr;
-                }
+                
+                // [JXL Sequential] Crossfade enabled for smooth Scout->Heavy transition
+                // (Block removed)
                 
                 // Validation for actual animation
                 if (!g_ghostBitmap || !g_runtime.EnableCrossFade) {
@@ -4083,6 +4113,7 @@ void ProcessEngineEvents(HWND hwnd) {
     }
     
     if (needsRepaint) {
+        OutputDebugStringW(L"[Main] Calling RequestRepaint(All)\n");
         RequestRepaint(PaintLayer::All);
     }
 }
@@ -4706,8 +4737,8 @@ void OnPaint(HWND hwnd) {
     }
     
     if (g_isImageDirty) {
-    g_isImageDirty = false; // Reset dirty flag BEFORE drawing (Consume flag)
-    g_renderEngine->BeginDraw();
+        g_isImageDirty = false; // Reset dirty flag BEFORE drawing (Consume flag)
+        g_renderEngine->BeginDraw();
     
     // --- Performance Metrics Update ---
     // [Performance] Unguarded metric block removed. 
@@ -4873,6 +4904,7 @@ void OnPaint(HWND hwnd) {
             
             if (g_isCrossFading) {
                 // === Arrival Priority Block ===
+
                 // Determines what happens when a new image lands.
                 // This overrides Warp/Scroll blur to ensure the user SEES the new image clearly.
                 // ONLY Animate if we have a Ghost AND CrossFade enabled AND we are coming from a Thumbnail.
@@ -4889,7 +4921,7 @@ void OnPaint(HWND hwnd) {
                 }
                 else {
                     // Cross-Fade Animation (Ghost -> Truth)
-                    DWORD duration = CROSS_FADE_DURATION;
+                    DWORD duration = g_slowMotionMode ? SLOW_MOTION_DURATION : CROSS_FADE_DURATION;
                     DWORD elapsed = GetTickCount() - g_crossFadeStart;
                     float alpha = std::min(1.0f, (float)elapsed / (float)duration);
 
@@ -4901,6 +4933,15 @@ void OnPaint(HWND hwnd) {
                     } else {
                         // 1. Draw Ghost (Stretched Thumbnail)
                         context->DrawBitmap(g_ghostBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                        
+                        // [SlowMotion Debug] Add red tint to Ghost so user can distinguish Scout vs Heavy
+                        if (g_slowMotionMode) {
+                            ComPtr<ID2D1SolidColorBrush> redTint;
+                            context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 0.3f * (1.0f - alpha)), &redTint);
+                            if (redTint) {
+                                context->FillRectangle(destRect, redTint.Get());
+                            }
+                        }
 
                         // 2. Draw Full (Fading In)
                         context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
@@ -4913,6 +4954,24 @@ void OnPaint(HWND hwnd) {
             else if (g_renderEngine->IsWarpMode()) {
                 // Warp Mode (Blur) - PRIORITY 2
                 g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
+                
+                // [SlowMotion Debug] Red border when showing Scout preview (blurry) in Warp mode too
+                if (g_slowMotionMode && g_isBlurry) {
+                    ComPtr<ID2D1SolidColorBrush> redBorder;
+                    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 1.0f), &redBorder);
+                    if (redBorder) {
+                         // Draw INSIDE: Inset by half stroke width (4px)
+                        float strokeWidth = 8.0f;
+                        float inset = strokeWidth / 2.0f;
+                        D2D1_RECT_F borderRect = D2D1::RectF(
+                            destRect.left + inset, 
+                            destRect.top + inset, 
+                            destRect.right - inset, 
+                            destRect.bottom - inset
+                        );
+                        context->DrawRectangle(borderRect, redBorder.Get(), strokeWidth);
+                    }
+                }
             }
             else {
                 // Static 模式：正常绘制
@@ -4920,6 +4979,24 @@ void OnPaint(HWND hwnd) {
                     ? D2D1_INTERPOLATION_MODE_LINEAR 
                     : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
                 context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, interpMode);
+                
+                // [SlowMotion Debug] Red border when showing Scout preview (blurry)
+                if (g_slowMotionMode && g_isBlurry) {
+                    ComPtr<ID2D1SolidColorBrush> redBorder;
+                    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 1.0f), &redBorder);
+                    if (redBorder) {
+                        // Draw INSIDE: Inset by half stroke width (4px)
+                        float strokeWidth = 8.0f;
+                        float inset = strokeWidth / 2.0f;
+                        D2D1_RECT_F borderRect = D2D1::RectF(
+                            destRect.left + inset, 
+                            destRect.top + inset, 
+                            destRect.right - inset, 
+                            destRect.bottom - inset
+                        );
+                        context->DrawRectangle(borderRect, redBorder.Get(), strokeWidth); 
+                    }
+                }
             }
         }
         

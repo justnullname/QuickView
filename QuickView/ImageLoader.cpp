@@ -3705,11 +3705,70 @@ HRESULT CImageLoader::LoadThumbWebP_Limited(const uint8_t* data, size_t size, in
 
             // High-precision float for quality, speed is fine for thumbnail
 
+// [JXL Memory Optimization] Context for 1:8 Skip-Sampling Callback
+struct JxlSkipSampleContext {
+    uint8_t* outBuffer;
+    size_t outWidth;
+    size_t outHeight;
+    size_t outStride;
+    size_t factor; // 8
+};
+
+// [JXL Memory Optimization] Callback to read only 1 pixel every 8x8 block
+// Performs simultaneous Skip-Sampling, Swizzle (RGBA->BGRA), and Premultiplication
+static void JxlSkipSampleCallback(void* run_opaque, size_t x, size_t y, size_t num_pixels, const void* pixels) {
+    JxlSkipSampleContext* ctx = (JxlSkipSampleContext*)run_opaque;
+    const uint8_t* src = (const uint8_t*)pixels;
+    
+    // Vertical Skip: Only process every 8th row
+    if (y % ctx->factor != 0) return;
+    
+    size_t targetY = y / ctx->factor;
+    if (targetY >= ctx->outHeight) return;
+    
+    uint8_t* rowPtr = ctx->outBuffer + targetY * ctx->outStride;
+    
+    // Horizontal Skip & Pixel Processing
+    for (size_t i = 0; i < num_pixels; ++i) {
+        size_t currentX = x + i;
+        
+        // Only process every 8th column
+        if (currentX % ctx->factor == 0) {
+            size_t targetX = currentX / ctx->factor;
+            if (targetX < ctx->outWidth) {
+                size_t srcOffset = i * 4; // 4 bytes per pixel (RGBA input)
+                size_t dstOffset = targetX * 4; // 4 bytes per pixel (BGRA output)
+                
+                uint8_t r = src[srcOffset + 0];
+                uint8_t g = src[srcOffset + 1];
+                uint8_t b = src[srcOffset + 2];
+                uint8_t a = src[srcOffset + 3]; // Alpha
+                
+                // Premultiply Alpha
+                if (a > 0 && a < 255) {
+                    r = (uint8_t)((r * a) / 255);
+                    g = (uint8_t)((g * a) / 255);
+                    b = (uint8_t)((b * a) / 255);
+                } else if (a == 0) {
+                    r = g = b = 0;
+                }
+                
+                // Store as BGRA
+                rowPtr[dstOffset + 0] = b;
+                rowPtr[dstOffset + 1] = g;
+                rowPtr[dstOffset + 2] = r;
+                rowPtr[dstOffset + 3] = a;
+            }
+        }
+    }
+}
+
 
 HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData) {
     if (!pFile || fileSize == 0 || !pData) return E_INVALIDARG;
 
     pData->isValid = false;
+    pData->isBlurry = true; // [FIX] Set early - DC mode always produces blurry output
     
     // 1. Create Decoder
     JxlDecoder* dec = JxlDecoderCreate(NULL);
@@ -3750,6 +3809,7 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
     bool headerSeen = false;
 
     // 5. Decode Loop (Buffer Mode)
+    JxlSkipSampleContext dsCtx = {};
     JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; // BGRA (We swizzle later if needed, but JXL is RGBA)
     // Actually, let's stick to RGBA and Swizzle manually, or use SIMD.
     
@@ -3765,36 +3825,30 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
         else if (status == JXL_DEC_SUCCESS) {
             // Finished
             if (pData->isValid) {
-                 // Final Swizzle & Premultiply
-                 uint8_t* p = pData->pixels.data();
-                 size_t pxCount = (size_t)pData->width * pData->height;
-                 
-                 // [Transparency Fix] Preserve real alpha, swizzle RGBA → BGRA + premultiply
-                 // Previous code forced a=255 which broke transparency during crossfade
-                 for(size_t i=0; i<pxCount; ++i) {
-                     uint8_t r = p[i*4+0];
-                     uint8_t g = p[i*4+1];
-                     uint8_t b = p[i*4+2];
-                     uint8_t a = p[i*4+3]; // Keep real alpha!
-                     
-                     // Premultiply for D2D compatibility
-                     if (a < 255 && a > 0) {
-                         r = (uint8_t)((r * a) / 255);
-                         g = (uint8_t)((g * a) / 255);
-                         b = (uint8_t)((b * a) / 255);
-                     } else if (a == 0) {
-                         r = g = b = 0;
+                 // For Preview (Name="libjxl (Preview)"), we used Buffer, so we need to Swizzle here.
+                 // For DC (Name="libjxl (Scout DC 1:8)"), we used Callback which already did it.
+                 if (pData->loaderName == std::wstring(L"libjxl (Preview)")) {
+                     uint8_t* p = pData->pixels.data();
+                     size_t pxCount = (size_t)pData->width * pData->height;
+                     for(size_t i=0; i<pxCount; ++i) {
+                         uint8_t r = p[i*4+0];
+                         uint8_t g = p[i*4+1];
+                         uint8_t b = p[i*4+2];
+                         uint8_t a = p[i*4+3];
+                         
+                         if (a < 255 && a > 0) {
+                             r = (uint8_t)((r * a) / 255);
+                             g = (uint8_t)((g * a) / 255);
+                             b = (uint8_t)((b * a) / 255);
+                         } else if (a == 0) {
+                             r = g = b = 0;
+                         }
+                         p[i*4+0] = b;
+                         p[i*4+1] = g;
+                         p[i*4+2] = r;
+                         p[i*4+3] = a;
                      }
-                     
-                     // RGBA -> BGRA (premultiplied)
-                     p[i*4+0] = b;
-                     p[i*4+1] = g;
-                     p[i*4+2] = r;
-                     p[i*4+3] = a;
                  }
-                 
-                 pData->loaderName = L"libjxl (DC)";
-                 pData->isBlurry = true;
                  return cleanup(S_OK);
             }
             return cleanup(E_FAIL);
@@ -3844,32 +3898,30 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
              pData->isValid = true;
         }
         else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-            size_t bufferSize = 0;
-            if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &format, &bufferSize)) return cleanup(E_FAIL);
+            // [Memory Optimization] Use Callback for 1:8 Skip Sampling
+            size_t factor = 8;
+            size_t targetW = (info.xsize + factor - 1) / factor;
+            size_t targetH = (info.ysize + factor - 1) / factor;
             
-            // [Guard] Check if Full Resolution
-            size_t fullSizeMin = (size_t)info.xsize * info.ysize * 4; 
-            bool isFullRes = (bufferSize >= fullSizeMin);
+            try { 
+                // Allocate tiny buffer (1/64 size)
+                pData->pixels.resize(targetW * targetH * 4); 
+            } catch(...) { return cleanup(E_OUTOFMEMORY); }
             
-            // [TEST] 2MP limit removed to test scaling efficiency
-            
-            // Allocation & Dynamic Dimension Logic
-            pData->loaderName = isFullRes ? L"libjxl (Scout Full)" : L"libjxl (Scout DC)";
-            
-            try { pData->pixels.resize(bufferSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
-            
-            // Reverse engineer width
-            if (isFullRes) {
-                pData->width = info.xsize;
-                pData->height = info.ysize;
-            } else {
-                 pData->width = (info.xsize + 7) / 8;
-                 pData->height = (info.ysize + 7) / 8;
-            }
-            pData->stride = pData->width * 4;
+            pData->width = (int)targetW;
+            pData->height = (int)targetH;
+            pData->stride = (int)targetW * 4;
             pData->isValid = true;
+            pData->loaderName = L"libjxl (Scout DC 1:8)";
+            pData->isBlurry = true;
 
-            if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufferSize)) {
+            dsCtx.outBuffer = pData->pixels.data();
+            dsCtx.outWidth = targetW;
+            dsCtx.outHeight = targetH;
+            dsCtx.outStride = pData->stride;
+            dsCtx.factor = factor;
+            
+            if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutCallback(dec, &format, JxlSkipSampleCallback, &dsCtx)) {
                 return cleanup(E_FAIL);
             }
         }

@@ -25,6 +25,7 @@ extern void DrawGridTooltip(ID2D1DeviceContext* context, float winPixelW, float 
 extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 
 extern RuntimeConfig g_runtime;
+extern bool g_slowMotionMode; // [Debug] Slow-motion crossfade mode
 
 // ============================================================================
 // UIRenderer Implementation - 3-Layer Architecture
@@ -450,9 +451,9 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         toggleY += 16.0f;
     };
     
-    DrawToggle(L"Scout [1]", g_runtime.EnableScout);
-    DrawToggle(L"Heavy [2]", g_runtime.EnableHeavy);
-    DrawToggle(L"Fade [3]", g_runtime.EnableCrossFade);
+    DrawToggle(L"Scout[Ctl1]", g_runtime.EnableScout);
+    DrawToggle(L"Heavy[Ctl2]", g_runtime.EnableHeavy);
+    DrawToggle(L"SlowM[Ctl3]", g_slowMotionMode);
 
     // 2. Traffic Lights (Triggers)
     float x = hudX + 10.0f;
