@@ -1916,7 +1916,12 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                   }
                   */
 
-                  config.output.colorspace = MODE_BGRA;
+                  // [v4.2] Optimization:
+                  // 1. Use MODE_bgrA for Native Premultiplied Alpha (Matches D2D PBGRA) - Correctness + Speed
+                  // 2. Disable Fancy Upsampling (Nearest Neighbor for Chroma) - Faster decode
+                  config.output.colorspace = MODE_bgrA; 
+                  config.options.no_fancy_upsampling = 1;
+                  
                   config.output.is_external_memory = 1; // We allocate!
                   config.options.use_threads = 1;       // Enable multithreading
 
@@ -4032,6 +4037,10 @@ static HRESULT LoadThumbJPEG_Robust(LPCWSTR filePath, int targetSize, CImageLoad
 
     if (scaling.num != 1 || scaling.denom != 1) {
         tj3SetScalingFactor(tj, scaling);
+        // [v4.1] Optimization: Use FASTDCT only when scaling (Thumbnail/Scout Preview)
+        // For full-size small images (FastPass), we prefer higher quality (SlowDCT).
+        tj3Set(tj, TJPARAM_FASTDCT, 1);
+        
         width = TJSCALED(width, scaling);
         height = TJSCALED(height, scaling);
     }

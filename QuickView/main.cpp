@@ -3919,7 +3919,6 @@ void ProcessEngineEvents(HWND hwnd) {
                 
                 if (!evt.thumbData.isBlurry) {
                     g_imageQualityLevel = 2; 
-                    AdjustWindowToImage(hwnd);
                     
                     if (g_imageLoader) {
                         g_imageLoader->ReadMetadata(evt.filePath.c_str(), &g_currentMetadata);
@@ -3927,6 +3926,9 @@ void ProcessEngineEvents(HWND hwnd) {
                         g_currentMetadata.Height = evt.thumbData.origHeight > 0 ? evt.thumbData.origHeight : evt.thumbData.height;
                         g_currentMetadata.LoaderName = evt.thumbData.loaderName;
                     }
+                    
+                    g_isImageDirty = true; // Ensure repaint
+                    AdjustWindowToImage(hwnd); // Now uses correct metadata dimensions
                     
                     wchar_t titleBuf[512];
                     swprintf_s(titleBuf, L"%s - %s", 
