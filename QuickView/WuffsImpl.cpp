@@ -1,6 +1,8 @@
 // ============================================================
 // WuffsImpl.cpp - Wuffs Library Implementation (Optimized Build)
 // ============================================================
+
+// === Module Selection ===
 #define WUFFS_CONFIG__MODULES
 #define WUFFS_CONFIG__MODULE__BASE
 #define WUFFS_CONFIG__MODULE__CRC32
@@ -15,7 +17,23 @@
 #define WUFFS_CONFIG__MODULE__WBMP
 #define WUFFS_CONFIG__MODULE__NETPBM
 #define WUFFS_CONFIG__MODULE__QOI
-#define WUFFS_CONFIG__STATIC_FUNCTIONS
+
+// === Performance Optimizations ===
+#define WUFFS_CONFIG__STATIC_FUNCTIONS  // Inline functions for better optimization
+
+// [SIMD] MSVC AVX2 optimization hint
+// Wuffs will use runtime CPUID to enable SSE/AVX/AVX2 automatically
+// This macro silences the pragma message suggesting /arch:AVX
+#ifdef _MSC_VER
+#define WUFFS_CONFIG__I_KNOW_THAT_WUFFS_MSVC_PERFORMS_BEST_WITH_ARCH_AVX2
+#endif
+
+// [DST Format] Only generate code for BGRA variants we actually use
+// Reduces binary size and may improve instruction cache hit rate
+#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ENABLE_ALLOWLIST
+#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_NONPREMUL
+#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_PREMUL
+
 #define WUFFS_IMPLEMENTATION
 #include "../third_party/wuffs/release/c/wuffs-v0.4.c"
 
