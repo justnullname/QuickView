@@ -201,7 +201,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
             if (bmp) {
                 D2D1_SIZE_F bmpSize = bmp->GetSize();
                 D2D1_RECT_F src = GetCenterCropRect(bmpSize, cellRect);
-                pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+                pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, src);
             } else {
                 // Placeholder (Gray Box) call QueueRequest
                 D2D1_COLOR_F color = D2D1::ColorF(0.2f, 0.2f, 0.2f, m_opacity);

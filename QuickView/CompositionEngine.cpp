@@ -62,6 +62,11 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
     m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_galleryLayer.visual.Get());
     
+    // [v4.1] Set HIGH QUALITY interpolation for all scaled bitmaps
+    // Default is INHERIT->NEAREST_NEIGHBOR which causes blocky artifacts on zoom
+    m_imageVisual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+    m_galleryLayer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+    
     // 6. 设置 Root
     m_target->SetRoot(m_rootVisual.Get());
     

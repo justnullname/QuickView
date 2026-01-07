@@ -818,7 +818,29 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
              return S_OK;
         }
     }
-
+    else if (format == L"GIF") {
+        // [v4.1] GIF Support: Use Wuffs for fast decode (First Frame Only)
+        // Scout Lane: Allow small GIFs (<2MB), Heavy Lane: Allow all
+        if (!allowSlow && fsize > 2 * 1024 * 1024) return E_ABORT;
+        
+        std::vector<uint8_t> buf;
+        if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+        
+        uint32_t w, h;
+        if (WuffsLoader::DecodeGIF(buf.data(), buf.size(), &w, &h, pData->pixels)) {
+            // Sanity check for extremely large GIFs
+            if (w > 4096 || h > 4096) {
+                pData->pixels.clear();
+                return E_ABORT;
+            }
+            pData->width = w; pData->height = h; pData->stride = w * 4;
+            pData->origWidth = w; pData->origHeight = h;
+            pData->fileSize = buf.size();
+            pData->isValid = true; pData->isBlurry = true;
+            pData->loaderName = L"Wuffs GIF";
+            return S_OK;
+        }
+    }
     // 1. Optimized Path (JPEG)
     if (format == L"JPEG") {
         // [STE] Scout Lane Circuit Breaker for Large JPEG
@@ -1960,22 +1982,16 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         if (!ReadFileToPMR(filePath, pngBuf, st)) return E_ABORT;
 
         uint32_t w = 0, h = 0;
-        std::vector<uint8_t> pixelData; // Wuffs wrapper returns std::vector (Heap)
-        
-        if (WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &w, &h, pixelData, ShouldCancel)) {
-            UINT stride = w * 4;
-            // Copy to PMR
-            try {
-                pOutput->pixels.resize(pixelData.size());
-                pOutput->width = w;
-                pOutput->height = h;
-                pOutput->stride = stride;
-                memcpy(pOutput->pixels.data(), pixelData.data(), pixelData.size());
-                pOutput->isValid = true;
-                
-                if (pLoaderName) *pLoaderName = L"Wuffs PNG (PMR)";
-                return S_OK;
-            } catch(...) { return E_OUTOFMEMORY; }
+        // Direct decode into PMR (Zero Copy)
+        if (WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &w, &h, pOutput->pixels, ShouldCancel)) {
+             UINT stride = w * 4;
+             pOutput->width = w;
+             pOutput->height = h;
+             pOutput->stride = stride;
+             pOutput->isValid = true;
+             
+             if (pLoaderName) *pLoaderName = L"Wuffs PNG (PMR ZeroCopy)";
+             return S_OK;
         }
     
     // --- JXL Path (Streaming Deep Cancel + PMR) ---
@@ -2606,7 +2622,7 @@ HRESULT CImageLoader::LoadPngWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, Canc
     if (!ReadFileToVector(filePath, pngBuf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
     
     if (!WuffsLoader::DecodePNG(pngBuf.data(), pngBuf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
@@ -2629,7 +2645,7 @@ HRESULT CImageLoader::LoadGifWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, Canc
     if (!ReadFileToVector(filePath, gifBuf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
 
     if (!WuffsLoader::DecodeGIF(gifBuf.data(), gifBuf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
@@ -2652,7 +2668,7 @@ HRESULT CImageLoader::LoadBmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, Canc
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
 
     if (!WuffsLoader::DecodeBMP(buf.data(), buf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
@@ -2675,7 +2691,7 @@ HRESULT CImageLoader::LoadTgaWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, Canc
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
 
     if (!WuffsLoader::DecodeTGA(buf.data(), buf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
@@ -2698,7 +2714,7 @@ HRESULT CImageLoader::LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, Can
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
 
     if (!WuffsLoader::DecodeWBMP(buf.data(), buf.size(), &width, &height, pixelData, checkCancel)) {
         return E_FAIL;
@@ -2841,7 +2857,7 @@ HRESULT CImageLoader::LoadNetpbmWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
 
     if (!WuffsLoader::DecodeNetpbm(buf.data(), buf.size(), &width, &height, pixelData)) {
         return E_FAIL;
@@ -2863,7 +2879,7 @@ HRESULT CImageLoader::LoadQoiWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
 
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData;
 
     if (!WuffsLoader::DecodeQOI(buf.data(), buf.size(), &width, &height, pixelData)) {
         return E_FAIL;

@@ -281,7 +281,7 @@ void CRenderEngine::DrawBitmap(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect)
         bitmap,
         destRect,
         1.0f,  // Opacity
-        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
+        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC // Mipmap-based for best downscale quality
     );
 }
 
@@ -425,7 +425,7 @@ void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& d
     
     // 如果没有 Effect 或强度为 0，直接绘制
     if (!m_blurEffect || m_warpIntensity < 0.01f) {
-        m_d2dContext->DrawBitmap(bitmap, destRect, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+        m_d2dContext->DrawBitmap(bitmap, destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
         return;
     }
     
@@ -439,7 +439,7 @@ void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& d
         m_blurEffect.Get(),
         D2D1::Point2F(destRect.left, destRect.top), // Offset
         D2D1::RectF(0, 0, bmpSize.width, bmpSize.height), // Source Rect
-        D2D1_INTERPOLATION_MODE_LINEAR,
+        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
         D2D1_COMPOSITE_MODE_SOURCE_OVER
     );
     

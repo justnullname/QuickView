@@ -1942,6 +1942,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
             g_viewState.IsInteracting = false;  // End interaction mode
+            RequestRepaint(PaintLayer::Image);  // [v4.1] Trigger HQ interpolation redraw
         }
 
         // Debug HUD Refresh (996)
@@ -4934,7 +4935,7 @@ void OnPaint(HWND hwnd) {
                         context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                     } else {
                         // 1. Draw Ghost (Stretched Thumbnail)
-                        context->DrawBitmap(g_ghostBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                        context->DrawBitmap(g_ghostBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                         
                         // [SlowMotion Debug] Add red tint to Ghost so user can distinguish Scout vs Heavy
                         if (g_slowMotionMode) {
@@ -4946,7 +4947,7 @@ void OnPaint(HWND hwnd) {
                         }
 
                         // 2. Draw Full (Fading In)
-                        context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+                        context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                         
                         // Continue Animation
                         RequestRepaint(PaintLayer::Image);
@@ -4979,7 +4980,7 @@ void OnPaint(HWND hwnd) {
                 // Static 模式：正常绘制
                 D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
                     ? D2D1_INTERPOLATION_MODE_LINEAR 
-                    : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+                    : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC; // Mipmap-based for extreme downscale
                 context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, interpMode);
                 
                 // [SlowMotion Debug] Red border when showing Scout preview (blurry)
