@@ -1559,49 +1559,71 @@ void AdjustWindowToImage(HWND hwnd) {
     }
     
     // Convert to Pixels (using EXIF-adjusted dimensions)
-    int imgW = static_cast<int>(imgWidth * (dpi / 96.0f));
-    int imgH = static_cast<int>(imgHeight * (dpi / 96.0f));
-    
-    // Add margin for borderless look (optional, but good for shadow)
-    // Actually our client area IS the window size now in borderless.
+    int clientW = static_cast<int>(imgWidth * (dpi / 96.0f));
+    int clientH = static_cast<int>(imgHeight * (dpi / 96.0f));
     
     // Get Monitor Work Area
     HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = { sizeof(mi) };
     GetMonitorInfoW(hMon, &mi);
     
-    int maxW = (mi.rcWork.right - mi.rcWork.left) * 9 / 10;
-    int maxH = (mi.rcWork.bottom - mi.rcWork.top) * 9 / 10;
+    // Max Window Dimensions (Screen - Safety Margin)
+    int maxWinW = (mi.rcWork.right - mi.rcWork.left) - 32; // 32px safe margin
+    int maxWinH = (mi.rcWork.bottom - mi.rcWork.top) - 32;
     
-    int targetW = imgW;
-    int targetH = imgH;
+    // Calculate required Window Size for desired Client Size (accounting for Chrome)
+    RECT rc = { 0, 0, clientW, clientH };
+    DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
+    DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+    BOOL hasMenu = (GetMenu(hwnd) != nullptr);
+    AdjustWindowRectEx(&rc, style, hasMenu, exStyle);
     
-    // Scale down if too big
-    if (targetW > maxW || targetH > maxH) {
-        float ratio = std::min((float)maxW / targetW, (float)maxH / targetH);
-        targetW = (int)(targetW * ratio);
-        targetH = (int)(targetH * ratio);
+    int windowW = rc.right - rc.left;
+    int windowH = rc.bottom - rc.top;
+    
+    // Chrome Dimensions
+    int chromeW = windowW - clientW;
+    int chromeH = windowH - clientH;
+    
+    // Scale down if Window is too big for screen
+    if (windowW > maxWinW || windowH > maxWinH) {
+        // We must scale the CLIENT area to maintain aspect ratio
+        int maxClientW = maxWinW - chromeW;
+        int maxClientH = maxWinH - chromeH;
+        
+        // Prevent negative client area if chrome is huge? Unlikely.
+        if (maxClientW < 1) maxClientW = 1;
+        if (maxClientH < 1) maxClientH = 1;
+        
+        float ratio = std::min((float)maxClientW / clientW, (float)maxClientH / clientH);
+        clientW = (int)(clientW * ratio);
+        clientH = (int)(clientH * ratio);
+        
+        // Recalculate Window Size
+        windowW = clientW + chromeW;
+        windowH = clientH + chromeH;
     }
     
-    // Minimum size for UI controls
-    if (targetW < 400) targetW = 400;
-    if (targetH < 300) targetH = 300;
+    // Minimum size for UI controls (Constraint on Window Size)
+    if (windowW < 500) windowW = 500; // ensure enough width for toolbar
+    if (windowH < 400) windowH = 400;
     
     // Center logic
     RECT rcWindow; GetWindowRect(hwnd, &rcWindow);
     int currentCenterX = rcWindow.left + (rcWindow.right - rcWindow.left) / 2;
     int currentCenterY = rcWindow.top + (rcWindow.bottom - rcWindow.top) / 2;
     
-    // Using SetWindowPos to resize and center roughly
-    // Or just resize around center?
-    int newLeft = currentCenterX - targetW / 2;
-    int newTop = currentCenterY - targetH / 2;
+    int newLeft = currentCenterX - windowW / 2;
+    int newTop = currentCenterY - windowH / 2;
     
     // Ensure on screen
     if (newLeft < mi.rcWork.left) newLeft = mi.rcWork.left;
     if (newTop < mi.rcWork.top) newTop = mi.rcWork.top;
+    // Also check bottom/right edges?
+    if (newLeft + windowW > mi.rcWork.right) newLeft = mi.rcWork.right - windowW;
+    if (newTop + windowH > mi.rcWork.bottom) newTop = mi.rcWork.bottom - windowH;
     
-    SetWindowPos(hwnd, nullptr, newLeft, newTop, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(hwnd, nullptr, newLeft, newTop, windowW, windowH, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void ReloadCurrentImage(HWND hwnd) {
