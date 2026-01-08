@@ -3057,19 +3057,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (newTotalScale > 20.0f) newTotalScale = 20.0f;
 
         if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
-            // Calculate Desired Window Size to achieve NewTotalScale with Zoom=1.0 (Fit)
-            // DesiredCanvasW = ImageW * NewTotalScale
-            // But FitScale logic is Window / Image.
-            // If we set Window = Image * NewTotalScale, then FitScale = NewTotalScale.
-            // So ViewState.Zoom should be 1.0.
-            
-            // Get Monitor Info
+             // 1. Calculate Target Dimensions (Uncapped)
              HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
              MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
              int maxW = (mi.rcWork.right - mi.rcWork.left);
              int maxH = (mi.rcWork.bottom - mi.rcWork.top);
              
-             // EXIF Rotation correct for logic dimensions
+             // Logic dimensions (EXIF)
              float logicImgW = imgSize.width;
              float logicImgH = imgSize.height;
              int orientation = g_viewState.ExifOrientation;
@@ -3080,40 +3074,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              int targetW = (int)(logicImgW * newTotalScale);
              int targetH = (int)(logicImgH * newTotalScale);
              
-             // Clamp
+             // 2. Clamp Window Dimensions (Viewport Clamping)
              bool capped = false;
-             if (targetW > maxW) { targetW = maxW; capped = true; }
-             if (targetH > maxH) { targetH = maxH; capped = true; }
-             if (targetW < 400) { targetW = 400; capped = true; } // Min size
-             if (targetH < 300) { targetH = 300; capped = true; }
+             int finalWinW = targetW;
+             int finalWinH = targetH;
              
-             // Apply Window Resize
-             // Center window on screen or keep center?
-             // Usually keep center.
+             if (finalWinW > maxW) { finalWinW = maxW; capped = true; }
+             if (finalWinH > maxH) { finalWinH = maxH; capped = true; }
+             if (finalWinW < 400) finalWinW = 400; // Min size
+             if (finalWinH < 300) finalWinH = 300;
+             
+             // 3. Apply Window Resize (Physical)
              RECT rcWin; GetWindowRect(hwnd, &rcWin);
              int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
              int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
+             SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, SWP_NOZORDER | SWP_NOACTIVATE);
              
-             // If we are resizing window, 'FitScale' changes.
-             // Final 'FitScale' will be min(TargetW/ImgW, TargetH/ImgH).
-             // We want FinalTotalScale = NewTotalScale.
-             // So ViewState.Zoom = NewTotalScale / FinalFitScale.
+             // 4. Calculate Hardware Scale (Visual Override)
+             // If targetW > finalWinW, we need GPU scaling to display the extra size
+             float hardwareScale = 1.0f;
+             if (capped) {
+                 float scaleW = (float)targetW / (float)finalWinW;
+                 float scaleH = (float)targetH / (float)finalWinH;
+                 hardwareScale = std::max(scaleW, scaleH);
+             }
              
-             SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+             // Update Zoom State (Relative to "Fit in Final Window")
+             g_viewState.Zoom = hardwareScale;
              
-             // Recalculate Zoom
-             float newFitScale = std::min((float)targetW / logicImgW, (float)targetH / logicImgH);
-             g_viewState.Zoom = newTotalScale / newFitScale;
-             
-             // Reset Pan when window adapting (optional, keeps image centered)
+             // Reset Pan when not capped (keep centered)
              if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
              
-             // [DComp] Use hardware layout update (no repaint needed)
+             // 5. Apply to DComp
              if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0) {
-                 g_compEngine->UpdateLayout((float)targetW, (float)targetH, 
-                                            g_lastSurfaceSize.width, g_lastSurfaceSize.height);
+                 // First, Calculate Base Fit (Surface -> Window)
+                 g_compEngine->UpdateLayout((float)finalWinW, (float)finalWinH,
+                                          (float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
+                 
+                 if (capped) {
+                     // Calculate combined scale for DComp: BaseFit * HardwareScale
+                     float baseFitScale = std::min((float)finalWinW / g_lastSurfaceSize.width, 
+                                                 (float)finalWinH / g_lastSurfaceSize.height);
+                     float finalDCompScale = baseFitScale * hardwareScale;
+                     
+                     // Apply Override Scale (Zooming around window center)
+                     g_compEngine->SetZoom(finalDCompScale, finalWinW/2.0f, finalWinH/2.0f);
+                     g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+                     g_compEngine->Commit();
+                 }
              }
-             RequestRepaint(PaintLayer::Dynamic); // Only OSD update needed
+             RequestRepaint(PaintLayer::Dynamic); 
         } else {
              // Standard Zoom (Window size fixed or Maxed)
              // Zoom centered on window center
