@@ -181,20 +181,12 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
     // Get pending layer (opposite of active)
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
     ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
-    ImageLayer& active = (pendingIndex == 0) ? m_imageB : m_imageA;
     
-    // Ensure pending layer is behind active (Z-order fixup)
-    // Re-add pending to bottom of container
-    m_imageContainer->RemoveVisual(pending.visual.Get());
-    m_imageContainer->AddVisual(pending.visual.Get(), FALSE, nullptr);
-    // Put active on top
-    m_imageContainer->RemoveVisual(active.visual.Get());
-    m_imageContainer->AddVisual(active.visual.Get(), TRUE, pending.visual.Get());
-    
-    // Reset pending visual opacity to 1.0 (it will be revealed)
+    // [Optimization] Do NOT modify Visual Tree (prevents DWM thrashing)
+    // Instead, just ensure pending layer is invisible (Opacity 0)
     ComPtr<IDCompositionVisual3> visual3;
     if (SUCCEEDED(pending.visual.As(&visual3))) {
-        visual3->SetOpacity(1.0f);
+        visual3->SetOpacity(0.0f); // Hidden while drawing
     }
     
     // Reset pending visual offset
@@ -259,44 +251,76 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransp
     OutputDebugStringW(L"[DComp] PlayPingPongCrossFade\n");
     
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
-    ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
-    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+    // Image A is ALWAYS Top. Image B is ALWAYS Bottom.
+    bool pendingIsTop = (pendingIndex == 0); // ImageA is index 0
     
-    // Get Visual3 for opacity animation
-    ComPtr<IDCompositionVisual3> activeVisual3, pendingVisual3;
-    bool hasVisual3 = SUCCEEDED(active.visual.As(&activeVisual3)) && 
-                      SUCCEEDED(pending.visual.As(&pendingVisual3));
-    
-    if (hasVisual3 && durationMs > 0) {
-        // Create animation
-        ComPtr<IDCompositionAnimation> fadeOut, fadeIn;
-        m_device->CreateAnimation(&fadeOut);
-        m_device->CreateAnimation(&fadeIn);
-        
+    ComPtr<IDCompositionVisual3> topVisual, bottomVisual;
+    // Safely get visual3 interfaces
+    if (FAILED(m_imageA.visual.As(&topVisual)) || FAILED(m_imageB.visual.As(&bottomVisual))) {
+        return E_FAIL;
+    }
+
+    if (durationMs > 0) {
+        ComPtr<IDCompositionAnimation> anim;
+        m_device->CreateAnimation(&anim);
         float duration = durationMs / 1000.0f;
         
-        // Fade out active layer (1.0 -> 0.0)
-        fadeOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
-        fadeOut->End(duration, 0.0f);
-        activeVisual3->SetOpacity(fadeOut.Get());
-        
         if (isTransparent) {
-            // For transparent images: also fade in pending (0.0 -> 1.0)
-            pendingVisual3->SetOpacity(0.0f); // Start at 0
-            fadeIn->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
-            fadeIn->End(duration, 1.0f);
-            pendingVisual3->SetOpacity(fadeIn.Get());
-        } else {
-            // For opaque images: pending stays at 1.0 behind active
-            pendingVisual3->SetOpacity(1.0f);
+             // Transparent mode: Always dual-fade to avoid ghosting (seeing old image through new)
+             // Pending Fades IN (0->1)
+             // Active Fades OUT (1->0)
+             
+             ComPtr<IDCompositionAnimation> animIn, animOut;
+             m_device->CreateAnimation(&animIn);
+             m_device->CreateAnimation(&animOut);
+             animIn->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
+             animIn->End(duration, 1.0f);
+             
+             animOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
+             animOut->End(duration, 0.0f);
+             
+             if (pendingIsTop) {
+                 topVisual->SetOpacity(animIn.Get());
+                 bottomVisual->SetOpacity(animOut.Get());
+             } else {
+                 bottomVisual->SetOpacity(animIn.Get());
+                 topVisual->SetOpacity(animOut.Get());
+             }
+        }
+        else if (pendingIsTop) {
+            // Case 1: Pending is Top (A). Active is Bottom (B).
+            // A Fades IN (0->1). B stays 1.0 (visible behind).
+            // This covers B with A.
+            
+            // Ensure B is fully visible
+            bottomVisual->SetOpacity(1.0f);
+            
+            // Animate A: 0 -> 1
+            anim->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
+            anim->End(duration, 1.0f);
+            topVisual->SetOpacity(anim.Get());
+        } 
+        else {
+            // Case 2: Pending is Bottom (B). Active is Top (A).
+            // A Fades OUT (1->0). B set to 1.0 (revealed behind).
+            // This reveals B by clearing A.
+            
+            // Ensure B is visible immediately (it's behind A)
+            bottomVisual->SetOpacity(1.0f);
+            
+            // Animate A: 1 -> 0
+            anim->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
+            anim->End(duration, 0.0f);
+            topVisual->SetOpacity(anim.Get());
         }
     } else {
-        // No animation - instant switch via Z-order
-        // Pending is already behind active and at opacity 1.0
-        // Just need to hide active
-        if (hasVisual3) {
-            activeVisual3->SetOpacity(0.0f);
-            pendingVisual3->SetOpacity(1.0f);
+        // Instant Switch
+        if (pendingIsTop) {
+            topVisual->SetOpacity(1.0f);
+            bottomVisual->SetOpacity(1.0f); // Or 0? Doesn't matter if A covers B.
+        } else {
+            topVisual->SetOpacity(0.0f);
+            bottomVisual->SetOpacity(1.0f);
         }
     }
     
