@@ -565,6 +565,18 @@ static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparen
     if (orientation > 1) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     
     g_compEngine->EndPendingUpdate();
+
+    // [Fix] Re-apply correct Scale/Pan for the NEW surface content
+    // WM_SIZE (triggered by AdjustWindow) ran BEFORE this surface existed, 
+    // using STALE dimensions (Old Image), causing incorrect scaling (e.g. tiny thumbnail).
+    // Now that Surface fits Window (fitScale=1.0), we enforce the correct Logical Zoom.
+    if (g_compEngine->IsInitialized()) {
+        g_compEngine->SetZoom(g_viewState.Zoom, 0.0f, 0.0f);
+        g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+        // Note: Commit is handled by PlayPingPongCrossFade internally? 
+        // PlayPingPongCrossFade calls GetDevice()->Commit().
+        // If we set properties here, they are committed together.
+    }
     
     // Play cross-fade animation (150ms)
     g_compEngine->PlayPingPongCrossFade(g_slowMotionMode ? (float)SLOW_MOTION_DURATION : (float)CROSS_FADE_DURATION, isTransparent);
