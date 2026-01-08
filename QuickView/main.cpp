@@ -4095,8 +4095,8 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_imagePath = evt.filePath; 
                 g_imageQualityLevel = 1;    
                 
-                // [DComp] Render to DComp Surface (instant show for thumbs)
-                RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
+                // [DComp] Render will happen AFTER window adjustment (moved down)
+                // RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
                 
                 // Force INSTANT SHOW (no cross-fade for thumbs)
                 g_isCrossFading = false;
@@ -4125,6 +4125,9 @@ void ProcessEngineEvents(HWND hwnd) {
                     if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
                         PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
                     }
+                    
+                    // [DComp] Render NOW (after window adjustment)
+                    RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
                 } else {
                     // [Fix] Adjust window size using original dimensions even for blurry preview
                     // This prevents flash when Heavy loads with correct size
@@ -4151,6 +4154,9 @@ void ProcessEngineEvents(HWND hwnd) {
                         evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
                         g_szWindowTitle);
                     SetWindowTextW(hwnd, titleBuf);
+                    
+                    // [DComp] Render NOW (after window adjustment)
+                    RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
                 }
                 
                 // [Fix] Always clear loading state immediately for Scout/Thumb
@@ -4224,11 +4230,10 @@ void ProcessEngineEvents(HWND hwnd) {
                     KillTimer(hwnd, IDT_FULL_DECODE);
                 }
                 
-                // [DComp] Render to DComp Surface with cross-fade
+                // [DComp] Render moved down to after AdjustWindow
                 // Check if current image has transparency (PNG/WebP/AVIF with alpha)
                 bool hasTransparency = (evt.metadata.Format.find(L"PNG") != std::wstring::npos) ||
                                        (evt.metadata.FormatDetails.find(L"Alpha") != std::wstring::npos);
-                RenderImageToDComp(hwnd, fullBitmap.Get(), hasTransparency);
                 
                 // Legacy flags (for compatibility with OnPaint-based rendering)
                 g_isCrossFading = true;
@@ -4261,6 +4266,9 @@ void ProcessEngineEvents(HWND hwnd) {
                 
                 // Auto-fit window to image size
                 AdjustWindowToImage(hwnd);
+                
+                // [DComp] Render NOW (after window adjustment)
+                RenderImageToDComp(hwnd, fullBitmap.Get(), hasTransparency);
                 
                 // Recalc layout
                 g_toolbar.UpdateLayout(0,0);
