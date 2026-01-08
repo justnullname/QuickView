@@ -504,13 +504,6 @@ HRESULT CompositionEngine::Resize(UINT width, UINT height) {
     m_width = width;
     m_height = height;
     
-    // [Fix] Update Image Layout (Transform) for new window size
-    // ensuring image stays centered and fitted without desync.
-    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
-    if (active.surface && active.width > 0 && active.height > 0) {
-        UpdateLayout((float)width, (float)height, (float)active.width, (float)active.height);
-    }
-    
     // Only recreate UI surfaces, NOT image surfaces
     return CreateAllSurfaces(width, height);
 }

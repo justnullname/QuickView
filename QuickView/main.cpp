@@ -1559,53 +1559,27 @@ void AdjustWindowToImage(HWND hwnd) {
     }
     
     // Convert to Pixels (using EXIF-adjusted dimensions)
-    int clientW = static_cast<int>(imgWidth * (dpi / 96.0f));
-    int clientH = static_cast<int>(imgHeight * (dpi / 96.0f));
+    int windowW = static_cast<int>(imgWidth * (dpi / 96.0f));
+    int windowH = static_cast<int>(imgHeight * (dpi / 96.0f));
     
     // Get Monitor Work Area
     HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = { sizeof(mi) };
     GetMonitorInfoW(hMon, &mi);
     
-    // Max Window Dimensions (Screen - Safety Margin)
-    int maxWinW = (mi.rcWork.right - mi.rcWork.left) - 32; // 32px safe margin
-    int maxWinH = (mi.rcWork.bottom - mi.rcWork.top) - 32;
-    
-    // Calculate required Window Size for desired Client Size (accounting for Chrome)
-    RECT rc = { 0, 0, clientW, clientH };
-    DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
-    DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-    BOOL hasMenu = (GetMenu(hwnd) != nullptr);
-    AdjustWindowRectEx(&rc, style, hasMenu, exStyle);
-    
-    int windowW = rc.right - rc.left;
-    int windowH = rc.bottom - rc.top;
-    
-    // Chrome Dimensions
-    int chromeW = windowW - clientW;
-    int chromeH = windowH - clientH;
+    // Max Window Dimensions
+    int maxWinW = (mi.rcWork.right - mi.rcWork.left);
+    int maxWinH = (mi.rcWork.bottom - mi.rcWork.top);
     
     // Scale down if Window is too big for screen
     if (windowW > maxWinW || windowH > maxWinH) {
-        // We must scale the CLIENT area to maintain aspect ratio
-        int maxClientW = maxWinW - chromeW;
-        int maxClientH = maxWinH - chromeH;
-        
-        // Prevent negative client area if chrome is huge? Unlikely.
-        if (maxClientW < 1) maxClientW = 1;
-        if (maxClientH < 1) maxClientH = 1;
-        
-        float ratio = std::min((float)maxClientW / clientW, (float)maxClientH / clientH);
-        clientW = (int)(clientW * ratio);
-        clientH = (int)(clientH * ratio);
-        
-        // Recalculate Window Size
-        windowW = clientW + chromeW;
-        windowH = clientH + chromeH;
+        float ratio = std::min((float)maxWinW / windowW, (float)maxWinH / windowH);
+        windowW = (int)(windowW * ratio);
+        windowH = (int)(windowH * ratio);
     }
     
-    // Minimum size for UI controls (Constraint on Window Size)
-    if (windowW < 500) windowW = 500; // ensure enough width for toolbar
+    // Minimum size for UI controls
+    if (windowW < 500) windowW = 500; 
     if (windowH < 400) windowH = 400;
     
     // Center logic
@@ -1619,9 +1593,6 @@ void AdjustWindowToImage(HWND hwnd) {
     // Ensure on screen
     if (newLeft < mi.rcWork.left) newLeft = mi.rcWork.left;
     if (newTop < mi.rcWork.top) newTop = mi.rcWork.top;
-    // Also check bottom/right edges?
-    if (newLeft + windowW > mi.rcWork.right) newLeft = mi.rcWork.right - windowW;
-    if (newTop + windowH > mi.rcWork.bottom) newTop = mi.rcWork.bottom - windowH;
     
     SetWindowPos(hwnd, nullptr, newLeft, newTop, windowW, windowH, SWP_NOZORDER | SWP_NOACTIVATE);
 }
@@ -2128,6 +2099,40 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam != SIZE_MINIMIZED) {
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
             CalculateWindowControls(D2D1::SizeF((float)LOWORD(lParam), (float)HIWORD(lParam)));
+            
+            // [DComp Fix] Update Image Layout (Fit + Zoom) logic
+            // This ensures image scales correctly with Window Resize AND behaves correctly when Zoom > Screen
+            if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
+                 float winW = (float)LOWORD(lParam);
+                 float winH = (float)HIWORD(lParam);
+                 float imgW = g_lastSurfaceSize.width;
+                 float imgH = g_lastSurfaceSize.height;
+                 
+                 // 1. Calculate Fit Scale (Base)
+                 float scaleX = winW / imgW;
+                 float scaleY = winH / imgH;
+                 float fitScale = std::min(scaleX, scaleY);
+                 
+                 // 2. Apply User Zoom
+                 // g_viewState.Zoom is relative to "Fit-to-Window" (1.0 = Fit)
+                 float finalScale = fitScale * g_viewState.Zoom;
+                 
+                 // 3. Calculate Centering Offsets
+                 float scaledW = imgW * finalScale;
+                 float scaledH = imgH * finalScale;
+                 
+                 float offsetX = (winW - scaledW) / 2.0f;
+                 float offsetY = (winH - scaledH) / 2.0f;
+                 
+                 // Add User Pan
+                 offsetX += g_viewState.PanX;
+                 offsetY += g_viewState.PanY;
+                 
+                 // 4. Update DComp
+                 g_compEngine->SetZoom(finalScale, 0.0f, 0.0f); // Scale from top-left
+                 g_compEngine->SetPan(offsetX, offsetY);
+                 g_compEngine->Commit();
+            }
             
             // [Phase 7] Fit Stage: Update screen dimensions for decode-to-scale
             g_runtime.screenWidth = LOWORD(lParam);
