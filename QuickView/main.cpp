@@ -510,16 +510,59 @@ static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparen
     }
     
     // Calculate fit rect (center image in surface)
+    // Calculate fit rect (center image in surface)
     D2D1_SIZE_F bmpSize = bitmap->GetSize();
-    float scale = std::min((float)surfW / bmpSize.width, (float)surfH / bmpSize.height);
-    float scaledW = bmpSize.width * scale;
-    float scaledH = bmpSize.height * scale;
-    float x = (surfW - scaledW) / 2.0f;
-    float y = (surfH - scaledH) / 2.0f;
-    D2D1_RECT_F destRect = D2D1::RectF(x, y, x + scaledW, y + scaledH);
+    
+    // [Fix] Handle EXIF Orientation
+    // Quick check if we need to swap dimensions for fitting
+    bool swapDims = false;
+    int orientation = 1;
+    if (g_config.AutoRotate) {
+        orientation = g_viewState.ExifOrientation;
+        if (orientation >= 5 && orientation <= 8) swapDims = true;
+    }
+    
+    float imgW = bmpSize.width;
+    float imgH = bmpSize.height;
+    
+    // Effective dimensions for fitting calculation
+    float effectiveW = swapDims ? imgH : imgW;
+    float effectiveH = swapDims ? imgW : imgH;
+    
+    float scale = std::min((float)surfW / effectiveW, (float)surfH / effectiveH);
+    
+    // Draw dimensions (unrotated local space)
+    float drawW = imgW * scale;
+    float drawH = imgH * scale;
+    
+    // Center point for rotation/drawing
+    D2D1_POINT_2F center = D2D1::Point2F(surfW / 2.0f, surfH / 2.0f);
+    
+    // Calculate Dest Rect centered at 'center'
+    float x = center.x - drawW / 2.0f;
+    float y = center.y - drawH / 2.0f;
+    D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
+    
+    // Apply Rotation Transform
+    D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Identity();
+    if (orientation > 1) {
+        switch (orientation) {
+            case 2: m = D2D1::Matrix3x2F::Scale(-1, 1, center); break;
+            case 3: m = D2D1::Matrix3x2F::Rotation(180, center); break;
+            case 4: m = D2D1::Matrix3x2F::Scale(1, -1, center); break;
+            case 5: m = D2D1::Matrix3x2F::Scale(-1, 1, center) * D2D1::Matrix3x2F::Rotation(270, center); break;
+            case 6: m = D2D1::Matrix3x2F::Rotation(90, center); break;
+            case 7: m = D2D1::Matrix3x2F::Scale(-1, 1, center) * D2D1::Matrix3x2F::Rotation(90, center); break;
+            case 8: m = D2D1::Matrix3x2F::Rotation(270, center); break;
+        }
+        ctx->SetTransform(m);
+    }
     
     // Draw bitmap with high quality
     ctx->DrawBitmap(bitmap, destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+    
+    // Reset Transform
+    if (orientation > 1) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     
     g_compEngine->EndPendingUpdate();
     
