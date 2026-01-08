@@ -5,20 +5,23 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
+#include <algorithm>
 
 #pragma comment(lib, "dcomp.lib")
 
 using Microsoft::WRL::ComPtr;
 
 // ============================================================================
-// CompositionEngine - DirectComposition 多层合成管理器
+// CompositionEngine - DirectComposition Visual Ping-Pong Architecture
 // ============================================================================
-// 架构 (Z-Order 从后往前):
+// Visual Tree (Z-Order from back to front):
 //   Root Visual
-//     ├── Image Visual (SwapChain)     - 主图层
-//     ├── Gallery Visual (Surface C)   - 画廊层 (独立滚动/动画)
-//     ├── Static UI Visual (Surface A) - 静态 UI (Toolbar, Controls)
-//     └── Dynamic UI Visual (Surface B)- 动态 UI (HUD, OSD, Tooltip)
+//     ├── ImageContainer (Scale/Translate Transforms)
+//     │     ├── ImageVisual B (Pong - Hidden/Pending)
+//     │     └── ImageVisual A (Ping - Visible/Active)
+//     ├── Gallery Visual  - Gallery Overlay
+//     ├── Static Visual   - Toolbar, Window Controls
+//     └── Dynamic Visual  - HUD, OSD, Tooltip
 // ============================================================================
 
 enum class UILayer {
@@ -32,42 +35,74 @@ public:
     CompositionEngine() = default;
     ~CompositionEngine();
 
-    // 初始化 DComp 设备和 Visual 树
+    // Initialize DComp device and Visual tree
     HRESULT Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1Device* d2dDevice);
     
-    // 设置图片层的 SwapChain
-    HRESULT SetImageSwapChain(IDXGISwapChain1* swapChain);
+    // ===== Visual Ping-Pong Image Layer =====
+    // BeginPendingUpdate: Get D2D context for the hidden (pending) layer
+    // Call this to draw a new image. Surface is auto-created/resized as needed.
+    ID2D1DeviceContext* BeginPendingUpdate(UINT width, UINT height);
+    HRESULT EndPendingUpdate();
     
-    // ===== 分层绘制接口 =====
+    // PlayPingPongCrossFade: Animate transition from Active to Pending
+    // isTransparent: If true, cross-fade both layers. If false, only fade out old.
+    HRESULT PlayPingPongCrossFade(float durationMs, bool isTransparent = false);
+    
+    // AlignActiveLayer: Center the active layer in window
+    HRESULT AlignActiveLayer(float windowW, float windowH);
+    
+    // ===== Hardware Transforms (Zero CPU) =====
+    // UpdateLayout: Adjust transform when window resizes (no pixel repainting)
+    HRESULT UpdateLayout(float windowW, float windowH, float surfaceW, float surfaceH);
+    
+    // SetZoom: Apply scale transform around center point
+    HRESULT SetZoom(float scale, float centerX, float centerY);
+    
+    // SetPan: Apply translation transform
+    HRESULT SetPan(float offsetX, float offsetY);
+    
+    // ResetImageTransform: Reset to identity (Scale=1, Offset=0)
+    HRESULT ResetImageTransform();
+    
+    // ===== UI Layer Drawing =====
     ID2D1DeviceContext* BeginLayerUpdate(UILayer layer, const RECT* dirtyRect = nullptr);
     HRESULT EndLayerUpdate(UILayer layer);
     
-    // 兼容旧接口 (映射到 Dynamic)
+    // Legacy compatibility
     ID2D1DeviceContext* BeginUIUpdate(const RECT* dirtyRect = nullptr) {
         return BeginLayerUpdate(UILayer::Dynamic, dirtyRect);
     }
     HRESULT EndUIUpdate() { return EndLayerUpdate(UILayer::Dynamic); }
     
-    // Gallery 滚动控制 (使用 DComp SetOffset)
+    // Gallery scroll control (uses DComp SetOffset)
     HRESULT SetGalleryOffset(float offsetX, float offsetY);
     
-    // 调整大小
+    // Resize (recreates UI surfaces, NOT image surfaces)
     HRESULT Resize(UINT width, UINT height);
     
-    // 提交合成
+    // Commit composition
     HRESULT Commit();
     
-    // 状态
+    // State
     bool IsInitialized() const { return m_device != nullptr; }
     UINT GetWidth() const { return m_width; }
     UINT GetHeight() const { return m_height; }
+    
+    // Debug accessors
+    int GetActiveLayerIndex() const { return m_activeLayerIndex; }
+    void GetLayerSpecs(int index, UINT* w, UINT* h) const {
+        const auto& layer = (index == 0) ? m_imageA : m_imageB;
+        if (w) *w = layer.width;
+        if (h) *h = layer.height;
+    }
 
 private:
     HRESULT CreateLayerSurface(UILayer layer, UINT width, UINT height);
     HRESULT CreateAllSurfaces(UINT width, UINT height);
-
+    
+    // UI Layer data
     struct LayerData {
-        ComPtr<IDCompositionVisual> visual;
+        ComPtr<IDCompositionVisual2> visual;
         ComPtr<IDCompositionSurface> surface;
         ComPtr<ID2D1DeviceContext> context;
         ComPtr<ID2D1Bitmap1> target;
@@ -75,25 +110,48 @@ private:
         POINT drawOffset = {};
     };
     
+    // Image Layer data (Ping-Pong)
+    struct ImageLayer {
+        ComPtr<IDCompositionVisual2> visual;
+        ComPtr<IDCompositionSurface> surface;
+        ComPtr<ID2D1Bitmap1> d2dTarget;
+        UINT width = 0;
+        UINT height = 0;
+    };
+    
+    HRESULT EnsureImageSurface(ImageLayer& layer, UINT width, UINT height);
     LayerData& GetLayer(UILayer layer);
 
     HWND m_hwnd = nullptr;
     UINT m_width = 0;
     UINT m_height = 0;
 
-    // DComp 设备和目标
-    ComPtr<IDCompositionDevice> m_device;
+    // DComp Device (V2 for Visual3 support)
+    ComPtr<IDCompositionDesktopDevice> m_device;
     ComPtr<IDCompositionTarget> m_target;
     
-    // Visual 树
-    ComPtr<IDCompositionVisual> m_rootVisual;
-    ComPtr<IDCompositionVisual> m_imageVisual;
+    // Visual Tree
+    ComPtr<IDCompositionVisual2> m_rootVisual;
+    ComPtr<IDCompositionVisual2> m_imageContainer; // Parent for image layers, holds transforms
     
-    // 3 层 UI
-    LayerData m_staticLayer;   // Toolbar, Controls
-    LayerData m_dynamicLayer;  // HUD, OSD
-    LayerData m_galleryLayer;  // Gallery
+    // Image Layers (Ping-Pong)
+    ImageLayer m_imageA;
+    ImageLayer m_imageB;
+    int m_activeLayerIndex = 0; // 0 = A is active, 1 = B is active
     
-    // D2D 共享设备
+    // Shared D2D context for image rendering
+    ComPtr<ID2D1DeviceContext> m_pendingContext;
+    
+    // Hardware Transforms (applied to m_imageContainer)
+    ComPtr<IDCompositionScaleTransform> m_scaleTransform;
+    ComPtr<IDCompositionTranslateTransform> m_translateTransform;
+    ComPtr<IDCompositionTransform> m_transformGroup;
+    
+    // UI Layers
+    LayerData m_staticLayer;
+    LayerData m_dynamicLayer;
+    LayerData m_galleryLayer;
+    
+    // D2D Device
     ComPtr<ID2D1Device> m_d2dDevice;
 };

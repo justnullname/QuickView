@@ -2,11 +2,11 @@
 #include "CompositionEngine.h"
 
 // ============================================================================
-// CompositionEngine Implementation - 3-Layer Architecture
+// CompositionEngine Implementation - Visual Ping-Pong Architecture
 // ============================================================================
 
 CompositionEngine::~CompositionEngine() {
-    // ComPtr 自动释放资源
+    // ComPtr auto-releases resources
 }
 
 CompositionEngine::LayerData& CompositionEngine::GetLayer(UILayer layer) {
@@ -18,6 +18,9 @@ CompositionEngine::LayerData& CompositionEngine::GetLayer(UILayer layer) {
     }
 }
 
+// ============================================================================
+// Initialize - Create DComp Device and Visual Tree
+// ============================================================================
 HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1Device* d2dDevice) {
     if (!hwnd || !d3dDevice || !d2dDevice) return E_INVALIDARG;
     
@@ -26,24 +29,34 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     
     HRESULT hr = S_OK;
     
-    // 1. 获取 DXGI Device
+    // 1. Get DXGI Device
     ComPtr<IDXGIDevice> dxgiDevice;
     hr = d3dDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
     if (FAILED(hr)) return hr;
     
-    // 2. 创建 DirectComposition 设备
-    hr = DCompositionCreateDevice(dxgiDevice.Get(), IID_PPV_ARGS(&m_device));
-    if (FAILED(hr)) return hr;
+    // 2. Create DComp Device (V2 API for Visual3 support)
+    hr = DCompositionCreateDevice2(dxgiDevice.Get(), IID_PPV_ARGS(&m_device));
+    if (FAILED(hr)) {
+        OutputDebugStringW(L"[DComp] DCompositionCreateDevice2 failed!\n");
+        return hr;
+    }
+    OutputDebugStringW(L"[DComp] Created IDCompositionDesktopDevice (V2)\n");
     
-    // 3. 创建 Target (绑定到窗口)
+    // 3. Create Target (bind to HWND)
     hr = m_device->CreateTargetForHwnd(hwnd, TRUE, &m_target);
     if (FAILED(hr)) return hr;
     
-    // 4. 创建 Visual 树
+    // 4. Create Visuals (all as Visual2 for Device2 compatibility)
     hr = m_device->CreateVisual(&m_rootVisual);
     if (FAILED(hr)) return hr;
     
-    hr = m_device->CreateVisual(&m_imageVisual);
+    hr = m_device->CreateVisual(&m_imageContainer);
+    if (FAILED(hr)) return hr;
+    
+    hr = m_device->CreateVisual(&m_imageA.visual);
+    if (FAILED(hr)) return hr;
+    
+    hr = m_device->CreateVisual(&m_imageB.visual);
     if (FAILED(hr)) return hr;
     
     hr = m_device->CreateVisual(&m_galleryLayer.visual);
@@ -55,22 +68,53 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_device->CreateVisual(&m_dynamicLayer.visual);
     if (FAILED(hr)) return hr;
     
-    // 5. 构建 Visual 层级 (Z-Order: Image -> Static -> Dynamic -> Gallery)
-    // Gallery 最顶层，支持覆盖所有 UI 的全屏模式
-    m_rootVisual->AddVisual(m_imageVisual.Get(), TRUE, nullptr);
-    m_rootVisual->AddVisual(m_staticLayer.visual.Get(), TRUE, m_imageVisual.Get());
-    m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
-    m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_galleryLayer.visual.Get());
+    // 5. Create Hardware Transforms
+    hr = m_device->CreateScaleTransform(&m_scaleTransform);
+    if (FAILED(hr)) return hr;
     
-    // [v4.1] Set HIGH QUALITY interpolation for all scaled bitmaps
-    // Default is INHERIT->NEAREST_NEIGHBOR which causes blocky artifacts on zoom
-    m_imageVisual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-    m_galleryLayer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+    hr = m_device->CreateTranslateTransform(&m_translateTransform);
+    if (FAILED(hr)) return hr;
     
-    // 6. 设置 Root
+    // Create TransformGroup and apply to ImageContainer
+    IDCompositionTransform* transforms[] = { m_scaleTransform.Get(), m_translateTransform.Get() };
+    hr = m_device->CreateTransformGroup(transforms, 2, &m_transformGroup);
+    if (FAILED(hr)) return hr;
+    
+    m_imageContainer->SetTransform(m_transformGroup.Get());
+    
+    // 6. Build Visual Tree
+    // Structure:
+    // Root
+    //  ├── ImageContainer (with Transform)
+    //  │    ├── ImageB (bottom, pending)
+    //  │    └── ImageA (top, active)
+    //  ├── Gallery
+    //  ├── Static
+    //  └── Dynamic (topmost)
+    
+    // Add images to container (B first, A on top)
+    m_imageContainer->AddVisual(m_imageB.visual.Get(), FALSE, nullptr);
+    m_imageContainer->AddVisual(m_imageA.visual.Get(), TRUE, m_imageB.visual.Get());
+    
+    // Add container to root
+    m_rootVisual->AddVisual(m_imageContainer.Get(), FALSE, nullptr);
+    
+    // UI layers on top of image container
+    m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_imageContainer.Get());
+    m_rootVisual->AddVisual(m_staticLayer.visual.Get(), TRUE, m_galleryLayer.visual.Get());
+    m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
+    
+    // 7. Set interpolation mode for image layers (HIGH QUALITY)
+    m_imageA.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+    m_imageB.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+    
+    // 8. Set Root
     m_target->SetRoot(m_rootVisual.Get());
     
-    // 7. 创建每层的 D2D Context
+    // 9. Create shared D2D contexts
+    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pendingContext);
+    if (FAILED(hr)) return hr;
+    
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_staticLayer.context);
     if (FAILED(hr)) return hr;
     
@@ -80,7 +124,7 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_galleryLayer.context);
     if (FAILED(hr)) return hr;
     
-    // 8. 获取窗口大小并创建所有 Surface
+    // 10. Get window size and create UI surfaces
     RECT rc;
     GetClientRect(hwnd, &rc);
     m_width = rc.right;
@@ -91,21 +135,266 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
         if (FAILED(hr)) return hr;
     }
     
-    // 9. 提交初始状态
+    // 11. Commit initial state
     hr = m_device->Commit();
+    
+    OutputDebugStringW(L"[DComp] Initialization complete\n");
+    return hr;
+}
+
+// ============================================================================
+// Image Surface Management
+// ============================================================================
+HRESULT CompositionEngine::EnsureImageSurface(ImageLayer& layer, UINT width, UINT height) {
+    if (width == 0 || height == 0) return E_INVALIDARG;
+    
+    // Reuse existing surface if large enough
+    if (layer.surface && layer.width >= width && layer.height >= height) {
+        return S_OK;
+    }
+    
+    // Create new surface
+    layer.surface.Reset();
+    HRESULT hr = m_device->CreateSurface(
+        width, height,
+        DXGI_FORMAT_B8G8R8A8_UNORM,
+        DXGI_ALPHA_MODE_PREMULTIPLIED,
+        &layer.surface
+    );
+    if (FAILED(hr)) return hr;
+    
+    layer.width = width;
+    layer.height = height;
+    
+    // Bind to visual
+    hr = layer.visual->SetContent(layer.surface.Get());
     
     return hr;
 }
 
+// ============================================================================
+// Ping-Pong Image Rendering
+// ============================================================================
+ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height) {
+    OutputDebugStringW(L"[DComp] BeginPendingUpdate\n");
+    
+    // Get pending layer (opposite of active)
+    int pendingIndex = (m_activeLayerIndex + 1) % 2;
+    ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
+    ImageLayer& active = (pendingIndex == 0) ? m_imageB : m_imageA;
+    
+    // Ensure pending layer is behind active (Z-order fixup)
+    // Re-add pending to bottom of container
+    m_imageContainer->RemoveVisual(pending.visual.Get());
+    m_imageContainer->AddVisual(pending.visual.Get(), FALSE, nullptr);
+    // Put active on top
+    m_imageContainer->RemoveVisual(active.visual.Get());
+    m_imageContainer->AddVisual(active.visual.Get(), TRUE, pending.visual.Get());
+    
+    // Reset pending visual opacity to 1.0 (it will be revealed)
+    ComPtr<IDCompositionVisual3> visual3;
+    if (SUCCEEDED(pending.visual.As(&visual3))) {
+        visual3->SetOpacity(1.0f);
+    }
+    
+    // Reset pending visual offset
+    pending.visual->SetOffsetX(0.0f);
+    pending.visual->SetOffsetY(0.0f);
+    
+    // Ensure surface exists and is correct size
+    if (FAILED(EnsureImageSurface(pending, width, height))) return nullptr;
+    
+    // Begin drawing
+    ComPtr<IDXGISurface> dxgiSurface;
+    POINT offset;
+    HRESULT hr = pending.surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &offset);
+    if (FAILED(hr)) return nullptr;
+    
+    // Create D2D bitmap wrapper
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+    );
+    
+    pending.d2dTarget.Reset();
+    hr = m_pendingContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, &pending.d2dTarget);
+    if (FAILED(hr)) {
+        pending.surface->EndDraw();
+        return nullptr;
+    }
+    
+    m_pendingContext->SetTarget(pending.d2dTarget.Get());
+    m_pendingContext->BeginDraw();
+    
+    // Apply BeginDraw offset
+    m_pendingContext->SetTransform(D2D1::Matrix3x2F::Translation((float)offset.x, (float)offset.y));
+    
+    // Clear to transparent
+    m_pendingContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+    
+    return m_pendingContext.Get();
+}
+
+HRESULT CompositionEngine::EndPendingUpdate() {
+    OutputDebugStringW(L"[DComp] EndPendingUpdate\n");
+    
+    if (!m_pendingContext) return E_FAIL;
+    
+    // Reset transform
+    m_pendingContext->SetTransform(D2D1::Matrix3x2F::Identity());
+    m_pendingContext->EndDraw();
+    m_pendingContext->SetTarget(nullptr);
+    
+    // End surface draw
+    int pendingIndex = (m_activeLayerIndex + 1) % 2;
+    ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
+    
+    pending.surface->EndDraw();
+    pending.d2dTarget.Reset();
+    
+    return S_OK;
+}
+
+HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransparent) {
+    OutputDebugStringW(L"[DComp] PlayPingPongCrossFade\n");
+    
+    int pendingIndex = (m_activeLayerIndex + 1) % 2;
+    ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
+    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+    
+    // Get Visual3 for opacity animation
+    ComPtr<IDCompositionVisual3> activeVisual3, pendingVisual3;
+    bool hasVisual3 = SUCCEEDED(active.visual.As(&activeVisual3)) && 
+                      SUCCEEDED(pending.visual.As(&pendingVisual3));
+    
+    if (hasVisual3 && durationMs > 0) {
+        // Create animation
+        ComPtr<IDCompositionAnimation> fadeOut, fadeIn;
+        m_device->CreateAnimation(&fadeOut);
+        m_device->CreateAnimation(&fadeIn);
+        
+        float duration = durationMs / 1000.0f;
+        
+        // Fade out active layer (1.0 -> 0.0)
+        fadeOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
+        fadeOut->End(duration, 0.0f);
+        activeVisual3->SetOpacity(fadeOut.Get());
+        
+        if (isTransparent) {
+            // For transparent images: also fade in pending (0.0 -> 1.0)
+            pendingVisual3->SetOpacity(0.0f); // Start at 0
+            fadeIn->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
+            fadeIn->End(duration, 1.0f);
+            pendingVisual3->SetOpacity(fadeIn.Get());
+        } else {
+            // For opaque images: pending stays at 1.0 behind active
+            pendingVisual3->SetOpacity(1.0f);
+        }
+    } else {
+        // No animation - instant switch via Z-order
+        // Pending is already behind active and at opacity 1.0
+        // Just need to hide active
+        if (hasVisual3) {
+            activeVisual3->SetOpacity(0.0f);
+            pendingVisual3->SetOpacity(1.0f);
+        }
+    }
+    
+    // Swap active index
+    m_activeLayerIndex = pendingIndex;
+    
+    m_device->Commit();
+    return S_OK;
+}
+
+HRESULT CompositionEngine::AlignActiveLayer(float windowW, float windowH) {
+    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+    
+    if (!active.visual || active.width == 0) return E_FAIL;
+    
+    // Center the active layer in window
+    float offsetX = (windowW - (float)active.width) / 2.0f;
+    float offsetY = (windowH - (float)active.height) / 2.0f;
+    
+    active.visual->SetOffsetX(offsetX);
+    active.visual->SetOffsetY(offsetY);
+    
+    return S_OK;
+}
+
+// ============================================================================
+// Hardware Transforms (Zero CPU Cost)
+// ============================================================================
+HRESULT CompositionEngine::UpdateLayout(float windowW, float windowH, float surfaceW, float surfaceH) {
+    if (!m_scaleTransform || !m_translateTransform) return E_FAIL;
+    if (surfaceW <= 0 || surfaceH <= 0) return E_INVALIDARG;
+    
+    // Calculate scale to fit surface into window
+    float scaleX = windowW / surfaceW;
+    float scaleY = windowH / surfaceH;
+    float scale = std::min(scaleX, scaleY);
+    
+    // Calculate offset to center
+    float scaledW = surfaceW * scale;
+    float scaledH = surfaceH * scale;
+    float offsetX = (windowW - scaledW) / 2.0f;
+    float offsetY = (windowH - scaledH) / 2.0f;
+    
+    // Apply transforms
+    m_scaleTransform->SetScaleX(scale);
+    m_scaleTransform->SetScaleY(scale);
+    m_scaleTransform->SetCenterX(0.0f);
+    m_scaleTransform->SetCenterY(0.0f);
+    
+    m_translateTransform->SetOffsetX(offsetX);
+    m_translateTransform->SetOffsetY(offsetY);
+    
+    return m_device->Commit();
+}
+
+HRESULT CompositionEngine::SetZoom(float scale, float centerX, float centerY) {
+    if (!m_scaleTransform) return E_FAIL;
+    
+    m_scaleTransform->SetScaleX(scale);
+    m_scaleTransform->SetScaleY(scale);
+    m_scaleTransform->SetCenterX(centerX);
+    m_scaleTransform->SetCenterY(centerY);
+    
+    return S_OK; // Caller should Commit
+}
+
+HRESULT CompositionEngine::SetPan(float offsetX, float offsetY) {
+    if (!m_translateTransform) return E_FAIL;
+    
+    m_translateTransform->SetOffsetX(offsetX);
+    m_translateTransform->SetOffsetY(offsetY);
+    
+    return S_OK; // Caller should Commit
+}
+
+HRESULT CompositionEngine::ResetImageTransform() {
+    if (!m_scaleTransform || !m_translateTransform) return E_FAIL;
+    
+    m_scaleTransform->SetScaleX(1.0f);
+    m_scaleTransform->SetScaleY(1.0f);
+    m_scaleTransform->SetCenterX(0.0f);
+    m_scaleTransform->SetCenterY(0.0f);
+    
+    m_translateTransform->SetOffsetX(0.0f);
+    m_translateTransform->SetOffsetY(0.0f);
+    
+    return m_device->Commit();
+}
+
+// ============================================================================
+// UI Layer Management
+// ============================================================================
 HRESULT CompositionEngine::CreateLayerSurface(UILayer layer, UINT width, UINT height) {
     if (!m_device || width == 0 || height == 0) return E_FAIL;
     
     LayerData& data = GetLayer(layer);
-    
-    // 释放旧 Surface
     data.surface.Reset();
     
-    // 创建新的 Surface (支持透明)
     HRESULT hr = m_device->CreateSurface(
         width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -114,10 +403,7 @@ HRESULT CompositionEngine::CreateLayerSurface(UILayer layer, UINT width, UINT he
     );
     if (FAILED(hr)) return hr;
     
-    // 绑定到 Visual
-    hr = data.visual->SetContent(data.surface.Get());
-    
-    return hr;
+    return data.visual->SetContent(data.surface.Get());
 }
 
 HRESULT CompositionEngine::CreateAllSurfaces(UINT width, UINT height) {
@@ -127,14 +413,7 @@ HRESULT CompositionEngine::CreateAllSurfaces(UINT width, UINT height) {
     hr = CreateLayerSurface(UILayer::Dynamic, width, height);
     if (FAILED(hr)) return hr;
     
-    hr = CreateLayerSurface(UILayer::Gallery, width, height);
-    return hr;
-}
-
-HRESULT CompositionEngine::SetImageSwapChain(IDXGISwapChain1* swapChain) {
-    if (!m_imageVisual || !swapChain) return E_FAIL;
-    
-    return m_imageVisual->SetContent(swapChain);
+    return CreateLayerSurface(UILayer::Gallery, width, height);
 }
 
 ID2D1DeviceContext* CompositionEngine::BeginLayerUpdate(UILayer layer, const RECT* dirtyRect) {
@@ -143,14 +422,9 @@ ID2D1DeviceContext* CompositionEngine::BeginLayerUpdate(UILayer layer, const REC
     if (!data.surface || data.isDrawing) return nullptr;
     
     ComPtr<IDXGISurface> dxgiSurface;
-    HRESULT hr = data.surface->BeginDraw(
-        dirtyRect,
-        IID_PPV_ARGS(&dxgiSurface),
-        &data.drawOffset
-    );
+    HRESULT hr = data.surface->BeginDraw(dirtyRect, IID_PPV_ARGS(&dxgiSurface), &data.drawOffset);
     if (FAILED(hr)) return nullptr;
     
-    // 创建 D2D Bitmap 作为渲染目标
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
@@ -165,14 +439,9 @@ ID2D1DeviceContext* CompositionEngine::BeginLayerUpdate(UILayer layer, const REC
     
     data.context->SetTarget(data.target.Get());
     data.context->BeginDraw();
-    
-    // 应用偏移 (BeginDraw 返回的 offset)
     data.context->SetTransform(D2D1::Matrix3x2F::Translation(
-        (float)data.drawOffset.x,
-        (float)data.drawOffset.y
+        (float)data.drawOffset.x, (float)data.drawOffset.y
     ));
-    
-    // 清除为完全透明
     data.context->Clear(D2D1::ColorF(0, 0, 0, 0));
     
     data.isDrawing = true;
@@ -185,13 +454,11 @@ HRESULT CompositionEngine::EndLayerUpdate(UILayer layer) {
     if (!data.isDrawing) return E_FAIL;
     
     data.context->SetTransform(D2D1::Matrix3x2F::Identity());
-    
     HRESULT hr = data.context->EndDraw();
     data.context->SetTarget(nullptr);
     data.target.Reset();
     
     HRESULT hr2 = data.surface->EndDraw();
-    
     data.isDrawing = false;
     
     return SUCCEEDED(hr) ? hr2 : hr;
@@ -200,7 +467,6 @@ HRESULT CompositionEngine::EndLayerUpdate(UILayer layer) {
 HRESULT CompositionEngine::SetGalleryOffset(float offsetX, float offsetY) {
     if (!m_galleryLayer.visual) return E_FAIL;
     
-    // 使用 DComp 的 SetOffsetX/Y 实现零拷贝滚动
     HRESULT hr = m_galleryLayer.visual->SetOffsetX(offsetX);
     if (FAILED(hr)) return hr;
     
@@ -214,7 +480,7 @@ HRESULT CompositionEngine::Resize(UINT width, UINT height) {
     m_width = width;
     m_height = height;
     
-    // 重新创建所有 Surface
+    // Only recreate UI surfaces, NOT image surfaces
     return CreateAllSurfaces(width, height);
 }
 
