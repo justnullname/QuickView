@@ -1,6 +1,7 @@
 #pragma once
 #include "pch.h"
 #include "CompositionEngine.h"
+#include "ImageLoader.h"  // For ImageMetadata
 #include <dwrite.h>
 #include <array>
 #include "EditState.h"
@@ -13,6 +14,55 @@
 //   Static Layer:  Toolbar, Window Controls, Info Panel, Settings
 //   Dynamic Layer: Debug HUD, OSD, Tooltip, Dialog
 //   Gallery Layer: Gallery Overlay (独立滚动/动画)
+// ============================================================================
+
+// ============================================================================
+// Info Panel Data Types (Migrated from main.cpp)
+// ============================================================================
+
+enum class TruncateMode {
+    None,           // No truncation
+    EndEllipsis,    // End truncation: "Canon EF 24-70mm..."
+    MiddleEllipsis, // Middle truncation: "Project_A...Final.psd"
+};
+
+struct InfoRow {
+    std::wstring icon;       // Emoji icon (e.g., "📄")
+    std::wstring label;      // Label (e.g., "文件")
+    std::wstring valueMain;  // Main value (e.g., "f/1.6")
+    std::wstring valueSub;   // Secondary value in gray (e.g., "(1,138,997 B)")
+    std::wstring fullText;   // Full text for tooltip
+    
+    TruncateMode mode = TruncateMode::EndEllipsis;
+    bool isClickable = false;
+    
+    // Runtime (calculated during layout)
+    D2D1_RECT_F hitRect = {};
+    std::wstring displayText; // Truncated display text
+    bool isTruncated = false;
+};
+
+// ============================================================================
+// Hit Test Result Types
+// ============================================================================
+
+enum class UIHitResult {
+    None,
+    PanelToggle,    // Toggle Expand/Collapse
+    PanelClose,     // Close Info Panel
+    GPSCoord,       // Click to copy GPS coordinates
+    GPSLink,        // Click to open in Maps
+    InfoRow         // Click to copy row content
+};
+
+struct HitTestResult {
+    UIHitResult type = UIHitResult::None;
+    std::wstring payload;  // Text to copy or URL to open
+    int rowIndex = -1;     // Index of hit row (for hover tracking)
+};
+
+// ============================================================================
+// UIRenderer Class
 // ============================================================================
 
 class UIRenderer {
@@ -35,6 +85,18 @@ public:
     
     bool RenderAll(HWND hwnd);  // 渲染所有需要更新的层
     
+    // ===== State Injection (Decoupled from main.cpp globals) =====
+    void UpdateMetadata(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath);
+    void UpdateViewState(const ViewState& viewState);
+    void UpdateHoverState(POINT mousePos, int hoverRowIndex);
+    
+    // ===== Hit Testing (For Click Detection) =====
+    HitTestResult HitTest(float x, float y);
+    
+    // ===== Accessors for Hit Rects =====
+    D2D1_RECT_F GetPanelToggleRect() const { return m_panelToggleRect; }
+    D2D1_RECT_F GetPanelCloseRect() const { return m_panelCloseRect; }
+    
     // ===== UI 状态更新 =====
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
@@ -42,7 +104,7 @@ public:
     // [HUD V4] Zero-Cost Telemetry
     void SetTelemetry(const ImageEngine::TelemetrySnapshot& s) { m_telemetry = s; if (m_showDebugHUD) MarkDynamicDirty(); }
     
-    void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkDynamicDirty(); }
+    void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkStaticDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
     void SetPinActive(bool active) { m_pinActive = active; MarkStaticDirty(); }
@@ -57,17 +119,51 @@ private:
     void RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd);
     void RenderGalleryLayer(ID2D1DeviceContext* dc);
     
+    // ===== Info Panel Drawing (Migrated from main.cpp) =====
+    void BuildInfoGrid();
+    void DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width);
+    void DrawGridTooltip(ID2D1DeviceContext* dc);
+    void DrawInfoPanel(ID2D1DeviceContext* dc);
+    void DrawCompactInfo(ID2D1DeviceContext* dc);
+    void DrawHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect);
+    void DrawNavIndicators(ID2D1DeviceContext* dc);
+    
     // 绘制函数
     void DrawOSD(ID2D1DeviceContext* dc);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
     
+    // Text Truncation Helpers
+    std::wstring MakeMiddleEllipsis(float maxWidth, const std::wstring& text);
+    std::wstring MakeEndEllipsis(float maxWidth, const std::wstring& text);
+    float MeasureTextWidth(const std::wstring& text);
+    
     // Dirty Rects 计算
     RECT CalculateOSDDirtyRect();
     
     CompositionEngine* m_compEngine = nullptr;
     IDWriteFactory* m_dwriteFactory = nullptr;
+    
+    // ===== Encapsulated State (Migrated from main.cpp globals) =====
+    CImageLoader::ImageMetadata m_metadata;
+    std::wstring m_imagePath;
+    ViewState m_viewState;
+    std::vector<InfoRow> m_infoGrid;
+    POINT m_lastMousePos = {};
+    int m_hoverRowIndex = -1;
+    
+    // Info Panel Hit Rects
+    D2D1_RECT_F m_panelToggleRect = {};
+    D2D1_RECT_F m_panelCloseRect = {};
+    D2D1_RECT_F m_gpsCoordRect = {};
+    D2D1_RECT_F m_gpsLinkRect = {};
+    
+    // Grid Layout Constants
+    static constexpr float GRID_ICON_WIDTH = 20.0f;
+    static constexpr float GRID_LABEL_WIDTH = 55.0f;
+    static constexpr float GRID_ROW_HEIGHT = 18.0f;
+    static constexpr float GRID_PADDING = 8.0f;
     
     // OSD 状态
     std::wstring m_osdText;
@@ -77,8 +173,6 @@ private:
     // Debug HUD V4 State
     bool m_showDebugHUD = false;
     ImageEngine::TelemetrySnapshot m_telemetry;
-    
-    // Legacy members removed (m_fps, m_memBytes, history buffers etc.)
     
     RuntimeConfig m_runtime; // Verification Flags
     
@@ -110,4 +204,5 @@ private:
     ComPtr<IDWriteTextFormat> m_osdFormat;
     ComPtr<IDWriteTextFormat> m_debugFormat;
     ComPtr<IDWriteTextFormat> m_iconFormat;
+    ComPtr<IDWriteTextFormat> m_panelFormat;  // For Info Panel text
 };

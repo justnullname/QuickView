@@ -89,24 +89,7 @@ struct DialogState {
 };
 
 // struct OSDState moved to OSDState.h
-
-struct ViewState {
-    float Zoom = 1.0f;
-    float PanX = 0.0f;
-    float PanY = 0.0f;
-    bool IsDragging = false;
-    bool IsInteracting = false;  // True during drag/zoom/resize for dynamic interpolation
-    bool IsMiddleDragWindow = false;  // True when middle button is dragging window
-    POINT LastMousePos = { 0, 0 };
-    POINT DragStartPos = { 0, 0 };  // For click vs drag detection
-    DWORD DragStartTime = 0;        // For click vs drag detection
-    POINT WindowDragStart = { 0, 0 }; // Window position at drag start
-    POINT CursorDragStart = { 0, 0 }; // Cursor screen position at drag start
-    int EdgeHoverState = 0; // -1=Left, 0=None, 1=Right
-    int ExifOrientation = 1; // EXIF Orientation (1-8, 1=Normal)
-
-    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; EdgeHoverState = 0; ExifOrientation = 1; }
-};
+// struct ViewState moved to EditState.h
 
 #include "FileNavigator.h"
 #include "GalleryOverlay.h"
@@ -155,7 +138,7 @@ static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static InputController g_inputController;  // Quantum Stream: 输入状态机
 static ComPtr<ID2D1Bitmap> g_currentBitmap;
-static std::wstring g_imagePath;
+std::wstring g_imagePath;  // Non-static for extern access from UIRenderer
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
 static bool g_isBlurry = false; // For Motion Blur (Ghost)
 static bool g_transitionFromThumb = false; // Flag: Did we transition from a thumbnail?
@@ -172,13 +155,13 @@ static DialogState g_dialog;
 static EditState g_editState;
 AppConfig g_config;
 RuntimeConfig g_runtime;
-static ViewState g_viewState;
+ViewState g_viewState;  // Non-static for extern access from UIRenderer
 static FileNavigator g_navigator; // New Navigator
 static ThumbnailManager g_thumbMgr;
 GalleryOverlay g_gallery;  // Non-static for extern access from UIRenderer
 Toolbar g_toolbar;  // Non-static for extern access from UIRenderer
 SettingsOverlay g_settingsOverlay;  // Non-static for extern access from UIRenderer
-static CImageLoader::ImageMetadata g_currentMetadata;
+CImageLoader::ImageMetadata g_currentMetadata;  // Non-static for extern access from UIRenderer
 static ComPtr<IWICBitmap> g_prefetchedBitmap;
 static std::wstring g_prefetchedPath;
 static ComPtr<IDWriteTextFormat> g_pPanelTextFormat;
@@ -320,118 +303,11 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 }
 
 // ============================================================================
-// UI Grid System - Data-Driven Info Panel
+// UI Grid System - Migrated to UIRenderer
 // ============================================================================
-
-enum class TruncateMode {
-    None,           // No truncation
-    EndEllipsis,    // End truncation: "Canon EF 24-70mm..."
-    MiddleEllipsis, // Middle truncation: "Project_A...Final.psd"
-};
-
-struct InfoRow {
-    std::wstring icon;       // Emoji icon (e.g., "📄")
-    std::wstring label;      // Label (e.g., "文件")
-    std::wstring valueMain;  // Main value (e.g., "f/1.6")
-    std::wstring valueSub;   // Secondary value in gray (e.g., "(1,138,997 B)")
-    std::wstring fullText;   // Full text for tooltip
-    
-    TruncateMode mode = TruncateMode::EndEllipsis;
-    bool isClickable = false;
-    
-    // Runtime (calculated during layout)
-    D2D1_RECT_F hitRect = {};
-    std::wstring displayText; // Truncated display text
-    bool isTruncated = false;
-};
-
-// Grid state
-static std::vector<InfoRow> g_infoGrid;
-static int g_hoverRowIndex = -1; // -1 = no hover
-static POINT g_lastMousePos = {};
-
-// Grid layout constants
-static const float GRID_ICON_WIDTH = 20.0f;
-static const float GRID_LABEL_WIDTH = 55.0f;
-static const float GRID_ROW_HEIGHT = 18.0f;
-static const float GRID_PADDING = 8.0f;
-
-static float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format);
-
-// Smart truncation: measure text width and truncate accordingly
-static std::wstring MakeMiddleEllipsis(IDWriteTextFormat* format, float maxWidth, const std::wstring& text) {
-    if (text.empty() || !format || !g_renderEngine) return text;
-    
-    float fullWidth = MeasureTextWidth(text, format);
-    if (fullWidth <= maxWidth) return text;
-    
-    // Binary search for optimal truncation
-    float ellipsisWidth = MeasureTextWidth(L"...", format);
-    float availWidth = maxWidth - ellipsisWidth;
-    if (availWidth <= 0) return L"...";
-    
-    // Approximate: keep 1/3 at start, 2/3 at end
-    size_t total = text.length();
-    size_t keepStart = total / 3;
-    size_t keepEnd = total / 2;
-    
-    // Refine by measuring
-    for (int i = 0; i < 5; i++) { // Max 5 iterations
-        std::wstring candidate = text.substr(0, keepStart) + L"..." + text.substr(total - keepEnd);
-        float width = MeasureTextWidth(candidate, format);
-        if (width <= maxWidth) {
-            return candidate;
-        }
-        keepStart = keepStart * 9 / 10;
-        keepEnd = keepEnd * 9 / 10;
-        if (keepStart < 3 || keepEnd < 3) break;
-    }
-    
-    // Fallback: very short
-    if (total > 10) {
-        return text.substr(0, 4) + L"..." + text.substr(total - 4);
-    }
-    return text.substr(0, 3) + L"...";
-}
-
-static std::wstring MakeEndEllipsis(IDWriteTextFormat* format, float maxWidth, const std::wstring& text) {
-    if (text.empty() || !format || !g_renderEngine) return text;
-    
-    float fullWidth = MeasureTextWidth(text, format);
-    if (fullWidth <= maxWidth) return text;
-    
-    float ellipsisWidth = MeasureTextWidth(L"...", format);
-    float availWidth = maxWidth - ellipsisWidth;
-    if (availWidth <= 0) return L"...";
-    
-    // Binary search
-    size_t lo = 0, hi = text.length();
-    while (lo < hi) {
-        size_t mid = (lo + hi + 1) / 2;
-        float w = MeasureTextWidth(text.substr(0, mid), format);
-        if (w <= availWidth) lo = mid;
-        else hi = mid - 1;
-    }
-    
-    if (lo > 0) return text.substr(0, lo) + L"...";
-    return L"...";
-}
-
-
-
-static float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) {
-    if (text.empty() || !format) return 0.0f;
-    ComPtr<IDWriteTextLayout> layout;
-    g_renderEngine->m_dwriteFactory->CreateTextLayout(
-        text.c_str(), (UINT32)text.length(), format, 
-        5000.0f, 5000.0f, // Large max width/height
-        &layout
-    );
-    if (!layout) return 0.0f;
-    DWRITE_TEXT_METRICS metrics;
-    layout->GetMetrics(&metrics);
-    return metrics.width;
-}
+// TruncateMode, InfoRow, g_infoGrid, MeasureTextWidth, MakeMiddleEllipsis, 
+// MakeEndEllipsis, BuildInfoGrid, DrawInfoGrid, DrawGridTooltip, DrawInfoPanel,
+// DrawCompactInfo, DrawHistogram, DrawNavIndicators have been moved to UIRenderer.
 
 
 // --- Forward Declarations ---
@@ -2387,46 +2263,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
          }
          
           // Hand cursor for info panel clickable areas
-          if (g_runtime.ShowInfoPanel) {
+          if (g_runtime.ShowInfoPanel && g_uiRenderer) {
               float mx = (float)pt.x, my = (float)pt.y;
-              int hoverIndex = -1; // -1=none, 0=toggle, 1=close, 2+=grid rows, 100=gpsCoord, 101=gpsLink
-              static int s_lastHoverIndex = -1; // Track previous hover index
+              static int s_lastRowIndex = -2; // Track row index (-1 = no row, -2 = initial)
+              static UIHitResult s_lastHitType = UIHitResult::None;
               
-              // Toggle button
-              if (mx >= g_panelToggleRect.left && mx <= g_panelToggleRect.right && my >= g_panelToggleRect.top && my <= g_panelToggleRect.bottom) {
-                  hoverIndex = 0;
-              }
-              // Close button
-              else if (mx >= g_panelCloseRect.left && mx <= g_panelCloseRect.right && my >= g_panelCloseRect.top && my <= g_panelCloseRect.bottom) {
-                  hoverIndex = 1;
+              auto hit = g_uiRenderer->HitTest(mx, my);
+              
+              if (hit.type != UIHitResult::None) {
+                  SetCursor(LoadCursor(nullptr, IDC_HAND));
               }
               
-              // Info grid rows (when expanded)
-              if (hoverIndex < 0 && g_runtime.InfoPanelExpanded) {
-                  int rowIdx = 2;
-                  for (const auto& row : g_infoGrid) {
-                      if (mx >= row.hitRect.left && mx <= row.hitRect.right && my >= row.hitRect.top && my <= row.hitRect.bottom) {
-                          hoverIndex = rowIdx;
-                          break;
-                      }
-                      rowIdx++;
-                  }
-                  // GPS coordinate and link
-                  if (hoverIndex < 0 && g_currentMetadata.HasGPS) {
-                      if (mx >= g_gpsCoordRect.left && mx <= g_gpsCoordRect.right && my >= g_gpsCoordRect.top && my <= g_gpsCoordRect.bottom) {
-                          hoverIndex = 100;
-                      } else if (mx >= g_gpsLinkRect.left && mx <= g_gpsLinkRect.right && my >= g_gpsLinkRect.top && my <= g_gpsLinkRect.bottom) {
-                          hoverIndex = 101;
-                      }
-                  }
-              }
-              
-              if (hoverIndex >= 0) SetCursor(LoadCursor(nullptr, IDC_HAND));
-              
-              // FIX: Request repaint when hovered ROW changes (not just on/off)
-              if (hoverIndex != s_lastHoverIndex) {
-                  s_lastHoverIndex = hoverIndex;
-                  RequestRepaint(PaintLayer::Static); // Info Panel is on Static layer
+              // Repaint on hover state change (type OR row index)
+              bool changed = (hit.type != s_lastHitType) || (hit.rowIndex != s_lastRowIndex);
+              if (changed) {
+                  s_lastHitType = hit.type;
+                  s_lastRowIndex = hit.rowIndex;
+                  RequestRepaint(PaintLayer::Static);
               }
           }
          } // End of !g_gallery.IsVisible() guard
@@ -2663,96 +2516,45 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         
-        if (g_runtime.ShowInfoPanel) {
-             // 1. Toggle Button
-             if (pt.x >= g_panelToggleRect.left && pt.x <= g_panelToggleRect.right &&
-                 pt.y >= g_panelToggleRect.top && pt.y <= g_panelToggleRect.bottom) {
-                 g_runtime.InfoPanelExpanded = !g_runtime.InfoPanelExpanded;
-                 // Lazy Load Histogram if expanding and data missing
-                 if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
-                     UpdateHistogramAsync(hwnd, g_imagePath);
-                 }
-                 RequestRepaint(PaintLayer::All);
-                 return 0;
-             }
+        if (g_runtime.ShowInfoPanel && g_uiRenderer) {
+             // Use UIRenderer::HitTest for all Info Panel interactions
+             auto hit = g_uiRenderer->HitTest((float)pt.x, (float)pt.y);
              
-             // 2. Close Button
-             if (pt.x >= g_panelCloseRect.left && pt.x <= g_panelCloseRect.right &&
-                 pt.y >= g_panelCloseRect.top && pt.y <= g_panelCloseRect.bottom) {
-                 g_runtime.ShowInfoPanel = false;
-                 g_toolbar.SetExifState(false); // Sync toolbar icon state
-                 RequestRepaint(PaintLayer::All);
-                 return 0;
-             }
-             
-             // 3. Grid Row Click (Copy to Clipboard)
-             if (g_runtime.InfoPanelExpanded) {
-                 float mx = (float)pt.x;
-                 float my = (float)pt.y;
-                 for (const auto& row : g_infoGrid) {
-                     if (mx >= row.hitRect.left && mx <= row.hitRect.right &&
-                         my >= row.hitRect.top && my <= row.hitRect.bottom) {
-                         
-                         std::wstring textToCopy = row.fullText.empty() ? row.valueMain : row.valueMain; // Prefer Main or Full? 
-                         // Logic: If truncated, fullText usually holds untruncated. If unique (like filename), fullText holds basename. 
-                         // Let's use fullText if available and different?
-                         // Actually:
-                         // File: fullText = basename
-                         // Size: fullText = ""
-                         // Lens: fullText = lens name
-                         // So fullText is good. If empty, use valueMain.
-                         if (!row.fullText.empty()) textToCopy = row.fullText;
-                         else textToCopy = row.valueMain;
-                         
-                         // Special case: File -> Full Path
-                         if (row.label == L"File") textToCopy = g_imagePath;
-                         
-                         if (CopyToClipboard(hwnd, textToCopy)) {
-                             g_osd.Show(hwnd, L"Copied!", false);
-                         }
-                         RequestRepaint(PaintLayer::All); // For visual feedback if we add click effect later
-                         return 0;
+             switch (hit.type) {
+                 case UIHitResult::PanelToggle:
+                     g_runtime.InfoPanelExpanded = !g_runtime.InfoPanelExpanded;
+                     if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty() && !g_imagePath.empty()) {
+                         UpdateHistogramAsync(hwnd, g_imagePath);
                      }
-                 }
-             }
-             
-             // 3. GPS Coordinates (Click to Copy)
-             if (g_runtime.InfoPanelExpanded && g_currentMetadata.HasGPS) {
-                 if (pt.x >= g_gpsCoordRect.left && pt.x <= g_gpsCoordRect.right &&
-                     pt.y >= g_gpsCoordRect.top && pt.y <= g_gpsCoordRect.bottom) {
-                     wchar_t coordBuf[128];
-                     swprintf_s(coordBuf, L"%.6f, %.6f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
-                     if (CopyToClipboard(hwnd, coordBuf)) {
+                     RequestRepaint(PaintLayer::All);
+                     return 0;
+                     
+                 case UIHitResult::PanelClose:
+                     g_runtime.ShowInfoPanel = false;
+                     g_toolbar.SetExifState(false);
+                     RequestRepaint(PaintLayer::All);
+                     return 0;
+                     
+                 case UIHitResult::InfoRow:
+                     if (CopyToClipboard(hwnd, hit.payload)) {
+                         g_osd.Show(hwnd, L"Copied!", false);
+                     }
+                     RequestRepaint(PaintLayer::All);
+                     return 0;
+                     
+                 case UIHitResult::GPSCoord:
+                     if (CopyToClipboard(hwnd, hit.payload)) {
                          g_osd.Show(hwnd, L"Coordinates copied!", false);
                      }
                      RequestRepaint(PaintLayer::All);
                      return 0;
-                 }
-             }
-             
-             // 4. GPS Link (Bing Maps) - Only if Expanded
-             if (g_runtime.InfoPanelExpanded && g_currentMetadata.HasGPS) {
-                 if (pt.x >= g_gpsLinkRect.left && pt.x <= g_gpsLinkRect.right &&
-                     pt.y >= g_gpsLinkRect.top && pt.y <= g_gpsLinkRect.bottom) {
-                     wchar_t url[256];
-                     // Bing Maps URL format
-                     swprintf_s(url, L"https://www.bing.com/maps?where1=%.6f%%2C%.6f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
-                     ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+                     
+                 case UIHitResult::GPSLink:
+                     ShellExecuteW(nullptr, L"open", hit.payload.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                      return 0;
-                 }
-             }
-             
-             // 5. Filename (Click to Copy) - Only if Expanded
-             if (g_runtime.InfoPanelExpanded) {
-                 if (pt.x >= g_filenameRect.left && pt.x <= g_filenameRect.right &&
-                     pt.y >= g_filenameRect.top && pt.y <= g_filenameRect.bottom) {
-                     std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
-                     if (CopyToClipboard(hwnd, filename)) {
-                         g_osd.Show(hwnd, L"Filename copied!", false);
-                     }
-                     RequestRepaint(PaintLayer::All);
-                     return 0;
-                 }
+                     
+                 case UIHitResult::None:
+                     break;
              }
         }
         
@@ -2943,18 +2745,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 bool clickValid = false;
                 int direction = 0;
                 
-                // Arrow mode (0): Click only on icon hitbox
+                // Arrow mode (0): Click on edge zones (same as other modes)
                 if (g_config.NavIndicator == 0) {
-                    // Check against g_navArrowHitbox (set by DrawNavIndicators)
-                    extern D2D1_ELLIPSE g_navArrowHitbox;
-                    if (g_navArrowHitbox.radiusX > 0) {
-                        float dx = (float)pt.x - g_navArrowHitbox.point.x;
-                        float dy = (float)pt.y - g_navArrowHitbox.point.y;
-                        float dist = sqrtf(dx*dx + dy*dy);
-                        if (dist <= g_navArrowHitbox.radiusX) {
-                            clickValid = true;
-                            direction = (pt.x < width / 2) ? -1 : 1;
-                        }
+                    // Use zone check: Left/Right 15%, vertical 30%-70%
+                    bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
+                    bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
+                    if (inHRange && inVRange) {
+                        clickValid = true;
+                        direction = (pt.x < width * 0.15) ? -1 : 1;
                     }
                 } else {
                     // Cursor/None mode (1,2): Smaller central range 40%-60%
@@ -4454,498 +4252,10 @@ void Navigate(HWND hwnd, int direction) {
     }
 }
 
-void DrawHistogram(ID2D1DeviceContext* context, const CImageLoader::ImageMetadata& meta, D2D1_RECT_F rect) {
-    if (meta.HistR.empty()) return; // Need RGB data
-    
-    // Find max across all channels for consistent scaling
-    uint32_t maxVal = 1;
-    for (int i = 0; i < 256; i++) {
-        if (meta.HistR[i] > maxVal) maxVal = meta.HistR[i];
-        if (meta.HistG[i] > maxVal) maxVal = meta.HistG[i];
-        if (meta.HistB[i] > maxVal) maxVal = meta.HistB[i];
-    }
-    
-    float stepX = (rect.right - rect.left) / 256.0f;
-    float bottom = rect.bottom;
-    float height = rect.bottom - rect.top;
-    
-    // Helper lambda to draw a single channel
-    auto drawChannel = [&](const std::vector<uint32_t>& hist, D2D1::ColorF color) {
-        ComPtr<ID2D1PathGeometry> path;
-        g_renderEngine->m_d2dFactory->CreatePathGeometry(&path);
-        ComPtr<ID2D1GeometrySink> sink;
-        path->Open(&sink);
-        
-        sink->BeginFigure(D2D1::Point2F(rect.left, bottom), D2D1_FIGURE_BEGIN_FILLED);
-        for (int i = 0; i < 256; i++) {
-            float val = (float)hist[i] / maxVal;
-            float y = bottom - val * height;
-            sink->AddLine(D2D1::Point2F(rect.left + i * stepX, y));
-        }
-        sink->AddLine(D2D1::Point2F(rect.right, bottom));
-        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-        sink->Close();
-        
-        ComPtr<ID2D1SolidColorBrush> brush;
-        context->CreateSolidColorBrush(color, &brush);
-        context->FillGeometry(path.Get(), brush.Get());
-    };
-    
-    // Draw RGB with semi-transparency (order: B, G, R for nice overlap)
-    drawChannel(meta.HistB, D2D1::ColorF(0.0f, 0.4f, 1.0f, 0.4f));  // Blue
-    drawChannel(meta.HistG, D2D1::ColorF(0.2f, 0.9f, 0.3f, 0.4f));  // Green
-    drawChannel(meta.HistR, D2D1::ColorF(1.0f, 0.3f, 0.3f, 0.4f));  // Red
-}
-
-void DrawCompactInfo(ID2D1DeviceContext* context) {
-    if (g_imagePath.empty()) return;
-    
-    if (!g_pPanelTextFormat) {
-         g_renderEngine->m_dwriteFactory->CreateTextFormat(
-            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 
-            13.0f, L"en-us", &g_pPanelTextFormat
-        );
-        // Set no-wrap mode to prevent long filenames from wrapping
-        if (g_pPanelTextFormat) {
-            g_pPanelTextFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-    }
-    
-    std::wstring info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
-    
-    // Add Size
-    if (g_currentMetadata.Width > 0) {
-        wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
-        info += sz;
-        
-        // File Size
-        if (g_currentMetadata.FileSize > 0) {
-            double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
-            swprintf_s(sz, L"   %.2f MB", mb);
-            info += sz;
-        }
-    }
-    // Add Compact EXIF
-    std::wstring meta = g_currentMetadata.GetCompactString();
-    if (!meta.empty()) info += L"   " + meta;
-    
-    // Measure Text
-    float textW = MeasureTextWidth(info, g_pPanelTextFormat.Get());
-    float totalW = textW + 70.0f; // Padding for 2 buttons
-    
-    D2D1_RECT_F rect = D2D1::RectF(20, 10, 20 + textW, 40);
-    D2D1_RECT_F bgRect = D2D1::RectF(20, 10, 20 + totalW + 10, 40);
-    
-    // Shadow Text
-    ComPtr<ID2D1SolidColorBrush> brushShadow;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), &brushShadow);
-    D2D1_RECT_F shadowRect = D2D1::RectF(rect.left + 1, rect.top + 1, rect.right + 1, rect.bottom + 1);
-    context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), shadowRect, brushShadow.Get());
-    
-    // Text
-    ComPtr<ID2D1SolidColorBrush> brushText;
-    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
-    context->DrawTextW(info.c_str(), (UINT32)info.length(), g_pPanelTextFormat.Get(), rect, brushText.Get());
-
-    // Expand Button [+] - Yellow with shadow
-    g_panelToggleRect = D2D1::RectF(rect.right + 8, rect.top, rect.right + 38, rect.bottom);
-    
-    // Shadow
-    D2D1_RECT_F shadowRect1 = D2D1::RectF(g_panelToggleRect.left + 1, g_panelToggleRect.top + 1, g_panelToggleRect.right + 1, g_panelToggleRect.bottom + 1);
-    context->DrawTextW(L"[+]", 3, g_pPanelTextFormat.Get(), shadowRect1, brushShadow.Get());
-    
-    ComPtr<ID2D1SolidColorBrush> brushYellow;
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.85f, 0.0f), &brushYellow); // Warm yellow
-    context->DrawTextW(L"[+]", 3, g_pPanelTextFormat.Get(), g_panelToggleRect, brushYellow.Get());
-    
-    // Close Button [x] - Red with shadow
-    g_panelCloseRect = D2D1::RectF(g_panelToggleRect.right + 5, rect.top, g_panelToggleRect.right + 35, rect.bottom);
-    
-    // Shadow
-    D2D1_RECT_F shadowRect2 = D2D1::RectF(g_panelCloseRect.left + 1, g_panelCloseRect.top + 1, g_panelCloseRect.right + 1, g_panelCloseRect.bottom + 1);
-    context->DrawTextW(L"[x]", 3, g_pPanelTextFormat.Get(), shadowRect2, brushShadow.Get());
-    
-    ComPtr<ID2D1SolidColorBrush> brushRed;
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f), &brushRed); // Soft red
-    context->DrawTextW(L"[x]", 3, g_pPanelTextFormat.Get(), g_panelCloseRect, brushRed.Get());
-}
-
-// ============================================================================
-// Grid-Based Info Panel System
-// ============================================================================
-
-// Build info grid data from current metadata
-void BuildInfoGrid() {
-    g_infoGrid.clear();
-    
-    // Row 1: Filename
-    std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
-    g_infoGrid.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
-    
-    // Row 2: Dimensions + Megapixels
-    if (g_currentMetadata.Width > 0) {
-        UINT64 totalPixels = (UINT64)g_currentMetadata.Width * g_currentMetadata.Height;
-        double megapixels = totalPixels / 1000000.0;
-        wchar_t dimBuf[64];
-        // Use 'x' instead of multiplication sign to avoid mojibake
-        swprintf_s(dimBuf, L"%u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
-        wchar_t mpBuf[32];
-        swprintf_s(mpBuf, L"(%.1f MP)", megapixels);
-        g_infoGrid.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
-    }
-    
-    // Row 3: File Size
-    if (g_currentMetadata.FileSize > 0) {
-        UINT64 bytes = g_currentMetadata.FileSize;
-        wchar_t sizeBuf[32];
-        if (bytes >= 1024 * 1024) {
-            swprintf_s(sizeBuf, L"%.2f MB", bytes / (1024.0 * 1024.0));
-        } else if (bytes >= 1024) {
-            swprintf_s(sizeBuf, L"%.2f KB", bytes / 1024.0);
-        } else {
-            swprintf_s(sizeBuf, L"%llu B", bytes);
-        }
-        std::wstring sub = L"(" + FormatBytesWithCommas(bytes) + L")";
-        std::wstring extra = g_currentMetadata.FormatDetails.empty() ? L"" : L" [" + g_currentMetadata.FormatDetails + L"]";
-        g_infoGrid.push_back({L"\U0001F4BE", L"Disk", std::wstring(sizeBuf) + extra, sub, L"", TruncateMode::None, false});
-    }
-    
-    // Row 4: Date
-    if (!g_currentMetadata.Date.empty()) {
-        g_infoGrid.push_back({L"\U0001F4C5", L"Date", g_currentMetadata.Date, L"", L"", TruncateMode::EndEllipsis, false});
-    }
-    
-    // Row 5: Camera
-    if (!g_currentMetadata.Make.empty()) {
-        std::wstring camera = g_currentMetadata.Make + L" " + g_currentMetadata.Model;
-        g_infoGrid.push_back({L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false});
-    }
-    
-    // Row 6: Exposure (ISO + Aperture + Shutter + Bias)
-    if (!g_currentMetadata.ISO.empty()) {
-        std::wstring exp = L"ISO " + g_currentMetadata.ISO + L"  " + g_currentMetadata.Aperture + L"  " + g_currentMetadata.Shutter;
-        std::wstring sub = g_currentMetadata.ExposureBias.empty() ? L"" : g_currentMetadata.ExposureBias;
-        g_infoGrid.push_back({L"\U000026A1", L"Exp", exp, sub, exp + L" " + sub, TruncateMode::EndEllipsis, false});
-    }
-    
-    // Row 7: Lens
-    if (!g_currentMetadata.Lens.empty()) {
-        g_infoGrid.push_back({L"\U0001F52D", L"Lens", g_currentMetadata.Lens, L"", g_currentMetadata.Lens, TruncateMode::EndEllipsis, false});
-    }
-    
-    // Row 8: Focal
-    if (!g_currentMetadata.Focal.empty()) {
-        g_infoGrid.push_back({L"\U0001F3AF", L"Focal", g_currentMetadata.Focal, L"", L"", TruncateMode::None, false});
-    }
-    
-    // Row 9: Color Space
-    if (!g_currentMetadata.ColorSpace.empty()) {
-        g_infoGrid.push_back({L"\U0001F3A8", L"Color", g_currentMetadata.ColorSpace, L"", L"", TruncateMode::None, false});
-    }
-    
-    // Row 10: Decoder (Removed as per user request - duplicate of HUD)
-    /*
-    if (!g_currentMetadata.LoaderName.empty()) {
-        wchar_t timeBuf[32];
-        swprintf_s(timeBuf, L"(%llu ms)", (UINT64)g_currentMetadata.LoadTimeMs);
-        g_infoGrid.push_back({L"\U00002699", L"Decode", g_currentMetadata.LoaderName, timeBuf, L"", TruncateMode::None, false});
-    }
-    */
-    
-    // Row 11: Software
-    if (!g_currentMetadata.Software.empty()) {
-        g_infoGrid.push_back({L"\U0001F4BB", L"Soft", g_currentMetadata.Software, L"", g_currentMetadata.Software, TruncateMode::EndEllipsis, false});
-    }
-}
-
-// Layout and draw the info grid
-void DrawInfoGrid(ID2D1DeviceContext* context, float startX, float startY, float width) {
-    if (g_infoGrid.empty()) return;
-    
-    ComPtr<ID2D1SolidColorBrush> brushWhite, brushGray, brushHover;
-    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushWhite);
-    context->CreateSolidColorBrush(D2D1::ColorF(0.6f, 0.6f, 0.65f), &brushGray);
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &brushHover);
-    
-    float valueColStart = startX + GRID_ICON_WIDTH + GRID_LABEL_WIDTH;
-    float valueColWidth = width - GRID_ICON_WIDTH - GRID_LABEL_WIDTH - GRID_PADDING;
-    float y = startY;
-    
-    for (size_t i = 0; i < g_infoGrid.size(); i++) {
-        auto& row = g_infoGrid[i];
-        
-        // Calculate hit rect (for tooltip and click)
-        row.hitRect = D2D1::RectF(startX, y, startX + width, y + GRID_ROW_HEIGHT);
-        
-        // Hover highlight
-        if ((int)i == g_hoverRowIndex) {
-            context->FillRectangle(row.hitRect, brushHover.Get());
-        }
-        
-        // Icon column
-        D2D1_RECT_F iconRect = D2D1::RectF(startX, y, startX + GRID_ICON_WIDTH, y + GRID_ROW_HEIGHT);
-        context->DrawTextW(row.icon.c_str(), (UINT32)row.icon.length(), g_pPanelTextFormat.Get(), iconRect, brushWhite.Get());
-        
-        // Label column (gray)
-        D2D1_RECT_F labelRect = D2D1::RectF(startX + GRID_ICON_WIDTH, y, valueColStart, y + GRID_ROW_HEIGHT);
-        context->DrawTextW(row.label.c_str(), (UINT32)row.label.length(), g_pPanelTextFormat.Get(), labelRect, brushGray.Get());
-        
-        // Value column - apply truncation
-        float subWidth = row.valueSub.empty() ? 0 : MeasureTextWidth(row.valueSub, g_pPanelTextFormat.Get()) + 5;
-        float mainMaxWidth = valueColWidth - subWidth;
-        
-        if (row.mode == TruncateMode::MiddleEllipsis) {
-            row.displayText = MakeMiddleEllipsis(g_pPanelTextFormat.Get(), mainMaxWidth, row.valueMain);
-        } else if (row.mode == TruncateMode::EndEllipsis) {
-            row.displayText = MakeEndEllipsis(g_pPanelTextFormat.Get(), mainMaxWidth, row.valueMain);
-        } else {
-            row.displayText = row.valueMain;
-        }
-        row.isTruncated = (row.displayText != row.valueMain);
-        
-        // Draw main value
-        D2D1_RECT_F valueRect = D2D1::RectF(valueColStart, y, valueColStart + mainMaxWidth, y + GRID_ROW_HEIGHT);
-        context->DrawTextW(row.displayText.c_str(), (UINT32)row.displayText.length(), g_pPanelTextFormat.Get(), valueRect, brushWhite.Get());
-        
-        // Draw sub value (gray, smaller feel)
-        if (!row.valueSub.empty()) {
-            D2D1_RECT_F subRect = D2D1::RectF(valueColStart + mainMaxWidth, y, startX + width, y + GRID_ROW_HEIGHT);
-            context->DrawTextW(row.valueSub.c_str(), (UINT32)row.valueSub.length(), g_pPanelTextFormat.Get(), subRect, brushGray.Get());
-        }
-        
-        y += GRID_ROW_HEIGHT;
-    }
-}
-
-// Draw tooltip for hovered row
-void DrawGridTooltip(ID2D1DeviceContext* context, float winPixelW, float winPixelH) {
-    if (g_hoverRowIndex < 0 || g_hoverRowIndex >= (int)g_infoGrid.size()) return;
-    
-    // DIMENSION REFACTOR
-    float dpiX, dpiY; context->GetDpi(&dpiX, &dpiY);
-    if (dpiX == 0) dpiX = 96.0f;
-    if (dpiY == 0) dpiY = 96.0f;
-    float logicW = winPixelW * 96.0f / dpiX;
-    float logicH = winPixelH * 96.0f / dpiY;
-    if (winPixelW <= 0) { D2D1_SIZE_F s = context->GetSize(); logicW = s.width; logicH = s.height; }
-
-    const auto& row = g_infoGrid[g_hoverRowIndex];
-    if (!row.isTruncated || row.fullText.empty()) return;
-    
-    float x = (float)g_lastMousePos.x + 10;
-    float y = (float)g_lastMousePos.y + 20;
-    
-    float textWidth = MeasureTextWidth(row.fullText, g_pPanelTextFormat.Get());
-    float padding = 6.0f;
-    float boxWidth = textWidth + padding * 2;
-    float boxHeight = 20.0f;
-    
-    if (x + boxWidth > logicW - 10) x = logicW - boxWidth - 10;
-    if (y + boxHeight > logicH - 10) y = logicH - boxHeight - 10;
-    
-    D2D1_RECT_F boxRect = D2D1::RectF(x, y, x + boxWidth, y + boxHeight);
-    
-    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.1f, 0.12f, 0.95f), &brushBg);
-    context->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.4f, 0.45f), &brushBorder);
-    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
-    
-    context->FillRoundedRectangle(D2D1::RoundedRect(boxRect, 4.0f, 4.0f), brushBg.Get());
-    context->DrawRoundedRectangle(D2D1::RoundedRect(boxRect, 4.0f, 4.0f), brushBorder.Get(), 1.0f);
-    
-    D2D1_RECT_F textRect = D2D1::RectF(x + padding, y + 2, x + boxWidth - padding, y + boxHeight);
-    context->DrawTextW(row.fullText.c_str(), (UINT32)row.fullText.length(), g_pPanelTextFormat.Get(), textRect, brushText.Get());
-}
-
-// Edge Navigation Indicators - Stylized Arrow Icons
-// Global hitbox for Arrow mode click detection
-D2D1_ELLIPSE g_navArrowHitbox = {};
-
-void DrawNavIndicators(ID2D1DeviceContext* context, float winPixelW, float winPixelH) {
-    // Only draw for Arrow mode (NavIndicator == 0)
-    if (!g_config.EdgeNavClick || g_viewState.EdgeHoverState == 0 || g_config.NavIndicator != 0) {
-        g_navArrowHitbox = {}; // Clear hitbox
-        return;
-    }
-
-    // DIMENSION REFACTOR
-    float dpiX, dpiY; context->GetDpi(&dpiX, &dpiY);
-    if (dpiX == 0) dpiX = 96.0f;
-    if (dpiY == 0) dpiY = 96.0f;
-    float logicW = winPixelW * 96.0f / dpiX;
-    float logicH = winPixelH * 96.0f / dpiY;
-    if (winPixelW <= 0) { D2D1_SIZE_F s = context->GetSize(); logicW = s.width; logicH = s.height; }
-    
-    // Arrow Zone: 15% of width, centered vertically
-    float zoneWidth = logicW * 0.15f;
-    float arrowCenterY = logicH * 0.5f;
-    float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (logicW - zoneWidth / 2.0f);
-    
-    // Smaller, refined Circle + Arrow Design
-    float circleRadius = 20.0f;
-    float arrowSize = 10.0f;
-    float strokeWidth = 3.0f;
-    
-    // Store hitbox for click detection
-    g_navArrowHitbox = D2D1::Ellipse(D2D1::Point2F(arrowCenterX, arrowCenterY), circleRadius, circleRadius);
-    
-    // Draw semi-transparent circle background
-    ComPtr<ID2D1SolidColorBrush> brushCircle, brushArrow;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &brushCircle);
-    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f), &brushArrow);
-    
-    context->FillEllipse(g_navArrowHitbox, brushCircle.Get());
-    
-    // Create Path Geometry for Chevron - Centered in circle
-    ComPtr<ID2D1PathGeometry> path;
-    g_renderEngine->m_d2dFactory->CreatePathGeometry(&path);
-    ComPtr<ID2D1GeometrySink> sink;
-    path->Open(&sink);
-    
-    if (g_viewState.EdgeHoverState == -1) { // < Prev (Left Arrow)
-        sink->BeginFigure(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY));
-        sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
-    } else { // > Next (Right Arrow)
-        sink->BeginFigure(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY));
-        sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
-    }
-    sink->EndFigure(D2D1_FIGURE_END_OPEN);
-    sink->Close();
-    
-    // Draw arrow with rounded ends
-    ComPtr<ID2D1StrokeStyle> strokeStyle;
-    D2D1_STROKE_STYLE_PROPERTIES strokeProps = {};
-    strokeProps.startCap = D2D1_CAP_STYLE_ROUND;
-    strokeProps.endCap = D2D1_CAP_STYLE_ROUND;
-    strokeProps.lineJoin = D2D1_LINE_JOIN_ROUND;
-    g_renderEngine->m_d2dFactory->CreateStrokeStyle(strokeProps, nullptr, 0, &strokeStyle);
-    
-    context->DrawGeometry(path.Get(), brushArrow.Get(), strokeWidth, strokeStyle.Get());
-}
-
-void DrawInfoPanel(ID2D1DeviceContext* context, float winPixelW, float winPixelH) {
-    if (!g_runtime.ShowInfoPanel) return;
-    
-    // Init Font
-    if (!g_pPanelTextFormat) {
-        g_renderEngine->m_dwriteFactory->CreateTextFormat(
-            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 
-            13.0f, L"en-us", &g_pPanelTextFormat
-        );
-    }
-    
-    // Ensure format attributes are reset (prevent contamination from DrawCompactInfo)
-    if (g_pPanelTextFormat) {
-        g_pPanelTextFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        g_pPanelTextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        g_pPanelTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    }
-    
-    // Panel Rect (Top Left)
-    float padding = 10.0f;
-    float width = 300.0f; 
-    float height = 220.0f; 
-    float startX = 20.0f;
-    float startY = 40.0f; 
-    
-    if (g_currentMetadata.HasGPS) height += 50.0f;
-    if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f;
-    if (!g_currentMetadata.Software.empty()) height += 20.0f;
-
-    D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
-    
-    // Background
-    ComPtr<ID2D1SolidColorBrush> brushBg;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, g_config.InfoPanelAlpha), &brushBg);
-    context->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f, 8.0f), brushBg.Get());
-    
-    ComPtr<ID2D1SolidColorBrush> brushWhite;
-    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushWhite);
-    
-    // Buttons (Top Right)
-    // Close [ X ]
-    g_panelCloseRect = D2D1::RectF(startX + width - 25, startY + 5, startX + width - 5, startY + 25);
-    context->DrawTextW(L"x", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelCloseRect.left + 5, g_panelCloseRect.top, g_panelCloseRect.right, g_panelCloseRect.bottom), brushWhite.Get());
-    
-    // Minimize [ - ]
-    g_panelToggleRect = D2D1::RectF(startX + width - 50, startY + 5, startX + width - 30, startY + 25);
-    context->DrawTextW(L"-", 1, g_pPanelTextFormat.Get(), D2D1::RectF(g_panelToggleRect.left + 6, g_panelToggleRect.top, g_panelToggleRect.right, g_panelToggleRect.bottom), brushWhite.Get());
-
-
-    // === NEW: Grid-Based Info Panel ===
-    BuildInfoGrid();
-    float gridStartY = startY + 30.0f; // After buttons
-    float gridContentHeight = g_infoGrid.size() * GRID_ROW_HEIGHT;
-    DrawInfoGrid(context, startX + padding, gridStartY, width - padding * 2);
-    
-    // Calculate where histogram/GPS should start (after grid content)
-    
-    float currentY = startY + (height - (g_currentMetadata.HasGPS ? 130.0f : 100.0f)); 
-    // Heuristic layout is tricky with variable lines. 
-    // Re-calculating Y based on lines?
-    // Let's use fixed offset from bottom for Histogram?
-    if (!g_currentMetadata.HistR.empty()) {
-        float histH = 80.0f;
-        float histY = startY + height - padding - histH - (g_currentMetadata.HasGPS ? 50.0f : 0);
-        DrawHistogram(context, g_currentMetadata, D2D1::RectF(startX + padding, histY, startX + width - padding, histY + histH));
-    }
-    
-    // GPS
-    g_gpsLinkRect = {}; 
-    if (g_currentMetadata.HasGPS) {
-        float gpsY = startY + height - 55.0f;
-        
-        // Line 1: Coordinates (clickable to copy)
-        wchar_t gpsBuf[128];
-        swprintf_s(gpsBuf, L"GPS: %.5f, %.5f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
-        g_gpsCoordRect = D2D1::RectF(startX + padding, gpsY, startX + width - padding, gpsY + 18.0f);
-        context->DrawTextW(gpsBuf, (UINT32)wcslen(gpsBuf), g_pPanelTextFormat.Get(), g_gpsCoordRect, brushWhite.Get());
-        
-        // Line 2: Altitude and OpenMap
-        float line2Y = gpsY + 20.0f;
-        
-        // Altitude (if available)
-        if (g_currentMetadata.Altitude != 0) {
-            wchar_t altBuf[64]; swprintf_s(altBuf, L"Alt: %.1fm", g_currentMetadata.Altitude);
-            D2D1_RECT_F altRect = D2D1::RectF(startX + padding, line2Y, startX + width - 90, line2Y + 18.0f);
-            context->DrawTextW(altBuf, (UINT32)wcslen(altBuf), g_pPanelTextFormat.Get(), altRect, brushWhite.Get());
-        }
-        
-        // Link Button - Right side
-        g_gpsLinkRect = D2D1::RectF(startX + width - 85.0f, line2Y, startX + width - padding, line2Y + 18.0f);
-        ComPtr<ID2D1SolidColorBrush> brushLink;
-        context->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.7f, 1.0f), &brushLink);
-        context->DrawTextW(L"OpenMap", 7, g_pPanelTextFormat.Get(), g_gpsLinkRect, brushLink.Get());
-    }
-}
-
-
-
 void OnPaint(HWND hwnd) {
     if (!g_renderEngine) return;
     
-    // Track mouse position and update grid hover state
-    POINT cursorPos;
-    GetCursorPos(&cursorPos);
-    ScreenToClient(hwnd, &cursorPos);
-    g_lastMousePos = cursorPos;
-    
-    // Check which grid row is being hovered
-    g_hoverRowIndex = -1;
-    if (g_runtime.InfoPanelExpanded && g_runtime.ShowInfoPanel) {
-        float x = (float)cursorPos.x;
-        float y = (float)cursorPos.y;
-        for (size_t i = 0; i < g_infoGrid.size(); i++) {
-            const auto& row = g_infoGrid[i];
-            if (x >= row.hitRect.left && x <= row.hitRect.right &&
-                y >= row.hitRect.top && y <= row.hitRect.bottom) {
-                g_hoverRowIndex = (int)i;
-                break;
-            }
-        }
-    }
+    // [MIGRATED] Hover tracking moved to UIRenderer::UpdateHoverState
     
     if (g_isImageDirty) {
         g_isImageDirty = false; // Reset dirty flag BEFORE drawing (Consume flag)

@@ -144,6 +144,27 @@ struct AppConfig {
     }
 };
 
+/// <summary>
+/// View State (Zoom, Pan, Interaction)
+/// </summary>
+struct ViewState {
+    float Zoom = 1.0f;
+    float PanX = 0.0f;
+    float PanY = 0.0f;
+    bool IsDragging = false;
+    bool IsInteracting = false;  // True during drag/zoom/resize for dynamic interpolation
+    bool IsMiddleDragWindow = false;  // True when middle button is dragging window
+    POINT LastMousePos = { 0, 0 };
+    POINT DragStartPos = { 0, 0 };  // For click vs drag detection
+    DWORD DragStartTime = 0;        // For click vs drag detection
+    POINT WindowDragStart = { 0, 0 }; // Window position at drag start
+    POINT CursorDragStart = { 0, 0 }; // Cursor screen position at drag start
+    int EdgeHoverState = 0; // -1=Left, 0=None, 1=Right
+    int ExifOrientation = 1; // EXIF Orientation (1-8, 1=Normal)
+
+    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; EdgeHoverState = 0; ExifOrientation = 1; }
+};
+
 // Runtime State (Reset on Restart)
 struct RuntimeConfig {
     bool LockWindowSize = false;
@@ -175,3 +196,4 @@ extern RuntimeConfig g_runtime;
 bool CheckWritePermission(const std::wstring& dir);
 void SaveConfig(); // Ensure visible
 void LoadConfig(); // Ensure visible
+
