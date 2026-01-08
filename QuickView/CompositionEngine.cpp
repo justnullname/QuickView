@@ -148,10 +148,18 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
 HRESULT CompositionEngine::EnsureImageSurface(ImageLayer& layer, UINT width, UINT height) {
     if (width == 0 || height == 0) return E_INVALIDARG;
     
-    // Reuse existing surface if large enough
-    if (layer.surface && layer.width >= width && layer.height >= height) {
+    // [Fix] Enforce Exact Size Match
+    // Reusing larger surfaces causes issues:
+    // 1. Layout logic uses layer.width (old large size) causing shrinking.
+    // 2. Visual displays full large surface (garbage pixels outside active area).
+    if (layer.surface && layer.width == width && layer.height == height) {
+        // OutputDebugStringW(L"[DComp] Reuse Surface\n");
         return S_OK;
     }
+    
+    wchar_t buf[128];
+    swprintf_s(buf, L"[DComp] CreateSurface %ux%u (Old: %ux%u)\n", width, height, layer.width, layer.height);
+    OutputDebugStringW(buf);
     
     // Create new surface
     layer.surface.Reset();
