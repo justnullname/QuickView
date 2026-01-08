@@ -2282,7 +2282,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.PanX += (pt.x - g_viewState.LastMousePos.x); 
              g_viewState.PanY += (pt.y - g_viewState.LastMousePos.y); 
              g_viewState.LastMousePos = pt;
-             RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Pan affects Image and OSD
+             
+             // [DComp] Use hardware pan (zero CPU cost)
+             if (g_compEngine && g_compEngine->IsInitialized()) {
+                 g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+                 g_compEngine->Commit();
+             }
+             RequestRepaint(PaintLayer::Dynamic);  // OSD update only
          }
          
           // Hand cursor for info panel clickable areas
@@ -4901,7 +4907,8 @@ void OnPaint(HWND hwnd) {
             g_renderEngine->SetWarpMode(0.0f, 0.0f);
         }
         
-        if (g_currentBitmap) {
+        // [Double-Render Fix] Only draw legacy if DComp is NOT active
+        if ((!g_compEngine || !g_compEngine->IsInitialized()) && g_currentBitmap) {
             D2D1_SIZE_F size = g_currentBitmap->GetSize();
             // rtSize removed (unused, replaced by logicW/logicH)
             
