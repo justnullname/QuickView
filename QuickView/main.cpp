@@ -3117,9 +3117,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                                                  (float)finalWinH / g_lastSurfaceSize.height);
                      float finalDCompScale = baseFitScale * hardwareScale;
                      
-                     // Apply Override Scale (Zooming around window center)
-                     g_compEngine->SetZoom(finalDCompScale, finalWinW/2.0f, finalWinH/2.0f);
-                     g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+                     // [Fix] Use Top-Left Scaling + Centering Offset
+                     // Scaling around Window Center (previous attempt) was incorrect because visual origin is (0,0).
+                     // Top-Left scaling allows precise calculation of the centering offset.
+                     g_compEngine->SetZoom(finalDCompScale, 0.0f, 0.0f);
+                     
+                     // Calculate Offset to center the Scaled Image in the Window
+                     float scaledW = g_lastSurfaceSize.width * finalDCompScale;
+                     float scaledH = g_lastSurfaceSize.height * finalDCompScale;
+                     
+                     float offsetX = (finalWinW - scaledW) / 2.0f;
+                     float offsetY = (finalWinH - scaledH) / 2.0f;
+                     
+                     // Apply Offset + User Pan
+                     g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
                      g_compEngine->Commit();
                  }
              }
