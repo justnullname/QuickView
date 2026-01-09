@@ -47,6 +47,19 @@
 
 namespace WuffsLoader {
 
+    struct BufferAdapter {
+        AllocatorFunc allocFunc;
+        uint8_t* ptr = nullptr;
+        using allocator_type = std::allocator<uint8_t>;
+        BufferAdapter(AllocatorFunc f) : allocFunc(f) {}
+        void resize(size_t s) {
+            ptr = allocFunc(s);
+            if (!ptr && s > 0) throw std::bad_alloc();
+        }
+        uint8_t* data() { return ptr; }
+        allocator_type get_allocator() const { return allocator_type(); }
+    };
+
 #define WUFFS_TRY(expr) \
     do { \
         while(true) { \
@@ -116,6 +129,7 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
 }
 bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodePNG_Impl(d, s, w, h, out, c); }
 bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodePNG_Impl(d, s, w, h, out, c); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodePNG_Impl(d, s, w, h, a, c); }
 
 // ------------------------------------------------------------
 // GIF Decoder
@@ -170,6 +184,7 @@ static bool DecodeGIF_Impl(const uint8_t* data, size_t size,
 }
 bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeGIF_Impl(d, s, w, h, out, c); }
 bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeGIF_Impl(d, s, w, h, out, c); }
+bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeGIF_Impl(d, s, w, h, a, c); }
 
 // ------------------------------------------------------------
 // BMP Decoder
@@ -224,6 +239,7 @@ static bool DecodeBMP_Impl(const uint8_t* data, size_t size,
 }
 bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeBMP_Impl(d, s, w, h, out, c); }
 bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeBMP_Impl(d, s, w, h, out, c); }
+bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeBMP_Impl(d, s, w, h, a, c); }
 
 // ------------------------------------------------------------
 // TGA Decoder
@@ -278,6 +294,7 @@ static bool DecodeTGA_Impl(const uint8_t* data, size_t size,
 }
 bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeTGA_Impl(d, s, w, h, out, c); }
 bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeTGA_Impl(d, s, w, h, out, c); }
+bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeTGA_Impl(d, s, w, h, a, c); }
 
 // ------------------------------------------------------------
 // WBMP Decoder
@@ -332,6 +349,7 @@ static bool DecodeWBMP_Impl(const uint8_t* data, size_t size,
 }
 bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeWBMP_Impl(d, s, w, h, out, c); }
 bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeWBMP_Impl(d, s, w, h, out, c); }
+bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeWBMP_Impl(d, s, w, h, a, c); }
 
 // ------------------------------------------------------------
 // NetPBM Decoder
@@ -386,6 +404,7 @@ static bool DecodeNetpbm_Impl(const uint8_t* data, size_t size,
 }
 bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeNetpbm_Impl(d, s, w, h, out, c); }
 bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeNetpbm_Impl(d, s, w, h, out, c); }
+bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeNetpbm_Impl(d, s, w, h, a, c); }
 
 // ------------------------------------------------------------
 // QOI Decoder
@@ -440,6 +459,7 @@ static bool DecodeQOI_Impl(const uint8_t* data, size_t size,
 }
 bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeQOI_Impl(d, s, w, h, out, c); }
 bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeQOI_Impl(d, s, w, h, out, c); }
+bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeQOI_Impl(d, s, w, h, a, c); }
 
 #undef WUFFS_TRY
 

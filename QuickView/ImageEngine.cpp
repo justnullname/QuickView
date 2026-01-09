@@ -741,10 +741,8 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
         return; // For now, only prefetch immediate neighbor
     }
     
-    // [TEMP DISABLED] Prefetch system disabled during N+1 lane testing
-    // TODO: Re-enable after core navigation is stable
-    return;
-    
+    // [v4.1] Smart Prefetch logic re-enabled (Unified Dispatch Integration)
+
     // 6. Pre-flight check for classification
     auto info = m_loader->PeekHeader(path.c_str());
     

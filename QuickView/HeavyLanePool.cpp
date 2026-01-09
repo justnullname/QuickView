@@ -384,10 +384,14 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     int targetW = isFullDecode ? 0 : GetSystemMetrics(SM_CXSCREEN);
     int targetH = isFullDecode ? 0 : GetSystemMetrics(SM_CYSCREEN);
 
+    // [v5.3] Metadata container (populated by LoadToFrame directly)
+    CImageLoader::ImageMetadata meta;
+
     // Call ImageLoader with shared Arena
     auto decodeStart = std::chrono::high_resolution_clock::now();
     HRESULT hr = m_loader->LoadToFrame(path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
-        [&]() { return st.stop_requested(); }); // Cancel predicate
+        [&]() { return st.stop_requested(); },
+        &meta); // [v5.3] Pass metadata pointer
     
     // [Debug] Ctrl+4 forces WIC fallback logic in ImageLoader, but if we need to enforce valid frame output...
     // Note: ImageLoader.cpp handles DisableDirectD2D check now.
@@ -419,10 +423,10 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         if (SUCCEEDED(hr) && rawFrame.IsValid()) {
             if (st.stop_requested()) return;
             
-            // Read metadata
-            CImageLoader::ImageMetadata meta;
-            m_loader->ReadMetadata(path.c_str(), &meta);
-            meta.LoaderName = loaderName;
+            if (st.stop_requested()) return;
+            
+            // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
+            // No need to call ReadMetadata separately or access global variables.
             
             if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
             

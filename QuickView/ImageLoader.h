@@ -45,6 +45,9 @@ public:
         std::wstring FormatDetails; // e.g. "4:2:0", "10-bit", "Lossy"
         std::wstring ColorSpace;    // e.g. "sRGB", "Display P3", "Adobe RGB"
         
+        // [v5.3] EXIF Orientation (1-8, 1=Normal)
+        int ExifOrientation = 1;
+        
         // Decoder Info
         std::wstring LoaderName;    // e.g. "TurboJPEG", "libavif"
         DWORD LoadTimeMs = 0;       // Load time in milliseconds
@@ -142,6 +145,11 @@ public:
     /// Compute Histogram from bitmap (Sparse Sampling supported)
     /// </summary>
     HRESULT ComputeHistogram(IWICBitmapSource* source, ImageMetadata* pMetadata);
+    
+    /// <summary>
+    /// Compute Histogram from RawImageFrame (for HeavyLanePool pipeline)
+    /// </summary>
+    static void ComputeHistogramFromFrame(const QuickView::RawImageFrame& frame, ImageMetadata* pMetadata);
 
     /// <summary>
     /// Load WIC bitmap from file
@@ -183,7 +191,8 @@ public:
                         class QuantumArena* arena = nullptr,
                         int targetWidth = 0, int targetHeight = 0,
                         std::wstring* pLoaderName = nullptr,
-                        CancelPredicate checkCancel = nullptr);
+                        CancelPredicate checkCancel = nullptr,
+                        ImageMetadata* pMetadata = nullptr);
 
 
     /// <summary>
@@ -194,15 +203,9 @@ public:
 
 
 
-    /// <summary>
-    /// Get format details from last load (e.g. "4:2:0", "10-bit")
-    /// </summary>
-    std::wstring GetLastFormatDetails() const;
-
-    /// <summary>
-    /// Get EXIF Orientation from last load (1-8, 1=Normal)
-    /// </summary>
-    int GetLastExifOrientation() const;
+    // [v5.3 DEPRECATED] Use DecodeResult.metadata instead
+    // std::wstring GetLastFormatDetails() const;
+    // int GetLastExifOrientation() const;
 
     // --- NEW: Fast Image Info (Header-Only Parsing) ---
     struct ImageInfo {
@@ -266,7 +269,6 @@ private:
     /// </summary>
     HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData);
     HRESULT LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow = true);
-    HRESULT LoadThumbWebP_Limited(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, int timeoutMs);
 
 
 
@@ -300,6 +302,9 @@ private:
     
     // QOI via Wuffs
     HRESULT LoadQoiWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap);
+    
+    // Robust JPEG Thumbnail Helper
+    HRESULT LoadThumbJPEG_Robust(LPCWSTR filePath, int targetSize, ThumbData* pData);
     
     // Custom PCX Decoder
     HRESULT LoadPCX(LPCWSTR filePath, IWICBitmap** ppBitmap);

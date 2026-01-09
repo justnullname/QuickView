@@ -3916,10 +3916,15 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_imagePath = evt.filePath;
                 
                 // Metadata
-                g_currentMetadata.Width = evt.metadata.Width;
-                g_currentMetadata.Height = evt.metadata.Height;
-                g_currentMetadata.Format = evt.metadata.Format;
-                g_currentMetadata.LoaderName = evt.metadata.LoaderName;
+                // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
+                g_currentMetadata = evt.metadata;
+                
+                // [v5.3] Set EXIF Orientation based on AutoRotate config
+                if (g_config.AutoRotate) {
+                    g_viewState.ExifOrientation = evt.metadata.ExifOrientation;
+                } else {
+                    g_viewState.ExifOrientation = 1; // Ignore rotation
+                }
                 
                 // JXL Logic (Trigger Heavy if Preview)
                 if (isPreview && evt.metadata.Format == L"JXL") {
