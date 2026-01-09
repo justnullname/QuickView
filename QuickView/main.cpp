@@ -203,7 +203,7 @@ static void SaveOverlayWindowState(HWND hwnd);
 static void RestoreOverlayWindowState(HWND hwnd);
 
 // [DComp] Render bitmap to DComp Pending Surface and trigger cross-fade
-static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparent);
+static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparent, bool isFastUpgrade = false);
 
 // RenderDebugHUD moved to UIRenderer
 
@@ -366,7 +366,7 @@ bool CanPan(HWND hwnd) {
 }
 
 // [DComp] Render bitmap to DComp Pending Surface and trigger cross-fade
-static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparent) {
+static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparent, bool isFastUpgrade) {
     if (!g_compEngine || !g_compEngine->IsInitialized() || !bitmap) {
         return false;
     }
@@ -460,7 +460,9 @@ static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparen
     }
     
     // Play cross-fade animation (150ms)
-    g_compEngine->PlayPingPongCrossFade(g_slowMotionMode ? (float)SLOW_MOTION_DURATION : (float)CROSS_FADE_DURATION, isTransparent);
+    // [Two-Stage] Fast upgrade = instant transition (50ms), normal = standard crossfade
+    float duration = isFastUpgrade ? 50.0f : (g_slowMotionMode ? (float)SLOW_MOTION_DURATION : (float)CROSS_FADE_DURATION);
+    g_compEngine->PlayPingPongCrossFade(duration, isTransparent);
     
     // Track surface size for UpdateLayout
     g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
@@ -3945,7 +3947,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Render
                 bool hasTransparency = (evt.metadata.Format.find(L"PNG") != std::wstring::npos) || 
                                        (evt.metadata.Format.find(L"Alpha") != std::wstring::npos);
-                RenderImageToDComp(hwnd, bitmap.Get(), hasTransparency);
+                // [Two-Stage] Detect same-image upgrade (scaled → full)
+                // Fast transition when: was scaled, now full, same image ID
+                bool isSameImageUpgrade = g_isImageScaled && !evt.isScaled && 
+                                          (evt.imageId == g_currentImageId.load());
+                RenderImageToDComp(hwnd, bitmap.Get(), hasTransparency, isSameImageUpgrade);
                 
                 // Cleanup
                 g_isLoading = false;
