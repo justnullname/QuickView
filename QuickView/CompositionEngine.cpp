@@ -275,25 +275,23 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransp
         
         float duration = durationMs / 1000.0f;
         
-        // [High Performance Fix] Always Dual-Fade
-        // We must Fade Out the old layer (B) to 0.0 to prevent it from showing 
-        // underneath the new layer (A) if A is smaller or transparent.
-        // This solves the "Double Image" bug during scaling/resizing.
+        // [Fix] Overlay Fade-Out Pattern
+        // Old approach (dual fade): A=50% + B=50% = 75% visible at midpoint (background bleed-through!)
+        // New approach: New layer = 100% always, Old layer fades out to 0
+        // Result: At any point, opacity = 100% (new) + X% (old fading) = always opaque
         
-        // A: Fade In (0 -> 1)
-        animIn->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
-        animIn->End(duration, 1.0f);
-        
-        // B: Fade Out (1 -> 0)
+        // Old layer: Fade Out (1 -> 0)
         animOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
         animOut->End(duration, 0.0f);
         
         if (pendingIsTop) {
-            topVisual->SetOpacity(animIn.Get());
-            bottomVisual->SetOpacity(animOut.Get());
+            // Pending = Top (A), will become active
+            topVisual->SetOpacity(1.0f);  // New: Always 100%
+            bottomVisual->SetOpacity(animOut.Get());  // Old: Fade out
         } else {
-            bottomVisual->SetOpacity(animIn.Get());
-            topVisual->SetOpacity(animOut.Get());
+            // Pending = Bottom (B), will become active
+            bottomVisual->SetOpacity(1.0f);  // New: Always 100%
+            topVisual->SetOpacity(animOut.Get());  // Old: Fade out
         }
     } else {
         // Instant Switch
