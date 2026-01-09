@@ -267,7 +267,6 @@ private:
     HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData);
     HRESULT LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow = true);
     HRESULT LoadThumbWebP_Limited(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, int timeoutMs);
-    HRESULT LoadThumbWebP_Scaled(const uint8_t* data, size_t size, int targetSize, ThumbData* pData);
 
 
 

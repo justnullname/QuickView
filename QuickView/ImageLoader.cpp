@@ -624,93 +624,7 @@ static void ApplyOrientationToThumbData(CImageLoader::ThumbData* pData, int orie
     }
 }
 
-HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData) {
-    if (!pData || !pBuf || size == 0) return E_INVALIDARG;
 
-    // Advanced API for threading + scaling support
-    WebPDecoderConfig config;
-    if (!WebPInitDecoderConfig(&config)) return E_FAIL;
-    
-    if (WebPGetFeatures(pBuf, size, &config.input) != VP8_STATUS_OK) return E_FAIL;
-    
-    int w = config.input.width;
-    int h = config.input.height;
-    pData->origWidth = w;
-    pData->origHeight = h;
-    pData->fileSize = size;
-    if (w <= 0 || h <= 0) return E_FAIL;
-
-    // Calculate Ratio aiming for targetSize in smallest dimension (cover)? 
-    // Or fit?
-    // TurboJPEG logic above tries to find a metric >= targetSize.
-    // Let's match typical scaler logic: Match one dimension to target size?
-    // Actually WebP scaling is arbitrary (unlike JPEG which is 1/2, 1/4, 1/8).
-    // So we can request exact size?
-    // WebP documentation says "scaled_width/height".
-    // "The output buffer will be scaled to these dimensions".
-    // So we can request exactly targetSize X something.
-    
-    // Let's compute exact target size maintaining aspect ratio.
-    float ratio = std::max((float)targetSize/w, (float)targetSize/h);
-    // If ratio >= 1.0 (Image smaller than target), keep original.
-    int newW, newH;
-    if (ratio >= 1.0f) {
-        newW = w;
-        newH = h;
-    } else {
-        newW = (int)(w * ratio);
-        newH = (int)(h * ratio);
-        if (newW < 1) newW = 1; 
-        if (newH < 1) newH = 1;
-    }
-
-    config.options.use_threads = 1;
-    config.options.use_scaling = 1;
-    config.options.scaled_width = newW;
-    config.options.scaled_height = newH;
-    config.options.no_fancy_upsampling = 1; // Speed up
-    config.output.colorspace = MODE_BGRA;   // Direct BGRA
-    
-    // Decode
-    if (WebPDecode(pBuf, size, &config) != VP8_STATUS_OK) {
-         WebPFreeDecBuffer(&config.output);
-         return E_FAIL;
-    }
-    
-    // Copy/Move to ThumbData
-    // We could have decoded directly to pData->pixels if we resized it first and used external memory.
-    // But stride handling: WebP stride might differ?
-    // config.output.u.RGBA.stride usually is width*4 for MODE_BGRA.
-    
-    uint8_t* output = config.output.u.RGBA.rgba;
-    int stride = config.output.u.RGBA.stride;
-    int dataSize = config.output.u.RGBA.size;
-    
-    pData->width = newW;
-    pData->height = newH;
-    pData->stride = newW * 4; // Our target stride
-    
-    if (stride == pData->stride) {
-        pData->pixels.assign(output, output + dataSize);
-    } else {
-        // Copy row by row
-        pData->pixels.resize(pData->stride * newH);
-        for(int y=0; y<newH; ++y) {
-            BYTE* src = output + y * stride;
-            BYTE* dst = pData->pixels.data() + y * pData->stride;
-            memcpy(dst, src, std::min(stride, pData->stride));
-        }
-    }
-    
-
-    
-    // MANUAL PREMULTIPLY (Required for D2D/WIC compatibility to checkboard correctly)
-    SIMDUtils::PremultiplyAlpha_BGRA(pData->pixels.data(), pData->width, pData->height, pData->stride);
-
-    pData->isValid = true;
-    WebPFreeDecBuffer(&config.output);
-    return S_OK;
-}
 
 HRESULT CImageLoader::LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData) {
     if (!pData) return E_INVALIDARG;
@@ -3756,7 +3670,7 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
     return (result == AVIF_RESULT_OK) ? S_OK : E_FAIL;
 }
 
-HRESULT CImageLoader::LoadThumbWebP_Scaled(const uint8_t* data, size_t size, int targetSize, ThumbData* pData) {
+HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* data, size_t size, int targetSize, ThumbData* pData) {
     WebPDecoderConfig config;
     if (!WebPInitDecoderConfig(&config)) return E_FAIL;
     
@@ -3774,6 +3688,52 @@ HRESULT CImageLoader::LoadThumbWebP_Scaled(const uint8_t* data, size_t size, int
 
     config.output.colorspace = MODE_BGRA;
     
+    // [Animated WebP] Extract first frame if animated (No scaling for now)
+    if (config.input.has_animation) {
+         WebPData webpData = { data, size };
+         WebPAnimDecoderOptions decOpts;
+         WebPAnimDecoderOptionsInit(&decOpts);
+         decOpts.color_mode = MODE_BGRA;
+         decOpts.use_threads = 1;
+
+         WebPAnimDecoder* dec = WebPAnimDecoderNew(&webpData, &decOpts);
+         if (dec) {
+             WebPAnimInfo animInfo;
+             if (WebPAnimDecoderGetInfo(dec, &animInfo)) {
+                  uint8_t* frameBuf = nullptr;
+                  int timestamp = 0;
+                  if (WebPAnimDecoderGetNext(dec, &frameBuf, &timestamp) && frameBuf) {
+                       int aw = (int)animInfo.canvas_width;
+                       int ah = (int)animInfo.canvas_height;
+                       size_t rowSize = (size_t)aw * 4;
+                       size_t totalSize = rowSize * ah;
+
+                       try {
+                           pData->pixels.resize(totalSize);
+                       } catch(...) {
+                           WebPAnimDecoderDelete(dec); 
+                           WebPFreeDecBuffer(&config.output);
+                           return E_OUTOFMEMORY; 
+                       }
+
+                       for (int y = 0; y < ah; ++y) {
+                            memcpy(pData->pixels.data() + (size_t)y * rowSize, 
+                                   frameBuf + (size_t)y * rowSize, rowSize);
+                       }
+
+                       pData->width = aw;
+                       pData->height = ah;
+                       pData->stride = (int)rowSize;
+                       // pData->format = PixelFormat::BGRA8888; // Removed: ThumbData has no format
+                       WebPAnimDecoderDelete(dec);
+                       WebPFreeDecBuffer(&config.output);
+                       return S_OK;
+                  }
+             }
+             WebPAnimDecoderDelete(dec);
+         }
+    }
+
     if (WebPDecode(data, size, &config) != VP8_STATUS_OK) {
         WebPFreeDecBuffer(&config.output); return E_FAIL;
     }
@@ -3801,9 +3761,9 @@ HRESULT CImageLoader::LoadThumbWebP_Limited(const uint8_t* data, size_t size, in
     
     if ((uint64_t)features.width * features.height > 16 * 1024 * 1024) return E_FAIL; // Limit 16MP
     
-    // 2. Call Scaled (which calls LoadThumbWebP_Scaled internally, oh wait, LoadThumbWebPFromMemory does?)
-    // Actually LoadThumbWebP_Scaled IS the scaled implementation I added.
-    return LoadThumbWebP_Scaled(data, size, targetSize, pData);
+    // 2. Call Standard Loader (which includes scaling support if applicable)
+    // Note: Implicitly uses internal scaling for VP8, or decodes full size for VP8L
+    return LoadThumbWebPFromMemory(data, size, targetSize, pData);
 }
 
             // High-precision float for quality, speed is fine for thumbnail
