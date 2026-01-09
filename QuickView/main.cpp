@@ -2824,17 +2824,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // Calc Current Total Scale (Fit * Zoom)
         RECT rc; GetClientRect(hwnd, &rc);
-        D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
         
-        // EXIF Rotation correct for logic dimensions for Fit Scale calculation
-        float logicInitW = imgSize.width;
-        float logicInitH = imgSize.height;
-        int initOrientation = g_viewState.ExifOrientation;
-        if (initOrientation == 5 || initOrientation == 6 || initOrientation == 7 || initOrientation == 8) {
-            std::swap(logicInitW, logicInitH);
-        }
+        // Use Surface size for consistency (same as WM_SIZE and Standard Zoom apply section)
+        float imgW = g_lastSurfaceSize.width;
+        float imgH = g_lastSurfaceSize.height;
+        if (imgW <= 0 || imgH <= 0) return 0; // Safety check
         
-        float fitScale = std::min((float)rc.right / logicInitW, (float)rc.bottom / logicInitH);
+        float fitScale = std::min((float)rc.right / imgW, (float)rc.bottom / imgH);
         float currentTotalScale = fitScale * g_viewState.Zoom;
         
         float zoomFactor = (delta > 0) ? 1.1f : 0.90909f;
@@ -2874,9 +2870,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              int maxW = (mi.rcWork.right - mi.rcWork.left);
              int maxH = (mi.rcWork.bottom - mi.rcWork.top);
              
-             // Logic dimensions (EXIF)
-             float logicImgW = imgSize.width;
-             float logicImgH = imgSize.height;
+             // Logic dimensions (already have imgW/imgH from surface size)
+             float logicImgW = imgW;
+             float logicImgH = imgH;
              int orientation = g_viewState.ExifOrientation;
              if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
                  std::swap(logicImgW, logicImgH);
@@ -2948,34 +2944,42 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              RequestRepaint(PaintLayer::Dynamic); 
         } else {
              // Standard Zoom (Window size fixed or Maxed)
-             // Zoom centered on window center
+             // [Fix] Use same approach as WM_SIZE: Top-Left Scaling + Centering Offset
              RECT rcNew; GetClientRect(hwnd, &rcNew);
+             float winW = (float)rcNew.right;
+             float winH = (float)rcNew.bottom;
              
-             // EXIF Rotation correct for logic dimensions
-             float logicImgW = imgSize.width;
-             float logicImgH = imgSize.height;
-             int orientation = g_viewState.ExifOrientation;
-             if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
-                 std::swap(logicImgW, logicImgH);
-             }
-             float newFitScale = std::min((float)rcNew.right / logicImgW, (float)rcNew.bottom / logicImgH);
+             // Image dimensions (surface size)
+             float imgW = g_lastSurfaceSize.width;
+             float imgH = g_lastSurfaceSize.height;
+             
+             if (imgW <= 0 || imgH <= 0) break; // Safety check
+             
+             // Calculate fit scale and new zoom
+             float fitScale = std::min(winW / imgW, winH / imgH);
              float oldZoom = g_viewState.Zoom;
-             float newZoom = newTotalScale / newFitScale;
+             float newZoom = newTotalScale / fitScale;
              
-             // Simple center-based zoom: just scale Pan values proportionally
+             // Update pan proportionally (center-based zoom behavior)
              float zoomRatio = newZoom / oldZoom;
              g_viewState.PanX *= zoomRatio;
              g_viewState.PanY *= zoomRatio;
              g_viewState.Zoom = newZoom;
              
-             // [DComp] Use hardware zoom (zero CPU cost)
+             // [DComp] Apply using consistent approach: Top-Left Scaling + Offset
              if (g_compEngine && g_compEngine->IsInitialized()) {
-                 // Calculate scale and pan for DComp
-                 float windowCenterX = rcNew.right / 2.0f;
-                 float windowCenterY = rcNew.bottom / 2.0f;
-                 g_compEngine->SetZoom(newZoom, windowCenterX, windowCenterY);
-                 g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
-                 g_compEngine->Commit();
+                  float finalScale = fitScale * g_viewState.Zoom;
+                  
+                  // Calculate centering offset (same formula as WM_SIZE)
+                  float scaledW = imgW * finalScale;
+                  float scaledH = imgH * finalScale;
+                  float offsetX = (winW - scaledW) / 2.0f;
+                  float offsetY = (winH - scaledH) / 2.0f;
+                  
+                  // Apply zoom from top-left (0,0) and use offset for centering
+                  g_compEngine->SetZoom(finalScale, 0.0f, 0.0f);
+                  g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
+                  g_compEngine->Commit();
              }
              RequestRepaint(PaintLayer::Dynamic); // Only OSD update needed
         }

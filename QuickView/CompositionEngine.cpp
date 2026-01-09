@@ -375,27 +375,16 @@ HRESULT CompositionEngine::SetZoom(float scale, float centerX, float centerY) {
     
     m_currentScale = scale;
     
-    // Force scaling around IMAGE Center
-    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
-    float imgCenterX = 0.0f;
-    float imgCenterY = 0.0f;
-    
-    if (active.width > 0 && active.height > 0) {
-        imgCenterX = (float)active.width / 2.0f;
-        imgCenterY = (float)active.height / 2.0f;
-    }
-    
+    // [Fix] Use passed center coordinates instead of calculating image center
+    // main.cpp calculates the appropriate center based on zoom mode:
+    // - Window resize zoom: uses 0,0 (top-left) with centering offset in Pan
+    // - Standard zoom: uses window center
     m_scaleTransform->SetScaleX(scale);
     m_scaleTransform->SetScaleY(scale);
-    m_scaleTransform->SetCenterX(imgCenterX);
-    m_scaleTransform->SetCenterY(imgCenterY);
+    m_scaleTransform->SetCenterX(centerX);
+    m_scaleTransform->SetCenterY(centerY);
     
-    // [Fix Jump] Do NOT update Translation here.
-    // main.cpp calls SetPan immediately after SetZoom.
-    // Using stale m_currentPanX here causes the "Jump" artifact.
-    // We rely on SetPan to apply the Compensation.
-    
-    return S_OK; 
+    return S_OK; // Caller should Commit
 }
 
 HRESULT CompositionEngine::SetPan(float offsetX, float offsetY) {
@@ -404,19 +393,10 @@ HRESULT CompositionEngine::SetPan(float offsetX, float offsetY) {
     m_currentPanX = offsetX;
     m_currentPanY = offsetY;
     
-    // Apply Compensation: ADD (W/2 * (S-1))
-    // Converts Scaled Offset -> Unscaled Center Offset
-    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
-    float compX = 0.0f, compY = 0.0f;
-    if (active.width > 0) {
-        compX = (active.width / 2.0f) * (m_currentScale - 1.0f);
-        compY = (active.height / 2.0f) * (m_currentScale - 1.0f);
-    }
+    m_translateTransform->SetOffsetX(offsetX);
+    m_translateTransform->SetOffsetY(offsetY);
     
-    m_translateTransform->SetOffsetX(offsetX + compX);
-    m_translateTransform->SetOffsetY(offsetY + compY);
-    
-    return S_OK; 
+    return S_OK; // Caller should Commit
 }
 
 HRESULT CompositionEngine::ResetImageTransform() {
