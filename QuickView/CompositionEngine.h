@@ -154,4 +154,9 @@ private:
     
     // D2D Device
     ComPtr<ID2D1Device> m_d2dDevice;
+
+    // State tracking for Drift Compensation
+    float m_currentScale = 1.0f;
+    float m_currentPanX = 0.0f;
+    float m_currentPanY = 0.0f;
 };

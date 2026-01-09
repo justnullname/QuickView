@@ -605,7 +605,15 @@ void RequestRepaint(PaintLayer layer) {
         if (HasLayer(layer, PaintLayer::Static))  { g_uiRenderer->MarkStaticDirty();  g_debugMetrics.dirtyTriggerStatic = 5; }
         if (HasLayer(layer, PaintLayer::Dynamic)) { g_uiRenderer->MarkDynamicDirty(); g_debugMetrics.dirtyTriggerDynamic = 5; }
         if (HasLayer(layer, PaintLayer::Gallery)) { g_uiRenderer->MarkGalleryDirty(); g_debugMetrics.dirtyTriggerGallery = 5; }
-        if (HasLayer(layer, PaintLayer::Image))   { g_isImageDirty = true; g_debugMetrics.dirtyTriggerImage = 5; } // Set real dirty flag
+        if (HasLayer(layer, PaintLayer::Image))   { 
+            g_isImageDirty = true; 
+            // Ping-Pong Logic: If Active is A(0), we paint to B. If Active is B(1), we paint to A.
+            if (g_compEngine && g_compEngine->GetActiveLayerIndex() == 0) {
+                g_debugMetrics.dirtyTriggerImageB = 5; // Target B
+            } else {
+                g_debugMetrics.dirtyTriggerImageA = 5; // Target A
+            }
+        } // Set real dirty flag
     }
     
     // 2. 触发 Windows 消息循环唤醒 WM_PAINT
@@ -3854,256 +3862,106 @@ void ProcessEngineEvents(HWND hwnd) {
     auto events = g_imageEngine->PollState();
     for (const auto& evt : events) {
         switch (evt.type) {
-        case EventType::ThumbReady: {
+        case EventType::PreviewReady:
+        case EventType::FullReady: {
             if (!g_renderEngine) break;
             
             // [ImageID] Validate using stable path hash
             ImageID currentId = g_currentImageId.load();
             if (evt.imageId != currentId) {
-                wchar_t buf[256];
-                swprintf_s(buf, L"[Main] ThumbReady REJECTED: ImageID=%zu vs Current=%zu, Path=%s\n",
-                    evt.imageId, currentId,
-                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
-                OutputDebugStringW(buf);
-                break; // Discard event not matching current image
-            }
-            
-            wchar_t buf[256];
-            swprintf_s(buf, L"[Main] ThumbReady ACCEPTED: ImageID=%zu, Path=%s\n",
-                evt.imageId, evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
-            OutputDebugStringW(buf);
-
-            // RACING CONDITION FIX:
-            // [v3.1] Texture Promotion Mechanism
-            // Only accept if current level is < 1 (Void)
-            // If we are already at Level 1 (Scout) or Level 2 (Truth), ignore this.
-            if (g_imageQualityLevel >= 1) {
-                 wchar_t buf2[256];
-                 swprintf_s(buf2, L"[Main] ThumbReady DISCARDED: QualityLevel=%d (already >= 1)\n", g_imageQualityLevel);
-                 OutputDebugStringW(buf2);
-                 break; 
+                wchar_t idLog[128];
+                swprintf_s(idLog, L"[Main] ID Mismatch: Evt=%llu Cur=%llu\n", evt.imageId, currentId);
+                OutputDebugStringW(idLog);
+                break; 
             }
 
-            // User requested "Blurred Thumbnail"
-            // We need to create D2D bitmap from the raw bytes (ThumbData)
-            // CImageLoader::ThumbData has BGRA
+            bool isPreview = (evt.type == EventType::PreviewReady);
             
-            if (evt.thumbData.pixels.empty()) break;
+            // [Texture Promotion] 
+            // - If we are at Level 2 (Full), ignore Level 1 (Preview).
+            if (g_imageQualityLevel >= 2 && isPreview) break;
+            // - If we are at Level 2 (Full), ignore another Level 2 unless "Scaled" (Upgrade).
+            if (g_imageQualityLevel >= 2 && !g_isImageScaled && !isPreview) break;
 
-
+            ComPtr<ID2D1Bitmap> bitmap;
+            HRESULT hr = E_FAIL;
             
-            // Create directly from memory (BGRX - using RenderEngine helper)
-            ComPtr<ID2D1Bitmap> thumbBitmap;
-            HRESULT hr = g_renderEngine->CreateBitmapFromMemory(
-                evt.thumbData.pixels.data(),
-                evt.thumbData.width,
-                evt.thumbData.height,
-                evt.thumbData.stride,
-                &thumbBitmap
-            );
-
-            if (SUCCEEDED(hr)) {
-                g_currentBitmap = thumbBitmap;
-                g_ghostBitmap = thumbBitmap; 
-                g_isBlurry = evt.thumbData.isBlurry; 
+            // Unified Path: RawImageFrame -> GPU
+            if (evt.rawFrame && evt.rawFrame->IsValid()) {
+                hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
+                if (FAILED(hr)) {
+                    wchar_t buf[128]; swprintf_s(buf, L"[Main] Upload Failed: HR=0x%X\n", hr);
+                    OutputDebugStringW(buf);
+                }
+                if (SUCCEEDED(hr)) {
+                     g_debugMetrics.rawFrameUploadCount++;
+                     g_debugMetrics.lastUploadChannel.store(1);
+                }
+            } 
+            
+            if (SUCCEEDED(hr) && bitmap) {
+                // Apply State
+                g_currentBitmap = bitmap;
+                g_isBlurry = isPreview;
+                g_imageQualityLevel = isPreview ? 1 : 2;
+                g_imagePath = evt.filePath;
                 
-                wchar_t blurryBuf[128];
-                swprintf_s(blurryBuf, L"[Main] ThumbReady: isBlurry=%d (from Scout)\n", evt.thumbData.isBlurry ? 1 : 0);
-                OutputDebugStringW(blurryBuf);
+                // Metadata
+                g_currentMetadata.Width = evt.metadata.Width;
+                g_currentMetadata.Height = evt.metadata.Height;
+                g_currentMetadata.Format = evt.metadata.Format;
+                g_currentMetadata.LoaderName = evt.metadata.LoaderName;
                 
-                g_imagePath = evt.filePath; 
-                g_imageQualityLevel = 1;    
+                // JXL Logic (Trigger Heavy if Preview)
+                if (isPreview && evt.metadata.Format == L"JXL") {
+                     g_imageEngine->TriggerPendingJxlHeavy();
+                }
                 
-                // [DComp] Render will happen AFTER window adjustment (moved down)
-                // RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
-                
-                // Force INSTANT SHOW (no cross-fade for thumbs)
-                g_isCrossFading = false;
-                g_ghostBitmap = nullptr; 
-                
-                if (!evt.thumbData.isBlurry) {
-                    g_imageQualityLevel = 2; 
-                    
-                    if (g_imageLoader) {
-                        g_imageLoader->ReadMetadata(evt.filePath.c_str(), &g_currentMetadata);
-                        g_currentMetadata.Width = evt.thumbData.origWidth > 0 ? evt.thumbData.origWidth : evt.thumbData.width;
-                        g_currentMetadata.Height = evt.thumbData.origHeight > 0 ? evt.thumbData.origHeight : evt.thumbData.height;
-                        g_currentMetadata.LoaderName = evt.thumbData.loaderName;
-                    }
-                    
-                    g_isImageDirty = true; // Ensure repaint
-                    AdjustWindowToImage(hwnd); // Now uses correct metadata dimensions
-                    
-                    wchar_t titleBuf[512];
-                    swprintf_s(titleBuf, L"%s - %s", 
-                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
-                        g_szWindowTitle);
-                    SetWindowTextW(hwnd, titleBuf);
-                    
-                    POINT pt;
-                    if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
-                        PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
-                    }
-                    
-                    // [DComp] Render NOW (after window adjustment)
-                    RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
-                } else {
-                    // [Fix] Adjust window size using original dimensions even for blurry preview
-                    // This prevents flash when Heavy loads with correct size
-                    if (evt.thumbData.origWidth > 0 && evt.thumbData.origHeight > 0) {
-                        // Store original dimensions in metadata BEFORE adjusting window
-                        g_currentMetadata.Width = evt.thumbData.origWidth;
-                        g_currentMetadata.Height = evt.thumbData.origHeight;
-                        g_currentMetadata.LoaderName = evt.thumbData.loaderName;
-                        if (g_imageLoader) {
-                            g_imageLoader->ReadMetadata(evt.filePath.c_str(), &g_currentMetadata);
-                            // Restore dimensions (ReadMetadata may overwrite)
-                            g_currentMetadata.Width = evt.thumbData.origWidth;
-                            g_currentMetadata.Height = evt.thumbData.origHeight;
-                        }
-                        
-                        // [Fix] Set Dirty flag BEFORE window adjustment to ensure repaint isn't missed
-                        // even if WM_SIZE triggers an early paint.
-                        g_isImageDirty = true;
-                        AdjustWindowToImage(hwnd);
-                    }
-                    
-                    wchar_t titleBuf[512];
+                // UI Text Logic
+                wchar_t titleBuf[512];
+                if (isPreview) {
                     swprintf_s(titleBuf, L"Loading... %s - %s", 
                         evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
                         g_szWindowTitle);
-                    SetWindowTextW(hwnd, titleBuf);
-                    
-                    // [DComp] Render NOW (after window adjustment)
-                    RenderImageToDComp(hwnd, thumbBitmap.Get(), false);
-                }
-                
-                // [Fix] Always clear loading state immediately for Scout/Thumb
-                // This ensures cursor returns to Arrow and user knows "Something happened"
-                g_isLoading = false;
-                
-                // Force cursor update
-                POINT pt;
-                if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
-                     PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
-                }
-                
-                // [JXL Sequential] Scout done - trigger Heavy if pending
-                if (evt.thumbData.loaderName.find(L"libjxl") != std::wstring::npos) {
-                    g_pImageEngine->TriggerPendingJxlHeavy();
-                }
-                
-                // Post-adjustment repaint
-                RequestRepaint(PaintLayer::All);
-            }
-            break;
-        }
-        case EventType::FullReady: {
-            // Final High-Res Image
-            if (!g_renderEngine) break;
-            
-            // [ImageID] SIMPLIFIED VALIDATION - Single stable hash check
-            // ImageID = hash(path), so this implicitly validates both identity and content
-            ImageID currentId = g_currentImageId.load();
-            if (evt.imageId != currentId) {
-                wchar_t buf[256];
-                swprintf_s(buf, L"[Main] FullReady REJECTED: ImageID=%zu vs Current=%zu, Path=%s\n",
-                    evt.imageId, currentId, 
-                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
-                OutputDebugStringW(buf);
-                break; // Discard event not matching current image
-            }
-            
-            wchar_t buf[256];
-            swprintf_s(buf, L"[Main] FullReady ACCEPTED: ImageID=%zu, Path=%s\n",
-                evt.imageId, evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str());
-            OutputDebugStringW(buf);
-
-            // evt.fullImage is IWICBitmapSource
-            
-            // [v3.1] Texture Promotion Mechanism
-            // Only accept if current level is < 2 OR if we are upgrading from specific Scaled state
-            // If we are already at Level 2 (Full/Heavy) AND not scaled, we don't need update.
-            if (g_imageQualityLevel >= 2 && !g_isImageScaled) break; 
-            
-            ComPtr<ID2D1Bitmap> fullBitmap;
-            if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(evt.fullImage.Get(), &fullBitmap))) {
-                
-                // 1. Capture OLD image as Ghost (Thumbnail or Previous Image)
-                g_ghostBitmap = g_currentBitmap; 
-                g_transitionFromThumb = g_isBlurry; // Capture: Was the ghost a blurry thumbnail?
-                
-                // 2. Set NEW image as Current (Truth)
-                g_currentBitmap = fullBitmap;
-                g_isBlurry = false; 
-                g_imageQualityLevel = 2; // [v3.1] Promoted to Level 2 (Truth/Fit)
-                
-                // [Two-Stage] Track if image was scaled (IDCT downscaled)
-                g_isImageScaled = evt.isScaled;
-                if (evt.isScaled) {
-                    // Start 300ms idle timer for full resolution decode
-                    g_scaledDecodeTime = GetTickCount();
-                    SetTimer(hwnd, IDT_FULL_DECODE, 300, nullptr);
                 } else {
-                    // Already full resolution, no need for timer
-                    KillTimer(hwnd, IDT_FULL_DECODE);
+                     swprintf_s(titleBuf, L"%s - %s", 
+                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
+                        g_szWindowTitle);
+                     
+                     if (evt.isScaled) {
+                          g_isImageScaled = true;
+                          g_scaledDecodeTime = GetTickCount();
+                          SetTimer(hwnd, IDT_FULL_DECODE, 300, nullptr);
+                     } else {
+                          g_isImageScaled = false;
+                          KillTimer(hwnd, IDT_FULL_DECODE);
+                     }
                 }
-                
-                // [DComp] Render moved down to after AdjustWindow
-                // Check if current image has transparency (PNG/WebP/AVIF with alpha)
-                bool hasTransparency = (evt.metadata.Format.find(L"PNG") != std::wstring::npos) ||
-                                       (evt.metadata.FormatDetails.find(L"Alpha") != std::wstring::npos);
-                
-                // Legacy flags (for compatibility with OnPaint-based rendering)
-                g_isCrossFading = true;
-                g_crossFadeStart = GetTickCount();
-
-                g_imagePath = evt.filePath;
-                
-                // Use pre-read metadata from Heavy Lane (no UI blocking!)
-                g_currentMetadata = evt.metadata;
-                
-                // Trigger histogram calculation if Info Panel is expanded
-                if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty()) {
-                    UpdateHistogramAsync(hwnd, evt.filePath);
-                }
-                if (g_runtime.InfoPanelExpanded && g_currentMetadata.HistR.empty()) {
-                    UpdateHistogramAsync(hwnd, evt.filePath);
-                }
-                
-                // Apply EXIF orientation for view state
-                g_viewState.ExifOrientation = 1;  // Default
-                // Parse EXIF orientation from metadata if available
-                // (The metadata should already include parsed orientation)
-                
-                // Title
-                wchar_t titleBuf[512];
-                swprintf_s(titleBuf, L"%s - %s", 
-                    evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
-                    g_szWindowTitle);
                 SetWindowTextW(hwnd, titleBuf);
                 
-                // Auto-fit window to image size
+                // Update Window Size
                 AdjustWindowToImage(hwnd);
                 
-                // [DComp] Render NOW (after window adjustment)
-                RenderImageToDComp(hwnd, fullBitmap.Get(), hasTransparency);
+                // Render
+                bool hasTransparency = (evt.metadata.Format.find(L"PNG") != std::wstring::npos) || 
+                                       (evt.metadata.Format.find(L"Alpha") != std::wstring::npos);
+                RenderImageToDComp(hwnd, bitmap.Get(), hasTransparency);
                 
-                // Recalc layout
-                g_toolbar.UpdateLayout(0,0);
+                // Cleanup
+                g_isLoading = false;
                 
-                // Mark UI layers dirty after image switch
-                if (g_uiRenderer) {
-                    g_uiRenderer->MarkStaticDirty();
-                    g_uiRenderer->MarkGalleryDirty();
+                // Cursor Update
+                POINT pt;
+                if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+                    PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
                 }
                 
-                // [Phase 3] Clear wait cursor immediately when ANY image is shown
-                // Don't wait for Truth Stage - Fit Stage is good enough for cursor
-                g_isLoading = false;
-                PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
-                
                 needsRepaint = true;
+                
+                wchar_t debugBuf[256];
+                swprintf_s(debugBuf, L"[Main] Displayed: %s (Blurry=%d, Scaled=%d)\n", 
+                    isPreview ? L"Preview" : L"Full", g_isBlurry, g_isImageScaled);
+                OutputDebugStringW(debugBuf);
             }
             break;
         }

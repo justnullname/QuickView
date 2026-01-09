@@ -11,6 +11,7 @@
 #include "../third_party/nanosvg/nanosvgrast.h"
 #pragma warning(pop)
 #include "ImageLoader.h"
+#include "EditState.h" // For g_runtime
 // [Deep Cancel] Use low-level libjpeg API for scanline cancellation
 #include <stdio.h> // jpeglib needs stdio
 #include <setjmp.h> // For error handling
@@ -4261,5 +4262,402 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     return result;
 }
 
+
+// ============================================================================
+// [Direct D2D] Zero-Copy Loading Implementation
+// ============================================================================
+// This is the new primary loading API for the Direct D2D rendering pipeline.
+// It decodes images directly to RawImageFrame, bypassing WIC where possible.
+// ============================================================================
+
+#include "MemoryArena.h"
+
+HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* outFrame,
+                                   QuantumArena* arena,
+                                   int targetWidth, int targetHeight,
+                                   std::wstring* pLoaderName,
+                                   CancelPredicate checkCancel) {
+    using namespace QuickView;
+    
+    if (!filePath || !outFrame) return E_INVALIDARG;
+    
+    // Reset output frame
+    outFrame->Release();
+    
+    // Detect format from magic bytes
+    std::wstring format = DetectFormatFromContent(filePath);
+    
+    // Helper: Allocate memory (Always aligned)
+    auto AllocateBuffer = [&](size_t size) -> uint8_t* {
+        if (arena) {
+            uint8_t* ptr = static_cast<uint8_t*>(arena->Allocate(size, 64));
+            // Note: Arena::Allocate uses _aligned_malloc on overflow.
+            return ptr; 
+        } else {
+            return static_cast<uint8_t*>(_aligned_malloc(size, 64));
+        }
+    };
+    
+    // Helper: Setup deleter based on allocation source
+    auto SetupDeleter = [&](uint8_t* ptr) {
+        if (arena && arena->Owns(ptr)) {
+            // Arena memory - no explicit free needed (Arena manages lifecycle)
+            outFrame->memoryDeleter = nullptr;
+        } else {
+            // Heap memory (either from Arena overflow or direct _aligned_malloc)
+            // MUST use _aligned_free
+            outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        }
+    };
+    
+    // ========================================================================
+    // JPEG Path (libjpeg-turbo) - Zero-Copy
+    // ========================================================================
+    if (format == L"JPEG") {
+        // [Revert] Ctrl+4 (DisableDirectD2D) logic moved to main.cpp (Bypass Upload).
+        // ImageLoader should ALWAYS try TurboJPEG first for performance.
+        
+        bool success = false;
+        std::vector<uint8_t> jpegBuf;
+        
+        // Attempt fast load + decode
+        if (ReadFileToVector(filePath, jpegBuf)) {
+            // ... RAII ...
+            tjhandle tjInstance = tj3Init(TJINIT_DECOMPRESS);
+            struct TjGuard { tjhandle h; ~TjGuard() { if (h) tj3Destroy(h); } } guard{tjInstance};
+
+            if (tjInstance && tj3DecompressHeader(tjInstance, jpegBuf.data(), jpegBuf.size()) == 0) {
+                int width = tj3Get(tjInstance, TJPARAM_JPEGWIDTH);
+                int height = tj3Get(tjInstance, TJPARAM_JPEGHEIGHT);
+                
+                if (width > 0 && height > 0) {
+                     int stride = CalculateSIMDAlignedStride(width, 4);
+                     size_t bufSize = static_cast<size_t>(stride) * height;
+                     
+                     // Allocate buffer (using _aligned_malloc via helper)
+                     uint8_t* pixels = AllocateBuffer(bufSize);
+                     
+                     if (pixels) {
+                         // [Clean] Use TJPF_BGRX - fastest path, D2D ignores alpha via X8 format
+                         if (tj3Decompress8(tjInstance, jpegBuf.data(), jpegBuf.size(), pixels, stride, TJPF_BGRX) == 0) {
+                             // Success!
+                             outFrame->pixels = pixels;
+                             outFrame->width = width;
+                             outFrame->height = height;
+                             outFrame->stride = stride;
+                             outFrame->format = PixelFormat::BGRX8888; // X8 = Ignore Alpha
+                             SetupDeleter(pixels);
+                             
+                             if (pLoaderName) *pLoaderName = L"TurboJPEG";
+                             
+                             // Subsampling / Quality info (Preserved)
+                             // ... (omitted specifics for brevity, preserved in logic) ...
+                             int jpegSubsamp = tj3Get(tjInstance, TJPARAM_SUBSAMP);
+                             std::wstring subsamp;
+                             switch (jpegSubsamp) {
+                                case TJSAMP_444: subsamp = L"4:4:4"; break;
+                                case TJSAMP_422: subsamp = L"4:2:2"; break;
+                                case TJSAMP_420: subsamp = L"4:2:0"; break;
+                                case TJSAMP_GRAY: subsamp = L"Gray"; break;
+                                case TJSAMP_440: subsamp = L"4:4:0"; break;
+                                default: subsamp = L""; break;
+                            }
+                            int quality = GetJpegQualityFromBuffer(jpegBuf.data(), jpegBuf.size());
+                            if (quality > 0) {
+                                wchar_t buf[64];
+                                swprintf_s(buf, L"%s Q~%d", subsamp.c_str(), quality);
+                                g_lastFormatDetails = buf;
+                            } else {
+                                g_lastFormatDetails = subsamp;
+                            }
+                            g_lastExifOrientation = ReadJpegExifOrientation(jpegBuf.data(), jpegBuf.size());
+                            
+                            success = true;
+                         } else {
+                             // Decompress failed
+                             if (!arena || !arena->Owns(pixels)) _aligned_free(pixels); // Corrected Deleter
+                         }
+                     }
+                }
+            }
+        }
+        
+        if (success) return S_OK;
+        // If we reach here, TurboJPEG failed. Fall through to WIC.
+    }
+    
+    // ========================================================================
+    // SVG Path (NanoSVG) - Re-Rasterization Support
+    // ========================================================================
+    // SVG is special: vector format, can rasterize at ANY target resolution.
+    // This enables "lossless zoom" - re-rasterize when user zooms in.
+    // ========================================================================
+    if (format == L"SVG" || format == L"Unknown") {
+        // Check file extension for SVG (magic detection might fail for XML)
+        std::wstring pathLower = filePath;
+        std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+        bool isSvg = (pathLower.size() > 4 && pathLower.substr(pathLower.size() - 4) == L".svg");
+        
+        if (isSvg) {
+            std::vector<uint8_t> fileData;
+            if (!ReadFileToVector(filePath, fileData)) return E_FAIL;
+            
+            if (checkCancel && checkCancel()) return E_ABORT;
+            
+            // NanoSVG parses char* string (null terminated)
+            std::vector<char> xmlData(fileData.begin(), fileData.end());
+            xmlData.push_back('\0');
+            
+            // Parse (96 DPI default units)
+            NSVGimage* image = nsvgParse(xmlData.data(), "px", 96.0f);
+            if (!image) return E_FAIL;
+            
+            // RAII guard
+            struct SvgGuard { NSVGimage* img; ~SvgGuard() { if (img) nsvgDelete(img); } } guard{image};
+            
+            // Calculate target scale
+            // If targetWidth/Height specified, scale to fit. Otherwise, 2x for crisp.
+            float scale = 2.0f;
+            if (targetWidth > 0 && targetHeight > 0 && image->width > 0 && image->height > 0) {
+                float scaleW = static_cast<float>(targetWidth) / image->width;
+                float scaleH = static_cast<float>(targetHeight) / image->height;
+                scale = std::min(scaleW, scaleH);
+                // Ensure minimum 1.0 scale for readability
+                if (scale < 1.0f) scale = 1.0f;
+            }
+            
+            // Safety limit (8K max)
+            float maxDim = 8192.0f;
+            if (image->width * scale > maxDim || image->height * scale > maxDim) {
+                float aspect = image->width / image->height;
+                scale = (aspect > 1.0f) ? (maxDim / image->width) : (maxDim / image->height);
+            }
+            
+            int width = static_cast<int>(image->width * scale);
+            int height = static_cast<int>(image->height * scale);
+            
+            if (width <= 0 || height <= 0) return E_FAIL;
+            
+            // Rasterize
+            NSVGrasterizer* rast = nsvgCreateRasterizer();
+            if (!rast) return E_OUTOFMEMORY;
+            struct RastGuard { NSVGrasterizer* r; ~RastGuard() { if (r) nsvgDeleteRasterizer(r); } } rastGuard{rast};
+            
+            // Allocate buffer (SIMD aligned)
+            int stride = CalculateSIMDAlignedStride(width, 4);
+            size_t bufSize = static_cast<size_t>(stride) * height;
+            uint8_t* pixels = AllocateBuffer(bufSize);
+            if (!pixels) return E_OUTOFMEMORY;
+            
+            // NanoSVG outputs RGBA
+            nsvgRasterize(rast, image, 0, 0, scale, pixels, width, height, stride);
+            
+            // Fill output frame (RGBA format!)
+            outFrame->pixels = pixels;
+            outFrame->width = width;
+            outFrame->height = height;
+            outFrame->stride = stride;
+            outFrame->format = PixelFormat::RGBA8888;  // NanoSVG = RGBA
+            SetupDeleter(pixels);
+            
+            if (pLoaderName) *pLoaderName = L"NanoSVG";
+            g_lastFormatDetails = L"Vector";
+            
+            return S_OK;
+        }
+    }
+    
+    // ========================================================================
+    // WebP Path (libwebp) - Zero-Copy with SIMD Premultiply
+    // ========================================================================
+    if (format == L"WebP") {
+        std::vector<uint8_t> webpBuf;
+        if (!ReadFileToVector(filePath, webpBuf)) return E_FAIL;
+        
+        if (checkCancel && checkCancel()) return E_ABORT;
+        
+        // Advanced API for threading support
+        WebPDecoderConfig config;
+        if (!WebPInitDecoderConfig(&config)) return E_FAIL;
+        
+        // RAII guard for WebP buffer
+        struct WebPGuard { 
+            WebPDecBuffer* buf; 
+            ~WebPGuard() { if (buf) WebPFreeDecBuffer(buf); } 
+        } wpGuard{&config.output};
+        
+        // Enable multi-threaded decoding, output BGRA
+        config.options.use_threads = 1;
+        config.output.colorspace = MODE_BGRA;
+        
+        if (WebPGetFeatures(webpBuf.data(), webpBuf.size(), &config.input) != VP8_STATUS_OK) {
+            return E_FAIL;
+        }
+        
+        int width = config.input.width;
+        int height = config.input.height;
+        if (width <= 0 || height <= 0) return E_FAIL;
+        
+        // Decode
+        if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) != VP8_STATUS_OK) {
+            return E_FAIL;
+        }
+        
+        uint8_t* output = config.output.u.RGBA.rgba;
+        int webpStride = config.output.u.RGBA.stride;
+        
+        // Allocate our own buffer (SIMD aligned) and copy
+        int stride = CalculateSIMDAlignedStride(width, 4);
+        size_t bufSize = static_cast<size_t>(stride) * height;
+        uint8_t* pixels = AllocateBuffer(bufSize);
+        if (!pixels) return E_OUTOFMEMORY;
+        
+        // Copy row by row (handles stride mismatch)
+        for (int y = 0; y < height; ++y) {
+            memcpy(pixels + y * stride, output + y * webpStride, width * 4);
+        }
+        
+        // SIMD Premultiply Alpha (Required for D2D/WIC compatibility)
+        if (config.input.has_alpha) {
+            SIMDUtils::PremultiplyAlpha_BGRA(pixels, width, height, stride);
+        }
+        
+        // Fill output frame
+        outFrame->pixels = pixels;
+        outFrame->width = width;
+        outFrame->height = height;
+        outFrame->stride = stride;
+        outFrame->format = PixelFormat::BGRA8888;
+        SetupDeleter(pixels);
+        
+        if (pLoaderName) *pLoaderName = L"libwebp";
+        
+        // Format details
+        if (config.input.format == 2) {  // VP8L = lossless
+            g_lastFormatDetails = L"Lossless";
+        } else {
+            g_lastFormatDetails = L"Lossy";
+        }
+        if (config.input.has_alpha) g_lastFormatDetails += L" +Alpha";
+        
+        return S_OK;
+    }
+    
+    // ========================================================================
+    // PNG/GIF/BMP Path (Wuffs) - Zero-Copy, Already Premultiplied
+    // ========================================================================
+    if (format == L"PNG" || format == L"GIF" || format == L"BMP") {
+        std::vector<uint8_t> fileBuf;
+        if (!ReadFileToVector(filePath, fileBuf)) return E_FAIL;
+        
+        if (checkCancel && checkCancel()) return E_ABORT;
+        
+        uint32_t width = 0, height = 0;
+        std::vector<uint8_t> pixelBuf;
+        bool ok = false;
+        
+        // Wuffs cancel predicate wrapper
+        auto wuffsCancel = [&checkCancel]() -> bool {
+            return checkCancel && checkCancel();
+        };
+        
+        // Select appropriate decoder
+        if (format == L"PNG") {
+            ok = WuffsLoader::DecodePNG(fileBuf.data(), fileBuf.size(), &width, &height, pixelBuf, wuffsCancel);
+            g_lastFormatDetails = L"Lossless";
+        } else if (format == L"GIF") {
+            ok = WuffsLoader::DecodeGIF(fileBuf.data(), fileBuf.size(), &width, &height, pixelBuf, wuffsCancel);
+            g_lastFormatDetails = L"Indexed";
+        } else if (format == L"BMP") {
+            ok = WuffsLoader::DecodeBMP(fileBuf.data(), fileBuf.size(), &width, &height, pixelBuf, wuffsCancel);
+            g_lastFormatDetails = L"";
+        }
+        
+        if (!ok || width == 0 || height == 0 || pixelBuf.empty()) return E_FAIL;
+        
+        // Wuffs outputs tight stride (width * 4), copy to aligned buffer
+        int wuffsStride = static_cast<int>(width * 4);
+        int stride = CalculateSIMDAlignedStride(static_cast<int>(width), 4);
+        size_t bufSize = static_cast<size_t>(stride) * height;
+        uint8_t* pixels = AllocateBuffer(bufSize);
+        if (!pixels) return E_OUTOFMEMORY;
+        
+        // Copy row by row (handles stride alignment)
+        for (uint32_t y = 0; y < height; ++y) {
+            memcpy(pixels + y * stride, pixelBuf.data() + y * wuffsStride, wuffsStride);
+        }
+        
+        // Fill output frame (BGRA_PREMUL from Wuffs)
+        outFrame->pixels = pixels;
+        outFrame->width = static_cast<int>(width);
+        outFrame->height = static_cast<int>(height);
+        outFrame->stride = stride;
+        outFrame->format = PixelFormat::BGRA8888;
+        SetupDeleter(pixels);
+        
+        if (pLoaderName) {
+            if (format == L"PNG") *pLoaderName = L"Wuffs/PNG";
+            else if (format == L"GIF") *pLoaderName = L"Wuffs/GIF";
+            else if (format == L"BMP") *pLoaderName = L"Wuffs/BMP";
+        }
+        
+        return S_OK;
+    }
+    
+    // ========================================================================
+    // Fallback: Use existing WIC path and convert to RawImageFrame
+    // ========================================================================
+    // This is a temporary bridge until all decoders are ported.
+    // It has one extra memory copy but maintains compatibility.
+    // ========================================================================
+    
+    ComPtr<IWICBitmap> wicBitmap;
+    std::wstring loaderName;
+    HRESULT hr = LoadToMemory(filePath, &wicBitmap, &loaderName, false, checkCancel);
+    if (FAILED(hr)) return hr;
+    
+    if (pLoaderName) *pLoaderName = loaderName;
+    
+    // Get dimensions
+    UINT wicWidth = 0, wicHeight = 0;
+    hr = wicBitmap->GetSize(&wicWidth, &wicHeight);
+    if (FAILED(hr) || wicWidth == 0 || wicHeight == 0) return E_FAIL;
+    
+    // Lock and copy pixels
+    WICRect lockRect = { 0, 0, (INT)wicWidth, (INT)wicHeight };
+    ComPtr<IWICBitmapLock> lock;
+    hr = wicBitmap->Lock(&lockRect, WICBitmapLockRead, &lock);
+    if (FAILED(hr)) return hr;
+    
+    UINT wicStride = 0;
+    hr = lock->GetStride(&wicStride);
+    if (FAILED(hr)) return hr;
+    
+    UINT bufferSize = 0;
+    BYTE* wicData = nullptr;
+    hr = lock->GetDataPointer(&bufferSize, &wicData);
+    if (FAILED(hr) || !wicData) return hr;
+    
+    // Allocate output buffer with aligned stride
+    int outStride = CalculateSIMDAlignedStride(wicWidth, 4);
+    size_t outSize = static_cast<size_t>(outStride) * wicHeight;
+    uint8_t* pixels = AllocateBuffer(outSize);
+    if (!pixels) return E_OUTOFMEMORY;
+    
+    // Copy row by row (handles stride mismatch)
+    for (UINT y = 0; y < wicHeight; ++y) {
+        memcpy(pixels + y * outStride, wicData + y * wicStride, wicWidth * 4);
+    }
+    
+    // Fill output frame
+    outFrame->pixels = pixels;
+    outFrame->width = static_cast<int>(wicWidth);
+    outFrame->height = static_cast<int>(wicHeight);
+    outFrame->stride = outStride;
+    outFrame->format = PixelFormat::BGRA8888; // WIC always converts to BGRA
+    SetupDeleter(pixels);
+    
+    return S_OK;
+}
 
 

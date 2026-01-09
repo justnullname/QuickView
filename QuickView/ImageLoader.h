@@ -4,6 +4,7 @@
 #include <stop_token>
 #include <functional>
 #include "WuffsLoader.h"
+#include "ImageTypes.h"    // [Direct D2D] RawImageFrame
 #include <memory_resource>
 
 /// <summary>
@@ -161,6 +162,29 @@ public:
                             std::wstring* pLoaderName = nullptr, 
                             std::stop_token st = {},
                             CancelPredicate checkCancel = nullptr);
+
+    // ============================================================================
+    // [Direct D2D] Zero-Copy Loading API
+    // ============================================================================
+    
+    /// <summary>
+    /// Load image directly to RawImageFrame (Zero-Copy path for Direct D2D).
+    /// This is the primary loading API for the new rendering pipeline.
+    /// </summary>
+    /// <param name="filePath">Path to image file</param>
+    /// <param name="outFrame">Output frame (caller provides, function fills)</param>
+    /// <param name="arena">Optional QuantumArena for memory allocation (nullptr = use new[])</param>
+    /// <param name="targetWidth">Target width for scaling (0 = full decode)</param>
+    /// <param name="targetHeight">Target height for scaling (0 = full decode)</param>
+    /// <param name="pLoaderName">Optional output: name of decoder used</param>
+    /// <param name="checkCancel">Optional cancellation predicate</param>
+    /// <returns>S_OK on success</returns>
+    HRESULT LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* outFrame,
+                        class QuantumArena* arena = nullptr,
+                        int targetWidth = 0, int targetHeight = 0,
+                        std::wstring* pLoaderName = nullptr,
+                        CancelPredicate checkCancel = nullptr);
+
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)

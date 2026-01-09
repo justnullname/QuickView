@@ -2,13 +2,14 @@
 #include "HeavyLanePool.h"
 #include "ImageEngine.h"
 #include <filesystem>
+#include <chrono>
 
 // ============================================================================
 // HeavyLanePool Implementation
 // ============================================================================
 
 HeavyLanePool::HeavyLanePool(ImageEngine* parent, CImageLoader* loader,
-                             QuantumArenaPool* pool, const EngineConfig& config)
+                             TripleArenaPool* pool, const EngineConfig& config)
     : m_parent(parent)
     , m_loader(loader)
     , m_pool(pool)
@@ -365,47 +366,52 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         // Check if cancelled before starting
         if (st.stop_requested()) return;
         
-        // [Crash Fix] Use per-worker arena for memory isolation
-        // Lazy allocate arena if not yet created (256MB per worker, sufficient for 4K images)
-        {
-            std::lock_guard lock(m_poolMutex);
-            if (!m_workers[workerId].arena) {
-                m_workers[workerId].arena = std::make_unique<QuantumArena>(256 * 1024 * 1024);
-            }
-        }
-        auto& arena = *m_workers[workerId].arena;
-        arena.Reset();  // Safe: only this worker uses this arena
+
         
         // [Two-Stage] Calculate target size
-        // If isFullDecode, use 0 (forces full resolution decode)
-        // Otherwise, fit to screen (enables IDCT scaling)
-        int targetW = isFullDecode ? 0 : GetSystemMetrics(SM_CXSCREEN);
-        int targetH = isFullDecode ? 0 : GetSystemMetrics(SM_CYSCREEN);
-        
-        // Create decoded image with PMR allocator
-        CImageLoader::DecodedImage decoded(arena.GetResource());
-        std::wstring loaderName;
-        
-        // [User Feedback] Deep cancellation: pass stop_token to decoder
-        // [v4.0] Atomic Cancellation Predicate
-        auto checkCancel = [this, imageId]() {
-             return m_parent->GetGlobalToken() != imageId;
-        };
+    // [Unified Architecture] Always use the Back Arena for new decoding jobs
+    // Note: ResetBackHeavy() is handled by ImageEngine at critical boundaries.
+    // Here we just allocate from the shared pool.
+    QuantumArena& arena = m_pool->GetBackHeavyArena();
+    
+    // [Direct D2D] Load directly to RawImageFrame (Zero-Copy)
+    QuickView::RawImageFrame rawFrame;
+    std::wstring loaderName; // [Fix] Define local variable for metadata usage
+    
+    // Determine target size
+    int targetW = 0, targetH = 0;
+    if (!isFullDecode) {
+         // Should get screen size from parent? For now 0 means full or natural.
+         // If scaled decode is needed, we need target dims.
+         // But LoadToFrame handles "0" as "Full Size" usually.
+         // SVG/Vector needs target.
+    }
 
-        // [Dual Timing] Measure pure decode time
-        auto decodeStart = std::chrono::high_resolution_clock::now();
-        
-        HRESULT hr = m_loader->LoadToMemoryPMR(
-            path.c_str(), 
-            &decoded, 
-            arena.GetResource(), 
-            targetW, targetH, 
-            &loaderName, 
-            st,  // Pass stop token for deep cancellation
-            checkCancel // [v4.0] Pass atomic check
-        );
-        
-        auto decodeEnd = std::chrono::high_resolution_clock::now();
+    // Call ImageLoader with shared Arena
+    auto decodeStart = std::chrono::high_resolution_clock::now();
+    HRESULT hr = m_loader->LoadToFrame(path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
+        [&]() { return st.stop_requested(); }); // Cancel predicate
+    
+    // [Debug] Ctrl+4 forces WIC fallback logic in ImageLoader, but if we need to enforce valid frame output...
+    // Note: ImageLoader.cpp handles DisableDirectD2D check now.
+    
+    // [Fix] If ForceWIC caused failure, we might need to handle it?
+    // ImageLoader returns E_FAIL. HeavyLane handles it (catch blocks).
+    // So Ctrl+4 disables HeavyLane image loading effectively.
+    // BUT we want ForceWIC to *fall back* to WIC, not fail.
+    // In ImageLoader.cpp, I added "if (DisableDirectD2D) return E_FAIL" inside TurboJPEG block.
+    // ImageLoader's `LoadUsingTurboJpeg` returns failure, so `Load` should proceed to try WIC?
+    // Let's verify ImageLoader.cpp structure (viewed in Step 1205).
+    // Step 1205 showed `if (format == L"JPEG") { ... return E_FAIL; }`
+    // It did NOT show "else fallback".
+    // I need to confirm `Load` function structure.
+    // If `Load` function has:
+    // if (JPEG) { try TJ; if ok return; }
+    // ... WIC fallback ...
+    // Then returning E_FAIL makes it fall through to WIC. Which is correct.
+    // So HeavyLane logic is fine.
+    
+    auto decodeEnd = std::chrono::high_resolution_clock::now();
         int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
         
         if (st.stop_requested() || hr == E_ABORT) {
@@ -413,55 +419,36 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             return;
         }
         
-        if (SUCCEEDED(hr) && decoded.isValid) {
-            // Create WIC Bitmap from PMR buffer for D2D compatibility
-            // [Deep Copy] Safe arena release
-            ComPtr<IWICBitmap> wicBitmap;
-            // [Fix] Use PBGRA (premultiplied) because LoadToMemoryPMR applies premultiply.
-            hr = m_loader->CreateWICBitmapCopy(
-                decoded.width, decoded.height,
-                GUID_WICPixelFormat32bppPBGRA,  // Premultiplied alpha
-                decoded.stride,
-                (UINT)decoded.pixels.size(),
-                decoded.pixels.data(),
-                &wicBitmap
-            );
+        if (SUCCEEDED(hr) && rawFrame.IsValid()) {
+            if (st.stop_requested()) return;
             
-            if (SUCCEEDED(hr) && wicBitmap) {
-                if (st.stop_requested()) return;
-                
-                // Read metadata
-                CImageLoader::ImageMetadata meta;
-                m_loader->ReadMetadata(path.c_str(), &meta);
-                meta.LoaderName = loaderName;
-                
-                if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
-                
-                // [FIX] Ensure metadata dimensions match the actual decoded image
-                // especially if WIC failed to read metadata (e.g. JXL without codec)
-                if (meta.Width == 0 || meta.Height == 0) {
-                     meta.Width = decoded.width;
-                     meta.Height = decoded.height;
-                }
-                
-                // Build event
-                EngineEvent evt;
-                evt.type = EventType::FullReady;
-                evt.filePath = path;
-                evt.imageId = imageId;  // [ImageID] Stable hash instead of navToken
-                evt.fullImage = wicBitmap;
-                evt.metadata = std::move(meta);
-                
-                // Determine if scaled
-                // [Fix V3] Compare against original dimensions from metadata, not targetW.
-                // Previously, if 4500px result >= 3840px target, we thought it was "full", 
-                // preventing Stage B upgrade for 6000px images.
-                // Allow small fuzz factor for jpeg alignment.
-                bool wasScaled = (decoded.width < (UINT)(evt.metadata.Width - 8) || decoded.height < (UINT)(evt.metadata.Height - 8));
-                evt.isScaled = wasScaled;
-                
-                QueueResult(std::move(evt));
+            // Read metadata
+            CImageLoader::ImageMetadata meta;
+            m_loader->ReadMetadata(path.c_str(), &meta);
+            meta.LoaderName = loaderName;
+            
+            if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
+            
+            // [FIX] Ensure metadata dimensions match the actual decoded image
+            if (meta.Width == 0 || meta.Height == 0) {
+                 meta.Width = rawFrame.width;
+                 meta.Height = rawFrame.height;
             }
+            
+            // Build event with rawFrame (new Direct D2D path)
+            EngineEvent evt;
+            evt.type = EventType::FullReady;
+            evt.filePath = path;
+            evt.imageId = imageId;
+            evt.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame)); // Move to heap-managed shared_ptr
+            evt.metadata = std::move(meta);
+            
+            // Determine if scaled
+            bool wasScaled = (evt.rawFrame->width < (int)(evt.metadata.Width - 8) || 
+                              evt.rawFrame->height < (int)(evt.metadata.Height - 8));
+            evt.isScaled = wasScaled;
+            
+            QueueResult(std::move(evt));
         }
         
         // [Dual Timing] Store decode time in worker

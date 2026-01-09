@@ -3,6 +3,7 @@
 #include <dxgi1_3.h>
 #include <memory>
 #include <dwrite.h>
+#include "ImageTypes.h"  // [Direct D2D] RawImageFrame support
 
 #pragma comment(lib, "dwrite.lib")
 
@@ -63,6 +64,21 @@ public:
     /// Create D2D bitmap from raw memory (BGRX)
     /// </summary>
     HRESULT CreateBitmapFromMemory(const void* data, UINT width, UINT height, UINT stride, ID2D1Bitmap** ppBitmap);
+
+    // ============================================================================
+    // [Direct D2D] Zero-Copy Upload from RawImageFrame
+    // ============================================================================
+    
+    /// <summary>
+    /// Upload RawImageFrame directly to GPU as D2D Bitmap.
+    /// This is the core function for the zero-copy rendering pipeline.
+    /// Supports BGRA (native), RGBA (compatible), and Float (HDR) formats.
+    /// </summary>
+    /// <param name="frame">Source frame (read-only reference)</param>
+    /// <param name="outBitmap">Output D2D bitmap pointer</param>
+    /// <returns>S_OK on success, error code on failure</returns>
+    HRESULT UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap);
+
 
     // === Warp Mode (Motion Blur) ===
     

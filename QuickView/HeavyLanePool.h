@@ -37,7 +37,7 @@ enum class WorkerState {
 class HeavyLanePool {
 public:
     HeavyLanePool(ImageEngine* parent, CImageLoader* loader, 
-                  QuantumArenaPool* pool, const EngineConfig& config);
+                  TripleArenaPool* pool, const EngineConfig& config);
     ~HeavyLanePool();
     
     // === Task Submission ===
@@ -98,9 +98,9 @@ private:
         std::wstring loaderName; // [Phase 11] Capture actual decoder name
         bool isFullDecode = false; // [Two-Stage] Records if last decode was full res
         
-        // [Crash Fix] Per-worker arena for true memory isolation
-        // Each worker has its own arena to prevent race conditions
-        std::unique_ptr<QuantumArena> arena;
+        // [Unified Architecture] Shared Arena from TripleArenaPool (ImageEngine owns it)
+        // Workers no longer own arenas. They use GetBackHeavyArena() from parent pool.
+        // std::unique_ptr<QuantumArena> arena; // REMOVED
         
         Worker() = default;
         Worker(Worker&&) = default;
@@ -110,7 +110,7 @@ private:
     // === Members ===
     ImageEngine* m_parent;
     CImageLoader* m_loader;
-    QuantumArenaPool* m_pool;
+    TripleArenaPool* m_pool; // [Unified Architecture]
     EngineConfig m_config;
     
     std::vector<Worker> m_workers;

@@ -269,65 +269,39 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransp
     }
 
     if (durationMs > 0) {
-        ComPtr<IDCompositionAnimation> anim;
-        m_device->CreateAnimation(&anim);
+        ComPtr<IDCompositionAnimation> animIn, animOut;
+        m_device->CreateAnimation(&animIn);
+        m_device->CreateAnimation(&animOut);
+        
         float duration = durationMs / 1000.0f;
         
-        if (isTransparent) {
-             // Transparent mode: Always dual-fade to avoid ghosting (seeing old image through new)
-             // Pending Fades IN (0->1)
-             // Active Fades OUT (1->0)
-             
-             ComPtr<IDCompositionAnimation> animIn, animOut;
-             m_device->CreateAnimation(&animIn);
-             m_device->CreateAnimation(&animOut);
-             animIn->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
-             animIn->End(duration, 1.0f);
-             
-             animOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
-             animOut->End(duration, 0.0f);
-             
-             if (pendingIsTop) {
-                 topVisual->SetOpacity(animIn.Get());
-                 bottomVisual->SetOpacity(animOut.Get());
-             } else {
-                 bottomVisual->SetOpacity(animIn.Get());
-                 topVisual->SetOpacity(animOut.Get());
-             }
-        }
-        else if (pendingIsTop) {
-            // Case 1: Pending is Top (A). Active is Bottom (B).
-            // A Fades IN (0->1). B stays 1.0 (visible behind).
-            // This covers B with A.
-            
-            // Ensure B is fully visible
-            bottomVisual->SetOpacity(1.0f);
-            
-            // Animate A: 0 -> 1
-            anim->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
-            anim->End(duration, 1.0f);
-            topVisual->SetOpacity(anim.Get());
-        } 
-        else {
-            // Case 2: Pending is Bottom (B). Active is Top (A).
-            // A Fades OUT (1->0). B set to 1.0 (revealed behind).
-            // This reveals B by clearing A.
-            
-            // Ensure B is visible immediately (it's behind A)
-            bottomVisual->SetOpacity(1.0f);
-            
-            // Animate A: 1 -> 0
-            anim->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
-            anim->End(duration, 0.0f);
-            topVisual->SetOpacity(anim.Get());
+        // [High Performance Fix] Always Dual-Fade
+        // We must Fade Out the old layer (B) to 0.0 to prevent it from showing 
+        // underneath the new layer (A) if A is smaller or transparent.
+        // This solves the "Double Image" bug during scaling/resizing.
+        
+        // A: Fade In (0 -> 1)
+        animIn->AddCubic(0.0, 0.0f, 1.0f / duration, 0.0f, 0.0f);
+        animIn->End(duration, 1.0f);
+        
+        // B: Fade Out (1 -> 0)
+        animOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
+        animOut->End(duration, 0.0f);
+        
+        if (pendingIsTop) {
+            topVisual->SetOpacity(animIn.Get());
+            bottomVisual->SetOpacity(animOut.Get());
+        } else {
+            bottomVisual->SetOpacity(animIn.Get());
+            topVisual->SetOpacity(animOut.Get());
         }
     } else {
         // Instant Switch
         if (pendingIsTop) {
             topVisual->SetOpacity(1.0f);
-            bottomVisual->SetOpacity(1.0f); // Or 0? Doesn't matter if A covers B.
+            bottomVisual->SetOpacity(0.0f); // Force hide background
         } else {
-            topVisual->SetOpacity(0.0f);
+            topVisual->SetOpacity(0.0f); // Force hide background
             bottomVisual->SetOpacity(1.0f);
         }
     }
@@ -361,25 +335,39 @@ HRESULT CompositionEngine::UpdateLayout(float windowW, float windowH, float surf
     if (!m_scaleTransform || !m_translateTransform) return E_FAIL;
     if (surfaceW <= 0 || surfaceH <= 0) return E_INVALIDARG;
     
-    // Calculate scale to fit surface into window
+    // [Fix] Consistent Scaled Offset Logic
+    // We revert to calculating Scaled Offset (Original Logic) to match main.cpp expectation.
+    // But we apply internal compensation for Center Scaling.
+    
     float scaleX = windowW / surfaceW;
     float scaleY = windowH / surfaceH;
     float scale = std::min(scaleX, scaleY);
     
-    // Calculate offset to center
+    // Calculate SCALED offset (as main.cpp likely does)
     float scaledW = surfaceW * scale;
     float scaledH = surfaceH * scale;
     float offsetX = (windowW - scaledW) / 2.0f;
     float offsetY = (windowH - scaledH) / 2.0f;
     
-    // Apply transforms
+    // Set Center Scaling
+    float imgCenterX = surfaceW / 2.0f;
+    float imgCenterY = surfaceH / 2.0f;
+
     m_scaleTransform->SetScaleX(scale);
     m_scaleTransform->SetScaleY(scale);
-    m_scaleTransform->SetCenterX(0.0f);
-    m_scaleTransform->SetCenterY(0.0f);
+    m_scaleTransform->SetCenterX(imgCenterX);
+    m_scaleTransform->SetCenterY(imgCenterY);
     
-    m_translateTransform->SetOffsetX(offsetX);
-    m_translateTransform->SetOffsetY(offsetY);
+    // Compensation: ADD (W/2 * (S-1))
+    float compX = (surfaceW / 2.0f) * (scale - 1.0f);
+    float compY = (surfaceH / 2.0f) * (scale - 1.0f);
+    
+    m_translateTransform->SetOffsetX(offsetX + compX);
+    m_translateTransform->SetOffsetY(offsetY + compY);
+    
+    m_currentScale = scale;
+    m_currentPanX = offsetX; // Store base input
+    m_currentPanY = offsetY;
     
     return m_device->Commit();
 }
@@ -387,21 +375,50 @@ HRESULT CompositionEngine::UpdateLayout(float windowW, float windowH, float surf
 HRESULT CompositionEngine::SetZoom(float scale, float centerX, float centerY) {
     if (!m_scaleTransform) return E_FAIL;
     
+    m_currentScale = scale;
+    
+    // Force scaling around IMAGE Center
+    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+    float imgCenterX = 0.0f;
+    float imgCenterY = 0.0f;
+    
+    if (active.width > 0 && active.height > 0) {
+        imgCenterX = (float)active.width / 2.0f;
+        imgCenterY = (float)active.height / 2.0f;
+    }
+    
     m_scaleTransform->SetScaleX(scale);
     m_scaleTransform->SetScaleY(scale);
-    m_scaleTransform->SetCenterX(centerX);
-    m_scaleTransform->SetCenterY(centerY);
+    m_scaleTransform->SetCenterX(imgCenterX);
+    m_scaleTransform->SetCenterY(imgCenterY);
     
-    return S_OK; // Caller should Commit
+    // [Fix Jump] Do NOT update Translation here.
+    // main.cpp calls SetPan immediately after SetZoom.
+    // Using stale m_currentPanX here causes the "Jump" artifact.
+    // We rely on SetPan to apply the Compensation.
+    
+    return S_OK; 
 }
 
 HRESULT CompositionEngine::SetPan(float offsetX, float offsetY) {
     if (!m_translateTransform) return E_FAIL;
     
-    m_translateTransform->SetOffsetX(offsetX);
-    m_translateTransform->SetOffsetY(offsetY);
+    m_currentPanX = offsetX;
+    m_currentPanY = offsetY;
     
-    return S_OK; // Caller should Commit
+    // Apply Compensation: ADD (W/2 * (S-1))
+    // Converts Scaled Offset -> Unscaled Center Offset
+    ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+    float compX = 0.0f, compY = 0.0f;
+    if (active.width > 0) {
+        compX = (active.width / 2.0f) * (m_currentScale - 1.0f);
+        compY = (active.height / 2.0f) * (m_currentScale - 1.0f);
+    }
+    
+    m_translateTransform->SetOffsetX(offsetX + compX);
+    m_translateTransform->SetOffsetY(offsetY + compY);
+    
+    return S_OK; 
 }
 
 HRESULT CompositionEngine::ResetImageTransform() {

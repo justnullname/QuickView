@@ -220,9 +220,174 @@ private:
 };
 
 // ============================================================================
+// ArenaConfig - 动态内存配额 (根据物理内存自动配置)
+// ============================================================================
+
+struct ArenaConfig {
+    size_t scoutArenaSize;    // Scout Arena 大小
+    size_t heavyArenaSize;    // Heavy Arena 大小 (每个)
+    
+    /// <summary>
+    /// 根据系统物理内存自动计算最佳配置
+    /// </summary>
+    static ArenaConfig Detect() {
+        MEMORYSTATUSEX statex;
+        statex.dwLength = sizeof(statex);
+        GlobalMemoryStatusEx(&statex);
+        
+        uint64_t totalPhys = statex.ullTotalPhys;
+        ArenaConfig config;
+        
+        if (totalPhys <= 4ULL * 1024 * 1024 * 1024) {
+            // <= 4GB: 穷人模式
+            config.scoutArenaSize = 32 * 1024 * 1024;   // 32MB
+            config.heavyArenaSize = 256 * 1024 * 1024;  // 256MB × 2
+        } else if (totalPhys <= 8ULL * 1024 * 1024 * 1024) {
+            // <= 8GB: 标准模式
+            config.scoutArenaSize = 64 * 1024 * 1024;   // 64MB
+            config.heavyArenaSize = 512 * 1024 * 1024;  // 512MB × 2
+        } else {
+            // > 8GB: 土豪模式
+            config.scoutArenaSize = 64 * 1024 * 1024;   // 64MB
+            config.heavyArenaSize = 1024 * 1024 * 1024; // 1GB × 2
+        }
+        
+        return config;
+    }
+    
+    /// <summary>
+    /// 获取配置模式名称 (用于调试)
+    /// </summary>
+    const wchar_t* GetModeName() const {
+        if (heavyArenaSize <= 256 * 1024 * 1024) return L"Lite (4GB)";
+        if (heavyArenaSize <= 512 * 1024 * 1024) return L"Standard (8GB)";
+        return L"Pro (>8GB)";
+    }
+};
+
+// ============================================================================
+// TripleArenaPool - 三 Arena 管理器
+// ============================================================================
+// Scout 专用 1 个小型 Arena + Heavy 专用 2 个大型 Arena (Ping-Pong)
+// ============================================================================
+
+class TripleArenaPool {
+public:
+    TripleArenaPool() 
+        : m_heavyIndex(0)
+    {
+        // 延迟初始化 - 构造函数不分配内存
+    }
+    
+    /// <summary>
+    /// 使用探测到的配置初始化
+    /// </summary>
+    void Initialize() {
+        Initialize(ArenaConfig::Detect());
+    }
+    
+    /// <summary>
+    /// 使用指定配置初始化
+    /// </summary>
+    void Initialize(const ArenaConfig& config) {
+        m_config = config;
+        m_scoutArena = std::make_unique<QuantumArena>(config.scoutArenaSize);
+        m_heavyArenas[0] = std::make_unique<QuantumArena>(config.heavyArenaSize);
+        m_heavyArenas[1] = std::make_unique<QuantumArena>(config.heavyArenaSize);
+        m_initialized = true;
+    }
+    
+    // ============== Scout Arena ==============
+    
+    QuantumArena& GetScoutArena() {
+        EnsureInitialized();
+        return *m_scoutArena;
+    }
+    
+    /// <summary>
+    /// 重置 Scout Arena (每次任务开始前调用)
+    /// </summary>
+    void ResetScout() {
+        if (m_scoutArena) m_scoutArena->Reset();
+    }
+    
+    // ============== Heavy Arena (Ping-Pong) ==============
+    
+    QuantumArena& GetActiveHeavyArena() {
+        EnsureInitialized();
+        return *m_heavyArenas[m_heavyIndex.load(std::memory_order_acquire)];
+    }
+    
+    QuantumArena& GetBackHeavyArena() {
+        EnsureInitialized();
+        return *m_heavyArenas[1 - m_heavyIndex.load(std::memory_order_acquire)];
+    }
+    
+    /// <summary>
+    /// 交换 Heavy Arena (解码完成后调用)
+    /// </summary>
+    void SwapHeavy() {
+        m_heavyIndex.fetch_xor(1, std::memory_order_acq_rel);
+    }
+    
+    /// <summary>
+    /// 重置后台 Heavy Arena (新任务开始前调用)
+    /// </summary>
+    void ResetBackHeavy() {
+        GetBackHeavyArena().Reset();
+    }
+    
+    // ============== 调试统计 ==============
+    
+    const ArenaConfig& GetConfig() const { return m_config; }
+    int GetHeavyIndex() const { return m_heavyIndex.load(std::memory_order_acquire); }
+    
+    size_t GetTotalCapacity() const {
+        if (!m_initialized) return 0;
+        return m_scoutArena->GetCapacity() + 
+               m_heavyArenas[0]->GetCapacity() + 
+               m_heavyArenas[1]->GetCapacity();
+    }
+    
+    size_t GetTotalUsed() const {
+        if (!m_initialized) return 0;
+        return m_scoutArena->GetUsedBytes() + 
+               m_heavyArenas[0]->GetUsedBytes() + 
+               m_heavyArenas[1]->GetUsedBytes();
+    }
+    
+    // Const accessors for HUD
+    const QuantumArena* GetScoutArenaPtr() const { return m_scoutArena.get(); }
+    const QuantumArena* GetHeavyArena0Ptr() const { return m_heavyArenas[0].get(); }
+    // Aliases for Engine compatibility
+    size_t GetUsedMemory() const { return GetTotalUsed(); }
+    
+    size_t GetTotalMemory() const {
+        if (!m_initialized) return 0;
+        return m_scoutArena->GetCapacity() + 
+               m_heavyArenas[0]->GetCapacity() + 
+               m_heavyArenas[1]->GetCapacity();
+    }
+    
+
+
+private:
+    void EnsureInitialized() {
+        if (!m_initialized) Initialize();
+    }
+    
+    ArenaConfig m_config;
+    std::unique_ptr<QuantumArena> m_scoutArena;
+    std::unique_ptr<QuantumArena> m_heavyArenas[2];
+    std::atomic<int> m_heavyIndex;
+    bool m_initialized = false;
+};
+
+// ============================================================================
 // 别名 - 保持向后兼容
 // ============================================================================
 using MemoryArena = QuantumArena;
 
 template <typename T>
 using ArenaAllocator = std::pmr::polymorphic_allocator<T>;
+

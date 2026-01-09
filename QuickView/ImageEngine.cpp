@@ -7,6 +7,7 @@
 #pragma comment(lib, "psapi.lib")
 #include <cctype>
 #include <filesystem>
+#include <chrono>
 
 // ============================================================================
 // ImageEngine Implementation
@@ -19,14 +20,18 @@ ImageEngine::ImageEngine(CImageLoader* loader)
     // [N+1] Detect hardware and create pool
     SystemInfo sysInfo = SystemInfo::Detect();
     m_engineConfig = EngineConfig::FromHardware(sysInfo);
+    
+    // [Unified Architecture] Initialize 3-Arena System
+    m_pool.Initialize(ArenaConfig::Detect());
+    
     m_heavyPool = std::make_unique<HeavyLanePool>(this, loader, &m_pool, m_engineConfig);
     
     // Debug output
     wchar_t buf[256];
-    swprintf_s(buf, L"[ImageEngine] N+1 Pool: Tier=%s, MaxWorkers=%d, RAM=%.1fGB\n",
+    swprintf_s(buf, L"[ImageEngine] N+1 Pool: Tier=%s (Arena: %s), MaxWorkers=%d\n",
         m_engineConfig.GetTierName(), 
-        m_engineConfig.maxHeavyWorkers,
-        (double)sysInfo.totalRAM / (1024.0 * 1024.0 * 1024.0));
+        m_pool.GetConfig().GetModeName(),
+        m_engineConfig.maxHeavyWorkers);
     OutputDebugStringW(buf);
 }
 
@@ -194,7 +199,7 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     }
 
     if (useScout) {
-        m_scout.Push(path);
+        m_scout.Push(path, imageId);
     }
 }
 
@@ -319,8 +324,8 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     // Phase 4: Arena Water Levels
     // Use GetLastArenaBytes() which tracks decoded.pixels.size()
     // TODO: Get arena stats from pool workers
-    s.arena.activeCapacity = m_pool.GetActive().GetCapacity();
-    s.arena.backCapacity = m_pool.GetBack().GetCapacity();
+    s.arena.activeCapacity = m_pool.GetTotalCapacity();
+    s.arena.backCapacity = m_pool.GetTotalUsed();
 
     return s;
 }
@@ -458,10 +463,11 @@ void ImageEngine::ScoutLane::Clear() {
     // m_skipCount is not reset here, it accumulates for debug stats.
 }
 
-void ImageEngine::ScoutLane::Push(const std::wstring& path) {
+void ImageEngine::ScoutLane::Push(const std::wstring& path, ImageID id) {
+    if (m_stopSignal) return;
     {
         std::lock_guard lock(m_queueMutex);
-        m_queue.push_back(path);
+        m_queue.push_back({path, id});
         // [v3.1] Simplified Push: No complex anti-explosion here.
         // UpdateView()'s "Ruthless Purge" handles queue depth.
     }
@@ -513,7 +519,7 @@ int ImageEngine::ScoutLane::GetResultsSize() const {
 void ImageEngine::ScoutLane::QueueWorker() {
     OutputDebugStringW(L"[Scout] Worker Thread Started\n");
     while (!m_stopSignal) {
-        std::wstring path;
+        ScoutCommand cmd;
         // Standard C++ Try-Catch for Robustness
         try {
             {
@@ -524,73 +530,54 @@ void ImageEngine::ScoutLane::QueueWorker() {
 
                 // [v3.2] Robustness: Check again for empty to be safe
                 if (!m_queue.empty()) {
-                    path = m_queue.front();
+                    cmd = m_queue.front();
                     m_queue.pop_front();
                 }
             }
             
-            if (path.empty()) continue;
+            if (cmd.path.empty()) continue;
             
             m_isWorking = true; // [HUD V4] Active
             
-            std::wstring debugMsg = L"[Scout] Processing: " + path.substr(path.find_last_of(L"\\/") + 1) + L"\n";
+            std::wstring debugMsg = L"[Scout] Processing: " + cmd.path.substr(cmd.path.find_last_of(L"\\/") + 1) + L"\n";
             OutputDebugStringW(debugMsg.c_str());
 
-            // --- Work Stage (v3.1 Express Lane) ---
+            // --- Work Stage (Unified RawImageFrame Architecture) ---
             auto start = std::chrono::high_resolution_clock::now();
-            constexpr double EXPRESS_BUDGET_MS = 30.0; // Hard red line (Re-enabled)
             
-            CImageLoader::ThumbData thumb;
-            HRESULT hr = E_FAIL;
+            // [Unified Architecture] Scout uses ScoutArena
+            // Reset arena before each task to ensure clean state (Scout is serial)
+            m_parent->m_pool.ResetScout();
+            QuantumArena& arena = m_parent->m_pool.GetScoutArena();
             
-            // [v3.2] Optimization: Removed redundant PeekHeader. 
-            // We assume if it's in Scout Lane, we should try FastPass first.
+            QuickView::RawImageFrame rawFrame;
+            std::wstring loaderName;
             
-            // 1. Try Fast Pass (Type A optimization)
-            // [Dual Timing] Measure decode time
-            auto decodeStart = std::chrono::high_resolution_clock::now();
-            hr = m_loader->LoadFastPass(path.c_str(), &thumb);
-            auto decodeEnd = std::chrono::high_resolution_clock::now();
-            int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+            // Intelligent Target Sizing
+            // Type A (Sprint) -> Full Decode (target=0) -> FullReady
+            // Type B (Heavy) -> Thumbnail (target=256) -> PreviewReady
+            int targetSize = 256; 
             
-            if (SUCCEEDED(hr) && thumb.isValid) {
-                // [FIX] Do NOT override thumb.isBlurry here!
-                // LoadThumbJXL_DC sets isBlurry=true for DC preview
-                // LoadFastPass other formats set isBlurry=false for clear image
-                // We must preserve the value set by the decoder!
-                if (thumb.loaderName.empty()) {
-                    thumb.loaderName = L"FastPass";
-                }
+            auto info = m_loader->PeekHeader(cmd.path.c_str());
+            if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
+                targetSize = 0; // Full decode used as Final
             }
-            
-            // 2. Fallback: Embedded thumbnail (RAW/JPEG Exif)
-            if (FAILED(hr)) {
-                auto now = std::chrono::high_resolution_clock::now();
-                double elapsed = std::chrono::duration<double, std::milli>(now - start).count();
-                
-                if (elapsed < EXPRESS_BUDGET_MS - 5.0) { // Reserve 5ms margin
-                    OutputDebugStringW(L"[Scout] Trying LoadThumbnail...\n");
-                    auto thumbDecodeStart = std::chrono::high_resolution_clock::now();
-                    hr = m_loader->LoadThumbnail(path.c_str(), 256, &thumb, false); // allowSlow=false
-                    auto thumbDecodeEnd = std::chrono::high_resolution_clock::now();
-                    decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(thumbDecodeEnd - thumbDecodeStart).count();
-                    
-                    if (SUCCEEDED(hr)) {
-                        OutputDebugStringW(L"[Scout] LoadThumbnail OK\n");
-                        thumb.isBlurry = true; // Ghost image
-                        thumb.loaderName = L"WIC (Thumb)";
-                    } else {
-                        wchar_t buf[64]; swprintf_s(buf, L"[Scout] LoadThumbnail FAILED hr=0x%08X\n", hr); OutputDebugStringW(buf);
-                    }
-                } else {
-                     OutputDebugStringW(L"[Scout] Budget Exhausted (Skipping Thumb)\n");
-                }
+            // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading, so Scout should be Thumb/Preview
+            if (info.format == L"JXL" && info.width * info.height >= 2000000) {
+                 targetSize = 256;
             }
+
+            // [Direct D2D] Load directly to RawImageFrame backed by Arena
+            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetSize, targetSize, &loaderName);
             
-            if (SUCCEEDED(hr) && thumb.isValid) {
-                // [v3.2] Save values BEFORE move
-                std::wstring loaderName = thumb.loaderName;
-                bool isClear = !thumb.isBlurry;
+            int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
+
+            if (SUCCEEDED(hr) && rawFrame.IsValid()) {
+                // Determine blurriness
+                // If we did a full decode (target=0 or result close to original), it's Clear.
+                // Otherwise it's a Thumbnail (Blurry/Preview).
+                bool isClear = (targetSize == 0) || 
+                               (rawFrame.width >= info.width / 2 && rawFrame.height >= info.height / 2);
                 
                 // Save Scout Loader Name for HUD
                 {
@@ -599,16 +586,33 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 }
                 
                 EngineEvent e;
-                e.type = EventType::ThumbReady;
-                e.filePath = path;
-                e.imageId = ComputePathHash(path); 
-                e.thumbData = std::move(thumb);
+                e.type = isClear ? EventType::FullReady : EventType::PreviewReady;
+                e.filePath = cmd.path;
+                e.imageId = cmd.id; 
+                e.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame));
+                
 
+                // [Unified] Populate Metadata instead of ThumbData
+                e.metadata.Width = info.width;
+                e.metadata.Height = info.height;
+                e.metadata.Format = info.format;
+                e.metadata.LoaderName = loaderName;
+                
+                e.isScaled = !isClear;
+                // pixels empty
+
+                // [FIX] Store result in m_results for PollState to retrieve
+                // Previously QueueEvent only sent notification but dropped the event!
                 {
                     std::lock_guard lock(m_queueMutex);
                     m_results.push_back(std::move(e));
                 }
-                m_parent->QueueEvent(EngineEvent{}); 
+                
+                // Signal main thread
+                m_parent->QueueEvent(EngineEvent{}); // Dummy event, just for notification
+                
+                if (isClear) OutputDebugStringW(L"[Scout] Output: FullReady (Final)\n");
+                else OutputDebugStringW(L"[Scout] Output: PreviewReady (Blurry)\n"); 
                 
                 // [v3.1] If Fast Pass produced clear image, cancel Heavy Lane
                 if (isClear) {
@@ -616,15 +620,13 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 }
             } else {
                 // [JXL Fallback] Scout 失败（如 Modular E_ABORT），仍需触发 pending Heavy
-                // 检查是否为 JXL 并且有 pending Heavy
-                std::wstring ext = path;
+                std::wstring ext = cmd.path;
                 size_t dot = ext.find_last_of(L'.');
                 if (dot != std::wstring::npos) {
                     std::wstring e = ext.substr(dot);
                     std::transform(e.begin(), e.end(), e.begin(), ::towlower);
                     if (e == L".jxl") {
-                        OutputDebugStringW(L"[Scout] JXL Failed, triggering pending Heavy\n");
-                        m_parent->TriggerPendingJxlHeavy();
+                         m_parent->TriggerPendingJxlHeavy();
                     }
                 }
             }
@@ -633,7 +635,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
             int totalMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
             m_lastDecodeTimeMs.store(decodeMs);
             m_lastTotalTimeMs.store(totalMs);
-            m_lastLoadId.store(ComputePathHash(path)); // [HUD Fix]
+            m_lastLoadId.store(cmd.id);
             
             m_isWorking = false; // [HUD V4] Idle
 
@@ -751,7 +753,7 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
         // Small image: push to Scout Lane
-        m_scout.Push(path);
+        m_scout.Push(path, ComputePathHash(path));
     } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Large image: only prefetch if Heavy Lane is idle
         // This prevents prefetch from blocking current image decode

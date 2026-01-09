@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "RenderEngine.h"
+#include "ImageTypes.h"  // [Direct D2D] RawImageFrame
 #include <algorithm>  // for std::clamp
 
 // 核心修复：引入 DirectX GUID 定义库
@@ -361,6 +362,69 @@ HRESULT CRenderEngine::CreateBitmapFromMemory(const void* data, UINT width, UINT
 
     return m_d2dContext->CreateBitmap(D2D1::SizeU(width, height), data, stride, &props, reinterpret_cast<ID2D1Bitmap1**>(ppBitmap));
 }
+
+// ============================================================================
+// [Direct D2D] Zero-Copy Upload from RawImageFrame
+// ============================================================================
+
+HRESULT CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap) {
+    if (!m_d2dContext) return E_POINTER;
+    if (!outBitmap) return E_INVALIDARG;
+    if (!frame.IsValid()) return E_INVALIDARG;
+    
+    // Map PixelFormat to DXGI_FORMAT and D2D1_ALPHA_MODE
+    DXGI_FORMAT dxgiFormat;
+    D2D1_ALPHA_MODE alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    
+    switch (frame.format) {
+        case QuickView::PixelFormat::BGRA8888:
+            // D2D Native - Best Performance
+            dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+            break;
+
+        case QuickView::PixelFormat::BGRX8888:
+            // JPEG via TurboJPEG - X8 format ignores alpha channel (opaque)
+            dxgiFormat = DXGI_FORMAT_B8G8R8X8_UNORM; 
+            alphaMode = D2D1_ALPHA_MODE_IGNORE;
+            break;
+            
+        case QuickView::PixelFormat::RGBA8888:
+            // Compatible - Some older GPUs may have slight overhead
+            dxgiFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+            break;
+            
+        case QuickView::PixelFormat::R32G32B32A32_FLOAT:
+            // HDR (TinyEXR) - 128-bit floating point
+            dxgiFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
+            alphaMode = D2D1_ALPHA_MODE_STRAIGHT; // HDR typically uses straight alpha
+            break;
+            
+        default:
+            // Fallback to BGRA
+            dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+            break;
+    }
+    
+    // Create D2D Bitmap Properties
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(dxgiFormat, alphaMode),
+        96.0f, 96.0f  // Standard DPI
+    );
+    
+    // Direct Upload - Data is copied to GPU synchronously
+    // After this call returns, the CPU memory can be safely released
+    HRESULT hr = m_d2dContext->CreateBitmap(
+        D2D1::SizeU(static_cast<UINT32>(frame.width), static_cast<UINT32>(frame.height)),
+        frame.pixels,
+        static_cast<UINT32>(frame.stride),
+        &props,
+        reinterpret_cast<ID2D1Bitmap1**>(outBitmap)
+    );
+    
+    return hr;
+}
+
 
 // ============================================================================
 // Warp Mode (Motion Blur) 实现

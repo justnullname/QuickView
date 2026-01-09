@@ -651,6 +651,45 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     DrawToggle(L"Scout[Ctl1]", g_runtime.EnableScout);
     DrawToggle(L"Heavy[Ctl2]", g_runtime.EnableHeavy);
     DrawToggle(L"SlowM[Ctl3]", g_slowMotionMode);
+    
+    // [Direct D2D] Pipeline Indicator - Shows which path was used for last upload
+    toggleY += 6.0f;  // Small gap
+    {
+        int channel = g_debugMetrics.lastUploadChannel.load();
+        // 0=Unknown, 1=DirectD2D, 2=WIC, 3=Scout
+        D2D1_RECT_F pipeRect = D2D1::RectF(toggleX, toggleY, toggleX + 80, toggleY + 14);
+        
+        if (channel == 1) {
+            // Green = Direct D2D path (Zero-Copy)
+            dc->FillRoundedRectangle(D2D1::RoundedRect(pipeRect, 3, 3), greenBrush.Get());
+            dc->DrawText(L"Direct D2D", 10, m_debugFormat.Get(), 
+                    D2D1::RectF(pipeRect.left + 4, pipeRect.top, pipeRect.right, pipeRect.bottom), blackTransBrush.Get());
+        } else if (channel == 2) {
+            // Yellow = WIC Fallback path
+            dc->FillRoundedRectangle(D2D1::RoundedRect(pipeRect, 3, 3), yellowBrush.Get());
+            dc->DrawText(L"WIC Path", 8, m_debugFormat.Get(), 
+                    D2D1::RectF(pipeRect.left + 4, pipeRect.top, pipeRect.right, pipeRect.bottom), blackTransBrush.Get());
+        } else if (channel == 3) {
+            // Blue = Scout path (Thumbnail)
+            dc->FillRoundedRectangle(D2D1::RoundedRect(pipeRect, 3, 3), blueBrush.Get());
+            dc->DrawText(L"Scout", 5, m_debugFormat.Get(), 
+                    D2D1::RectF(pipeRect.left + 4, pipeRect.top, pipeRect.right, pipeRect.bottom), whiteBrush.Get());
+        } else {
+            // Gray = Unknown/Initial
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(pipeRect, 3, 3), grayBrush.Get());
+            dc->DrawText(L"---", 3, m_debugFormat.Get(), 
+                    D2D1::RectF(pipeRect.left + 4, pipeRect.top, pipeRect.right, pipeRect.bottom), grayBrush.Get());
+        }
+        
+        // Statistics line below: D=Direct D2D, W=WIC Fallback
+        toggleY += 18.0f;
+        wchar_t statBuf[64];
+        swprintf_s(statBuf, L"D:%d W:%d", 
+            g_debugMetrics.rawFrameUploadCount.load(), 
+            g_debugMetrics.wicFallbackCount.load());
+        dc->DrawText(statBuf, (UINT32)wcslen(statBuf), m_debugFormat.Get(), 
+                D2D1::RectF(toggleX, toggleY, toggleX + 100, toggleY + 14), whiteBrush.Get());
+    }
 
     // 2. Traffic Lights (Triggers)
     float x = hudX + 10.0f;
@@ -678,7 +717,8 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         x += gap;
     };
 
-    DrawLight(L"IMG", g_debugMetrics.dirtyTriggerImage, redBrush.Get());
+    DrawLight(L"IMGA", g_debugMetrics.dirtyTriggerImageA, redBrush.Get());
+    DrawLight(L"IMGB", g_debugMetrics.dirtyTriggerImageB, redBrush.Get());
     DrawLight(L"GAL", g_debugMetrics.dirtyTriggerGallery, yellowBrush.Get());
     DrawLight(L"STA", g_debugMetrics.dirtyTriggerStatic, blueBrush.Get()); 
     DrawLight(L"DYN", g_debugMetrics.dirtyTriggerDynamic, greenBrush.Get());
@@ -799,7 +839,10 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     swprintf_s(buf, L"Arena: %llu / %llu MB    Sys: %llu MB", 
         s.pmrUsed / 1024/1024, s.pmrCapacity / 1024/1024,
         s.sysMemory / 1024/1024);
-    dc->DrawText(buf, wcslen(buf), m_debugFormat.Get(), D2D1::RectF(px, py-2, px+barW, py+16), whiteBrush.Get()); // Text inside bar?
+        
+    // Use simple Shadow/Text approach for readability
+    dc->DrawText(buf, wcslen(buf), m_debugFormat.Get(), D2D1::RectF(px+1, py-1, px+barW+1, py+17), blackTransBrush.Get()); // Shadow
+    dc->DrawText(buf, wcslen(buf), m_debugFormat.Get(), D2D1::RectF(px, py-2, px+barW, py+16), whiteBrush.Get()); // Text
 }
 
 // ============================================================================
