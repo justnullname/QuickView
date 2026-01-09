@@ -526,13 +526,10 @@ HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
                          wchar_t buf[64];
                          swprintf_s(buf, L"%s Q~%d", subsamp.c_str(), quality);
                          // [v5.3] Metadata now handled by Codec::JPEG::Load via result.metadata
-                         // g_lastFormatDetails = buf; 
                      } else {
-                         // g_lastFormatDetails = subsamp;
                      }
                      
-                     // Read EXIF Orientation
-                     // g_lastExifOrientation = ReadJpegExifOrientation(jpegBuf.data(), jpegBuf.size());
+                     // Read EXIF Orientation (Handled in Codec::JPEG)
                  }
             }
         }
@@ -1189,7 +1186,7 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         if (res.pixels) ctx.freeFunc(res.pixels);
         
         if (SUCCEEDED(hr)) {
-            // g_lastFormatDetails = details;
+            // Metadata populated in Codec::WebP
         }
         return hr;
     }
@@ -4615,7 +4612,6 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             if (width <= 0 || height <= 0) return E_FAIL;
             
             // [v5.3] Metadata TODO: Return via DecodeResult if using Unified path.
-            // g_lastFormatDetails = L"Vector";
             
             // Rasterize
             NSVGrasterizer* rast = nsvgCreateRasterizer();
@@ -4640,7 +4636,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             SetupDeleter(pixels);
             
             if (pLoaderName) *pLoaderName = L"NanoSVG";
-            // g_lastFormatDetails = L"Vector";
+            // g_lastFormatDetails = L"Vector"; (Removed)
             if (pMetadata) {
                 pMetadata->LoaderName = L"NanoSVG";
                 pMetadata->FormatDetails = L"Vector";
