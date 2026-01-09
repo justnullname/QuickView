@@ -1957,8 +1957,44 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
                       config.output.u.RGBA.stride = stride;
                       config.output.u.RGBA.size = bufSize;
 
-                      // [Performance] Revert to Atomic Decode (WebPDecode) to match v2.1 speed (1829ms vs 2069ms)
-                      // Deep Cancel (Incremental) adds ~13% overhead. Speed is priority.
+                      // [Animated WebP] Use WebPAnimDecoder to extract first frame
+                      if (config.input.has_animation) {
+                           WebPData webpData = { webpBuf.data(), webpBuf.size() };
+                           WebPAnimDecoderOptions decOpts;
+                           WebPAnimDecoderOptionsInit(&decOpts);
+                           decOpts.color_mode = MODE_BGRA; // BGRA for D2D
+                           decOpts.use_threads = 1;
+                           
+                           WebPAnimDecoder* dec = WebPAnimDecoderNew(&webpData, &decOpts);
+                           if (dec) {
+                               WebPAnimInfo animInfo;
+                               if (WebPAnimDecoderGetInfo(dec, &animInfo)) {
+                                    uint8_t* frameBuf = nullptr;
+                                    int timestamp = 0;
+                                    // Get first frame
+                                    if (WebPAnimDecoderGetNext(dec, &frameBuf, &timestamp) && frameBuf) {
+                                         // Copy to output buffer
+                                         size_t rowSize = (size_t)animInfo.canvas_width * 4;
+                                         for (UINT y = 0; y < animInfo.canvas_height; ++y) {
+                                              memcpy(pOutput->pixels.data() + (size_t)y * stride,
+                                                     frameBuf + (size_t)y * rowSize, rowSize);
+                                         }
+                                         pOutput->width = (int)animInfo.canvas_width;
+                                         pOutput->height = (int)animInfo.canvas_height;
+                                         pOutput->stride = stride;
+                                         pOutput->isValid = true;
+                                         // pOutput->format assignment removed (not supported by wrapper)
+                                         if (pLoaderName) *pLoaderName = L"WebP (Anim)";
+                                         WebPAnimDecoderDelete(dec);
+                                         return S_OK;
+                                    }
+                               }
+                               WebPAnimDecoderDelete(dec);
+                           }
+                           // Fallback to regular decode if animation decode fails
+                      }
+
+                      // [Static WebP] Standard atomic decode
                       if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) == VP8_STATUS_OK) {
                            pOutput->width = w;
                            pOutput->height = h;
