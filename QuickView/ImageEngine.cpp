@@ -700,11 +700,11 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     
     int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
     
-    // 3. Adjacent: Must-have for fluid navigation
-    ScheduleJob(currentIndex + step, Priority::High);
-    
     // 4. If prefetch disabled, stop here (Eco mode)
     if (!m_prefetchPolicy.enablePrefetch) return;
+
+    // 3. Adjacent: Must-have for fluid navigation
+    ScheduleJob(currentIndex + step, Priority::High);
     
     // 5. Anti-regret: One in opposite direction
     ScheduleJob(currentIndex - step, Priority::Low);

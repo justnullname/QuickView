@@ -36,7 +36,7 @@ enum class BrowseDirection { FORWARD, BACKWARD, IDLE };
 enum class Priority { Critical = 0, High = 1, Low = 2, Idle = 3 };
 
 struct PrefetchPolicy {
-    bool enablePrefetch = true;                   // Master switch
+    bool enablePrefetch = false;                   // Master switch [User Request: Disabled]
     size_t maxCacheMemory = 512 * 1024 * 1024;    // 512MB default
     int lookAheadCount = 3;                       // Forward prefetch count
 };
