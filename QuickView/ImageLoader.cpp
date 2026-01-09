@@ -1128,7 +1128,56 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     int height = config.input.height;
     if (width == 0 || height == 0) return E_FAIL;
 
-    // Decode
+    // [Animated WebP] Extract first frame if animated
+    if (config.input.has_animation) {
+         WebPData webpData = { webpBuf.data(), webpBuf.size() };
+         WebPAnimDecoderOptions decOpts;
+         WebPAnimDecoderOptionsInit(&decOpts);
+         decOpts.color_mode = MODE_BGRA;
+         decOpts.use_threads = 1;
+         
+         WebPAnimDecoder* dec = WebPAnimDecoderNew(&webpData, &decOpts);
+         if (dec) {
+             WebPAnimInfo animInfo;
+             if (WebPAnimDecoderGetInfo(dec, &animInfo)) {
+                  uint8_t* frameBuf = nullptr;
+                  int timestamp = 0;
+                  if (WebPAnimDecoderGetNext(dec, &frameBuf, &timestamp) && frameBuf) {
+                       // We have the frame!
+                       int aw = (int)animInfo.canvas_width;
+                       int ah = (int)animInfo.canvas_height;
+                       size_t stride = (size_t)aw * 4;
+                       size_t totalSize = stride * ah;
+                       
+                       // Copy to temp buffer for Premultiply (to avoid modifying decoder buffer directly)
+                       std::vector<uint8_t> tempBuf(totalSize);
+                       for (int y = 0; y < ah; ++y) {
+                            memcpy(tempBuf.data() + (size_t)y * stride, 
+                                   frameBuf + (size_t)y * stride, stride);
+                       }
+                       
+                       // Manual Premultiply
+                       SIMDUtils::PremultiplyAlpha_BGRA(tempBuf.data(), aw, ah, stride);
+
+                       HRESULT hr = CreateWICBitmapFromMemory(aw, ah, GUID_WICPixelFormat32bppPBGRA, 
+                                                             (UINT)stride, (UINT)totalSize, tempBuf.data(), ppBitmap);
+                       
+                       // Set metadata
+                       if (SUCCEEDED(hr)) {
+                           g_lastFormatDetails = L"WebP (Anim)";
+                           if (config.input.has_alpha) g_lastFormatDetails += L" +Alpha";
+                       }
+                       
+                       WebPAnimDecoderDelete(dec);
+                       WebPFreeDecBuffer(&config.output);
+                       return hr;
+                  }
+             }
+             WebPAnimDecoderDelete(dec);
+         }
+    }
+
+    // Decode (Static)
     if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) != VP8_STATUS_OK) {
         WebPFreeDecBuffer(&config.output);
         return E_FAIL;
@@ -4527,7 +4576,53 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         int height = config.input.height;
         if (width <= 0 || height <= 0) return E_FAIL;
         
-        // Decode
+        // [Animated WebP] Extract first frame
+        if (config.input.has_animation) {
+             WebPData webpData = { webpBuf.data(), webpBuf.size() };
+             WebPAnimDecoderOptions decOpts;
+             WebPAnimDecoderOptionsInit(&decOpts);
+             decOpts.color_mode = MODE_BGRA;
+             decOpts.use_threads = 0; // Disable threading to avoid Scout freeze
+             
+             WebPAnimDecoder* dec = WebPAnimDecoderNew(&webpData, &decOpts);
+             if (dec) {
+                 WebPAnimInfo animInfo;
+                 if (WebPAnimDecoderGetInfo(dec, &animInfo)) {
+                      uint8_t* frameBuf = nullptr;
+                      int timestamp = 0;
+                      if (WebPAnimDecoderGetNext(dec, &frameBuf, &timestamp) && frameBuf) {
+                           int aw = (int)animInfo.canvas_width;
+                           int ah = (int)animInfo.canvas_height;
+                           int stride = CalculateSIMDAlignedStride(aw, 4);
+                           size_t bufSize = static_cast<size_t>(stride) * ah;
+                           
+                           uint8_t* pixels = AllocateBuffer(bufSize);
+                           if (!pixels) { WebPAnimDecoderDelete(dec); return E_OUTOFMEMORY; }
+                           
+                           // Copy
+                           for (int y = 0; y < ah; ++y) {
+                                memcpy(pixels + y * stride, frameBuf + (size_t)y * aw * 4, aw * 4);
+                           }
+                           
+                           if (config.input.has_alpha) SIMDUtils::PremultiplyAlpha_BGRA(pixels, aw, ah, stride);
+                           
+                           outFrame->pixels = pixels;
+                           outFrame->width = aw;
+                           outFrame->height = ah;
+                           outFrame->stride = stride;
+                           outFrame->format = PixelFormat::BGRA8888;
+                           SetupDeleter(pixels);
+                           
+                           if (pLoaderName) *pLoaderName = L"WebP (Anim)";
+                           WebPAnimDecoderDelete(dec);
+                           return S_OK;
+                      }
+                 }
+                 WebPAnimDecoderDelete(dec);
+             }
+        }
+        
+        // Decode (Static)
         if (WebPDecode(webpBuf.data(), webpBuf.size(), &config) != VP8_STATUS_OK) {
             return E_FAIL;
         }
