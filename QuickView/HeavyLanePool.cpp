@@ -378,14 +378,11 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     QuickView::RawImageFrame rawFrame;
     std::wstring loaderName; // [Fix] Define local variable for metadata usage
     
-    // Determine target size
-    int targetW = 0, targetH = 0;
-    if (!isFullDecode) {
-         // Should get screen size from parent? For now 0 means full or natural.
-         // If scaled decode is needed, we need target dims.
-         // But LoadToFrame handles "0" as "Full Size" usually.
-         // SVG/Vector needs target.
-    }
+    // [Two-Stage Decode] Calculate target size based on isFullDecode flag
+    // If isFullDecode, use 0 (forces full resolution decode)
+    // Otherwise, fit to screen (enables IDCT scaling for large images)
+    int targetW = isFullDecode ? 0 : GetSystemMetrics(SM_CXSCREEN);
+    int targetH = isFullDecode ? 0 : GetSystemMetrics(SM_CYSCREEN);
 
     // Call ImageLoader with shared Arena
     auto decodeStart = std::chrono::high_resolution_clock::now();

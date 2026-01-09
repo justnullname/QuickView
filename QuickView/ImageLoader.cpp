@@ -4327,12 +4327,45 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             struct TjGuard { tjhandle h; ~TjGuard() { if (h) tj3Destroy(h); } } guard{tjInstance};
 
             if (tjInstance && tj3DecompressHeader(tjInstance, jpegBuf.data(), jpegBuf.size()) == 0) {
-                int width = tj3Get(tjInstance, TJPARAM_JPEGWIDTH);
-                int height = tj3Get(tjInstance, TJPARAM_JPEGHEIGHT);
+                int origWidth = tj3Get(tjInstance, TJPARAM_JPEGWIDTH);
+                int origHeight = tj3Get(tjInstance, TJPARAM_JPEGHEIGHT);
                 
-                if (width > 0 && height > 0) {
-                     int stride = CalculateSIMDAlignedStride(width, 4);
-                     size_t bufSize = static_cast<size_t>(stride) * height;
+                if (origWidth > 0 && origHeight > 0) {
+                     // [Two-Stage Decode] Calculate IDCT scaling factor
+                     int finalW = origWidth, finalH = origHeight;
+                     
+                     if (targetWidth > 0 && targetHeight > 0) {
+                         // Find best scaling factor that fits screen
+                         int numFactors;
+                         tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+                         tjscalingfactor bestFactor = {1, 1}; // Default: full size
+                         
+                         // Find smallest factor where result >= max(targetWidth, targetHeight)
+                         int targetSize = std::max(targetWidth, targetHeight);
+                         int bestSize = origWidth * origHeight; // Start with full size
+                         
+                         for (int i = 0; i < numFactors; i++) {
+                             int sW = TJSCALED(origWidth, factors[i]);
+                             int sH = TJSCALED(origHeight, factors[i]);
+                             int maxDim = std::max(sW, sH);
+                             int pixels = sW * sH;
+                             
+                             // Find the smallest size that still covers target
+                             if (maxDim >= targetSize && pixels < bestSize) {
+                                 bestSize = pixels;
+                                 bestFactor = factors[i];
+                             }
+                         }
+                         
+                         // Apply scaling factor
+                         if (tj3SetScalingFactor(tjInstance, bestFactor) == 0) {
+                             finalW = TJSCALED(origWidth, bestFactor);
+                             finalH = TJSCALED(origHeight, bestFactor);
+                         }
+                     }
+                     
+                     int stride = CalculateSIMDAlignedStride(finalW, 4);
+                     size_t bufSize = static_cast<size_t>(stride) * finalH;
                      
                      // Allocate buffer (using _aligned_malloc via helper)
                      uint8_t* pixels = AllocateBuffer(bufSize);
@@ -4342,8 +4375,8 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                          if (tj3Decompress8(tjInstance, jpegBuf.data(), jpegBuf.size(), pixels, stride, TJPF_BGRX) == 0) {
                              // Success!
                              outFrame->pixels = pixels;
-                             outFrame->width = width;
-                             outFrame->height = height;
+                             outFrame->width = finalW;
+                             outFrame->height = finalH;
                              outFrame->stride = stride;
                              outFrame->format = PixelFormat::BGRX8888; // X8 = Ignore Alpha
                              SetupDeleter(pixels);
