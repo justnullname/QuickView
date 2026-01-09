@@ -147,8 +147,8 @@ public:
         ImageID targetHash = 0;
         ImageID renderHash = 0;
         wchar_t loaderName[64] = { 0 };
-        char imageSpecs[64] = { 0 }; // [Phase 7] Restored
         bool syncStatus = false; // Green/Yellow/Red logic helper
+        bool isScaled = false;   // [Two-Stage] True if current image is IDCT scaled
         
         // Zone A2: Legacy DComp
         bool layerImg = false;

@@ -4477,21 +4477,9 @@ void OnPaint(HWND hwnd) {
 
                 // Inject Image Specs
                 if (g_currentBitmap) {
-                    auto size = g_currentBitmap->GetSize(); // Logical size
-                    auto pixelSize = g_currentBitmap->GetPixelSize(); // Physical size
-                    auto fmt = g_currentBitmap->GetPixelFormat();
-                    const char* fmtStr = "Unknown";
-                    if (fmt.format == DXGI_FORMAT_B8G8R8A8_UNORM) fmtStr = "BGRA";
-                    else if (fmt.format == DXGI_FORMAT_R8G8B8A8_UNORM) fmtStr = "RGBA";
-                    else if (fmt.format == DXGI_FORMAT_A8_UNORM) fmtStr = "Alpha";
-                    
-                    // [Debug] Append Flags to Specs
-                    snprintf(s.imageSpecs, 64, "%.0fx%.0f %s", 
-                        (double)size.width, (double)size.height, fmtStr);
-                } else {
-                    strcpy_s(s.imageSpecs, "No Image");
                 }
 
+                s.isScaled = g_isImageScaled; // [Two-Stage] Pass scaled state to HUD
                 g_uiRenderer->SetTelemetry(s);
             }
         }

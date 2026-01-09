@@ -732,9 +732,10 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     // 3. Text Data (Vitals)
     swprintf_s(buffer, 
         L"FPS: %.1f\n"
-        L"%s", 
+        L"%s%s", 
         s.fps,
-        s.loaderName[0] == 0 ? L"-" : s.loaderName);
+        s.loaderName[0] == 0 ? L"-" : s.loaderName,
+        s.isScaled ? L"  [Scaled]" : L"");
     
     dc->DrawText(buffer, (UINT32)wcslen(buffer), m_debugFormat.Get(), 
             D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW - 10, hudY + 75), m_whiteBrush.Get());
