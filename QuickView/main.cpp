@@ -467,11 +467,14 @@ static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparen
     // Track surface size for UpdateLayout
     g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
     
-    // Reset zoom state
+    // Reset zoom state (values only, visual is handled by WM_SIZE)
+    // Note: WM_SIZE will calculate and apply correct fitScale using these values
     g_viewState.Zoom = 1.0f;
     g_viewState.PanX = 0;
     g_viewState.PanY = 0;
-    g_compEngine->ResetImageTransform();
+    // [Fix] Do NOT call ResetImageTransform() here!
+    // It would set visual scale to 1.0 (100%) before WM_SIZE applies correct fitScale,
+    // causing a visible flash in locked window mode.
     
     OutputDebugStringW(L"[DComp] RenderImageToDComp complete\n");
     return true;
