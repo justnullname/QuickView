@@ -59,6 +59,9 @@ public:
         std::wstring LoaderName;    // e.g. "TurboJPEG", "libavif"
         DWORD LoadTimeMs = 0;       // Load time in milliseconds
         
+        // [Phase 18] Embedded Profile Flag
+        bool HasEmbeddedColorProfile = false;
+        
         // GPS
         bool HasGPS = false;
         double Latitude = 0.0;

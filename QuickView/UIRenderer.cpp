@@ -939,7 +939,11 @@ void UIRenderer::BuildInfoGrid() {
     
     // Row 9: Color Space
     if (!g_currentMetadata.ColorSpace.empty()) {
-        m_infoGrid.push_back({L"\U0001F3A8", L"Color", g_currentMetadata.ColorSpace, L"", L"", TruncateMode::None, false});
+        std::wstring colorText = g_currentMetadata.ColorSpace;
+        if (g_currentMetadata.HasEmbeddedColorProfile) {
+            colorText += L" [ICC]";
+        }
+        m_infoGrid.push_back({L"\U0001F3A8", L"Color", colorText, L"", L"", TruncateMode::None, false});
     }
     
     // Row 10: Flash

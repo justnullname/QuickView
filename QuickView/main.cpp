@@ -3986,7 +3986,14 @@ void ProcessEngineEvents(HWND hwnd) {
                 if (finalMetadata.ExposureProgram.empty() && !g_currentMetadata.ExposureProgram.empty()) finalMetadata.ExposureProgram = g_currentMetadata.ExposureProgram;
                 if (finalMetadata.WhiteBalance.empty() && !g_currentMetadata.WhiteBalance.empty()) finalMetadata.WhiteBalance = g_currentMetadata.WhiteBalance;
                 
-                 finalMetadata.IsFullMetadataLoaded = true; // Mark as loaded
+                // [Phase 18 Fix] Preserve Embedded Profile Flag
+                if (!finalMetadata.HasEmbeddedColorProfile && g_currentMetadata.HasEmbeddedColorProfile) {
+                    finalMetadata.HasEmbeddedColorProfile = true;
+                }
+                
+                 // [v5.3 Fix] Do NOT force true here.
+                 // We want UIRenderer to detect "false" and trigger RequestFullMetadata (Async).
+                 // finalMetadata.IsFullMetadataLoaded = true;
 
                 // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
                 g_currentMetadata = finalMetadata;
@@ -4086,6 +4093,8 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.MeteringMode.empty()) g_currentMetadata.MeteringMode = evt.metadata.MeteringMode;
                  if (!evt.metadata.ExposureProgram.empty()) g_currentMetadata.ExposureProgram = evt.metadata.ExposureProgram;
                  if (!evt.metadata.ColorSpace.empty()) g_currentMetadata.ColorSpace = evt.metadata.ColorSpace;
+                 // [Phase 18 Fix] Async ICC Flag Propagation
+                 if (evt.metadata.HasEmbeddedColorProfile) g_currentMetadata.HasEmbeddedColorProfile = true;
                  
                  // GPS (Atomic update)
                  if (evt.metadata.HasGPS) {

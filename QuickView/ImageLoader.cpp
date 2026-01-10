@@ -18,6 +18,7 @@
 #define HAVE_BOOLEAN // Prevent conflict with Windows boolean
 #include <jpeglib.h>
 #include <turbojpeg.h> // [v5.0] Required for JPEGLoader fallback logic
+#include <webp/demux.h> // [Phase 18] Required for Native WebP ICC extraction
 #include <jxl/decode.h> // JXL
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
@@ -3875,7 +3876,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
              UINT csVal = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
              if (csVal == 1) pMetadata->ColorSpace = L"sRGB";
              else if (csVal == 2) pMetadata->ColorSpace = L"Adobe RGB";
-             else if (csVal == 65535) pMetadata->ColorSpace = L"Wide Gamut";
+             else if (csVal == 65535) pMetadata->ColorSpace = L"Uncalibrated";
              PropVariantClear(&var); break;
          }
     }
@@ -3977,34 +3978,57 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
     header.resize(actualSize);
     
     // 1. JPEG
+    // 1. JPEG
     if (header.size() > 2 && header[0] == 0xFF && header[1] == 0xD8) {
+        // [Safety] Use setjmp to catch libjpeg errors (defaults to exit())
         struct my_error_mgr { struct jpeg_error_mgr pub; jmp_buf setjmp_buffer; };
         auto my_error_exit = [](j_common_ptr cinfo) {
             my_error_mgr* myerr = (my_error_mgr*)cinfo->err;
             longjmp(myerr->setjmp_buffer, 1);
         };
+        
         struct jpeg_decompress_struct cinfo;
         struct my_error_mgr jerr;
+        
         cinfo.err = jpeg_std_error(&jerr.pub);
         jerr.pub.error_exit = my_error_exit;
         
-        if (setjmp(jerr.setjmp_buffer)) { jpeg_destroy_decompress(&cinfo); return false; }
+        if (setjmp(jerr.setjmp_buffer)) {
+            jpeg_destroy_decompress(&cinfo);
+            return false;
+        }
         
         jpeg_create_decompress(&cinfo);
+        
+        // [v6.3] Enable Marker Saving for APP1 (Exif) and APP2 (ICC)
+        jpeg_save_markers(&cinfo, JPEG_APP0 + 1, 0xFFFF); 
+        jpeg_save_markers(&cinfo, JPEG_APP0 + 2, 0xFFFF); // ICC Profile
+        
         jpeg_mem_src(&cinfo, header.data(), (unsigned long)header.size());
-        jpeg_save_markers(&cinfo, JPEG_APP0 + 1, 0xFFFF);
         
         bool success = false;
         if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+             std::vector<uint8_t> iccData;
+             
              for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {
+                 // Exif (APP1)
                  if (marker->marker == JPEG_APP0 + 1 && marker->data_length >= 6 && memcmp(marker->data, "Exif\0\0", 6) == 0) {
                      easyexif::EXIFInfo exif;
                      if (exif.parseFromEXIFSegment(marker->data, marker->data_length) == 0) {
-                         // QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); 
                          PopulateMetadataFromEasyExif_Refined(exif, *pMetadata);
                          success = true;
                      }
                  }
+                 // ICC (APP2)
+                 else if (marker->marker == JPEG_APP0 + 2 && marker->data_length > 14 && memcmp(marker->data, "ICC_PROFILE\0", 12) == 0) {
+                     iccData.insert(iccData.end(), marker->data + 14, marker->data + marker->data_length);
+                 }
+             }
+             
+             if (!iccData.empty()) {
+                 pMetadata->HasEmbeddedColorProfile = true;
+                 std::wstring desc = CImageLoader::ParseICCProfileName(iccData.data(), iccData.size());
+                 if (!desc.empty()) pMetadata->ColorSpace = desc;
              }
         }
         jpeg_destroy_decompress(&cinfo);
@@ -4018,6 +4042,7 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
         bool success = false;
         if (demux) {
             WebPChunkIterator chunk;
+            // EXIF
             if (WebPDemuxGetChunk(demux, "EXIF", 1, &chunk)) {
                  easyexif::EXIFInfo exif;
                  if (exif.parseFromEXIFSegment(chunk.chunk.bytes, static_cast<unsigned>(chunk.chunk.size)) == 0) {
@@ -4028,6 +4053,13 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
                      if (exif.parseFromEXIFSegment(t.data(), static_cast<unsigned>(t.size())) == 0) { QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true; }
                  }
                  WebPDemuxReleaseChunkIterator(&chunk);
+            }
+            // ICC
+            if (WebPDemuxGetChunk(demux, "ICCP", 1, &chunk)) {
+                pMetadata->HasEmbeddedColorProfile = true;
+                std::wstring desc = CImageLoader::ParseICCProfileName(chunk.chunk.bytes, chunk.chunk.size);
+                if (!desc.empty()) pMetadata->ColorSpace = desc;
+                WebPDemuxReleaseChunkIterator(&chunk);
             }
             WebPDemuxDelete(demux);
         }
@@ -4056,6 +4088,13 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
                             if (exif.parseFromEXIFSegment(t.data(), static_cast<unsigned>(t.size())) == 0) { QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true; }
                         }
                     }
+                    
+                    // ICC
+                   if (decoder->image->icc.size > 0) {
+                       pMetadata->HasEmbeddedColorProfile = true;
+                       std::wstring desc = CImageLoader::ParseICCProfileName(decoder->image->icc.data, decoder->image->icc.size);
+                       if (!desc.empty()) pMetadata->ColorSpace = desc;
+                   }
                 }
             }
             avifDecoderDestroy(decoder);
@@ -4072,7 +4111,7 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
         auto runner = CImageLoader::GetJxlRunner();
         JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
         
-        if (JXL_DEC_SUCCESS == JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_BOX)) {
+        if (JXL_DEC_SUCCESS == JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_BOX | JXL_DEC_COLOR_ENCODING)) {
             if (JXL_DEC_SUCCESS == JxlDecoderSetInput(dec, header.data(), header.size())) {
                 std::vector<uint8_t> ex;
                 bool reading = false;
@@ -4081,7 +4120,19 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
                     if (status == JXL_DEC_ERROR || status == JXL_DEC_SUCCESS) break;
                     if (status == JXL_DEC_NEED_MORE_INPUT) break; // 256KB exhausted
                     
-                    if (status == JXL_DEC_BOX) {
+                    /* [v6.3] Disabled: libjxl version too old (missing JXL_DEC_COLOR_ENCODING)
+                    if (status == JXL_DEC_COLOR_ENCODING) {
+                         size_t iccSize = 0;
+                         if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &iccSize) && iccSize > 0) {
+                             std::vector<uint8_t> icc(iccSize);
+                             if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsICCProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA, icc.data(), iccSize)) {
+                                 pMetadata->HasEmbeddedColorProfile = true;
+                                 std::wstring desc = CImageLoader::ParseICCProfileName(icc.data(), icc.size);
+                                 if (!desc.empty()) pMetadata->ColorSpace = desc;
+                             }
+                         }
+                    }
+                    else */ if (status == JXL_DEC_BOX) {
                         JxlBoxType t;
                         if (JXL_DEC_SUCCESS == JxlDecoderGetBoxType(dec, t, JXL_TRUE)) {
                             if (memcmp(t, "Exif", 4) == 0) {
@@ -4231,6 +4282,7 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
                                     if (!desc.empty()) {
                                         pMetadata->ColorSpace = desc;
                                         found = true;
+                                        pMetadata->HasEmbeddedColorProfile = true; // [Phase 18] Flag it
                                     } 
                                 }
                             }
