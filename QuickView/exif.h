@@ -112,6 +112,7 @@ class EXIFInfo {
                                              // 5: Micrometer.
     std::string Make;               // Lens manufacturer
     std::string Model;              // Lens model
+    double FocalLengthIn35mm;       // 35mm equivalent focal length
   } LensInfo;
 
 

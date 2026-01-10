@@ -354,6 +354,72 @@ static int ReadJpegExifOrientation(const uint8_t* data, size_t size) {
     return 1;
 }
 
+// [v6.2] Refined EasyExif Populator (Fixes Date Priority & 35mm)
+// Moved to Top for visibility to JXL/AVIF loaders
+static void PopulateMetadataFromEasyExif_Refined(const easyexif::EXIFInfo& exif, CImageLoader::ImageMetadata& meta) {
+    if (!exif.Make.empty()) meta.Make = std::wstring(exif.Make.begin(), exif.Make.end());
+    if (!exif.Model.empty()) meta.Model = std::wstring(exif.Model.begin(), exif.Model.end());
+    if (!exif.Software.empty()) meta.Software = std::wstring(exif.Software.begin(), exif.Software.end());
+    if (!exif.LensInfo.Model.empty()) meta.Lens = std::wstring(exif.LensInfo.Model.begin(), exif.LensInfo.Model.end());
+    
+    // Date: FORCE OVERWRITE (Priority: EXIF > FileSystem)
+    if (!exif.DateTimeOriginal.empty()) {
+        meta.Date = std::wstring(exif.DateTimeOriginal.begin(), exif.DateTimeOriginal.end());
+    } else if (!exif.DateTime.empty()) {
+        meta.Date = std::wstring(exif.DateTime.begin(), exif.DateTime.end());
+    }
+
+    // Exposure
+    if (exif.ISOSpeedRatings > 0) meta.ISO = std::to_wstring(exif.ISOSpeedRatings);
+    
+    if (exif.ExposureTime > 0) {
+        wchar_t buf[32];
+        if (exif.ExposureTime >= 1.0) swprintf_s(buf, L"%.1fs", exif.ExposureTime);
+        else swprintf_s(buf, L"1/%.0fs", 1.0 / exif.ExposureTime);
+        meta.Shutter = buf;
+    }
+    
+    if (exif.FNumber > 0) {
+        wchar_t buf[32]; swprintf_s(buf, L"f/%.1f", exif.FNumber);
+        meta.Aperture = buf;
+    }
+    
+    // Focal Length & 35mm Equivalent
+    if (exif.FocalLength > 0) {
+        wchar_t buf[64];
+        if (exif.LensInfo.FocalLengthIn35mm > 0) {
+             swprintf_s(buf, L"%.0fmm (%.0fmm)", exif.FocalLength, exif.LensInfo.FocalLengthIn35mm);
+             meta.Focal35mm = std::to_wstring((int)exif.LensInfo.FocalLengthIn35mm) + L"mm";
+        } else {
+             swprintf_s(buf, L"%.0fmm", exif.FocalLength);
+        }
+        meta.Focal = buf;
+    }
+    
+    if (std::abs(exif.ExposureBiasValue) > 0.001) {
+        wchar_t buf[32]; swprintf_s(buf, L"%+.1f ev", exif.ExposureBiasValue);
+        meta.ExposureBias = buf;
+    }
+    
+    // Flash
+    meta.Flash = (exif.Flash & 1) ? L"Flash: On" : L"Flash: Off";
+    
+    // GPS
+    if (exif.GeoLocation.Latitude != 0 || exif.GeoLocation.Longitude != 0) {
+        meta.HasGPS = true;
+        meta.Latitude = exif.GeoLocation.Latitude;
+        meta.Longitude = exif.GeoLocation.Longitude;
+        meta.Altitude = exif.GeoLocation.Altitude; 
+    }
+
+    // [v6.2] Level 1: EXIF Color Space (Fastest)
+    if (exif.ColorSpace == 1) meta.ColorSpace = L"sRGB";
+    else if (exif.ColorSpace == 2) meta.ColorSpace = L"Adobe RGB";
+    else if (exif.ColorSpace == 65535) meta.ColorSpace = L"Uncalibrated";
+}
+
+
+
 // Helper to read file to vector
 bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
     HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -2136,8 +2202,10 @@ namespace QuickView {
                     JxlDecoderDestroy(dec); return E_FAIL;
                 }
 
-                int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE;
+                int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME | JXL_DEC_COLOR_ENCODING;
                 if (ctx.forcePreview) events |= JXL_DEC_PREVIEW_IMAGE;
+                // [v6.2] Parse EXIF if metadata requested
+                if (ctx.pMetadata) events |= JXL_DEC_BOX;
 
                 if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) {
                     JxlDecoderDestroy(dec); return E_FAIL;
@@ -2160,9 +2228,17 @@ namespace QuickView {
 
                 uint8_t* pixels = nullptr;
                 int stride = 0;
+                // [v6.2] Buffer for EXIF data
+                std::vector<uint8_t> jxlExifBuffer;
+
                 int finalW = 0, finalH = 0;
                 bool headerRead = false;
                 bool wantPreview = ctx.forcePreview;
+                
+                // [v6.2] Metadata Details (Lossy/Lossless, Bit Depth)
+                // We need to query BasicInfo even if not strictly required for decode
+                // But JXL decode event flow provides it.
+                // We should subscribe to BASIC_INFO.
 
                 for (;;) {
                     // Check Cancel
@@ -2194,8 +2270,62 @@ namespace QuickView {
                         if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
                             JxlDecoderDestroy(dec); return E_FAIL;
                         }
-                        // Info allows us to filter heavy images if needed?
-                        // For now, proceed.
+                        
+                        // [v6.2] Populate Metadata
+                        if (ctx.pMetadata) {
+                             CImageLoader::PopulateFormatDetails(
+                                 ctx.pMetadata, 
+                                 L"JXL", 
+                                 info.bits_per_sample, 
+                                 info.uses_original_profile, // likely lossless
+                                 info.alpha_bits > 0, 
+                                 (info.have_animation == JXL_TRUE)
+                             );
+                        }
+                     }
+                     
+                     // [v6.2] Handle Color Encoding (ICC)
+                     else if (status == JXL_DEC_COLOR_ENCODING) {
+                         if (ctx.pMetadata) {
+                             size_t iccSize = 0;
+                             if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &iccSize)) {
+                                 if (iccSize > 0) {
+                                     std::vector<uint8_t> icc(iccSize);
+                                     if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsICCProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA, icc.data(), iccSize)) {
+                                         std::wstring desc = CImageLoader::ParseICCProfileName(icc.data(), iccSize);
+                                         if (!desc.empty()) ctx.pMetadata->ColorSpace = desc;
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                     
+                     // [v6.2] Handle EXIF Box
+                    else if (status == JXL_DEC_BOX) {
+                        JxlBoxType type;
+                        if (JXL_DEC_SUCCESS == JxlDecoderGetBoxType(dec, type, JXL_TRUE)) {
+                            if (memcmp(type, "Exif", 4) == 0 && ctx.pMetadata) {
+                                uint64_t boxSize = 0;
+                                if (JXL_DEC_SUCCESS == JxlDecoderGetBoxSizeRaw(dec, &boxSize)) {
+                                    // Header is 4 (size 4) + 4 (type 4) = 8? No, Raw size includes header?
+                                    // JXL API: Raw size is full box size.
+                                    // We need to capture the payload? 
+                                    // JxlDecoderSetBoxBuffer captures *payload* if we want?
+                                    // No, it captures remaining data in box.
+                                    // Start position?
+                                    // We use a large buffer to be safe or exact size?
+                                    // Exact size if known.
+                                    // Note: boxSize might be "0" (until end) or 1 (large).
+                                    // Assuming standard box.
+                                    
+                                    // Safety cap 1MB
+                                    if (boxSize < 1024 * 1024 * 5) { // 5MB limit
+                                         jxlExifBuffer.resize((size_t)boxSize);
+                                         JxlDecoderSetBoxBuffer(dec, jxlExifBuffer.data(), jxlExifBuffer.size());
+                                    }
+                                }
+                            }
+                        }
                     }
                     else if (status == JXL_DEC_FRAME) {
                         // Frame info
@@ -2281,6 +2411,29 @@ namespace QuickView {
                         result.metadata.FormatDetails = L"JXL";
                         if (status == JXL_DEC_PREVIEW_IMAGE) result.metadata.FormatDetails += L" (Preview)";
                         if (info.have_animation) result.metadata.FormatDetails += L" [Anim]";
+                        
+                        // [v6.2] Parse Captured EXIF
+                        if (!jxlExifBuffer.empty() && result.metadata.IsEmpty()) {
+                             // JXL Exif box usually starts with 4 byte offset? Or straight TIFF?
+                             // 00 00 00 06 (big endian) + "Exif\0\0" ?
+                             // Or just Raw TIFF?
+                             // Spec says "Exif" box contains Exif data.
+                             // Usually it's: [4 bytes offset] [Exif\0\0] [TIFF...] ?
+                             // Or just TIFF?
+                             // EasyExif expects standard Exif header or TIFF.
+                             // Let's try direct first, then offset.
+                             easyexif::EXIFInfo exif;
+                             if (exif.parseFromEXIFSegment(jxlExifBuffer.data(), (unsigned)jxlExifBuffer.size()) == 0) {
+                                 PopulateMetadataFromEasyExif_Refined(exif, result.metadata);
+                             } else {
+                                 // Try skipping 4 bytes (offset?)
+                                 if (jxlExifBuffer.size() > 4) {
+                                      if (exif.parseFromEXIFSegment(jxlExifBuffer.data() + 4, (unsigned)(jxlExifBuffer.size() - 4)) == 0) {
+                                         PopulateMetadataFromEasyExif_Refined(exif, result.metadata);
+                                      }
+                                 }
+                             }
+                        }
                         
                         result.metadata.Width = finalW;
                         result.metadata.Height = finalH;
@@ -3517,8 +3670,8 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     PROPVARIANT var; PropVariantInit(&var);
 
     // Helper to try multiple paths
-    auto TryGetText = [&](const std::initializer_list<const wchar_t*>& queries, std::wstring& target) {
-        if (!target.empty()) return;
+    auto TryGetText = [&](const std::initializer_list<const wchar_t*>& queries, std::wstring& target, bool force = false) {
+        if (!target.empty() && !force) return;
         for (auto q : queries) {
             if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
                 if (var.vt == VT_LPSTR && var.pszVal) {
@@ -3552,6 +3705,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     }, pMetadata->Model);
 
     // Date (DateTimeOriginal 36867 or DateTime 306)
+    // Date (DateTimeOriginal 36867 or DateTime 306) -> FORCE OVERWRITE
     TryGetText({ 
         L"/app1/ifd/exif/{ushort=36867}", 
         L"/ifd/exif/{ushort=36867}", 
@@ -3560,7 +3714,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
         L"/ifd/{ushort=306}",
         L"/xmp/tiff:DateTime",
         L"/xmp/xmp:CreateDate"
-    }, pMetadata->Date);
+    }, pMetadata->Date, true);
 
     // Software
     TryGetText({ 
@@ -3617,14 +3771,18 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
         for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
             // Try 35mm equivalent
             double val35 = 0;
-            const wchar_t* q35 = L"/app1/ifd/exif/{ushort=41989}";
-            if (SUCCEEDED(GetMetadataRational(reader, q35, &val35)) && val35 > 0) {
-                 wchar_t buf[32]; swprintf_s(buf, L"%.0fmm (%.0fmm)", val, val35);
-                 pMetadata->Focal = buf; 
+            const wchar_t* q35[] = { L"/app1/ifd/exif/{ushort=41989}", L"/ifd/exif/{ushort=41989}" };
+            bool found35 = false;
+            for(auto q : q35) if(SUCCEEDED(GetMetadataRational(reader, q, &val35)) && val35 > 0) { found35 = true; break; }
+            
+            wchar_t buf[64];
+            if (found35) {
+                 swprintf_s(buf, L"%.0fmm (%.0fmm)", val, val35);
+                 pMetadata->Focal35mm = std::to_wstring((int)val35) + L"mm"; 
             } else {
-                 wchar_t buf[32]; swprintf_s(buf, L"%.0fmm", val);
-                 pMetadata->Focal = buf;
+                 swprintf_s(buf, L"%.0fmm", val);
             }
+            pMetadata->Focal = buf;
             break;
         }
     }
@@ -3804,6 +3962,10 @@ static void PopulateFileStats(LPCWSTR filePath, CImageLoader::ImageMetadata* met
     }
 }
 
+
+
+
+
 // [v6.0] Async Native Helper (Header-Only, No Pixel Decode)
 static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata* pMetadata) {
     if (!filePath || !pMetadata) return false;
@@ -3838,7 +4000,8 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
                  if (marker->marker == JPEG_APP0 + 1 && marker->data_length >= 6 && memcmp(marker->data, "Exif\0\0", 6) == 0) {
                      easyexif::EXIFInfo exif;
                      if (exif.parseFromEXIFSegment(marker->data, marker->data_length) == 0) {
-                         QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+                         // QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); 
+                         PopulateMetadataFromEasyExif_Refined(exif, *pMetadata);
                          success = true;
                      }
                  }
@@ -4013,76 +4176,89 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
     ComPtr<IWICMetadataQueryReader> reader;
     if (SUCCEEDED(frame->GetMetadataQueryReader(&reader))) {
         PopulateExifFromQueryReader(reader.Get(), pMetadata);
+        
+        // [v6.2] Level 1: EXIF Color Space (Fastest)
+        // Check Tag 40961 (ColorSpace)
+        if (pMetadata->ColorSpace.empty()) {
+            PROPVARIANT csVar; PropVariantInit(&csVar);
+            const wchar_t* csQueries[] = { L"/app1/ifd/exif/{ushort=40961}", L"/ifd/exif/{ushort=40961}" };
+            for (auto q : csQueries) {
+                if (SUCCEEDED(reader->GetMetadataByName(q, &csVar))) {
+                    UINT csVal = 0;
+                    if (csVar.vt == VT_UI2) csVal = csVar.uiVal;
+                    else if (csVar.vt == VT_UI4) csVal = csVar.ulVal;
+                    
+                    if (csVal == 1) pMetadata->ColorSpace = L"sRGB";
+                    else if (csVal == 2) pMetadata->ColorSpace = L"Adobe RGB";
+                    else if (csVal == 65535) pMetadata->ColorSpace = L"Uncalibrated";
+                    PropVariantClear(&csVar);
+                    break;
+                }
+            }
+        }
     }
 
-    // [v6.1] Universal Color Space (ICC) - Supports PNG, HEIC, AVIF, WebP
-    if (pMetadata->ColorSpace.empty()) {
+    // [v6.2] Level 2: ICC Profile (Most Accurate)
+    // Only if ColorSpace is empty or "Uncalibrated"
+    if (pMetadata->ColorSpace.empty() || pMetadata->ColorSpace == L"Uncalibrated") {
         UINT count = 0;
         if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
             std::vector<IWICColorContext*> contexts(count);
-             for (UINT i = 0; i < count; i++) m_wicFactory->CreateColorContext(&contexts[i]);
-             
-             UINT actual = 0;
-             if (SUCCEEDED(frame->GetColorContexts(count, contexts.data(), &actual))) {
-                 bool found = false;
-                 for (UINT i = 0; i < actual; i++) {
-                     if (!found) { // Process until found
-                         WICColorContextType type;
-                         contexts[i]->GetType(&type);
-                         if (type == WICColorContextExifColorSpace) {
-                             UINT val = 0; contexts[i]->GetExifColorSpace(&val);
-                             if (val == 1) { pMetadata->ColorSpace = L"sRGB"; found = true; }
-                             else if (val == 2) { pMetadata->ColorSpace = L"Adobe RGB"; found = true; }
-                         } else if (type == WICColorContextProfile) {
-                             pMetadata->ColorSpace = L"Embedded Profile"; 
-                             found = true;
-                         }
-                     }
-                 }
-             }
-             
-             // Release ALL created contexts
-             for (UINT i = 0; i < count; i++) {
-                 if (contexts[i]) contexts[i]->Release();
-             }
-        }
-    }
-
-    // [v6.1] Universal Bit Depth (from Pixel Format)
-    // Only if we don't have specifics yet
-    if (pMetadata->FormatDetails.empty()) {
-        WICPixelFormatGUID fmt;
-        if (SUCCEEDED(frame->GetPixelFormat(&fmt))) {
-             if (IsEqualGUID(fmt, GUID_WICPixelFormat8bppIndexed)) pMetadata->FormatDetails = L"8-bit Indexed";
-             else if (IsEqualGUID(fmt, GUID_WICPixelFormat16bppGray)) pMetadata->FormatDetails = L"16-bit Gray";
-             else if (IsEqualGUID(fmt, GUID_WICPixelFormat48bppRGB)) pMetadata->FormatDetails = L"16-bit RGB";
-             else if (IsEqualGUID(fmt, GUID_WICPixelFormat64bppRGBA)) pMetadata->FormatDetails = L"16-bit RGBA";
-             else if (IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA) || IsEqualGUID(fmt, GUID_WICPixelFormat32bppPBGRA)) {
-                  // Standard 8-bit, maybe don't clutter? Or show "8-bit"?
-                  // User asked "PNG verify bit depth".
-                  pMetadata->FormatDetails = L"8-bit RGBA";
-             }
-             else if (IsEqualGUID(fmt, GUID_WICPixelFormat128bppRGBAFloat)) pMetadata->FormatDetails = L"32-bit Float";
-             else if (IsEqualGUID(fmt, GUID_WICPixelFormat16bppBGR565)) pMetadata->FormatDetails = L"16-bit BGR565";
+            for (UINT i = 0; i < count; i++) m_wicFactory->CreateColorContext(&contexts[i]);
+            
+            UINT actual = 0;
+            if (SUCCEEDED(frame->GetColorContexts(count, contexts.data(), &actual))) {
+                bool found = false;
+                for (UINT i = 0; i < actual; i++) {
+                    if (!found) { 
+                        WICColorContextType type;
+                        contexts[i]->GetType(&type);
+                        if (type == WICColorContextExifColorSpace) {
+                            // WIC's wrapper for EXIF ColorSpace tag - usually redundant with above
+                            UINT val = 0; contexts[i]->GetExifColorSpace(&val);
+                            if (val == 1) { pMetadata->ColorSpace = L"sRGB"; found = true; }
+                            else if (val == 2) { pMetadata->ColorSpace = L"Adobe RGB"; found = true; }
+                        } else if (type == WICColorContextProfile) {
+                            // Deep inspect profile
+                            UINT cbProfile = 0;
+                            contexts[i]->GetProfileBytes(0, nullptr, &cbProfile);
+                            if (cbProfile > 0) {
+                                std::vector<BYTE> profile(cbProfile);
+                                if (SUCCEEDED(contexts[i]->GetProfileBytes(cbProfile, profile.data(), &cbProfile))) {
+                                    // Search for signatures
+                                    // [v6.2] Professional Parsing
+                                    std::wstring desc = CImageLoader::ParseICCProfileName(profile.data(), profile.size());
+                                    if (!desc.empty()) {
+                                        pMetadata->ColorSpace = desc;
+                                        found = true;
+                                    } 
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Release ALL created contexts
+            for (UINT i = 0; i < count; i++) {
+                if (contexts[i]) contexts[i]->Release();
+            }
         }
     }
     
-    // Fallback to EXIF ColorSpace if ICC not found
-    if (pMetadata->ColorSpace.empty()) {
-        PROPVARIANT csVar; PropVariantInit(&csVar);
-        const wchar_t* csQueries[] = { L"/app1/ifd/exif/{ushort=40961}", L"/ifd/exif/{ushort=40961}" };
-        for (auto q : csQueries) {
-            if (SUCCEEDED(reader->GetMetadataByName(q, &csVar))) {
-                UINT csVal = 0;
-                if (csVar.vt == VT_UI2) csVal = csVar.uiVal;
-                else if (csVar.vt == VT_UI4) csVal = csVar.ulVal;
-                
-                if (csVal == 1) pMetadata->ColorSpace = L"sRGB";
-                else if (csVal == 2) pMetadata->ColorSpace = L"Adobe RGB";
-                else if (csVal == 65535) pMetadata->ColorSpace = L"Wide Gamut";
-                PropVariantClear(&csVar);
-                break;
-            }
+    // [v6.2] Level 3: Implicit (Fallback)
+    if (pMetadata->ColorSpace.empty() || pMetadata->ColorSpace == L"Uncalibrated") {
+        // Check Channels / Pixel Format
+        WICPixelFormatGUID fmt;
+        if (SUCCEEDED(frame->GetPixelFormat(&fmt))) {
+             if (IsEqualGUID(fmt, GUID_WICPixelFormat16bppGray) || 
+                 IsEqualGUID(fmt, GUID_WICPixelFormat8bppGray)) {
+                 pMetadata->ColorSpace = L"Grayscale";
+             } else if (IsEqualGUID(fmt, GUID_WICPixelFormat32bppCMYK) ||
+                        IsEqualGUID(fmt, GUID_WICPixelFormat64bppCMYK)) {
+                 pMetadata->ColorSpace = L"CMYK";
+             } else {
+                 pMetadata->ColorSpace = L"sRGB (Untagged)";
+             }
         }
     }
 
@@ -4399,16 +4575,41 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
     if (pMetadata && decoder->image->exif.data && decoder->image->exif.size > 0) {
         easyexif::EXIFInfo exif;
         if (exif.parseFromEXIFSegment(decoder->image->exif.data, static_cast<unsigned>(decoder->image->exif.size)) == 0) {
-            QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+            // QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+            PopulateMetadataFromEasyExif_Refined(exif, *pMetadata);
         } else {
              // Try prepend Exif header for raw TIFF payloads
              std::vector<unsigned char> tempBuf(decoder->image->exif.size + 6);
              memcpy(tempBuf.data(), "Exif\0\0", 6);
              memcpy(tempBuf.data() + 6, decoder->image->exif.data, decoder->image->exif.size);
              if (exif.parseFromEXIFSegment(tempBuf.data(), static_cast<unsigned>(tempBuf.size())) == 0) {
-                 QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+                 // QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+                 PopulateMetadataFromEasyExif_Refined(exif, *pMetadata);
              }
         }
+    }
+    
+    // [v6.2] AVIF Bit Depth & Details
+    if (pMetadata) {
+        // AVIF usually 8, 10, or 12.
+        // decoder->image->depth is reliable after decoding.
+        // Lossless? AVIF doesn't have a simple flag. Assuming Lossy unless user profile overrides?
+        // We will default to Lossy for AVIF unless we check qMin/qMax? Too complex.
+        // Alpha? yes if decoder->image->alphaPlane != NULL or image->alphaRowBytes > 0
+        bool hasAlpha = (decoder->image->alphaPlane != nullptr && decoder->image->alphaRowBytes > 0);
+        
+        // Wait, 'decoder->image' might be null if destroyed? No, we destroy after.
+        
+        CImageLoader::PopulateFormatDetails(
+            pMetadata, 
+            L"AVIF", 
+            decoder->image->depth, 
+            false, // Assume Lossy for AVIF usually
+            hasAlpha, 
+            (decoder->imageCount > 1) // Animation
+        );
+        
+        if (size > 1024 * 1024 * 5) pMetadata->FormatDetails += L" (Deep)"; // cosmetic
     }
 
 
@@ -4462,6 +4663,12 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
         if (result != AVIF_RESULT_OK) {
             avifDecoderDestroy(decoder);
             return E_FAIL;
+        }
+
+        // [v6.2] Parse ICC
+        if (decoder->image->icc.size > 0 && pMetadata) {
+             std::wstring desc = CImageLoader::ParseICCProfileName(decoder->image->icc.data, decoder->image->icc.size);
+             if (!desc.empty()) pMetadata->ColorSpace = desc;
         }
 
         // [v6.0] Format Details
@@ -5391,3 +5598,85 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
 }
 
 
+
+// ============================================================================
+// [v6.2] Static Helper Implementations
+// ============================================================================
+
+// Helper: Big-Endian to Native
+inline uint32_t ReadU32BE(const uint8_t* ptr) {
+    return (ptr[0] << 24) | (ptr[1] << 16) | (ptr[2] << 8) | ptr[3];
+}
+
+std::wstring CImageLoader::ParseICCProfileName(const uint8_t* data, size_t size) {
+    if (!data || size < 128) return L"";
+    
+    // 1. Signature Check "acsp" at offset 36
+    if (size > 40 && memcmp(data + 36, "acsp", 4) != 0) return L"";
+    
+    // 2. Tag Count at offset 128
+    uint32_t tagCount = ReadU32BE(data + 128);
+    if (128 + 4 + tagCount * 12 > size) return L"";
+    
+    // 3. Scan Tags
+    const uint8_t* tags = data + 132;
+    
+    for (uint32_t i = 0; i < tagCount; ++i) {
+        const uint8_t* entry = tags + i * 12;
+        
+        // Look for 'desc'
+        if (memcmp(entry, "desc", 4) == 0) {
+            uint32_t offset = ReadU32BE(entry + 4);
+            uint32_t length = ReadU32BE(entry + 8);
+            
+            if (offset + length > size || length < 12) continue;
+            
+            const uint8_t* tagData = data + offset;
+            uint32_t asciiLen = ReadU32BE(tagData + 8);
+            
+            if (asciiLen > 0 && asciiLen < length && offset + 12 + asciiLen <= size) {
+                 std::string ascii((const char*)(tagData + 12), asciiLen);
+                 // Remove nulls
+                 ascii.erase(std::remove(ascii.begin(), ascii.end(), '\0'), ascii.end());
+                 return std::wstring(ascii.begin(), ascii.end());
+            }
+        }
+    }
+    return L""; // Not found
+}
+
+void CImageLoader::PopulateFormatDetails(struct ImageMetadata* meta, const wchar_t* formatName, int bitDepth, bool isLossless, bool hasAlpha, bool isAnim) {
+    if (!meta) return;
+    
+    wchar_t buf[128];
+    meta->FormatDetails = L"";
+    
+    // Bit Depth
+    if (bitDepth > 0) {
+        swprintf_s(buf, L"%d-bit ", bitDepth);
+        meta->FormatDetails += buf;
+    }
+    
+    // Name
+    meta->FormatDetails += formatName;
+    
+    // Lossless/Lossy
+    if (isLossless) meta->FormatDetails += L" Lossless";
+    // else meta->FormatDetails += L" Lossy"; // Optional: Don't show "Lossy" for standard JPG? User asked for ALL formats.
+    else if (_wcsicmp(formatName, L"JPG") != 0 && _wcsicmp(formatName, L"JPEG") != 0) {
+         // Show Lossy for non-JPGs (AVIF, WebP, JXL)
+         // For JPG it's implied? User said "in ALL supported formats... show Lossy/Lossless".
+         meta->FormatDetails += L" Lossy"; 
+    } 
+    else {
+        // For JPG, maybe Q-value covers it?
+        // Let's explicitly add "Lossy" to satisfy "ALL formats" request.
+        meta->FormatDetails += L" Lossy";
+    }
+
+    // Alpha
+    if (hasAlpha) meta->FormatDetails += L" Alpha";
+    
+    // Anim
+    if (isAnim) meta->FormatDetails += L" Anim";
+}

@@ -635,6 +635,12 @@ int easyexif::EXIFInfo::parseFromEXIFSegment(const unsigned char *buf,
             this->FocalLength = result.val_rational().front();
           break;
 
+        case 0xa405:
+            // Focal length in 35mm film (Short)
+            if (result.format() == 3 && result.val_short().size())
+                this->LensInfo.FocalLengthIn35mm = result.val_short().front();
+            break;
+
         case 0x9207:
           // Metering mode
           if (result.format() == 3 && result.val_short().size())
@@ -690,11 +696,7 @@ int easyexif::EXIFInfo::parseFromEXIFSegment(const unsigned char *buf,
             }
             break;
 
-        case 0xa405:
-          // Focal length in 35mm film
-          if (result.format() == 3 && result.val_short().size())
-            this->FocalLengthIn35mm = result.val_short().front();
-          break;
+
 
         case 0xa432:
           // Focal length and FStop.

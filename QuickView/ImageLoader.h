@@ -20,6 +20,9 @@ public:
     /// Initialize loader
     /// </summary>
     HRESULT Initialize(IWICImagingFactory* wicFactory);
+
+
+
     
     // [v4.0] Infrastructure: Atomic Cancellation Predicate
     using CancelPredicate = std::function<bool()>;
@@ -33,6 +36,7 @@ public:
         std::wstring Aperture; // e.g. "f/2.8"
         std::wstring Shutter;  // e.g. "1/500s"
         std::wstring Focal;    // e.g. "50mm"
+        std::wstring Focal35mm; // e.g. "75mm" (35mm equivalent)
         std::wstring ExposureBias; // e.g. "+0.3 EV"
         std::wstring Flash;        // New: Flash status
         std::wstring WhiteBalance;    // [v5.5] Auto/Manual
@@ -88,6 +92,10 @@ public:
             return s;
         }
     };
+
+    // [v6.2] Static Helpers (Defined here to see ImageMetadata)
+    static std::wstring ParseICCProfileName(const uint8_t* data, size_t size);
+    static void PopulateFormatDetails(struct ImageMetadata* meta, const wchar_t* formatName, int bitDepth, bool isLossless, bool hasAlpha, bool isAnim);
 
     // --- NEW: Raw Thumbnail Data (Zero-Copy flow) ---
     struct ThumbData {
