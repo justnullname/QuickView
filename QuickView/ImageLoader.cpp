@@ -41,6 +41,9 @@
 // Forward declaration
 static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer);
 
+// [v6.3] Forward Declaration for JXL Helper
+static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c);
+
 std::mutex CImageLoader::s_jxlRunnerMutex;
 void* CImageLoader::s_jxlRunner = nullptr;
 
@@ -4120,19 +4123,54 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
                     if (status == JXL_DEC_ERROR || status == JXL_DEC_SUCCESS) break;
                     if (status == JXL_DEC_NEED_MORE_INPUT) break; // 256KB exhausted
                     
-                    /* [v6.3] Disabled: libjxl version too old (missing JXL_DEC_COLOR_ENCODING)
-                    if (status == JXL_DEC_COLOR_ENCODING) {
+                    if (status == JXL_DEC_BASIC_INFO) {
+                        JxlBasicInfo info = {};
+                        if (JXL_DEC_SUCCESS == JxlDecoderGetBasicInfo(dec, &info)) {
+                             // Debug logging
+                             wchar_t buf[128];
+                             swprintf_s(buf, L"[JXL] BasicInfo: %ux%u, Bits=%u, Exp=%u, Alpha=%u, P3=%u\n", 
+                                 info.xsize, info.ysize, info.bits_per_sample, 
+                                 info.exponent_bits_per_sample, info.num_extra_channels, 
+                                 info.uses_original_profile);
+                             OutputDebugStringW(buf);
+                             pMetadata->Width = info.xsize;
+                             pMetadata->Height = info.ysize;
+                             
+                             // Detect Bit Depth (approximate, JXL stores bits_per_sample)
+                             int bitDepth = info.bits_per_sample;
+                             if (info.exponent_bits_per_sample > 0) bitDepth = 32; // Float usually 32-bit container
+                             
+                             bool hasAlpha = (info.num_extra_channels > 0); // Simplification: extra channels *usually* alpha
+                             bool isLossless = (info.uses_original_profile == JXL_TRUE); 
+                             // Not strictly true (Modular Squeeze can use original profile but be lossy), 
+                             // but "uses_original_profile" is the best proxy for "Not transformed to XYB".
+                             // True Lossless in JXL is complex. For UI, "Lossless" usually implies "Arithmetic/Modular mode without XYB".
+                             
+                             CImageLoader::PopulateFormatDetails(pMetadata, L"JXL", bitDepth, isLossless, hasAlpha, false); 
+                             success = true; // [v6.3] Mark as successful
+                        }
+                    }
+                    else if (status == JXL_DEC_COLOR_ENCODING) {
                          size_t iccSize = 0;
                          if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &iccSize) && iccSize > 0) {
                              std::vector<uint8_t> icc(iccSize);
                              if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsICCProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA, icc.data(), iccSize)) {
                                  pMetadata->HasEmbeddedColorProfile = true;
-                                 std::wstring desc = CImageLoader::ParseICCProfileName(icc.data(), icc.size);
+                                 std::wstring desc = CImageLoader::ParseICCProfileName(icc.data(), icc.size());
+                                 
+                                 // [v6.3] Fallback: Parse Structured Color Encoding (e.g. for P3/HLG/PQ where ICC name is missing)
+                                 if (desc.empty()) {
+                                      JxlColorEncoding enc;
+                                      if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA, &enc)) {
+                                          desc = ParseJXLColorEncoding(enc);
+                                      }
+                                 }
+                                 
                                  if (!desc.empty()) pMetadata->ColorSpace = desc;
                              }
                          }
                     }
-                    else */ if (status == JXL_DEC_BOX) {
+                    else if (status == JXL_DEC_BOX) {
                         JxlBoxType t;
                         if (JXL_DEC_SUCCESS == JxlDecoderGetBoxType(dec, t, JXL_TRUE)) {
                             if (memcmp(t, "Exif", 4) == 0) {
@@ -4309,8 +4347,13 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
                         IsEqualGUID(fmt, GUID_WICPixelFormat64bppCMYK)) {
                  pMetadata->ColorSpace = L"CMYK";
              } else {
-                 pMetadata->ColorSpace = L"sRGB (Untagged)";
-             }
+                  // [v6.3] Do NOT label as "Untagged" if we know there is an embedded profile whose name we just couldn't parse.
+                  if (pMetadata->HasEmbeddedColorProfile) {
+                      pMetadata->ColorSpace = L"Embedded Profile"; 
+                  } else {
+                      pMetadata->ColorSpace = L"sRGB (Untagged)";
+                  }
+              }
         }
     }
 
@@ -5692,10 +5735,51 @@ std::wstring CImageLoader::ParseICCProfileName(const uint8_t* data, size_t size)
                  ascii.erase(std::remove(ascii.begin(), ascii.end(), '\0'), ascii.end());
                  return std::wstring(ascii.begin(), ascii.end());
             }
+             }
         }
-    }
+
     return L""; // Not found
 }
+
+// Helper: Parse JXL Color Encoding enum
+static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c) {
+    if (c.color_space == JXL_COLOR_SPACE_GRAY) return L"Grayscale";
+    if (c.color_space == JXL_COLOR_SPACE_XYB) return L"XYB";
+    if (c.color_space != JXL_COLOR_SPACE_RGB) return L""; // Unknown
+
+    std::wstring primaries;
+    switch (c.primaries) {
+        case JXL_PRIMARIES_SRGB: primaries = L"sRGB"; break;
+        case JXL_PRIMARIES_P3: primaries = L"Display P3"; break;
+        case JXL_PRIMARIES_2100: primaries = L"Rec.2100"; break;
+        default: break;
+    }
+
+    std::wstring transfer;
+    switch (c.transfer_function) {
+        case JXL_TRANSFER_FUNCTION_SRGB: transfer = L"sRGB"; break;
+        case JXL_TRANSFER_FUNCTION_LINEAR: transfer = L"Linear"; break;
+        case JXL_TRANSFER_FUNCTION_PQ: transfer = L"PQ"; break;
+        case JXL_TRANSFER_FUNCTION_HLG: transfer = L"HLG"; break;
+        case JXL_TRANSFER_FUNCTION_709: transfer = L"Rec.709"; break;
+        case JXL_TRANSFER_FUNCTION_DCI: transfer = L"DCI"; break;
+        default: break;
+    }
+
+    // Combine logic
+    if (primaries == L"sRGB" && transfer == L"sRGB") return L"sRGB";
+    if (primaries == L"Display P3" && transfer == L"sRGB") return L"Display P3";
+    if (primaries.empty() && transfer.empty()) return L"";
+
+    // Generic formatting
+    std::wstring result = primaries.empty() ? L"Custom" : primaries;
+    if (!transfer.empty() && transfer != L"sRGB") { // Assume sRGB transfer is default/implied for many
+        result += L" (" + transfer + L")";
+    }
+    return result;
+}
+
+// ============================================================================
 
 void CImageLoader::PopulateFormatDetails(struct ImageMetadata* meta, const wchar_t* formatName, int bitDepth, bool isLossless, bool hasAlpha, bool isAnim) {
     if (!meta) return;

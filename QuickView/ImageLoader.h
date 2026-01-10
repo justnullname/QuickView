@@ -98,7 +98,10 @@ public:
 
     // [v6.2] Static Helpers (Defined here to see ImageMetadata)
     static std::wstring ParseICCProfileName(const uint8_t* data, size_t size);
+    
+    // [v6.3] Helper to populate FormatDetails string
     static void PopulateFormatDetails(struct ImageMetadata* meta, const wchar_t* formatName, int bitDepth, bool isLossless, bool hasAlpha, bool isAnim);
+
 
     // --- NEW: Raw Thumbnail Data (Zero-Copy flow) ---
     struct ThumbData {

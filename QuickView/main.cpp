@@ -4093,8 +4093,12 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.MeteringMode.empty()) g_currentMetadata.MeteringMode = evt.metadata.MeteringMode;
                  if (!evt.metadata.ExposureProgram.empty()) g_currentMetadata.ExposureProgram = evt.metadata.ExposureProgram;
                  if (!evt.metadata.ColorSpace.empty()) g_currentMetadata.ColorSpace = evt.metadata.ColorSpace;
-                 // [Phase 18 Fix] Async ICC Flag Propagation
+                 if (!evt.metadata.ColorSpace.empty()) g_currentMetadata.ColorSpace = evt.metadata.ColorSpace;
                  if (evt.metadata.HasEmbeddedColorProfile) g_currentMetadata.HasEmbeddedColorProfile = true;
+                 
+                 // [v6.3] Propagate Format Details & Format
+                 if (!evt.metadata.FormatDetails.empty()) g_currentMetadata.FormatDetails = evt.metadata.FormatDetails;
+                 if (!evt.metadata.Format.empty()) g_currentMetadata.Format = evt.metadata.Format;
                  
                  // GPS (Atomic update)
                  if (evt.metadata.HasGPS) {
