@@ -258,11 +258,17 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 #include <jxl/resizable_parallel_runner.h>
 #include <jxl/thread_parallel_runner.h>
 #include <libraw/libraw.h>   // libraw
+#include <wincodec.h>
 
 #include <string>
 #include <algorithm>
 #include <vector>
-#include <thread> // For hardware_concurrency
+#include <sstream>
+#include <iomanip>
+#include "exif.h"
+#include <immintrin.h> // [AVX2]
+ // [v6.0] EasyExif
+#include "ImageEngine.h"
 
 // Wuffs (Google's memory-safe decoder)
 // Implementation is in WuffsImpl.cpp with selective module loading
@@ -1003,11 +1009,95 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
 #endif // Debris Deletion End
 
 namespace QuickView {
+// [v6.0] Helper for EasyExif population
+static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageLoader::ImageMetadata& meta) {
+     auto toW = [](const std::string& s) -> std::wstring {
+         if (s.empty()) return L"";
+         int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, NULL, 0);
+         if (len <= 0) return L"";
+         std::wstring w(len - 1, 0);
+         MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], len);
+         return w;
+     };
+     
+     if (!exif.Make.empty()) meta.Make = toW(exif.Make);
+     if (!exif.Model.empty()) meta.Model = toW(exif.Model);
+     if (!exif.DateTimeOriginal.empty()) meta.Date = toW(exif.DateTimeOriginal);
+     else if (!exif.DateTime.empty()) meta.Date = toW(exif.DateTime);
+     
+     if (exif.ISOSpeedRatings > 0) meta.ISO = std::to_wstring(exif.ISOSpeedRatings);
+     
+     if (exif.ExposureTime > 0.0) {
+         wchar_t buf[32];
+         if (exif.ExposureTime >= 1.0) swprintf_s(buf, L"%.1fs", exif.ExposureTime);
+         else swprintf_s(buf, L"1/%.0fs", 1.0/exif.ExposureTime);
+         meta.Shutter = buf;
+     }
+     
+     if (exif.FNumber > 0.0) {
+         wchar_t buf[32]; swprintf_s(buf, L"f/%.1f", exif.FNumber);
+         meta.Aperture = buf;
+     }
+     
+     if (exif.FocalLength > 0.0) {
+         wchar_t buf[32]; swprintf_s(buf, L"%.0fmm", exif.FocalLength);
+         meta.Focal = buf;
+     }
+     
+     if (exif.Flash & 1) meta.Flash = L"Flash: On";
+     else if (exif.Flash == 0) meta.Flash = L"Flash: Off";
+     
+     if (!exif.Software.empty()) meta.Software = toW(exif.Software);
+     if (!exif.LensInfo.Model.empty()) meta.Lens = toW(exif.LensInfo.Model);
+
+     // [v6.0] Color Space
+     if (exif.ColorSpace == 1) meta.ColorSpace = L"sRGB";
+     else if (exif.ColorSpace == 2) meta.ColorSpace = L"Adobe RGB";
+     else if (exif.ColorSpace == 65535) meta.ColorSpace = L"Uncalibrated";
+}
+
     namespace Codec {
         namespace WebP {
-
+            // Needs: #include <webp/demux.h> if not already included via header chain? 
+            // Actually QuickView uses libwebp/src/webp/demux.h usually or similar.
+            // Let's assume headers are available via pch or similar.
+            // If not, we might need to include it.
+            
             static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 if (!data || size == 0) return E_FAIL;
+
+                // [v6.0] WebP Exif Extraction using WebPDemux
+                {
+                    WebPData webpData = { data, size };
+                    WebPDemuxer* demux = WebPDemux(&webpData);
+                    if (demux) {
+                        WebPChunkIterator chunk;
+                        if (WebPDemuxGetChunk(demux, "EXIF", 1, &chunk)) {
+                             easyexif::EXIFInfo exif;
+                             // Note: WebP EXIF chunk usually contains "Exif\0\0" header? Or raw TIFF?
+                             // EasyExif handles raw TIFF if we skip "Exif\0\0" check?
+                             // parseFromEXIFSegment expects "Exif\0\0" at start usually.
+                             // WebP spec: "The payload of the 'EXIF' chunk consists of the Exif metadata... conforming to the TIFF specification."
+                             // It usually starts directly with TIFF header (II/MM).
+                             // Make wrapper:
+                             if (exif.parseFromEXIFSegment(chunk.chunk.bytes, static_cast<unsigned>(chunk.chunk.size)) != 0) {
+                                 // Try parsing as raw TIFF (prepend "Exif\0\0" dummy?)
+                                 // EasyExif::parseFromEXIFSegment *checks* for "Exif\0\0".
+                                 // We might need to construct a temp buffer.
+                                 std::vector<unsigned char> tempBuf(chunk.chunk.size + 6);
+                                 memcpy(tempBuf.data(), "Exif\0\0", 6);
+                                 memcpy(tempBuf.data() + 6, chunk.chunk.bytes, chunk.chunk.size);
+                                 if (exif.parseFromEXIFSegment(tempBuf.data(), static_cast<unsigned>(tempBuf.size())) == 0) {
+                                     PopulateMetadataFromEasyExif(exif, result.metadata);
+                                 }
+                             } else {
+                                 PopulateMetadataFromEasyExif(exif, result.metadata);
+                             }
+                             WebPDemuxReleaseChunkIterator(&chunk);
+                        }
+                        WebPDemuxDelete(demux);
+                    }
+                }
 
                 WebPDecoderConfig config;
                 if (!WebPInitDecoderConfig(&config)) return E_FAIL;
@@ -1017,6 +1107,14 @@ namespace QuickView {
 
                 if (WebPGetFeatures(data, size, &config.input) != VP8_STATUS_OK) return E_FAIL;
                 
+                // [v6.0] Format Details
+                if (config.input.format == 2) result.metadata.FormatDetails = L"Lossless";
+                else if (config.input.format == 1) result.metadata.FormatDetails = L"Lossy";
+                else result.metadata.FormatDetails = L"WebP";
+                
+                if (config.input.has_animation) result.metadata.FormatDetails += L" Anim";
+                if (config.input.has_alpha) result.metadata.FormatDetails += L" Alpha";
+
                 // 1. Animated WebP
                 if (config.input.has_animation) {
                     WebPData webpData = { data, size };
@@ -1749,9 +1847,57 @@ namespace QuickView {
                 jpeg_create_decompress(&cinfo);
                 jpeg_mem_src(&cinfo, pBuf, (unsigned long)bufSize);
 
+                // [v6.0] Exif Marker Persistence for EasyExif
+                jpeg_save_markers(&cinfo, JPEG_APP0 + 1, 0xFFFF);
+
                 if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
                     jpeg_destroy_decompress(&cinfo);
                     return E_FAIL;
+                }
+                
+                // [v6.0] Parse EXIF Marker (Native)
+                for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {
+                    if (marker->marker == JPEG_APP0 + 1 && marker->data_length >= 6 && memcmp(marker->data, "Exif\0\0", 6) == 0) {
+                        easyexif::EXIFInfo exif;
+                        if (exif.parseFromEXIFSegment(marker->data, marker->data_length) == 0) {
+                             QuickView::PopulateMetadataFromEasyExif(exif, result.metadata);
+                        }
+                        break; // Found it
+                    }
+                }
+
+                // [v6.0] Fill FormatDetails (Q + Subsampling)
+                {
+                    // Estimate Quality
+                    int q = GetJpegQualityFromBuffer(pBuf, bufSize);
+                    
+                    // Determine Subsampling
+                    std::wstring sub = L"";
+                    if (cinfo.num_components == 3) {
+                        int h0 = cinfo.comp_info[0].h_samp_factor;
+                        int v0 = cinfo.comp_info[0].v_samp_factor;
+                        int h1 = cinfo.comp_info[1].h_samp_factor;
+                        int v1 = cinfo.comp_info[1].v_samp_factor;
+                        int h2 = cinfo.comp_info[2].h_samp_factor;
+                        int v2 = cinfo.comp_info[2].v_samp_factor;
+
+                        if (h0 == 2 && v0 == 2 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1) sub = L"4:2:0";
+                        else if (h0 == 2 && v0 == 1 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1) sub = L"4:2:2";
+                        else if (h0 == 1 && v0 == 1 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1) sub = L"4:4:4";
+                        else sub = L"4:4:0"; // Approximation for others
+                    } else if (cinfo.num_components == 1) {
+                        sub = L"Gray";
+                    }
+
+                    wchar_t fmtBuf[64];
+                    if (q > 0) swprintf_s(fmtBuf, L"%s Q=%d", sub.c_str(), q);
+                    else swprintf_s(fmtBuf, L"%s", sub.c_str());
+                    result.metadata.FormatDetails = fmtBuf;
+                    
+                    // Progressive?
+                    if (jpeg_has_multiple_scans(&cinfo)) {
+                         result.metadata.FormatDetails += L" Prog";
+                    }
                 }
 
                 // IDCT Scaling Logic
@@ -2385,23 +2531,63 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
         if (!ReadAll(filePath, fileBuf)) return E_FAIL;
         
         // Dispatch
-        if (fmt == L"JPEG") {
+        if (fmt == L"AVIF") {
+            CImageLoader::ThumbData tmp;
+            HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(fileBuf.data(), fileBuf.size(), 0, &tmp, false, &result.metadata);
+            if (SUCCEEDED(hr) && tmp.isValid) {
+                 // Copy from ThumbData to DecodeResult
+                 // Need to account for stride
+                 result.width = tmp.width;
+                 result.height = tmp.height;
+                 result.stride = tmp.stride;
+                 size_t bufSize = (size_t)tmp.stride * tmp.height;
+                 result.pixels = ctx.allocator(bufSize);
+                 if (result.pixels) {
+                     memcpy(result.pixels, tmp.pixels.data(), bufSize);
+                     result.metadata.LoaderName = L"libavif (Unified)"; 
+                     return S_OK;
+                 }
+                 return E_OUTOFMEMORY;
+            }
+        }
+        else if (fmt == L"JXL") {
+             CImageLoader::ThumbData tmp;
+             HRESULT hr = CImageLoader::LoadThumbJXL_DC(fileBuf.data(), fileBuf.size(), &tmp, &result.metadata);
+             if (SUCCEEDED(hr) && tmp.isValid) {
+                 result.width = tmp.width;
+                 result.height = tmp.height;
+                 result.stride = tmp.stride;
+                 size_t bufSize = (size_t)tmp.stride * tmp.height;
+                 result.pixels = ctx.allocator(bufSize);
+                 if (result.pixels) {
+                     memcpy(result.pixels, tmp.pixels.data(), bufSize);
+                     result.metadata.LoaderName = L"libjxl (Unified)"; 
+                     return S_OK;
+                 }
+                 return E_OUTOFMEMORY;
+             }
+        }
+        else if (fmt == L"WebP") {
+             // WebP Loader already accepts DecodeResult directly
+             HRESULT hr = QuickView::Codec::WebP::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             if (SUCCEEDED(hr)) {
+                 result.metadata.LoaderName = L"WebP (Unified)";
+                 return S_OK;
+             }
+        }
+        else if (fmt == L"JPEG") {
             HRESULT hr = JPEG::Load(fileBuf.data(), fileBuf.size(), ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"TurboJPEG (Unified)"; return S_OK; }
         }
-        if (fmt == L"WebP") {
-            HRESULT hr = WebP::Load(fileBuf.data(), fileBuf.size(), ctx, result);
-            if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"libwebp (Unified)"; return S_OK; }
-        }
-        if (fmt == L"PNG") {
+        else if (fmt == L"PNG") {
             HRESULT hr = Wuffs::LoadPNG(fileBuf.data(), fileBuf.size(), ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs PNG (Unified)"; return S_OK; }
         }
-        if (fmt == L"GIF") {
+        else if (fmt == L"GIF") {
             HRESULT hr = Wuffs::LoadGIF(fileBuf.data(), fileBuf.size(), ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs GIF (Unified)"; return S_OK; }
         }
-        if (fmt == L"BMP") {
+        else if (fmt == L"BMP") {
             HRESULT hr = Wuffs::LoadBMP(fileBuf.data(), fileBuf.size(), ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs BMP (Unified)"; return S_OK; }
         }
@@ -3618,17 +3804,173 @@ static void PopulateFileStats(LPCWSTR filePath, CImageLoader::ImageMetadata* met
     }
 }
 
+// [v6.0] Async Native Helper (Header-Only, No Pixel Decode)
+static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata* pMetadata) {
+    if (!filePath || !pMetadata) return false;
+    
+    // Read Header (256KB should cover most Exif)
+    std::vector<uint8_t> header(256 * 1024); 
+    size_t actualSize = PeekHeader(filePath, header.data(), header.size());
+    if (actualSize == 0) return false;
+    header.resize(actualSize);
+    
+    // 1. JPEG
+    if (header.size() > 2 && header[0] == 0xFF && header[1] == 0xD8) {
+        struct my_error_mgr { struct jpeg_error_mgr pub; jmp_buf setjmp_buffer; };
+        auto my_error_exit = [](j_common_ptr cinfo) {
+            my_error_mgr* myerr = (my_error_mgr*)cinfo->err;
+            longjmp(myerr->setjmp_buffer, 1);
+        };
+        struct jpeg_decompress_struct cinfo;
+        struct my_error_mgr jerr;
+        cinfo.err = jpeg_std_error(&jerr.pub);
+        jerr.pub.error_exit = my_error_exit;
+        
+        if (setjmp(jerr.setjmp_buffer)) { jpeg_destroy_decompress(&cinfo); return false; }
+        
+        jpeg_create_decompress(&cinfo);
+        jpeg_mem_src(&cinfo, header.data(), (unsigned long)header.size());
+        jpeg_save_markers(&cinfo, JPEG_APP0 + 1, 0xFFFF);
+        
+        bool success = false;
+        if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+             for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {
+                 if (marker->marker == JPEG_APP0 + 1 && marker->data_length >= 6 && memcmp(marker->data, "Exif\0\0", 6) == 0) {
+                     easyexif::EXIFInfo exif;
+                     if (exif.parseFromEXIFSegment(marker->data, marker->data_length) == 0) {
+                         QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+                         success = true;
+                     }
+                 }
+             }
+        }
+        jpeg_destroy_decompress(&cinfo);
+        return success;
+    }
+    
+    // 2. WebP
+    else if (header.size() > 12 && memcmp(header.data(), "RIFF", 4) == 0 && memcmp(header.data() + 8, "WEBP", 4) == 0) {
+        WebPData webpData = { header.data(), header.size() };
+        WebPDemuxer* demux = WebPDemux(&webpData);
+        bool success = false;
+        if (demux) {
+            WebPChunkIterator chunk;
+            if (WebPDemuxGetChunk(demux, "EXIF", 1, &chunk)) {
+                 easyexif::EXIFInfo exif;
+                 if (exif.parseFromEXIFSegment(chunk.chunk.bytes, static_cast<unsigned>(chunk.chunk.size)) == 0) {
+                     QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true;
+                 } else {
+                     std::vector<unsigned char> t(chunk.chunk.size + 6);
+                     memcpy(t.data(), "Exif\0\0", 6); memcpy(t.data() + 6, chunk.chunk.bytes, chunk.chunk.size);
+                     if (exif.parseFromEXIFSegment(t.data(), static_cast<unsigned>(t.size())) == 0) { QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true; }
+                 }
+                 WebPDemuxReleaseChunkIterator(&chunk);
+            }
+            WebPDemuxDelete(demux);
+        }
+        return success;
+    }
+    
+    // 3. AVIF (ftyp avif/heic) - libavif header parse
+    else if (header.size() > 12 && memcmp(header.data() + 4, "ftyp", 4) == 0) {
+        avifDecoder* decoder = avifDecoderCreate();
+        if (decoder) {
+            bool success = false;
+            // Note: avifDecoderSetIOMemory uses reader which might try to read more than available?
+            // If we only provide 256KB, parser might fail if file is larger and boxes are far?
+            // "rodata.size" is buffer size. AVIF parser respects it. 
+            // If it returns AVIF_RESULT_TRUNCATED_DATA, we fail gracefully.
+            if (avifDecoderSetIOMemory(decoder, header.data(), header.size()) == AVIF_RESULT_OK) {
+                decoder->ignoreXMP = AVIF_TRUE;
+                if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
+                    if (decoder->image->exif.size > 0 && decoder->image->exif.data) {
+                        easyexif::EXIFInfo exif;
+                        if (exif.parseFromEXIFSegment(decoder->image->exif.data, static_cast<unsigned>(decoder->image->exif.size)) == 0) {
+                            QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true;
+                        } else {
+                            std::vector<unsigned char> t(decoder->image->exif.size + 6);
+                            memcpy(t.data(), "Exif\0\0", 6); memcpy(t.data() + 6, decoder->image->exif.data, decoder->image->exif.size);
+                            if (exif.parseFromEXIFSegment(t.data(), static_cast<unsigned>(t.size())) == 0) { QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true; }
+                        }
+                    }
+                }
+            }
+            avifDecoderDestroy(decoder);
+            return success;
+        }
+    }
+    
+    // 4. JXL (Signature check FF 0A or 00 00 00 0C JXL)
+    else if (header.size() > 12 && ((header[0]==0xFF && header[1]==0x0A) || (header.size()>12 && memcmp(header.data()+4, "JXL ", 4)==0))) {
+        JxlDecoder* dec = JxlDecoderCreate(NULL);
+        if (!dec) return false;
+        
+        bool success = false;
+        auto runner = CImageLoader::GetJxlRunner();
+        JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
+        
+        if (JXL_DEC_SUCCESS == JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_BOX)) {
+            if (JXL_DEC_SUCCESS == JxlDecoderSetInput(dec, header.data(), header.size())) {
+                std::vector<uint8_t> ex;
+                bool reading = false;
+                for (;;) {
+                    JxlDecoderStatus status = JxlDecoderProcessInput(dec);
+                    if (status == JXL_DEC_ERROR || status == JXL_DEC_SUCCESS) break;
+                    if (status == JXL_DEC_NEED_MORE_INPUT) break; // 256KB exhausted
+                    
+                    if (status == JXL_DEC_BOX) {
+                        JxlBoxType t;
+                        if (JXL_DEC_SUCCESS == JxlDecoderGetBoxType(dec, t, JXL_TRUE)) {
+                            if (memcmp(t, "Exif", 4) == 0) {
+                                ex.resize(65536);
+                                JxlDecoderSetBoxBuffer(dec, ex.data(), ex.size());
+                                reading = true;
+                            } else reading = false;
+                        }
+                    } else if (reading && status != JXL_DEC_BOX_NEED_MORE_OUTPUT) {
+                        // Finished box
+                        size_t rem = JxlDecoderReleaseBoxBuffer(dec);
+                        size_t size = ex.size() - rem;
+                        if (size > 0) {
+                            easyexif::EXIFInfo exif;
+                            if (exif.parseFromEXIFSegment(ex.data(), static_cast<unsigned>(size)) == 0) { QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true; }
+                            else {
+                                std::vector<unsigned char> tmp(size + 6);
+                                memcpy(tmp.data(), "Exif\0\0", 6); memcpy(tmp.data()+6, ex.data(), size);
+                                if (exif.parseFromEXIFSegment(tmp.data(), static_cast<unsigned>(tmp.size())) == 0) { QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata); success = true; }
+                            }
+                        }
+                        break; // Found it
+                    }
+                }
+            }
+        }
+        JxlDecoderDestroy(dec);
+        return success;
+    }
+
+    return false;
+}
+
 HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, bool clear) {
     if (!filePath || !pMetadata) return E_INVALIDARG;
     if (clear) *pMetadata = {}; 
     
+    // [v5.3] Read File Stats (Size/Date) - ALWAYS read this first
+    PopulateFileStats(filePath, pMetadata);
+
+    // [v6.0] Try Native parsers first (Faster & No WIC dependency for JXL/AVIF)
+    if (TryReadMetadataNative(filePath, pMetadata)) {
+        return S_OK;
+    }
+    
     // 1. Detect Format (if missing)
+
     if (pMetadata->Format.empty()) {
         pMetadata->Format = DetectFormatFromContent(filePath);
     }
     
-    // [v5.3] Read File Stats (Size/Date)
-    PopulateFileStats(filePath, pMetadata);
+    // File Stats already populated above
     
     // 2. Dispatch
     if (pMetadata->Format == L"Raw" || pMetadata->Format == L"Unknown") {
@@ -3671,6 +4013,58 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
     ComPtr<IWICMetadataQueryReader> reader;
     if (SUCCEEDED(frame->GetMetadataQueryReader(&reader))) {
         PopulateExifFromQueryReader(reader.Get(), pMetadata);
+    }
+
+    // [v6.1] Universal Color Space (ICC) - Supports PNG, HEIC, AVIF, WebP
+    if (pMetadata->ColorSpace.empty()) {
+        UINT count = 0;
+        if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
+            std::vector<IWICColorContext*> contexts(count);
+             for (UINT i = 0; i < count; i++) m_wicFactory->CreateColorContext(&contexts[i]);
+             
+             UINT actual = 0;
+             if (SUCCEEDED(frame->GetColorContexts(count, contexts.data(), &actual))) {
+                 bool found = false;
+                 for (UINT i = 0; i < actual; i++) {
+                     if (!found) { // Process until found
+                         WICColorContextType type;
+                         contexts[i]->GetType(&type);
+                         if (type == WICColorContextExifColorSpace) {
+                             UINT val = 0; contexts[i]->GetExifColorSpace(&val);
+                             if (val == 1) { pMetadata->ColorSpace = L"sRGB"; found = true; }
+                             else if (val == 2) { pMetadata->ColorSpace = L"Adobe RGB"; found = true; }
+                         } else if (type == WICColorContextProfile) {
+                             pMetadata->ColorSpace = L"Embedded Profile"; 
+                             found = true;
+                         }
+                     }
+                 }
+             }
+             
+             // Release ALL created contexts
+             for (UINT i = 0; i < count; i++) {
+                 if (contexts[i]) contexts[i]->Release();
+             }
+        }
+    }
+
+    // [v6.1] Universal Bit Depth (from Pixel Format)
+    // Only if we don't have specifics yet
+    if (pMetadata->FormatDetails.empty()) {
+        WICPixelFormatGUID fmt;
+        if (SUCCEEDED(frame->GetPixelFormat(&fmt))) {
+             if (IsEqualGUID(fmt, GUID_WICPixelFormat8bppIndexed)) pMetadata->FormatDetails = L"8-bit Indexed";
+             else if (IsEqualGUID(fmt, GUID_WICPixelFormat16bppGray)) pMetadata->FormatDetails = L"16-bit Gray";
+             else if (IsEqualGUID(fmt, GUID_WICPixelFormat48bppRGB)) pMetadata->FormatDetails = L"16-bit RGB";
+             else if (IsEqualGUID(fmt, GUID_WICPixelFormat64bppRGBA)) pMetadata->FormatDetails = L"16-bit RGBA";
+             else if (IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA) || IsEqualGUID(fmt, GUID_WICPixelFormat32bppPBGRA)) {
+                  // Standard 8-bit, maybe don't clutter? Or show "8-bit"?
+                  // User asked "PNG verify bit depth".
+                  pMetadata->FormatDetails = L"8-bit RGBA";
+             }
+             else if (IsEqualGUID(fmt, GUID_WICPixelFormat128bppRGBAFloat)) pMetadata->FormatDetails = L"32-bit Float";
+             else if (IsEqualGUID(fmt, GUID_WICPixelFormat16bppBGR565)) pMetadata->FormatDetails = L"16-bit BGR565";
+        }
     }
     
     // Fallback to EXIF ColorSpace if ICC not found
@@ -3867,18 +4261,102 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
     int stride = frame.stride;
     
     // Assume BGRA8888 (standard for RawImageFrame)
+    // Assume BGRA8888 (standard for RawImageFrame)
     for (UINT y = 0; y < frame.height; y += stepY) {
         const uint8_t* row = ptr + (UINT64)y * stride;
-        for (UINT x = 0; x < frame.width; x++) {
-            // Unrolling or SIMD could be added here, but scalar is fast enough with skip sampling.
-            // Layout: B, G, R, A
-            uint8_t b = row[x * 4 + 0];
-            uint8_t g = row[x * 4 + 1];
-            uint8_t r = row[x * 4 + 2];
+        UINT x = 0;
+    
+        // [AVX2] SIMD Optimization for Luminance Calculation
+        // Process 8 pixels at a time
+        const UINT width8 = frame.width & ~7; // Align to 8
+    
+        // Constants for Luminance: (R*299 + G*587 + B*114) / 1000
+        // We use integer arithmetic. 8-bit * 16-bit coeff fits in 32-bit sum.
+        // 0000 012B 024B 0072 (A R G B in Little Endian registers)
+        // R=299(0x12B), G=587(0x24B), B=114(0x72)
+        const __m256i vCoeffs = _mm256_set1_epi64x(0x0000012B024B0072);
+        
+        // For integer division by 1000:
+        // x / 1000 ~= (x * 67109) >> 26
+        const __m256i vMul = _mm256_set1_epi32(67109);
+        
+        for (; x < width8; x += 8) {
+            // Load 8 pixels (32 bytes)
+            // 0: B G R A | 1: B G R A ...
+            __m256i vPixels = _mm256_loadu_si256((const __m256i*)(row + x * 4));
             
-            pMetadata->HistB[b]++;
-            pMetadata->HistG[g]++;
-            pMetadata->HistR[r]++;
+            // Expand to 16-bit (0..3 and 4..7) to allow Multiply-Add
+            __m256i vPix03 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(vPixels));
+            __m256i vPix47 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(vPixels, 1));
+            
+            // Multiply and Horizontal Add pairs
+            __m256i vSum03 = _mm256_madd_epi16(vPix03, vCoeffs); // 32-bit integers
+            __m256i vSum47 = _mm256_madd_epi16(vPix47, vCoeffs);
+            
+            // Horizontal Add adjacent dwords to sum BG + RA
+            // For P0: vSum03[0] = B*Cb + G*Cg. vSum03[1] = R*Cr + A*0. Sum = L_scaled.
+            // _mm256_hadd_epi32 adds adjacent dwords.
+            // Note: hadd acts on 128-bit lanes. 
+            // Lane 0: [S0 S1 S2 S3] -> [S0+S1, S2+S3, S0+S1, S2+S3] ?? No.
+            // hadd: dest[0]=src[0]+src[1], dest[1]=src[2]+src[3].
+            // P0=S0+S1. P1=S2+S3. P2=S4+S5...
+            __m256i vLuma03 = _mm256_hadd_epi32(vSum03, vSum03); 
+            // Result: [P0 P1 P0 P1 | P2 P3 P2 P3] (duplicated due to hadd(x,x))
+            
+            // vLuma03 contains P0, P1 in low 64, P2, P3 in high 64 of low lane.
+            
+            __m256i vLuma47 = _mm256_hadd_epi32(vSum47, vSum47);
+            
+            // Division by 1000 approx
+            __m256i vDiv03 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma03, vMul), 26);
+            __m256i vDiv47 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma47, vMul), 26);
+            
+            // Extract Luma values (scalar is acceptable since binning is scalar)
+            // Layout of vDiv03: [L0 L1 L0 L1 | L2 L3 L2 L3]
+            uint32_t l0 = _mm256_cvtsi256_si32(vDiv03);
+            uint32_t l1 = _mm256_extract_epi32(vDiv03, 1);
+            uint32_t l2 = _mm256_extract_epi32(vDiv03, 4); // Jump to second lane? No.
+            // Lane 0 (low 128): [L0 L1 L0 L1] (idx 0,1,2,3)
+            // Lane 1 (high 128): [L2 L3 L2 L3] (idx 4,5,6,7)
+            // Wait, hadd on 256 uses src1 low, src2 low -> dest low. src1 high, src2 high -> dest high.
+            // vSum03 = [P0 P1 P2 P3] (conceptually 4 pixels, 8 ints).
+            // A: [P0 P1] [P2 P3]
+            // B: [P0 P1] [P2 P3]
+            // hadd(A, B) -> Low: A_Low_Hadd, B_Low_Hadd.
+            // A_Low_Hadd: P0, P1. B_Low_Hadd: P0, P1.
+            // Result Low: [P0 P1 P0 P1]. High: [P2 P3 P2 P3].
+            // Indices: 0,1,2,3, 4,5,6,7.
+            // 0=P0, 1=P1. 4=P2, 5=P3.
+            
+            uint32_t l3 = _mm256_extract_epi32(vDiv03, 5);
+            
+            uint32_t l4 = _mm256_cvtsi256_si32(vDiv47);
+            uint32_t l5 = _mm256_extract_epi32(vDiv47, 1);
+            uint32_t l6 = _mm256_extract_epi32(vDiv47, 4);
+            uint32_t l7 = _mm256_extract_epi32(vDiv47, 5);
+            
+            // Binning
+            const uint8_t* p = row + x * 4;
+            pMetadata->HistB[p[0]]++; pMetadata->HistG[p[1]]++; pMetadata->HistR[p[2]]++; pMetadata->HistL[l0]++;
+            pMetadata->HistB[p[4]]++; pMetadata->HistG[p[5]]++; pMetadata->HistR[p[6]]++; pMetadata->HistL[l1]++;
+            pMetadata->HistB[p[8]]++; pMetadata->HistG[p[9]]++; pMetadata->HistR[p[10]]++; pMetadata->HistL[l2]++;
+            pMetadata->HistB[p[12]]++; pMetadata->HistG[p[13]]++; pMetadata->HistR[p[14]]++; pMetadata->HistL[l3]++;
+            pMetadata->HistB[p[16]]++; pMetadata->HistG[p[17]]++; pMetadata->HistR[p[18]]++; pMetadata->HistL[l4]++;
+            pMetadata->HistB[p[20]]++; pMetadata->HistG[p[21]]++; pMetadata->HistR[p[22]]++; pMetadata->HistL[l5]++;
+            pMetadata->HistB[p[24]]++; pMetadata->HistG[p[25]]++; pMetadata->HistR[p[26]]++; pMetadata->HistL[l6]++;
+            pMetadata->HistB[p[28]]++; pMetadata->HistG[p[29]]++; pMetadata->HistR[p[30]]++; pMetadata->HistL[l7]++;
+        }
+
+    for (; x < frame.width; x++) {
+        // Unrolling or SIMD could be added here, but scalar is fast enough with skip sampling.
+        // Layout: B, G, R, A
+        uint8_t b = row[x * 4 + 0];
+        uint8_t g = row[x * 4 + 1];
+        uint8_t r = row[x * 4 + 2];
+        
+        pMetadata->HistB[b]++;
+        pMetadata->HistG[g]++;
+        pMetadata->HistR[r]++;
             
             // Luminance (approx)
             uint8_t l = (uint8_t)((r * 299 + g * 587 + b * 114) / 1000);
@@ -3895,7 +4373,7 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
 
 
 
-HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow) {
+HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow, ImageMetadata* pMetadata) {
     if (!data || size == 0 || !pData) return E_POINTER;
 
     avifDecoder* decoder = avifDecoderCreate();
@@ -3908,90 +4386,31 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
         return E_FAIL;
     }
 
-    // [Optimization] Early Exit for Massive Images without Exif
-    // If image is huge (e.g. > 100MP), and we don't find Exif thumb quickly, 
-    // we should abort to avoid blocking the Heavy Lane (Full Decode) which will run soon.
-    // However, we need dimensions first... so we must Parse. 
-    // libavif Parse is usually fast (just reads header).
-
     // 3. Parse
-    // Enable incremental to allow parsing to finish faster on some files? 
-    // No, incremental is for truncated data. But 'ignoreXMP' etc helps.
     decoder->ignoreXMP = AVIF_TRUE; 
-    // decoder->ignoreExif = AVIF_TRUE; // WE NEED EXIF for thumbnail! Do not ignore.
-    
     result = avifDecoderParse(decoder);
     if (result != AVIF_RESULT_OK) {
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
-
-    // [Optimization] Fast Path: Check for Embedded Exif Thumbnail (JPEG)
-    // Many camera-generated AVIFs or converted files retain the Exif thumbnail.
-    // IMPORANT: Only use this if we are looking for a THUMBNAIL (targetSize > 0).
-    // If targetSize == 0 (Fast Pass), we want the full image!
-    if (targetSize > 0 && decoder->image->exif.size > 0 && decoder->image->exif.data) {
-        const uint8_t* exifData = decoder->image->exif.data;
-        size_t exifSize = decoder->image->exif.size;
-        
-        // Simple scan for JPEG Start of Image (SOI) Marker (FF D8)
-        // We limit scan to first 64KB to avoid wasting time on huge blobs if it's not at start
-        size_t scanLimit = (exifSize > 65536) ? 65536 : exifSize; 
-        const uint8_t* soi = nullptr;
-        
-        for (size_t i = 0; i < scanLimit - 1; ++i) {
-            if (exifData[i] == 0xFF && exifData[i+1] == 0xD8) {
-                soi = exifData + i;
-                break;
-            }
-        }
-
-        if (soi) {
-            // Found potential JPEG. Let WIC try to decode it.
-            // The size is from soi to end of exif buffer.
-            size_t jpegSize = exifSize - (soi - exifData);
-            
-            ComPtr<IWICStream> stream;
-            HRESULT hr = m_wicFactory->CreateStream(&stream);
-            if (SUCCEEDED(hr)) hr = stream->InitializeFromMemory((BYTE*)soi, (DWORD)jpegSize);
-            
-            ComPtr<IWICBitmapDecoder> wicDecoder;
-            if (SUCCEEDED(hr)) hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &wicDecoder);
-            
-            ComPtr<IWICBitmapFrameDecode> frame;
-            if (SUCCEEDED(hr)) hr = wicDecoder->GetFrame(0, &frame);
-
-            if (SUCCEEDED(hr)) {
-                // Success! We found a valid image in the Exif.
-                // Convert to common format
-                ComPtr<IWICFormatConverter> converter;
-                if (SUCCEEDED(hr)) hr = m_wicFactory->CreateFormatConverter(&converter);
-                if (SUCCEEDED(hr)) hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut);
-
-                if (SUCCEEDED(hr)) {
-                    UINT w, h;
-                    converter->GetSize(&w, &h);
-                    pData->width = w;
-                    pData->height = h;
-                    pData->stride = w * 4;
-                    pData->origWidth = decoder->image->width;
-                    pData->origHeight = decoder->image->height;
-                    
-                    size_t bufSize = (size_t)pData->stride * h;
-                    try {
-                        pData->pixels.resize(bufSize);
-                        hr = converter->CopyPixels(nullptr, pData->stride, (UINT)bufSize, pData->pixels.data());
-                        if (SUCCEEDED(hr)) {
-                            pData->isValid = true;
-                            pData->isBlurry = true; // Exif thumbs are usually lower res
-                            avifDecoderDestroy(decoder); 
-                            return S_OK; // FAST RETURN
-                        }
-                    } catch(...) { }
-                }
-            }
+    
+    // [v6.0] Native EXIF Extraction
+    // Extract early (after Parse) to support both FastPath and Main path
+    if (pMetadata && decoder->image->exif.data && decoder->image->exif.size > 0) {
+        easyexif::EXIFInfo exif;
+        if (exif.parseFromEXIFSegment(decoder->image->exif.data, static_cast<unsigned>(decoder->image->exif.size)) == 0) {
+            QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+        } else {
+             // Try prepend Exif header for raw TIFF payloads
+             std::vector<unsigned char> tempBuf(decoder->image->exif.size + 6);
+             memcpy(tempBuf.data(), "Exif\0\0", 6);
+             memcpy(tempBuf.data() + 6, decoder->image->exif.data, decoder->image->exif.size);
+             if (exif.parseFromEXIFSegment(tempBuf.data(), static_cast<unsigned>(tempBuf.size())) == 0) {
+                 QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+             }
         }
     }
+
 
     // [Success Strategy] "Too Big to Thumb"
     // If image > 50 MP (e.g. 8K x 6K) AND we didn't find Exif thumb above:
@@ -4043,6 +4462,22 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
         if (result != AVIF_RESULT_OK) {
             avifDecoderDestroy(decoder);
             return E_FAIL;
+        }
+
+        // [v6.0] Format Details
+        {
+            const char* subsamp = "";
+            switch (decoder->image->yuvFormat) {
+                 case AVIF_PIXEL_FORMAT_YUV444: subsamp = "4:4:4"; break;
+                 case AVIF_PIXEL_FORMAT_YUV422: subsamp = "4:2:2"; break;
+                 case AVIF_PIXEL_FORMAT_YUV420: subsamp = "4:2:0"; break;
+                 case AVIF_PIXEL_FORMAT_YUV400: subsamp = "Gray"; break;
+                 default: subsamp = "Unknown"; break;
+            }
+            wchar_t fmtBuf[64];
+            swprintf_s(fmtBuf, L"%d-bit %S", decoder->image->depth, subsamp);
+            pMetadata->FormatDetails = fmtBuf;
+            if (decoder->imageCount > 1) pMetadata->FormatDetails += L" Seq";
         }
     }
 
@@ -4238,11 +4673,11 @@ static void JxlSkipSampleCallback(void* run_opaque, size_t x, size_t y, size_t n
 
 
 
-HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData) {
+HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData, ImageMetadata* pMetadata) {
     if (!pFile || fileSize == 0 || !pData) return E_INVALIDARG;
 
     pData->isValid = false;
-    pData->isBlurry = true; // [FIX] Set early - DC mode always produces blurry output
+    pData->isBlurry = true; // DC mode always produces blurry output
     
     // 1. Create Decoder
     JxlDecoder* dec = JxlDecoderCreate(NULL);
@@ -4250,27 +4685,39 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
     
     // [JXL Global Runner] Use singleton instead of creating each time
     void* runner = CImageLoader::GetJxlRunner();
+    if (JXL_DEC_SUCCESS != JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner)) {
+        JxlDecoderDestroy(dec);
+        return E_FAIL;
+    }
 
-    // RAII Cleanup - NOTE: Do NOT destroy global runner!
+    // RAII Cleanup
     auto cleanup = [&](HRESULT hr) {
         JxlDecoderDestroy(dec);
         return hr;
     };
-    // [v5.0] Setup moved to header
     
     OutputDebugStringW(L"[JXL_DC] Input Set. Entering Loop.\n");
     
-    JxlBasicInfo info = {};
+    // 2. Setup Input
+    if (JXL_DEC_SUCCESS != JxlDecoderSetInput(dec, pFile, fileSize)) return cleanup(E_FAIL);
+    
+    // 3. Subscribe Events
+    // [v6.0] Added JXL_DEC_BOX for EXIF
+    int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME;
+    if (pMetadata) events |= JXL_DEC_BOX;
+    
+    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) return cleanup(E_FAIL);
 
+    JxlBasicInfo info = {};
     bool headerSeen = false;
+    
+    // [v6.0] EXIF State
+    std::vector<uint8_t> exifBuffer;
+    bool readingExif = false;
 
     // 5. Decode Loop (Buffer Mode)
     JxlSkipSampleContext dsCtx = {};
-    JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; // BGRA (We swizzle later if needed, but JXL is RGBA)
-    // Actually, let's stick to RGBA and Swizzle manually, or use SIMD.
-    
-    // [Optimization] JXL outputs RGBA. We need BGRA.
-    // We will swizzle in-place after decode.
+    JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; 
 
     for (;;) {
         JxlDecoderStatus status = JxlDecoderProcessInput(dec);
@@ -4281,9 +4728,8 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
         else if (status == JXL_DEC_SUCCESS) {
             // Finished
             if (pData->isValid) {
-                 // For Preview (Name="libjxl (Preview)"), we used Buffer, so we need to Swizzle here.
-                 // For DC (Name="libjxl (Scout DC 1:8)"), we used Callback which already did it.
                  if (pData->loaderName == std::wstring(L"libjxl (Preview)")) {
+                     // Swizzle RGBA -> BGRA
                      uint8_t* p = pData->pixels.data();
                      size_t pxCount = (size_t)pData->width * pData->height;
                      for(size_t i=0; i<pxCount; ++i) {
@@ -4296,9 +4742,8 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                              r = (uint8_t)((r * a) / 255);
                              g = (uint8_t)((g * a) / 255);
                              b = (uint8_t)((b * a) / 255);
-                         } else if (a == 0) {
-                             r = g = b = 0;
-                         }
+                         } else if (a == 0) r = g = b = 0;
+                         
                          p[i*4+0] = b;
                          p[i*4+1] = g;
                          p[i*4+2] = r;
@@ -4312,10 +4757,9 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
         else if (status == JXL_DEC_BASIC_INFO) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) return cleanup(E_FAIL);
             
-            // [Modular Detection] 无损 JXL 没有 DC 层，直接放弃 Scout
             if (info.uses_original_profile) {
                 OutputDebugStringW(L"[JXL_DC] Modular/Lossless detected, skipping Scout\n");
-                return cleanup(E_ABORT);  // Let Heavy Lane handle
+                return cleanup(E_ABORT); 
             }
             
             // Output Color Profile
@@ -4327,30 +4771,57 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
             JxlDecoderSetOutputColorProfile(dec, &color_encoding, NULL, 0);
 
-            // [Strategy] 1. Preview? 2. DC?
-            bool usePreview = info.have_preview;
-            if (!usePreview) {
-                 // Try kDC
+            if (!info.have_preview) {
                  JxlDecoderSetProgressiveDetail(dec, kDC);
             }
-            // Set orig dimensions
-            pData->origWidth = info.xsize;
-            pData->origHeight = info.ysize;
+            pData->origWidth = static_cast<int>(info.xsize);
+            pData->origHeight = static_cast<int>(info.ysize);
+            
+            // [v6.0] Format Details
+            if (pMetadata) {
+                wchar_t fmtBuf[64];
+                const wchar_t* mode = info.uses_original_profile ? L"Lossless" : L"Lossy";
+                swprintf_s(fmtBuf, L"%d-bit %s", info.bits_per_sample, mode);
+                pMetadata->FormatDetails = fmtBuf;
+                if (info.have_animation) pMetadata->FormatDetails += L" Anim";
+            }
+        }
+        else if (status == JXL_DEC_BOX) {
+            JxlBoxType type;
+            if (JXL_DEC_SUCCESS == JxlDecoderGetBoxType(dec, type, JXL_TRUE)) {
+                // Check if Exif (ignoring case or strict?) Standard is "Exif"
+                if (memcmp(type, "Exif", 4) == 0 && pMetadata) {
+                    // Start reading box
+                    // Limit to 256KB to retrieve essential metadata
+                    exifBuffer.resize(256 * 1024); 
+                    JxlDecoderSetBoxBuffer(dec, exifBuffer.data(), exifBuffer.size());
+                    readingExif = true;
+                } else {
+                    readingExif = false;
+                }
+            }
+        }
+        else if (status == JXL_DEC_BOX_NEED_MORE_OUTPUT) {
+            // Buffer full. Truncate reading.
+             if (readingExif) {
+                 JxlDecoderReleaseBoxBuffer(dec);
+                 // We have full buffer. Logic in 'else' will parse it?
+                 // No, we need to mark we are done.
+                 // Actually logic below handles parsing.
+             }
         }
         else if (status == JXL_DEC_NEED_PREVIEW_OUT_BUFFER) {
              size_t bufferSize = 0;
              if (JXL_DEC_SUCCESS != JxlDecoderPreviewOutBufferSize(dec, &format, &bufferSize)) return cleanup(E_FAIL);
              
              pData->loaderName = L"libjxl (Preview)";
-             
              try { pData->pixels.resize(bufferSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
              if (JXL_DEC_SUCCESS != JxlDecoderSetPreviewOutBuffer(dec, &format, pData->pixels.data(), bufferSize)) return cleanup(E_FAIL);
              
-             // Infer dimensions (approx)
              size_t px = bufferSize / 4;
-             pData->width = (int)sqrt((double)px * info.xsize / info.ysize); 
-             pData->height = px / pData->width;
-             pData->stride = pData->width * 4;
+             pData->width = static_cast<UINT>(sqrt((double)px * info.xsize / info.ysize)); 
+             pData->height = static_cast<UINT>(px / pData->width);
+             pData->stride = static_cast<UINT>(pData->width * 4);
              pData->isValid = true;
         }
         else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
@@ -4360,13 +4831,12 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             size_t targetH = (info.ysize + factor - 1) / factor;
             
             try { 
-                // Allocate tiny buffer (1/64 size)
                 pData->pixels.resize(targetW * targetH * 4); 
             } catch(...) { return cleanup(E_OUTOFMEMORY); }
             
-            pData->width = (int)targetW;
-            pData->height = (int)targetH;
-            pData->stride = (int)targetW * 4;
+            pData->width = static_cast<UINT>(targetW);
+            pData->height = static_cast<UINT>(targetH);
+            pData->stride = static_cast<UINT>(targetW * 4);
             pData->isValid = true;
             pData->loaderName = L"libjxl (Scout DC 1:8)";
             pData->isBlurry = true;
@@ -4382,7 +4852,7 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             }
         }
         else if (status == JXL_DEC_FULL_IMAGE) {
-            // Frame done (DC frame)
+            // Frame done
             // Continue to JXL_DEC_SUCCESS or next frame
         }
         else if (status == JXL_DEC_NEED_MORE_INPUT) {
@@ -4392,8 +4862,32 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             // We can flush to get partial result, but in DC mode, just wait for FULL_IMAGE/NEED_BUFFER
             // JxlDecoderFlushImage(dec);
         }
+        
+        // [v6.0] Handle Exif Parsing (if we switched state away from BOX)
+        // If we were reading Exif and now status changed (to almost anything else), we check buffer.
+        // Actually JXL_DEC_BOX_NEED_MORE_OUTPUT is special.
+        if (readingExif && status != JXL_DEC_BOX && status != JXL_DEC_BOX_NEED_MORE_OUTPUT) {
+             size_t remaining = JxlDecoderReleaseBoxBuffer(dec);
+             size_t validSize = exifBuffer.size() - remaining;
+             if (validSize > 0) {
+                 easyexif::EXIFInfo exif;
+                 // JXL Exif box payload: "The content of the box is the Exif metadata..."
+                 // Usually starts with II/MM (TIFF header) or "Exif\0\0".
+                 if (exif.parseFromEXIFSegment(exifBuffer.data(), static_cast<unsigned>(validSize)) == 0) {
+                     QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+                 } else {
+                      // Try prepend
+                      std::vector<unsigned char> tmp(validSize + 6);
+                      memcpy(tmp.data(), "Exif\0\0", 6);
+                      memcpy(tmp.data()+6, exifBuffer.data(), validSize);
+                      if (exif.parseFromEXIFSegment(tmp.data(), static_cast<unsigned>(tmp.size())) == 0) {
+                          QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
+                      }
+                 }
+             }
+             readingExif = false;
+        }
     }
-
 }
 
 // [v3.1] Robust TurboJPEG Helper (Replaces elusive LoadThumbJPEG)
@@ -4720,9 +5214,12 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             *pLoaderName = res.metadata.LoaderName;
         }
 
-        // [v5.3] Output full metadata if requested
         if (pMetadata) {
             *pMetadata = res.metadata;
+            // [v5.3 Fix] Ensure FileSize is populated for Info Panel "Disk" row
+            if (pMetadata->FileSize == 0) {
+                 PopulateFileStats(filePath, pMetadata);
+            }
         }
         
         outFrame->pixels = res.pixels;

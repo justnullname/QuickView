@@ -1793,6 +1793,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     if (argc > 1) {
         g_navigator.Initialize(argv[1]);
         LoadImageAsync(hwnd, argv[1]);
+        // [Fix Race] Force-check event queue for super-fast loads on startup
+        PostMessageW(hwnd, WM_ENGINE_EVENT, 0, 0);
     } else {
         // No file specified - auto open file dialog
         OPENFILENAMEW ofn = {};
@@ -1807,6 +1809,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
             OutputDebugStringW(L"[Main] File Selected\n");
             g_navigator.Initialize(szFile);
             LoadImageAsync(hwnd, szFile);
+            // [Fix Race] Force check here too
+             PostMessageW(hwnd, WM_ENGINE_EVENT, 0, 0); 
         }
     }
     
@@ -3920,35 +3924,69 @@ void ProcessEngineEvents(HWND hwnd) {
                 // If Async Metadata (lazy) arrived FIRST, we must preserve it!
                 auto finalMetadata = evt.metadata; // Create mutable copy
                 
-                if (g_currentMetadata.IsFullMetadataLoaded && (g_currentImageId.load() == evt.imageId)) {
-                     // Preserve Async EXIF fields
-                     finalMetadata.Make = g_currentMetadata.Make;
-                     finalMetadata.Model = g_currentMetadata.Model;
-                     finalMetadata.Lens = g_currentMetadata.Lens;
-                     finalMetadata.ISO = g_currentMetadata.ISO;
-                     finalMetadata.Aperture = g_currentMetadata.Aperture;
-                     finalMetadata.Shutter = g_currentMetadata.Shutter;
-                     finalMetadata.Focal = g_currentMetadata.Focal;
-                     finalMetadata.ExposureBias = g_currentMetadata.ExposureBias;
-                     finalMetadata.Flash = g_currentMetadata.Flash;
-                     finalMetadata.Date = g_currentMetadata.Date;
-                     finalMetadata.Software = g_currentMetadata.Software;
-                     finalMetadata.ColorSpace = g_currentMetadata.ColorSpace;
-                     finalMetadata.WhiteBalance = g_currentMetadata.WhiteBalance;
-                     finalMetadata.MeteringMode = g_currentMetadata.MeteringMode;
-                     finalMetadata.ExposureProgram = g_currentMetadata.ExposureProgram;
-                     
-                     finalMetadata.HasGPS = g_currentMetadata.HasGPS;
+                // [v5.5] Robust Metadata Merge (First Principles)
+                // Rule: Never overwrite valid data with empty/zero data.
+                // The HeavyLane (Decoder) is the source of truth for Dimensions and Pixels.
+                // The ReadMetadata (Async) is the source of truth for EXIF/Details.
+                
+                // 1. Dimensions: Decoder knows best. Async might fail (WIC).
+                if (finalMetadata.Width == 0 && g_currentMetadata.Width > 0) {
+                    finalMetadata.Width = g_currentMetadata.Width;
+                    finalMetadata.Height = g_currentMetadata.Height;
+                }
+                
+                // 2. File Stats: Always trust non-zero (Source fix ensures Async has it, but safety first)
+                if (finalMetadata.FileSize == 0 && g_currentMetadata.FileSize > 0) {
+                    finalMetadata.FileSize = g_currentMetadata.FileSize;
+                }
+                if ((finalMetadata.CreationTime.dwLowDateTime == 0 && finalMetadata.CreationTime.dwHighDateTime == 0) &&
+                    (g_currentMetadata.CreationTime.dwLowDateTime != 0 || g_currentMetadata.CreationTime.dwHighDateTime != 0)) {
+                    finalMetadata.CreationTime = g_currentMetadata.CreationTime;
+                }
+                // (Repeat for LastWriteTime if needed, mainly Creation is used)
+                
+                // 3. Color Space: Trust Decoder (EasyExif/Native) if Async (WIC) misses it
+                // BUT: Async might have found it via deeper WIC search.
+                // Logic: If Async has it, use it. If Async is empty, keep HeavyLane.
+                if (finalMetadata.ColorSpace.empty() && !g_currentMetadata.ColorSpace.empty()) {
+                    finalMetadata.ColorSpace = g_currentMetadata.ColorSpace;
+                }
+                
+                // 4. Format Details: HeavyLane often has specific codec info (e.g. "Q=95")
+                // Async might be generic.
+                if (finalMetadata.FormatDetails.empty() && !g_currentMetadata.FormatDetails.empty()) {
+                    finalMetadata.FormatDetails = g_currentMetadata.FormatDetails;
+                }
+                
+                // 5. GPS: Async usually has better GPS (WIC). Keep Async unless empty?
+                // Actually HeavyLane doesn't parse GPS (yet), so Async is primary.
+                // But just in case:
+                if (!finalMetadata.HasGPS && g_currentMetadata.HasGPS) {
+                     finalMetadata.HasGPS = true;
                      finalMetadata.Latitude = g_currentMetadata.Latitude;
                      finalMetadata.Longitude = g_currentMetadata.Longitude;
                      finalMetadata.Altitude = g_currentMetadata.Altitude;
-                     
-                     finalMetadata.FileSize = g_currentMetadata.FileSize;
-                     finalMetadata.CreationTime = g_currentMetadata.CreationTime;
-                     finalMetadata.LastWriteTime = g_currentMetadata.LastWriteTime;
-                     
-                     finalMetadata.IsFullMetadataLoaded = true; // Keep flag
                 }
+
+                // 6. Camera Info (Universal Protection)
+                if (finalMetadata.Make.empty() && !g_currentMetadata.Make.empty()) finalMetadata.Make = g_currentMetadata.Make;
+                if (finalMetadata.Model.empty() && !g_currentMetadata.Model.empty()) finalMetadata.Model = g_currentMetadata.Model;
+                if (finalMetadata.Lens.empty() && !g_currentMetadata.Lens.empty()) finalMetadata.Lens = g_currentMetadata.Lens;
+                if (finalMetadata.Software.empty() && !g_currentMetadata.Software.empty()) finalMetadata.Software = g_currentMetadata.Software;
+                if (finalMetadata.Date.empty() && !g_currentMetadata.Date.empty()) finalMetadata.Date = g_currentMetadata.Date;
+                
+                // 7. Exposure Info
+                if (finalMetadata.ISO.empty() && !g_currentMetadata.ISO.empty()) finalMetadata.ISO = g_currentMetadata.ISO;
+                if (finalMetadata.Aperture.empty() && !g_currentMetadata.Aperture.empty()) finalMetadata.Aperture = g_currentMetadata.Aperture;
+                if (finalMetadata.Shutter.empty() && !g_currentMetadata.Shutter.empty()) finalMetadata.Shutter = g_currentMetadata.Shutter;
+                if (finalMetadata.Focal.empty() && !g_currentMetadata.Focal.empty()) finalMetadata.Focal = g_currentMetadata.Focal;
+                if (finalMetadata.ExposureBias.empty() && !g_currentMetadata.ExposureBias.empty()) finalMetadata.ExposureBias = g_currentMetadata.ExposureBias;
+                if (finalMetadata.Flash.empty() && !g_currentMetadata.Flash.empty()) finalMetadata.Flash = g_currentMetadata.Flash;
+                if (finalMetadata.MeteringMode.empty() && !g_currentMetadata.MeteringMode.empty()) finalMetadata.MeteringMode = g_currentMetadata.MeteringMode;
+                if (finalMetadata.ExposureProgram.empty() && !g_currentMetadata.ExposureProgram.empty()) finalMetadata.ExposureProgram = g_currentMetadata.ExposureProgram;
+                if (finalMetadata.WhiteBalance.empty() && !g_currentMetadata.WhiteBalance.empty()) finalMetadata.WhiteBalance = g_currentMetadata.WhiteBalance;
+                
+                 finalMetadata.IsFullMetadataLoaded = true; // Mark as loaded
 
                 // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
                 g_currentMetadata = finalMetadata;
