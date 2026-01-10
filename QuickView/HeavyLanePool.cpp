@@ -430,11 +430,25 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             
             if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
             
+            // [v5.4] Extract FormatDetails
+            meta.FormatDetails = rawFrame.formatDetails;
+            
             // [FIX] Ensure metadata dimensions match the actual decoded image
             if (meta.Width == 0 || meta.Height == 0) {
                  meta.Width = rawFrame.width;
                  meta.Height = rawFrame.height;
             }
+            
+            // [v5.3 Lazy] No Sync ReadMetadata here. 
+            // Full EXIF will be loaded ASYNC via RequestFullMetadata when Info Panel opens.
+            
+            // [v5.3 Eager Histogram] Compute Histogram in Background (<1ms)
+            // We do this here because we don't cache pixels. Lazy histogram would require re-decode.
+            m_loader->ComputeHistogramFromFrame(rawFrame, &meta);
+            // [DEBUG] Trace histogram
+            wchar_t debugBuf[256];
+            swprintf_s(debugBuf, L"[HeavyLane] Histogram R=%zu (Eager)\n", meta.HistR.size());
+            OutputDebugStringW(debugBuf);
             
             // Build event with rawFrame (new Direct D2D path)
             EngineEvent evt;

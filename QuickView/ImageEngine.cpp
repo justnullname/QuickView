@@ -598,6 +598,19 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 e.metadata.Format = info.format;
                 e.metadata.LoaderName = loaderName;
                 
+                // [v5.4] Extract FormatDetails from decoded frame
+                if (e.rawFrame) {
+                    e.metadata.FormatDetails = e.rawFrame->formatDetails;
+                }
+                
+                // [v5.3 Lazy] Reverted Sync ReadMetadata. 
+                // Metadata will be populated only when InfoPanel requests it.
+                
+                // [v5.3 Eager] Compute Histogram (Fast)
+                if (e.rawFrame && e.rawFrame->IsValid()) {
+                    m_loader->ComputeHistogramFromFrame(*e.rawFrame, &e.metadata);
+                }
+                
                 e.isScaled = !isClear;
                 // pixels empty
 
@@ -843,4 +856,85 @@ void ImageEngine::EvictCache(int currentIndex) {
         }
         ++it;
     }
+}
+
+// [v5.3] Async Request for Auxiliary Metadata (EXIF/Stats)
+void ImageEngine::RequestFullMetadata() {
+    // Capture current state safely
+    std::wstring path = m_currentNavPath;
+    ImageID id = m_currentImageId;
+    
+    if (path.empty()) return;
+
+    // [v5.3] Debounce Logic
+    {
+        std::lock_guard<std::mutex> lock(m_scout.m_pendingMutex);
+        if (m_scout.m_pendingMetadataRequests.count(id)) return; // Already requested
+        m_scout.m_pendingMetadataRequests.insert(id);
+    }
+
+    // Launch Async (Detached)
+    std::thread([this, path, id]() {
+        // [v5.4] Robustness: RAII Cleaner to ensure we ALWAYS remove from pending set
+        struct PendingCleaner {
+            ScoutLane& lane;
+            ImageID id;
+            ~PendingCleaner() {
+                std::lock_guard<std::mutex> lock(lane.m_pendingMutex);
+                lane.m_pendingMetadataRequests.erase(id);
+            }
+        } cleaner{m_scout, id};
+
+        try {
+            // Initialize COM for WIC
+            HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+            
+            CImageLoader tempLoader; 
+
+            // [v5.3 Fix] Create local WIC Factory for temp loader
+            Microsoft::WRL::ComPtr<IWICImagingFactory> pFactory;
+            bool factoryOk = false;
+            
+            if (SUCCEEDED(hr)) {
+                 HRESULT hrFactory = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory));
+                 if (SUCCEEDED(hrFactory)) {
+                     tempLoader.Initialize(pFactory.Get());
+                     factoryOk = true;
+                 } else {
+                     OutputDebugStringW(L"[ImageEngine] Failed to create WIC Factory for async metadata!\n");
+                 }
+            }
+            
+            if (factoryOk) {
+                CImageLoader::ImageMetadata meta;
+                
+                // Pass 'clear=true' to ensure fresh struct
+                tempLoader.ReadMetadata(path.c_str(), &meta, true);
+                
+                EngineEvent evt;
+                evt.type = EventType::MetadataReady;
+                evt.imageId = id;
+                evt.filePath = path; 
+                evt.metadata = std::move(meta);
+                
+                // Inject into Scout Results Queue (Thread Safe)
+                {
+                    std::lock_guard<std::mutex> lock(m_scout.m_queueMutex);
+                    m_scout.m_results.push_back(std::move(evt));
+                }
+                
+                // Signal Main Thread (via dummy event)
+                // [v5.5 Fix] MUST wake up the message loop, otherwise MetadataReady is ignored until user input!
+                QueueEvent(EngineEvent{}); 
+            }
+            
+            if (SUCCEEDED(hr)) CoUninitialize();
+            
+        } catch (...) {
+            OutputDebugStringW(L"[ImageEngine] Critical Exception in Async Metadata Thread!\n");
+        }
+        
+        // Destructor of 'cleaner' runs here, removing ID from pending set.
+        
+    }).detach();
 }

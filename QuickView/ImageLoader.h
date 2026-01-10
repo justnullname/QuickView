@@ -35,6 +35,9 @@ public:
         std::wstring Focal;    // e.g. "50mm"
         std::wstring ExposureBias; // e.g. "+0.3 EV"
         std::wstring Flash;        // New: Flash status
+        std::wstring WhiteBalance;    // [v5.5] Auto/Manual
+        std::wstring MeteringMode;    // [v5.5] Pattern/Spot/etc.
+        std::wstring ExposureProgram; // [v5.5] Aperture Priority/Manual/etc.
         std::wstring Date;         // EXIF Date or File Date fallback
         std::wstring Software;     // New: Software/Firmware
         
@@ -57,6 +60,13 @@ public:
         double Latitude = 0.0;
         double Longitude = 0.0;
         double Altitude = 0.0;       // New: Altitude
+        
+        // [v5.3] Split Strategy: True if Aux data (EXIF strings) is loaded
+        bool IsFullMetadataLoaded = false;
+
+        // [v5.3] File Timestamps (for Sorting/Details)
+        FILETIME CreationTime = {0};
+        FILETIME LastWriteTime = {0};
 
         // Histogram (256 bins)
         std::vector<uint32_t> HistR;
@@ -107,6 +117,9 @@ public:
         
         DecodedImage() : pixels(std::pmr::get_default_resource()) {}
         explicit DecodedImage(std::pmr::memory_resource* mr) : pixels(mr) {}
+        
+        // [v5.4] Metadata
+        std::wstring FormatDetails;
     };
 
     // --- NEW: Pre-flight Check Types (v3.1) ---
@@ -139,7 +152,7 @@ public:
     /// <summary>
     /// Read metadata from file using WIC
     /// </summary>
-    HRESULT ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata);
+    HRESULT ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, bool clear = true);
 
     /// <summary>
     /// Compute Histogram from bitmap (Sparse Sampling supported)

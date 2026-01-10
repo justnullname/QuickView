@@ -1768,6 +1768,55 @@ namespace QuickView {
                         cinfo.scale_denom = nextDenom;
                     }
                 }
+                
+                // [v5.4 Quality Metrics] Extract JPEG Details
+                std::wstring details;
+                
+                // 1. Progressive vs Baseline
+                if (jpeg_has_multiple_scans(&cinfo)) details += L"Progressive, ";
+                else details += L"Baseline, ";
+                
+                // 2. Chroma Subsampling
+                // cinfo.comp_info[0] is usually Y. Check sampling factors relative to Max.
+                // Standard: MaxH=2 MaxV=2. 
+                // 4:4:4 -> Y=1x1 (relative) or Y=MaxH x MaxV
+                // Actually easier: Check Sum of H*V? 
+                // Common check:
+                int h0 = cinfo.comp_info[0].h_samp_factor;
+                int v0 = cinfo.comp_info[0].v_samp_factor;
+                int maxH = cinfo.max_h_samp_factor;
+                int maxV = cinfo.max_v_samp_factor;
+                int numComps = cinfo.num_components;
+                
+                if (numComps == 1) {
+                    details += L"Grayscale";
+                } else if (numComps == 3) {
+                    if (h0 == maxH && v0 == maxV) {
+                        int h1 = cinfo.comp_info[1].h_samp_factor;
+                        int v1 = cinfo.comp_info[1].v_samp_factor;
+                        
+                        if (h1 == h0 && v1 == v0) details += L"4:4:4";
+                        else if (h1 * 2 == h0 && v1 == v0) details += L"4:2:2";
+                        else if (h1 * 2 == h0 && v1 * 2 == v0) details += L"4:2:0";
+                        else if (h1 == h0 && v1 * 2 == v0) details += L"4:4:0";
+                        else details += L"Subsampled (Custom)";
+                    } else {
+                        details += L"Subsampled";
+                    }
+                } else if (numComps == 4) {
+                    details += L"CMYK";
+                }
+                
+                // 3. Bit Depth (if available in this struct version, usually 8)
+                // if (cinfo.data_precision != 8) details += L" " + std::to_wstring(cinfo.data_precision) + L"bpp";
+                
+                // [v5.7] Append Estimated Q-Value
+                int q = GetJpegQualityFromBuffer(pBuf, bufSize);
+                if (q > 0) {
+                    details += L" Q~" + std::to_wstring(q);
+                }
+                
+                result.metadata.FormatDetails = details;
 
                 // Color Space Mapping
                 // LibJpeg-Turbo supports: JCS_EXT_RGB, JCS_EXT_RGBX, JCS_EXT_BGR, JCS_EXT_BGRX, JCS_EXT_XBGR, JCS_EXT_XRGB, JCS_EXT_RGBA, JCS_EXT_BGRA, JCS_EXT_ABGR, JCS_EXT_ARGB
@@ -1818,7 +1867,7 @@ namespace QuickView {
                 result.success = true;
 
                 // [v5.3] Fill metadata directly
-                result.metadata.FormatDetails = L"JPEG (Deep)";
+                // result.metadata.FormatDetails already populated above
                 if (cinfo.output_width < cinfo.image_width) result.metadata.FormatDetails += L" [Scaled]";
                 result.metadata.Width = cinfo.image_width; // Original size
                 result.metadata.Height = cinfo.image_height;
@@ -2425,6 +2474,8 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         pOutput->height = res.height;
         pOutput->stride = res.stride;
         // pOutput->format = res.format; // DecodedImage uses implicit BGRA8888
+        // [v5.4] Metadata
+        pOutput->FormatDetails = res.metadata.FormatDetails;
         pOutput->isValid = true;
         return S_OK;
     }
@@ -3267,128 +3318,87 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath, CImageLoader::ImageMetadata*
 }
 
 // [v5.1] Metadata Dispatcher
-HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata) {
-    if (!filePath || !pMetadata) return E_INVALIDARG;
-    *pMetadata = {}; // Clear
-    
-    // 1. Detect Format
-    pMetadata->Format = DetectFormatFromContent(filePath);
-    
-    // [v5.2] Read File Size early (works for ALL formats)
-    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile != INVALID_HANDLE_VALUE) {
-        LARGE_INTEGER size;
-        if (GetFileSizeEx(hFile, &size)) pMetadata->FileSize = size.QuadPart;
-        CloseHandle(hFile);
-    }
-    
-    // 2. Dispatch
-    if (pMetadata->Format == L"Raw" || pMetadata->Format == L"Unknown") {
-        // Try LibRaw first for metadata
-        // Note: LibRaw handles CR2, NEF, ARW, HEIC reliably
-        std::wstring path = filePath;
-        std::transform(path.begin(), path.end(), path.begin(), ::towlower);
-        
-        bool isRawExt = (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || 
-                         path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || 
-                         path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw") || 
-                         path.ends_with(L".cr3") || path.ends_with(L".nrw") ||
-                         path.ends_with(L".heic") || path.ends_with(L".heif")); // Add HEIC support
-                         
-        if (isRawExt) {
-            if (SUCCEEDED(ReadMetadataLibRaw(filePath, pMetadata))) {
-                // LibRaw succeeded - metadata fields populated
-                // Continue to WIC for GPS if needed
-            }
-        }
-    }
-    
-    // 3. WIC Fallback (for JPEG, PNG, or if LibRaw failed/didn't have GPS)
-    // We append/overwrite with WIC data if available.
-    
-    if (!m_wicFactory) return S_OK; // Return partial if no WIC
-    
-    ComPtr<IWICBitmapDecoder> decoder;
-    HRESULT hr = m_wicFactory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
-    
-    if (FAILED(hr)) {
-        // If WIC failed but we detected a format/read some raw data, return S_OK
-        return S_OK; 
-    }
-    
-    // Get First Frame
-    ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(decoder->GetFrame(0, &frame))) return S_OK;
-    
-    // [v5.2] Read Basic Info (Width/Height) from WIC frame
-    if (pMetadata->Width == 0 || pMetadata->Height == 0) {
-        frame->GetSize(&pMetadata->Width, &pMetadata->Height);
-    }
-    
-    // [v5.2] Date Fallback (FileSize already read at top of function)
-    if (pMetadata->Date.empty()) {
-        HANDLE hFile2 = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hFile2 != INVALID_HANDLE_VALUE) {
-            FILETIME ftWrite;
-            if (GetFileTime(hFile2, nullptr, nullptr, &ftWrite)) {
-                 SYSTEMTIME st; FileTimeToSystemTime(&ftWrite, &st);
-                 wchar_t buf[64];
-                 swprintf_s(buf, L"%04d-%02d-%02d %02d:%02d:%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-                 pMetadata->Date = buf;
-            }
-            CloseHandle(hFile2);
-        }
-    }
-    
-    ComPtr<IWICMetadataQueryReader> reader;
-    if (FAILED(frame->GetMetadataQueryReader(&reader))) return S_OK; // No metadata
-    
-    // --- Parse WIC Metadata (Existing Logic) ---
-    // [Cleaned up in separate helper or inline]
-    // Keeping inline for now to minimize diff, but logic is robust.
-    
-    // Retrieve Properties... (Model, Make, ISO, etc.)
-    // Only overwrite if empty (preserve LibRaw data if present)
+// [v5.3] Shared EXIF Extraction logic for WIC (File & Memory)
+static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageLoader::ImageMetadata* pMetadata) {
+    if (!reader || !pMetadata) return;
     
     PROPVARIANT var; PropVariantInit(&var);
 
-    // Make
-    if (pMetadata->Make.empty()) {
-        const wchar_t* queries[] = { L"/app1/ifd/{ushort=271}", L"/ifd/{ushort=271}" };
+    // Helper to try multiple paths
+    auto TryGetText = [&](const std::initializer_list<const wchar_t*>& queries, std::wstring& target) {
+        if (!target.empty()) return;
+        for (auto q : queries) {
+            if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+                if (var.vt == VT_LPSTR && var.pszVal) {
+                     std::string s = var.pszVal; target = std::wstring(s.begin(), s.end());
+                } else if (var.vt == VT_LPWSTR && var.pwszVal) {
+                     target = var.pwszVal;
+                } else if (var.vt == VT_BSTR && var.bstrVal) {
+                     target = var.bstrVal;
+                }
+                PropVariantClear(&var);
+                if (!target.empty()) break;
+            }
+        }
+    };
+
+    // Make - Try standard EXIF, TIFF, XMP, and root fallbacks
+    TryGetText({ 
+        L"/app1/ifd/{ushort=271}", 
+        L"/ifd/{ushort=271}", 
+        L"/xmp/tiff:Make",
+        L"/{ushort=271}"
+    }, pMetadata->Make);
+
+    // Model
+    TryGetText({ 
+        L"/app1/ifd/{ushort=272}", 
+        L"/ifd/{ushort=272}", 
+        L"/xmp/tiff:Model", 
+        L"/xmp/exif:Model",
+        L"/{ushort=272}"
+    }, pMetadata->Model);
+
+    // Date (DateTimeOriginal 36867 or DateTime 306)
+    TryGetText({ 
+        L"/app1/ifd/exif/{ushort=36867}", 
+        L"/ifd/exif/{ushort=36867}", 
+        L"/xmp/exif:DateTimeOriginal",
+        L"/app1/ifd/{ushort=306}", 
+        L"/ifd/{ushort=306}",
+        L"/xmp/tiff:DateTime",
+        L"/xmp/xmp:CreateDate"
+    }, pMetadata->Date);
+
+    // Software
+    TryGetText({ 
+        L"/app1/ifd/{ushort=305}", 
+        L"/ifd/{ushort=305}",
+        L"/xmp/tiff:Software",
+        L"/xmp/xmp:CreatorTool"
+    }, pMetadata->Software);
+
+    // ISO
+    if (pMetadata->ISO.empty()) {
+        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=34855}", L"/ifd/exif/{ushort=34855}", L"/xmp/exif:ISOSpeedRatings/xmpSeq:li" };
         for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
-            if (var.vt == VT_LPSTR && var.pszVal) {
-                 std::string s = var.pszVal; pMetadata->Make = std::wstring(s.begin(), s.end());
+            if (var.vt == VT_UI2) pMetadata->ISO = std::to_wstring(var.uiVal);
+            else if (var.vt == VT_UI4) pMetadata->ISO = std::to_wstring(var.ulVal);
+            else if (var.vt == VT_LPSTR && var.pszVal) {
+                // XMP often returns string
+                std::string s = var.pszVal; pMetadata->ISO = std::wstring(s.begin(), s.end());
+            } else if (var.vt == VT_LPWSTR && var.pwszVal) {
+                pMetadata->ISO = var.pwszVal;
             }
             PropVariantClear(&var); break;
         }
     }
 
-    // Model
-    if (pMetadata->Model.empty()) {
-        const wchar_t* queries[] = { L"/app1/ifd/{ushort=272}", L"/ifd/{ushort=272}" };
-        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
-            if (var.vt == VT_LPSTR && var.pszVal) {
-                 std::string s = var.pszVal; pMetadata->Model = std::wstring(s.begin(), s.end());
-            }
-            PropVariantClear(&var); break;
-        }
-    }
-    
-    // ISO (34855)
-    if (pMetadata->ISO.empty()) {
-        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=34855}", L"/ifd/exif/{ushort=34855}" };
-        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
-            if (var.vt == VT_UI2) pMetadata->ISO = std::to_wstring(var.uiVal);
-            else if (var.vt == VT_UI4) pMetadata->ISO = std::to_wstring(var.ulVal);
-            PropVariantClear(&var); break;
-        }
-    }
-    
-    // Shutter (ExposureTime 33434)
+    // Shutter (ExposureTime)
     if (pMetadata->Shutter.empty()) {
         double val = 0;
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=33434}", L"/ifd/exif/{ushort=33434}" };
-        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &val))) {
+        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
             wchar_t buf[32];
             if (val >= 1.0) swprintf_s(buf, L"%.1fs", val);
             else swprintf_s(buf, L"1/%.0fs", 1.0/val);
@@ -3396,109 +3406,265 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata) {
             break;
         }
     }
+
+    // Aperture (FNumber)
+    if (pMetadata->Aperture.empty()) {
+        double val = 0;
+        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=33437}", L"/ifd/exif/{ushort=33437}" };
+        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
+            wchar_t buf[32]; swprintf_s(buf, L"f/%.1f", val);
+            pMetadata->Aperture = buf;
+            break;
+        }
+    }
+
+    // Focal Length
+    if (pMetadata->Focal.empty()) {
+        double val = 0;
+        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=37386}", L"/ifd/exif/{ushort=37386}" };
+        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
+            // Try 35mm equivalent
+            double val35 = 0;
+            const wchar_t* q35 = L"/app1/ifd/exif/{ushort=41989}";
+            if (SUCCEEDED(GetMetadataRational(reader, q35, &val35)) && val35 > 0) {
+                 wchar_t buf[32]; swprintf_s(buf, L"%.0fmm (%.0fmm)", val, val35);
+                 pMetadata->Focal = buf; 
+            } else {
+                 wchar_t buf[32]; swprintf_s(buf, L"%.0fmm", val);
+                 pMetadata->Focal = buf;
+            }
+            break;
+        }
+    }
     
-    // Aperture (FNumber 33437)
-    double aperture = 0.0;
-    const wchar_t* apertureQueries[] = { L"/app1/ifd/exif/{ushort=33437}", L"/ifd/exif/{ushort=33437}" };
-    for (auto q : apertureQueries) if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &aperture))) {
-        wchar_t buf[32];
-        swprintf_s(buf, L"f/%.1f", aperture);
-        pMetadata->Aperture = buf;
+    // Exposure Bias
+    double bias = 0.0;
+    const wchar_t* biasQueries[] = { L"/app1/ifd/exif/{ushort=37380}", L"/ifd/exif/{ushort=37380}" };
+    for (auto q : biasQueries) if (SUCCEEDED(GetMetadataSignedRational(reader, q, &bias))) {
+        if (std::abs(bias) > 0.0001) {
+            wchar_t buf[32]; swprintf_s(buf, L"%+.1f ev", bias);
+            pMetadata->ExposureBias = buf;
+        }
         break;
     }
+
+    // Flash
+    if (pMetadata->Flash.empty()) {
+         const wchar_t* flashQueries[] = { L"/app1/ifd/exif/{ushort=37377}", L"/ifd/exif/{ushort=37377}" };
+         for (auto q : flashQueries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+             UINT fVal = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
+             pMetadata->Flash = (fVal & 1) ? L"Flash: On" : L"Flash: Off";
+             PropVariantClear(&var); break;
+         }
+    }
     
-    // Focal Length (37386)
-    double focal = 0.0;
-    const wchar_t* focalQueries[] = { L"/app1/ifd/exif/{ushort=37386}", L"/ifd/exif/{ushort=37386}" };
-    for (auto q : focalQueries) {
-        if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &focal))) {
-             wchar_t buf[64];
-             // Try to get 35mm equivalent (0xa405)
-             double focal35 = 0.0;
-             const wchar_t* focal35Queries[] = { L"/app1/ifd/exif/{ushort=41989}", L"/ifd/exif/{ushort=41989}" };
-             for (auto q35 : focal35Queries) {
-                 if (SUCCEEDED(GetMetadataRational(reader.Get(), q35, &focal35)) && focal35 > 0) break;
+    // Lens Model
+    TryGetText({ 
+        L"/app1/ifd/exif/{ushort=42036}", 
+        L"/ifd/exif/{ushort=42036}", 
+        L"/app1/ifd/exif/{ushort=0xA434}", 
+        L"/ifd/exif/{ushort=0xA434}",
+        L"/xmp/exif:LensModel",
+        L"/xmp/aux:Lens"
+    }, pMetadata->Lens);
+
+    // [v5.5] White Balance
+    if (pMetadata->WhiteBalance.empty()) {
+        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=41987}", L"/ifd/exif/{ushort=41987}" };
+        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+             UINT val = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 99);
+             if (val == 0) pMetadata->WhiteBalance = L"Auto";
+             else if (val == 1) pMetadata->WhiteBalance = L"Manual";
+             PropVariantClear(&var); break;
+        }
+    }
+
+    // [v5.5] Metering Mode
+    if (pMetadata->MeteringMode.empty()) {
+        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=37383}", L"/ifd/exif/{ushort=37383}" };
+        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+             UINT val = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
+             switch (val) {
+                 case 1: pMetadata->MeteringMode = L"Average"; break;
+                 case 2: pMetadata->MeteringMode = L"Center Weighted"; break;
+                 case 3: pMetadata->MeteringMode = L"Spot"; break;
+                 case 4: pMetadata->MeteringMode = L"MultiSpot"; break;
+                 case 5: pMetadata->MeteringMode = L"Pattern"; break;
+                 case 6: pMetadata->MeteringMode = L"Partial"; break;
+                 case 255: pMetadata->MeteringMode = L"Other"; break;
+                 default: break; // Unknown
              }
-             if (focal35 > 0) {
-                 swprintf_s(buf, L"%.0fmm (%.0fmm)", focal, focal35);
-             } else {
-                 swprintf_s(buf, L"%.0fmm", focal);
+             PropVariantClear(&var); break;
+        }
+    }
+
+    // [v5.5] Exposure Program
+    if (pMetadata->ExposureProgram.empty()) {
+        const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=34850}", L"/ifd/exif/{ushort=34850}" };
+        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+             UINT val = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
+             switch (val) {
+                 case 1: pMetadata->ExposureProgram = L"Manual"; break;
+                 case 2: pMetadata->ExposureProgram = L"Normal"; break;
+                 case 3: pMetadata->ExposureProgram = L"Aperture Priority"; break;
+                 case 4: pMetadata->ExposureProgram = L"Shutter Priority"; break;
+                 case 5: pMetadata->ExposureProgram = L"Creative"; break;
+                 case 6: pMetadata->ExposureProgram = L"Action"; break;
+                 case 7: pMetadata->ExposureProgram = L"Portrait"; break;
+                 case 8: pMetadata->ExposureProgram = L"Landscape"; break;
+                 default: break;
              }
-             pMetadata->Focal = buf;
-             break;
+             PropVariantClear(&var); break;
+        }
+    }
+
+    // Color Space
+    if (pMetadata->ColorSpace.empty()) {
+         const wchar_t* csQueries[] = { L"/app1/ifd/exif/{ushort=40961}", L"/ifd/exif/{ushort=40961}" };
+         for (auto q : csQueries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+             UINT csVal = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
+             if (csVal == 1) pMetadata->ColorSpace = L"sRGB";
+             else if (csVal == 2) pMetadata->ColorSpace = L"Adobe RGB";
+             else if (csVal == 65535) pMetadata->ColorSpace = L"Wide Gamut";
+             PropVariantClear(&var); break;
+         }
+    }
+
+    // GPS
+    double lat = 0, lon = 0;
+    bool foundGPS = false;
+    if (SUCCEEDED(GetMetadataGPS(reader, L"/app1/ifd/gps/{ushort=2}", L"/app1/ifd/gps/{ushort=1}", &lat)) &&
+        SUCCEEDED(GetMetadataGPS(reader, L"/app1/ifd/gps/{ushort=4}", L"/app1/ifd/gps/{ushort=3}", &lon))) { foundGPS = true; }
+    else if (SUCCEEDED(GetMetadataGPS(reader, L"/ifd/gps/{ushort=2}", L"/ifd/gps/{ushort=1}", &lat)) &&
+             SUCCEEDED(GetMetadataGPS(reader, L"/ifd/gps/{ushort=4}", L"/ifd/gps/{ushort=3}", &lon))) { foundGPS = true; }
+             
+    if (foundGPS) {
+        pMetadata->HasGPS = true;
+        pMetadata->Latitude = lat;
+        pMetadata->Longitude = lon;
+        
+        // Altitude
+        double alt = 0;
+        const wchar_t* altQueries[] = { L"/app1/ifd/gps/{ushort=6}", L"/ifd/gps/{ushort=6}" };
+        for (auto q : altQueries) if (SUCCEEDED(GetMetadataRational(reader, q, &alt))) {
+            pMetadata->Altitude = alt;
+            // Ref
+            std::wstring refPath = q;
+            size_t pos = refPath.rfind(L"6}");
+            if (pos != std::wstring::npos) {
+                refPath.replace(pos, 2, L"5}");
+                PROPVARIANT rVar; PropVariantInit(&rVar);
+                if (SUCCEEDED(reader->GetMetadataByName(refPath.c_str(), &rVar))) {
+                    if (rVar.vt == VT_UI1 && rVar.bVal == 1) pMetadata->Altitude = -alt;
+                    PropVariantClear(&rVar);
+                }
+            }
+            break;
+        }
+    }
+}
+
+// [v5.3] Extract Metadata from Memory (Zero-IO)
+static void ExtractExifFromMemory(IWICImagingFactory* factory, const uint8_t* data, size_t size, CImageLoader::ImageMetadata* meta) {
+    if (!factory || !data || !size || !meta) return;
+    
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(&stream))) return;
+    if (FAILED(stream->InitializeFromMemory(const_cast<uint8_t*>(data), static_cast<DWORD>(size)))) return;
+    
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromStream(stream.Get(), NULL, WICDecodeMetadataCacheOnDemand, &decoder))) return;
+    
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0, &frame))) return;
+    
+    ComPtr<IWICMetadataQueryReader> reader;
+    if (FAILED(frame->GetMetadataQueryReader(&reader))) return;
+    
+    PopulateExifFromQueryReader(reader.Get(), meta);
+}
+
+// [v5.3] File Stats
+static void PopulateFileStats(LPCWSTR filePath, CImageLoader::ImageMetadata* meta) {
+    if (!filePath || !meta) return;
+    
+    // File Size
+    std::error_code ec;
+    uintmax_t size = std::filesystem::file_size(filePath, ec);
+    if (!ec) meta->FileSize = size;
+    
+    // Date (Fallback to Modify Date) + [v5.3] Timestamps
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+         FILETIME ftCreate, ftAccess, ftWrite;
+         if (GetFileTime(hFile, &ftCreate, &ftAccess, &ftWrite)) {
+             meta->CreationTime = ftCreate;
+             meta->LastWriteTime = ftWrite;
+             
+             if (meta->Date.empty()) {
+                 SYSTEMTIME st; FileTimeToSystemTime(&ftWrite, &st);
+                 wchar_t buf[64];
+                 swprintf_s(buf, L"%04d-%02d-%02d %02d:%02d:%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+                 meta->Date = buf; 
+             }
+         }
+         CloseHandle(hFile);
+    }
+}
+
+HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, bool clear) {
+    if (!filePath || !pMetadata) return E_INVALIDARG;
+    if (clear) *pMetadata = {}; 
+    
+    // 1. Detect Format (if missing)
+    if (pMetadata->Format.empty()) {
+        pMetadata->Format = DetectFormatFromContent(filePath);
+    }
+    
+    // [v5.3] Read File Stats (Size/Date)
+    PopulateFileStats(filePath, pMetadata);
+    
+    // 2. Dispatch
+    if (pMetadata->Format == L"Raw" || pMetadata->Format == L"Unknown") {
+        // Try LibRaw first for metadata
+        std::wstring path = filePath;
+        std::transform(path.begin(), path.end(), path.begin(), ::towlower);
+        
+        bool isRawExt = (path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || 
+                         path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || 
+                         path.ends_with(L".raf") || path.ends_with(L".pef") || path.ends_with(L".srw") || 
+                         path.ends_with(L".cr3") || path.ends_with(L".nrw") ||
+                         path.ends_with(L".heic") || path.ends_with(L".heif"));
+                         
+        if (isRawExt) {
+            if (SUCCEEDED(ReadMetadataLibRaw(filePath, pMetadata))) {
+                // LibRaw succeeded - metadata fields populated
+                // Continue to WIC for GPS if needed (or other missing fields)
+            }
         }
     }
     
-    // Lens Model (42036 or 0xA434)
-    const wchar_t* lensQueries[] = { L"/app1/ifd/exif/{ushort=42036}", L"/ifd/exif/{ushort=42036}" };
-    for (auto q : lensQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Lens)) && !pMetadata->Lens.empty()) break;
-
-    // Software (305) - Try multiple paths
-    const wchar_t* softQueries[] = { L"/app1/ifd/{ushort=305}", L"/ifd/{ushort=305}" };
-    for (auto q : softQueries) if (SUCCEEDED(GetMetadataString(reader.Get(), q, pMetadata->Software)) && !pMetadata->Software.empty()) break;
-
-    // ColorSpace Detection:
-    // 1. Try to get ICC Profile embedded in image for accurate color space name
-    // 2. Fall back to EXIF ColorSpace tag (0xa001)
+    // 3. WIC Fallback (for JPEG, PNG, or if LibRaw failed/didn't have GPS)
+    if (!m_wicFactory) return S_OK; 
     
-    // Try ICC Profile first - Get color context from frame
-    ComPtr<IWICBitmapFrameDecode> iccFrame;
-    if (SUCCEEDED(decoder->GetFrame(0, &iccFrame))) {
-        ComPtr<IWICColorContext> colorContext;
-        if (SUCCEEDED(m_wicFactory->CreateColorContext(&colorContext))) {
-            UINT count = 0;
-            IWICColorContext* contexts[1] = { colorContext.Get() };
-            hr = iccFrame->GetColorContexts(1, contexts, &count);
-            if (SUCCEEDED(hr) && count > 0) {
-                // Get profile bytes and parse description
-                UINT profileSize = 0;
-                colorContext->GetProfileBytes(0, nullptr, &profileSize);
-                if (profileSize > 128) { // ICC profile header is 128 bytes
-                    std::vector<BYTE> profileData(profileSize);
-                    if (SUCCEEDED(colorContext->GetProfileBytes(profileSize, profileData.data(), &profileSize))) {
-                        // ICC Profile structure: 
-                        // Offset 12-15: Profile/Device class (signature)
-                        // We need to find 'desc' tag for profile description
-                        // Tag table starts at offset 128
-                        UINT tagCount = (profileData[128] << 24) | (profileData[129] << 16) | (profileData[130] << 8) | profileData[131];
-                        for (UINT i = 0; i < tagCount && i < 50; i++) {
-                            UINT tagOffset = 132 + i * 12;
-                            if (tagOffset + 12 > profileSize) break;
-                            // Check for 'desc' tag signature
-                            if (profileData[tagOffset] == 'd' && profileData[tagOffset+1] == 'e' && 
-                                profileData[tagOffset+2] == 's' && profileData[tagOffset+3] == 'c') {
-                                UINT descOffset = (profileData[tagOffset+4] << 24) | (profileData[tagOffset+5] << 16) | 
-                                                  (profileData[tagOffset+6] << 8) | profileData[tagOffset+7];
-                                UINT descSize = (profileData[tagOffset+8] << 24) | (profileData[tagOffset+9] << 16) | 
-                                                (profileData[tagOffset+10] << 8) | profileData[tagOffset+11];
-                                if (descOffset + 12 < profileSize && descSize > 12) {
-                                    // Skip type signature (4 bytes) and reserved (4 bytes)
-                                    // ASCII count at offset+8
-                                    UINT strLen = (profileData[descOffset+8] << 24) | (profileData[descOffset+9] << 16) |
-                                                  (profileData[descOffset+10] << 8) | profileData[descOffset+11];
-                                    if (strLen > 0 && strLen < 128 && descOffset + 12 + strLen <= profileSize) {
-                                        std::string desc((char*)&profileData[descOffset + 12], strLen - 1);
-                                        // Common profiles
-                                        if (desc.find("Display P3") != std::string::npos) pMetadata->ColorSpace = L"Display P3";
-                                        else if (desc.find("sRGB") != std::string::npos) pMetadata->ColorSpace = L"sRGB";
-                                        else if (desc.find("Adobe RGB") != std::string::npos) pMetadata->ColorSpace = L"Adobe RGB";
-                                        else if (desc.find("DCI-P3") != std::string::npos) pMetadata->ColorSpace = L"DCI-P3";
-                                        else if (desc.find("Rec. 2020") != std::string::npos || desc.find("BT.2020") != std::string::npos) pMetadata->ColorSpace = L"Rec.2020";
-                                        else {
-                                            // Use first 20 chars of description
-                                            std::wstring wdesc(desc.begin(), desc.end());
-                                            if (wdesc.length() > 20) wdesc = wdesc.substr(0, 20) + L"...";
-                                            pMetadata->ColorSpace = wdesc;
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = m_wicFactory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+    
+    if (FAILED(hr)) return S_OK;
+    
+    // Get First Frame
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0, &frame))) return S_OK;
+    
+    // Dimensions (if missing)
+    if (pMetadata->Width == 0 || pMetadata->Height == 0) {
+        frame->GetSize(&pMetadata->Width, &pMetadata->Height);
+    }
+    
+    // 4. Metadata Reader (Standard EXIF + GPS)
+    ComPtr<IWICMetadataQueryReader> reader;
+    if (SUCCEEDED(frame->GetMetadataQueryReader(&reader))) {
+        PopulateExifFromQueryReader(reader.Get(), pMetadata);
     }
     
     // Fallback to EXIF ColorSpace if ICC not found
@@ -3594,6 +3760,7 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata) {
         }
     }
 
+    pMetadata->IsFullMetadataLoaded = true;
     return S_OK;
 }
 
@@ -3606,65 +3773,62 @@ HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* 
     pMetadata->HistB.assign(256, 0);
     pMetadata->HistL.assign(256, 0);
 
-    ComPtr<IWICBitmap> bitmap;
-    if (FAILED(source->QueryInterface(IID_PPV_ARGS(&bitmap)))) {
-        return E_NOINTERFACE; 
-    }
-    
-    ComPtr<IWICBitmapLock> lock;
-    if (FAILED(bitmap->Lock(nullptr, WICBitmapLockRead, &lock))) return E_FAIL;
-    
     UINT width = 0, height = 0;
-    bitmap->GetSize(&width, &height);
-    
-    UINT stride = 0;
-    lock->GetStride(&stride);
+    source->GetSize(&width, &height);
+    if (width == 0 || height == 0) return E_FAIL;
 
-    UINT bufSize = 0;
-    BYTE* ptr = nullptr;
-    if (FAILED(lock->GetDataPointer(&bufSize, &ptr))) return E_FAIL;
-    
     WICPixelFormatGUID format;
     source->GetPixelFormat(&format);
     
-    // Determine offsets
-    int offsetR = 0, offsetG = 1, offsetB = 2; // Default RGBA
+    // Determine offsets (Enable for 32bpp BGRA/PBGRA)
+    int offsetR = 0, offsetG = 1, offsetB = 2; // Default RGBA order (if not BGRA)
+    bool isBGRA = false;
+    
     if (IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA) || 
         IsEqualGUID(format, GUID_WICPixelFormat32bppPBGRA)) {
         offsetR = 2; offsetG = 1; offsetB = 0;
+        isBGRA = true;
+    } else {
+        // If not BGRA 32bpp, we might be reading garbage. 
+        // Ideally we should FormatConvert here, but for performance we might skip or simplistic check.
+        // Most of our pipeline ensures 32bpp conversion before this stage.
     }
-    
-    // Optimized Histogram Calculation
-    // For small images (< 2MP), use Step=1 (Exact).
-    // For large images, use Step > 1 (Sparse).
-    
+
+    // Optimization: Skip Sampling
     UINT64 totalPixels = (UINT64)width * height;
-    
     UINT step = 1;
-    if (totalPixels > 2000000) { // 2MP threshold
-         // Target ~250k samples
+    if (totalPixels > 2000000) { 
          step = (UINT)sqrt(totalPixels / 250000.0);
          if (step < 1) step = 1;
     }
     
-    // Sampling Loop
+    // Row Buffer
+    UINT stride = width * 4; 
+    std::vector<BYTE> rowBuffer(stride);
+    
     for (UINT y = 0; y < height; y += step) {
-        BYTE* row = ptr + (UINT64)y * stride; // Use 64-bit math for stride offset safety
+        WICRect rect = { 0, (INT)y, (INT)width, 1 };
+        
+        // Use CopyPixels: Works on FormatConverters unlike Lock()
+        if (FAILED(source->CopyPixels(&rect, stride, stride, rowBuffer.data()))) continue;
+        
+        BYTE* row = rowBuffer.data();
         for (UINT x = 0; x < width; x += step) {
-            // Safety check for last pixel in row? 
-            // x*4 should be < stride. x < width implies x*4 < width*4 <= stride.
-            // But if stride is tight...
-            
-            BYTE r = row[x * 4 + offsetR];
-            BYTE g = row[x * 4 + offsetG];
-            BYTE b = row[x * 4 + offsetB];
+            BYTE r, g, b;
+            if (isBGRA) {
+                b = row[x * 4];
+                g = row[x * 4 + 1];
+                r = row[x * 4 + 2];
+            } else {
+                r = row[x * 4];
+                g = row[x * 4 + 1];
+                b = row[x * 4 + 2];
+            }
             
             pMetadata->HistR[r]++;
             pMetadata->HistG[g]++;
             pMetadata->HistB[b]++;
             
-            // Luma (Integer approx: 0.2126R + 0.7152G + 0.0722B)
-            // (54*R + 183*G + 18*B) / 256
             BYTE l = (BYTE)((54 * r + 183 * g + 19 * b) >> 8);
             pMetadata->HistL[l]++;
         }
@@ -3675,36 +3839,43 @@ HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* 
 
 // [v5.2] Histogram from RawImageFrame (for HeavyLanePool pipeline)
 void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& frame, ImageMetadata* pMetadata) {
-    if (!pMetadata || !frame.pixels || frame.width <= 0 || frame.height <= 0) return;
-    
-    // Reset
+    if (!frame.pixels || frame.width == 0 || frame.height == 0 || !pMetadata) return;
+
     pMetadata->HistR.assign(256, 0);
     pMetadata->HistG.assign(256, 0);
     pMetadata->HistB.assign(256, 0);
     pMetadata->HistL.assign(256, 0);
     
-    // RawImageFrame is always BGRA8888 (B=0, G=1, R=2, A=3)
-    const int offsetB = 0, offsetG = 1, offsetR = 2;
-    
+    // Skip Sampling (Target ~2MP samples)
     UINT64 totalPixels = (UINT64)frame.width * frame.height;
-    UINT step = 1;
-    if (totalPixels > 2000000) {
-        step = (UINT)sqrt(totalPixels / 250000.0);
-        if (step < 1) step = 1;
-    }
+    UINT stepY = 1;
     
-    for (int y = 0; y < frame.height; y += step) {
-        const BYTE* row = frame.pixels + (size_t)y * frame.stride;
-        for (int x = 0; x < frame.width; x += step) {
-            BYTE r = row[x * 4 + offsetR];
-            BYTE g = row[x * 4 + offsetG];
-            BYTE b = row[x * 4 + offsetB];
+    if (totalPixels > 2000000) {
+        // Calculate step to keep roughly 2M pixels
+        // total / step = 2M  => step = total / 2M
+        stepY = (UINT)(totalPixels / 2000000);
+        if (stepY < 1) stepY = 1;
+    }
+
+    const uint8_t* ptr = frame.pixels;
+    int stride = frame.stride;
+    
+    // Assume BGRA8888 (standard for RawImageFrame)
+    for (UINT y = 0; y < frame.height; y += stepY) {
+        const uint8_t* row = ptr + (UINT64)y * stride;
+        for (UINT x = 0; x < frame.width; x++) {
+            // Unrolling or SIMD could be added here, but scalar is fast enough with skip sampling.
+            // Layout: B, G, R, A
+            uint8_t b = row[x * 4 + 0];
+            uint8_t g = row[x * 4 + 1];
+            uint8_t r = row[x * 4 + 2];
             
-            pMetadata->HistR[r]++;
-            pMetadata->HistG[g]++;
             pMetadata->HistB[b]++;
+            pMetadata->HistG[g]++;
+            pMetadata->HistR[r]++;
             
-            BYTE l = (BYTE)((54 * r + 183 * g + 19 * b) >> 8);
+            // Luminance (approx)
+            uint8_t l = (uint8_t)((r * 299 + g * 587 + b * 114) / 1000);
             pMetadata->HistL[l]++;
         }
     }
@@ -4553,6 +4724,8 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         outFrame->height = res.height;
         outFrame->stride = res.stride;
         outFrame->format = PixelFormat::BGRA8888; // Default
+        // [v5.4] Metadata
+        outFrame->formatDetails = res.metadata.FormatDetails;
         
         SetupDeleter(res.pixels);
         return S_OK;

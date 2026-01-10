@@ -3916,8 +3916,42 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_imagePath = evt.filePath;
                 
                 // Metadata
+                // [v5.4 Fix] Race Condition: Prevent FullReady (Basic) from overwriting Async EXIF
+                // If Async Metadata (lazy) arrived FIRST, we must preserve it!
+                auto finalMetadata = evt.metadata; // Create mutable copy
+                
+                if (g_currentMetadata.IsFullMetadataLoaded && (g_currentImageId.load() == evt.imageId)) {
+                     // Preserve Async EXIF fields
+                     finalMetadata.Make = g_currentMetadata.Make;
+                     finalMetadata.Model = g_currentMetadata.Model;
+                     finalMetadata.Lens = g_currentMetadata.Lens;
+                     finalMetadata.ISO = g_currentMetadata.ISO;
+                     finalMetadata.Aperture = g_currentMetadata.Aperture;
+                     finalMetadata.Shutter = g_currentMetadata.Shutter;
+                     finalMetadata.Focal = g_currentMetadata.Focal;
+                     finalMetadata.ExposureBias = g_currentMetadata.ExposureBias;
+                     finalMetadata.Flash = g_currentMetadata.Flash;
+                     finalMetadata.Date = g_currentMetadata.Date;
+                     finalMetadata.Software = g_currentMetadata.Software;
+                     finalMetadata.ColorSpace = g_currentMetadata.ColorSpace;
+                     finalMetadata.WhiteBalance = g_currentMetadata.WhiteBalance;
+                     finalMetadata.MeteringMode = g_currentMetadata.MeteringMode;
+                     finalMetadata.ExposureProgram = g_currentMetadata.ExposureProgram;
+                     
+                     finalMetadata.HasGPS = g_currentMetadata.HasGPS;
+                     finalMetadata.Latitude = g_currentMetadata.Latitude;
+                     finalMetadata.Longitude = g_currentMetadata.Longitude;
+                     finalMetadata.Altitude = g_currentMetadata.Altitude;
+                     
+                     finalMetadata.FileSize = g_currentMetadata.FileSize;
+                     finalMetadata.CreationTime = g_currentMetadata.CreationTime;
+                     finalMetadata.LastWriteTime = g_currentMetadata.LastWriteTime;
+                     
+                     finalMetadata.IsFullMetadataLoaded = true; // Keep flag
+                }
+
                 // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
-                g_currentMetadata = evt.metadata;
+                g_currentMetadata = finalMetadata;
                 
                 // [v5.3] Set EXIF Orientation based on AutoRotate config
                 if (g_config.AutoRotate) {
@@ -3983,6 +4017,59 @@ void ProcessEngineEvents(HWND hwnd) {
             }
             break;
         }
+
+        case EventType::MetadataReady: {
+            // [v5.3] Async Aux Metadata handling (Split Strategy)
+            if (evt.imageId == g_currentImageId.load()) {
+                 // Merge logic: Only overwrite fields that are present in aux data
+                 if (!evt.metadata.Date.empty()) g_currentMetadata.Date = evt.metadata.Date;
+                 // [Fix] Copy Make!
+                 if (!evt.metadata.Make.empty()) g_currentMetadata.Make = evt.metadata.Make;
+                 if (!evt.metadata.Model.empty()) g_currentMetadata.Model = evt.metadata.Model;
+                 if (!evt.metadata.Lens.empty()) g_currentMetadata.Lens = evt.metadata.Lens;
+                 
+                 // [Debug Camera]
+                 wchar_t camBuf[256];
+                 swprintf_s(camBuf, L"[Main] MetadataReady Camera: Make='%s', Model='%s'\n", 
+                     evt.metadata.Make.c_str(), evt.metadata.Model.c_str());
+                 OutputDebugStringW(camBuf);
+                 
+                 if (!evt.metadata.ISO.empty()) g_currentMetadata.ISO = evt.metadata.ISO;
+                 if (!evt.metadata.Shutter.empty()) g_currentMetadata.Shutter = evt.metadata.Shutter;
+                 if (!evt.metadata.Aperture.empty()) g_currentMetadata.Aperture = evt.metadata.Aperture;
+                 if (!evt.metadata.Focal.empty()) g_currentMetadata.Focal = evt.metadata.Focal;
+                 if (!evt.metadata.ExposureBias.empty()) g_currentMetadata.ExposureBias = evt.metadata.ExposureBias;
+                 if (!evt.metadata.Flash.empty()) g_currentMetadata.Flash = evt.metadata.Flash;
+                 if (!evt.metadata.Software.empty()) g_currentMetadata.Software = evt.metadata.Software;
+                 
+                 // [v5.5] New Indicators
+                 if (!evt.metadata.Flash.empty()) g_currentMetadata.Flash = evt.metadata.Flash;
+                 if (!evt.metadata.WhiteBalance.empty()) g_currentMetadata.WhiteBalance = evt.metadata.WhiteBalance;
+                 if (!evt.metadata.MeteringMode.empty()) g_currentMetadata.MeteringMode = evt.metadata.MeteringMode;
+                 if (!evt.metadata.ExposureProgram.empty()) g_currentMetadata.ExposureProgram = evt.metadata.ExposureProgram;
+                 if (!evt.metadata.ColorSpace.empty()) g_currentMetadata.ColorSpace = evt.metadata.ColorSpace;
+                 
+                 // GPS (Atomic update)
+                 if (evt.metadata.HasGPS) {
+                     g_currentMetadata.HasGPS = true;
+                     g_currentMetadata.Latitude = evt.metadata.Latitude;
+                     g_currentMetadata.Longitude = evt.metadata.Longitude;
+                     g_currentMetadata.Altitude = evt.metadata.Altitude;
+                 }
+                 
+                 // File Attributes
+                 if (evt.metadata.FileSize > 0) g_currentMetadata.FileSize = evt.metadata.FileSize;
+                 if (evt.metadata.CreationTime.dwLowDateTime != 0) g_currentMetadata.CreationTime = evt.metadata.CreationTime;
+                 if (evt.metadata.LastWriteTime.dwLowDateTime != 0) g_currentMetadata.LastWriteTime = evt.metadata.LastWriteTime;
+
+                 g_currentMetadata.IsFullMetadataLoaded = true;
+                 
+                 // Refresh UI layers
+                 OutputDebugStringW(L"[Main] MetadataReady: Merged Async Data. Requesting Repaint.\n");
+                 RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+            }
+            break;
+        }
         }
     }
 
@@ -4020,6 +4107,11 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     g_ghostBitmap = nullptr; // Clear previous ghost
     g_isBlurry = true; // Reset for new image
     g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
+    
+    // [v5.5 Fix] Reset global metadata to prevent stale data merging
+    // Crucial for the Race Fix in FullReady to work correctly!
+    g_currentMetadata = {}; 
+    g_currentMetadata.IsFullMetadataLoaded = false;
     
     
     // Level 0 Feedback: Immediate OSD before any decode starts

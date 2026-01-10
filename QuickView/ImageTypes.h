@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <utility>
+#include <string>
 
 namespace QuickView {
 
@@ -43,6 +44,9 @@ struct RawImageFrame {
     int height = 0;             // Image height in pixels
     int stride = 0;             // Bytes per row (pitch), must be aligned
     PixelFormat format = PixelFormat::BGRA8888;
+    
+    // [v5.4] Intrinsic Decoder Details (e.g. "4:2:0", "Progressive")
+    std::wstring formatDetails;
     
     // === Lifecycle Management ===
     // Callback to release memory when frame is destroyed.
@@ -130,6 +134,8 @@ private:
         height = other.height;
         stride = other.stride;
         format = other.format;
+        // [v5.6 Fix] Move formatDetails!
+        formatDetails = std::move(other.formatDetails);
         memoryDeleter = std::move(other.memoryDeleter);
         
         // Nullify source
@@ -137,6 +143,7 @@ private:
         other.width = 0;
         other.height = 0;
         other.stride = 0;
+        // other.formatDetails is moved (empty)
         // memoryDeleter is moved, but setting to nullptr for clarity
     }
 };

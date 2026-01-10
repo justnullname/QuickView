@@ -4,6 +4,7 @@
 #include <deque>
 #include <list>
 #include <unordered_map>
+#include <set>
 #include <atomic>
 #include <string>
 #include <mutex>
@@ -28,7 +29,8 @@ enum class EventType {
     PreviewReady,   // Scout Lane Result (Preview or JXL DC)
     FullReady,      // Heavy Lane Result (Final)
     LoadError,      // Something went wrong
-    StatusChange    // For UI debug/status bar "Loading...", "Idle"
+    StatusChange,   // For UI debug/status bar "Loading...", "Idle"
+    MetadataReady   // [v5.3] Async metadata update (EXIF)
 };
 
 // === Phase 3: Prefetch System ===
@@ -58,10 +60,12 @@ struct EngineEvent {
     ComPtr<IWICBitmapSource> fullImage;    // For FullReady (Legacy, being deprecated)
     std::shared_ptr<QuickView::RawImageFrame> rawFrame;  // [Direct D2D] New: Zero-Copy Frame
     CImageLoader::ImageMetadata metadata;  // Pre-read metadata (avoids UI blocking)
-    std::wstring loaderName;               // Which decoder was used
     
-    // [Phase 7] Truth Stage
-    bool isScaled = false; // true = Fit Stage (scaled), false = Truth Stage (full res)
+    // Status Message Payload
+    std::wstring message;
+    
+    bool isScaled = false; // [Phase 11] Was image scaled during decode?
+    std::wstring loaderName; // Which decoder was used
 };
 
 class ImageEngine {
@@ -93,6 +97,9 @@ public:
     
     // [JXL Sequential] Trigger pending Heavy task after Scout completes
     void TriggerPendingJxlHeavy();
+    
+    // [v5.3] Async Request for Auxiliary Metadata (EXIF/Stats)
+    void RequestFullMetadata();
 
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
@@ -227,6 +234,7 @@ private:
 
     // --- Lane 1: The Scout ---
     class ScoutLane {
+        friend class ImageEngine;
     public:
         ScoutLane(ImageEngine* parent, CImageLoader* loader);
         ~ScoutLane();
@@ -265,6 +273,10 @@ private:
         std::jthread m_thread; 
         mutable std::mutex m_queueMutex;
         mutable std::mutex m_debugMutex; // [v3.2] For loader name
+        
+        std::mutex m_pendingMutex;
+        std::set<ImageID> m_pendingMetadataRequests;
+
         struct ScoutCommand {
             std::wstring path;
             ImageID id;

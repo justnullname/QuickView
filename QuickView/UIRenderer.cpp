@@ -111,8 +111,7 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
             y >= m_gpsLinkRect.top && y <= m_gpsLinkRect.bottom) {
             result.type = UIHitResult::GPSLink;
             wchar_t url[256];
-            swprintf_s(url, L"https://www.openstreetmap.org/?mlat=%.5f&mlon=%.5f#map=15/%.5f/%.5f",
-                g_currentMetadata.Latitude, g_currentMetadata.Longitude,
+            swprintf_s(url, L"https://www.bing.com/maps?q=%.5f,%.5f", 
                 g_currentMetadata.Latitude, g_currentMetadata.Longitude);
             result.payload = url;
             return result;
@@ -445,6 +444,13 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     
     // Info Panel - Use g_runtime directly since SetRuntimeConfig may not be called
     if (g_runtime.ShowInfoPanel) {
+        // [v5.3] Lazy Metadata Trigger (Split Strategy)
+        // If panel is visible, ensure we have full metadata (Async)
+        // [v5.3] Debounce now handled by ImageEngine
+        if (!g_currentMetadata.IsFullMetadataLoaded && g_pImageEngine) {
+             g_pImageEngine->RequestFullMetadata();
+        }
+
         if (g_runtime.InfoPanelExpanded) {
             DrawInfoPanel(dc);
         } else {
@@ -891,10 +897,13 @@ void UIRenderer::BuildInfoGrid() {
         } else {
             swprintf_s(sizeBuf, L"%llu B", bytes);
         }
-        std::wstring sub = L"(" + FormatBytesWithCommas(bytes) + L")";
+        std::wstring sizeBufStr = sizeBuf;
         std::wstring extra = g_currentMetadata.FormatDetails.empty() ? L"" : L" [" + g_currentMetadata.FormatDetails + L"]";
-        m_infoGrid.push_back({L"\U0001F4BE", L"Disk", std::wstring(sizeBuf) + extra, sub, L"", TruncateMode::None, false});
+        // [User Request] Remove (bytes) suffix. Only keep Size + Format Details.
+        m_infoGrid.push_back({L"\U0001F4BE", L"Disk", sizeBufStr + extra, L"", L"", TruncateMode::None, false});
     }
+
+    // [User Request] Remove Decode Info Row
     
     // Row 4: Date
     if (!g_currentMetadata.Date.empty()) {
@@ -902,8 +911,12 @@ void UIRenderer::BuildInfoGrid() {
     }
     
     // Row 5: Camera
-    if (!g_currentMetadata.Make.empty()) {
-        std::wstring camera = g_currentMetadata.Make + L" " + g_currentMetadata.Model;
+    if (!g_currentMetadata.Make.empty() || !g_currentMetadata.Model.empty()) {
+        std::wstring camera = g_currentMetadata.Make;
+        if (!g_currentMetadata.Model.empty()) {
+            if (!camera.empty()) camera += L" ";
+            camera += g_currentMetadata.Model;
+        }
         m_infoGrid.push_back({L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false});
     }
     
@@ -929,7 +942,27 @@ void UIRenderer::BuildInfoGrid() {
         m_infoGrid.push_back({L"\U0001F3A8", L"Color", g_currentMetadata.ColorSpace, L"", L"", TruncateMode::None, false});
     }
     
-    // Row 10: Software
+    // Row 10: Flash
+    if (!g_currentMetadata.Flash.empty()) {
+        m_infoGrid.push_back({L"\U0001F4A1", L"Flash", g_currentMetadata.Flash, L"", L"", TruncateMode::None, false});
+    }
+
+    // Row 11: White Balance
+    if (!g_currentMetadata.WhiteBalance.empty()) {
+        m_infoGrid.push_back({L"\U0001F321", L"W.Bal", g_currentMetadata.WhiteBalance, L"", L"", TruncateMode::None, false});
+    }
+
+    // Row 12: Metering
+    if (!g_currentMetadata.MeteringMode.empty()) {
+        m_infoGrid.push_back({L"\U000025CE", L"Meter", g_currentMetadata.MeteringMode, L"", L"", TruncateMode::None, false});
+    }
+
+    // Row 13: Program
+    if (!g_currentMetadata.ExposureProgram.empty()) {
+        m_infoGrid.push_back({L"\U0001F4CA", L"Prog", g_currentMetadata.ExposureProgram, L"", g_currentMetadata.ExposureProgram, TruncateMode::EndEllipsis, false});
+    }
+
+    // Row 14: Software
     if (!g_currentMetadata.Software.empty()) {
         m_infoGrid.push_back({L"\U0001F4BB", L"Soft", g_currentMetadata.Software, L"", g_currentMetadata.Software, TruncateMode::EndEllipsis, false});
     }
