@@ -4059,6 +4059,11 @@ void ProcessEngineEvents(HWND hwnd) {
                  
                  // File Attributes
                  if (evt.metadata.FileSize > 0) g_currentMetadata.FileSize = evt.metadata.FileSize;
+                 // [v5.8] Dimensions (if generic/RAW metadata has them)
+                 if (evt.metadata.Width > 0 && evt.metadata.Height > 0) {
+                     g_currentMetadata.Width = evt.metadata.Width;
+                     g_currentMetadata.Height = evt.metadata.Height;
+                 }
                  if (evt.metadata.CreationTime.dwLowDateTime != 0) g_currentMetadata.CreationTime = evt.metadata.CreationTime;
                  if (evt.metadata.LastWriteTime.dwLowDateTime != 0) g_currentMetadata.LastWriteTime = evt.metadata.LastWriteTime;
 

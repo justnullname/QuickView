@@ -3252,6 +3252,12 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath, CImageLoader::ImageMetadata*
 
     if (RawProcessor.open_file(pathUtf8.c_str()) != LIBRAW_SUCCESS) return E_FAIL;
     
+    // [v5.8] Dimensions
+    if (RawProcessor.imgdata.sizes.width > 0 && RawProcessor.imgdata.sizes.height > 0) {
+        pMetadata->Width = RawProcessor.imgdata.sizes.width;
+        pMetadata->Height = RawProcessor.imgdata.sizes.height;
+    }
+
     // ISO
     if (RawProcessor.imgdata.other.iso_speed > 0) {
         pMetadata->ISO = std::to_wstring((int)RawProcessor.imgdata.other.iso_speed);
