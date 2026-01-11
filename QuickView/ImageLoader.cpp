@@ -2191,6 +2191,90 @@ namespace QuickView {
                 return E_FAIL;
             }
 
+            static HRESULT LoadTGA(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                uint32_t w = 0, h = 0;
+                uint8_t* capturedPtr = nullptr;
+                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+
+                if (WuffsLoader::DecodeTGA(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
+                    result.pixels = capturedPtr;
+                    result.width = w;
+                    result.height = h;
+                    result.stride = w * 4;
+                    result.format = PixelFormat::BGRA8888;
+                    result.success = true;
+                    // [v5.3] Fill metadata directly
+                    result.metadata.FormatDetails = L"Wuffs TGA";
+                    result.metadata.Width = w;
+                    result.metadata.Height = h;
+                    return S_OK;
+                }
+                return E_FAIL;
+            }
+
+            static HRESULT LoadQOI(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                uint32_t w = 0, h = 0;
+                uint8_t* capturedPtr = nullptr;
+                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+
+                if (WuffsLoader::DecodeQOI(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
+                    result.pixels = capturedPtr;
+                    result.width = w;
+                    result.height = h;
+                    result.stride = w * 4;
+                    result.format = PixelFormat::BGRA8888;
+                    result.success = true;
+                    // [v5.3] Fill metadata directly
+                    result.metadata.FormatDetails = L"Wuffs QOI";
+                    result.metadata.Width = w;
+                    result.metadata.Height = h;
+                    return S_OK;
+                }
+                return E_FAIL;
+            }
+            
+            static HRESULT LoadWBMP(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                uint32_t w = 0, h = 0;
+                uint8_t* capturedPtr = nullptr;
+                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+
+                if (WuffsLoader::DecodeWBMP(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
+                    result.pixels = capturedPtr;
+                    result.width = w;
+                    result.height = h;
+                    result.stride = w * 4;
+                    result.format = PixelFormat::BGRA8888;
+                    result.success = true;
+                    // [v5.3] Fill metadata directly
+                    result.metadata.FormatDetails = L"Wuffs WBMP";
+                    result.metadata.Width = w;
+                    result.metadata.Height = h;
+                    return S_OK;
+                }
+                return E_FAIL;
+            }
+
+            static HRESULT LoadNetPBM(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                uint32_t w = 0, h = 0;
+                uint8_t* capturedPtr = nullptr;
+                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+
+                if (WuffsLoader::DecodeNetpbm(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
+                    result.pixels = capturedPtr;
+                    result.width = w;
+                    result.height = h;
+                    result.stride = w * 4;
+                    result.format = PixelFormat::BGRA8888;
+                    result.success = true;
+                    // [v5.3] Fill metadata directly
+                    result.metadata.FormatDetails = L"Wuffs NetPBM";
+                    result.metadata.Width = w;
+                    result.metadata.Height = h;
+                    return S_OK;
+                }
+                return E_FAIL;
+            }
+
         } // namespace Wuffs
 
         namespace JXL {
@@ -2634,6 +2718,224 @@ namespace QuickView {
             }
         } // namespace RawCodec
 
+        namespace NanoSVG {
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                // NanoSVG inputs must be null-terminated string (it parses XML)
+                // We make a safe copy
+                std::vector<char> xmlInput(size + 1);
+                memcpy(xmlInput.data(), data, size);
+                xmlInput[size] = '\0'; // Ensure Null Terminator
+
+                NSVGimage* image = nsvgParse(xmlInput.data(), "px", 96.0f);
+                if (!image) return E_FAIL;
+
+                int w = (int)image->width;
+                int h = (int)image->height;
+                float scale = 1.0f;
+
+                if (w <= 0 || h <= 0) { nsvgDelete(image); return E_FAIL; }
+
+                // [v6.8] Target Size Support
+                if (ctx.targetWidth > 0 && ctx.targetHeight > 0) {
+                     // Scale to fit? Or fill?
+                     // Usually fit within.
+                     float sx = (float)ctx.targetWidth / w;
+                     float sy = (float)ctx.targetHeight / h;
+                     scale = (sx < sy) ? sx : sy;
+                }
+                else if (ctx.targetWidth > 0) {
+                     scale = (float)ctx.targetWidth / w;
+                }
+
+                int finalW = (int)(w * scale);
+                int finalH = (int)(h * scale);
+                
+                // Rasterize
+                NSVGrasterizer* rast = nsvgCreateRasterizer();
+                if (!rast) { nsvgDelete(image); return E_OUTOFMEMORY; }
+
+                int stride = CalculateSIMDAlignedStride(finalW, 4);
+                size_t totalSize = (size_t)stride * finalH;
+                uint8_t* pixels = ctx.allocator(totalSize);
+
+                if (!pixels) {
+                    nsvgDeleteRasterizer(rast);
+                    nsvgDelete(image);
+                    return E_OUTOFMEMORY;
+                }
+
+                // Rasterize directly to buffer?
+                // NanoSVG rasterizes packed RGBA.
+                // We need BGRA.
+                // Either rasterize to temp and convert, or rasterize and swap?
+                // Rasterize allows custom stride.
+                // But it writes RGBA.
+                
+                // Let's rasterize to pixels (it writes RGBA).
+                // Then swizzle in place.
+                nsvgRasterize(rast, image, 0, 0, scale, pixels, finalW, finalH, stride);
+                
+                // Swizzle RB
+                // Use SIMD if possible, or simple loop
+                for (int y = 0; y < finalH; ++y) {
+                    uint8_t* row = pixels + (size_t)y * stride;
+                    for (int x = 0; x < finalW; ++x) {
+                        uint8_t r = row[x*4+0];
+                        uint8_t b = row[x*4+2];
+                        row[x*4+0] = b;
+                        row[x*4+2] = r;
+                    }
+                }
+
+                nsvgDeleteRasterizer(rast);
+                nsvgDelete(image);
+
+                result.pixels = pixels;
+                result.width = finalW;
+                result.height = finalH;
+                result.stride = stride;
+                result.format = PixelFormat::BGRA8888;
+                result.success = true;
+                result.metadata.FormatDetails = L"NanoSVG";
+                result.metadata.Width = finalW; // Or Original W?
+                result.metadata.Height = finalH;
+                return S_OK;
+            }
+        }
+
+        namespace TinyEXR {
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                int w = 0, h = 0;
+                std::vector<float> floatPixels;
+                
+                if (!TinyExrLoader::LoadEXRFromMemory(data, size, &w, &h, floatPixels)) {
+                    return E_FAIL;
+                }
+
+                if (w <= 0 || h <= 0 || floatPixels.empty()) return E_FAIL;
+
+                int stride = CalculateSIMDAlignedStride(w, 4);
+                size_t totalSize = (size_t)stride * h;
+                uint8_t* pixels = ctx.allocator(totalSize);
+                if (!pixels) return E_OUTOFMEMORY;
+
+                // Tone Map (Simple Gamma Correction e.g., 2.2 + Exposure?)
+                // Or just Clamp?
+                // TinyEXR gives linear RGBA float.
+                // We'll do simple sRGB conversion: x^(1/2.2)
+                
+                for (int y = 0; y < h; ++y) {
+                    uint8_t* rowDst = pixels + (size_t)y * stride;
+                    const float* rowSrc = floatPixels.data() + (size_t)y * w * 4;
+
+                    for (int x = 0; x < w; ++x) {
+                        float r = rowSrc[x*4+0];
+                        float g = rowSrc[x*4+1];
+                        float b = rowSrc[x*4+2];
+                        float a = rowSrc[x*4+3];
+
+                        // Clamp
+                        if (r < 0) r = 0; if (r > 1) r = 1;
+                        if (g < 0) g = 0; if (g > 1) g = 1;
+                        if (b < 0) b = 0; if (b > 1) b = 1;
+                        if (a < 0) a = 0; if (a > 1) a = 1;
+
+                        // Gamma 2.2 approximation (sqrt is 2.0, close enough for quick view)
+                        // Or pow(x, 0.4545)
+                        // Let's use sqrt for speed in this view
+                        /*
+                        r = sqrtf(r);
+                        g = sqrtf(g);
+                        b = sqrtf(b);
+                        */ 
+                        // Actually, let's just multiply by 255 for now (Linear View usually looks dark)
+                        // User can add tone mapping later. 
+                        // I will add simple gamma for usability.
+                        r = powf(r, 1.0f/2.2f);
+                        g = powf(g, 1.0f/2.2f);
+                        b = powf(b, 1.0f/2.2f);
+
+                        uint8_t R = (uint8_t)(r * 255.0f);
+                        uint8_t G = (uint8_t)(g * 255.0f);
+                        uint8_t B = (uint8_t)(b * 255.0f);
+                        uint8_t A = (uint8_t)(a * 255.0f);
+
+                        // BGRA
+                        rowDst[x*4+0] = B;
+                        rowDst[x*4+1] = G;
+                        rowDst[x*4+2] = R;
+                        rowDst[x*4+3] = A;
+                    }
+                }
+
+                result.pixels = pixels;
+                result.width = w;
+                result.height = h;
+                result.stride = stride;
+                result.format = PixelFormat::BGRA8888;
+                result.success = true;
+                result.metadata.FormatDetails = L"TinyEXR";
+                result.metadata.Width = w;
+                result.metadata.Height = h;
+                return S_OK;
+            }
+        }
+
+
+
+        namespace Stb {
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                int w = 0, h = 0, c = 0;
+                std::vector<uint8_t> out;
+                // STB uses malloc, we use vector wrapper
+                if (StbLoader::LoadImageFromMemory(data, size, &w, &h, &c, out, false)) {
+                     // Check if RGB or RGBA? StbLoader wrapper usually forces RGBA (4 channels) if possible or returns raw?
+                     // Verify StbLoader implementation?
+                     // It says "LoadImage" - usually wrapping stbi_load_from_memory forcing 4 components?
+                     // Assuming RGBA output from StbLoader wrapper.
+                     
+                     int stride = CalculateSIMDAlignedStride(w, 4);
+                     size_t totalSize = (size_t)stride * h;
+                     uint8_t* pixels = ctx.allocator(totalSize);
+                     if (!pixels) return E_OUTOFMEMORY;
+                     
+                     // Copy and Convert if needed
+                     // Stb is usually RGBA. We use BGRA.
+                     // Copy row by row
+                     uint8_t* src = out.data();
+                     // Check channels?
+                     // If wrapper forces 4, assume 4.
+                     
+                     for(int y=0; y<h; y++) {
+                         uint32_t* rowDst = (uint32_t*)(pixels + (size_t)y * stride);
+                         uint8_t* rowSrc = src + (size_t)y * w * 4; // Assuming 4 channels packed
+                         
+                         for(int x=0; x<w; x++) {
+                             uint8_t r = rowSrc[x*4+0]; // R
+                             uint8_t g = rowSrc[x*4+1]; // G
+                             uint8_t b = rowSrc[x*4+2]; // B
+                             uint8_t a = rowSrc[x*4+3]; // A
+                             
+                             // BGRA Output
+                             rowDst[x] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                         }
+                     }
+                     
+                    result.pixels = pixels;
+                    result.width = w;
+                    result.height = h;
+                    result.stride = stride;
+                    result.format = PixelFormat::BGRA8888;
+                    result.success = true;
+                    result.metadata.FormatDetails = L"StbImage";
+                    result.metadata.Width = w;
+                    result.metadata.Height = h;
+                    return S_OK;
+                }
+                return E_FAIL;
+            }
+        }
+
     } // namespace Codec
 } // namespace QuickView
 
@@ -2681,14 +2983,21 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
     }
 
     // --- Buffer Based Codecs ---
-    bool isBufferCodec = (fmt == L"JPEG" || fmt == L"WebP" || fmt == L"PNG" || fmt == L"GIF" || fmt == L"BMP" || fmt == L"JXL");
+    // [v6.7] Expanded: Include ALL integrated specialized formats
+    bool isBufferCodec = (
+        fmt == L"JPEG" || fmt == L"WebP" || fmt == L"PNG" || fmt == L"GIF" || fmt == L"BMP" || fmt == L"JXL" ||
+        fmt == L"AVIF" || 
+        fmt == L"QOI" || fmt == L"TGA" || fmt == L"PNM" || fmt == L"WBMP" ||
+        fmt == L"PSD" || fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX" ||
+        fmt == L"SVG" || fmt == L"EXR" || fmt == L"HEIC"
+    );
     
     if (isBufferCodec) {
         std::vector<uint8_t> fileBuf;
         if (!ReadAll(filePath, fileBuf)) return E_FAIL;
         
         // Dispatch
-        if (fmt == L"AVIF") {
+        if (fmt == L"AVIF" || fmt == L"HEIC") {
             CImageLoader::ThumbData tmp;
             HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(fileBuf.data(), fileBuf.size(), 0, &tmp, false, &result.metadata);
             if (SUCCEEDED(hr) && tmp.isValid) {
@@ -2708,21 +3017,27 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
             }
         }
         else if (fmt == L"JXL") {
-             CImageLoader::ThumbData tmp;
-             HRESULT hr = CImageLoader::LoadThumbJXL_DC(fileBuf.data(), fileBuf.size(), &tmp, &result.metadata);
-             if (SUCCEEDED(hr) && tmp.isValid) {
-                 result.width = tmp.width;
-                 result.height = tmp.height;
-                 result.stride = tmp.stride;
-                 size_t bufSize = (size_t)tmp.stride * tmp.height;
-                 result.pixels = ctx.allocator(bufSize);
-                 if (result.pixels) {
-                     memcpy(result.pixels, tmp.pixels.data(), bufSize);
-                     result.metadata.LoaderName = L"libjxl (Unified)"; 
-                     return S_OK;
+             // [Two-Stage] Only use DC Preview if scaling is requested (Stage 1)
+             // or if explicitly forcing preview.
+             if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
+                 CImageLoader::ThumbData tmp;
+                 HRESULT hr = CImageLoader::LoadThumbJXL_DC(fileBuf.data(), fileBuf.size(), &tmp, &result.metadata);
+                 if (SUCCEEDED(hr) && tmp.isValid) {
+                     result.width = tmp.width;
+                     result.height = tmp.height;
+                     result.stride = tmp.stride;
+                     size_t bufSize = (size_t)tmp.stride * tmp.height;
+                     result.pixels = ctx.allocator(bufSize);
+                     if (result.pixels) {
+                         memcpy(result.pixels, tmp.pixels.data(), bufSize);
+                         result.metadata.LoaderName = L"libjxl (DC)"; 
+                         return S_OK;
+                     }
+                     // If alloc failed, fall through to full decode? No, E_OUTOFMEMORY.
+                     return E_OUTOFMEMORY;
                  }
-                 return E_OUTOFMEMORY;
              }
+             // Fall through to JXL::Load (Full) if DC failed or not requested
         }
         else if (fmt == L"WebP") {
              // WebP Loader already accepts DecodeResult directly
@@ -2747,6 +3062,42 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
         else if (fmt == L"BMP") {
             HRESULT hr = Wuffs::LoadBMP(fileBuf.data(), fileBuf.size(), ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs BMP (Unified)"; return S_OK; }
+        }
+        else if (fmt == L"QOI") {
+            HRESULT hr = Wuffs::LoadQOI(fileBuf.data(), fileBuf.size(), ctx, result);
+            if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs QOI (Unified)"; return S_OK; }
+        }
+        else if (fmt == L"TGA") {
+            HRESULT hr = Wuffs::LoadTGA(fileBuf.data(), fileBuf.size(), ctx, result);
+            if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs TGA (Unified)"; return S_OK; }
+        }
+        else if (fmt == L"PNM") {
+            HRESULT hr = Wuffs::LoadNetPBM(fileBuf.data(), fileBuf.size(), ctx, result);
+            if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs NetPBM (Unified)"; return S_OK; }
+        }
+        else if (fmt == L"WBMP") {
+            HRESULT hr = Wuffs::LoadWBMP(fileBuf.data(), fileBuf.size(), ctx, result);
+            if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs WBMP (Unified)"; return S_OK; }
+        }
+        else if (fmt == L"SVG") {
+             HRESULT hr = NanoSVG::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             if (SUCCEEDED(hr)) { 
+                 // NanoSVG populates LoaderName
+                 return S_OK; 
+             }
+        }
+        else if (fmt == L"EXR") {
+             HRESULT hr = TinyEXR::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             if (SUCCEEDED(hr)) { 
+                 return S_OK; 
+             }
+        }
+        else if (fmt == L"PSD" || fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX") {
+             HRESULT hr = Stb::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             if (SUCCEEDED(hr)) { 
+                 // Stb::Load sets LoaderName to StbImage
+                 return S_OK; 
+             }
         }
         if (fmt == L"JXL") {
             HRESULT hr = JXL::Load(fileBuf.data(), fileBuf.size(), ctx, result);
@@ -2980,14 +3331,29 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         
         if (isAvif || isHeic) {
             pInfo->format = isAvif ? L"AVIF" : L"HEIC";
-            // Check if we need full file? AVIF usually needs full file or at least moov/meta.
-            // Fast Check: if libavif works on partial?
-            // "avifDecoderSetIOMemory" works. "avifDecoderParse" reads.
-            // If it needs more data, it fails.
-            // We give 64KB. Often not enough for MP4 structure.
-            // Just return E_FAIL to fallback to WIC or Full Loader?
-            // Or try reading full file here? (might be slow).
-            // Let's Skip Full Read in Fast Pass to ensure < 5ms.
+            // [v6.9] Try Parsing AVIF/HEIC Header
+            // We give 64KB (caller usually reads 64KB). Often enough for mp4/avif header (moov).
+            avifDecoder* decoder = avifDecoderCreate();
+            if (decoder) {
+                if (avifDecoderSetIOMemory(decoder, data, size) == AVIF_RESULT_OK) {
+                    if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
+                        pInfo->width = decoder->image->width;
+                        pInfo->height = decoder->image->height;
+                        pInfo->bitDepth = decoder->image->depth;
+                        pInfo->hasAlpha = decoder->image->alphaPlane != nullptr; // or just assume?
+                        // Actually decoder->image might not be fully populated until NextImage?
+                        // avifDecoderParse parses the sequence header. It populates width/height.
+                        // For alpha, we check if alphaPresent?
+                        pInfo->hasAlpha = (decoder->alphaPresent == AVIF_TRUE);
+                        pInfo->isAnimated = (decoder->imageCount > 1);
+                        
+                        avifDecoderDestroy(decoder);
+                        return S_OK;
+                    }
+                }
+                avifDecoderDestroy(decoder);
+            }
+            // If failed to parse (truncated), fallback to Heavy Lane (or Caller's logic)
             return E_FAIL; 
         }
     }
@@ -4649,6 +5015,17 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
 
     avifDecoder* decoder = avifDecoderCreate();
     if (!decoder) return E_OUTOFMEMORY;
+    
+    // [v6.9] Robustness: Disable strict compliance checks to accept slightly malformed files
+    decoder->strictFlags = AVIF_STRICT_DISABLED;
+    
+    // [v6.9.1] Maximize Tolerance
+    decoder->ignoreXMP = AVIF_TRUE; 
+    decoder->ignoreExif = AVIF_TRUE; // We extract Exif via EasyExif later anyway
+    
+    // Force Primary Item (Single Image) decoding if possible to avoid complex sequence issues?
+    // decoder->requestedSource = AVIF_DECODER_SOURCE_PRIMARY_ITEM; 
+    // Actually, keep AUTO, as some files might be sequences.
 
     // 2. Setup IO
     avifResult result = avifDecoderSetIOMemory(decoder, data, size);
@@ -4658,12 +5035,18 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
     }
 
     // 3. Parse
-    decoder->ignoreXMP = AVIF_TRUE; 
     result = avifDecoderParse(decoder);
     if (result != AVIF_RESULT_OK) {
+        // [v6.9.2] Diagnostic Log (Keep this for edge cases)
+        wchar_t buf[512]; 
+        swprintf_s(buf, L"[AVIF_FAIL] Parse Failed: %S | Diag: %S (v%S)\n", 
+            avifResultToString(result), decoder->diag.error, avifVersion());
+        OutputDebugStringW(buf);
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
+    
+        // [AVIF_OK] Parsed (Log removed for cleanliness)
     
     // [v6.0] Native EXIF Extraction
     // Extract early (after Parse) to support both FastPath and Main path
@@ -4730,6 +5113,7 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
     // Decoding the middle item is often a good representation and faster than stitching.
     if (decoder->imageCount > 1) {
         // Pick middle frame
+        // Pick middle frame
         uint32_t midIndex = decoder->imageCount / 2;
         result = avifDecoderNthImage(decoder, midIndex);
         if (result != AVIF_RESULT_OK) {
@@ -4741,10 +5125,6 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
         // Single Image Logic
         
         // [STE Level 3] Circuit Breaker (Strict Budget)
-        // If allowSlow is FALSE (Warp State) AND we are here (meaning no Exif found),
-        // we must ABORT unless it's a Fast Pass candidate (already checked outside).
-        // Actually, FastPass calls this with targetSize=0.
-        // If targetSize > 0 (Thumbnail request) AND !allowSlow -> SKIP.
         if (targetSize > 0 && !allowSlow) {
              avifDecoderDestroy(decoder);
              return E_ABORT; 
@@ -5081,6 +5461,8 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             
             // [v6.0] Format Details
             if (pMetadata) {
+                pMetadata->Width = static_cast<int>(info.xsize);
+                pMetadata->Height = static_cast<int>(info.ysize);
                 wchar_t fmtBuf[64];
                 const wchar_t* mode = info.uses_original_profile ? L"Lossless" : L"Lossy";
                 swprintf_s(fmtBuf, L"%d-bit %s", info.bits_per_sample, mode);
@@ -5360,6 +5742,42 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
     return E_FAIL;
 }
 
+
+// Helper: Parse AVIF dimensions using libavif (Header only)
+static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height) {
+    if (!width || !height) return false;
+    
+    // Read first 16KB (usually enough for header)
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    
+    uint8_t buf[16384]; 
+    DWORD bytesRead = 0;
+    ReadFile(hFile, buf, sizeof(buf), &bytesRead, nullptr);
+    CloseHandle(hFile);
+    
+    if (bytesRead < 100) return false;
+
+    avifDecoder* decoder = avifDecoderCreate();
+    if (!decoder) return false;
+    
+    bool success = false;
+    if (avifDecoderSetIOMemory(decoder, buf, bytesRead) == AVIF_RESULT_OK) {
+        // [v6.9] Robust Header Parsing
+        decoder->strictFlags = AVIF_STRICT_DISABLED;
+        decoder->ignoreXMP = AVIF_TRUE;
+        decoder->ignoreExif = AVIF_TRUE;
+        
+        if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
+            *width = decoder->image->width;
+            *height = decoder->image->height;
+            success = true;
+        }
+    }
+    avifDecoderDestroy(decoder);
+    return success;
+}
+
 // ============================================================================
 // Pre-flight Check (v3.1) - Fast header classification
 // ============================================================================
@@ -5380,6 +5798,18 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
         // Try format detection only
         result.format = DetectFormatFromContent(filePath);
         if (result.format == L"Unknown") return result;
+
+        // [v6.6 Fix] AVIF/HEIC: Try to get real dimensions using libavif
+        if (result.format == L"AVIF") {
+            uint32_t w = 0, h = 0;
+            if (GetAVIFDimensions(filePath, &w, &h)) {
+                result.width = w;
+                result.height = h;
+            } else {
+                 // If header parse fails (e.g. truncated buffer), default to Invalid/Heavy?
+                 // We don't want to blindly send to FastLane (TypeA) if size is 0.
+            }
+        }
     } else {
         result.format = info.format;
         result.width = info.width;
@@ -5429,7 +5859,9 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     }
     else if (result.format == L"AVIF" || result.format == L"HEIC") {
         // AVIF/HEIC: ≤4MP → Express Fast Pass
-        if (pixels <= 4000000) {
+        // [v6.6] Safety: If pixels == 0 (Unknown), Assume Large (Heavy Lane)
+        // This prevents huge AVIFs (where header Peek failed) from crashing FastLane.
+        if (pixels > 0 && pixels <= 4000000) {
             result.type = ImageType::TypeA_Sprint;
         } else {
             result.type = ImageType::TypeB_Heavy;
@@ -5815,4 +6247,35 @@ void CImageLoader::PopulateFormatDetails(struct ImageMetadata* meta, const wchar
     
     // Anim
     if (isAnim) meta->FormatDetails += L" Anim";
+}
+// [v6.5 Recursor] Get Embedded Thumbnail/Preview dimensions for RAW files
+HRESULT CImageLoader::GetEmbeddedPreviewInfo(LPCWSTR filePath, int* width, int* height) {
+    if (!filePath || !width || !height) return E_INVALIDARG;
+    *width = 0; *height = 0;
+
+    // Use LibRaw to extract thumbnail Dimensions FAST.
+    LibRaw RawProcessor;
+
+    // Conversion helper (same as ReadMetadataLibRaw)
+    std::string pathUtf8;
+    try {
+        int len = WideCharToMultiByte(CP_UTF8, 0, filePath, -1, NULL, 0, NULL, NULL);
+        if (len > 0) {
+            pathUtf8.resize(len);
+            WideCharToMultiByte(CP_UTF8, 0, filePath, -1, &pathUtf8[0], len, NULL, NULL);
+            pathUtf8.pop_back(); 
+        }
+    } catch(...) { return E_INVALIDARG; }
+
+    if (RawProcessor.open_file(pathUtf8.c_str()) != LIBRAW_SUCCESS) return E_FAIL;
+    
+    // Try unpack_thumb to get dimensions (unfortunately needed for some formats)
+    // Optimization: Check if sizes are already available in imgdata.thumbnail without unpack?
+    // Usually twidth/theight are 0 until unpack_thumb.
+    if (RawProcessor.unpack_thumb() != LIBRAW_SUCCESS) return E_FAIL;
+
+    *width = RawProcessor.imgdata.thumbnail.twidth;
+    *height = RawProcessor.imgdata.thumbnail.theight;
+    
+    return S_OK;
 }

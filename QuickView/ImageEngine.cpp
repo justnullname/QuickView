@@ -15,7 +15,7 @@
 
 ImageEngine::ImageEngine(CImageLoader* loader)
     : m_loader(loader)
-    , m_scout(this, loader)
+    , m_fastLane(this, loader)
 {
     // [N+1] Detect hardware and create pool
     SystemInfo sysInfo = SystemInfo::Detect();
@@ -54,7 +54,7 @@ void ImageEngine::QueueEvent(EngineEvent&& e) {
     // Actually, Main Thread calls PollState() to get them.
     // So we must still store them, but Notify Main Thread.
     
-    // NOTE: ScoutLane and HeavyLane manage their own result queues.
+    // NOTE: FastLane and HeavyLane manage their own result queues.
     // We don't have a central queue in ImageEngine currently. 
     // They store in m_results of each lane.
     
@@ -100,31 +100,21 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     OutputDebugStringW(buf);
 }
 
-void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint64_t navToken) {
-    if (path.empty()) return;
-    
-    // [Phase 3] Store the navigation token for event filtering (deprecated)
-    m_currentNavToken.store(navToken);
-    
-    // [ImageID Architecture] Compute and store stable hash ID for current image
-    ImageID imageId = ComputePathHash(path);
-    m_currentImageId.store(imageId);
-    
-    // Track State
-    m_currentNavPath = path;
-    m_lastInputTime = std::chrono::steady_clock::now();
+// [Phase 2 Stub Removed (Implemented above)]
+// void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, uintmax_t fileSize) { ... }
 
-    // [v3.1] Pre-flight Check & Shunting Matrix
-    // Intelligent dispatch based on file header analysis
+// [Phase 2] Dispatcher Implementation
+void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, uintmax_t fileSize) {
+    // 1. Peek Header
     CImageLoader::ImageHeaderInfo info = m_loader->PeekHeader(path.c_str());
     
-    // [DEBUG] Classification logging
+    // [DEBUG] Log
     {
         wchar_t buf[512];
         const wchar_t* typeName = L"Invalid";
         if (info.type == CImageLoader::ImageType::TypeA_Sprint) typeName = L"TypeA_Sprint";
         else if (info.type == CImageLoader::ImageType::TypeB_Heavy) typeName = L"TypeB_Heavy";
-        swprintf_s(buf, L"[NavigateTo] %s: %dx%d (%.1f MP), Format=%s, Type=%s\n",
+        swprintf_s(buf, L"[Dispatch] %s: %dx%d (%.1f MP), Format=%s, Type=%s\n",
             path.substr(path.find_last_of(L"\\/") + 1).c_str(),
             info.width, info.height,
             (double)(info.width * info.height) / 1000000.0,
@@ -136,74 +126,105 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     // Update State for UI
     m_hasEmbeddedThumb = info.hasEmbeddedThumb;
     
-    // Default to Heavy if analysis fails (safety net)
-    bool useScout = m_config.EnableScout;
+    bool useFastLane = m_config.EnableScout;
     bool useHeavy = m_config.EnableHeavy;
     
-    // CLASSIFICATION LOGIC
+    // 2. Recursive RAW Check
+    // If it's a RAW file with an embedded thumb, check the preview resolution.
+    // "RAW" detection: check if string contains RAW or format check from loader
+    if ((info.format.find(L"RAW") != std::wstring::npos) && info.hasEmbeddedThumb) {
+        int embW = 0, embH = 0;
+        // Call the new method [v6.5 Recursor]
+        if (SUCCEEDED(m_loader->GetEmbeddedPreviewInfo(path.c_str(), &embW, &embH))) {
+            uint64_t embPixels = (uint64_t)embW * embH;
+            // Threshold: 2.5 MP (Conservative)
+            // If embedded preview is huge, it will block FastLane. Force Heavy Lane.
+            if (embPixels > 2500000) { 
+                OutputDebugStringW(L"[Dispatch] RAW Embedded Preview TOO LARGE -> Force Heavy Lane\n");
+                // Override Classification: Treat as Heavy
+                info.type = CImageLoader::ImageType::TypeB_Heavy; 
+            }
+        }
+    }
+    
+    // 3. Classification Logic (Refined)
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
-        // [v3.2] Type A images go to Express Lane ONLY
-        // JPEG ≤8.5MP, PNG ≤4MP, RAW/TIFF (embedded), etc.
-        // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading (DC Preview + Heavy Full Decode)
+        // Small/Fast images -> FastLane Only
+        // [v4.1] Exception: JXL (TypeA) uses Heavy/Two-Stage logic
         if (info.format != L"JXL") {
              useHeavy = false;
         }
     } 
     else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
-        // Case: Large Image without embedded thumb
-        // Strategy: Main Only. Scout ignored (would produce blurry or abort).
-        useScout = false;
+        // Large Image -> Heavy Only (FastLane ignored)
+        useFastLane = false;
     }
-    // else: Invalid/Unknown -> Parallel fallback
     
-    // [ImageID] ALWAYS cancel stale tasks BEFORE dispatching new one
-    // Use ImageID (path hash) instead of navToken for stable identification
+    // 4. Cancel Stale Tasks
     m_heavyPool->CancelOthers(imageId);
     
-    wchar_t tokenBuf[256];
-    swprintf_s(tokenBuf, L"[Dispatch] ImageID=%zu (Token=%llu deprecated)\n", imageId, navToken);
-    OutputDebugStringW(tokenBuf);
-    
-    // DISPATCH
-    bool isJXL = (info.format == L"JXL");
-    
-    // [JXL Sequential] Clear any pending Heavy from previous image
-    m_pendingJxlHeavyPath.clear();
-    m_pendingJxlHeavyId = 0;
-    
-    if (useHeavy && !isJXL) {
-        // Non-JXL: Parallel dispatch (Scout + Heavy simultaneously)
-        OutputDebugStringW(L"[Dispatch] -> Heavy Pool (Parallel)\n");
-        m_heavyPool->Submit(path, imageId);
-    } else if (useHeavy && isJXL) {
-        // JXL-specific dispatch logic
-        uint64_t pixels = (uint64_t)info.width * info.height;
+    // 5. JXL Special Logic
+    if (info.format == L"JXL") {
+        m_pendingJxlHeavyPath.clear();
+        m_pendingJxlHeavyId = 0;
         
-        if (pixels < 2'000'000) {
-            // [小图跳过] <2MP: 直接 Heavy，不走 Scout (DC 预览太小没意义)
-            OutputDebugStringW(L"[Dispatch] -> JXL Small (<2MP): Heavy Only\n");
-            m_heavyPool->Submit(path, imageId);
-            useScout = false;  // Disable Scout for this image
-        } else if (!useScout || !m_config.EnableScout) {
-            // [Scout 禁用] 大图但 Scout 被禁用，直接 Heavy
-            OutputDebugStringW(L"[Dispatch] -> JXL Large, Scout Disabled: Heavy Direct\n");
+        uint64_t pixels = (uint64_t)info.width * info.height;
+        if (pixels < 2000000) {
+            // Small JXL (<2MP): Heavy Only (DC Preview useless)
+            OutputDebugStringW(L"[Dispatch] -> JXL Small: Heavy Direct\n");
             m_heavyPool->Submit(path, imageId);
         } else {
-            // [大图串行] >=2MP: Scout 先行，Heavy 等待
-            OutputDebugStringW(L"[Dispatch] -> JXL Large (>=2MP): Scout First, Heavy Pending\n");
-            m_pendingJxlHeavyPath = path;
-            m_pendingJxlHeavyId = imageId;
+            // Large JXL (>2MP): FastLane First (DC Preview) -> Heavy Pending
+            if (useFastLane && m_config.EnableScout) {
+                OutputDebugStringW(L"[Dispatch] -> JXL Large: FastLane First\n");
+                m_pendingJxlHeavyPath = path;
+                m_pendingJxlHeavyId = imageId;
+                m_fastLane.Push(path, imageId);
+            } else {
+                // FastLane Disabled
+                OutputDebugStringW(L"[Dispatch] -> JXL Large: Heavy Direct (FastLane Disabled)\n");
+                m_heavyPool->Submit(path, imageId);
+            }
         }
-    } else {
-        OutputDebugStringW(L"[Dispatch] -> Scout Only (TypeA)\n");
+        return; // JXL handled
     }
-
-    if (useScout) {
-        m_scout.Push(path, imageId);
+    
+    // 6. Standard Routing
+    if (useHeavy) {
+        OutputDebugStringW(L"[Dispatch] -> Heavy Lane\n");
+        m_heavyPool->Submit(path, imageId);
+    }
+    if (useFastLane) {
+        // Avoid parallel duplicate work if Heavy is already taking it?
+        // Logic: TypeA -> FastLane only. TypeB -> Heavy only.
+        // Unknown type -> Parallel (Both).
+        OutputDebugStringW(L"[Dispatch] -> FastLane\n");
+        m_fastLane.Push(path, imageId);
     }
 }
 
-bool ImageEngine::ShouldSkipScoutForFastFormat(const std::wstring& path) {
+void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint64_t navToken) {
+    if (path.empty()) return;
+    
+    // [Phase 3] Store the navigation token
+    m_currentNavToken.store(navToken);
+    
+    // [ImageID Architecture] Compute stable hash
+    ImageID imageId = ComputePathHash(path);
+    m_currentImageId.store(imageId);
+    
+    m_currentNavPath = path;
+    m_lastInputTime = std::chrono::steady_clock::now();
+
+    // [Two-Stage] Reset State
+    m_isViewingScaledImage = false;
+    m_stage2Requested = false;
+
+    // Use Central Dispatcher
+    DispatchImageLoad(path, imageId, fileSize);
+}
+
+bool ImageEngine::ShouldSkipFastLaneForFastFormat(const std::wstring& path) {
     // Check extension
     std::wstring ext = path;
     size_t dot = ext.find_last_of(L'.');
@@ -218,12 +239,12 @@ bool ImageEngine::ShouldSkipScoutForFastFormat(const std::wstring& path) {
                          e == L".ppm" || e == L".pgm" || e == L".pbm" || e == L".pam");
     if (!isFastFormat) return false;
     
-    // Check image size - skip Scout only for small images
+    // Check image size - skip FastLane only for small images
     UINT w = 0, h = 0;
     if (SUCCEEDED(m_loader->GetImageSize(path.c_str(), &w, &h))) {
         // < 16 Megapixels (4096x4096)
         if (w * h < 16 * 1024 * 1024) {
-            return true; // Skip Scout, Heavy Lane will handle
+            return true; // Skip FastLane, Heavy Lane will handle
         }
     }
     return false;
@@ -232,28 +253,50 @@ bool ImageEngine::ShouldSkipScoutForFastFormat(const std::wstring& path) {
 std::vector<EngineEvent> ImageEngine::PollState() {
     std::vector<EngineEvent> batch;
     
-    // 1. Harvest Scout Events
-    while (auto e = m_scout.TryPopResult()) {
+    // 1. Harvest FastLane Events
+    while (auto e = m_fastLane.TryPopResult()) {
         batch.push_back(std::move(*e));
     }
 
     // 2. Harvest Heavy Events
-    // 2. Harvest Heavy Events
     while (auto e = m_heavyPool->TryPopResult()) {
          batch.push_back(std::move(*e));
+    }
+
+    // 3. [Two-Stage] Track state and Trigger Stage 2
+    for (const auto& e : batch) {
+        if (e.imageId == m_currentImageId.load()) {
+            if (e.type == EventType::PreviewReady || (e.type == EventType::FullReady && e.isScaled)) {
+                m_isViewingScaledImage = true;
+                m_stage1Time = std::chrono::steady_clock::now();
+            } else if (e.type == EventType::FullReady && !e.isScaled) {
+                m_isViewingScaledImage = false; // Final reached
+                m_stage2Requested = false;      // Reset request flag (job done)
+            }
+        }
+    }
+    
+    // Check Timer (300ms idle)
+    if (m_isViewingScaledImage && !m_stage2Requested) {
+        auto now = std::chrono::steady_clock::now();
+        auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_stage1Time).count();
+        if (dur > 300) {
+             RequestFullDecode(m_currentNavPath, m_currentImageId.load());
+             m_stage2Requested = true;
+        }
     }
 
     return batch;
 }
 
 bool ImageEngine::IsIdle() const {
-    return m_scout.IsQueueEmpty() && m_heavyPool->IsIdle();
+    return m_fastLane.IsQueueEmpty() && m_heavyPool->IsIdle();
 }
 
 ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     DebugStats s = {};
-    s.scoutQueueSize = m_scout.GetQueueSize();
-    s.scoutResultsSize = m_scout.GetResultsSize();
+    s.fastQueueSize = m_fastLane.GetQueueSize();
+    s.fastResultsSize = m_fastLane.GetResultsSize();
     
     auto poolStats = m_heavyPool->GetStats();
     s.heavyState = m_heavyPool->IsBusy() ? HeavyState::DECODING : HeavyState::IDLE;
@@ -267,14 +310,17 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     s.memoryUsed = m_pool.GetUsedMemory();
     s.memoryTotal = m_pool.GetTotalMemory();
     
-    s.scoutSkipCount = m_scout.GetSkipCount();
-    s.scoutLoadTimeMs = m_scout.m_lastTotalTimeMs.load(); // [Dual Timing] Use total time for legacy
-    s.scoutLastImageId = m_scout.m_lastLoadId.load(); // [HUD Fix]
+    s.fastSkipCount = m_fastLane.GetSkipCount();
+    s.fastTotalTimeMs = m_fastLane.m_lastTotalTimeMs.load(); 
+    s.fastDecodeTimeMs = m_fastLane.m_lastDecodeTimeMs.load();
+    s.fastLastImageId = m_fastLane.m_lastLoadId.load();
+    s.fastDroppedCount = m_fastLane.m_droppedCount.load();
+    s.fastWorking = m_fastLane.m_isWorking.load();
 
 
     // Fallback loader name
     if (s.loaderName.empty()) {
-        s.loaderName = m_scout.GetLastLoaderName();
+        s.loaderName = m_fastLane.GetLastLoaderName();
     }
     if (s.loaderName.empty()) {
         s.loaderName = L"[Unknown]";
@@ -303,8 +349,8 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
                     // Heavy in progress = pending
                     s.topology.slots[slotIndex] = CacheStatus::PENDING;
                 } else {
-                    // Scout only mode or not yet loaded
-                    s.topology.slots[slotIndex] = CacheStatus::SCOUT;
+                    // FastLane only mode or not yet loaded
+                    s.topology.slots[slotIndex] = CacheStatus::FAST;
                 }
                 continue;
             }
@@ -339,22 +385,22 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     // RenderHash is filled by UI (main.cpp)
     // FPS is filled by UI
     // Loader Name
-    wcscpy_s(s.loaderName, m_scout.GetLastLoaderName().c_str());
+    wcscpy_s(s.loaderName, m_fastLane.GetLastLoaderName().c_str());
     
     // Legacy DComp Lights: Filled by UI
     
-    // Zone B: Matrix (Scout)
-    s.scoutQueue = m_scout.GetQueueSize();
-    s.scoutDropped = m_scout.m_droppedCount.load();
-    s.scoutWorking = m_scout.m_isWorking.load();
-    // [Phase 10] Filter Scout Time by ImageID
+    // Zone B: Matrix (FastLane)
+    s.fastQueue = m_fastLane.GetQueueSize();
+    s.fastDropped = m_fastLane.m_droppedCount.load();
+    s.fastWorking = m_fastLane.m_isWorking.load();
+    // [Phase 10] Filter FastLane Time by ImageID
     // [Dual Timing] Return both decode and total times
-    if (m_scout.m_lastLoadId == s.targetHash) {
-        s.scoutDecodeTime = (int)m_scout.m_lastDecodeTimeMs.load();
-        s.scoutTotalTime = (int)m_scout.m_lastTotalTimeMs.load();
+    if (m_fastLane.m_lastLoadId == s.targetHash) {
+        s.fastDecodeTime = (int)m_fastLane.m_lastDecodeTimeMs.load();
+        s.fastTotalTime = (int)m_fastLane.m_lastTotalTimeMs.load();
     } else {
-        s.scoutDecodeTime = 0;
-        s.scoutTotalTime = 0;
+        s.fastDecodeTime = 0;
+        s.fastTotalTime = 0;
     }
     
     // [Phase 10] Pass targetHash to filter stale times
@@ -428,8 +474,8 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
 }
 
 void ImageEngine::ResetDebugCounters() {
-    m_scout.ResetSkipCount();
-    m_scout.ResetSkipCount();
+    m_fastLane.ResetSkipCount();
+    m_fastLane.ResetSkipCount();
 }
 
 // Note: IsFastPassCandidate removed in v3.1 - replaced by PeekHeader() classification
@@ -438,24 +484,24 @@ void ImageEngine::ResetDebugCounters() {
 
 
 // ============================================================================
-// Scout Lane (The Recon)
+// Fast Lane (The Recon)
 // ============================================================================
 
-ImageEngine::ScoutLane::ScoutLane(ImageEngine* parent, CImageLoader* loader)
+ImageEngine::FastLane::FastLane(ImageEngine* parent, CImageLoader* loader)
     : m_parent(parent), m_loader(loader)
 {
     // Start worker
     m_thread = std::jthread([this]() { QueueWorker(); });
 }
 
-ImageEngine::ScoutLane::~ScoutLane() {
+ImageEngine::FastLane::~FastLane() {
     m_stopSignal = true;
     m_cv.notify_all();
     // m_thread destructor joins
 }
 
 // [v3.1] Ruthless Purge: Clear pending queue but keep results
-void ImageEngine::ScoutLane::Clear() {
+void ImageEngine::FastLane::Clear() {
     std::lock_guard lock(m_queueMutex);
     m_droppedCount += (int)m_queue.size(); // [HUD V4] Count drops
     m_queue.clear();
@@ -463,7 +509,7 @@ void ImageEngine::ScoutLane::Clear() {
     // m_skipCount is not reset here, it accumulates for debug stats.
 }
 
-void ImageEngine::ScoutLane::Push(const std::wstring& path, ImageID id) {
+void ImageEngine::FastLane::Push(const std::wstring& path, ImageID id) {
     if (m_stopSignal) return;
     {
         std::lock_guard lock(m_queueMutex);
@@ -475,7 +521,7 @@ void ImageEngine::ScoutLane::Push(const std::wstring& path, ImageID id) {
     // [DEBUG] Log Push notification
     {
         wchar_t buf[512];
-        swprintf_s(buf, L"[Scout] Push: %s (queue size=%d)\n",
+        swprintf_s(buf, L"[FastLane] Push: %s (queue size=%d)\n",
             path.substr(path.find_last_of(L"\\/") + 1).c_str(), (int)m_queue.size());
         OutputDebugStringW(buf);
     }
@@ -487,7 +533,7 @@ void ImageEngine::ScoutLane::Push(const std::wstring& path, ImageID id) {
     m_cv.notify_one();
 }
 
-std::optional<EngineEvent> ImageEngine::ScoutLane::TryPopResult() {
+std::optional<EngineEvent> ImageEngine::FastLane::TryPopResult() {
     // Ideally we'd use a mutex here too, but for single-consumer (MainThread)
     // we can check empty first or lock.
     // Let's use a try_lock or just lock.
@@ -501,25 +547,25 @@ std::optional<EngineEvent> ImageEngine::ScoutLane::TryPopResult() {
     return e;
 }
 
-bool ImageEngine::ScoutLane::IsQueueEmpty() const {
+bool ImageEngine::FastLane::IsQueueEmpty() const {
     std::lock_guard lock(m_queueMutex);
     return m_queue.empty() && m_results.empty();
 }
 
-int ImageEngine::ScoutLane::GetQueueSize() const {
+int ImageEngine::FastLane::GetQueueSize() const {
     std::lock_guard lock(m_queueMutex);
     return (int)m_queue.size();
 }
 
-int ImageEngine::ScoutLane::GetResultsSize() const {
+int ImageEngine::FastLane::GetResultsSize() const {
     std::lock_guard lock(m_queueMutex);
     return (int)m_results.size();
 }
 
-void ImageEngine::ScoutLane::QueueWorker() {
-    OutputDebugStringW(L"[Scout] Worker Thread Started\n");
+void ImageEngine::FastLane::QueueWorker() {
+    OutputDebugStringW(L"[FastLane] Worker Thread Started\n");
     while (!m_stopSignal) {
-        ScoutCommand cmd;
+        FastLaneCommand cmd;
         // Standard C++ Try-Catch for Robustness
         try {
             {
@@ -539,14 +585,14 @@ void ImageEngine::ScoutLane::QueueWorker() {
             
             m_isWorking = true; // [HUD V4] Active
             
-            std::wstring debugMsg = L"[Scout] Processing: " + cmd.path.substr(cmd.path.find_last_of(L"\\/") + 1) + L"\n";
+            std::wstring debugMsg = L"[FastLane] Processing: " + cmd.path.substr(cmd.path.find_last_of(L"\\/") + 1) + L"\n";
             OutputDebugStringW(debugMsg.c_str());
 
             // --- Work Stage (Unified RawImageFrame Architecture) ---
             auto start = std::chrono::high_resolution_clock::now();
             
-            // [Unified Architecture] Scout uses ScoutArena
-            // Reset arena before each task to ensure clean state (Scout is serial)
+            // [Unified Architecture] FastLane uses ScoutArena
+            // Reset arena before each task to ensure clean state (FastLane is serial)
             m_parent->m_pool.ResetScout();
             QuantumArena& arena = m_parent->m_pool.GetScoutArena();
             
@@ -562,7 +608,7 @@ void ImageEngine::ScoutLane::QueueWorker() {
             if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
                 targetSize = 0; // Full decode used as Final
             }
-            // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading, so Scout should be Thumb/Preview
+            // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading, so FastLane should be Thumb/Preview
             if (info.format == L"JXL" && info.width * info.height >= 2000000) {
                  targetSize = 256;
             }
@@ -624,15 +670,15 @@ void ImageEngine::ScoutLane::QueueWorker() {
                 // Signal main thread
                 m_parent->QueueEvent(EngineEvent{}); // Dummy event, just for notification
                 
-                if (isClear) OutputDebugStringW(L"[Scout] Output: FullReady (Final)\n");
-                else OutputDebugStringW(L"[Scout] Output: PreviewReady (Blurry)\n"); 
+                if (isClear) OutputDebugStringW(L"[FastLane] Output: FullReady (Final)\n");
+                else OutputDebugStringW(L"[FastLane] Output: PreviewReady (Blurry)\n"); 
                 
                 // [v3.1] If Fast Pass produced clear image, cancel Heavy Lane
                 if (isClear) {
                     m_parent->CancelHeavy();
                 }
             } else {
-                // [JXL Fallback] Scout 失败（如 Modular E_ABORT），仍需触发 pending Heavy
+                // [JXL Fallback] FastLane 失败（如 Modular E_ABORT），仍需触发 pending Heavy
                 std::wstring ext = cmd.path;
                 size_t dot = ext.find_last_of(L'.');
                 if (dot != std::wstring::npos) {
@@ -654,14 +700,14 @@ void ImageEngine::ScoutLane::QueueWorker() {
 
         } catch (const std::exception& ex) {
             m_isWorking = false; // [HUD V4] Safety reset
-            OutputDebugStringW(L"[Scout] CRITICAL EXCEPTION in QueueWorker: ");
+            OutputDebugStringW(L"[FastLane] CRITICAL EXCEPTION in QueueWorker: ");
             OutputDebugStringA(ex.what());
             OutputDebugStringW(L"\n");
         } catch (...) {
-            OutputDebugStringW(L"[Scout] CRITICAL UNKNOWN EXCEPTION in QueueWorker\n");
+            OutputDebugStringW(L"[FastLane] CRITICAL UNKNOWN EXCEPTION in QueueWorker\n");
         }
     }
-    OutputDebugStringW(L"[Scout] Worker Thread Exiting\n");
+    OutputDebugStringW(L"[FastLane] Worker Thread Exiting\n");
 }
 
 void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
@@ -670,7 +716,7 @@ void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
 
 void ImageEngine::TriggerPendingJxlHeavy() {
     if (!m_pendingJxlHeavyPath.empty() && m_pendingJxlHeavyId != 0) {
-        OutputDebugStringW(L"[JXL Sequential] Scout done, triggering Heavy\n");
+        OutputDebugStringW(L"[JXL Sequential] FastLane done, triggering Heavy\n");
         m_heavyPool->Submit(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
         m_pendingJxlHeavyPath.clear();
         m_pendingJxlHeavyId = 0;
@@ -702,10 +748,10 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     // [v3.1] Cancellation Strategy: Ruthless Purge -> Reschedule
     // ------------------------------------------------------------------------
     
-    // 1. Purge Phase: Clear all pending Scout tasks
+    // 1. Purge Phase: Clear all pending FastLane tasks
     // This removes "Old Neighbors" that are no longer relevant.
-    // Scout running state is Atomic (Gatekeeper), so running tasks finish naturally.
-    m_scout.Clear();
+    // FastLane running state is Atomic (Gatekeeper), so running tasks finish naturally.
+    m_fastLane.Clear();
     
     // 2. Reschedule Phase: LIFO / Critical First
     // Even if 'currentIndex' was just purged, it's re-queued immediately here.
@@ -763,8 +809,8 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     uintmax_t fileSize = m_navigator->GetFileSize(index);
     
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
-        // Small image: push to Scout Lane
-        m_scout.Push(path, ComputePathHash(path));
+        // Small image: push to FastLane
+        m_fastLane.Push(path, ComputePathHash(path));
     } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Large image: only prefetch if Heavy Lane is idle
         // This prevents prefetch from blocking current image decode
@@ -780,7 +826,7 @@ void ImageEngine::PruneQueue(int currentIndex, BrowseDirection dir) {
     int minValid = currentIndex - 2;
     int maxValid = currentIndex + m_prefetchPolicy.lookAheadCount + 1;
     
-    // Scout lane already has skip-middle logic
+    // FastLane already has skip-middle logic
     // Heavy lane has single-slot replacement
     // Cache eviction handles the rest
     EvictCache(currentIndex);
@@ -868,22 +914,22 @@ void ImageEngine::RequestFullMetadata() {
 
     // [v5.3] Debounce Logic
     {
-        std::lock_guard<std::mutex> lock(m_scout.m_pendingMutex);
-        if (m_scout.m_pendingMetadataRequests.count(id)) return; // Already requested
-        m_scout.m_pendingMetadataRequests.insert(id);
+        std::lock_guard<std::mutex> lock(m_fastLane.m_pendingMutex);
+        if (m_fastLane.m_pendingMetadataRequests.count(id)) return; // Already requested
+        m_fastLane.m_pendingMetadataRequests.insert(id);
     }
 
     // Launch Async (Detached)
     std::thread([this, path, id]() {
         // [v5.4] Robustness: RAII Cleaner to ensure we ALWAYS remove from pending set
         struct PendingCleaner {
-            ScoutLane& lane;
+            FastLane& lane;
             ImageID id;
             ~PendingCleaner() {
                 std::lock_guard<std::mutex> lock(lane.m_pendingMutex);
                 lane.m_pendingMetadataRequests.erase(id);
             }
-        } cleaner{m_scout, id};
+        } cleaner{m_fastLane, id};
 
         try {
             // Initialize COM for WIC
@@ -919,8 +965,8 @@ void ImageEngine::RequestFullMetadata() {
                 
                 // Inject into Scout Results Queue (Thread Safe)
                 {
-                    std::lock_guard<std::mutex> lock(m_scout.m_queueMutex);
-                    m_scout.m_results.push_back(std::move(evt));
+                    std::lock_guard<std::mutex> lock(m_fastLane.m_queueMutex);
+                    m_fastLane.m_results.push_back(std::move(evt));
                 }
                 
                 // Signal Main Thread (via dummy event)

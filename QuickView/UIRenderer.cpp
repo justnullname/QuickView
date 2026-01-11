@@ -751,13 +751,14 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     float py = hudY + 130.0f; 
 
     // Scout Stats + Time [Dual Timing] - Use full width, status moved below
-    swprintf_s(buffer, L"[ SCOUT ] Queue:%d  Drop:%d  Dec: %dms   Tot: %dms", 
-        s.scoutQueue, s.scoutDropped, s.scoutDecodeTime, s.scoutTotalTime);
+    // FastLane Stats + Time
+    swprintf_s(buffer, L"[ FAST ] Queue:%d  Drop:%d  Dec: %dms   Tot: %dms", 
+        s.fastQueue, s.fastDropped, s.fastDecodeTime, s.fastTotalTime);
     dc->DrawText(buffer, wcslen(buffer), m_debugFormat.Get(), D2D1::RectF(px, py, px + hudW - 20, py+20), whiteBrush.Get());
     
     // Scout Status Indicator (moved to right side of same line)
     D2D1_RECT_F scoutStatusRect = D2D1::RectF(px + hudW - 70, py, px + hudW - 20, py + 16);
-    if (s.scoutWorking) {
+    if (s.fastWorking) {
         dc->FillRectangle(scoutStatusRect, greenBrush.Get());
         dc->DrawText(L"WORK", 4, m_debugFormat.Get(), D2D1::RectF(scoutStatusRect.left+5, scoutStatusRect.top, scoutStatusRect.right, scoutStatusRect.bottom), blackTransBrush.Get());
     } else {

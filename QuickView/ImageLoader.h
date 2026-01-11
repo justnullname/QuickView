@@ -258,6 +258,12 @@ public:
     /// </summary>
     HRESULT GetImageSize(LPCWSTR filePath, UINT* width, UINT* height);
 
+    /// <summary>
+    /// [v6.5 Recursor] Get Embedded Thumbnail/Preview dimensions for RAW files
+    /// Used by FastLane to decide if it should reject a huge embedded preview
+    /// </summary>
+    HRESULT GetEmbeddedPreviewInfo(LPCWSTR filePath, int* width, int* height);
+
     // Helper: Create WIC bitmap from raw bits
     HRESULT CreateWICBitmapFromMemory(UINT width, UINT height, REFGUID format, UINT stride, UINT size, BYTE* data, IWICBitmap** ppBitmap);
     
