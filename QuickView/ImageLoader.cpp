@@ -208,13 +208,25 @@ static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
     if (size >= 4 && magic[0] == 0x49 && magic[1] == 0x49 && magic[2] == 0x2A && magic[3] == 0x00) return L"TIFF";
     if (size >= 4 && magic[0] == 0x4D && magic[1] == 0x4D && magic[2] == 0x00 && magic[3] == 0x2A) return L"TIFF";
     
+    // [v6.9.7] PRIORITIZE TGA Check over WBMP (since TGA often starts with 00 00)
+    // Check TGA (Heuristic): ColorMapType(0/1) + ImageType(1/2/3/9/10/11) + PixelDepth(8/15/16/24/32) at offset 16
+    if (size >= 18) {
+        bool validColorMap = (magic[1] == 0 || magic[1] == 1);
+        bool validType = (magic[2] == 1 || magic[2] == 2 || magic[2] == 3 || magic[2] == 9 || magic[2] == 10 || magic[2] == 11);
+        bool validBpp = (magic[16] == 8 || magic[16] == 15 || magic[16] == 16 || magic[16] == 24 || magic[16] == 32);
+        if (validColorMap && validType && validBpp) return L"TGA";
+    }
+
+    // [v6.9.6] Check WBMP: Type 0, Fixed Header 0
+    if (size >= 2 && magic[0] == 0x00 && magic[1] == 0x00) return L"WBMP";
+    
     return L"Unknown";
 }
 
 // Compatibility wrapper
 static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
-    uint8_t magic[16] = {0};
-    size_t read = PeekHeader(filePath, magic, 16);
+    uint8_t magic[32] = {0}; // Increased to 32 for TGA heuristic (needs offset 16)
+    size_t read = PeekHeader(filePath, magic, 32);
     if (read == 0) return L"Unknown";
     return DetectFormatFromContent(magic, read);
 }
@@ -3069,7 +3081,17 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
         }
         else if (fmt == L"TGA") {
             HRESULT hr = Wuffs::LoadTGA(fileBuf.data(), fileBuf.size(), ctx, result);
-            if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs TGA (Unified)"; return S_OK; }
+            if (SUCCEEDED(hr)) { 
+                result.metadata.LoaderName = L"Wuffs TGA (Unified)"; 
+                return S_OK; 
+            }
+            // [v6.9.7] Fallback: If Wuffs fails (Strict), try Stb (Robust)
+            // This ensures FastLane doesn't fail silently for valid TGA files.
+            hr = Stb::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+            if (SUCCEEDED(hr)) {
+                // Stb sets LoaderName to "StbImage"
+                return S_OK;
+            }
         }
         else if (fmt == L"PNM") {
             HRESULT hr = Wuffs::LoadNetPBM(fileBuf.data(), fileBuf.size(), ctx, result);
@@ -3405,6 +3427,48 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         return S_OK;
     }
     
+    // --- [v6.9.6] TGA (Heuristic) ---
+    // Offset 1: ColorMapType (0/1). Offset 2: ImageType.
+    if (size >= 18 && (data[1] <= 1) && (data[2]==1 || data[2]==2 || data[2]==3 || data[2]==9 || data[2]==10 || data[2]==11)) {
+        // TGA Width at 12, Height at 14 (Little Endian)
+        uint16_t w = data[12] | (data[13] << 8);
+        uint16_t h = data[14] | (data[15] << 8);
+        uint8_t depth = data[16]; // Offset 16
+        
+        if (w > 0 && h > 0) {
+            pInfo->format = L"TGA";
+            pInfo->width = w;
+            pInfo->height = h;
+            pInfo->bitDepth = depth;
+            return S_OK;
+        }
+    }
+
+    // --- [v6.9.6] WBMP ---
+    // Header: Type(0), Fixed(0), Width(MBI), Height(MBI)
+    if (size >= 4 && data[0] == 0x00 && data[1] == 0x00) {
+        size_t off = 2;
+        auto ReadMBI = [&](uint32_t& outVal) -> bool {
+            outVal = 0;
+            while (off < size) {
+                uint8_t byte = data[off++];
+                outVal = (outVal << 7) | (byte & 0x7F);
+                if ((byte & 0x80) == 0) return true;
+                if (off >= size) return false;
+            }
+            return false;
+        };
+        
+        uint32_t w = 0, h = 0;
+        if (ReadMBI(w) && ReadMBI(h)) {
+            pInfo->format = L"WBMP";
+            pInfo->width = w;
+            pInfo->height = h;
+            pInfo->bitDepth = 1;
+            return S_OK;
+        }
+    }
+
     // --- RAW ---
     // Fast Pass skips LibRaw (too slow ~10ms).
     // Let WIC or Full Loader handle it.

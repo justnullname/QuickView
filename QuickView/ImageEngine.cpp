@@ -564,6 +564,7 @@ int ImageEngine::FastLane::GetResultsSize() const {
 
 void ImageEngine::FastLane::QueueWorker() {
     OutputDebugStringW(L"[FastLane] Worker Thread Started\n");
+
     while (!m_stopSignal) {
         FastLaneCommand cmd;
         // Standard C++ Try-Catch for Robustness
@@ -678,6 +679,8 @@ void ImageEngine::FastLane::QueueWorker() {
                     m_parent->CancelHeavy();
                 }
             } else {
+
+
                 // [JXL Fallback] FastLane 失败（如 Modular E_ABORT），仍需触发 pending Heavy
                 std::wstring ext = cmd.path;
                 size_t dot = ext.find_last_of(L'.');
