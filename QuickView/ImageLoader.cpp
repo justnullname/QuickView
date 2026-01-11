@@ -5036,17 +5036,11 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
 
     // 3. Parse
     result = avifDecoderParse(decoder);
+    // [v6.9.2] Diagnostic Logs CLEANED UP for Production
     if (result != AVIF_RESULT_OK) {
-        // [v6.9.2] Diagnostic Log (Keep this for edge cases)
-        wchar_t buf[512]; 
-        swprintf_s(buf, L"[AVIF_FAIL] Parse Failed: %S | Diag: %S (v%S)\n", 
-            avifResultToString(result), decoder->diag.error, avifVersion());
-        OutputDebugStringW(buf);
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
-    
-        // [AVIF_OK] Parsed (Log removed for cleanliness)
     
     // [v6.0] Native EXIF Extraction
     // Extract early (after Parse) to support both FastPath and Main path
@@ -5140,26 +5134,41 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
             return E_FAIL;
         }
 
-        // [v6.2] Parse ICC
         if (decoder->image->icc.size > 0 && pMetadata) {
              std::wstring desc = CImageLoader::ParseICCProfileName(decoder->image->icc.data, decoder->image->icc.size);
              if (!desc.empty()) pMetadata->ColorSpace = desc;
         }
 
-        // [v6.0] Format Details
-        {
-            const char* subsamp = "";
+        if (pMetadata) {
+            const wchar_t* subsamp = L"";
             switch (decoder->image->yuvFormat) {
-                 case AVIF_PIXEL_FORMAT_YUV444: subsamp = "4:4:4"; break;
-                 case AVIF_PIXEL_FORMAT_YUV422: subsamp = "4:2:2"; break;
-                 case AVIF_PIXEL_FORMAT_YUV420: subsamp = "4:2:0"; break;
-                 case AVIF_PIXEL_FORMAT_YUV400: subsamp = "Gray"; break;
-                 default: subsamp = "Unknown"; break;
+                 case AVIF_PIXEL_FORMAT_YUV444: subsamp = L"4:4:4"; break;
+                 case AVIF_PIXEL_FORMAT_YUV422: subsamp = L"4:2:2"; break;
+                 case AVIF_PIXEL_FORMAT_YUV420: subsamp = L"4:2:0"; break;
+                 case AVIF_PIXEL_FORMAT_YUV400: subsamp = L"Gray"; break;
+                 default: subsamp = L""; break;
             }
-            wchar_t fmtBuf[64];
-            swprintf_s(fmtBuf, L"%d-bit %S", decoder->image->depth, subsamp);
+            
+            // Heuristic for Lossless: Matrix=Identity (RGB) + 4:4:4 usually implies lossless (or high quality)
+            bool isIdentity = (decoder->image->matrixCoefficients == AVIF_MATRIX_COEFFICIENTS_IDENTITY);
+            const wchar_t* coding = isIdentity ? L"RGB" : L"YUV";
+            
+            // Animation
+            bool isAnim = (decoder->imageCount > 1);
+            
+            // Alpha
+            bool hasAlpha = (decoder->image->alphaPlane != nullptr) || decoder->alphaPresent;
+            
+            wchar_t fmtBuf[128];
+            // Format: "10-bit YUV 4:2:0 (Alpha) Seq"
+            swprintf_s(fmtBuf, L"%d-bit %s%s%s%s%s", 
+                decoder->image->depth, 
+                coding,
+                (subsamp[0] ? L" " : L""), subsamp,
+                (hasAlpha ? L" (Alpha)" : L""),
+                (isAnim ? L" Seq" : L"")
+            );
             pMetadata->FormatDetails = fmtBuf;
-            if (decoder->imageCount > 1) pMetadata->FormatDetails += L" Seq";
         }
     }
 
