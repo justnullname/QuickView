@@ -5202,6 +5202,7 @@ HRESULT CImageLoader::LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int 
     avifRGBImageSetDefaults(&rgb, decoder->image);
     rgb.format = AVIF_RGB_FORMAT_BGRA;
     rgb.depth = 8; // Force 8-bit for display
+    rgb.alphaPremultiplied = AVIF_TRUE; // [v6.9.3] Fix: Direct2D requires Premultiplied Alpha
     
     // Use multi-threaded conversion if available
     rgb.maxThreads = decoder->maxThreads;
@@ -5756,13 +5757,25 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height) {
     if (!width || !height) return false;
     
-    // Read first 16KB (usually enough for header)
+    // [v6.9.4] Robust Probe: Read FULL file if small (<1MB) to ensure 'moov'/'meta' are found.
+    // Otherwise read 64KB probe (increased from 16KB).
     HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
     
-    uint8_t buf[16384]; 
+    LARGE_INTEGER fileSize;
+    if (!GetFileSizeEx(hFile, &fileSize)) {
+        CloseHandle(hFile);
+        return false;
+    }
+    
+    DWORD bytesToRead = 65536; // Default Probe 64KB
+    if (fileSize.QuadPart < 1024 * 1024) {
+        bytesToRead = (DWORD)fileSize.QuadPart;
+    }
+    
+    std::vector<uint8_t> buffer(bytesToRead);
     DWORD bytesRead = 0;
-    ReadFile(hFile, buf, sizeof(buf), &bytesRead, nullptr);
+    ReadFile(hFile, buffer.data(), bytesToRead, &bytesRead, nullptr);
     CloseHandle(hFile);
     
     if (bytesRead < 100) return false;
@@ -5771,7 +5784,7 @@ static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* heigh
     if (!decoder) return false;
     
     bool success = false;
-    if (avifDecoderSetIOMemory(decoder, buf, bytesRead) == AVIF_RESULT_OK) {
+    if (avifDecoderSetIOMemory(decoder, buffer.data(), bytesRead) == AVIF_RESULT_OK) {
         // [v6.9] Robust Header Parsing
         decoder->strictFlags = AVIF_STRICT_DISABLED;
         decoder->ignoreXMP = AVIF_TRUE;
