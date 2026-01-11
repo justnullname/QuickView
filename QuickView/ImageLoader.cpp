@@ -4629,7 +4629,11 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
     
     // 4. Metadata Reader (Standard EXIF + GPS)
     ComPtr<IWICMetadataQueryReader> reader;
-    if (SUCCEEDED(frame->GetMetadataQueryReader(&reader))) {
+    
+    // [v6.9.5] Safety: Skip EXIF for BMP/ICO to prevent WIC crashes (unsupported op)
+    bool skipExif = (pMetadata->Format == L"BMP" || pMetadata->Format == L"ICO" || pMetadata->Format == L"CUR");
+
+    if (!skipExif && SUCCEEDED(frame->GetMetadataQueryReader(&reader))) {
         PopulateExifFromQueryReader(reader.Get(), pMetadata);
         
         // [v6.2] Level 1: EXIF Color Space (Fastest)
@@ -4723,79 +4727,9 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
         }
     }
 
-    // Exposure Bias (37380) - Signed Rational
-    double bias = 0.0;
-    const wchar_t* biasQueries[] = { L"/app1/ifd/exif/{ushort=37380}", L"/ifd/exif/{ushort=37380}" };
-    for (auto q : biasQueries) if (SUCCEEDED(GetMetadataSignedRational(reader.Get(), q, &bias))) {
-        if (std::abs(bias) > 0.0001) { // Check non-zero with epsilon
-            wchar_t buf[32]; swprintf_s(buf, L"%+.1f ev", bias);
-            pMetadata->ExposureBias = buf;
-        }
-        break;
-    }
-
-    // Flash (37377)
-    PROPVARIANT flashVar; PropVariantInit(&flashVar);
-    const wchar_t* flashQueries[] = { L"/app1/ifd/exif/{ushort=37377}", L"/ifd/exif/{ushort=37377}" };
-    for (auto q : flashQueries) {
-        if (SUCCEEDED(reader->GetMetadataByName(q, &flashVar))) {
-            UINT flashVal = 0;
-            if (flashVar.vt == VT_UI2) flashVal = flashVar.uiVal;
-            else if (flashVar.vt == VT_UI4) flashVal = flashVar.ulVal;
-            
-            pMetadata->Flash = (flashVal & 1) ? L"Flash: On" : L"Flash: Off"; // Simple logic
-            if ((flashVal & 1) == 0) pMetadata->Flash = L""; // Don't show if Off? Or show "Flash: Off"? User said "Whether there is flash". "Off" is info.
-            // But usually clean UI hides "Off". "Windows Photo" shows it.
-            // I'll show it if it was explicitly recorded.
-            PropVariantClear(&flashVar);
-            break;
-        }
-    }
-
-    // GPS
-    double lat = 0, lon = 0;
-    bool foundGPS = false;
-    
-    // Block 1: Try /app1/ifd/gps/...
-    if (SUCCEEDED(GetMetadataGPS(reader.Get(), L"/app1/ifd/gps/{ushort=2}", L"/app1/ifd/gps/{ushort=1}", &lat)) &&
-        SUCCEEDED(GetMetadataGPS(reader.Get(), L"/app1/ifd/gps/{ushort=4}", L"/app1/ifd/gps/{ushort=3}", &lon))) {
-        foundGPS = true;
-    }
-    // Block 2: Try /ifd/gps/... (Fallback)
-    else if (SUCCEEDED(GetMetadataGPS(reader.Get(), L"/ifd/gps/{ushort=2}", L"/ifd/gps/{ushort=1}", &lat)) &&
-             SUCCEEDED(GetMetadataGPS(reader.Get(), L"/ifd/gps/{ushort=4}", L"/ifd/gps/{ushort=3}", &lon))) {
-        foundGPS = true;
-    }
-
-    if (foundGPS) {
-        pMetadata->HasGPS = true;
-        pMetadata->Latitude = lat;
-        pMetadata->Longitude = lon;
-        
-        // Altitude - Try multiple paths for HEIC/JPEG compatibility
-        double alt = 0;
-        const wchar_t* altQueries[] = { 
-            L"/app1/ifd/gps/{ushort=6}", 
-            L"/ifd/gps/{ushort=6}",
-            L"/ifd/{ushort=34853}/{ushort=6}"  // GPS IFD pointer method
-        };
-        for (auto q : altQueries) {
-            if (SUCCEEDED(GetMetadataRational(reader.Get(), q, &alt))) {
-                pMetadata->Altitude = alt;
-                // Check Ref (5): 0=Above, 1=Below
-                PROPVARIANT altRef; PropVariantInit(&altRef);
-                // Try corresponding ref path
-                std::wstring refPath = q;
-                size_t pos = refPath.rfind(L"6}");
-                if (pos != std::wstring::npos) refPath.replace(pos, 2, L"5}");
-                if (SUCCEEDED(reader->GetMetadataByName(refPath.c_str(), &altRef))) {
-                    if (altRef.vt == VT_UI1 && altRef.bVal == 1) pMetadata->Altitude = -alt;
-                    PropVariantClear(&altRef);
-                }
-                break;
-            }
-        }
-    }
+    // [v6.9.5] Redundant code removed. 
+    // Exposure, Flash, and GPS are already populated by PopulateExifFromQueryReader above.
+    // This avoids crashing when 'reader' is NULL (e.g. BMP/ICO).
 
     pMetadata->IsFullMetadataLoaded = true;
     return S_OK;
