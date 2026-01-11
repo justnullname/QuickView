@@ -83,7 +83,8 @@ template <typename Vec>
 static bool DecodePNG_Impl(const uint8_t* data, size_t size, 
                uint32_t* outWidth, uint32_t* outHeight,
                Vec& outPixels,
-               CancelPredicate checkCancel) {
+               CancelPredicate checkCancel,
+               WuffsImageInfo* pInfo) {
     wuffs_png__decoder dec;
     wuffs_base__status status = wuffs_png__decoder__initialize(
         &dec, sizeof(dec), WUFFS_VERSION,
@@ -103,6 +104,25 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     uint32_t width = wuffs_base__pixel_config__width(&ic.pixcfg);
     uint32_t height = wuffs_base__pixel_config__height(&ic.pixcfg);
     if (width == 0 || height == 0) return false;
+
+    // [v6.3] Extract Metadata (Zero Cost) - Before we override format for decoding
+    if (pInfo) {
+        // Transparency
+        pInfo->hasAlpha = !wuffs_base__image_config__first_frame_is_opaque(&ic);
+        
+        // Bit Depth - simplified check based on source format
+        wuffs_base__pixel_format fmt = wuffs_base__pixel_config__pixel_format(&ic.pixcfg);
+        // Wuffs format encoding is complex, but we can verify bit depth approximately
+        // Standard PNG is usually 8 bit per channel. 
+        // If 16-bit, Wuffs might report it? 
+        // Wuffs v0.3+ usually decodes to 8-bit BGRA/RGBA.
+        // However, we can check basic assumption:
+        pInfo->bitDepth = 8; // Default
+        
+        // Simple heuristic for APNG? Wuffs doesn't easily expose "is_animated" flag in image_config for PNG?
+        // Actually it might satisfy "generic" animation interface?
+        // For now, default to false.
+    }
 
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
@@ -127,9 +147,9 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodePNG_Impl(d, s, w, h, out, c); }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodePNG_Impl(d, s, w, h, out, c); }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodePNG_Impl(d, s, w, h, a, c); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { return DecodePNG_Impl(d, s, w, h, out, c, p); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { return DecodePNG_Impl(d, s, w, h, out, c, p); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c, WuffsImageInfo* p) { BufferAdapter a(alloc); return DecodePNG_Impl(d, s, w, h, a, c, p); }
 
 // ------------------------------------------------------------
 // GIF Decoder

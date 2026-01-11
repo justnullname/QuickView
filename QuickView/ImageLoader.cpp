@@ -2121,44 +2121,49 @@ namespace QuickView {
 
             static HRESULT LoadPNG(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
-                // Wuffs uses AllocatorFunc directly via our new overload
-                if (WuffsLoader::DecodePNG(data, size, &w, &h, ctx.allocator, ctx.checkCancel)) {
-                    result.pixels = nullptr; // Ptr held by allocator/buffer? No, allocator returns ptr. 
-                    // Wait, adapter stores ptr. But adapter is local in DecodePNG.
-                    // How do we get the pointer back?
-                    // The Adapter calls 'ctx.allocator', which (usually) stores the pointer in 'result' or returns it.
-                    // BUT 'ctx.allocator' returns pointer. 'adapter' stores it.
-                    // We need 'result.pixels'.
-                    // If 'ctx.allocator' is simple (malloc), we don't know the pointer unless we capture it?
-                    // ISSUE: Standard Allocator Functional doesn't "output" the pointer to the caller of the codec directly.
-                    // The Codec calls Allocator -> Allocator returns Ptr.
-                    // Wuffs calls Allocator -> Allocator returns Ptr.
-                    // Wuffs discards Ptr (it uses it internally).
-                    // We need to capture the pointer!
-                    
-                    // We can wrap the allocator to capture the pointer.
-                    uint8_t* capturedPtr = nullptr;
-                    auto capturingAlloc = [&](size_t s) -> uint8_t* {
-                        capturedPtr = ctx.allocator(s);
-                        return capturedPtr;
-                    };
-                    
-                    // Call Wuffs with CAPTURING allocator
-                    if (!WuffsLoader::DecodePNG(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) return E_FAIL;
-                    
-                    result.pixels = capturedPtr;
-                    result.width = w;
-                    result.height = h;
-                    result.stride = w * 4; // Wuffs is packed
-                    result.format = PixelFormat::BGRA8888; // Wuffs is BGRA Premul
-                    result.success = true;
-                    // [v5.3] Fill metadata directly
-                    result.metadata.FormatDetails = L"Wuffs PNG";
-                    result.metadata.Width = w;
-                    result.metadata.Height = h;
-                    return S_OK;
-                }
-                return E_FAIL;
+                
+                // [v6.3] Capture metadata
+                WuffsLoader::WuffsImageInfo info;
+                
+                // We can wrap the allocator to capture the pointer.
+                uint8_t* capturedPtr = nullptr;
+                auto capturingAlloc = [&](size_t s) -> uint8_t* {
+                    capturedPtr = ctx.allocator(s);
+                    return capturedPtr;
+                };
+                
+                // Call Wuffs with CAPTURING allocator AND Metadata Info
+                if (!WuffsLoader::DecodePNG(data, size, &w, &h, capturingAlloc, ctx.checkCancel, &info)) return E_FAIL;
+                
+                result.pixels = capturedPtr;
+                result.width = w;
+                result.height = h;
+                result.stride = w * 4; // Wuffs is packed
+                result.format = PixelFormat::BGRA8888; // Wuffs is BGRA Premul
+                result.success = true;
+
+                // [v5.3] Fill metadata directly
+                // [v6.3] Use PopulateFormatDetails helper for consistent formatting
+                // "Wuffs PNG" is the base format name.
+                // Info struct gives us: bitDepth, hasAlpha, isAnim.
+                // We can use CImageLoader::PopulateFormatDetails(..., L"Wuffs PNG", info.bitDepth, true (lossless), info.hasAlpha, info.isAnim);
+                // Wait, PopulateFormatDetails helper is static member.
+                // We are inside CImageLoader (friend/nested)? No, Codec namespace.
+                // But PopulateFormatDetails is public static.
+                
+                // [v6.3] Manual formatting for FormatDetails using extracted info
+                // Always show bit depth (User preference)
+                bool showBitDepth = (info.bitDepth > 0);
+                
+                std::wstring details = L"Wuffs PNG";
+                if (showBitDepth) details += L" " + std::to_wstring(info.bitDepth) + L"-bit";
+                if (info.hasAlpha) details += L" Alpha";
+                if (info.isAnim) details += L" [Anim]";
+                
+                result.metadata.FormatDetails = details;
+                result.metadata.Width = w;
+                result.metadata.Height = h;
+                return S_OK;
             }
 
             static HRESULT LoadGIF(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {

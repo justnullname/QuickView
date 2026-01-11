@@ -18,18 +18,31 @@ using AllocatorFunc = std::function<uint8_t*(size_t size)>;
 /// <summary>
 /// Decode PNG image to BGRA pixels
 /// </summary>
+// [v6.3] Metadata extracted during decode (Zero Cost)
+struct WuffsImageInfo {
+    int bitDepth = 0;       // e.g. 8, 16
+    bool hasAlpha = false;  // true if alpha channel exists (or transparency)
+    bool isAnim = false;    // true if animated (APNG)
+};
+
+/// <summary>
+/// Decode PNG image to BGRA pixels
+/// </summary>
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = nullptr,
+               WuffsImageInfo* pInfo = nullptr);
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = nullptr,
+               WuffsImageInfo* pInfo = nullptr);
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = nullptr,
+               WuffsImageInfo* pInfo = nullptr);
 
 /// <summary>
 /// Decode GIF image (first frame) to BGRA pixels
