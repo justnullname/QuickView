@@ -151,13 +151,47 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
         // Small/Fast images -> FastLane Only
         // [v4.1] Exception: JXL (TypeA) uses Heavy/Two-Stage logic
-        if (info.format != L"JXL") {
+        if (info.format != L"JXL" && info.format != L"WebP") {
              useHeavy = false;
+        }
+        
+        // [v7.1] WebP Strategy: Strict Threshold
+        // < 1.5MB and < 2MP -> FastLane (Memory/CPU Cheap)
+        // Else -> HeavyLane (Direct Full Decode, Background)
+        std::wstring fmtLower = info.format;
+        std::transform(fmtLower.begin(), fmtLower.end(), fmtLower.begin(), ::towlower);
+        
+        if (fmtLower == L"webp") {
+             bool isSmall = (info.fileSize < 1572864) && // 1.5 * 1024 * 1024
+                            ((uint64_t)info.width * info.height < 2000000);
+             if (isSmall) {
+                 useFastLane = true;
+                 useHeavy = false;
+             } else {
+                 // [v7.2 Fix] Large WebP -> Force Direct Full Decode (Stage 2 immediately).
+                 // Standard 'useHeavy' path uses Submit() which defaults to 'isFullDecode=false' (Scaled).
+                 // We must use SubmitFullDecode() to bypass Stage 1.
+                 OutputDebugStringW(L"[Dispatch] -> WebP Large: Heavy Direct Full\n");
+                 m_heavyPool->SubmitFullDecode(path, imageId);
+                 return; 
+             }
         }
     } 
     else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Large Image -> Heavy Only (FastLane ignored)
         useFastLane = false;
+        
+        // [v7.2 Fix] Check WebP Heavy here too (if flagged as TypeB by PeekHeader)
+        std::wstring fmtLower = info.format;
+        std::transform(fmtLower.begin(), fmtLower.end(), fmtLower.begin(), ::towlower);
+        
+        if (fmtLower == L"webp") {
+             OutputDebugStringW(L"[Dispatch] -> WebP Heavy: Heavy Direct Full\n");
+             m_heavyPool->SubmitFullDecode(path, imageId); // Direct Full
+             return;
+        }
+        
+        // Other heavy formats use standard scaling -> Stage 2 logic
     }
     
     // 4. Cancel Stale Tasks
@@ -603,19 +637,36 @@ void ImageEngine::FastLane::QueueWorker() {
             // Intelligent Target Sizing
             // Type A (Sprint) -> Full Decode (target=0) -> FullReady
             // Type B (Heavy) -> Thumbnail (target=256) -> PreviewReady
-            int targetSize = 256; 
+            int targetW = 256; 
+            int targetH = 256;
             
             auto info = m_loader->PeekHeader(cmd.path.c_str());
+            
+            // Standard Thumbnails
             if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
-                targetSize = 0; // Full decode used as Final
+                targetW = 0; targetH = 0; // Full decode used as Final
             }
-            // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading, so FastLane should be Thumb/Preview
+            
+            // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading
             if (info.format == L"JXL" && info.width * info.height >= 2000000) {
-                 targetSize = 256;
+                 targetW = 256; targetH = 256;
+            }
+            
+            // [v7.0] WebP Strategy: Conditional Two-Stage based on Screen Resolution
+            // Request: If > Screen, use Two-Stage (Stage 1 = Scaled Preview). Else Direct Full.
+            // [v7.1] WebP Strategy: Direct Decode (User Request)
+            // Rules: <1.5MB & <2MP -> FastLane (Full).
+            // Logic handled in Dispatch. If we are here, we do Direct Full Decode.
+            // Gallery Thumbnails use a different path (ThumbnailManager), so this only affects Viewer.
+            std::wstring fmtLower2 = info.format;
+            std::transform(fmtLower2.begin(), fmtLower2.end(), fmtLower2.begin(), ::towlower);
+
+            if (fmtLower2 == L"webp") {
+                targetW = 0; targetH = 0; 
             }
 
             // [Direct D2D] Load directly to RawImageFrame backed by Arena
-            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetSize, targetSize, &loaderName);
+            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName);
             
             int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
 
@@ -623,7 +674,7 @@ void ImageEngine::FastLane::QueueWorker() {
                 // Determine blurriness
                 // If we did a full decode (target=0 or result close to original), it's Clear.
                 // Otherwise it's a Thumbnail (Blurry/Preview).
-                bool isClear = (targetSize == 0) || 
+                bool isClear = (targetW == 0) || 
                                (rawFrame.width >= info.width / 2 && rawFrame.height >= info.height / 2);
                 
                 // Save Scout Loader Name for HUD

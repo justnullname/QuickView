@@ -1191,8 +1191,17 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                 
                 // [v6.0] Format Details
                 if (config.input.format == 2) result.metadata.FormatDetails = L"Lossless";
-                else if (config.input.format == 1) result.metadata.FormatDetails = L"Lossy";
-                else result.metadata.FormatDetails = L"WebP";
+                else if (config.input.format == 1) result.metadata.FormatDetails = L"Lossy YUV";
+                
+                // [v7.0] Append Color Mode details
+                // VP8 (Lossy) is YUV 4:2:0. VP8L (Lossless) is ARGB.
+                // User Request: Show YUV.
+                // Already added "YUV" above for lossy.
+                // For Lossless, we can add ARGB?
+                if (config.input.format == 2) result.metadata.FormatDetails += L" ARGB";
+                // else result.metadata.FormatDetails += L""; 
+
+                // [CR Logic moved to specific decoder paths to ensure correct frame count/size]
                 
                 if (config.input.has_animation) result.metadata.FormatDetails += L" Anim";
                 if (config.input.has_alpha) result.metadata.FormatDetails += L" Alpha";
@@ -1203,7 +1212,7 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                     WebPAnimDecoderOptions decOpts;
                     WebPAnimDecoderOptionsInit(&decOpts);
                     decOpts.color_mode = MODE_BGRA;
-                    decOpts.use_threads = 0; // Disable threading (Scout Freeze Fix)
+                    decOpts.use_threads = 1; // [v7.1] Re-enabled per user request
 
                     WebPAnimDecoder* dec = WebPAnimDecoderNew(&webpData, &decOpts);
                     if (dec) {
@@ -1252,9 +1261,18 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                                 result.format = PixelFormat::BGRA8888;
                                 result.success = true;
 
-                                // [v5.3] Fill metadata directly
-                                result.metadata.FormatDetails = L"WebP (Anim)";
-                                if (config.input.has_alpha) result.metadata.FormatDetails += L" +Alpha";
+                                // [v7.2] Animated WebP Info
+                                result.metadata.FormatDetails = L"Anim";
+                                bool isLossless = (config.input.format == 2);
+                                
+                                // Anim usually mixes frames, but base format is indicative
+                                if (isLossless) result.metadata.FormatDetails += L" Lossless ARGB";
+                                else result.metadata.FormatDetails += L" Lossy YUV";
+
+                                if (config.input.has_alpha && !isLossless) result.metadata.FormatDetails += L" +Alpha";
+                                
+                                // [CR Removed per user request]
+                                
                                 result.metadata.Width = config.input.width;
                                 result.metadata.Height = config.input.height;
 
@@ -1320,10 +1338,21 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                 result.format = PixelFormat::BGRA8888;
                 result.success = true;
 
-                // [v5.3] Fill metadata directly
-                result.metadata.FormatDetails = (config.input.format == 2) ? L"WebP (Lossless)" : L"WebP (Lossy)";
+                // [v7.2] Refined WebP Info (Short & Accurate)
+                // Static WebP Path
+                bool isLossless = (config.input.format == 2);
+                result.metadata.FormatDetails = isLossless ? L"Lossless" : L"Lossy";
+                
                 if (config.options.use_scaling) result.metadata.FormatDetails += L" [Scaled]";
-                if (config.input.has_alpha) result.metadata.FormatDetails += L" +Alpha";
+                
+                // Append Color Mode
+                if (isLossless) result.metadata.FormatDetails += L" ARGB"; 
+                else result.metadata.FormatDetails += L" YUV";
+                
+                if (config.input.has_alpha && !isLossless) result.metadata.FormatDetails += L" +Alpha";
+                
+                // [CR Removed per user request]
+                
                 result.metadata.Width = config.input.width;
                 result.metadata.Height = config.input.height;
 
@@ -3472,6 +3501,92 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
             pInfo->bitDepth = 1;
             return S_OK;
         }
+    }
+
+    // --- [v7.0] PNM/PAM (Netpbm) ---
+    // P1-P7 magic bytes. Header is ASCII (except P7 logic).
+    // Parsing PNM header is tricky due to whitespace/comments, but usually simple enough for 'Fast' check.
+    if (size >= 2 && data[0] == 'P' && data[1] >= '1' && data[1] <= '7') {
+         pInfo->format = L"PNM";
+         // Simple parser: skip magic, skip whitespace/comments, read width, read height
+         size_t i = 2;
+         auto skip = [&]() {
+             while (i < size) {
+                 if (isspace(data[i])) { i++; continue; }
+                 if (data[i] == '#') { 
+                     while (i < size && data[i] != '\n' && data[i] != '\r') i++; 
+                     continue; 
+                 }
+                 break;
+             }
+         };
+         auto readInt = [&]() -> int {
+             skip();
+             int val = 0;
+             bool found = false;
+             while (i < size && isdigit(data[i])) {
+                 val = val * 10 + (data[i] - '0');
+                 i++;
+                 found = true;
+             }
+             return found ? val : -1;
+         };
+         
+         // P7 (PAM) has diff header: "WIDTH 123\nHEIGHT 456\n..."
+         if (data[1] == '7') {
+             // Robust Parsing for PAM Header
+             // Use simple buffer scan to avoid stream overhead issues
+             const char* p = (const char*)data + 2; // Skip P7
+             const char* end = (const char*)data + std::min(size, (size_t)4096); // Check first 4KB
+             
+             auto nextToken = [&](std::string& outToken) -> bool {
+                 outToken.clear();
+                 // Skip non-graphical
+                 while (p < end && (unsigned char)*p <= 32) p++;
+                 // Skip comments
+                 while (p < end && *p == '#') {
+                     while (p < end && *p != '\n' && *p != '\r') p++;
+                     while (p < end && (unsigned char)*p <= 32) p++;
+                 }
+                 if (p >= end) return false;
+                 
+                 // Read token
+                 while (p < end && (unsigned char)*p > 32) {
+                     outToken += *p++;
+                 }
+                 return !outToken.empty();
+             };
+             
+             int w = 0, h = 0;
+             std::string tok;
+             while (nextToken(tok)) {
+                 if (tok == "WIDTH") {
+                     std::string val; 
+                     if (nextToken(val)) w = std::atoi(val.c_str());
+                 }
+                 else if (tok == "HEIGHT") {
+                     std::string val;
+                     if (nextToken(val)) h = std::atoi(val.c_str());
+                 }
+                 else if (tok == "ENDHDR") {
+                     break;
+                 }
+             }
+             
+             if (w > 0 && h > 0) {
+                 pInfo->width = w; pInfo->height = h;
+                 return S_OK;
+             }
+         } else {
+             // P1-P6: width height maxval(for some)
+             int w = readInt();
+             int h = readInt();
+             if (w > 0 && h > 0) {
+                 pInfo->width = w; pInfo->height = h;
+                 return S_OK;
+             }
+         }
+         // If parsing fails, E_FAIL (will fall back to slow load if configured, or fail)
     }
 
     // --- RAW ---
