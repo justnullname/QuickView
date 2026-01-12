@@ -6142,76 +6142,336 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             if (!ReadFileToVector(filePath, fileData)) return E_FAIL;
             
             if (checkCancel && checkCancel()) return E_ABORT;
+
+            // Hybrid D2D SVG Path (D3D11 WARP Device Architecture)
+            // Debugging: Added detailed HRESULT logs.
+
+            HRESULT hr = S_OK;
             
-            // NanoSVG parses char* string (null terminated)
-            std::vector<char> xmlData(fileData.begin(), fileData.end());
-            xmlData.push_back('\0');
+            // [Fix] Universal SVG Sanitizer & Style Inliner
+            // Issues: 
+            // 1. Direct2D fails on non-ASCII IDs (Paint Server Resolution Failure).
+            // 2. Direct2D ignores <style> in <defs>, causing missing fills (Black Silhouette/Invisibility).
+            if (!fileData.empty()) {
+                std::string svgContent(fileData.begin(), fileData.end());
+
+                // =========================================================
+                // PHASE 1: ID SANITIZATION (Fix Broken Links)
+                // =========================================================
+                // Regex: id="([^"]+)"
+                std::regex reID("id=\"([^\"]+)\"");
+                auto words_begin = std::sregex_iterator(svgContent.begin(), svgContent.end(), reID);
+                auto words_end = std::sregex_iterator();
+                
+                std::map<std::string, std::string> replacements;
+                int count = 0;
+                
+                for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
+                    std::smatch match = *i;
+                    std::string val = match.str(1);
+                    
+                    bool unsafe = false;
+                    for (unsigned char c : val) {
+                        if (c > 127) { unsafe = true; break; }
+                    }
+                    // Also consider spaces or weird symbols as unsafe for D2D validation
+                    if (!unsafe && val.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") != std::string::npos) {
+                         unsafe = true; 
+                    }
+
+                    if (unsafe && replacements.find(val) == replacements.end()) {
+                         char buf[64];
+                         sprintf_s(buf, "qv_fix_%d", count++);
+                         replacements[val] = std::string(buf);
+                    }
+                }
+                
+                // Apply ID Replacements
+                if (!replacements.empty()) {
+                    for (auto const& [oldVal, newVal] : replacements) {
+                        size_t pos = 0;
+                        while ((pos = svgContent.find(oldVal, pos)) != std::string::npos) {
+                             svgContent.replace(pos, oldVal.length(), newVal);
+                             pos += newVal.length();
+                        }
+                    }
+                    wchar_t msg[128];
+                    swprintf_s(msg, L"[SVG] Sanitized %d Unsafe IDs.\n", (int)replacements.size());
+                    OutputDebugStringW(msg);
+                }
+
+                // =========================================================
+                // PHASE 2: STYLE INLINER (Fix Black Silhouette)
+                // =========================================================
+                // Adobe format: .st0{fill:url(#ID);} or .st0 { fill: #FFF; }
+                // Regex: Find class name and fill value
+                try {
+                    // Regex captures: Group 1 = Class Name, Group 2 = Fill Value
+                    std::regex reStyle("\\.([a-zA-Z0-9_-]+)\\s*\\{\\s*fill:\\s*([^;\\}]+);?\\s*\\}");
+                    auto style_begin = std::sregex_iterator(svgContent.begin(), svgContent.end(), reStyle);
+                    auto style_end = std::sregex_iterator();
+                    
+                    int inlinedCount = 0;
+
+                    for (std::sregex_iterator i = style_begin; i != style_end; ++i) {
+                        std::smatch match = *i;
+                        std::string className = match.str(1); // e.g. "st0"
+                        std::string fillVal = match.str(2);   // e.g. "url(#qv_fix_0)"
+
+                        // We inject the fill attribute directly into the tag using that class.
+                        // Find: class="st0"
+                        // Replace: fill="url(#qv_fix_0)" class="st0"
+                        // Note: This relies on 'class=' being the hook.
+                        
+                        std::string searchPattern = "class=\"" + className + "\"";
+                        std::string replacePattern = "fill=\"" + fillVal + "\" class=\"" + className + "\"";
+                        
+                        size_t pos = 0;
+                        while ((pos = svgContent.find(searchPattern, pos)) != std::string::npos) {
+                            svgContent.replace(pos, searchPattern.length(), replacePattern);
+                            pos += replacePattern.length();
+                            inlinedCount++;
+                        }
+                    }
+                    
+                    if (inlinedCount > 0) {
+                         wchar_t msg[128];
+                         swprintf_s(msg, L"[SVG] Inlined %d Styles (Fixed Black Silhouette).\n", inlinedCount);
+                         OutputDebugStringW(msg);
+                    }
+                } catch (...) {
+                    // Regex error safety
+                    OutputDebugStringW(L"[SVG] Style Inliner Pattern Failure\n");
+                }
+                
+                // Commit changes
+                fileData.assign(svgContent.begin(), svgContent.end());
+            }
+
+            // 1. Create D3D11 Device
+            ComPtr<ID3D11Device> pD3DDevice;
+            D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
+            D3D_FEATURE_LEVEL featureLevel;
             
-            // Parse (96 DPI default units)
-            NSVGimage* image = nsvgParse(xmlData.data(), "px", 96.0f);
-            if (!image) return E_FAIL;
+            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, featureLevels, ARRAYSIZE(featureLevels), D3D11_SDK_VERSION, &pD3DDevice, &featureLevel, nullptr);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] D3D11CreateDevice Failed\n"); return hr; }
+
+            // 2. Create D2D Device & Context
+            ComPtr<IDXGIDevice> pDxgiDevice;
+            hr = pD3DDevice.As(&pDxgiDevice);
+            if (FAILED(hr)) return hr;
+
+            ComPtr<ID2D1Factory1> pD2DFactory;
+            D2D1_FACTORY_OPTIONS options = {};
+            #ifdef _DEBUG
+            options.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
+            #endif
+            hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), &options, &pD2DFactory);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] D2D1CreateFactory Failed\n"); return hr; }
+
+            ComPtr<ID2D1Device> pD2DDevice;
+            hr = pD2DFactory->CreateDevice(pDxgiDevice.Get(), &pD2DDevice);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] CreateDevice Failed\n"); return hr; }
+
+            ComPtr<ID2D1DeviceContext5> pContext5;
+            ComPtr<ID2D1DeviceContext> pContextBase;
+            hr = pD2DDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &pContextBase);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] CreateDeviceContext Failed\n"); return hr; }
+
+            hr = pContextBase.As(&pContext5); 
+            if (FAILED(hr)) return hr;
+
+            // 3. Load SVG Document
+            // Note: SHCreateMemStream is lightweight but sometimes lacks full IStream features (Stat).
+            // Use CreateStreamOnHGlobal for maximum compatibility with D2D.
+            ComPtr<IStream> pStream;
             
-            // RAII guard
-            struct SvgGuard { NSVGimage* img; ~SvgGuard() { if (img) nsvgDelete(img); } } guard{image};
+            HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, fileData.size());
+            if (!hMem) return E_OUTOFMEMORY;
             
-            // Calculate target scale
-            // If targetWidth/Height specified, scale to fit. Otherwise, 2x for crisp.
-            float scale = 2.0f;
-            if (targetWidth > 0 && targetHeight > 0 && image->width > 0 && image->height > 0) {
-                float scaleW = static_cast<float>(targetWidth) / image->width;
-                float scaleH = static_cast<float>(targetHeight) / image->height;
-                scale = std::min(scaleW, scaleH);
-                // Ensure minimum 1.0 scale for readability
-                if (scale < 1.0f) scale = 1.0f;
+            void* pMem = GlobalLock(hMem);
+            if (pMem) {
+                memcpy(pMem, fileData.data(), fileData.size());
+                GlobalUnlock(hMem);
+                
+                // Create stream with "release on release" = TRUE
+                hr = CreateStreamOnHGlobal(hMem, TRUE, &pStream);
+            } else {
+                GlobalFree(hMem);
+                return E_FAIL;
             }
             
-            // Safety limit (8K max)
-            float maxDim = 8192.0f;
-            if (image->width * scale > maxDim || image->height * scale > maxDim) {
-                float aspect = image->width / image->height;
-                scale = (aspect > 1.0f) ? (maxDim / image->width) : (maxDim / image->height);
+            if (FAILED(hr) || !pStream) {
+                 wchar_t err[64]; swprintf_s(err, L"[SVG] Stream Create Failed HR=0x%X\n", hr); OutputDebugStringW(err);
+                 return hr;
+            }
+
+            ComPtr<ID2D1SvgDocument> pSvgDoc;
+            // FIX: Viewport size cannot be 0x0. This causes E_INVALIDARG (0x80070057).
+            // Use a dummy non-zero size. We reset it properly with SetViewportSize later.
+            hr = pContext5->CreateSvgDocument(pStream.Get(), D2D1_SIZE_F{100, 100}, &pSvgDoc);
+            if (FAILED(hr)) { 
+                wchar_t err[64]; swprintf_s(err, L"[SVG] CreateSvgDocument Failed HR=0x%X\n", hr); OutputDebugStringW(err);
+                return hr; 
+            }
+
+            // 4. Determine Dimensions
+            ID2D1SvgElement* pRoot = nullptr; // Raw pointer
+            ComPtr<ID2D1SvgElement> spRoot; // Use ComPtr for safety if GetRoot AddRefs? GetRoot does AddRef.
+            pSvgDoc->GetRoot(&spRoot);
+            pRoot = spRoot.Get();
+            
+            if (!pRoot) { OutputDebugStringW(L"[SVG] No Root Element\n"); return E_FAIL; }
+
+            float svgW = 0.0f;
+            float svgH = 0.0f;
+            float svgX = 0.0f;
+            float svgY = 0.0f;
+
+            D2D1_SVG_VIEWBOX viewBox = {0};
+            bool hasViewBox = SUCCEEDED(pRoot->GetAttributeValue(L"viewBox", D2D1_SVG_ATTRIBUTE_POD_TYPE_VIEWBOX, &viewBox, sizeof(viewBox)));
+            
+            if (hasViewBox) {
+                svgW = viewBox.width;
+                svgH = viewBox.height;
+                svgX = viewBox.x;
+                svgY = viewBox.y;
+            } else {
+                 auto GetAttrFloat = [&](LPCWSTR name) -> float {
+                    wchar_t val[64] = {0};
+                    if (SUCCEEDED(pRoot->GetAttributeValue(name, D2D1_SVG_ATTRIBUTE_STRING_TYPE_SVG, val, 64))) {
+                        return (float)_wtof(val);
+                    }
+                    return 0.0f;
+                };
+                svgW = GetAttrFloat(L"width");
+                svgH = GetAttrFloat(L"height");
+                if (svgW <= 0) svgW = 512;
+                if (svgH <= 0) svgH = 512;
             }
             
-            int width = static_cast<int>(image->width * scale);
-            int height = static_cast<int>(image->height * scale);
+            wchar_t debugBuf[256];
+            swprintf_s(debugBuf, L"[SVG] Path=%s VB=%d Pos=(%.2f,%.2f) Size=%.2fx%.2f\n", filePath, hasViewBox, svgX, svgY, svgW, svgH);
+            OutputDebugStringW(debugBuf);
+             
+            float scale = 1.0f;
+            float maxDim = 4096.0f; 
+
+            if (targetWidth > 0 && targetHeight > 0) {
+                 float scaleW = (svgW > 0) ? (float)targetWidth / svgW : 1.0f;
+                 float scaleH = (svgH > 0) ? (float)targetHeight / svgH : 1.0f;
+                 scale = std::min(scaleW, scaleH);
+            } else {
+                 if (svgW > maxDim || svgH > maxDim) {
+                      scale = std::min(maxDim / svgW, maxDim / svgH);
+                 } else if (svgW < 1024 && svgH < 1024) {
+                      scale = 2.0f;
+                 }
+            }
             
-            if (width <= 0 || height <= 0) return E_FAIL;
+            if (svgW * scale > 16383.0f) scale = 16383.0f / svgW;
+            if (svgH * scale > 16383.0f) scale = 16383.0f / svgH;
             
-            // [v5.3] Metadata TODO: Return via DecodeResult if using Unified path.
+            int finalW = (int)(svgW * scale);
+            int finalH = (int)(svgH * scale);
+            if (finalW <= 0) finalW = 1;
+            if (finalH <= 0) finalH = 1;
+
+            // 5. Create D2D Target Bitmap (The "GPU" Surface)
+            ComPtr<ID2D1Bitmap1> pD2DTarget;
+            D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_TARGET,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            );
+            hr = pContext5->CreateBitmap(D2D1::SizeU(finalW, finalH), nullptr, 0, &props, &pD2DTarget);
+            if (FAILED(hr)) {
+                 wchar_t err[64]; swprintf_s(err, L"[SVG] CreateBitmap Target Failed HR=0x%X\n", hr); OutputDebugStringW(err);
+                 return hr;
+            }
+
+            // 6. Set Target & Draw
+            pContext5->SetTarget(pD2DTarget.Get());
             
-            // Rasterize
-            NSVGrasterizer* rast = nsvgCreateRasterizer();
-            if (!rast) return E_OUTOFMEMORY;
-            struct RastGuard { NSVGrasterizer* r; ~RastGuard() { if (r) nsvgDeleteRasterizer(r); } } rastGuard{rast};
+            pContext5->BeginDraw();
+            pContext5->Clear(D2D1::ColorF(0, 0.0f)); // Transparent
             
-            // Allocate buffer (SIMD aligned)
-            int stride = CalculateSIMDAlignedStride(width, 4);
-            size_t bufSize = static_cast<size_t>(stride) * height;
-            uint8_t* pixels = AllocateBuffer(bufSize);
-            if (!pixels) return E_OUTOFMEMORY;
+            pSvgDoc->SetViewportSize(D2D1_SIZE_F{svgW, svgH});
+
+            D2D1_MATRIX_3X2_F translation = D2D1::Matrix3x2F::Translation(-svgX, -svgY);
+            D2D1_MATRIX_3X2_F scaling = D2D1::Matrix3x2F::Scale(scale, scale);
+            pContext5->SetTransform(translation * scaling);
             
-            // NanoSVG outputs RGBA
-            nsvgRasterize(rast, image, 0, 0, scale, pixels, width, height, stride);
+            pContext5->DrawSvgDocument(pSvgDoc.Get());
             
-            // Fill output frame (RGBA format!)
-            outFrame->pixels = pixels;
-            outFrame->width = width;
-            outFrame->height = height;
-            outFrame->stride = stride;
-            outFrame->format = PixelFormat::RGBA8888;  // NanoSVG = RGBA
-            SetupDeleter(pixels);
+            hr = pContext5->EndDraw();
+            if (FAILED(hr)) {
+                wchar_t err[64]; swprintf_s(err, L"[SVG] EndDraw Failed HR=0x%X\n", hr); OutputDebugStringW(err);
+                return hr;
+            }
             
-            if (pLoaderName) *pLoaderName = L"NanoSVG";
-            // g_lastFormatDetails = L"Vector"; (Removed)
+            // 7. Readback Strategy: D2D Staging Bitmap (CPU_READ)
+            // WARP/D3D execution happens on device memory (or virtual device memory).
+            // We must explicitly copy to a CPU-mappable staging surface to read it safely.
+            
+            ComPtr<ID2D1Bitmap1> pStagingBitmap;
+            D2D1_BITMAP_PROPERTIES1 stagingProps = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            );
+            
+            hr = pContext5->CreateBitmap(D2D1::SizeU(finalW, finalH), nullptr, 0, &stagingProps, &pStagingBitmap);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] Create Staging Bitmap Failed\n"); return hr; }
+            
+            // Copy from Target to Staging
+            hr = pStagingBitmap->CopyFromBitmap(nullptr, pD2DTarget.Get(), nullptr);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] CopyFromBitmap Failed\n"); return hr; }
+            
+            // Map Staging Bitmap
+            D2D1_MAPPED_RECT mappedRect;
+            hr = pStagingBitmap->Map(D2D1_MAP_OPTIONS_READ, &mappedRect);
+            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] Map Failed\n"); return hr; }
+            
+            // 8. Copy to Output Frame
+            if (SUCCEEDED(hr)) {
+                UINT sourceStride = mappedRect.pitch;
+                UINT targetStride = finalW * 4;
+                UINT targetSize = targetStride * finalH;
+                
+                uint8_t* pixels = AllocateBuffer(targetSize);
+                if (!pixels) {
+                    pStagingBitmap->Unmap();
+                    return E_OUTOFMEMORY;
+                }
+                
+                // Copy Row-by-Row
+                 for (int y = 0; y < finalH; ++y) {
+                     const uint8_t* pSrcRow = (const uint8_t*)mappedRect.bits + (y * sourceStride);
+                     uint8_t* pDstRow = pixels + (y * targetStride);
+                     memcpy(pDstRow, pSrcRow, targetStride);
+                 }
+                 
+                 outFrame->pixels = pixels;
+                 outFrame->width = finalW;
+                 outFrame->height = finalH;
+                 outFrame->stride = targetStride;
+                 outFrame->format = PixelFormat::BGRA8888;
+                 
+                 SetupDeleter(pixels);
+                 
+                 pStagingBitmap->Unmap();
+            }
+            
+            // pLock releases on destruction
+            
+            if (pLoaderName) *pLoaderName = L"D2D Native";
             if (pMetadata) {
-                pMetadata->LoaderName = L"NanoSVG";
-                pMetadata->FormatDetails = L"Vector";
-                pMetadata->Width = width;
-                pMetadata->Height = height;
+                pMetadata->LoaderName = L"D2D SVG"; 
+                pMetadata->FormatDetails = L"Vector (Baked)";
+                pMetadata->Width = finalW;
+                pMetadata->Height = finalH;
             }
-            
             return S_OK;
-        }
+        } // End if (isSvg)
     }
     
     // WebP/Wuffs/JXL Codecs handled recursively or by Unified Dispatch above.

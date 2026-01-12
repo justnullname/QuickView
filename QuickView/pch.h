@@ -22,6 +22,8 @@ using Microsoft::WRL::ComPtr;
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <regex>
+#include <map>
 
 // Pragmas for linking
 #pragma comment(lib, "d2d1.lib")
@@ -29,6 +31,11 @@ using Microsoft::WRL::ComPtr;
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "shlwapi.lib") // [SVG] For SHCreateMemStream
+#pragma comment(lib, "ole32.lib")   // [SVG] For CreateStreamOnHGlobal
+
+// Windows Headers
+#include <shlwapi.h>
 
 // Helper macro for HRESULT checking
 #ifndef THROW_IF_FAILED
