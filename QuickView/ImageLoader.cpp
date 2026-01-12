@@ -2336,7 +2336,7 @@ namespace QuickView {
                     JxlDecoderDestroy(dec); return E_FAIL;
                 }
 
-                int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME | JXL_DEC_COLOR_ENCODING;
+                int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME | JXL_DEC_COLOR_ENCODING | JXL_DEC_FRAME_PROGRESSION;
                 if (ctx.forcePreview) events |= JXL_DEC_PREVIEW_IMAGE;
                 // [v6.2] Parse EXIF if metadata requested
                 if (ctx.pMetadata) events |= JXL_DEC_BOX;
@@ -2572,6 +2572,10 @@ namespace QuickView {
                         result.metadata.Width = finalW;
                         result.metadata.Height = finalH;
                         return S_OK;
+                    }
+                    else if (status == JXL_DEC_FRAME_PROGRESSION) {
+                        // [Deep Cancel] Progression event triggers loop to CheckCancel
+                        continue;
                     }
                     else if (status == JXL_DEC_SUCCESS) {
                         // Finished
@@ -3068,6 +3072,12 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
              if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
                  CImageLoader::ThumbData tmp;
                  HRESULT hr = CImageLoader::LoadThumbJXL_DC(fileBuf.data(), fileBuf.size(), &tmp, &result.metadata);
+                 
+                 // [v8.4] Critical Fix: Respect E_ABORT from FastLane
+                 // If JXL loader explicitly aborts (e.g. Large Modular Image in FastLane), 
+                 // we MUST NOT fall through to full decode on this thread.
+                 if (hr == E_ABORT) return E_ABORT;
+
                  if (SUCCEEDED(hr) && tmp.isValid) {
                      result.width = tmp.width;
                      result.height = tmp.height;
@@ -5423,72 +5433,66 @@ HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* data, size_t size, 
 
             // High-precision float for quality, speed is fine for thumbnail
 
-// [JXL Memory Optimization] Context for 1:8 Skip-Sampling Callback
-struct JxlSkipSampleContext {
-    uint8_t* outBuffer;
-    size_t outWidth;
-    size_t outHeight;
-    size_t outStride;
-    size_t factor; // 8
+// [JXL Memory Optimization] Callback REMOVED (Replaced by JxlDecoderSetPreferredDownsampling)
+
+
+
+
+// [v7.5] Manual Downsampling Callback (Since API is missing)
+struct JxlSkipContext {
+    uint8_t* pDest;
+    size_t stride;
+    size_t width;
+    size_t height;
+    size_t factor;
 };
 
-// [JXL Memory Optimization] Callback to read only 1 pixel every 8x8 block
-// Performs simultaneous Skip-Sampling, Swizzle (RGBA->BGRA), and Premultiplication
-static void JxlSkipSampleCallback(void* run_opaque, size_t x, size_t y, size_t num_pixels, const void* pixels) {
-    JxlSkipSampleContext* ctx = (JxlSkipSampleContext*)run_opaque;
-    const uint8_t* src = (const uint8_t*)pixels;
-    
-    // Vertical Skip: Only process every 8th row
+static void JxlSkipSampleCallback(void* opaque, size_t x, size_t y, size_t num_pixels, const void* pixels) {
+    JxlSkipContext* ctx = (JxlSkipContext*)opaque;
     if (y % ctx->factor != 0) return;
     
-    size_t targetY = y / ctx->factor;
-    if (targetY >= ctx->outHeight) return;
+    size_t destY = y / ctx->factor;
+    if (destY >= ctx->height) return;
+
+    const uint8_t* src = (const uint8_t*)pixels;
+    uint8_t* row = ctx->pDest + destY * ctx->stride;
     
-    uint8_t* rowPtr = ctx->outBuffer + targetY * ctx->outStride;
+    // Process pixels
+    // Optimization: Skip to first valid pixel
+    size_t i = 0;
     
-    // Horizontal Skip & Pixel Processing
-    for (size_t i = 0; i < num_pixels; ++i) {
-        size_t currentX = x + i;
+    // Align global x to factor
+    // gx = x + i
+    // We want (x + i) % factor == 0
+    // i % factor == (factor - (x % factor)) % factor
+    size_t rem = x % ctx->factor;
+    if (rem != 0) {
+        i = ctx->factor - rem;
+    }
+    
+    for (; i < num_pixels; i += ctx->factor) {
+        size_t gx = x + i;
+        size_t destX = gx / ctx->factor;
         
-        // Only process every 8th column
-        if (currentX % ctx->factor == 0) {
-            size_t targetX = currentX / ctx->factor;
-            if (targetX < ctx->outWidth) {
-                size_t srcOffset = i * 4; // 4 bytes per pixel (RGBA input)
-                size_t dstOffset = targetX * 4; // 4 bytes per pixel (BGRA output)
-                
-                uint8_t r = src[srcOffset + 0];
-                uint8_t g = src[srcOffset + 1];
-                uint8_t b = src[srcOffset + 2];
-                uint8_t a = src[srcOffset + 3]; // Alpha
-                
-                // Premultiply Alpha
-                if (a > 0 && a < 255) {
-                    r = (uint8_t)((r * a) / 255);
-                    g = (uint8_t)((g * a) / 255);
-                    b = (uint8_t)((b * a) / 255);
-                } else if (a == 0) {
-                    r = g = b = 0;
-                }
-                
-                // Store as BGRA
-                rowPtr[dstOffset + 0] = b;
-                rowPtr[dstOffset + 1] = g;
-                rowPtr[dstOffset + 2] = r;
-                rowPtr[dstOffset + 3] = a;
-            }
+        if (destX < ctx->width) {
+             size_t dstIdx = destX * 4;
+             size_t srcIdx = i * 4;
+             // Copy RGBA
+             row[dstIdx + 0] = src[srcIdx + 0];
+             row[dstIdx + 1] = src[srcIdx + 1];
+             row[dstIdx + 2] = src[srcIdx + 2];
+             row[dstIdx + 3] = src[srcIdx + 3];
         }
     }
 }
-
-
 
 HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData, ImageMetadata* pMetadata) {
     if (!pFile || fileSize == 0 || !pData) return E_INVALIDARG;
 
     pData->isValid = false;
-    pData->isBlurry = true; // DC mode always produces blurry output
-    
+    // Default to true. If we fall back to Full Decode (Small), we set it to false.
+    pData->isBlurry = true; 
+
     // 1. Create Decoder
     JxlDecoder* dec = JxlDecoderCreate(NULL);
     if (!dec) return E_OUTOFMEMORY;
@@ -5506,28 +5510,23 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
         return hr;
     };
     
-    OutputDebugStringW(L"[JXL_DC] Input Set. Entering Loop.\n");
-    
     // 2. Setup Input
     if (JXL_DEC_SUCCESS != JxlDecoderSetInput(dec, pFile, fileSize)) return cleanup(E_FAIL);
     
     // 3. Subscribe Events
-    // [v6.0] Added JXL_DEC_BOX for EXIF
-    int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME;
+    // Must subscribe to FRAME_PROGRESSION to catch 1:8
+    int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME | JXL_DEC_FRAME_PROGRESSION;
     if (pMetadata) events |= JXL_DEC_BOX;
     
     if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) return cleanup(E_FAIL);
 
     JxlBasicInfo info = {};
-    bool headerSeen = false;
+    JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; 
     
-    // [v6.0] EXIF State
+    // EXIF State
     std::vector<uint8_t> exifBuffer;
     bool readingExif = false;
-
-    // 5. Decode Loop (Buffer Mode)
-    JxlSkipSampleContext dsCtx = {};
-    JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; 
+    bool foundDC = false; // Flag if we caught the rabbit (1:8)
 
     for (;;) {
         JxlDecoderStatus status = JxlDecoderProcessInput(dec);
@@ -5536,43 +5535,14 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
              return cleanup(E_FAIL);
         }
         else if (status == JXL_DEC_SUCCESS) {
-            // Finished
-            if (pData->isValid) {
-                 if (pData->loaderName == std::wstring(L"libjxl (Preview)")) {
-                     // Swizzle RGBA -> BGRA
-                     uint8_t* p = pData->pixels.data();
-                     size_t pxCount = (size_t)pData->width * pData->height;
-                     for(size_t i=0; i<pxCount; ++i) {
-                         uint8_t r = p[i*4+0];
-                         uint8_t g = p[i*4+1];
-                         uint8_t b = p[i*4+2];
-                         uint8_t a = p[i*4+3];
-                         
-                         if (a < 255 && a > 0) {
-                             r = (uint8_t)((r * a) / 255);
-                             g = (uint8_t)((g * a) / 255);
-                             b = (uint8_t)((b * a) / 255);
-                         } else if (a == 0) r = g = b = 0;
-                         
-                         p[i*4+0] = b;
-                         p[i*4+1] = g;
-                         p[i*4+2] = r;
-                         p[i*4+3] = a;
-                     }
-                 }
-                 return cleanup(S_OK);
-            }
-            return cleanup(E_FAIL);
+            return cleanup(foundDC ? S_OK : E_FAIL);
         }
         else if (status == JXL_DEC_BASIC_INFO) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) return cleanup(E_FAIL);
             
-            if (info.uses_original_profile) {
-                OutputDebugStringW(L"[JXL_DC] Modular/Lossless detected, skipping Scout\n");
-                return cleanup(E_ABORT); 
-            }
+            // [Fix] Removed SetProgressiveDetail(dec, kDC)
+            // This allows the decoder to emit intermediate events.
             
-            // Output Color Profile
             JxlColorEncoding color_encoding = {};
             color_encoding.color_space = JXL_COLOR_SPACE_RGB;
             color_encoding.white_point = JXL_WHITE_POINT_D65;
@@ -5581,13 +5551,9 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
             JxlDecoderSetOutputColorProfile(dec, &color_encoding, NULL, 0);
 
-            if (!info.have_preview) {
-                 JxlDecoderSetProgressiveDetail(dec, kDC);
-            }
             pData->origWidth = static_cast<int>(info.xsize);
             pData->origHeight = static_cast<int>(info.ysize);
             
-            // [v6.0] Format Details
             if (pMetadata) {
                 pMetadata->Width = static_cast<int>(info.xsize);
                 pMetadata->Height = static_cast<int>(info.ysize);
@@ -5598,13 +5564,67 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                 if (info.have_animation) pMetadata->FormatDetails += L" Anim";
             }
         }
+        else if (status == JXL_DEC_FRAME_PROGRESSION) {
+            // [v8.3] Catch the Rabbit
+            size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
+            
+            if (ratio == 8) {
+                // Caught it!
+                size_t downW = info.xsize / 8;
+                size_t downH = info.ysize / 8;
+                if (downW == 0) downW = 1;
+                if (downH == 0) downH = 1;
+                
+                size_t bufferSize = downW * downH * 4;
+                try {
+                    pData->pixels.resize(bufferSize);
+                } catch(...) { return cleanup(E_OUTOFMEMORY); }
+                
+                pData->width = (UINT)downW;
+                pData->height = (UINT)downH;
+                pData->stride = (UINT)downW * 4;
+                pData->isValid = true;
+                pData->loaderName = L"libjxl (Prog 1:8)"; // Success marker
+
+                if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufferSize)) {
+                    return cleanup(E_FAIL);
+                }
+                
+                // Force Flush
+                if (JXL_DEC_SUCCESS != JxlDecoderFlushImage(dec)) {
+                     return cleanup(E_FAIL);
+                }
+                
+                // Manual Premultiply & Swizzle (RGBA -> BGRA)
+                uint8_t* p = pData->pixels.data();
+                size_t pxCount = bufferSize / 4;
+                 // Optimized Swizzle
+                 for(size_t i=0; i<pxCount; ++i) {
+                     uint8_t r = p[i*4+0];
+                     uint8_t g = p[i*4+1];
+                     uint8_t b = p[i*4+2];
+                     uint8_t a = p[i*4+3];
+                     // Pre-multiply
+                     if (a < 255 && a > 0) {
+                         r = (uint8_t)((r * a) / 255);
+                         g = (uint8_t)((g * a) / 255);
+                         b = (uint8_t)((b * a) / 255);
+                     } else if (a == 0) r = g = b = 0;
+                     
+                     p[i*4+0] = b;
+                     p[i*4+1] = g;
+                     p[i*4+2] = r;
+                     p[i*4+3] = a;
+                 }
+                 
+                foundDC = true;
+                return cleanup(S_OK); // Success!
+            }
+        }
         else if (status == JXL_DEC_BOX) {
             JxlBoxType type;
             if (JXL_DEC_SUCCESS == JxlDecoderGetBoxType(dec, type, JXL_TRUE)) {
-                // Check if Exif (ignoring case or strict?) Standard is "Exif"
                 if (memcmp(type, "Exif", 4) == 0 && pMetadata) {
-                    // Start reading box
-                    // Limit to 256KB to retrieve essential metadata
                     exifBuffer.resize(256 * 1024); 
                     JxlDecoderSetBoxBuffer(dec, exifBuffer.data(), exifBuffer.size());
                     readingExif = true;
@@ -5614,81 +5634,72 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             }
         }
         else if (status == JXL_DEC_BOX_NEED_MORE_OUTPUT) {
-            // Buffer full. Truncate reading.
-             if (readingExif) {
-                 JxlDecoderReleaseBoxBuffer(dec);
-                 // We have full buffer. Logic in 'else' will parse it?
-                 // No, we need to mark we are done.
-                 // Actually logic below handles parsing.
-             }
-        }
-        else if (status == JXL_DEC_NEED_PREVIEW_OUT_BUFFER) {
-             size_t bufferSize = 0;
-             if (JXL_DEC_SUCCESS != JxlDecoderPreviewOutBufferSize(dec, &format, &bufferSize)) return cleanup(E_FAIL);
-             
-             pData->loaderName = L"libjxl (Preview)";
-             try { pData->pixels.resize(bufferSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
-             if (JXL_DEC_SUCCESS != JxlDecoderSetPreviewOutBuffer(dec, &format, pData->pixels.data(), bufferSize)) return cleanup(E_FAIL);
-             
-             size_t px = bufferSize / 4;
-             pData->width = static_cast<UINT>(sqrt((double)px * info.xsize / info.ysize)); 
-             pData->height = static_cast<UINT>(px / pData->width);
-             pData->stride = static_cast<UINT>(pData->width * 4);
-             pData->isValid = true;
+            if (readingExif) JxlDecoderReleaseBoxBuffer(dec);
         }
         else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-            // [Memory Optimization] Use Callback for 1:8 Skip Sampling
-            size_t factor = 8;
-            size_t targetW = (info.xsize + factor - 1) / factor;
-            size_t targetH = (info.ysize + factor - 1) / factor;
+            // [v8.3] Fallback Logic
+            // Reached here means NO 1:8 event occurred (Modular or Small).
             
-            try { 
-                pData->pixels.resize(targetW * targetH * 4); 
-            } catch(...) { return cleanup(E_OUTOFMEMORY); }
+            // Strategy: 
+            // - If Small (< 2MP), decode fully (FastLane handles it).
+            // - If Large, Abort (HeavyLane handles it).
             
-            pData->width = static_cast<UINT>(targetW);
-            pData->height = static_cast<UINT>(targetH);
-            pData->stride = static_cast<UINT>(targetW * 4);
-            pData->isValid = true;
-            pData->loaderName = L"libjxl (Scout DC 1:8)";
-            pData->isBlurry = true;
+            bool isSmallEnough = ((uint64_t)info.xsize * info.ysize) < 2000000; // 2MP
 
-            dsCtx.outBuffer = pData->pixels.data();
-            dsCtx.outWidth = targetW;
-            dsCtx.outHeight = targetH;
-            dsCtx.outStride = pData->stride;
-            dsCtx.factor = factor;
-            
-            if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutCallback(dec, &format, JxlSkipSampleCallback, &dsCtx)) {
-                return cleanup(E_FAIL);
+            if (isSmallEnough) {
+                 // FastLane Full Decode
+                 size_t stride = info.xsize * 4;
+                 size_t bufSize = stride * info.ysize;
+                 try { pData->pixels.resize(bufSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
+                 
+                 pData->width = (UINT)info.xsize;
+                 pData->height = (UINT)info.ysize;
+                 pData->stride = (UINT)stride;
+                 pData->isValid = true;
+                 pData->isBlurry = false; // Full decode is sharp
+                 pData->loaderName = L"libjxl (Fast Full)";
+
+                 JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufSize);
+                 // No Flush, just continue loop
+            } else {
+                 // Too large for FastLane full decode. Abort.
+                 OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Aborting.\n");
+                 return cleanup(E_ABORT);
             }
         }
         else if (status == JXL_DEC_FULL_IMAGE) {
-            // Frame done
-            // Continue to JXL_DEC_SUCCESS or next frame
-        }
-        else if (status == JXL_DEC_NEED_MORE_INPUT) {
-             return cleanup(E_FAIL); // Buffer exhausted
-        }
-        else if (status == JXL_DEC_FRAME_PROGRESSION) {
-            // We can flush to get partial result, but in DC mode, just wait for FULL_IMAGE/NEED_BUFFER
-            // JxlDecoderFlushImage(dec);
+            // If we are here, it means we took the Fallback Path (Fast Full)
+             if (pData->isValid) {
+                 uint8_t* p = pData->pixels.data();
+                 size_t pxCount = (size_t)pData->width * pData->height;
+                 for(size_t i=0; i<pxCount; ++i) {
+                     uint8_t r = p[i*4+0];
+                     uint8_t g = p[i*4+1];
+                     uint8_t b = p[i*4+2];
+                     uint8_t a = p[i*4+3];
+                     if (a < 255 && a > 0) {
+                         r = (uint8_t)((r * a) / 255);
+                         g = (uint8_t)((g * a) / 255);
+                         b = (uint8_t)((b * a) / 255);
+                     } else if (a == 0) r = g = b = 0;
+                     p[i*4+0] = b;
+                     p[i*4+1] = g;
+                     p[i*4+2] = r;
+                     p[i*4+3] = a;
+                 }
+                 return cleanup(S_OK);
+             }
         }
         
-        // [v6.0] Handle Exif Parsing (if we switched state away from BOX)
-        // If we were reading Exif and now status changed (to almost anything else), we check buffer.
-        // Actually JXL_DEC_BOX_NEED_MORE_OUTPUT is special.
+        // Exif Box Handling
         if (readingExif && status != JXL_DEC_BOX && status != JXL_DEC_BOX_NEED_MORE_OUTPUT) {
              size_t remaining = JxlDecoderReleaseBoxBuffer(dec);
              size_t validSize = exifBuffer.size() - remaining;
              if (validSize > 0) {
                  easyexif::EXIFInfo exif;
-                 // JXL Exif box payload: "The content of the box is the Exif metadata..."
-                 // Usually starts with II/MM (TIFF header) or "Exif\0\0".
                  if (exif.parseFromEXIFSegment(exifBuffer.data(), static_cast<unsigned>(validSize)) == 0) {
                      QuickView::PopulateMetadataFromEasyExif(exif, *pMetadata);
                  } else {
-                      // Try prepend
                       std::vector<unsigned char> tmp(validSize + 6);
                       memcpy(tmp.data(), "Exif\0\0", 6);
                       memcpy(tmp.data()+6, exifBuffer.data(), validSize);

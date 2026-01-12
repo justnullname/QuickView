@@ -197,30 +197,29 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // 4. Cancel Stale Tasks
     m_heavyPool->CancelOthers(imageId);
     
-    // 5. JXL Special Logic
+    // 5. JXL Special Logic (User "Ultimate Strategy")
     if (info.format == L"JXL") {
         m_pendingJxlHeavyPath.clear();
         m_pendingJxlHeavyId = 0;
         
-        uint64_t pixels = (uint64_t)info.width * info.height;
-        if (pixels < 2000000) {
-            // Small JXL (<2MP): Heavy Only (DC Preview useless)
-            OutputDebugStringW(L"[Dispatch] -> JXL Small: Heavy Direct\n");
-            m_heavyPool->Submit(path, imageId);
-        } else {
-            // Large JXL (>2MP): FastLane First (DC Preview) -> Heavy Pending
-            if (useFastLane && m_config.EnableScout) {
-                OutputDebugStringW(L"[Dispatch] -> JXL Large: FastLane First\n");
-                m_pendingJxlHeavyPath = path;
-                m_pendingJxlHeavyId = imageId;
-                m_fastLane.Push(path, imageId);
-            } else {
-                // FastLane Disabled
-                OutputDebugStringW(L"[Dispatch] -> JXL Large: Heavy Direct (FastLane Disabled)\n");
-                m_heavyPool->Submit(path, imageId);
-            }
+        // Scene A: Small JXL (< 1MB AND < 2MP) -> FastLane Direct Full Decode
+        // 1MB = 1048576 bytes
+        // 2MP = 2000000 pixels
+        bool isSmall = (info.fileSize < 1048576) && ((uint64_t)info.width * info.height < 2000000);
+        
+        if (isSmall) {
+            OutputDebugStringW(L"[Dispatch] -> JXL Small: FastLane Direct Full\n");
+            // FastLane will use target=0 if detected as small
+            m_fastLane.Push(path, imageId);
+        } 
+        else {
+            // [v8.5] Hard Dispatch: Large JXL (>2MP or >3MB)
+            // Skip FastLane entirely. HeavyLane handles everything (Deep Cancel Relay).
+            // This eliminates the 18ms overhead of checking for DC in FastLane.
+            OutputDebugStringW(L"[Dispatch] -> JXL Large: Heavy Direct (Skip FastLane)\n");
+            m_heavyPool->SubmitFullDecode(path, imageId);
         }
-        return; // JXL handled
+        return; // JXL dispatched
     }
     
     // 6. Standard Routing
@@ -303,20 +302,39 @@ std::vector<EngineEvent> ImageEngine::PollState() {
             if (e.type == EventType::PreviewReady || (e.type == EventType::FullReady && e.isScaled)) {
                 m_isViewingScaledImage = true;
                 m_stage1Time = std::chrono::steady_clock::now();
+
+                // [JXL Serial] Trigger Stage 2 IMMEDIATELY for JXL (No 300ms wait)
+                if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
+                     OutputDebugStringW(L"[PollState] JXL Preview Ready -> Triggering Heavy Immediate\n");
+                     RequestFullDecode(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
+                     m_stage2Requested = true; 
+                     m_pendingJxlHeavyId = 0; 
+                }
+
             } else if (e.type == EventType::FullReady && !e.isScaled) {
                 m_isViewingScaledImage = false; // Final reached
                 m_stage2Requested = false;      // Reset request flag (job done)
+            } else if (e.type == EventType::LoadError) {
+                // [JXL Scene C] FastLane Aborted (Modular?) -> Trigger Heavy Immediately
+                if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
+                     OutputDebugStringW(L"[PollState] FastLane Failed (Modular?) -> Triggering Heavy Immediate\n");
+                     RequestFullDecode(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
+                     m_stage2Requested = true; // Mark as requested
+                     m_pendingJxlHeavyId = 0;  // Consumed
+                }
             }
         }
     }
     
     // Check Timer (300ms idle)
-    if (m_isViewingScaledImage && !m_stage2Requested) {
+    // Only if pending JXL is waiting and not already requested
+    if (m_isViewingScaledImage && !m_stage2Requested && m_pendingJxlHeavyId != 0 && m_pendingJxlHeavyId == m_currentImageId.load()) {
         auto now = std::chrono::steady_clock::now();
         auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_stage1Time).count();
         if (dur > 300) {
              RequestFullDecode(m_currentNavPath, m_currentImageId.load());
              m_stage2Requested = true;
+             m_pendingJxlHeavyId = 0; // Consumed
         }
     }
 
@@ -648,8 +666,17 @@ void ImageEngine::FastLane::QueueWorker() {
             }
             
             // [v4.1] Exception: JXL (TypeA) uses Two-Stage Loading
-            if (info.format == L"JXL" && info.width * info.height >= 2000000) {
-                 targetW = 256; targetH = 256;
+            // [v7.5] JXL Sizing Strategy
+            if (info.format == L"JXL") {
+                 // Small (<1MB & <2MP) -> Full Decode (target=0)
+                 // Re-check updated thresholds
+                 bool isSmall = (info.fileSize < 1048576) && ((uint64_t)info.width * info.height < 2000000);
+                 if (isSmall) {
+                     targetW = 0; targetH = 0;
+                 } else {
+                     // Large -> Preview (target=256 triggers DC)
+                     targetW = 256; targetH = 256;
+                 }
             }
             
             // [v7.0] WebP Strategy: Conditional Two-Stage based on Screen Resolution
@@ -732,15 +759,18 @@ void ImageEngine::FastLane::QueueWorker() {
             } else {
 
 
-                // [JXL Fallback] FastLane 失败（如 Modular E_ABORT），仍需触发 pending Heavy
-                std::wstring ext = cmd.path;
-                size_t dot = ext.find_last_of(L'.');
-                if (dot != std::wstring::npos) {
-                    std::wstring e = ext.substr(dot);
-                    std::transform(e.begin(), e.end(), e.begin(), ::towlower);
-                    if (e == L".jxl") {
-                         m_parent->TriggerPendingJxlHeavy();
+                // [v7.5] Handle Abort/Failure (Modular JXL)
+                // Unified Error Path: Push Event so PollState can handle it (Trigger Pending Heavy)
+                if (hr == E_ABORT || FAILED(hr)) {
+                    EngineEvent e;
+                    e.type = EventType::LoadError;
+                    e.filePath = cmd.path;
+                    e.imageId = cmd.id;
+                    {
+                        std::lock_guard lock(m_queueMutex);
+                        m_results.push_back(std::move(e));
                     }
+                    m_parent->QueueEvent(EngineEvent{}); // Signal
                 }
             }
             
