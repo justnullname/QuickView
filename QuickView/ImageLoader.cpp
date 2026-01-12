@@ -2534,11 +2534,15 @@ namespace QuickView {
                         
                         // Success
                         JxlDecoderDestroy(dec);
+                        // [v8.6] Fix: JXL outputs RGBA Straight, D2D needs BGRA Premultiplied.
+                        // Solve "Red Car becomes Blue" and Alpha blending artifacts.
+                        SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pixels, (size_t)finalW * finalH);
+
                         result.pixels = pixels;
                         result.width = finalW;
                         result.height = finalH;
-                        result.stride = finalW * 4; // RGBA Packed
-                        result.format = PixelFormat::RGBA8888; // Native
+                        result.stride = finalW * 4; 
+                        result.format = PixelFormat::BGRA8888; // Now Corrected to BGRA
                         result.success = true;
                         
                         // [v5.3] Fill metadata directly
