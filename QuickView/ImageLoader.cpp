@@ -6118,6 +6118,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         outFrame->format = PixelFormat::BGRA8888; // Default
         // [v5.4] Metadata
         outFrame->formatDetails = res.metadata.FormatDetails;
+        outFrame->exifOrientation = res.metadata.ExifOrientation; // [v8.7] Propagate Orientation
         
         SetupDeleter(res.pixels);
         return S_OK;

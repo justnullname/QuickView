@@ -48,6 +48,9 @@ struct RawImageFrame {
     // [v5.4] Intrinsic Decoder Details (e.g. "4:2:0", "Progressive")
     std::wstring formatDetails;
     
+    // [v8.7] EXIF Orientation (1-8)
+    int exifOrientation = 1; /* 1 = Normal */
+    
     // === Lifecycle Management ===
     // Callback to release memory when frame is destroyed.
     // - For Arena: nullptr (Arena manages memory)
@@ -136,6 +139,7 @@ private:
         format = other.format;
         // [v5.6 Fix] Move formatDetails!
         formatDetails = std::move(other.formatDetails);
+        exifOrientation = other.exifOrientation;
         memoryDeleter = std::move(other.memoryDeleter);
         
         // Nullify source
@@ -144,6 +148,7 @@ private:
         other.height = 0;
         other.stride = 0;
         // other.formatDetails is moved (empty)
+        other.exifOrientation = 1;
         // memoryDeleter is moved, but setting to nullptr for clarity
     }
 };

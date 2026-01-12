@@ -2874,13 +2874,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              int maxW = (mi.rcWork.right - mi.rcWork.left);
              int maxH = (mi.rcWork.bottom - mi.rcWork.top);
              
-             // Logic dimensions (already have imgW/imgH from surface size)
+             // Logic dimensions (already have imgW/imgH from surface size, which matches Window/Visual aspect)
              float logicImgW = imgW;
              float logicImgH = imgH;
-             int orientation = g_viewState.ExifOrientation;
-             if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
-                 std::swap(logicImgW, logicImgH);
-             }
+             
+             // [Fix] Do NOT swap here. g_lastSurfaceSize is derived from Window Size, which is already 
+             // adjusted to match the Visual (Protrated) aspect ratio by AdjustWindowToImage.
+             // Double-swapping caused the "Shrink to Strip" bug.
              
              int targetW = (int)(logicImgW * newTotalScale);
              int targetH = (int)(logicImgH * newTotalScale);
@@ -3317,8 +3317,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             // Get image size
             D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+            
+            // [Fix] Swap dimensions for calculation if Rotated (Matches Visual)
+            float calcW = imgSize.width;
+            float calcH = imgSize.height;
+            int orientation = g_viewState.ExifOrientation;
+            if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
+                std::swap(calcW, calcH);
+            }
+
             RECT rc; GetClientRect(hwnd, &rc);
-            float fitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+            float fitScale = std::min((float)rc.right / calcW, (float)rc.bottom / calcH);
             float currentTotalScale = fitScale * g_viewState.Zoom;
             
             // Calculate zoom step: Ctrl = 1%, otherwise 10%
@@ -3338,8 +3347,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 int maxW = (mi.rcWork.right - mi.rcWork.left);
                 int maxH = (mi.rcWork.bottom - mi.rcWork.top);
                 
-                int targetW = (int)(imgSize.width * newTotalScale);
-                int targetH = (int)(imgSize.height * newTotalScale);
+                int targetW = (int)(calcW * newTotalScale);
+                int targetH = (int)(calcH * newTotalScale);
                 
                 // Clamp
                 bool capped = false;
@@ -3356,14 +3365,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
                 
                 // Recalculate Zoom
-                float newFitScale = std::min((float)targetW / imgSize.width, (float)targetH / imgSize.height);
+                float newFitScale = std::min((float)targetW / calcW, (float)targetH / calcH);
                 g_viewState.Zoom = newTotalScale / newFitScale;
                 
                 if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
                 RequestRepaint(PaintLayer::All);
             } else {
                 // Standard Zoom (Window size fixed)
-                float newFitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+                float newFitScale = std::min((float)rc.right / calcW, (float)rc.bottom / calcH);
                 float oldZoom = g_viewState.Zoom;
                 float newZoom = newTotalScale / newFitScale;
                 
