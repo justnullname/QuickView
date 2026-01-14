@@ -207,6 +207,7 @@ static bool g_isImageScaled = false;         // [Two-Stage] True if current imag
 static DWORD g_scaledDecodeTime = 0;         // [Two-Stage] Tick when scaled image was shown
 static constexpr UINT_PTR IDT_FULL_DECODE = 42;  // Timer ID for 300ms full decode trigger
 static constexpr UINT_PTR IDT_ROI_DEBOUNCE = 43; // [Module C] Timer for SVG Gain Map
+static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for lazy high-res re-render
 
 // [Module C] ROI Lossless Zoom State
 bool g_isRoiActive = false;
@@ -214,7 +215,11 @@ ComPtr<ID2D1Bitmap> g_roiBitmap;
 D2D1_RECT_F g_currentRoiRect = {};
 D2D1_POINT_2F g_lastFitOffset = {}; // Center offset of image on screen
 float g_lastFitScale = 1.0f;        // Scale factor to fit image to screen
-D2D1_SIZE_F g_lastWindowSize = {};  // To detect resize tracking
+D2D1_SIZE_F g_lastWindowSize = {};  // To detect resize tracking (Bitmap ROI only)
+
+// [SVG Lossless Zoom] Track current rendered resolution
+static float g_svgRenderedScale = 1.0f;  // Scale at which current SVG Surface was rendered
+static constexpr UINT g_maxSvgSurfaceSize = 8192;  // Max dimension for SVG re-render
 
 // === DComp Ping-Pong State ===
 static D2D1_SIZE_F g_lastSurfaceSize = {0, 0}; // Track DComp Surface size for UpdateLayout
@@ -379,9 +384,10 @@ static void ExitRoiMode(HWND hwnd, bool forceExit = false) {
     }
     
     wchar_t dbg[256];
-    swprintf_s(dbg, L"[ExitRoiMode] Called. isRoiActive=%d forceExit=%d Format=%s Zoom=%.2f\n",
-        g_isRoiActive, forceExit, g_currentMetadata.Format.c_str(), g_viewState.Zoom);
-    OutputDebugStringW(dbg);
+    // [Log Spam Fix] Only log if actually doing something
+    // swprintf_s(dbg, L"[ExitRoiMode] Called. isRoiActive=%d forceExit=%d Format=%s Zoom=%.2f\n",
+    //    g_isRoiActive, forceExit, g_currentMetadata.Format.c_str(), g_viewState.Zoom);
+    // OutputDebugStringW(dbg);
     
     // [Step 4] If ROI buffer is still valid, don't exit - just restart timer
     if (g_isRoiActive && !forceExit && IsRoiBufferValid()) {
@@ -554,6 +560,120 @@ bool CanPan(HWND hwnd) {
     return false;
 }
 
+// [SVG Two-Tier] Upgrade SVG surface to higher resolution for sharper zoom
+// Called when zoom exceeds 1.8× and current surface is Tier 1 (2×)
+// Renders FULL SVG to new surface, then adjusts DComp transforms for seamless visual transition
+static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res, int tier) {
+    if (!res.isSvg || !res.svgDoc || !g_compEngine || !g_compEngine->IsInitialized()) {
+        return false;
+    }
+    
+    // Get window dimensions
+    RECT rc; GetClientRect(hwnd, &rc);
+    if (rc.right == 0 || rc.bottom == 0) return false;
+    
+    // Calculate new surface size based on tier
+    // Tier 1: screen × 2 (max 4096) - used for initial load
+    // Tier 2: screen × 4 (max 8192) - used when zoom > 1.8×
+    float multiplier = (tier == 1) ? 2.0f : 4.0f;
+    UINT maxSize = (tier == 1) ? 4096 : 8192;
+    
+    // [Fix] Strictly match Surface Aspect Ratio to SVG
+    // This eliminates internal padding/offsets, preventing visual shifts during upgrade
+    float rawW = (float)rc.right * multiplier;
+    float rawH = (float)rc.bottom * multiplier;
+    
+    // Calculate scale to fit SVG into this target box
+    // This ensures surfW/surfH has SAME aspect ratio as svgW/svgH
+    float surfaceScale = std::min(rawW / res.svgW, rawH / res.svgH);
+    
+    // Clamp to MaxSize (while preserving ratio)
+    float maxScaleW = (float)maxSize / res.svgW;
+    float maxScaleH = (float)maxSize / res.svgH;
+    float maxScale = std::min(maxScaleW, maxScaleH);
+    
+    if (surfaceScale > maxScale) surfaceScale = maxScale;
+    
+    UINT surfW = (UINT)(res.svgW * surfaceScale);
+    UINT surfH = (UINT)(res.svgH * surfaceScale);
+    
+    // Calculate SVG fit scale for this surface size
+    float fitScale = std::min((float)surfW / res.svgW, (float)surfH / res.svgH);
+    
+    // Center offset within surface
+    float offsetX = (surfW - res.svgW * fitScale) / 2.0f;
+    float offsetY = (surfH - res.svgH * fitScale) / 2.0f;
+    
+    // Save old surface size for transition calculation
+    float oldSurfW = g_lastSurfaceSize.width;
+    float oldSurfH = g_lastSurfaceSize.height;
+    
+    // Begin DComp update
+    auto ctx = g_compEngine->BeginPendingUpdate(surfW, surfH);
+    if (!ctx) return false;
+    
+    // Clear with transparent
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    
+    // Transform: Scale SVG to fit surface, centered
+    D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Scale(fitScale, fitScale) * 
+                                 D2D1::Matrix3x2F::Translation(offsetX, offsetY);
+    
+    // Draw SVG with D2D Native
+    ComPtr<ID2D1DeviceContext5> ctx5;
+    if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
+        ctx5->SetTransform(transform);
+        ctx5->DrawSvgDocument(res.svgDoc.Get());
+        ctx5->SetTransform(D2D1::Matrix3x2F::Identity());
+    }
+    
+    g_compEngine->EndPendingUpdate();
+    
+    // Update tracking
+    g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
+    g_svgRenderedScale = multiplier;
+    
+    // [Seamless Transition] Calculate new DComp transforms to maintain exact visual state
+    // Old state: oldSurface displayed at oldDCompScale with oldPan
+    // New state: newSurface (larger) should show SAME visual result
+    // 
+    // Visual size = SurfaceSize × DCompScale
+    // To maintain same visual: newDCompScale = oldDCompScale × (oldSurfSize / newSurfSize)
+    
+    float winW = (float)rc.right;
+    float winH = (float)rc.bottom;
+    
+    // Calculate base fit scales (how much to scale surface to fit window at 100%)
+    float oldBaseFit = (oldSurfW > 0) ? std::min(winW / oldSurfW, winH / oldSurfH) : 1.0f;
+    float newBaseFit = std::min(winW / (float)surfW, winH / (float)surfH);
+    
+    // New DComp scale to maintain same visual zoom
+    float newDCompScale = newBaseFit * g_viewState.Zoom;
+    
+    // Centering offset for new surface
+    float newScaledW = (float)surfW * newDCompScale;
+    float newScaledH = (float)surfH * newDCompScale;
+    float newOffsetX = (winW - newScaledW) / 2.0f;
+    float newOffsetY = (winH - newScaledH) / 2.0f;
+    
+    // Apply CrossFade transition
+    g_compEngine->PlayPingPongCrossFade(100.0f, true);
+    
+    // Apply new transforms (maintains visual state)
+    g_compEngine->SetZoom(newDCompScale, 0.0f, 0.0f);
+    g_compEngine->SetPan(newOffsetX + g_viewState.PanX, newOffsetY + g_viewState.PanY);
+    g_compEngine->Commit();
+    
+    // ViewState unchanged - user's zoom/pan state preserved
+    
+    wchar_t dbg[160];
+    swprintf_s(dbg, L"[SVG Upgrade] Tier=%d Surface=%ux%u DCompScale=%.3f\n", 
+               tier, surfW, surfH, newDCompScale);
+    OutputDebugStringW(dbg);
+    
+    return true;
+}
+
 // [DComp] Render content (Bitmap or SVG) to DComp Pending Surface
 // For SVG: Uses Direct2D Native path with real-time transform (Lossless Zoom)
 // For Bitmap: Uses existing logic
@@ -561,11 +681,61 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
     if (!g_compEngine || !g_compEngine->IsInitialized() || !res) return false;
     
     RECT rc; GetClientRect(hwnd, &rc);
-    UINT surfW = rc.right; UINT surfH = rc.bottom;
-    if (surfW == 0 || surfH == 0) return false;
+    UINT winW = rc.right; UINT winH = rc.bottom;
+    
+    // [Fix] Calculate Ideal/Target Window Size for Surface creation
+    // But keep winW/winH as ACTUAL sizes for DComp transforms to avoid glitches before resize
+    UINT targetWinW = winW;
+    UINT targetWinH = winH;
+    
+    if (!IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(mi) };
+        if (GetMonitorInfoW(hMon, &mi)) {
+            float screenW = (float)(mi.rcWork.right - mi.rcWork.left);
+            float screenH = (float)(mi.rcWork.bottom - mi.rcWork.top);
+            
+            float maxW = screenW * 0.9f;
+            float maxH = screenH * 0.9f;
+            
+            float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
+            float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
+            
+            if (contentW > 0 && contentH > 0) {
+                 float scale = std::min(maxW / contentW, maxH / contentH);
+                 if (scale > 1.0f) scale = 1.0f;
+                 
+                 targetWinW = (UINT)(contentW * scale);
+                 targetWinH = (UINT)(contentH * scale);
+            }
+        }
+    }
 
-    // Align active layer to new window size
-    g_compEngine->AlignActiveLayer((float)surfW, (float)surfH);
+    if (winW == 0 || winH == 0) return false;
+
+    // Calculate Surface Size based on TARGET window size (so it looks good after resize)
+    UINT surfW = targetWinW;
+    UINT surfH = targetWinH;
+    float svgMultiplier = 1.0f;
+
+    if (res.isSvg) {
+        svgMultiplier = 2.0f;
+        float rawW = (float)targetWinW * svgMultiplier;
+        float rawH = (float)targetWinH * svgMultiplier;
+        
+        // [Fix] Strictly match Surface Aspect Ratio to SVG
+        float surfaceScale = std::min(rawW / res.svgW, rawH / res.svgH);
+        
+        // Clamp to MaxSize (4096)
+        float maxScale = std::min(4096.0f / res.svgW, 4096.0f / res.svgH);
+        if (surfaceScale > maxScale) surfaceScale = maxScale;
+        
+        surfW = (UINT)(res.svgW * surfaceScale);
+        surfH = (UINT)(res.svgH * surfaceScale);
+    }
+
+    // [Fix] REMOVE AlignActiveLayer to prevent double-centering conflict with SetPan
+    
     ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH);
     if (!ctx) return false;
     
@@ -573,48 +743,50 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
 
     if (res.isSvg && res.svgDoc) {
         // === SVG Direct2D Native Path ===
-        // Note: For initial render, we Fit to Screen.
-        // Dynamic Zoom/Pan will be handled by calling this function again with updated params 
-        // OR by letting DComp handle it initially?
-        // STRATEGY: 
-        // 1. Initial Load: Render Fit-to-Screen.
-        // 2. High-Quality Zoom: We will need a new "UpdateSvgView" function later.
-        //    For now, just render at current g_viewState settings?
-        //    Actually, RenderImageToDComp is mostly for NEW images.
+        // Render FULL SVG to the scaled surface
         
         float fitScale = std::min((float)surfW / res.svgW, (float)surfH / res.svgH);
         
-        // Center
-        float offsetX = (surfW - res.svgW * fitScale) / 2.0f;
-        float offsetY = (surfH - res.svgH * fitScale) / 2.0f;
+        // Center within surface
+        float centerOffsetX = (surfW - res.svgW * fitScale) / 2.0f;
+        float centerOffsetY = (surfH - res.svgH * fitScale) / 2.0f;
         
-        // Transform: Scale to Fit, then Translate to Center
-        // Note: DComp handles zoom/pan via hardware transforms, so we only bake Fit here
+        // Transform: Scale to Fit surface, then Translate to Center of surface
         D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Scale(fitScale, fitScale) * 
-                                     D2D1::Matrix3x2F::Translation(offsetX, offsetY);
-        
-        // [Optimized] Clip to slightly larger than screen to avoid huge raster work
-        ctx->PushAxisAlignedClip(D2D1::RectF(0, 0, (float)surfW, (float)surfH), D2D1_ANTIALIAS_MODE_ALIASED);
+                                     D2D1::Matrix3x2F::Translation(centerOffsetX, centerOffsetY);
         
         ctx->SetTransform(transform);
-             // Need ID2D1DeviceContext5 for DrawSvgDocument
-             ComPtr<ID2D1DeviceContext5> ctx5;
-             if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
-                 ctx5->DrawSvgDocument(res.svgDoc.Get());
-             }
+        ComPtr<ID2D1DeviceContext5> ctx5;
+        if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
+             ctx5->DrawSvgDocument(res.svgDoc.Get());
+        }
         ctx->SetTransform(D2D1::Matrix3x2F::Identity());
         
-        ctx->PopAxisAlignedClip();
-        
-        // Store Fit Scale for metrics
+        // Store Metrics (relative to fit)
         g_lastFitScale = fitScale;
-        g_lastWindowSize = D2D1::SizeF((float)surfW, (float)surfH);
-        g_lastFitOffset = D2D1::Point2F(offsetX, offsetY);
+        g_lastFitOffset = D2D1::Point2F(centerOffsetX, centerOffsetY);
         
-        // For SVG, we reset DComp zoom to Identity because we just baked the fit.
-        // FUTURE: If we want lossless zoom, we'll re-call this with different transform.
-        g_compEngine->SetZoom(1.0f, 0, 0);
-        g_compEngine->SetPan(0, 0);
+        // [Critical Fix] Update Global Surface Size Tracking
+        // Without this, subsequent Zoom logic works on old/zero dimensions!
+        g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
+        
+        g_svgRenderedScale = svgMultiplier; // Track rendered tier
+        g_viewState.Zoom = 1.0f; // Initial zoom is 1.0 (Fit)
+        g_viewState.PanX = 0;
+        g_viewState.PanY = 0;
+        
+        // [DComp Logic]
+        // Surface is larger than window (e.g. 2x). We need to scale it DOMN to fit window visual.
+        float baseFit = std::min((float)winW / surfW, (float)winH / surfH);
+        
+        // Center the scaled surface in window
+        float scaledW = surfW * baseFit;
+        float scaledH = surfH * baseFit;
+        float winOffsetX = (winW - scaledW) / 2.0f;
+        float winOffsetY = (winH - scaledH) / 2.0f;
+        
+        g_compEngine->SetZoom(baseFit, 0, 0);
+        g_compEngine->SetPan(winOffsetX, winOffsetY);
 
     } else {
         // === Bitmap Path (Legacy) ===
@@ -641,6 +813,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         if (!g_isRoiActive) {
             g_lastFitScale = scale;
             g_lastWindowSize = D2D1::SizeF((float)surfW, (float)surfH);
+            g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH); // [Fix] Keep in sync
         }
         
         float drawW = imgW * scale;
@@ -2153,6 +2326,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
 
+        // [SVG Two-Tier] Upgrade to Tier 2 after zoom stabilizes
+        if (wParam == IDT_SVG_RERENDER) {
+            KillTimer(hwnd, IDT_SVG_RERENDER);
+            // Only upgrade if currently at Tier 1 (2×) and zoomed > 1.8×
+            if (g_imageResource.isSvg && g_svgRenderedScale < 4.0f && g_viewState.Zoom > 1.8f) {
+                if (UpgradeSvgSurface(hwnd, g_imageResource, 2)) {
+                    g_osd.Show(hwnd, L"HD", false);  // Quick confirmation
+                }
+            }
+            return 0;
+        }
+
         // [Module C] ROI Debounce Timer
         if (wParam == IDT_ROI_DEBOUNCE) {
             KillTimer(hwnd, IDT_ROI_DEBOUNCE);
@@ -3198,7 +3383,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                       g_compEngine->Commit();
                   }
               }
-             RequestRepaint(PaintLayer::Dynamic); 
+             RequestRepaint(PaintLayer::Dynamic);
+             
+             // [SVG Two-Tier] Trigger upgrade in window-resize path
+             if (g_imageResource.isSvg && g_viewState.Zoom > 1.8f && g_svgRenderedScale < 4.0f) {
+                 SetTimer(hwnd, IDT_SVG_RERENDER, 300, nullptr);
+             }
         } else {
              // Standard Zoom (Window size fixed or Maxed)
              // [Fix] Use same approach as WM_SIZE: Top-Left Scaling + Centering Offset
@@ -3239,6 +3429,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                   g_compEngine->Commit();
              }
              RequestRepaint(PaintLayer::Dynamic); // Only OSD update needed
+             
+             // [SVG Lossless Zoom] Trigger re-render timer if SVG and zoom exceeds current resolution
+             // [SVG Two-Tier] Trigger upgrade if Zoom > 1.8x and still at Tier 1
+             if (g_imageResource.isSvg && g_viewState.Zoom > 1.8f && g_svgRenderedScale < 4.0f) {
+                 SetTimer(hwnd, IDT_SVG_RERENDER, 300, nullptr);
+             }
         }
         
         // Show Zoom OSD
@@ -4168,6 +4364,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 if (evt.rawFrame->IsSvg()) {
                      // === SVG Path ===
                      g_imageResource.Reset();
+                     g_svgRenderedScale = 1.0f;  // [SVG Lossless] Reset rendered scale for new SVG
                      g_imageResource.isSvg = true;
                      g_imageResource.svgW = evt.rawFrame->svg->viewBoxW;
                      g_imageResource.svgH = evt.rawFrame->svg->viewBoxH;
