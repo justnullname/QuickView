@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "CompositionEngine.h" // Moved to top
 #include "framework.h"
 #include "QuickView.h"
@@ -206,16 +206,10 @@ static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2:
 static bool g_isImageScaled = false;         // [Two-Stage] True if current image is IDCT scaled
 static DWORD g_scaledDecodeTime = 0;         // [Two-Stage] Tick when scaled image was shown
 static constexpr UINT_PTR IDT_FULL_DECODE = 42;  // Timer ID for 300ms full decode trigger
-static constexpr UINT_PTR IDT_ROI_DEBOUNCE = 43; // [Module C] Timer for SVG Gain Map
 static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for lazy high-res re-render
 
-// [Module C] ROI Lossless Zoom State
-bool g_isRoiActive = false;
-ComPtr<ID2D1Bitmap> g_roiBitmap;
-D2D1_RECT_F g_currentRoiRect = {};
 D2D1_POINT_2F g_lastFitOffset = {}; // Center offset of image on screen
 float g_lastFitScale = 1.0f;        // Scale factor to fit image to screen
-D2D1_SIZE_F g_lastWindowSize = {};  // To detect resize tracking (Bitmap ROI only)
 
 // [SVG Lossless Zoom] Track current rendered resolution
 static float g_svgRenderedScale = 1.0f;  // Scale at which current SVG Surface was rendered
@@ -279,8 +273,8 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
 
 // Helper: Calculate visible rect in Document Space (without margin)
 static D2D1_RECT_F GetVisibleRect() {
-     float screenW = g_lastWindowSize.width > 0 ? g_lastWindowSize.width : (float)GetSystemMetrics(SM_CXSCREEN);
-     float screenH = g_lastWindowSize.height > 0 ? g_lastWindowSize.height : (float)GetSystemMetrics(SM_CYSCREEN);
+     float screenW = g_lastSurfaceSize.width > 0 ? g_lastSurfaceSize.width : (float)GetSystemMetrics(SM_CXSCREEN);
+     float screenH = g_lastSurfaceSize.height > 0 ? g_lastSurfaceSize.height : (float)GetSystemMetrics(SM_CYSCREEN);
 
      D2D1_POINT_2F pMin = {0,0};
      D2D1_POINT_2F pMax = {screenW, screenH};
@@ -316,116 +310,6 @@ static D2D1_RECT_F GetVisibleRect() {
      }
      
      return rect;
-}
-
-// Helper: Calculate ROI rect with 25% margin buffer [Module C Refactor]
-static D2D1_RECT_F GetRoiRect() {
-     D2D1_RECT_F visible = GetVisibleRect();
-     
-     // [Step 1] Add 25% margin on all sides (total 150% canvas)
-     float visibleW = visible.right - visible.left;
-     float visibleH = visible.bottom - visible.top;
-     float marginX = visibleW * 0.25f;
-     float marginY = visibleH * 0.25f;
-     
-     D2D1_RECT_F extended = {
-         visible.left - marginX,
-         visible.top - marginY,
-         visible.right + marginX,
-         visible.bottom + marginY
-     };
-     
-     // [Step 1b] Clamp to document bounds (prevent negative coords / overflow)
-     float docW = (float)g_currentMetadata.Width;
-     float docH = (float)g_currentMetadata.Height;
-     if (docW > 0 && docH > 0) {
-         extended.left = std::max(0.0f, extended.left);
-         extended.top = std::max(0.0f, extended.top);
-         extended.right = std::min(docW, extended.right);
-         extended.bottom = std::min(docH, extended.bottom);
-     }
-     
-     wchar_t buf[256];
-     swprintf_s(buf, L"[ROI] Visible=(%.1f,%.1f)-(%.1f,%.1f) Extended=(%.1f,%.1f)-(%.1f,%.1f)\n", 
-         visible.left, visible.top, visible.right, visible.bottom,
-         extended.left, extended.top, extended.right, extended.bottom);
-     OutputDebugStringW(buf);
-     
-     return extended;
-}
-
-// Helper: Check if visible rect is within ROI buffer safety zone (5% threshold)
-static bool IsRoiBufferValid() {
-    if (!g_isRoiActive) return false;
-    
-    D2D1_RECT_F visible = GetVisibleRect();
-    D2D1_RECT_F buffer = g_currentRoiRect;
-    
-    float bufferW = buffer.right - buffer.left;
-    float bufferH = buffer.bottom - buffer.top;
-    float dangerZone = std::min(bufferW, bufferH) * 0.05f;
-    
-    // Calculate remaining padding on each side
-    float padLeft = visible.left - buffer.left;
-    float padRight = buffer.right - visible.right;
-    float padTop = visible.top - buffer.top;
-    float padBottom = buffer.bottom - visible.bottom;
-    
-    // Valid if all sides have > 5% padding (safety zone)
-    return (padLeft > dangerZone && padRight > dangerZone && 
-            padTop > dangerZone && padBottom > dangerZone);
-}
-
-// Helper: Exit ROI Mode (Restore Low-Res) [Module C Refactor]
-static void ExitRoiMode(HWND hwnd, bool forceExit = false) {
-    // [SVG Architecture] Skip ROI entirely for SVG - it uses native D2D rendering
-    if (g_currentMetadata.Format == L"SVG") {
-        return; // No ROI for SVG
-    }
-    
-    wchar_t dbg[256];
-    // [Log Spam Fix] Only log if actually doing something
-    // swprintf_s(dbg, L"[ExitRoiMode] Called. isRoiActive=%d forceExit=%d Format=%s Zoom=%.2f\n",
-    //    g_isRoiActive, forceExit, g_currentMetadata.Format.c_str(), g_viewState.Zoom);
-    // OutputDebugStringW(dbg);
-    
-    // [Step 4] If ROI buffer is still valid, don't exit - just restart timer
-    if (g_isRoiActive && !forceExit && IsRoiBufferValid()) {
-        return;
-    }
-    
-    if (g_isRoiActive) {
-         g_isRoiActive = false;
-         g_roiBitmap.Reset();
-         
-         // Restore Visual State (Zoom/Pan from g_viewState)
-         if (g_compEngine) {
-             g_compEngine->SetZoom(g_viewState.Zoom, 0, 0); 
-             g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
-         }
-         
-         // Render Low Res Base
-         RenderImageToDComp(hwnd, g_imageResource, false, false);
-         OutputDebugStringW(L"[Main] Exit ROI Mode (Buffer Exhausted). Restored Low-Res.\n");
-    }
-    
-    // [Step 5] Restart Timer (Debounce) to request new ROI for large bitmaps
-    RECT rc; GetClientRect(hwnd, &rc);
-    float winW = (float)rc.right;
-    float winH = (float)rc.bottom;
-    float imgW = g_currentMetadata.Width > 0 ? (float)g_currentMetadata.Width : 0;
-    float imgH = g_currentMetadata.Height > 0 ? (float)g_currentMetadata.Height : 0;
-    float fitScale = (imgW > 0 && imgH > 0) ? std::min(winW / imgW, winH / imgH) : 1.0f;
-    float totalScale = fitScale * g_viewState.Zoom;
-    
-    // Only trigger ROI for large images that are zoomed in beyond 100%
-    bool needsRoi = (imgW > 3000 || imgH > 3000) && (totalScale > 1.0f);
-    if (needsRoi) {
-         int timerMs = forceExit ? 50 : 300;
-         SetTimer(hwnd, IDT_ROI_DEBOUNCE, timerMs, nullptr);
-         swprintf_s(dbg, L"[ExitRoiMode] Set %dms timer for ROI\n", timerMs);
-         OutputDebugStringW(dbg);
-    }
 }
 
 // --- Persistence Helpers ---
@@ -825,11 +709,8 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         OutputDebugStringW(dbg);
         
         // Store Metrics
-        if (!g_isRoiActive) {
-            g_lastFitScale = scale;
-            g_lastWindowSize = D2D1::SizeF((float)surfW, (float)surfH);
-            g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH); // [Fix] Keep in sync
-        }
+        g_lastFitScale = scale;
+        g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
         
         float drawW = imgW * scale;
         float drawH = imgH * scale;
@@ -839,7 +720,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         float y = center.y - drawH / 2.0f;
         D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
         
-        if (!g_isRoiActive) g_lastFitOffset = D2D1::Point2F(x, y);
+        g_lastFitOffset = D2D1::Point2F(x, y);
 
         // Apply Rotation
         D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Identity();
@@ -868,8 +749,8 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
              // Calculate base fit scale: Surface -> Window
              float baseFit = std::min((float)winW / surfW, (float)winH / surfH);
              
-             // For regular view (non-ROI, non-zoomed), calculate centered position
-             if (!g_isRoiActive && g_viewState.Zoom == 1.0f) {
+             // For regular view (non-zoomed), calculate centered position
+             if (g_viewState.Zoom == 1.0f) {
                  float scaledW = surfW * baseFit;
                  float scaledH = surfH * baseFit;
                  
@@ -882,7 +763,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
                  g_compEngine->SetZoom(baseFit, 0.0f, 0.0f);
                  g_compEngine->SetPan(winOffsetX, winOffsetY);
              } else {
-                 // Zoomed or ROI mode - use existing logic
+                 // Zoomed mode - use existing logic
                  g_compEngine->SetZoom(g_viewState.Zoom * baseFit, 0.0f, 0.0f);
                  g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
              }
@@ -2419,26 +2300,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
 
-        // [Module C] ROI Debounce Timer
-        if (wParam == IDT_ROI_DEBOUNCE) {
-            KillTimer(hwnd, IDT_ROI_DEBOUNCE);
-            // Check if SVG (Contains "SVG" case insensitive or usually uppercase "SVG")
-            bool isSvg = (g_currentMetadata.Format.find(L"SVG") != std::wstring::npos);
-            
-            if (!g_isRoiActive && isSvg && g_viewState.Zoom > 1.1f) {
-                 // Calculate ROI
-                 D2D1_RECT_F roi = GetRoiRect();
-                 
-                 // Show OSD
-                 g_osd.Show(hwnd, L"Lossless Rendering...", true);
-                 
-                 // Request Render
-                 if (g_imageEngine) {
-                     g_imageEngine->RequestRoiRender(g_imagePath, g_currentImageId.load(), roi);
-                 }
-            }
-        }
-
         // Interaction Timer (1001)
         if (wParam == INTERACTION_TIMER_ID) {
             KillTimer(hwnd, INTERACTION_TIMER_ID);
@@ -2555,8 +2416,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             // [Restore] Reset Zoom on Programmatic Resize (e.g. Image Load / AdjustWindow)
             // But preserve Zoom during interactive resizing (Dragging)
-            // [Fix] Do NOT reset zoom if in ROI mode (we are displaying a high-res tile)
-            if (!g_viewState.IsInteracting && !g_isRoiActive) {
+            if (!g_viewState.IsInteracting) {
                 g_viewState.Zoom = 1.0f;
                 g_viewState.PanX = 0;
                 g_viewState.PanY = 0;
@@ -2988,9 +2848,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
 
 
+
     case WM_LBUTTONDOWN: {
-        // [Module C] Exit ROI Mode on Interaction
-        ExitRoiMode(hwnd);
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
         // 0. Window control buttons - HIGHEST PRIORITY
@@ -3313,8 +3172,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_MOUSEWHEEL: {
-        // [Module C] Exit ROI Mode on Zoom
-        ExitRoiMode(hwnd);
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
         if (g_settingsOverlay.OnMouseWheel(wheelDelta)) {
             RequestRepaint(PaintLayer::Static);  // Settings panel is on Static layer
@@ -4753,34 +4610,6 @@ void ProcessEngineEvents(HWND hwnd) {
             break;
 
 
-        case EventType::RoiReady: {
-             // [Module C] ROI Tile Ready (Lossless Zoom)
-             if (!g_renderEngine) break;
-             if (evt.imageId != g_currentImageId.load()) break; // Stale
-
-             ComPtr<ID2D1Bitmap> bitmap;
-             HRESULT hr = E_FAIL;
-             
-             // Upload Frame
-             if (evt.rawFrame && evt.rawFrame->IsValid()) {
-                 hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
-             }
-             
-             if (SUCCEEDED(hr) && bitmap) {
-                 g_roiBitmap = bitmap;
-                 g_isRoiActive = true;
-                 g_currentRoiRect = evt.roiRect;
-                 
-                 g_osd.Show(hwnd, L"Lossless Zoom", false);
-                 
-                  // Switch View (Fast Transition)
-                  ImageResource roiRes; roiRes.bitmap = g_roiBitmap;
-                  RenderImageToDComp(hwnd, roiRes, false, true); // isFastUpgrade=true
-                 
-                 OutputDebugStringW(L"[Main] ROI Active. Switched to High-Res Tile.\n");
-             }
-             break;
-        }
          }
     }
 

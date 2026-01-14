@@ -30,8 +30,7 @@ enum class EventType {
     FullReady,      // Heavy Lane Result (Final)
     LoadError,      // Something went wrong
     StatusChange,   // For UI debug/status bar "Loading...", "Idle"
-    MetadataReady,  // [v5.3] Async metadata update (EXIF)
-    RoiReady        // [Module C] High-Res ROI Tile Ready
+    MetadataReady   // [v5.3] Async metadata update (EXIF)
 };
 
 // === Phase 3: Prefetch System ===
@@ -67,9 +66,6 @@ struct EngineEvent {
     
     bool isScaled = false; // [Phase 11] Was image scaled during decode?
     std::wstring loaderName; // Which decoder was used
-    
-    // [Module C] ROI Metadata
-    D2D1_RECT_F roiRect = {0};
 };
 
 class ImageEngine {
@@ -101,9 +97,6 @@ public:
     
     // [JXL Sequential] Trigger pending Heavy task after FastLane completes
     void TriggerPendingJxlHeavy();
-    
-    // [Module C] Request ROI Render
-    void RequestRoiRender(const std::wstring& path, ImageID imageId, D2D1_RECT_F roiRect);
     
     // [v5.3] Async Request for Auxiliary Metadata (EXIF/Stats)
     void RequestFullMetadata();

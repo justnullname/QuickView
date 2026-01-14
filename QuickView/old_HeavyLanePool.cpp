@@ -106,8 +106,6 @@ void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId) 
     m_poolCv.notify_one();
 }
 
-
-
 void HeavyLanePool::TryExpand() {
     // Already holding m_poolMutex
     
@@ -233,11 +231,6 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             self.stopSource = std::stop_source();  // Fresh stop source for this job
             self.state = WorkerState::BUSY;
             m_busyCount.fetch_add(1);
-            
-            wchar_t dbg[128];
-            swprintf_s(dbg, L"[HeavyPool] Worker %d Job: ID=%zu Full=%d\n", 
-                workerId, imageId, isFullDecode);
-            OutputDebugStringW(dbg);
         }
         
         // Perform decode
@@ -373,7 +366,10 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
         // Check if cancelled before starting
         if (st.stop_requested()) return;
         
-        // [Unified Architecture] Always use the Back Arena for new decoding jobs
+
+        
+        // [Two-Stage] Calculate target size
+    // [Unified Architecture] Always use the Back Arena for new decoding jobs
     // Note: ResetBackHeavy() is handled by ImageEngine at critical boundaries.
     // Here we just allocate from the shared pool.
     QuantumArena& arena = m_pool->GetBackHeavyArena();
@@ -383,21 +379,10 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     std::wstring loaderName; // [Fix] Define local variable for metadata usage
     
     // [Two-Stage Decode] Calculate target size based on isFullDecode flag
-    // If isFullDecode=true, use 0 (forces full resolution decode)
-    // If isFullDecode=false, use screen size (enables IDCT scaling for large JPEGs)
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    
-    int targetW = 0;
-    int targetH = 0;
-    
-    if (!isFullDecode) {
-        // [Two-Stage Fix] Stage 1: Use screen size to enable IDCT scaling
-        // This is the key fix - previously targetW/H were hardcoded to 0
-        targetW = screenW;
-        targetH = screenH;
-    }
-    // isFullDecode: targetW/H remain 0 -> forces full resolution decode
+    // If isFullDecode, use 0 (forces full resolution decode)
+    // Otherwise, fit to screen (enables IDCT scaling for large images)
+    int targetW = isFullDecode ? 0 : GetSystemMetrics(SM_CXSCREEN);
+    int targetH = isFullDecode ? 0 : GetSystemMetrics(SM_CYSCREEN);
 
     // [v5.3] Metadata container (populated by LoadToFrame directly)
     CImageLoader::ImageMetadata meta;
@@ -406,7 +391,7 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     auto decodeStart = std::chrono::high_resolution_clock::now();
     HRESULT hr = m_loader->LoadToFrame(path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
         [&]() { return st.stop_requested(); },
-        &meta);
+        &meta); // [v5.3] Pass metadata pointer
     
     // [Debug] Ctrl+4 forces WIC fallback logic in ImageLoader, but if we need to enforce valid frame output...
     // Note: ImageLoader.cpp handles DisableDirectD2D check now.
@@ -452,17 +437,6 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             if (meta.Width == 0 || meta.Height == 0) {
                  meta.Width = rawFrame.width;
                  meta.Height = rawFrame.height;
-            }
-            
-            // [Fix] Set Format from file extension if LoadToFrame didn't set it
-            // Critical for ROI detection (requires Format == L"SVG")
-            if (meta.Format.empty()) {
-                size_t dotPos = path.find_last_of(L'.');
-                if (dotPos != std::wstring::npos) {
-                    std::wstring ext = path.substr(dotPos + 1);
-                    for (auto& c : ext) c = towupper(c);
-                    meta.Format = ext;
-                }
             }
             
             // [v5.3 Lazy] No Sync ReadMetadata here. 

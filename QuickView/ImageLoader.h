@@ -225,8 +225,7 @@ public:
                         int targetWidth = 0, int targetHeight = 0,
                         std::wstring* pLoaderName = nullptr,
                         CancelPredicate checkCancel = nullptr,
-                        ImageMetadata* pMetadata = nullptr,
-                        const D2D1_RECT_F* pSourceRect = nullptr);
+                        ImageMetadata* pMetadata = nullptr);
 
 
     /// <summary>

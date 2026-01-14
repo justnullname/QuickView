@@ -97,19 +97,7 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     
     wchar_t buf[256];
     swprintf_s(buf, L"[Two-Stage] Full decode requested: ImageID=%zu\n", imageId);
-    swprintf_s(buf, L"[Two-Stage] Full decode requested: ImageID=%zu\n", imageId);
     OutputDebugStringW(buf);
-}
-
-// [Module C] Request ROI Render
-void ImageEngine::RequestRoiRender(const std::wstring& path, ImageID imageId, D2D1_RECT_F roiRect) {
-    if (path.empty()) return;
-    if (!m_heavyPool) return;
-    
-    // Validation
-    if (imageId != m_currentImageId.load()) return;
-    
-    m_heavyPool->SubmitRoi(path, imageId, roiRect);
 }
 
 // [Phase 2 Stub Removed (Implemented above)]

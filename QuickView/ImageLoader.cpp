@@ -6153,8 +6153,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                                    int targetWidth, int targetHeight,
                                    std::wstring* pLoaderName,
                                    CancelPredicate checkCancel,
-                                   ImageMetadata* pMetadata,
-                                   const D2D1_RECT_F* pSourceRect) {
+                                   ImageMetadata* pMetadata) {
     using namespace QuickView;
     
     if (!filePath || !outFrame) return E_INVALIDARG;
