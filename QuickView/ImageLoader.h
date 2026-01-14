@@ -152,7 +152,13 @@ public:
         bool hasEmbeddedThumb = false;
         ImageType type = ImageType::Invalid;
         
+        // [v9.1] Embedded Preview Info for smart RAW dispatch
+        int embeddedPreviewWidth = 0;
+        int embeddedPreviewHeight = 0;
+        bool embeddedPreviewIsJpeg = false;
+        
         int64_t GetPixelCount() const { return (int64_t)width * height; }
+        int64_t GetEmbeddedPreviewPixelCount() const { return (int64_t)embeddedPreviewWidth * embeddedPreviewHeight; }
         // [v3.1] Reverted to 2MB/2.1MP per user request
         bool IsSmall() const { return width > 0 && fileSize < 2 * 1024 * 1024 && GetPixelCount() < 2100000; }
     };

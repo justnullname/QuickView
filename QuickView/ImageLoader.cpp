@@ -149,8 +149,11 @@ static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
         if (isAvif || isAvis) return L"AVIF";
     }
 
-    // Check HEIC/HEIF: ftyp + brand
+    // Check HEIC/HEIF/CR3: ftyp + brand
     if (size >= 12 && magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p') {
+        // Canon CR3 (Raw)
+        if (magic[8] == 'c' && magic[9] == 'r' && magic[10] == 'x') return L"RAW"; // crx
+
         // Check brand at offset 8
         if ((magic[8] == 'h' && magic[9] == 'e' && magic[10] == 'i' && (magic[11] == 'c' || magic[11] == 'x' || magic[11] == 's' || magic[11] == 'm')) || // heic, heix, heis, heim
             (magic[8] == 'h' && magic[9] == 'e' && magic[10] == 'v' && (magic[11] == 'c' || magic[11] == 'm' || magic[11] == 's')) || // hevc, hevm, hevs
@@ -211,17 +214,63 @@ static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
     }
 
     // [v6.9.6] Check WBMP: Type 0, Fixed Header 0
-    if (size >= 2 && magic[0] == 0x00 && magic[1] == 0x00) return L"WBMP";
+    // [Fix] Must exclude ISOBMFF (ftyp) to avoid hijacking CR3/MP4 which start with size 00 00 ...
+    if (size >= 2 && magic[0] == 0x00 && magic[1] == 0x00) {
+        // If it looks like ftyp, it's NOT WBMP
+        if (size >= 8 && magic[4] == 'f' && magic[5] == 't' && magic[6] == 'y' && magic[7] == 'p') {
+            // Check known brands like crx? Already handled above. 
+            // If we are here, it's an UNKNOWN ftyp. Return Unknown, not WBMP.
+            return L"Unknown"; 
+        }
+        return L"WBMP";
+    }
     
     return L"Unknown";
 }
 
-// Compatibility wrapper
+// [v9.2] Redesigned Format Detection: Extension-First for RAW
+// RAW formats are too varied (40+ types using TIFF/ISOBMFF/proprietary containers).
+// Extension is the ONLY reliable indicator for RAW. Magic bytes are unreliable.
 static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
-    uint8_t magic[32] = {0}; // Increased to 32 for TGA heuristic (needs offset 16)
+    if (!filePath) return L"Unknown";
+    
+    // === STEP 1: Extension-based RAW Detection (Highest Priority) ===
+    // This MUST run first. RAW formats cannot be reliably detected by magic bytes.
+    std::wstring pathLower = filePath;
+    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+    
+    // Comprehensive LibRaw Extension List (40+ formats) + SVG
+    static const wchar_t* rawExts[] = {
+        L".3fr", L".ari", L".arw", L".bay", L".braw", L".cr2", L".cr3", L".cap", L".data", L".dcs", L".dcr", 
+        L".dng", L".drf", L".eip", L".erf", L".fff", L".gpr", L".iiq", L".k25", L".kdc", L".mdc", L".mef", 
+        L".mos", L".mrw", L".nef", L".nrw", L".obm", L".orf", L".pef", L".ptx", L".pxn", L".r3d", L".raf", 
+        L".raw", L".rwl", L".rw2", L".rwz", L".sr2", L".srf", L".srw", L".sti", L".x3f",
+        L".svg" // [v9.5] SVG detection
+        // Note: .tif/.tiff excluded - standard TIFFs should use WIC, not LibRaw
+    };
+    
+    for (const auto* ext : rawExts) {
+        if (pathLower.ends_with(ext)) {
+            if (wcscmp(ext, L".svg") == 0) return L"SVG"; // Special case for SVG
+            return L"RAW"; // Definitive RAW identification by extension
+        }
+    }
+    
+    // === STEP 2: Magic Bytes Detection (for non-RAW formats) ===
+    uint8_t magic[32] = {0}; 
     size_t read = PeekHeader(filePath, magic, 32);
     if (read == 0) return L"Unknown";
-    return DetectFormatFromContent(magic, read);
+    
+    std::wstring fmt = DetectFormatFromContent(magic, read);
+    
+    // === STEP 3: Extension Fallbacks (for problematic formats) ===
+    // TGA: Some TGAs have no reliable magic signature
+    if (fmt == L"Unknown") {
+        if (pathLower.ends_with(L".tga")) return L"TGA";
+        if (pathLower.ends_with(L".jxl")) return L"JXL";
+    }
+    
+    return fmt;
 }
 
 HRESULT CImageLoader::Initialize(IWICImagingFactory* wicFactory) {
@@ -2582,119 +2631,131 @@ namespace QuickView {
         } // namespace JXL
 
         namespace RawCodec {
+            // [v7.5] Optimized RAW Decoder (LibRaw)
+            // Strategy: Prio Embedded Preview -> Fallback Half-Size -> Full Size (if Forced)
             static HRESULT Load(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result) {
                 LibRaw RawProcessor;
-                
-                // [Optimization] Open File directly (Header only initially)
-                // Avoids reading 50MB+ into memory vector if not needed or if LibRaw handles it better.
-                // Note: LibRaw::open_file expects char* (UTF8) on Windows or wchar_t?
-                // LibRaw on Windows usually supports wchar_t if compiled with UNICODE support or open_file(const wchar_t*)
-                // We'll try open_file(filePath) and if compilation fails, we fix it (e.g. w2s).
-                // Actually, simplest is to use _wopen and libraw_open_oshandle if needed, but let's try direct call first.
-                // Wait, to be safe and avoid compilation error loops, I'll convert to UTF8.
-                // But paths on Windows can be complex.
-                // Let's assume standard LibRaw::open_file(const wchar_t*) exists in our build (common patch) OR we convert.
-                // Given the instruction "Use LibRaw::open_file", I'll use a helper to ensure path compatibility.
-                
-                // Conversion helper
+
+                // Debug: Entry point
+                OutputDebugStringW(L"[RawCodec] Entering RawCodec::Load\n");
+
+                // [v9.3] Use wide-char path directly on Windows (fixes -100009 error)
+                // LibRaw on Windows supports open_file(const wchar_t*) overload
+#ifdef _WIN32
+                int openResult = RawProcessor.open_file(filePath);
+#else
+                // Fallback to UTF-8 for non-Windows
                 std::string pathUtf8;
-                try {
-                    int len = WideCharToMultiByte(CP_UTF8, 0, filePath, -1, NULL, 0, NULL, NULL);
-                    if (len > 0) {
-                        pathUtf8.resize(len);
-                        WideCharToMultiByte(CP_UTF8, 0, filePath, -1, &pathUtf8[0], len, NULL, NULL);
-                        pathUtf8.pop_back(); // Remove null terminator from string size
-                    }
-                } catch(...) { return E_INVALIDARG; }
+                int len = WideCharToMultiByte(CP_UTF8, 0, filePath, -1, NULL, 0, NULL, NULL);
+                if (len > 0) {
+                    pathUtf8.resize(len);
+                    WideCharToMultiByte(CP_UTF8, 0, filePath, -1, &pathUtf8[0], len, NULL, NULL);
+                    pathUtf8.pop_back(); 
+                }
+                int openResult = RawProcessor.open_file(pathUtf8.c_str());
+#endif
+                if (openResult != LIBRAW_SUCCESS) {
+                    wchar_t dbg[128];
+                    swprintf_s(dbg, L"[RawCodec] open_file FAILED: %d\n", openResult);
+                    OutputDebugStringW(dbg);
+                    return E_FAIL;
+                }
+                OutputDebugStringW(L"[RawCodec] open_file OK\n");
 
-                if (RawProcessor.open_file(pathUtf8.c_str()) != LIBRAW_SUCCESS) return E_FAIL;
-
-                // 1. Try Preview
-                // Only if forcePreview implied or beneficial?
-                // If we want FULL decode, we skip preview unless we want to be fast?
-                // Usually Gallery/Scout wants Preview. Heavy wants Full.
-                // ctx.forcePreview is the flag.
-                bool tryPreview = ctx.forcePreview; 
+                // 2. Strategy Check
+                // Force Raw Logic: If enabled, we skip embedded preview and force full process. // [USER REQUEST]
+                bool forceRawStart = g_runtime.ForceRawDecode; 
                 
-                // If forcePreview is NOT set, we might still fallback to preview if full decode is too slow?
-                // No, Heavy lane expects Full.
-                
-                if (tryPreview && RawProcessor.unpack_thumb() == LIBRAW_SUCCESS) {
-                    libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb();
-                    if (thumb) {
-                        if (thumb->type == LIBRAW_IMAGE_JPEG) {
-                            // Delegate to Codec::JPEG
-                            HRESULT hr = JPEG::Load((uint8_t*)thumb->data, thumb->data_size, ctx, result);
-                            RawProcessor.dcraw_clear_mem(thumb);
-                            if (SUCCEEDED(hr)) {
-                            if (ctx.pFormatDetails) *ctx.pFormatDetails = L"LibRaw (JPEG Preview)";
-                            // [v5.3] Fill metadata directly
-                            result.metadata.FormatDetails = L"LibRaw (JPEG Preview)";
-                                return S_OK;
-                            }
-                        }
-                        else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
-                            // RGB Bitmap
-                             if (thumb->bits == 8 && thumb->colors == 3) {
-                                int w = thumb->width;
-                                int h = thumb->height;
-                                int stride = CalculateSIMDAlignedStride(w, 4); // We output BGRA
-                                size_t totalSize = (size_t)stride * h;
-                                
-                                uint8_t* pixels = ctx.allocator(totalSize);
-                                if (pixels) {
-                                    // Convert RGB to BGRA (and align stride)
-                                    uint8_t* src = (uint8_t*)thumb->data;
-                                    uint8_t* dst = pixels;
-                                    
-                                    // Robust copy
-                                    for(int y=0; y<h; y++) {
-                                        uint8_t* rowSrc = src + (y * w * 3);
-                                        uint32_t* rowDst = (uint32_t*)(dst + (y * stride)); // stride is bytes
-                                        
-                                        for(int x=0; x<w; x++) {
-                                            uint8_t r = rowSrc[x*3];
-                                            uint8_t g = rowSrc[x*3+1];
-                                            uint8_t b = rowSrc[x*3+2];
-                                            // BGRA
-                                            rowDst[x] = (0xFF000000) | (r << 16) | (g << 8) | b; 
-                                            // Wait: Little Endian: B G R A in memory.
-                                            // uint32 val = (A << 24) | (R << 16) | (G << 8) | B; 
-                                            // Memory: B G R A.
-                                            // If we write uint32: 0xAARRGGBB.
-                                            // Valid.
-                                        }
-                                    }
-                                    
-                                    result.pixels = pixels;
-                                    result.width = w;
-                                    result.height = h;
-                                    result.stride = stride;
-                                    result.format = PixelFormat::BGRA8888;
-                                    result.success = true;
-                                    // [v5.3] Fill metadata directly
-                                    result.metadata.FormatDetails = L"LibRaw (Bitmap Preview)";
-                                    result.metadata.Width = w;
-                                    result.metadata.Height = h;
-                                    
-                                    RawProcessor.dcraw_clear_mem(thumb);
+                // If NOT forced, prioritize embedded preview extraction
+                if (!forceRawStart) {
+                    int unpackResult = RawProcessor.unpack_thumb();
+                    
+                    // Debug logging
+                    wchar_t dbg[256];
+                    swprintf_s(dbg, L"[RawCodec] unpack_thumb: %d\n", unpackResult);
+                    OutputDebugStringW(dbg);
+                    
+                    if (unpackResult == LIBRAW_SUCCESS) {
+                        libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb();
+                        
+                        swprintf_s(dbg, L"[RawCodec] thumb=%p, type=%d, size=%d\n", 
+                                   thumb, thumb ? thumb->type : -1, thumb ? thumb->data_size : 0);
+                        OutputDebugStringW(dbg);
+                        
+                        if (thumb) {
+                            if (thumb->type == LIBRAW_IMAGE_JPEG) {
+                                // Delegate to Codec::JPEG
+                                HRESULT hr = JPEG::Load((uint8_t*)thumb->data, thumb->data_size, ctx, result);
+                                RawProcessor.dcraw_clear_mem(thumb);
+                                if (SUCCEEDED(hr)) {
+                                    // Override Metadata
+                                    result.metadata.LoaderName = L"LibRaw (Preview)";
+                                    OutputDebugStringW(L"[RawCodec] Preview JPEG decoded OK\n");
                                     return S_OK;
                                 }
-                             }
+                                OutputDebugStringW(L"[RawCodec] Preview JPEG decode FAILED\n");
+                            }
+                            else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
+                                // RGB Bitmap
+                                if (thumb->bits == 8 && thumb->colors == 3) {
+                                    int w = thumb->width;
+                                    int h = thumb->height;
+                                    int stride = CalculateSIMDAlignedStride(w, 4); 
+                                    size_t totalSize = (size_t)stride * h;
+                                    
+                                    uint8_t* pixels = ctx.allocator(totalSize);
+                                    if (pixels) {
+                                        uint8_t* src = (uint8_t*)thumb->data;
+                                        uint8_t* dst = pixels;
+                                        
+                                        for(int y=0; y<h; y++) {
+                                            uint8_t* rowSrc = src + (y * w * 3);
+                                            uint32_t* rowDst = (uint32_t*)(dst + (y * stride));
+                                            for(int x=0; x<w; x++) {
+                                                uint8_t r = rowSrc[x*3];
+                                                uint8_t g = rowSrc[x*3+1];
+                                                uint8_t b = rowSrc[x*3+2];
+                                                rowDst[x] = (0xFF000000) | (r << 16) | (g << 8) | b; 
+                                            }
+                                        }
+                                        
+                                        result.pixels = pixels;
+                                        result.width = w;
+                                        result.height = h;
+                                        result.stride = stride;
+                                        result.format = PixelFormat::BGRA8888;
+                                        result.success = true;
+                                        result.metadata.LoaderName = L"LibRaw (PreviewBmp)";
+                                        result.metadata.FormatDetails = L"Embedded Bitmap";
+                                        result.metadata.Width = w;
+                                        result.metadata.Height = h;
+                                        
+                                        RawProcessor.dcraw_clear_mem(thumb);
+                                        return S_OK;
+                                    }
+                                }
+                            }
+                            RawProcessor.dcraw_clear_mem(thumb);
                         }
-                        RawProcessor.dcraw_clear_mem(thumb);
                     }
-                }
+                } // End embedded preview attempt
+
+                // 3. Decode Fallback (LibRaw Processing)
+                // "Extract failed then half size. Not active full size... unless forced."
                 
-                // 2. Full Decode
-                if (ctx.checkCancel && ctx.checkCancel()) return E_ABORT; // Pre-check
+                if (ctx.checkCancel && ctx.checkCancel()) return E_ABORT;
 
                 RawProcessor.imgdata.params.use_camera_wb = 1;
                 RawProcessor.imgdata.params.use_auto_wb = 0; 
-                RawProcessor.imgdata.params.user_qual = 2; // AHD
+                RawProcessor.imgdata.params.user_qual = 2; // AHD (Standard Quality)
+                // [v4.0] Fast Decode (Half Size) by default for viewing
+                // This drastically speeds up (0.5s vs 3.0s) for 50MP files.
                 
-                // Downscale if targetWidth is small
-                if (ctx.targetWidth > 0 && RawProcessor.imgdata.sizes.width > ctx.targetWidth * 2) {
+                if (g_runtime.ForceRawDecode) {
+                     // Full Decode requested by user
+                     RawProcessor.imgdata.params.half_size = 0;
+                } else {
+                     // Default: Half Size (viewing optimization logic)
                      RawProcessor.imgdata.params.half_size = 1;
                 }
 
@@ -2726,10 +2787,7 @@ namespace QuickView {
                      uint8_t* dst = pixels;
                      
                      for(int y=0; y<h; y++) {
-                        uint8_t* rowSrc = src + (y * w * 3); // Source usually packed RGB
-                        // Note: image->data structure depends on LibRaw
-                        // dcraw_make_mem_image returns RGB 888 usually.
-                        
+                        uint8_t* rowSrc = src + (y * w * 3);
                         uint32_t* rowDst = (uint32_t*)(dst + (y * stride));
                         for(int x=0; x<w; x++) {
                             uint8_t r = rowSrc[x*3];
@@ -2745,9 +2803,11 @@ namespace QuickView {
                      result.stride = stride;
                      result.format = PixelFormat::BGRA8888;
                      result.success = true;
-                     // [v5.3] Fill metadata directly
-                     result.metadata.FormatDetails = L"LibRaw (Full)";
-                     if (RawProcessor.imgdata.params.half_size) result.metadata.FormatDetails += L" [Half]";
+                     result.metadata.LoaderName = L"LibRaw";
+                     result.metadata.FormatDetails = L"RAW Developed";
+                     if (RawProcessor.imgdata.params.half_size) result.metadata.FormatDetails += L" (Half)";
+                     else result.metadata.FormatDetails += L" (Full)";
+                     
                      result.metadata.Width = w;
                      result.metadata.Height = h;
                      
@@ -2906,35 +2966,21 @@ using namespace QuickView::Codec;
 static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result) {
     if (!filePath) return E_INVALIDARG;
 
-    // 1. Peek Header (4KB)
-    uint8_t header[4096];
-    size_t headerSize = PeekHeader(filePath, header, sizeof(header));
-    if (headerSize == 0) return E_FAIL; // Empty file or read error
-
-    // 2. Detect Format
-    std::wstring fmt = DetectFormatFromContent(header, headerSize);
+    // [v9.2] Use path-based detection directly (handles RAW extensions properly)
+    std::wstring fmt = DetectFormatFromContent(filePath);
     
-    // [JXL Special] If unknown but extension is .jxl, assume JXL (Magic bytes might be complex or at offset)
-    if (fmt == L"Unknown") {
-        std::wstring path = filePath;
-        std::transform(path.begin(), path.end(), path.begin(), ::towlower);
-        if (path.ends_with(L".jxl")) fmt = L"JXL";
-        // Note: Raw might also be "Unknown" via magic? 
-        // Existing DetectFormat checks common Raw magics. 
-    }
+    // Debug: Log detected format
+    wchar_t dbg[512];
+    swprintf_s(dbg, L"[LoadImageUnified] File=%s, fmt=%s\n", 
+               wcsrchr(filePath, L'\\') ? wcsrchr(filePath, L'\\') + 1 : filePath, fmt.c_str());
+    OutputDebugStringW(dbg);
 
     // 3. Dispatch
     
     // --- Stream/File Based Codecs ---
-    if (fmt == L"Raw" || fmt == L"Unknown") {
-        // If "Unknown", we try Raw Loader if it's potentially a RAW file?
-        // Or we let WIC handle it? 
-        // Existing logic: DetectFormat calls LoadRaw checks.
-        // We can just try Codec::Raw::Load. If it fails (LibRaw says no), we return E_FAIL/False.
-        // Use Codec::Raw::Load for "Raw".
-        // If "Unknown", maybe we shouldn't force Raw unless extension matches?
-        // Let's rely on fmt == "Raw".
-        if (fmt == L"Raw") {
+    // [v9.1 Fix] Accept both "Raw" and "RAW" (case insensitive)
+    if (fmt == L"Raw" || fmt == L"RAW" || fmt == L"Unknown") {
+        if (fmt == L"Raw" || fmt == L"RAW") {
              HRESULT hr = RawCodec::Load(filePath, ctx, result);
              if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"LibRaw (Unified)"; return S_OK; }
         }
@@ -5782,6 +5828,31 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
          }
          return E_FAIL;
     }
+    else if (format == L"RAW") {
+        // [v9.0] RAW Fast Pass: Use Embedded Preview
+        QuickView::Codec::DecodeContext ctx;
+        ctx.forcePreview = true; 
+        
+        ctx.allocator = [&](size_t s) -> uint8_t* {
+             try { pData->pixels.resize(s); return pData->pixels.data(); }
+             catch (...) { return nullptr; }
+        };
+        
+        QuickView::Codec::DecodeResult res;
+        HRESULT hr = QuickView::Codec::RawCodec::Load(filePath, ctx, res);
+        
+        if (SUCCEEDED(hr)) {
+             pData->width = res.width;
+             pData->height = res.height;
+             pData->stride = res.stride;
+             pData->isValid = true;
+             pData->loaderName = res.metadata.LoaderName; 
+             pData->isBlurry = false; // Previews are reasonably sharp
+             return S_OK;
+        }
+        // If fail, fall through to E_FAIL (HeavyLane will pick it up)
+        return E_FAIL;
+    }
     
     // [Module B] Fast SVG Path
     else if (format == L"SVG") {
@@ -5940,28 +6011,24 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
         return result; // Invalid
     }
     
-    // Use existing fast header parsing
+    // [v9.3] Use extension-first format detection (handles RAW correctly)
+    result.format = DetectFormatFromContent(filePath);
+    if (result.format == L"Unknown") return result;
+    
+    // Try to get dimensions from fast header parsing
     ImageInfo info;
-    if (FAILED(GetImageInfoFast(filePath, &info))) {
-        // Try format detection only
-        result.format = DetectFormatFromContent(filePath);
-        if (result.format == L"Unknown") return result;
-
-        // [v6.6 Fix] AVIF/HEIC: Try to get real dimensions using libavif
-        if (result.format == L"AVIF") {
-            uint32_t w = 0, h = 0;
-            if (GetAVIFDimensions(filePath, &w, &h)) {
-                result.width = w;
-                result.height = h;
-            } else {
-                 // If header parse fails (e.g. truncated buffer), default to Invalid/Heavy?
-                 // We don't want to blindly send to FastLane (TypeA) if size is 0.
-            }
-        }
-    } else {
-        result.format = info.format;
+    if (SUCCEEDED(GetImageInfoFast(filePath, &info))) {
         result.width = info.width;
         result.height = info.height;
+    }
+    
+    // [v6.6 Fix] AVIF/HEIC: Try to get real dimensions using libavif
+    if (result.format == L"AVIF" && result.width == 0) {
+        uint32_t w = 0, h = 0;
+        if (GetAVIFDimensions(filePath, &w, &h)) {
+            result.width = w;
+            result.height = h;
+        }
     }
     
     // Check for embedded thumbnail (RAW files always have, JPEG may have)
@@ -6001,9 +6068,30 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
         }
     }
     else if (result.format == L"RAW" || result.format == L"TIFF") {
-        // RAW/TIFF: Always has thumb → Express (Extraction only)
-        result.type = ImageType::TypeA_Sprint;
+        // [v9.1] Smart RAW Dispatch: Based on Embedded Preview Size
         result.hasEmbeddedThumb = true;
+        
+        // Try to get embedded preview dimensions
+        int previewW = 0, previewH = 0;
+        if (SUCCEEDED(GetEmbeddedPreviewInfo(filePath, &previewW, &previewH))) {
+            result.embeddedPreviewWidth = previewW;
+            result.embeddedPreviewHeight = previewH;
+            result.embeddedPreviewIsJpeg = true; // LibRaw unpack_thumb usually returns JPEG
+            
+            int64_t previewPixels = (int64_t)previewW * previewH;
+            
+            // Dispatch Logic:
+            // - Small preview (< 2MP, e.g. 160x120 thumb): FastLane (fast extraction)
+            // - Large preview (>= 2MP, e.g. 6000x4000 full JPEG): HeavyLane (TurboJPEG decode)
+            if (previewPixels > 0 && previewPixels < 2'000'000) {
+                result.type = ImageType::TypeA_Sprint;
+            } else {
+                result.type = ImageType::TypeB_Heavy;
+            }
+        } else {
+            // No embedded preview or extraction failed -> HeavyLane (LibRaw half-size)
+            result.type = ImageType::TypeB_Heavy;
+        }
     }
     else if (result.format == L"AVIF" || result.format == L"HEIC") {
         // AVIF/HEIC: ≤4MP → Express Fast Pass
@@ -6315,10 +6403,12 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             if (pLoaderName) *pLoaderName = L"SVG XML";
             if (pMetadata) {
                 pMetadata->LoaderName = L"SVG XML"; 
+                pMetadata->Format = L"SVG"; // [Fix] Transparency detection depends on this!
                 pMetadata->FormatDetails = L"Vector (Native)";
                 pMetadata->Width = (UINT)svgW;
                 pMetadata->Height = (UINT)svgH;
             }
+            outFrame->formatDetails = L"SVG"; // [Fix] Ensure frame carries this info too
             
             return S_OK;
         } // End if (isSvg)

@@ -701,6 +701,15 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
             float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
             float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
             
+            // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
+            // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
+            if (!res.isSvg) {
+                int orientation = g_viewState.ExifOrientation;
+                if (orientation >= 5 && orientation <= 8) {
+                     std::swap(contentW, contentH);
+                }
+            }
+            
             if (contentW > 0 && contentH > 0) {
                  float scale = std::min(maxW / contentW, maxH / contentH);
                  if (scale > 1.0f) scale = 1.0f;
@@ -808,6 +817,12 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         float effectiveH = swapDims ? imgW : imgH;
         
         float scale = std::min((float)surfW / effectiveW, (float)surfH / effectiveH);
+
+        // Debug Log
+        wchar_t dbg[256];
+        swprintf_s(dbg, L"[RenderDComp] SurfW=%d SurfH=%d EffW=%.1f EffH=%.1f Scale=%.4f Orient=%d\n",
+            surfW, surfH, effectiveW, effectiveH, scale, orientation);
+        OutputDebugStringW(dbg);
         
         // Store Metrics
         if (!g_isRoiActive) {
@@ -847,10 +862,30 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         
         if (orientation > 1) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
         
-        // Reset DComp (Legacy logic relies on DComp for Zoom)
+        // [v9.3 Fix] Calculate window centering offset like SVG path
+        // This ensures Bitmap images are centered when Surface size differs from window size
         if (g_compEngine->IsInitialized()) {
-             g_compEngine->SetZoom(g_viewState.Zoom, 0.0f, 0.0f);
-             g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+             // Calculate base fit scale: Surface -> Window
+             float baseFit = std::min((float)winW / surfW, (float)winH / surfH);
+             
+             // For regular view (non-ROI, non-zoomed), calculate centered position
+             if (!g_isRoiActive && g_viewState.Zoom == 1.0f) {
+                 float scaledW = surfW * baseFit;
+                 float scaledH = surfH * baseFit;
+                 
+                 // [v9.4] Tolerance for rounding errors (1px)
+                 // If the scaled size is extremely close to window size, align perfectly (0,0)
+                 // Otherwise, center it.
+                 float winOffsetX = (abs(winW - scaledW) < 1.0f) ? 0.0f : (winW - scaledW) / 2.0f;
+                 float winOffsetY = (abs(winH - scaledH) < 1.0f) ? 0.0f : (winH - scaledH) / 2.0f;
+                 
+                 g_compEngine->SetZoom(baseFit, 0.0f, 0.0f);
+                 g_compEngine->SetPan(winOffsetX, winOffsetY);
+             } else {
+                 // Zoomed or ROI mode - use existing logic
+                 g_compEngine->SetZoom(g_viewState.Zoom * baseFit, 0.0f, 0.0f);
+                 g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+             }
         }
     }
     
@@ -1871,19 +1906,38 @@ void AdjustWindowToImage(HWND hwnd) {
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
 
-    // [Fix] Use Metadata dimensions for window sizing (Scout Preview might be 1/8th size)
+    // [Fix] Prioritize ACTUAL visual dimensions to ensure perfect fit
+    // Metadata might differ from the embedded preview we are currently displaying
     float imgWidth, imgHeight;
-    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+    D2D1_SIZE_F resSize = g_imageResource.GetSize();
+    bool isFromResource = false;
+    
+    if (resSize.width > 0 && resSize.height > 0) {
+        imgWidth = resSize.width;
+        imgHeight = resSize.height;
+        isFromResource = true;
+    } else if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+        // Fallback to metadata if resource is invalid (unlikely here)
         imgWidth = (float)g_currentMetadata.Width;
         imgHeight = (float)g_currentMetadata.Height;
     } else {
-        D2D1_SIZE_F size = g_imageResource.GetSize(); // DIPs
-        imgWidth = size.width;
-        imgHeight = size.height;
+        return;
     }
+
+    // [v9.5] Fix: Always swap dimensions for Portrait orientations (5-8).
+    // Direct2D bitmaps store data in original orientation. Rotation is applied at render time.
+    // To adapt the WINDOW to the RENDERED image shape, we must swap w/h here.
     int orientation = g_viewState.ExifOrientation;
+    
+    // Debug Log
+    wchar_t dbg[256];
+    swprintf_s(dbg, L"[AdjustWindow] ResW=%.1f ResH=%.1f MetaW=%u MetaH=%u Orient=%d IsFromRes=%d\n",
+        resSize.width, resSize.height, g_currentMetadata.Width, g_currentMetadata.Height, orientation, isFromResource);
+    OutputDebugStringW(dbg);
+
     if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
         std::swap(imgWidth, imgHeight);
+        OutputDebugStringW(L"[AdjustWindow] Swapped Dimensions for Portrait\n");
     }
     
     // Get DPI
@@ -1913,9 +1967,21 @@ void AdjustWindowToImage(HWND hwnd) {
         windowH = (int)(windowH * ratio);
     }
     
-    // Minimum size for UI controls
-    if (windowW < 500) windowW = 500; 
-    if (windowH < 400) windowH = 400;
+    // Minimum size for UI controls (Preserve Aspect Ratio)
+    // [v9.4] Fix: Independent clamping caused AR distortion/margins
+    int minW = 500;
+    int minH = 400;
+    
+    if (windowW < minW || windowH < minH) {
+         float scaleW = (float)minW / windowW;
+         float scaleH = (float)minH / windowH;
+         float scaleUp = std::max(scaleW, scaleH); // Scale up to satisfy both mins
+         
+         // Don't scale up insanely if image is tiny icon?
+         // Limit upsizing to e.g. 5x? No, just let it fill min window.
+         windowW = (int)(windowW * scaleUp);
+         windowH = (int)(windowH * scaleUp);
+    }
     
     // Center logic
     RECT rcWindow; GetWindowRect(hwnd, &rcWindow);
@@ -1928,8 +1994,23 @@ void AdjustWindowToImage(HWND hwnd) {
     // Ensure on screen
     if (newLeft < mi.rcWork.left) newLeft = mi.rcWork.left;
     if (newTop < mi.rcWork.top) newTop = mi.rcWork.top;
-    
-    SetWindowPos(hwnd, nullptr, newLeft, newTop, windowW, windowH, SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // [v9.7] Fix: Use SetWindowPlacement to set dimensions.
+    // This handles Maximize/Snap states gracefully.
+    WINDOWPLACEMENT wp = { sizeof(WINDOWPLACEMENT) };
+    if (GetWindowPlacement(hwnd, &wp)) {
+        wp.flags = 0;
+        wp.showCmd = SW_SHOWNORMAL;
+        wp.rcNormalPosition.left = newLeft;
+        wp.rcNormalPosition.top = newTop;
+        wp.rcNormalPosition.right = newLeft + windowW;
+        wp.rcNormalPosition.bottom = newTop + windowH;
+        
+        SetWindowPlacement(hwnd, &wp);
+    } else {
+        ShowWindow(hwnd, SW_RESTORE);
+        SetWindowPos(hwnd, nullptr, newLeft, newTop, windowW, windowH, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 void ReloadCurrentImage(HWND hwnd) {
@@ -2430,8 +2511,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Limit minimum window size when Settings HUD is visible
         if (g_settingsOverlay.IsVisible()) {
             MINMAXINFO* pMMI = (MINMAXINFO*)lParam;
-            pMMI->ptMinTrackSize.x = 820; // HUD_WIDTH + margin
-            pMMI->ptMinTrackSize.y = 670; // HUD_HEIGHT + margin
+            pMMI->ptMinTrackSize.x = 500; // [v9.8] Match global min w
+            pMMI->ptMinTrackSize.y = 400; // [v9.8] Match global min h
         }
         return 0;
     }
