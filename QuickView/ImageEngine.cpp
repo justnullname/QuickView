@@ -222,7 +222,39 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         return; // JXL dispatched
     }
     
-    // 6. Standard Routing
+    // 6. Specialized Dispatch for TIFF/HEIC/HEIF (30ms budget optimization)
+    if (info.format == L"TIFF" || info.format == L"HEIC" || info.format == L"HEIF" || info.format == L"AVIF") {
+        uint64_t pixels = (uint64_t)info.width * info.height;
+        bool isSmall = false;
+
+        if (info.format == L"TIFF") {
+            // TIFF: < 5MP and < 20MB
+            // Uncompressed 5MP is fast. Large compressed TIFFs are slow.
+            // [Fix] Ensure pixels > 0 (if header parse failed, assume large)
+            isSmall = (pixels > 0 && pixels < 5000000 && info.fileSize < 20971520);
+        } else {
+            // HEIC/HEIF/AVIF: < 2.1MP (FHD)
+            // Compute intensive. Limit to FHD for FastLane (target < 30ms).
+            // [Fix] Ensure pixels > 0. PeekHeader fails for HEIC (avifDecoder doesn't support HEVC), 
+            // so width=0. We MUST treat unknown size as Large to prevent blocking UI.
+            isSmall = (pixels > 0 && pixels <= 2100000);
+        }
+
+        if (isSmall) {
+            wchar_t dbgBuf[128];
+            swprintf_s(dbgBuf, L"[Dispatch] -> %s Small (<30ms): FastLane\n", info.format.c_str());
+            OutputDebugStringW(dbgBuf);
+            m_fastLane.Push(path, imageId);
+        } else {
+            wchar_t dbgBuf[128];
+            swprintf_s(dbgBuf, L"[Dispatch] -> %s Large: Heavy Lane\n", info.format.c_str());
+            OutputDebugStringW(dbgBuf);
+            m_heavyPool->Submit(path, imageId);
+        }
+        return;
+    }
+
+    // 7. Standard Routing
     if (useHeavy) {
         OutputDebugStringW(L"[Dispatch] -> Heavy Lane\n");
         m_heavyPool->Submit(path, imageId);
