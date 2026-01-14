@@ -97,7 +97,19 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     
     wchar_t buf[256];
     swprintf_s(buf, L"[Two-Stage] Full decode requested: ImageID=%zu\n", imageId);
+    swprintf_s(buf, L"[Two-Stage] Full decode requested: ImageID=%zu\n", imageId);
     OutputDebugStringW(buf);
+}
+
+// [Module C] Request ROI Render
+void ImageEngine::RequestRoiRender(const std::wstring& path, ImageID imageId, D2D1_RECT_F roiRect) {
+    if (path.empty()) return;
+    if (!m_heavyPool) return;
+    
+    // Validation
+    if (imageId != m_currentImageId.load()) return;
+    
+    m_heavyPool->SubmitRoi(path, imageId, roiRect);
 }
 
 // [Phase 2 Stub Removed (Implemented above)]
@@ -691,6 +703,8 @@ void ImageEngine::FastLane::QueueWorker() {
             if (fmtLower2 == L"webp") {
                 targetW = 0; targetH = 0; 
             }
+            
+            // [Unified Logic] SVG uses target=0 like other formats (User Request: Remove 80% special case)
 
             // [Direct D2D] Load directly to RawImageFrame backed by Arena
             HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName);

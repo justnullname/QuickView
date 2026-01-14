@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "CompositionEngine.h" // Moved to top
 #include "framework.h"
 #include "QuickView.h"
 #include "RenderEngine.h"
@@ -128,16 +129,44 @@ static std::string GetAppVersionUTF8() {
 #define WM_UPDATE_FOUND (WM_APP + 2)
 #define WM_ENGINE_EVENT (WM_APP + 3)
 
+
 static const wchar_t* g_szClassName = L"QuickViewClass";
 static const wchar_t* g_szWindowTitle = L"QuickView 2026";
 static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
 ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
-static std::unique_ptr<CompositionEngine> g_compEngine;  // DComp 合成引擎
+// static std::unique_ptr<CompositionEngine> g_compEngine; 
+static CompositionEngine* g_compEngine = nullptr; // [Fix] Raw pointer to avoid unique_ptr include hell
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static InputController g_inputController;  // Quantum Stream: 输入状态机
-static ComPtr<ID2D1Bitmap> g_currentBitmap;
+// [Step 3] Unified Resource Management
+struct ImageResource {
+    ComPtr<ID2D1Bitmap> bitmap;
+    ComPtr<ID2D1SvgDocument> svgDoc;
+    bool isSvg = false;
+    float svgW = 0, svgH = 0;
+    
+    void Reset() {
+        bitmap.Reset();
+        svgDoc.Reset();
+        isSvg = false;
+        svgW = 0; svgH = 0;
+    }
+    
+    D2D1_SIZE_F GetSize() const {
+        if (isSvg) return D2D1::SizeF(svgW, svgH);
+        if (bitmap) return bitmap->GetSize();
+        return D2D1::SizeF(0, 0);
+    }
+    
+    // Truthy check
+    operator bool() const {
+        return (isSvg && svgDoc) || bitmap;
+    }
+};
+
+static ImageResource g_imageResource;
 std::wstring g_imagePath;  // Non-static for extern access from UIRenderer
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
 static bool g_isBlurry = false; // For Motion Blur (Ghost)
@@ -177,6 +206,15 @@ static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2:
 static bool g_isImageScaled = false;         // [Two-Stage] True if current image is IDCT scaled
 static DWORD g_scaledDecodeTime = 0;         // [Two-Stage] Tick when scaled image was shown
 static constexpr UINT_PTR IDT_FULL_DECODE = 42;  // Timer ID for 300ms full decode trigger
+static constexpr UINT_PTR IDT_ROI_DEBOUNCE = 43; // [Module C] Timer for SVG Gain Map
+
+// [Module C] ROI Lossless Zoom State
+bool g_isRoiActive = false;
+ComPtr<ID2D1Bitmap> g_roiBitmap;
+D2D1_RECT_F g_currentRoiRect = {};
+D2D1_POINT_2F g_lastFitOffset = {}; // Center offset of image on screen
+float g_lastFitScale = 1.0f;        // Scale factor to fit image to screen
+D2D1_SIZE_F g_lastWindowSize = {};  // To detect resize tracking
 
 // === DComp Ping-Pong State ===
 static D2D1_SIZE_F g_lastSurfaceSize = {0, 0}; // Track DComp Surface size for UpdateLayout
@@ -203,7 +241,8 @@ static void SaveOverlayWindowState(HWND hwnd);
 static void RestoreOverlayWindowState(HWND hwnd);
 
 // [DComp] Render bitmap to DComp Pending Surface and trigger cross-fade
-static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparent, bool isFastUpgrade = false);
+static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent, bool isFastUpgrade = false); // fwd decl
+static bool FileExists(LPCWSTR path); // fwd decl
 
 // RenderDebugHUD moved to UIRenderer
 
@@ -231,6 +270,156 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
         insertPos -= 3;
     }
     return num + L" B";
+}
+
+// Helper: Calculate visible rect in Document Space (without margin)
+static D2D1_RECT_F GetVisibleRect() {
+     float screenW = g_lastWindowSize.width > 0 ? g_lastWindowSize.width : (float)GetSystemMetrics(SM_CXSCREEN);
+     float screenH = g_lastWindowSize.height > 0 ? g_lastWindowSize.height : (float)GetSystemMetrics(SM_CYSCREEN);
+
+     D2D1_POINT_2F pMin = {0,0};
+     D2D1_POINT_2F pMax = {screenW, screenH};
+     
+     auto mapPt = [&](D2D1_POINT_2F p) -> D2D1_POINT_2F {
+          // 1. Inverse DComp Zoom/Pan
+          float x = (p.x - g_viewState.PanX) / g_viewState.Zoom;
+          float y = (p.y - g_viewState.PanY) / g_viewState.Zoom;
+          
+          // 2. Inverse D2D Fit/Offset
+          x = (x - g_lastFitOffset.x) / g_lastFitScale;
+          y = (y - g_lastFitOffset.y) / g_lastFitScale;
+          return {x, y};
+     };
+     
+     D2D1_POINT_2F rMin = mapPt(pMin);
+     D2D1_POINT_2F rMax = mapPt(pMax);
+     
+     D2D1_RECT_F rect = D2D1::RectF(rMin.x, rMin.y, rMax.x, rMax.y);
+
+     // [SVG] Convert from Bitmap Space to Document Space
+     if (g_currentMetadata.Format == L"SVG" && g_imageResource) {
+         D2D1_SIZE_F bmpSize = g_imageResource.GetSize();
+         if (bmpSize.width > 0 && g_currentMetadata.Width > 0) {
+             float scaleX = (float)g_currentMetadata.Width / bmpSize.width;
+             float scaleY = (float)g_currentMetadata.Height / bmpSize.height;
+             
+             rect.left *= scaleX;
+             rect.right *= scaleX;
+             rect.top *= scaleY;
+             rect.bottom *= scaleY;
+         }
+     }
+     
+     return rect;
+}
+
+// Helper: Calculate ROI rect with 25% margin buffer [Module C Refactor]
+static D2D1_RECT_F GetRoiRect() {
+     D2D1_RECT_F visible = GetVisibleRect();
+     
+     // [Step 1] Add 25% margin on all sides (total 150% canvas)
+     float visibleW = visible.right - visible.left;
+     float visibleH = visible.bottom - visible.top;
+     float marginX = visibleW * 0.25f;
+     float marginY = visibleH * 0.25f;
+     
+     D2D1_RECT_F extended = {
+         visible.left - marginX,
+         visible.top - marginY,
+         visible.right + marginX,
+         visible.bottom + marginY
+     };
+     
+     // [Step 1b] Clamp to document bounds (prevent negative coords / overflow)
+     float docW = (float)g_currentMetadata.Width;
+     float docH = (float)g_currentMetadata.Height;
+     if (docW > 0 && docH > 0) {
+         extended.left = std::max(0.0f, extended.left);
+         extended.top = std::max(0.0f, extended.top);
+         extended.right = std::min(docW, extended.right);
+         extended.bottom = std::min(docH, extended.bottom);
+     }
+     
+     wchar_t buf[256];
+     swprintf_s(buf, L"[ROI] Visible=(%.1f,%.1f)-(%.1f,%.1f) Extended=(%.1f,%.1f)-(%.1f,%.1f)\n", 
+         visible.left, visible.top, visible.right, visible.bottom,
+         extended.left, extended.top, extended.right, extended.bottom);
+     OutputDebugStringW(buf);
+     
+     return extended;
+}
+
+// Helper: Check if visible rect is within ROI buffer safety zone (5% threshold)
+static bool IsRoiBufferValid() {
+    if (!g_isRoiActive) return false;
+    
+    D2D1_RECT_F visible = GetVisibleRect();
+    D2D1_RECT_F buffer = g_currentRoiRect;
+    
+    float bufferW = buffer.right - buffer.left;
+    float bufferH = buffer.bottom - buffer.top;
+    float dangerZone = std::min(bufferW, bufferH) * 0.05f;
+    
+    // Calculate remaining padding on each side
+    float padLeft = visible.left - buffer.left;
+    float padRight = buffer.right - visible.right;
+    float padTop = visible.top - buffer.top;
+    float padBottom = buffer.bottom - visible.bottom;
+    
+    // Valid if all sides have > 5% padding (safety zone)
+    return (padLeft > dangerZone && padRight > dangerZone && 
+            padTop > dangerZone && padBottom > dangerZone);
+}
+
+// Helper: Exit ROI Mode (Restore Low-Res) [Module C Refactor]
+static void ExitRoiMode(HWND hwnd, bool forceExit = false) {
+    // [SVG Architecture] Skip ROI entirely for SVG - it uses native D2D rendering
+    if (g_currentMetadata.Format == L"SVG") {
+        return; // No ROI for SVG
+    }
+    
+    wchar_t dbg[256];
+    swprintf_s(dbg, L"[ExitRoiMode] Called. isRoiActive=%d forceExit=%d Format=%s Zoom=%.2f\n",
+        g_isRoiActive, forceExit, g_currentMetadata.Format.c_str(), g_viewState.Zoom);
+    OutputDebugStringW(dbg);
+    
+    // [Step 4] If ROI buffer is still valid, don't exit - just restart timer
+    if (g_isRoiActive && !forceExit && IsRoiBufferValid()) {
+        return;
+    }
+    
+    if (g_isRoiActive) {
+         g_isRoiActive = false;
+         g_roiBitmap.Reset();
+         
+         // Restore Visual State (Zoom/Pan from g_viewState)
+         if (g_compEngine) {
+             g_compEngine->SetZoom(g_viewState.Zoom, 0, 0); 
+             g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+         }
+         
+         // Render Low Res Base
+         RenderImageToDComp(hwnd, g_imageResource, false, false);
+         OutputDebugStringW(L"[Main] Exit ROI Mode (Buffer Exhausted). Restored Low-Res.\n");
+    }
+    
+    // [Step 5] Restart Timer (Debounce) to request new ROI for large bitmaps
+    RECT rc; GetClientRect(hwnd, &rc);
+    float winW = (float)rc.right;
+    float winH = (float)rc.bottom;
+    float imgW = g_currentMetadata.Width > 0 ? (float)g_currentMetadata.Width : 0;
+    float imgH = g_currentMetadata.Height > 0 ? (float)g_currentMetadata.Height : 0;
+    float fitScale = (imgW > 0 && imgH > 0) ? std::min(winW / imgW, winH / imgH) : 1.0f;
+    float totalScale = fitScale * g_viewState.Zoom;
+    
+    // Only trigger ROI for large images that are zoomed in beyond 100%
+    bool needsRoi = (imgW > 3000 || imgH > 3000) && (totalScale > 1.0f);
+    if (needsRoi) {
+         int timerMs = forceExit ? 50 : 300;
+         SetTimer(hwnd, IDT_ROI_DEBOUNCE, timerMs, nullptr);
+         swprintf_s(dbg, L"[ExitRoiMode] Set %dms timer for ROI\n", timerMs);
+         OutputDebugStringW(dbg);
+    }
 }
 
 // --- Persistence Helpers ---
@@ -326,13 +515,13 @@ std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName);
 
 // Helper: Check if panning makes sense (image exceeds window OR window exceeds screen)
 bool CanPan(HWND hwnd) {
-    if (!g_currentBitmap) return false;
+    if (!g_imageResource) return false;
     
     RECT rc; GetClientRect(hwnd, &rc);
     float windowW = (float)(rc.right - rc.left);
     float windowH = (float)(rc.bottom - rc.top);
     
-    D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+    D2D1_SIZE_F imgSize = g_imageResource.GetSize();
     float fitScale = std::min(windowW / imgSize.width, windowH / imgSize.height);
     float scaledW = imgSize.width * fitScale * g_viewState.Zoom;
     float scaledH = imgSize.height * fitScale * g_viewState.Zoom;
@@ -365,120 +554,144 @@ bool CanPan(HWND hwnd) {
     return false;
 }
 
-// [DComp] Render bitmap to DComp Pending Surface and trigger cross-fade
-static bool RenderImageToDComp(HWND hwnd, ID2D1Bitmap* bitmap, bool isTransparent, bool isFastUpgrade) {
-    if (!g_compEngine || !g_compEngine->IsInitialized() || !bitmap) {
-        return false;
-    }
+// [DComp] Render content (Bitmap or SVG) to DComp Pending Surface
+// For SVG: Uses Direct2D Native path with real-time transform (Lossless Zoom)
+// For Bitmap: Uses existing logic
+static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent, bool isFastUpgrade) {
+    if (!g_compEngine || !g_compEngine->IsInitialized() || !res) return false;
     
-    RECT rc;
-    GetClientRect(hwnd, &rc);
-    UINT surfW = rc.right;
-    UINT surfH = rc.bottom;
-    
+    RECT rc; GetClientRect(hwnd, &rc);
+    UINT surfW = rc.right; UINT surfH = rc.bottom;
     if (surfW == 0 || surfH == 0) return false;
-    
-    // [Fix] Align active layer (Old Image) to new window size
-    // This ensures smooth transition by centering the old image in the resized window
-    // (Matches behavior of commit 8cf27b)
-    g_compEngine->AlignActiveLayer((float)surfW, (float)surfH);
 
-    // Get D2D context for pending layer
+    // Align active layer to new window size
+    g_compEngine->AlignActiveLayer((float)surfW, (float)surfH);
     ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH);
-    if (!ctx) {
-        OutputDebugStringW(L"[DComp] BeginPendingUpdate failed!\n");
-        return false;
-    }
+    if (!ctx) return false;
     
-    // Calculate fit rect (center image in surface)
-    // Calculate fit rect (center image in surface)
-    D2D1_SIZE_F bmpSize = bitmap->GetSize();
-    
-    // [Fix] Handle EXIF Orientation
-    // Quick check if we need to swap dimensions for fitting
-    bool swapDims = false;
-    int orientation = 1;
-    if (g_config.AutoRotate) {
-        orientation = g_viewState.ExifOrientation;
-        if (orientation >= 5 && orientation <= 8) swapDims = true;
-    }
-    
-    float imgW = bmpSize.width;
-    float imgH = bmpSize.height;
-    
-    // Effective dimensions for fitting calculation
-    float effectiveW = swapDims ? imgH : imgW;
-    float effectiveH = swapDims ? imgW : imgH;
-    
-    float scale = std::min((float)surfW / effectiveW, (float)surfH / effectiveH);
-    
-    // Draw dimensions (unrotated local space)
-    float drawW = imgW * scale;
-    float drawH = imgH * scale;
-    
-    // Center point for rotation/drawing
-    D2D1_POINT_2F center = D2D1::Point2F(surfW / 2.0f, surfH / 2.0f);
-    
-    // Calculate Dest Rect centered at 'center'
-    float x = center.x - drawW / 2.0f;
-    float y = center.y - drawH / 2.0f;
-    D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
-    
-    // Apply Rotation Transform
-    D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Identity();
-    if (orientation > 1) {
-        switch (orientation) {
-            case 2: m = D2D1::Matrix3x2F::Scale(-1, 1, center); break;
-            case 3: m = D2D1::Matrix3x2F::Rotation(180, center); break;
-            case 4: m = D2D1::Matrix3x2F::Scale(1, -1, center); break;
-            case 5: m = D2D1::Matrix3x2F::Scale(-1, 1, center) * D2D1::Matrix3x2F::Rotation(270, center); break;
-            case 6: m = D2D1::Matrix3x2F::Rotation(90, center); break;
-            case 7: m = D2D1::Matrix3x2F::Scale(-1, 1, center) * D2D1::Matrix3x2F::Rotation(90, center); break;
-            case 8: m = D2D1::Matrix3x2F::Rotation(270, center); break;
+    ctx->Clear(isTransparent ? D2D1::ColorF(0, 0.0f) : D2D1::ColorF(0.1f, 0.1f, 0.1f));
+
+    if (res.isSvg && res.svgDoc) {
+        // === SVG Direct2D Native Path ===
+        // Note: For initial render, we Fit to Screen.
+        // Dynamic Zoom/Pan will be handled by calling this function again with updated params 
+        // OR by letting DComp handle it initially?
+        // STRATEGY: 
+        // 1. Initial Load: Render Fit-to-Screen.
+        // 2. High-Quality Zoom: We will need a new "UpdateSvgView" function later.
+        //    For now, just render at current g_viewState settings?
+        //    Actually, RenderImageToDComp is mostly for NEW images.
+        
+        float fitScale = std::min((float)surfW / res.svgW, (float)surfH / res.svgH);
+        
+        // Center
+        float offsetX = (surfW - res.svgW * fitScale) / 2.0f;
+        float offsetY = (surfH - res.svgH * fitScale) / 2.0f;
+        
+        // Transform: Scale to Fit, then Translate to Center
+        // Note: DComp handles zoom/pan via hardware transforms, so we only bake Fit here
+        D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Scale(fitScale, fitScale) * 
+                                     D2D1::Matrix3x2F::Translation(offsetX, offsetY);
+        
+        // [Optimized] Clip to slightly larger than screen to avoid huge raster work
+        ctx->PushAxisAlignedClip(D2D1::RectF(0, 0, (float)surfW, (float)surfH), D2D1_ANTIALIAS_MODE_ALIASED);
+        
+        ctx->SetTransform(transform);
+             // Need ID2D1DeviceContext5 for DrawSvgDocument
+             ComPtr<ID2D1DeviceContext5> ctx5;
+             if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
+                 ctx5->DrawSvgDocument(res.svgDoc.Get());
+             }
+        ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+        
+        ctx->PopAxisAlignedClip();
+        
+        // Store Fit Scale for metrics
+        g_lastFitScale = fitScale;
+        g_lastWindowSize = D2D1::SizeF((float)surfW, (float)surfH);
+        g_lastFitOffset = D2D1::Point2F(offsetX, offsetY);
+        
+        // For SVG, we reset DComp zoom to Identity because we just baked the fit.
+        // FUTURE: If we want lossless zoom, we'll re-call this with different transform.
+        g_compEngine->SetZoom(1.0f, 0, 0);
+        g_compEngine->SetPan(0, 0);
+
+    } else {
+        // === Bitmap Path (Legacy) ===
+        if (!res.bitmap) return false;
+        
+        D2D1_SIZE_F bmpSize = res.bitmap->GetSize();
+        
+        // Handle EXIF Orientation
+        bool swapDims = false;
+        int orientation = 1;
+        if (g_config.AutoRotate) {
+             orientation = g_viewState.ExifOrientation;
+             if (orientation >= 5 && orientation <= 8) swapDims = true;
         }
-        ctx->SetTransform(m);
+        
+        float imgW = bmpSize.width;
+        float imgH = bmpSize.height;
+        float effectiveW = swapDims ? imgH : imgW;
+        float effectiveH = swapDims ? imgW : imgH;
+        
+        float scale = std::min((float)surfW / effectiveW, (float)surfH / effectiveH);
+        
+        // Store Metrics
+        if (!g_isRoiActive) {
+            g_lastFitScale = scale;
+            g_lastWindowSize = D2D1::SizeF((float)surfW, (float)surfH);
+        }
+        
+        float drawW = imgW * scale;
+        float drawH = imgH * scale;
+        D2D1_POINT_2F center = D2D1::Point2F(surfW / 2.0f, surfH / 2.0f);
+        
+        float x = center.x - drawW / 2.0f;
+        float y = center.y - drawH / 2.0f;
+        D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
+        
+        if (!g_isRoiActive) g_lastFitOffset = D2D1::Point2F(x, y);
+
+        // Apply Rotation
+        D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Identity();
+        if (orientation > 1) {
+             // ... Rotation Logic (Simplified for brevity, copying existing logic is safer if I can see it)
+             // I'll assume standard rotation cases
+             switch (orientation) {
+                case 2: m = D2D1::Matrix3x2F::Scale(-1, 1, center); break;
+                case 3: m = D2D1::Matrix3x2F::Rotation(180, center); break;
+                case 4: m = D2D1::Matrix3x2F::Scale(1, -1, center); break;
+                case 5: m = D2D1::Matrix3x2F::Scale(-1, 1, center) * D2D1::Matrix3x2F::Rotation(270, center); break;
+                case 6: m = D2D1::Matrix3x2F::Rotation(90, center); break;
+                case 7: m = D2D1::Matrix3x2F::Scale(-1, 1, center) * D2D1::Matrix3x2F::Rotation(90, center); break;
+                case 8: m = D2D1::Matrix3x2F::Rotation(270, center); break;
+            }
+            ctx->SetTransform(m);
+        }
+        
+        ctx->DrawBitmap(res.bitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        
+        if (orientation > 1) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+        
+        // Reset DComp (Legacy logic relies on DComp for Zoom)
+        if (g_compEngine->IsInitialized()) {
+             g_compEngine->SetZoom(g_viewState.Zoom, 0.0f, 0.0f);
+             g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+        }
     }
-    
-    // Draw bitmap with high quality
-    ctx->DrawBitmap(bitmap, destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-    
-    // Reset Transform
-    if (orientation > 1) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     
     g_compEngine->EndPendingUpdate();
-
-    // [Fix] Re-apply correct Scale/Pan for the NEW surface content
-    // WM_SIZE (triggered by AdjustWindow) ran BEFORE this surface existed, 
-    // using STALE dimensions (Old Image), causing incorrect scaling (e.g. tiny thumbnail).
-    // Now that Surface fits Window (fitScale=1.0), we enforce the correct Logical Zoom.
-    if (g_compEngine->IsInitialized()) {
-        g_compEngine->SetZoom(g_viewState.Zoom, 0.0f, 0.0f);
-        g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
-        // Note: Commit is handled by PlayPingPongCrossFade internally? 
-        // PlayPingPongCrossFade calls GetDevice()->Commit().
-        // If we set properties here, they are committed together.
-    }
     
-    // Play cross-fade animation (150ms)
-    // [Two-Stage] Fast upgrade = instant transition (50ms), normal = standard crossfade
-    float duration = isFastUpgrade ? 50.0f : (g_slowMotionMode ? (float)SLOW_MOTION_DURATION : (float)CROSS_FADE_DURATION);
-    g_compEngine->PlayPingPongCrossFade(duration, isTransparent);
-    
-    // Track surface size for UpdateLayout
+    // Track surface size for WM_MOUSEWHEEL and WM_SIZE calculations
     g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
     
-    // Reset zoom state (values only, visual is handled by WM_SIZE)
-    // Note: WM_SIZE will calculate and apply correct fitScale using these values
-    g_viewState.Zoom = 1.0f;
-    g_viewState.PanX = 0;
-    g_viewState.PanY = 0;
-    // [Fix] Do NOT call ResetImageTransform() here!
-    // It would set visual scale to 1.0 (100%) before WM_SIZE applies correct fitScale,
-    // causing a visible flash in locked window mode.
-    
-    OutputDebugStringW(L"[DComp] RenderImageToDComp complete\n");
+    float duration = isFastUpgrade ? 50.0f : (g_slowMotionMode ? (float)SLOW_MOTION_DURATION : (float)CROSS_FADE_DURATION);
+    g_compEngine->PlayPingPongCrossFade(duration, isTransparent);
     return true;
 }
+
+// --- Helper Functions ---
 
 // --- Helper Functions ---
 
@@ -504,7 +717,7 @@ bool IsRawFile(const std::wstring& path) {
 }
 
 void ReleaseImageResources() {
-    g_currentBitmap.Reset();
+    g_imageResource.Reset();
     Sleep(50);
 }
 
@@ -1481,7 +1694,7 @@ bool CheckUnsavedChanges(HWND hwnd) {
 }
 
 void AdjustWindowToImage(HWND hwnd) {
-    if (!g_currentBitmap) return;
+    if (!g_imageResource) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
 
@@ -1491,7 +1704,7 @@ void AdjustWindowToImage(HWND hwnd) {
         imgWidth = (float)g_currentMetadata.Width;
         imgHeight = (float)g_currentMetadata.Height;
     } else {
-        D2D1_SIZE_F size = g_currentBitmap->GetSize(); // DIPs
+        D2D1_SIZE_F size = g_imageResource.GetSize(); // DIPs
         imgWidth = size.width;
         imgHeight = size.height;
     }
@@ -1548,7 +1761,7 @@ void AdjustWindowToImage(HWND hwnd) {
 
 void ReloadCurrentImage(HWND hwnd) {
     if (g_imagePath.empty() && g_editState.OriginalFilePath.empty()) return;
-    g_currentBitmap.Reset();
+    g_imageResource.Reset();
     LPCWSTR path;
     if (g_editState.IsDirty && FileExists(g_editState.TempFilePath.c_str())) path = g_editState.TempFilePath.c_str();
     else path = g_editState.OriginalFilePath.empty() ? g_imagePath.c_str() : g_editState.OriginalFilePath.c_str();
@@ -1753,13 +1966,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_imageEngine->SetNavigator(&g_navigator); // [Phase 3] Enable prefetch
     
     // Initialize DirectComposition (Visual Ping-Pong Architecture)
-    g_compEngine = std::make_unique<CompositionEngine>();
+    // g_compEngine = std::make_unique<CompositionEngine>();
+    g_compEngine = new CompositionEngine();
     if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
         // No SwapChain binding needed - new architecture uses DComp Surfaces directly
         
         // Initialize UI Renderer (renders to independent DComp Surface)
         g_uiRenderer = std::make_unique<UIRenderer>();
-        g_uiRenderer->Initialize(g_compEngine.get(), g_renderEngine->m_dwriteFactory.Get());
+        g_uiRenderer->Initialize(g_compEngine, g_renderEngine->m_dwriteFactory.Get());
     }
     
     // Init Gallery
@@ -1836,7 +2050,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // Explicitly release globals dependent on COM before CoUninitialize
     // Destroy in reverse order of dependency
     g_uiRenderer.reset();
-    g_compEngine.reset(); // Holds DComp device
+    if (g_compEngine) { delete g_compEngine; g_compEngine = nullptr; } // Holds DComp device
     g_imageEngine.reset();
     g_imageLoader.reset(); // Holds WIC factory
     g_renderEngine.reset(); // Holds D2D/D3D device
@@ -1936,6 +2150,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 
                 // Re-submit current image for full decode (targetWidth=0 means no scaling)
                 g_imageEngine->RequestFullDecode(g_imagePath, g_currentImageId.load());
+            }
+        }
+
+        // [Module C] ROI Debounce Timer
+        if (wParam == IDT_ROI_DEBOUNCE) {
+            KillTimer(hwnd, IDT_ROI_DEBOUNCE);
+            // Check if SVG (Contains "SVG" case insensitive or usually uppercase "SVG")
+            bool isSvg = (g_currentMetadata.Format.find(L"SVG") != std::wstring::npos);
+            
+            if (!g_isRoiActive && isSvg && g_viewState.Zoom > 1.1f) {
+                 // Calculate ROI
+                 D2D1_RECT_F roi = GetRoiRect();
+                 
+                 // Show OSD
+                 g_osd.Show(hwnd, L"Lossless Rendering...", true);
+                 
+                 // Request Render
+                 if (g_imageEngine) {
+                     g_imageEngine->RequestRoiRender(g_imagePath, g_currentImageId.load(), roi);
+                 }
             }
         }
 
@@ -2055,7 +2289,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             // [Restore] Reset Zoom on Programmatic Resize (e.g. Image Load / AdjustWindow)
             // But preserve Zoom during interactive resizing (Dragging)
-            if (!g_viewState.IsInteracting) {
+            // [Fix] Do NOT reset zoom if in ROI mode (we are displaying a high-res tile)
+            if (!g_viewState.IsInteracting && !g_isRoiActive) {
                 g_viewState.Zoom = 1.0f;
                 g_viewState.PanX = 0;
                 g_viewState.PanY = 0;
@@ -2271,9 +2506,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.PanY += (pt.y - g_viewState.LastMousePos.y); 
              g_viewState.LastMousePos = pt;
              
-             // [DComp] Use hardware pan (zero CPU cost)
-             if (g_compEngine && g_compEngine->IsInitialized()) {
-                 g_compEngine->SetPan(g_viewState.PanX, g_viewState.PanY);
+             // [DComp] Use hardware pan with proper centering offset
+             if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0) {
+                 RECT rc; GetClientRect(hwnd, &rc);
+                 float winW = (float)rc.right;
+                 float winH = (float)rc.bottom;
+                 float imgW = g_lastSurfaceSize.width;
+                 float imgH = g_lastSurfaceSize.height;
+                 
+                 // Calculate same centering offset as WM_MOUSEWHEEL
+                 float fitScale = std::min(winW / imgW, winH / imgH);
+                 float finalScale = fitScale * g_viewState.Zoom;
+                 float scaledW = imgW * finalScale;
+                 float scaledH = imgH * finalScale;
+                 float offsetX = (winW - scaledW) / 2.0f;
+                 float offsetY = (winH - scaledH) / 2.0f;
+                 
+                 g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
                  g_compEngine->Commit();
              }
              RequestRepaint(PaintLayer::Dynamic);  // OSD update only
@@ -2471,7 +2720,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
 
+
+
     case WM_LBUTTONDOWN: {
+        // [Module C] Exit ROI Mode on Interaction
+        ExitRoiMode(hwnd);
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
         // 0. Window control buttons - HIGHEST PRIORITY
@@ -2789,11 +3042,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         
-        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);  // Zoom affects Image + OSD
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
         return 0;
     }
 
     case WM_MOUSEWHEEL: {
+        // [Module C] Exit ROI Mode on Zoom
+        ExitRoiMode(hwnd);
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
         if (g_settingsOverlay.OnMouseWheel(wheelDelta)) {
             RequestRepaint(PaintLayer::Static);  // Settings panel is on Static layer
@@ -2807,7 +3062,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
              return 0;
         }
-        if (!g_currentBitmap) return 0;
+        if (!g_imageResource) return 0;
         
         // --- Magnetic Snap Time Lock ---
         static DWORD s_lastSnapTime = 0;
@@ -2916,35 +3171,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              // Reset Pan when not capped (keep centered)
              if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
              
-             // 5. Apply to DComp
-             if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0) {
-                 // First, Calculate Base Fit (Surface -> Window)
-                 g_compEngine->UpdateLayout((float)finalWinW, (float)finalWinH,
-                                          (float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
-                 
-                 if (capped) {
-                     // Calculate combined scale for DComp: BaseFit * HardwareScale
-                     float baseFitScale = std::min((float)finalWinW / g_lastSurfaceSize.width, 
-                                                 (float)finalWinH / g_lastSurfaceSize.height);
-                     float finalDCompScale = baseFitScale * hardwareScale;
-                     
-                     // [Fix] Use Top-Left Scaling + Centering Offset
-                     // Scaling around Window Center (previous attempt) was incorrect because visual origin is (0,0).
-                     // Top-Left scaling allows precise calculation of the centering offset.
-                     g_compEngine->SetZoom(finalDCompScale, 0.0f, 0.0f);
-                     
-                     // Calculate Offset to center the Scaled Image in the Window
-                     float scaledW = g_lastSurfaceSize.width * finalDCompScale;
-                     float scaledH = g_lastSurfaceSize.height * finalDCompScale;
-                     
-                     float offsetX = (finalWinW - scaledW) / 2.0f;
-                     float offsetY = (finalWinH - scaledH) / 2.0f;
-                     
-                     // Apply Offset + User Pan
-                     g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
-                     g_compEngine->Commit();
-                 }
-             }
+              // 5. Apply to DComp
+              if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0) {
+                  // First, Calculate Base Fit (Surface -> Window)
+                  g_compEngine->UpdateLayout((float)finalWinW, (float)finalWinH,
+                                           (float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
+                  
+                  if (capped) {
+                      // Calculate combined scale for DComp: BaseFit * HardwareScale
+                      float baseFitScale = std::min((float)finalWinW / g_lastSurfaceSize.width, 
+                                                  (float)finalWinH / g_lastSurfaceSize.height);
+                      float finalDCompScale = baseFitScale * hardwareScale;
+                      
+                      // [Fix] Use Top-Left Scaling + Centering Offset
+                      g_compEngine->SetZoom(finalDCompScale, 0.0f, 0.0f);
+                      
+                      // Calculate Offset to center the Scaled Image in the Window
+                      float scaledW = g_lastSurfaceSize.width * finalDCompScale;
+                      float scaledH = g_lastSurfaceSize.height * finalDCompScale;
+                      
+                      float offsetX = (finalWinW - scaledW) / 2.0f;
+                      float offsetY = (finalWinH - scaledH) / 2.0f;
+                      
+                      // Apply Offset + User Pan
+                      g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
+                      g_compEngine->Commit();
+                  }
+              }
              RequestRepaint(PaintLayer::Dynamic); 
         } else {
              // Standard Zoom (Window size fixed or Maxed)
@@ -3202,8 +3455,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Zoom
         // Zoom
         case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
-            if (g_currentBitmap) {
-                D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+            if (g_imageResource) {
+                D2D1_SIZE_F imgSize = g_imageResource.GetSize();
                 if (imgSize.width > 0 && imgSize.height > 0) {
                     // Logic to resize window to wrap image at 100% if allowed
                     if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
@@ -3251,7 +3504,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
             
         case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
-            if (g_currentBitmap) {
+            if (g_imageResource) {
                 // Get Monitor & Work Area
                 HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
                 MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
@@ -3270,7 +3523,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 int maxClientH = screenH - borderH;
                 
                 // Get Image Size (DIPs -> Pixels)
-                D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+                D2D1_SIZE_F imgSize = g_imageResource.GetSize();
                 float dpi = 96.0f;
                 UINT dpiX, dpiY;
                 if (SUCCEEDED(GetDpiForMonitor(hMon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
@@ -3310,13 +3563,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
         case VK_SUBTRACT: case VK_OEM_MINUS: { // Zoom Out
-            if (!g_currentBitmap) break;
+            if (!g_imageResource) break;
             
             bool isZoomIn = (wParam == VK_ADD || wParam == VK_OEM_PLUS);
             // bool ctrl reused from usage at top of WndProc
             
             // Get image size
-            D2D1_SIZE_F imgSize = g_currentBitmap->GetSize();
+            D2D1_SIZE_F imgSize = g_imageResource.GetSize();
             
             // [Fix] Swap dimensions for calculation if Rotated (Matches Visual)
             float calcW = imgSize.width;
@@ -3414,7 +3667,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         ClientToScreen(hwnd, &pt);
         
-        bool hasImage = g_currentBitmap != nullptr;
+        bool hasImage = g_imageResource;
         bool extensionFixNeeded = false;
         bool isRaw = false;
         if (hasImage && !g_imagePath.empty()) {
@@ -3574,7 +3827,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         RequestRepaint(PaintLayer::All);
                         g_editState.Reset();
                         g_viewState.Reset();
-                        g_currentBitmap.Reset();
+                        g_imageResource.Reset();
                         g_navigator.Initialize(nextPath.empty() ? L"" : nextPath.c_str());
                         if (!nextPath.empty()) LoadImageAsync(hwnd, nextPath);
                         else RequestRepaint(PaintLayer::All);
@@ -3909,21 +4162,68 @@ void ProcessEngineEvents(HWND hwnd) {
             HRESULT hr = E_FAIL;
             
             // Unified Path: RawImageFrame -> GPU
+            bool resourceReady = false;
+            
             if (evt.rawFrame && evt.rawFrame->IsValid()) {
-                hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
-                if (FAILED(hr)) {
-                    wchar_t buf[128]; swprintf_s(buf, L"[Main] Upload Failed: HR=0x%X\n", hr);
-                    OutputDebugStringW(buf);
-                }
-                if (SUCCEEDED(hr)) {
-                     g_debugMetrics.rawFrameUploadCount++;
-                     g_debugMetrics.lastUploadChannel.store(1);
+                if (evt.rawFrame->IsSvg()) {
+                     // === SVG Path ===
+                     g_imageResource.Reset();
+                     g_imageResource.isSvg = true;
+                     g_imageResource.svgW = evt.rawFrame->svg->viewBoxW;
+                     g_imageResource.svgH = evt.rawFrame->svg->viewBoxH;
+                     
+                     // Get D2D Context (from RenderEngine)
+                     ComPtr<ID2D1DeviceContext> ctxBase = g_renderEngine->GetDeviceContext();
+                     ComPtr<ID2D1DeviceContext5> ctx5;
+                     
+                     if (ctxBase && SUCCEEDED(ctxBase.As(&ctx5))) {
+                         const auto& xml = evt.rawFrame->svg->xmlData;
+                         
+                         // Create Stream
+                         ComPtr<IStream> stream;
+                         HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xml.size());
+                         if (hMem) {
+                             void* pMem = GlobalLock(hMem);
+                             if (pMem) {
+                                 memcpy(pMem, xml.data(), xml.size());
+                                 GlobalUnlock(hMem);
+                                 CreateStreamOnHGlobal(hMem, TRUE, &stream);
+                             } else GlobalFree(hMem);
+                         }
+                         
+                         if (stream) {
+                             D2D1_SIZE_F vpSize = { g_imageResource.svgW, g_imageResource.svgH };
+                             if (vpSize.width <= 0) vpSize.width = 100;
+                             if (vpSize.height <= 0) vpSize.height = 100;
+                             
+                             hr = ctx5->CreateSvgDocument(stream.Get(), vpSize, &g_imageResource.svgDoc);
+                         } else hr = E_OUTOFMEMORY;
+                     } else hr = E_NOINTERFACE;
+                     
+                     if (SUCCEEDED(hr)) {
+                         resourceReady = true;
+                     }
+                     else OutputDebugStringW(L"[Main] SVG Resource Creation Failed\n"); // Log HR?
+                     
+                } else {
+                    // === Bitmap Path ===
+                    hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
+                    if (FAILED(hr)) {
+                        wchar_t buf[128]; swprintf_s(buf, L"[Main] Upload Failed: HR=0x%X\n", hr);
+                        OutputDebugStringW(buf);
+                    } else {
+                         g_debugMetrics.rawFrameUploadCount++;
+                         g_debugMetrics.lastUploadChannel.store(1);
+                         g_imageResource.Reset();
+                         g_imageResource.bitmap = bitmap;
+                         resourceReady = true;
+                    }
                 }
             } 
             
-            if (SUCCEEDED(hr) && bitmap) {
+            if (resourceReady) {
                 // Apply State
-                g_currentBitmap = bitmap;
+                // g_imageResource is already populated
                 g_isBlurry = isPreview;
                 g_imageQualityLevel = isPreview ? 1 : 2;
                 g_imagePath = evt.filePath;
@@ -3932,6 +4232,13 @@ void ProcessEngineEvents(HWND hwnd) {
                 // [v5.4 Fix] Race Condition: Prevent FullReady (Basic) from overwriting Async EXIF
                 // If Async Metadata (lazy) arrived FIRST, we must preserve it!
                 auto finalMetadata = evt.metadata; // Create mutable copy
+                
+                // [Fix] For SVG frames, explicitly set Format and dimensions
+                if (g_imageResource.isSvg) {
+                    finalMetadata.Format = L"SVG";
+                    finalMetadata.Width = (UINT)g_imageResource.svgW;
+                    finalMetadata.Height = (UINT)g_imageResource.svgH;
+                }
                 
                 // [v5.5] Robust Metadata Merge (First Principles)
                 // Rule: Never overwrite valid data with empty/zero data.
@@ -3961,7 +4268,12 @@ void ProcessEngineEvents(HWND hwnd) {
                     finalMetadata.ColorSpace = g_currentMetadata.ColorSpace;
                 }
                 
-                // 4. Format Details: HeavyLane often has specific codec info (e.g. "Q=95")
+                // 4. Format: Critical for ROI detection. Preserve if HeavyLane didn't set it.
+                if (finalMetadata.Format.empty() && !g_currentMetadata.Format.empty()) {
+                    finalMetadata.Format = g_currentMetadata.Format;
+                }
+                
+                // 5. Format Details: HeavyLane often has specific codec info (e.g. "Q=95")
                 // Async might be generic.
                 if (finalMetadata.FormatDetails.empty() && !g_currentMetadata.FormatDetails.empty()) {
                     finalMetadata.FormatDetails = g_currentMetadata.FormatDetails;
@@ -4045,13 +4357,18 @@ void ProcessEngineEvents(HWND hwnd) {
                 AdjustWindowToImage(hwnd);
                 
                 // Render
-                bool hasTransparency = (evt.metadata.Format.find(L"PNG") != std::wstring::npos) || 
-                                       (evt.metadata.Format.find(L"Alpha") != std::wstring::npos);
+                // [Fix] Expand transparency detection to include all transparent formats
+                bool hasTransparency = (evt.metadata.Format == L"SVG") ||
+                                       (evt.metadata.Format == L"PNG") || 
+                                       (evt.metadata.Format == L"WEBP") ||
+                                       (evt.metadata.Format == L"GIF") ||
+                                       (evt.metadata.Format.find(L"Alpha") != std::wstring::npos) ||
+                                       (evt.rawFrame && evt.rawFrame->format == QuickView::PixelFormat::BGRA8888);
                 // [Two-Stage] Detect same-image upgrade (scaled → full)
                 // Fast transition when: was scaled, now full, same image ID
                 bool isSameImageUpgrade = g_isImageScaled && !evt.isScaled && 
                                           (evt.imageId == g_currentImageId.load());
-                RenderImageToDComp(hwnd, bitmap.Get(), hasTransparency, isSameImageUpgrade);
+                RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
                 
                 // Cleanup
                 g_isLoading = false;
@@ -4123,6 +4440,27 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (evt.metadata.Width > 0 && evt.metadata.Height > 0) {
                      g_currentMetadata.Width = evt.metadata.Width;
                      g_currentMetadata.Height = evt.metadata.Height;
+                     
+                     // [Fix] Only access rawFrame if it exists (MetadataReady may not have it)
+                     if (evt.rawFrame) {
+                         // [Fix] Infinite Loop Strategy: "No Improvement" Breaker
+                         float currentWidth = g_imageResource ? g_imageResource.GetSize().width : 0.0f;
+                         bool noImprovement = ((int)currentWidth > 0 && abs((int)evt.rawFrame->width - (int)currentWidth) < 10);
+                         
+                         // HitLimit: Hardware Constraint (4096 or 16384) OR Just "Big Enough" (> 3000)
+                         bool hitLimit = (evt.rawFrame->width >= 3500 || evt.rawFrame->height >= 3500); 
+                         
+                         // Stop loop if dimensions match or we hit limit
+                         bool dimensionsMatch = (evt.rawFrame->width >= evt.metadata.Width);
+                         
+                         g_isImageScaled = (!dimensionsMatch && !hitLimit && !noImprovement);
+                         
+                         wchar_t buf[256];
+                         swprintf_s(buf, L"[Main] Merged Dim: Frame=%dx%d Meta=%dx%d | HitLimit=%d Match=%d NoImp=%d -> Scaled=%d\n", 
+                             evt.rawFrame->width, evt.rawFrame->height, evt.metadata.Width, evt.metadata.Height, 
+                             hitLimit, dimensionsMatch, noImprovement, g_isImageScaled);
+                         OutputDebugStringW(buf);
+                     }
                  }
                  if (evt.metadata.CreationTime.dwLowDateTime != 0) g_currentMetadata.CreationTime = evt.metadata.CreationTime;
                  if (evt.metadata.LastWriteTime.dwLowDateTime != 0) g_currentMetadata.LastWriteTime = evt.metadata.LastWriteTime;
@@ -4133,9 +4471,39 @@ void ProcessEngineEvents(HWND hwnd) {
                  OutputDebugStringW(L"[Main] MetadataReady: Merged Async Data. Requesting Repaint.\n");
                  RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             }
+            }
             break;
+
+
+        case EventType::RoiReady: {
+             // [Module C] ROI Tile Ready (Lossless Zoom)
+             if (!g_renderEngine) break;
+             if (evt.imageId != g_currentImageId.load()) break; // Stale
+
+             ComPtr<ID2D1Bitmap> bitmap;
+             HRESULT hr = E_FAIL;
+             
+             // Upload Frame
+             if (evt.rawFrame && evt.rawFrame->IsValid()) {
+                 hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
+             }
+             
+             if (SUCCEEDED(hr) && bitmap) {
+                 g_roiBitmap = bitmap;
+                 g_isRoiActive = true;
+                 g_currentRoiRect = evt.roiRect;
+                 
+                 g_osd.Show(hwnd, L"Lossless Zoom", false);
+                 
+                  // Switch View (Fast Transition)
+                  ImageResource roiRes; roiRes.bitmap = g_roiBitmap;
+                  RenderImageToDComp(hwnd, roiRes, false, true); // isFastUpgrade=true
+                 
+                 OutputDebugStringW(L"[Main] ROI Active. Switched to High-Res Tile.\n");
+             }
+             break;
         }
-        }
+         }
     }
 
     if (g_imageEngine->IsIdle()) {
@@ -4172,7 +4540,8 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     g_ghostBitmap = nullptr; // Clear previous ghost
     g_isBlurry = true; // Reset for new image
     g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
-    
+
+// [v3.1] Global Quality Level (0=Default/Bilinear, 1=Bicubic, 2=Nearest)
     // [v5.5 Fix] Reset global metadata to prevent stale data merging
     // Crucial for the Race Fix in FullReady to work correctly!
     g_currentMetadata = {}; 
@@ -4375,8 +4744,10 @@ void OnPaint(HWND hwnd) {
         }
         
         // [Double-Render Fix] Only draw legacy if DComp is NOT active
-        if ((!g_compEngine || !g_compEngine->IsInitialized()) && g_currentBitmap) {
-            D2D1_SIZE_F size = g_currentBitmap->GetSize();
+        // Check Legacy/Fallback Path
+#if 0
+        if (((g_compEngine == nullptr) /*|| !g_compEngine->IsInitialized()*/) && g_imageResource) {
+            D2D1_SIZE_F size = g_imageResource.GetSize();
             // rtSize removed (unused, replaced by logicW/logicH)
             
             int orientation = g_viewState.ExifOrientation;
@@ -4468,7 +4839,7 @@ void OnPaint(HWND hwnd) {
                 if (!canAnimate) {
                      // Instant Cut (No Fade)
                      // Draw CLEAR Target (Static)
-                     context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                     context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                      
                      // End transition immediately (next frame will return to standard/warp logic)
                      g_isCrossFading = false;
@@ -4484,7 +4855,7 @@ void OnPaint(HWND hwnd) {
                         g_isCrossFading = false;
                         g_ghostBitmap = nullptr; // Cleanup
                         // Draw Full Final
-                        context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                        context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                     } else {
                         // 1. Draw Ghost (Stretched Thumbnail)
                         context->DrawBitmap(g_ghostBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
@@ -4499,7 +4870,7 @@ void OnPaint(HWND hwnd) {
                         }
 
                         // 2. Draw Full (Fading In)
-                        context->DrawBitmap(g_currentBitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                        context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                         
                         // Continue Animation
                         RequestRepaint(PaintLayer::Image);
@@ -4508,7 +4879,7 @@ void OnPaint(HWND hwnd) {
             } 
             else if (g_renderEngine->IsWarpMode()) {
                 // Warp Mode (Blur) - PRIORITY 2
-                g_renderEngine->DrawBitmapWithBlur(g_currentBitmap.Get(), destRect);
+                g_renderEngine->DrawBitmapWithBlur(g_imageResource.bitmap.Get(), destRect);
                 
                 // [SlowMotion Debug] Red border when showing Scout preview (blurry) in Warp mode too
                 if (g_slowMotionMode && g_isBlurry) {
@@ -4533,7 +4904,7 @@ void OnPaint(HWND hwnd) {
                 D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
                     ? D2D1_INTERPOLATION_MODE_LINEAR 
                     : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC; // Mipmap-based for extreme downscale
-                context->DrawBitmap(g_currentBitmap.Get(), destRect, 1.0f, interpMode);
+                context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, 1.0f, interpMode);
                 
                 // [SlowMotion Debug] Red border when showing Scout preview (blurry)
                 if (g_slowMotionMode && g_isBlurry) {
@@ -4554,6 +4925,7 @@ void OnPaint(HWND hwnd) {
                 }
             }
         }
+#endif
         
         // Reset transform for OSD and UI elements
         context->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -4645,7 +5017,7 @@ void OnPaint(HWND hwnd) {
                 s.syncStatus = (s.targetHash == s.renderHash);
 
                 // Inject Image Specs
-                if (g_currentBitmap) {
+                if (g_imageResource) {
                 }
 
                 s.isScaled = g_isImageScaled; // [Two-Stage] Pass scaled state to HUD
@@ -4700,7 +5072,7 @@ void OnPaint(HWND hwnd) {
         g_uiRenderer->Render(hwnd);
     }
     
-    // Commit DirectComposition
+    // Commit DirectComposition (Required for UI layer visibility)
     if (g_compEngine) g_compEngine->Commit();
 
     ValidateRect(hwnd, nullptr);

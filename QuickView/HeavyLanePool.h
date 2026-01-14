@@ -47,6 +47,9 @@ public:
     
     // [Two-Stage] Submit for full resolution decode (no scaling)
     void SubmitFullDecode(const std::wstring& path, ImageID imageId);
+
+    // [Module C] Submit for Region of Interest (ROI) Re-bake
+    void SubmitRoi(const std::wstring& path, ImageID imageId, D2D1_RECT_F roiRect);
     
     // === Cancellation ===
     // [ImageID] Cancel tasks that don't match the current imageId
@@ -129,6 +132,8 @@ private:
         std::wstring path;
         ImageID imageId;
         bool isFullDecode = false;  // [Two-Stage] true = full resolution, false = scaled
+        bool isRoi = false;         // [Module C]
+        D2D1_RECT_F roiRect = {0};  // [Module C]
     };
     std::deque<JobInfo> m_pendingJobs;
     
@@ -145,7 +150,7 @@ private:
     
     // Perform actual decode (calls into ImageLoader)
     // [Two-Stage] isFullDecode=true for full resolution, false for fit-to-screen IDCT scaling
-    void PerformDecode(int workerId, const std::wstring& path, ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode = false);
+    void PerformDecode(int workerId, const std::wstring& path, ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode = false, bool isRoi = false, D2D1_RECT_F roiRect = {0});
     
     // Expansion/Shrink logic
     void TryExpand();  // Called when job submitted

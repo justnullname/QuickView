@@ -106,6 +106,35 @@ void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId) 
     m_poolCv.notify_one();
 }
 
+
+
+// [Module C] Submit for Region of Interest (ROI) Re-bake
+void HeavyLanePool::SubmitRoi(const std::wstring& path, ImageID imageId, D2D1_RECT_F roiRect) {
+    std::lock_guard lock(m_poolMutex);
+    
+    // Add to queue with isRoi = true
+    JobInfo job;
+    job.path = path;
+    job.imageId = imageId;
+    job.isFullDecode = false; 
+    job.isRoi = true;
+    job.roiRect = roiRect;
+    
+    m_pendingJobs.push_back(job);
+    
+    wchar_t buf[256];
+    swprintf_s(buf, L"[HeavyPool] SubmitRoi: path=%s, ImageID=%zu, Rect=(%.1f,%.1f,%.1f,%.1f)\n",
+        path.substr(path.find_last_of(L"\\/") + 1).c_str(), imageId,
+        roiRect.left, roiRect.top, roiRect.right, roiRect.bottom);
+    OutputDebugStringW(buf);
+    
+    // Try to expand if all workers are busy
+    TryExpand();
+    
+    // Wake up a waiting worker
+    m_poolCv.notify_one();
+}
+
 void HeavyLanePool::TryExpand() {
     // Already holding m_poolMutex
     
@@ -208,6 +237,8 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         std::wstring path;
         ImageID imageId = 0;  // [ImageID]
         bool isFullDecode = false;  // [Two-Stage] 
+        bool isRoi = false;
+        D2D1_RECT_F roiRect = {0}; 
         
         // Wait for job
         {
@@ -224,18 +255,26 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             m_pendingJobs.pop_front();
             path = job.path;
             imageId = job.imageId;
+            imageId = job.imageId;
             isFullDecode = job.isFullDecode;  // [Two-Stage]
+            isRoi = job.isRoi;           // [Module C]
+            roiRect = job.roiRect;// [Module C]
             
             self.currentPath = path;
             self.currentId = imageId;  // [ImageID]
             self.stopSource = std::stop_source();  // Fresh stop source for this job
             self.state = WorkerState::BUSY;
             m_busyCount.fetch_add(1);
+            
+            wchar_t dbg[128];
+            swprintf_s(dbg, L"[HeavyPool] Worker %d Job: ID=%zu Full=%d Roi=%d TgtW=%d\n", 
+                workerId, imageId, isFullDecode, isRoi, (isFullDecode ? 0 : (isRoi ? 1 : -1))); // Just checking vars
+            OutputDebugStringW(dbg);
         }
         
         // Perform decode
         auto t0 = std::chrono::steady_clock::now();
-        PerformDecode(workerId, path, imageId, st, &self.loaderName, isFullDecode);
+        PerformDecode(workerId, path, imageId, st, &self.loaderName, isFullDecode, isRoi, roiRect);
         auto t1 = std::chrono::steady_clock::now();
         
         // Decode complete
@@ -357,7 +396,7 @@ void HeavyLanePool::ShrinkerLoop(std::stop_token st) {
 // ============================================================================
 
 void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
-                                   ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode) {
+                                   ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode, bool isRoi, D2D1_RECT_F roiRect) {
     if (path.empty()) return;
     
     auto start = std::chrono::high_resolution_clock::now();
@@ -380,9 +419,28 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     
     // [Two-Stage Decode] Calculate target size based on isFullDecode flag
     // If isFullDecode, use 0 (forces full resolution decode)
-    // Otherwise, fit to screen (enables IDCT scaling for large images)
-    int targetW = isFullDecode ? 0 : GetSystemMetrics(SM_CXSCREEN);
-    int targetH = isFullDecode ? 0 : GetSystemMetrics(SM_CYSCREEN);
+    // [Module C Refactor] If isRoi, calculate dynamic size based on ROI rect
+    // [Unified Logic] Initial load uses 0 (Full Decode) same as FastLane
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    
+    int targetW = 0;
+    int targetH = 0;
+    
+    if (isRoi) {
+        // [User Spec] Fixed 150% Screen Canvas
+        // Performance: Constant rendering cost regardless of SVG size
+        // The ROI rect determines WHICH part to render, not HOW MANY pixels
+        targetW = (int)(screenW * 1.5f);
+        targetH = (int)(screenH * 1.5f);
+        
+        wchar_t dbg[256];
+        float roiW = roiRect.right - roiRect.left;
+        float roiH = roiRect.bottom - roiRect.top;
+        swprintf_s(dbg, L"[HeavyLane] ROI Target: %dx%d (Fixed 150%% Screen, ROI=%.0fx%.0f)\n", 
+            targetW, targetH, roiW, roiH);
+        OutputDebugStringW(dbg);
+    }
 
     // [v5.3] Metadata container (populated by LoadToFrame directly)
     CImageLoader::ImageMetadata meta;
@@ -391,7 +449,7 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
     auto decodeStart = std::chrono::high_resolution_clock::now();
     HRESULT hr = m_loader->LoadToFrame(path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
         [&]() { return st.stop_requested(); },
-        &meta); // [v5.3] Pass metadata pointer
+        &meta, isRoi ? &roiRect : nullptr); // [Module C] Pass ROI Rect
     
     // [Debug] Ctrl+4 forces WIC fallback logic in ImageLoader, but if we need to enforce valid frame output...
     // Note: ImageLoader.cpp handles DisableDirectD2D check now.
@@ -439,6 +497,17 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
                  meta.Height = rawFrame.height;
             }
             
+            // [Fix] Set Format from file extension if LoadToFrame didn't set it
+            // Critical for ROI detection (requires Format == L"SVG")
+            if (meta.Format.empty()) {
+                size_t dotPos = path.find_last_of(L'.');
+                if (dotPos != std::wstring::npos) {
+                    std::wstring ext = path.substr(dotPos + 1);
+                    for (auto& c : ext) c = towupper(c);
+                    meta.Format = ext;
+                }
+            }
+            
             // [v5.3 Lazy] No Sync ReadMetadata here. 
             // Full EXIF will be loaded ASYNC via RequestFullMetadata when Info Panel opens.
             
@@ -452,16 +521,20 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             
             // Build event with rawFrame (new Direct D2D path)
             EngineEvent evt;
-            evt.type = EventType::FullReady;
+            evt.type = isRoi ? EventType::RoiReady : EventType::FullReady; // [Module C]
+            evt.roiRect = roiRect; // [Module C]
             evt.filePath = path;
             evt.imageId = imageId;
             evt.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame)); // Move to heap-managed shared_ptr
             evt.metadata = std::move(meta);
             
-            // Determine if scaled
+            // Determine if scaled (and if we can improve)
+            // [User Spec] Stop requesting Full Decode if we've hit hardware limits or achieved target
+            bool hitLimit = (evt.rawFrame->width >= 3500 || evt.rawFrame->height >= 3500);
             bool wasScaled = (evt.rawFrame->width < (int)(evt.metadata.Width - 8) || 
                               evt.rawFrame->height < (int)(evt.metadata.Height - 8));
-            evt.isScaled = wasScaled;
+            // Only mark as "scaled" (needing upgrade) if we're below limit AND below target
+            evt.isScaled = wasScaled && !hitLimit;
             
             QueueResult(std::move(evt));
         }

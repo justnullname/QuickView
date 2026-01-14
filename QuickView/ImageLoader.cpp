@@ -1,15 +1,8 @@
 #include "pch.h"
 #include <filesystem>
 
-// NanoSVG
-#pragma warning(push)
-#pragma warning(disable: 4244) 
-#pragma warning(disable: 4702)
-#define NANOSVG_IMPLEMENTATION
-#define NANOSVGRAST_IMPLEMENTATION
-#include "../third_party/nanosvg/nanosvg.h"
-#include "../third_party/nanosvg/nanosvgrast.h"
-#pragma warning(pop)
+// NanoSVG Removed per user request
+
 #include "ImageLoader.h"
 #include "EditState.h" // For g_runtime
 // [Deep Cancel] Use low-level libjpeg API for scanline cancellation
@@ -1755,10 +1748,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         HRESULT hr = LoadTinyExrImage(filePath, ppBitmap);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"TinyEXR"; return S_OK; }
     }
-    else if (detectedFmt == L"SVG") {
-        HRESULT hr = LoadSVG(filePath, ppBitmap);
-        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"NanoSVG"; return S_OK; }
-    }
+    // NanoSVG Removed
     else if (detectedFmt == L"QOI") {
          HRESULT hr = LoadQoiWuffs(filePath, ppBitmap);
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs QOI"; return S_OK; }
@@ -1797,10 +1787,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
                  return S_OK; 
              }
          }
-         else if (path.ends_with(L".svg")) {
-             HRESULT hr = LoadSVG(filePath, ppBitmap);
-             if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"NanoSVG"; return S_OK; }
-         }
+         // NanoSVG Removed
          else if (path.ends_with(L".tga")) {
              HRESULT hr = LoadTgaWuffs(filePath, ppBitmap);
              if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs TGA"; return S_OK; }
@@ -2772,90 +2759,8 @@ namespace QuickView {
             }
         } // namespace RawCodec
 
-        namespace NanoSVG {
-            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
-                // NanoSVG inputs must be null-terminated string (it parses XML)
-                // We make a safe copy
-                std::vector<char> xmlInput(size + 1);
-                memcpy(xmlInput.data(), data, size);
-                xmlInput[size] = '\0'; // Ensure Null Terminator
+        // NanoSVG namespace removed
 
-                NSVGimage* image = nsvgParse(xmlInput.data(), "px", 96.0f);
-                if (!image) return E_FAIL;
-
-                int w = (int)image->width;
-                int h = (int)image->height;
-                float scale = 1.0f;
-
-                if (w <= 0 || h <= 0) { nsvgDelete(image); return E_FAIL; }
-
-                // [v6.8] Target Size Support
-                if (ctx.targetWidth > 0 && ctx.targetHeight > 0) {
-                     // Scale to fit? Or fill?
-                     // Usually fit within.
-                     float sx = (float)ctx.targetWidth / w;
-                     float sy = (float)ctx.targetHeight / h;
-                     scale = (sx < sy) ? sx : sy;
-                }
-                else if (ctx.targetWidth > 0) {
-                     scale = (float)ctx.targetWidth / w;
-                }
-
-                int finalW = (int)(w * scale);
-                int finalH = (int)(h * scale);
-                
-                // Rasterize
-                NSVGrasterizer* rast = nsvgCreateRasterizer();
-                if (!rast) { nsvgDelete(image); return E_OUTOFMEMORY; }
-
-                int stride = CalculateSIMDAlignedStride(finalW, 4);
-                size_t totalSize = (size_t)stride * finalH;
-                uint8_t* pixels = ctx.allocator(totalSize);
-
-                if (!pixels) {
-                    nsvgDeleteRasterizer(rast);
-                    nsvgDelete(image);
-                    return E_OUTOFMEMORY;
-                }
-
-                // Rasterize directly to buffer?
-                // NanoSVG rasterizes packed RGBA.
-                // We need BGRA.
-                // Either rasterize to temp and convert, or rasterize and swap?
-                // Rasterize allows custom stride.
-                // But it writes RGBA.
-                
-                // Let's rasterize to pixels (it writes RGBA).
-                // Then swizzle in place.
-                nsvgRasterize(rast, image, 0, 0, scale, pixels, finalW, finalH, stride);
-                
-                // Swizzle RB
-                // Use SIMD if possible, or simple loop
-                for (int y = 0; y < finalH; ++y) {
-                    uint8_t* row = pixels + (size_t)y * stride;
-                    for (int x = 0; x < finalW; ++x) {
-                        uint8_t r = row[x*4+0];
-                        uint8_t b = row[x*4+2];
-                        row[x*4+0] = b;
-                        row[x*4+2] = r;
-                    }
-                }
-
-                nsvgDeleteRasterizer(rast);
-                nsvgDelete(image);
-
-                result.pixels = pixels;
-                result.width = finalW;
-                result.height = finalH;
-                result.stride = stride;
-                result.format = PixelFormat::BGRA8888;
-                result.success = true;
-                result.metadata.FormatDetails = L"NanoSVG";
-                result.metadata.Width = finalW; // Or Original W?
-                result.metadata.Height = finalH;
-                return S_OK;
-            }
-        }
 
         namespace TinyEXR {
             static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
@@ -3149,13 +3054,7 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
             HRESULT hr = Wuffs::LoadWBMP(fileBuf.data(), fileBuf.size(), ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs WBMP (Unified)"; return S_OK; }
         }
-        else if (fmt == L"SVG") {
-             HRESULT hr = NanoSVG::Load(fileBuf.data(), fileBuf.size(), ctx, result);
-             if (SUCCEEDED(hr)) { 
-                 // NanoSVG populates LoaderName
-                 return S_OK; 
-             }
-        }
+        /* NanoSVG Removed */
         else if (fmt == L"EXR") {
              HRESULT hr = TinyEXR::Load(fileBuf.data(), fileBuf.size(), ctx, result);
              if (SUCCEEDED(hr)) { 
@@ -3607,6 +3506,57 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
     // Fast Pass skips LibRaw (too slow ~10ms).
     // Let WIC or Full Loader handle it.
     
+    // --- [Module B] SVG Detection & Dimensions ---
+    bool isSvgExt = false;
+    std::wstring pathStr = filePath;
+    if (pathStr.length() > 4) {
+        std::wstring ext = pathStr.substr(pathStr.length() - 4);
+        if (_wcsicmp(ext.c_str(), L".svg") == 0) isSvgExt = true;
+    }
+
+    // Check content (XML/SVG) or extension
+    if (isSvgExt || (size >= 5 && data[0] == '<' && (data[1] == '?' || data[1] == 's'))) {
+        pInfo->format = L"SVG";
+        
+        // Default size if parsing fails
+        pInfo->width = 512;
+        pInfo->height = 512; 
+        
+        // Parse Dimensions (approximate from first 64KB)
+        std::string xml(data, data + size);
+        
+        try {
+            // Priority 1: viewBox="0 0 W H"
+            std::regex reViewBox("viewBox=\"([0-9\\.]+) ([0-9\\.]+) ([0-9\\.]+) ([0-9\\.]+)\"");
+            std::smatch m;
+            if (std::regex_search(xml, m, reViewBox)) {
+                float w = std::stof(m[3]);
+                float h = std::stof(m[4]);
+                if (w > 0 && h > 0) {
+                    pInfo->width = (int)w;
+                    pInfo->height = (int)h;
+                    return S_OK;
+                }
+            }
+            
+            // Priority 2: width="..." height="..."
+            std::regex reWidth("width=\"([0-9\\.]+)[a-z]*\"");
+            std::regex reHeight("height=\"([0-9\\.]+)[a-z]*\"");
+            float w = 0, h = 0;
+            
+            if (std::regex_search(xml, m, reWidth)) w = std::stof(m[1]);
+            if (std::regex_search(xml, m, reHeight)) h = std::stof(m[1]);
+            
+            if (w > 0 && h > 0) {
+                pInfo->width = (int)w;
+                pInfo->height = (int)h;
+            }
+        } catch (...) {
+            // Ignore parsing errors, return default
+        }
+        return S_OK;
+    }
+
     return E_FAIL;
 }
 HRESULT CImageLoader::GetImageSize(LPCWSTR filePath, UINT* width, UINT* height) {
@@ -3818,62 +3768,8 @@ HRESULT CImageLoader::LoadTinyExrImage(LPCWSTR filePath, IWICBitmap** ppBitmap) 
 // ----------------------------------------------------------------------------
 // NanoSVG Decoder (SVG Support)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadSVG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
-    std::vector<uint8_t> fileData;
-    if (!ReadFileToVector(filePath, fileData)) return E_FAIL;
+// LoadSVG removed (NanoSVG cleanup)
 
-    // NanoSVG parses char* string (null terminated recommended)
-    std::vector<char> xmlData(fileData.begin(), fileData.end());
-    xmlData.push_back('\0'); 
-
-    // Parse (96 DPI default units)
-    // Note: nsvgParse modifies the input string content during parsing (destructive)
-    NSVGimage* image = nsvgParse(xmlData.data(), "px", 96.0f);
-    if (!image) return E_FAIL;
-
-    // Scale Logic: 2.0x for crisp rendering
-    float scale = 2.0f; 
-    
-    // Safety size limit (e.g. 8k)
-    float maxDim = 8192.0f;
-    if (image->width * scale > maxDim || image->height * scale > maxDim) {
-         float aspect = image->width / image->height;
-         if (aspect > 1.0f) {
-             scale = maxDim / image->width;
-         } else {
-             scale = maxDim / image->height;
-         }
-    }
-
-    int width = (int)(image->width * scale);
-    int height = (int)(image->height * scale);
-    
-    if (width <= 0 || height <= 0) {
-        nsvgDelete(image);
-        return E_FAIL;
-    }
-
-    // Rasterize
-    NSVGrasterizer* rast = nsvgCreateRasterizer();
-    if (!rast) {
-        nsvgDelete(image);
-        return E_OUTOFMEMORY;
-    }
-
-    // NanoSVG generates RGBA (32-bit)
-    size_t stride = width * 4;
-    size_t size = stride * height;
-    std::vector<uint8_t> imgData(size);
-
-    nsvgRasterize(rast, image, 0, 0, scale, imgData.data(), width, height, (int)stride);
-
-    nsvgDeleteRasterizer(rast);
-    nsvgDelete(image);
-
-    // Create WIC Bitmap (GUID_WICPixelFormat32bppRGBA)
-    return CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat32bppRGBA,
-                                     (UINT)stride, (UINT)size, imgData.data(), ppBitmap);
-}
 
 // ----------------------------------------------------------------------------
 // Wuffs NetPBM (PAM, PBM, PGM, PPM)
@@ -5792,6 +5688,11 @@ HRESULT CImageLoader::LoadThumbJPEG_Robust(LPCWSTR filePath, int targetSize, Thu
     return S_OK;
 }
 
+// [Module B] Forward Declaration for Regex Helper
+static bool GetSvgDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
+
+
+
 HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
     if (!pData) return E_INVALIDARG;
     pData->isValid = false;
@@ -5882,9 +5783,101 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
          return E_FAIL;
     }
     
+    // [Module B] Fast SVG Path
+    else if (format == L"SVG") {
+        using namespace QuickView;
+        RawImageFrame* pFrame = new RawImageFrame();
+        
+        // Smart Sizing (Delegate to LoadToFrame logic via -1)
+        
+        // We restore w, h variables because they are used later for pData->origWidth
+        uint32_t w = 0, h = 0;
+        GetSvgDimensions(filePath, &w, &h);
+        
+        int targetW = -1;
+        int targetH = -1;
+        
+        // Use LoadToFrame (Hybrid D2D Path) on Current Thread
+        HRESULT hr = LoadToFrame(filePath, pFrame, nullptr, targetW, targetH, &pData->loaderName, nullptr, nullptr);
+        
+        if (SUCCEEDED(hr)) {
+             pData->width = pFrame->width;
+             pData->height = pFrame->height;
+             pData->stride = pFrame->stride;
+             pData->origWidth = (w > 0) ? w : pFrame->width;
+             pData->origHeight = (h > 0) ? h : pFrame->height;
+             
+             size_t size = pData->stride * pData->height;
+             pData->pixels.resize(size);
+             if (pFrame->pixels) memcpy(pData->pixels.data(), pFrame->pixels, size);
+             
+             // pData->format = DXGI_FORMAT_B8G8R8A8_UNORM; // Not a member
+             
+             pData->isValid = true;
+             pData->isBlurry = false;
+        }
+        
+        pFrame->Release();
+        delete pFrame;
+        return hr;
+    }
+
     return E_FAIL;
 }
 
+
+// Helper: Parse SVG dimensions using Regex (Header only)
+static bool GetSvgDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height) {
+    if (!width || !height) return false;
+    
+    // Read first 4KB (usually contains header)
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    
+    char buffer[4096];
+    DWORD bytesRead = 0;
+    ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, nullptr);
+    CloseHandle(hFile);
+    
+    if (bytesRead == 0) return false;
+    
+    std::string header(buffer, bytesRead);
+    std::smatch match;
+    
+    // 1. Try viewBox="x y w h"
+    // Handles space or comma separators.
+    std::regex reViewBox("viewBox=\"[\\d\\.-]+[ ,]+[\\d\\.-]+[ ,]+([\\d\\.]+)[ ,]+([\\d\\.]+)\"");
+    if (std::regex_search(header, match, reViewBox)) {
+        try {
+            *width = (uint32_t)std::stof(match[1].str());
+            *height = (uint32_t)std::stof(match[2].str());
+            return true;
+        } catch (...) {}
+    }
+    
+    // 2. Try width="..." height="..."
+    // Handles "100px", "100", "100pt" roughly
+    std::regex reWidth("width=\"([\\d\\.]+)[a-z]*\"");
+    std::regex reHeight("height=\"([\\d\\.]+)[a-z]*\"");
+    
+    float w=0, h=0;
+    bool foundW = false, foundH = false;
+    
+    if (std::regex_search(header, match, reWidth)) {
+        try { w = std::stof(match[1].str()); foundW = true; } catch(...) {}
+    }
+    if (std::regex_search(header, match, reHeight)) {
+        try { h = std::stof(match[1].str()); foundH = true; } catch(...) {}
+    }
+    
+    if (foundW && foundH) {
+        *width = (uint32_t)w;
+        *height = (uint32_t)h;
+        return true;
+    }
+    
+    return false;
+}
 
 // Helper: Parse AVIF dimensions using libavif (Header only)
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height) {
@@ -6022,6 +6015,28 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
             result.type = ImageType::TypeB_Heavy;
         }
     }
+    else if (result.format == L"SVG") {
+        // [Module B] Smart Dispatch & Measure
+        // 1. Extract Dimensions (Regex)
+        uint32_t w = 0, h = 0;
+        if (GetSvgDimensions(filePath, &w, &h)) {
+             result.width = w;
+             result.height = h;
+        } else {
+             // Fallback
+             result.width = 512;
+             result.height = 512;
+        }
+        
+        // 2. Dispatch Logic
+        // <= 512KB: FastLane (In-place Render)
+        // > 512KB: HeavyLane (Background Render)
+        if (result.fileSize <= 512 * 1024) {
+             result.type = ImageType::TypeA_Sprint;
+        } else {
+             result.type = ImageType::TypeB_Heavy;
+        }
+    }
     else {
         // Unknown format: Try Express if small
         if (result.fileSize < 2 * 1024 * 1024 && pixels < 2100000) {
@@ -6050,7 +6065,8 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                                    int targetWidth, int targetHeight,
                                    std::wstring* pLoaderName,
                                    CancelPredicate checkCancel,
-                                   ImageMetadata* pMetadata) {
+                                   ImageMetadata* pMetadata,
+                                   const D2D1_RECT_F* pSourceRect) {
     using namespace QuickView;
     
     if (!filePath || !outFrame) return E_INVALIDARG;
@@ -6248,228 +6264,62 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                 fileData.assign(svgContent.begin(), svgContent.end());
             }
 
-            // 1. Create D3D11 Device
-            ComPtr<ID3D11Device> pD3DDevice;
-            D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
-            D3D_FEATURE_LEVEL featureLevel;
-            
-            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, featureLevels, ARRAYSIZE(featureLevels), D3D11_SDK_VERSION, &pD3DDevice, &featureLevel, nullptr);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] D3D11CreateDevice Failed\n"); return hr; }
+            // [D2D Native] Simplified Loading: Store XML only
+            // =========================================================
+            // No rendering here! We just pass the sanitized XML to UI thread.
+            // =========================================================
 
-            // 2. Create D2D Device & Context
-            ComPtr<IDXGIDevice> pDxgiDevice;
-            hr = pD3DDevice.As(&pDxgiDevice);
-            if (FAILED(hr)) return hr;
+            // 2. Parse Dimensions (Regex)
+            // We need dimensions for the initial window size.
+            // Since we have the sanitized content string, we can parse it directly.
+            float svgW = 512.0f;
+            float svgH = 512.0f;
+            
+            // Reconstruct string from fileData (it was sanitized above)
+            std::string svgContent(fileData.begin(), fileData.end());
 
-            ComPtr<ID2D1Factory1> pD2DFactory;
-            D2D1_FACTORY_OPTIONS options = {};
-            #ifdef _DEBUG
-            options.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
-            #endif
-            hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), &options, &pD2DFactory);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] D2D1CreateFactory Failed\n"); return hr; }
-
-            ComPtr<ID2D1Device> pD2DDevice;
-            hr = pD2DFactory->CreateDevice(pDxgiDevice.Get(), &pD2DDevice);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] CreateDevice Failed\n"); return hr; }
-
-            ComPtr<ID2D1DeviceContext5> pContext5;
-            ComPtr<ID2D1DeviceContext> pContextBase;
-            hr = pD2DDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &pContextBase);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] CreateDeviceContext Failed\n"); return hr; }
-
-            hr = pContextBase.As(&pContext5); 
-            if (FAILED(hr)) return hr;
-
-            // 3. Load SVG Document
-            // Note: SHCreateMemStream is lightweight but sometimes lacks full IStream features (Stat).
-            // Use CreateStreamOnHGlobal for maximum compatibility with D2D.
-            ComPtr<IStream> pStream;
-            
-            HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, fileData.size());
-            if (!hMem) return E_OUTOFMEMORY;
-            
-            void* pMem = GlobalLock(hMem);
-            if (pMem) {
-                memcpy(pMem, fileData.data(), fileData.size());
-                GlobalUnlock(hMem);
-                
-                // Create stream with "release on release" = TRUE
-                hr = CreateStreamOnHGlobal(hMem, TRUE, &pStream);
-            } else {
-                GlobalFree(hMem);
-                return E_FAIL;
-            }
-            
-            if (FAILED(hr) || !pStream) {
-                 wchar_t err[64]; swprintf_s(err, L"[SVG] Stream Create Failed HR=0x%X\n", hr); OutputDebugStringW(err);
-                 return hr;
-            }
-
-            ComPtr<ID2D1SvgDocument> pSvgDoc;
-            // FIX: Viewport size cannot be 0x0. This causes E_INVALIDARG (0x80070057).
-            // Use a dummy non-zero size. We reset it properly with SetViewportSize later.
-            hr = pContext5->CreateSvgDocument(pStream.Get(), D2D1_SIZE_F{100, 100}, &pSvgDoc);
-            if (FAILED(hr)) { 
-                wchar_t err[64]; swprintf_s(err, L"[SVG] CreateSvgDocument Failed HR=0x%X\n", hr); OutputDebugStringW(err);
-                return hr; 
-            }
-
-            // 4. Determine Dimensions
-            ID2D1SvgElement* pRoot = nullptr; // Raw pointer
-            ComPtr<ID2D1SvgElement> spRoot; // Use ComPtr for safety if GetRoot AddRefs? GetRoot does AddRef.
-            pSvgDoc->GetRoot(&spRoot);
-            pRoot = spRoot.Get();
-            
-            if (!pRoot) { OutputDebugStringW(L"[SVG] No Root Element\n"); return E_FAIL; }
-
-            float svgW = 0.0f;
-            float svgH = 0.0f;
-            float svgX = 0.0f;
-            float svgY = 0.0f;
-
-            D2D1_SVG_VIEWBOX viewBox = {0};
-            bool hasViewBox = SUCCEEDED(pRoot->GetAttributeValue(L"viewBox", D2D1_SVG_ATTRIBUTE_POD_TYPE_VIEWBOX, &viewBox, sizeof(viewBox)));
-            
-            if (hasViewBox) {
-                svgW = viewBox.width;
-                svgH = viewBox.height;
-                svgX = viewBox.x;
-                svgY = viewBox.y;
-            } else {
-                 auto GetAttrFloat = [&](LPCWSTR name) -> float {
-                    wchar_t val[64] = {0};
-                    if (SUCCEEDED(pRoot->GetAttributeValue(name, D2D1_SVG_ATTRIBUTE_STRING_TYPE_SVG, val, 64))) {
-                        return (float)_wtof(val);
-                    }
-                    return 0.0f;
-                };
-                svgW = GetAttrFloat(L"width");
-                svgH = GetAttrFloat(L"height");
-                if (svgW <= 0) svgW = 512;
-                if (svgH <= 0) svgH = 512;
-            }
-            
-            wchar_t debugBuf[256];
-            swprintf_s(debugBuf, L"[SVG] Path=%s VB=%d Pos=(%.2f,%.2f) Size=%.2fx%.2f\n", filePath, hasViewBox, svgX, svgY, svgW, svgH);
-            OutputDebugStringW(debugBuf);
-             
-            float scale = 1.0f;
-            float maxDim = 4096.0f; 
-
-            if (targetWidth > 0 && targetHeight > 0) {
-                 float scaleW = (svgW > 0) ? (float)targetWidth / svgW : 1.0f;
-                 float scaleH = (svgH > 0) ? (float)targetHeight / svgH : 1.0f;
-                 scale = std::min(scaleW, scaleH);
-            } else {
-                 if (svgW > maxDim || svgH > maxDim) {
-                      scale = std::min(maxDim / svgW, maxDim / svgH);
-                 } else if (svgW < 1024 && svgH < 1024) {
-                      scale = 2.0f;
-                 }
-            }
-            
-            if (svgW * scale > 16383.0f) scale = 16383.0f / svgW;
-            if (svgH * scale > 16383.0f) scale = 16383.0f / svgH;
-            
-            int finalW = (int)(svgW * scale);
-            int finalH = (int)(svgH * scale);
-            if (finalW <= 0) finalW = 1;
-            if (finalH <= 0) finalH = 1;
-
-            // 5. Create D2D Target Bitmap (The "GPU" Surface)
-            ComPtr<ID2D1Bitmap1> pD2DTarget;
-            D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_TARGET,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
-            );
-            hr = pContext5->CreateBitmap(D2D1::SizeU(finalW, finalH), nullptr, 0, &props, &pD2DTarget);
-            if (FAILED(hr)) {
-                 wchar_t err[64]; swprintf_s(err, L"[SVG] CreateBitmap Target Failed HR=0x%X\n", hr); OutputDebugStringW(err);
-                 return hr;
-            }
-
-            // 6. Set Target & Draw
-            pContext5->SetTarget(pD2DTarget.Get());
-            
-            pContext5->BeginDraw();
-            pContext5->Clear(D2D1::ColorF(0, 0.0f)); // Transparent
-            
-            pSvgDoc->SetViewportSize(D2D1_SIZE_F{svgW, svgH});
-
-            D2D1_MATRIX_3X2_F translation = D2D1::Matrix3x2F::Translation(-svgX, -svgY);
-            D2D1_MATRIX_3X2_F scaling = D2D1::Matrix3x2F::Scale(scale, scale);
-            pContext5->SetTransform(translation * scaling);
-            
-            pContext5->DrawSvgDocument(pSvgDoc.Get());
-            
-            hr = pContext5->EndDraw();
-            if (FAILED(hr)) {
-                wchar_t err[64]; swprintf_s(err, L"[SVG] EndDraw Failed HR=0x%X\n", hr); OutputDebugStringW(err);
-                return hr;
-            }
-            
-            // 7. Readback Strategy: D2D Staging Bitmap (CPU_READ)
-            // WARP/D3D execution happens on device memory (or virtual device memory).
-            // We must explicitly copy to a CPU-mappable staging surface to read it safely.
-            
-            ComPtr<ID2D1Bitmap1> pStagingBitmap;
-            D2D1_BITMAP_PROPERTIES1 stagingProps = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
-            );
-            
-            hr = pContext5->CreateBitmap(D2D1::SizeU(finalW, finalH), nullptr, 0, &stagingProps, &pStagingBitmap);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] Create Staging Bitmap Failed\n"); return hr; }
-            
-            // Copy from Target to Staging
-            hr = pStagingBitmap->CopyFromBitmap(nullptr, pD2DTarget.Get(), nullptr);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] CopyFromBitmap Failed\n"); return hr; }
-            
-            // Map Staging Bitmap
-            D2D1_MAPPED_RECT mappedRect;
-            hr = pStagingBitmap->Map(D2D1_MAP_OPTIONS_READ, &mappedRect);
-            if (FAILED(hr)) { OutputDebugStringW(L"[SVG] Map Failed\n"); return hr; }
-            
-            // 8. Copy to Output Frame
-            if (SUCCEEDED(hr)) {
-                UINT sourceStride = mappedRect.pitch;
-                UINT targetStride = finalW * 4;
-                UINT targetSize = targetStride * finalH;
-                
-                uint8_t* pixels = AllocateBuffer(targetSize);
-                if (!pixels) {
-                    pStagingBitmap->Unmap();
-                    return E_OUTOFMEMORY;
+            try {
+                // Try viewBox="x y w h"
+                std::regex reViewBox("viewBox=\"[\\d\\.-]+[ ,]+[\\d\\.-]+[ ,]+([\\d\\.]+)[ ,]+([\\d\\.]+)\"");
+                std::smatch match;
+                if (std::regex_search(svgContent, match, reViewBox)) {
+                    svgW = std::stof(match[1]);
+                    svgH = std::stof(match[2]);
+                } else {
+                     // Try width/height (basic)
+                    std::regex reWidth("width=\"([\\d\\.]+)[a-z]*\"");
+                    std::regex reHeight("height=\"([\\d\\.]+)[a-z]*\"");
+                    if (std::regex_search(svgContent, match, reWidth)) svgW = std::stof(match[1]);
+                    if (std::regex_search(svgContent, match, reHeight)) svgH = std::stof(match[1]);
                 }
-                
-                // Copy Row-by-Row
-                 for (int y = 0; y < finalH; ++y) {
-                     const uint8_t* pSrcRow = (const uint8_t*)mappedRect.bits + (y * sourceStride);
-                     uint8_t* pDstRow = pixels + (y * targetStride);
-                     memcpy(pDstRow, pSrcRow, targetStride);
-                 }
-                 
-                 outFrame->pixels = pixels;
-                 outFrame->width = finalW;
-                 outFrame->height = finalH;
-                 outFrame->stride = targetStride;
-                 outFrame->format = PixelFormat::BGRA8888;
-                 
-                 SetupDeleter(pixels);
-                 
-                 pStagingBitmap->Unmap();
+            } catch (...) {
+                OutputDebugStringW(L"[SVG] Dimension parse failed, using default\n");
             }
             
-            // pLock releases on destruction
+            if (svgW <= 0) svgW = 512;
+            if (svgH <= 0) svgH = 512;
+
+            // 3. Populate RawImageFrame
+            outFrame->format = PixelFormat::SVG_XML;
+            outFrame->width = (int)svgW;
+            outFrame->height = (int)svgH;
+            outFrame->stride = 0; // No pixels
+            outFrame->pixels = nullptr;
             
-            if (pLoaderName) *pLoaderName = L"D2D Native";
+            // Allocate SvgData
+            outFrame->svg = std::make_unique<RawImageFrame::SvgData>();
+            outFrame->svg->xmlData.assign(svgContent.begin(), svgContent.end());
+            outFrame->svg->viewBoxW = svgW;
+            outFrame->svg->viewBoxH = svgH;
+             
+            if (pLoaderName) *pLoaderName = L"SVG XML";
             if (pMetadata) {
-                pMetadata->LoaderName = L"D2D SVG"; 
-                pMetadata->FormatDetails = L"Vector (Baked)";
-                pMetadata->Width = finalW;
-                pMetadata->Height = finalH;
+                pMetadata->LoaderName = L"SVG XML"; 
+                pMetadata->FormatDetails = L"Vector (Native)";
+                pMetadata->Width = (UINT)svgW;
+                pMetadata->Height = (UINT)svgH;
             }
+            
             return S_OK;
         } // End if (isSvg)
     }

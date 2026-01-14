@@ -23,8 +23,9 @@ namespace QuickView {
 enum class PixelFormat : uint8_t {
     BGRA8888,           // D2D Native (DXGI_FORMAT_B8G8R8A8_UNORM) - Preferred
     BGRX8888,           // D2D Native (Opaque Alpha)
-    RGBA8888,           // Some decoders (stb, nanosvg) - Compatible
-    R32G32B32A32_FLOAT  // HDR (TinyEXR) - 128-bit floating point
+    RGBA8888,           // Some decoders (stb) - Compatible
+    R32G32B32A32_FLOAT, // HDR (TinyEXR) - 128-bit floating point
+    SVG_XML             // [D2D Native] Raw SVG XML Data
 };
 
 // ============================================================================
@@ -39,7 +40,7 @@ enum class PixelFormat : uint8_t {
 
 struct RawImageFrame {
     // === Data Section ===
-    uint8_t* pixels = nullptr;  // Raw pixel data pointer
+    uint8_t* pixels = nullptr;  // Raw pixel data pointer (nullptr if SVG)
     int width = 0;              // Image width in pixels
     int height = 0;             // Image height in pixels
     int stride = 0;             // Bytes per row (pitch), must be aligned
@@ -50,6 +51,18 @@ struct RawImageFrame {
     
     // [v8.7] EXIF Orientation (1-8)
     int exifOrientation = 1; /* 1 = Normal */
+
+    // [D2D Native] SVG 专用数据 (仅当 format == SVG_XML 时使用)
+    // 使用 unique_ptr 确保非 SVG 路径零开销
+    struct SvgData {
+        std::vector<uint8_t> xmlData;  // 净化后的 SVG 源码
+        float viewBoxW = 0;            // SVG 固有宽度
+        float viewBoxH = 0;            // SVG 固有高度
+    };
+    std::unique_ptr<SvgData> svg;  // nullptr = 非 SVG
+    
+    // Helper: 仅 SVG 调用
+    bool IsSvg() const { return format == PixelFormat::SVG_XML && svg; }
     
     // === Lifecycle Management ===
     // Callback to release memory when frame is destroyed.
@@ -60,8 +73,12 @@ struct RawImageFrame {
     
     // === Helper Methods ===
     
-    /// Check if frame contains valid data
+    /// Check if frame contains valid data (pixels for raster, or XML for SVG)
     [[nodiscard]] bool IsValid() const noexcept {
+        // SVG frames don't have pixels, only XML data
+        if (format == PixelFormat::SVG_XML && svg && !svg->xmlData.empty()) {
+            return true;
+        }
         return pixels != nullptr && width > 0 && height > 0 && stride > 0;
     }
     
@@ -120,6 +137,7 @@ struct RawImageFrame {
         height = 0;
         stride = 0;
         memoryDeleter = nullptr;
+        svg.reset(); // [D2D Native] Release SVG data
     }
     
     /// Detach pointer without calling deleter (transfers ownership out)
@@ -142,6 +160,9 @@ private:
         exifOrientation = other.exifOrientation;
         memoryDeleter = std::move(other.memoryDeleter);
         
+        // [D2D Native] Move SVG Data
+        svg = std::move(other.svg);
+        
         // Nullify source
         other.pixels = nullptr;
         other.width = 0;
@@ -150,6 +171,7 @@ private:
         // other.formatDetails is moved (empty)
         other.exifOrientation = 1;
         // memoryDeleter is moved, but setting to nullptr for clarity
+        // other.svg is moved (becomes nullptr)
     }
 };
 
