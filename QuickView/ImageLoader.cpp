@@ -3573,6 +3573,61 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
     // Fast Pass skips LibRaw (too slow ~10ms).
     // Let WIC or Full Loader handle it.
     
+    // --- [v9.9] TIFF Dimension Extraction (Fast IFD Parse) ---
+    // TIFF magic: II (49 49 2A 00) or MM (4D 4D 00 2A)
+    bool isTiffLE = (size >= 8 && data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A && data[3] == 0x00);
+    bool isTiffBE = (size >= 8 && data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00 && data[3] == 0x2A);
+    
+    if (isTiffLE || isTiffBE) {
+        pInfo->format = L"TIFF";
+        
+        auto read16 = [&](size_t off) -> uint16_t {
+            if (off + 2 > size) return 0;
+            if (isTiffLE) return data[off] | ((uint16_t)data[off+1] << 8);
+            else return ((uint16_t)data[off] << 8) | data[off+1];
+        };
+        
+        auto read32 = [&](size_t off) -> uint32_t {
+            if (off + 4 > size) return 0;
+            if (isTiffLE) return data[off] | ((uint32_t)data[off+1] << 8) | 
+                                 ((uint32_t)data[off+2] << 16) | ((uint32_t)data[off+3] << 24);
+            else return ((uint32_t)data[off] << 24) | ((uint32_t)data[off+1] << 16) | 
+                        ((uint32_t)data[off+2] << 8) | data[off+3];
+        };
+        
+        // Read IFD0 offset (at byte 4-7)
+        uint32_t ifdOffset = read32(4);
+        if (ifdOffset > 0 && ifdOffset + 2 < size) {
+            uint16_t numEntries = read16(ifdOffset);
+            
+            int w = 0, h = 0;
+            for (uint16_t i = 0; i < numEntries && (ifdOffset + 2 + i * 12 + 12) <= size; ++i) {
+                size_t entryOff = ifdOffset + 2 + i * 12;
+                uint16_t tag = read16(entryOff);
+                uint16_t type = read16(entryOff + 2);
+                uint32_t count = read32(entryOff + 4);
+                
+                // Value or offset: for small values (1-4 bytes), value is inline at entryOff+8
+                uint32_t val = 0;
+                if (type == 3 && count == 1) val = read16(entryOff + 8); // SHORT
+                else if (type == 4 && count == 1) val = read32(entryOff + 8); // LONG
+                
+                if (tag == 256) w = (int)val; // ImageWidth
+                if (tag == 257) h = (int)val; // ImageHeight
+                
+                if (w > 0 && h > 0) break;
+            }
+            
+            if (w > 0 && h > 0) {
+                pInfo->width = w;
+                pInfo->height = h;
+                return S_OK;
+            }
+        }
+        // If parsing fails, return with format set but dimensions unknown
+        return S_OK;
+    }
+    
     // --- [v9.9] EXR Dimension Extraction (Fast Header Parse) ---
     // EXR magic: 0x76 0x2F 0x31 0x01
     if (size >= 8 && data[0] == 0x76 && data[1] == 0x2F && data[2] == 0x31 && data[3] == 0x01) {

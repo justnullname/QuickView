@@ -3244,9 +3244,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
 
-        // Limits
-        if (newTotalScale < 0.1f * fitScale) newTotalScale = 0.1f * fitScale; // Min 10% of FIT
-        if (newTotalScale > 20.0f) newTotalScale = 20.0f;
+        // [v9.9] Limits - Handle tiny images where fitScale is already very large
+        // Min: 10% of FIT scale (prevents excessive zoom-out)
+        // Max: Larger of 50x fitScale OR absolute 50.0 (ensures tiny images can still zoom in)
+        float minScale = 0.1f * fitScale;
+        float maxScale = std::max(50.0f * fitScale, 50.0f);
+        
+        if (newTotalScale < minScale) newTotalScale = minScale;
+        if (newTotalScale > maxScale) newTotalScale = maxScale;
 
         if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
              // 1. Calculate Target Dimensions (Uncapped)
