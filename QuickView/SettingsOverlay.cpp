@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "SettingsOverlay.h"
+#include "ImageEngine.h"
 #include <algorithm>
 #include <Shlobj.h>
 #include <commdlg.h>
@@ -11,6 +12,12 @@
 #include <wincodec.h>
 #pragma comment(lib, "version.lib")
 #pragma comment(lib, "windowscodecs.lib")
+
+// Global Accessor from main.cpp
+extern ImageEngine* g_pImageEngine;
+extern AppConfig g_config;
+extern RuntimeConfig g_runtime;
+
 
 static std::wstring GetAppVersion() {
     wchar_t fileName[MAX_PATH];
@@ -785,28 +792,75 @@ void SettingsOverlay::BuildMenu() {
     m_tabs.push_back(tabImage);
 
     // --- 5. Advanced (高级) ---
-    SettingsTab tabAdv;
-    tabAdv.name = L"Advanced";
-    tabAdv.name = L"Advanced";
-    tabAdv.icon = L"\xE71C"; // Equalizer/Settings icon
+    SettingsTab tabAdvanced;
+    tabAdvanced.name = L"Advanced";
+    tabAdvanced.icon = L"\xE71C"; // Equalizer/Settings icon
     
     // Debug
-    tabAdv.items.push_back({ L"Features", OptionType::Header });
-    tabAdv.items.push_back({ L"Enable Debug HUD (F12)", OptionType::Toggle, &g_config.EnableDebugFeatures });
-    tabAdv.items.push_back({ L"Transparency", OptionType::Header });
-    tabAdv.items.push_back({ L"Info Panel", OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
-    tabAdv.items.push_back({ L"Toolbar", OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });
-    tabAdv.items.push_back({ L"Settings", OptionType::Slider, nullptr, &g_config.SettingsAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdvanced.items.push_back({ L"Features", OptionType::Header });
+    tabAdvanced.items.push_back({ L"Enable Debug HUD (F12)", OptionType::Toggle, &g_config.EnableDebugFeatures });
+    
+    // [Prefetch System]
+    tabAdvanced.items.push_back({ L"Performance", OptionType::Header });
+    SettingsItem itemPrefetch = { L"Prefetch System", OptionType::Segment, nullptr, nullptr, &g_config.PrefetchGear, nullptr, 0, 0, {L"Off", L"Auto", L"Eco", L"Balanced", L"Ultra"} };
+    itemPrefetch.onChange = [this]() {
+         // Apply Policy Immediately
+         if (g_pImageEngine) {
+             PrefetchPolicy policy;
+             switch (g_config.PrefetchGear) {
+                 case 0: policy.enablePrefetch = false; break;
+                 case 1: { // Auto
+                     EngineConfig autoCfg = EngineConfig::FromHardware(SystemInfo::Detect());
+                     policy.enablePrefetch = true;
+                     policy.maxCacheMemory = autoCfg.maxCacheMemory;
+                     policy.lookAheadCount = autoCfg.prefetchLookAhead;
+                     break;
+                 }
+                 case 2: // Eco
+                     policy.enablePrefetch = true;
+                     policy.maxCacheMemory = 128 * 1024 * 1024;
+                     policy.lookAheadCount = 1;
+                     break;
+                 case 3: // Balanced
+                     policy.enablePrefetch = true;
+                     policy.maxCacheMemory = 512 * 1024 * 1024;
+                     policy.lookAheadCount = 3;
+                     break;
+                 case 4: // Ultra
+                     policy.enablePrefetch = true;
+                     policy.maxCacheMemory = 2048ULL * 1024 * 1024;
+                     policy.lookAheadCount = 10;
+                     break;
+             }
+             g_pImageEngine->SetPrefetchPolicy(policy);
+             
+             std::wstring status;
+             if (policy.enablePrefetch) {
+                 wchar_t buf[64];
+                 swprintf_s(buf, L"Limit: %d MB | +%d", (int)(policy.maxCacheMemory / 1024 / 1024), policy.lookAheadCount);
+                 status = buf;
+             } else {
+                 status = L"Disabled";
+             }
+             SetItemStatus(L"Prefetch System", status, D2D1::ColorF(0.1f, 0.8f, 0.1f));
+         }
+    };
+    tabAdvanced.items.push_back(itemPrefetch);
+
+    tabAdvanced.items.push_back({ L"Transparency", OptionType::Header });
+    tabAdvanced.items.push_back({ L"Info Panel", OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdvanced.items.push_back({ L"Toolbar", OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdvanced.items.push_back({ L"Settings", OptionType::Slider, nullptr, &g_config.SettingsAlpha, nullptr, nullptr, 0.1f, 1.0f });
     
     // System Helpers
-    tabAdv.items.push_back({ L"System", OptionType::Header });
+    tabAdvanced.items.push_back({ L"System", OptionType::Header });
     
     // Reset Settings
     SettingsItem itemReset = { L"Reset All Settings", OptionType::ActionButton };
     itemReset.buttonText = L"Restore";
     itemReset.buttonActivatedText = L"Done";
     itemReset.onChange = [this]() {
-         // 1. Delete Config Files (Both Locations Unconditionally)
+         // 1. Delete Config Files
          wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
          std::wstring exeDir = exePath;
          size_t lastSlash = exeDir.find_last_of(L"\\/");
@@ -825,7 +879,6 @@ void SettingsOverlay::BuildMenu() {
          // 3. Reset Runtime
          g_runtime.ShowInfoPanel = (g_config.ExifPanelMode != 0);
          g_runtime.InfoPanelExpanded = (g_config.ExifPanelMode == 2);
-         // Reset Transparency Defaults immediately (visual feedback)
          g_config.InfoPanelAlpha = 0.85f;
          g_config.ToolbarAlpha = 0.85f;
          
@@ -835,9 +888,9 @@ void SettingsOverlay::BuildMenu() {
          // 5. Visual Feedback
          SetItemStatus(L"Reset All Settings", L"Config Initialized", D2D1::ColorF(0.1f, 0.8f, 0.1f));
     };
-    tabAdv.items.push_back(itemReset);
+    tabAdvanced.items.push_back(itemReset);
 
-    m_tabs.push_back(tabAdv);
+    m_tabs.push_back(tabAdvanced);
 
     // --- 6. About (关于) ---
     // --- 6. About (关于) ---

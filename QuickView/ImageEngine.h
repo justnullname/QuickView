@@ -4,6 +4,7 @@
 #include <deque>
 #include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 #include <atomic>
 #include <string>
@@ -38,13 +39,13 @@ enum class BrowseDirection { FORWARD, BACKWARD, IDLE };
 enum class Priority { Critical = 0, High = 1, Low = 2, Idle = 3 };
 
 struct PrefetchPolicy {
-    bool enablePrefetch = false;                   // Master switch [User Request: Disabled]
+    bool enablePrefetch = true;                   // Master switch [User Request: Disabled -> Enabled]
     size_t maxCacheMemory = 512 * 1024 * 1024;    // 512MB default
     int lookAheadCount = 3;                       // Forward prefetch count
 };
 
 struct CacheEntry {
-    ComPtr<IWICBitmapSource> bitmap;
+    std::shared_ptr<QuickView::RawImageFrame> frame;
     int sourceIndex = -1;    // Which image index this belongs to
     size_t sizeBytes = 0;    // Memory footprint (W * H * 4)
 };
@@ -123,8 +124,10 @@ public:
     void SetNavigator(FileNavigator* nav) { m_navigator = nav; }
     void UpdateView(int currentIndex, BrowseDirection dir);
     void SetPrefetchPolicy(const PrefetchPolicy& policy);
+    const PrefetchPolicy& GetPrefetchPolicy() const { return m_prefetchPolicy; }
     size_t GetCacheMemoryUsage() const;
-    ComPtr<IWICBitmapSource> GetCachedImage(const std::wstring& path);
+    int GetCacheItemCount() const;
+    std::shared_ptr<QuickView::RawImageFrame> GetCachedImage(const std::wstring& path);
 
     
     // === Debug/Instrumentation API ===
@@ -182,7 +185,12 @@ public:
         int heavyCancellations = 0; // [HUD V4] Total cancellations
         
         // Zone C: Logic
-        CacheStatus cacheSlots[5]; // [-2, -1, CUR, +1, +2]
+        static constexpr int TOPO_OFFSET = 16; // [v8.14] Centered: 16 slots each direction
+        CacheStatus cacheSlots[32]; // [-16..+15] symmetric for bidirectional browsing
+        int prefetchLookAhead = 0; // Active policy lookahead (0 if disabled)
+        int browseDirection = 0;   // -1=Backward, 0=Idle, 1=Forward
+        bool prefetchEnabled = false; // Whether prefetch is active
+
         
         // Zone D: Memory
         size_t pmrUsed = 0;
@@ -327,8 +335,12 @@ private:
     // === Phase 3: Prefetch System ===
     FileNavigator* m_navigator = nullptr;
     PrefetchPolicy m_prefetchPolicy;
-    int m_currentViewIndex = -1;
-    BrowseDirection m_lastDirection = BrowseDirection::IDLE;
+    std::atomic<int> m_currentViewIndex{-1};
+    std::atomic<int> m_lastDirectionInt{0}; // [v8.15] Atomic: -1=Back, 0=Idle, 1=Forward
+    
+    // [v8.15] Track pending images for HUD PENDING (blue) display
+    std::unordered_set<std::wstring> m_pendingPaths;
+    mutable std::mutex m_pendingMutex;
     
     // Global Cache (LRU)
     std::unordered_map<std::wstring, CacheEntry> m_cache;
@@ -336,12 +348,14 @@ private:
     mutable std::mutex m_cacheMutex;
     size_t m_currentCacheBytes = 0;
     
-    void AddToCache(int index, const std::wstring& path, IWICBitmapSource* bitmap);
+    void AddToCache(int index, const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame> frame);
     void EvictCache(int currentIndex);
     void ScheduleJob(int index, Priority pri);
     void PruneQueue(int currentIndex, BrowseDirection dir);
 
-
+    // [Fix] Manual Event Queue for Cache Hits (and other internal events)
+    std::vector<EngineEvent> m_manualEventQueue;
+    mutable std::mutex m_manualQueueMutex;
 public:
     bool HasEmbeddedThumb() const { return m_hasEmbeddedThumb.load(); }
 };

@@ -824,25 +824,91 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     // ------------------------------------------------------------------------
     // Zone C: Logic Strip (Cache)
     // ------------------------------------------------------------------------
-    py += 40.0f;
-    dc->DrawText(L"[-2]  [-1]  [CUR]  [+1]  [+2]", 27, m_debugFormat.Get(), D2D1::RectF(px, py, px+300, py+20), whiteBrush.Get());
+    // ------------------------------------------------------------------------
+    // Zone C: Logic Strip (Cache) - Refactored V2
+    // ------------------------------------------------------------------------
+    py += 45.0f; // [HUD Adjust] Down 5px
+    
+    // 1. Status Line (Hit/Miss)
+    int curIdx = ImageEngine::TelemetrySnapshot::TOPO_OFFSET; // Index 5
+    bool isHit = (s.cacheSlots[curIdx] == ImageEngine::CacheStatus::HEAVY);
+    
+    if (isHit) {
+        dc->DrawText(L"CACHE HIT \u26A1", 11, m_debugFormat.Get(), D2D1::RectF(px, py, px+150, py+20), greenBrush.Get());
+    } else {
+        dc->DrawText(L"LOADING... \u23F3", 12, m_debugFormat.Get(), D2D1::RectF(px, py, px+150, py+20), yellowBrush.Get());
+    }
+    
+    // Draw Lookahead Info
+    wchar_t laBuf[32]; swprintf_s(laBuf, L"Lookahead: +%d", s.prefetchLookAhead);
+    dc->DrawText(laBuf, wcslen(laBuf), m_debugFormat.Get(), D2D1::RectF(px+160, py, px+300, py+20), whiteBrush.Get());
+    
     py += 20.0f;
     
-    float slotW = 50.0f;
-    for (int i = 0; i < 5; ++i) {
-        D2D1_RECT_F slt = D2D1::RectF(px + i*(slotW+10), py, px + i*(slotW+10) + slotW, py + 12);
-        auto st = s.cacheSlots[i];
-        if (i == 2) dc->DrawRectangle(D2D1::RectF(slt.left-2, slt.top-2, slt.right+2, slt.bottom+2), whiteBrush.Get()); // Current Border
+    // 2. The Strip (32 Slots)
+    // Fit 32 slots into ~380px width
+    float slotW = 10.0f;
+    float stripGap = 2.0f;
+    float stripX = px;
+    
+    for (int i = 0; i < 32; ++i) {
+        float sx = stripX + i * (slotW + stripGap);
+        D2D1_RECT_F slt = D2D1::RectF(sx, py, sx + slotW, py + 16);
         
-        if (st == ImageEngine::CacheStatus::HEAVY) dc->FillRectangle(slt, (ID2D1Brush*)greenBrush.Get()); // Mem
-        else if (st == ImageEngine::CacheStatus::PENDING) dc->FillRectangle(slt, (ID2D1Brush*)blueBrush.Get()); // Queue (Requires dispatcher state)
-        else dc->FillRectangle(slt, (ID2D1Brush*)grayBrush.Get()); // Empty
+        auto st = s.cacheSlots[i];
+        
+        // Target Window Highlight (Underline/Border)
+        // [v8.12] Directional: Use browseDirection to determine which slots to highlight
+        // browseDirection: -1=Backward, 0=Idle, 1=Forward
+        bool isTarget = false;
+        if (s.browseDirection > 0) {
+            // Forward: highlight [curIdx+1 ... curIdx+lookAhead]
+            isTarget = (i > curIdx && i <= curIdx + s.prefetchLookAhead);
+        } else if (s.browseDirection < 0) {
+            // Backward: highlight [curIdx-lookAhead ... curIdx-1]
+            isTarget = (i < curIdx && i >= curIdx - s.prefetchLookAhead);
+        } else {
+            // IDLE: Highlight immediate neighbors only (+/- 1)
+            // This matches strict IDLE prefetch logic
+            isTarget = (abs(i - curIdx) == 1);
+        }
+        
+        if (i == curIdx) {
+            // Current Cursor Highlight
+            dc->DrawRectangle(D2D1::RectF(slt.left-1, slt.top-1, slt.right+1, slt.bottom+1), whiteBrush.Get(), 2.0f);
+        } else if (isTarget) {
+            // Expected Zone Underline
+            dc->FillRectangle(D2D1::RectF(slt.left, slt.bottom+2, slt.right, slt.bottom+4), grayBrush.Get());
+        }
+        
+        if (st == ImageEngine::CacheStatus::HEAVY) dc->FillRectangle(slt, (ID2D1Brush*)greenBrush.Get()); 
+        else if (st == ImageEngine::CacheStatus::PENDING) dc->FillRectangle(slt, (ID2D1Brush*)blueBrush.Get());
+        else {
+             // Empty but Target?
+             if (isTarget) dc->DrawRectangle(slt, (ID2D1Brush*)grayBrush.Get(), 1.0f); // Hollow
+             else dc->FillRectangle(slt, (ID2D1Brush*)blackTransBrush.Get()); // Faint
+        }
+    }
+    
+    // [HUD Refinement] Cache Metrics
+    if (g_pImageEngine) {
+        size_t used = g_pImageEngine->GetCacheMemoryUsage();
+        size_t limit = g_pImageEngine->GetPrefetchPolicy().maxCacheMemory;
+        int count = g_pImageEngine->GetCacheItemCount();
+        
+        wchar_t cacheBuf[128];
+        swprintf_s(cacheBuf, L"Cache: %llu / %llu MB (%d Items)", used/1024/1024, limit/1024/1024, count);
+        
+        // Draw below the slots (py is currently at top of slots)
+        // [HUD Adjust] +5px gap between slot strip and Cache text
+        dc->DrawText(cacheBuf, (UINT32)wcslen(cacheBuf), m_debugFormat.Get(), 
+            D2D1::RectF(px, py + 23, px + hudW, py + 43), whiteBrush.Get());
     }
 
     // ------------------------------------------------------------------------
     // Zone D: Memory (PMR)
     // ------------------------------------------------------------------------
-    py += 30.0f;
+    py += 45.0f; // [HUD Adjust] +10px gap between Cache and Arena
     float barW = 320.0f;
     float barH = 14.0f;
     // Capacity

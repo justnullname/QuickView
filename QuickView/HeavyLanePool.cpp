@@ -481,7 +481,34 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             evt.type = EventType::FullReady;
             evt.filePath = path;
             evt.imageId = imageId;
-            evt.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame)); // Move to heap-managed shared_ptr
+            
+            // [v8.16 Fix] DEEP COPY pixels to heap!
+            // HeavyPool uses shared Arena from TripleArenaPool.
+            // If another worker uses the arena, or this worker starts a new job, memory is reset.
+            auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
+            if (rawFrame.IsSvg()) {
+                safeFrame->format = rawFrame.format;
+                safeFrame->width = rawFrame.width;
+                safeFrame->height = rawFrame.height;
+                safeFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
+                safeFrame->svg->xmlData = rawFrame.svg->xmlData;
+                safeFrame->svg->viewBoxW = rawFrame.svg->viewBoxW;
+                safeFrame->svg->viewBoxH = rawFrame.svg->viewBoxH;
+            } else {
+                size_t bufferSize = rawFrame.GetBufferSize();
+                uint8_t* heapPixels = new uint8_t[bufferSize];
+                memcpy(heapPixels, rawFrame.pixels, bufferSize);
+                
+                safeFrame->pixels = heapPixels;
+                safeFrame->width = rawFrame.width;
+                safeFrame->height = rawFrame.height;
+                safeFrame->stride = rawFrame.stride;
+                safeFrame->format = rawFrame.format;
+                safeFrame->formatDetails = rawFrame.formatDetails;
+                safeFrame->exifOrientation = rawFrame.exifOrientation;
+                safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
+            }
+            evt.rawFrame = safeFrame;
             evt.metadata = std::move(meta);
             
             // Determine if scaled

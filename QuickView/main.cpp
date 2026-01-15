@@ -393,7 +393,7 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
-FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true);
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, BrowseDirection dir = BrowseDirection::IDLE);
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
@@ -1617,6 +1617,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"InfoPanelAlpha", std::to_wstring(g_config.InfoPanelAlpha).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"ToolbarAlpha", std::to_wstring(g_config.ToolbarAlpha).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"SettingsAlpha", std::to_wstring(g_config.SettingsAlpha).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"NavIndicator", std::to_wstring(g_config.NavIndicator).c_str(), iniPath.c_str());
 
     // Control
     WritePrivateProfileStringW(L"Controls", L"InvertWheel", g_config.InvertWheel ? L"1" : L"0", iniPath.c_str());
@@ -1625,10 +1626,10 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"MiddleDragAction", std::to_wstring((int)g_config.MiddleDragAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"MiddleClickAction", std::to_wstring((int)g_config.MiddleClickAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"NavIndicator", std::to_wstring(g_config.NavIndicator).c_str(), iniPath.c_str());
+    // NavIndicator moved to View section
 
     // Image
-    WritePrivateProfileStringW(L"Image", L"AutoRotate", g_config.AutoRotate ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
@@ -1637,6 +1638,7 @@ void SaveConfig() {
 
     // Advanced / Debug
     WritePrivateProfileStringW(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Advanced", L"PrefetchGear", std::to_wstring((int)g_config.PrefetchGear).c_str(), iniPath.c_str());
     
     // Internal
     WritePrivateProfileStringW(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt ? L"1" : L"0", iniPath.c_str());
@@ -1696,6 +1698,7 @@ void LoadConfig() {
     
     GetPrivateProfileStringW(L"View", L"SettingsAlpha", L"0.95", buf, 32, iniPath.c_str());
     g_config.SettingsAlpha = (float)_wtof(buf);
+    g_config.NavIndicator = GetPrivateProfileIntW(L"View", L"NavIndicator", 0, iniPath.c_str());
 
     // Control
     g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
@@ -1708,7 +1711,7 @@ void LoadConfig() {
     g_config.MiddleDragIndex = (g_config.MiddleDragAction == MouseAction::WindowDrag) ? 0 : 1;
     g_config.MiddleClickIndex = (g_config.MiddleClickAction == MouseAction::ExitApp) ? 1 : 0;
     g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
-    g_config.NavIndicator = GetPrivateProfileIntW(L"Controls", L"NavIndicator", 0, iniPath.c_str());
+    // NavIndicator moved to View section
     
     // Image
     g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;
@@ -1719,7 +1722,9 @@ void LoadConfig() {
     g_config.AlwaysSaveLossy = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossy", 0, iniPath.c_str()) != 0;
 
     // Advanced / Debug
+    // Advanced / Debug
     g_config.EnableDebugFeatures = GetPrivateProfileIntW(L"Advanced", L"EnableDebugFeatures", 0, iniPath.c_str()) != 0;
+    g_config.PrefetchGear = GetPrivateProfileIntW(L"Advanced", L"PrefetchGear", 1, iniPath.c_str());
     
     // Internal
     g_config.ShowSavePrompt = GetPrivateProfileIntW(L"General", L"ShowSavePrompt", 1, iniPath.c_str()) != 0;
@@ -2100,6 +2105,38 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_pImageEngine = g_imageEngine.get(); // [v3.1] Init Global Accessor
     g_imageEngine->SetWindow(hwnd);
     g_imageEngine->SetNavigator(&g_navigator); // [Phase 3] Enable prefetch
+    
+    // [Prefetch System] Apply Initial Policy from Config
+    {
+         PrefetchPolicy policy;
+         switch (g_config.PrefetchGear) {
+             case 0: policy.enablePrefetch = false; break;
+             case 1: // Auto
+             {
+                 EngineConfig autoCfg = EngineConfig::FromHardware(SystemInfo::Detect());
+                 policy.enablePrefetch = true;
+                 policy.maxCacheMemory = autoCfg.maxCacheMemory;
+                 policy.lookAheadCount = autoCfg.prefetchLookAhead;
+                 break;
+             }
+             case 2: // Eco
+                 policy.enablePrefetch = true;
+                 policy.maxCacheMemory = 128 * 1024 * 1024;
+                 policy.lookAheadCount = 1;
+                 break;
+             case 3: // Balanced
+                 policy.enablePrefetch = true;
+                 policy.maxCacheMemory = 512 * 1024 * 1024;
+                 policy.lookAheadCount = 3;
+                 break;
+             case 4: // Ultra
+                 policy.enablePrefetch = true;
+                 policy.maxCacheMemory = 2048ULL * 1024 * 1024;
+                 policy.lookAheadCount = 10;
+                 break;
+         }
+         g_imageEngine->SetPrefetchPolicy(policy);
+    }
     
     // Initialize DirectComposition (Visual Ping-Pong Architecture)
     // g_compEngine = std::make_unique<CompositionEngine>();
@@ -4683,7 +4720,8 @@ void ProcessEngineEvents(HWND hwnd) {
     }
 }
 
-void StartNavigation(HWND hwnd, std::wstring path, bool showOSD) {
+// [v8.16] Added BrowseDirection to prevent resetting direction to IDLE
+void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection dir) {
     if (!g_imageEngine || path.empty()) return;
 
     // [Phase 3] Increment token FIRST (deprecated, kept for backward compatibility)
@@ -4735,7 +4773,11 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD) {
     
     g_imageEngine->NavigateTo(path, fileSize, myToken); // [Phase 3] Pass token
     
-
+    // [Fix] Trigger UpdateView immediately on initial load to seed prefetch
+    // [v8.16] Use passed direction instead of IDLE to preserve navigation state
+    if (idx != -1) {
+        g_imageEngine->UpdateView(idx, dir); 
+    }
 }
 
 
@@ -4762,14 +4804,14 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
     }
 }
 
-FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD) {
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection dir) {
     if (path.empty()) co_return;
     
     // Switch to UI thread if needed (though usually called from UI)
     // auto scheduler = co_await winrt::apartment_context(); // [Fix] winrt namespace not found, assume UI thread
 
     // [v4.1] Centralized Navigation Logic
-    StartNavigation(hwnd, path, showOSD);
+    StartNavigation(hwnd, path, showOSD, dir);
     
     co_return; 
 }
@@ -4807,12 +4849,17 @@ void Navigate(HWND hwnd, int direction) {
             // THEN call LoadImageAsync (which calls NavigateTo -> Push) to queue the new critical job.
             
             // [Phase 3] Notify prefetch system of navigation direction
+            // [Phase 3] Notify prefetch system of navigation direction
             BrowseDirection browseDir = (direction > 0) 
                 ? BrowseDirection::FORWARD 
                 : BrowseDirection::BACKWARD;
-            g_imageEngine->UpdateView(g_navigator.Index(), browseDir);
             
-            LoadImageAsync(hwnd, path);
+            // [v8.16 Fix] Pass direction to LoadImageAsync -> StartNavigation
+            // Do NOT call UpdateView directly here, as LoadImageAsync calls StartNavigation which calls UpdateView.
+            // Previously, StartNavigation hardcoded IDLE, overwriting our direction.
+            // g_imageEngine->UpdateView(g_navigator.Index(), browseDir); // REMOVED
+            
+            LoadImageAsync(hwnd, path, true, browseDir);
         } else if (g_navigator.HitEnd()) {
             // Show OSD when reaching end without looping
             if (direction > 0) {

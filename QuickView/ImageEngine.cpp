@@ -49,23 +49,16 @@ void ImageEngine::SetHighPriorityMode(bool enabled) {
 }
 
 void ImageEngine::QueueEvent(EngineEvent&& e) {
-    // Post directly if we have a window. 
-    // We still queue into Scout/Heavy result queues for legacy polling if needed,
-    // or we can store them in a unified queue?
-    // Actually, Main Thread calls PollState() to get them.
-    // So we must still store them, but Notify Main Thread.
+    // Store event in manual queue
+    {
+        std::lock_guard lock(m_manualQueueMutex);
+        m_manualEventQueue.push_back(std::move(e));
+    }
     
-    // NOTE: FastLane and HeavyLane manage their own result queues.
-    // We don't have a central queue in ImageEngine currently. 
-    // They store in m_results of each lane.
-    
-    // So we just signal the main thread.
-    // BUT we need to know WHICH lane produced it?
-    // PollState checks both. So simple Notify is enough.
-    
+    // Notify Main Thread
     if (m_hwnd) {
         // WM_ENGINE_EVENT = WM_APP + 3 (Must match main.cpp)
-        PostMessage(m_hwnd, 0x8000 + 3, 0, 0); 
+        PostMessageW(m_hwnd, 0x8000 + 3, 0, 0); 
     }
 }
 
@@ -108,6 +101,35 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
 void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, uintmax_t fileSize) {
     // 1. Peek Header
     CImageLoader::ImageHeaderInfo info = m_loader->PeekHeader(path.c_str());
+
+    // [Prefetch System] Cache Check
+    // If the image is already in memory (from prefetch), use it immediately!
+    {
+        auto cachedFrame = GetCachedImage(path);
+        if (cachedFrame) {
+            OutputDebugStringW(L"[Dispatch] Phase 3: Cache Hit! Short-circuiting.\n");
+            
+            EngineEvent e;
+            e.type = EventType::FullReady;
+            e.filePath = path; 
+            e.imageId = imageId;
+            e.rawFrame = cachedFrame; // Zero-copy shared_ptr
+            
+            // Re-populate metadata from cache if possible, or PeekHeader info
+            e.metadata.Width = info.width;
+            e.metadata.Height = info.height;
+            e.metadata.Format = info.format;
+            e.metadata.FileSize = info.fileSize;
+            
+            if (cachedFrame->IsSvg()) e.metadata.Format = L"SVG"; 
+            
+            QueueEvent(std::move(e)); 
+            
+            // Also notify heavy/fast lanes to cancel duplicate work?
+            // Actually if we return here, we don't submit to lanes.
+            return; 
+        }
+    }
     
     // [DEBUG] Log
     {
@@ -349,6 +371,15 @@ bool ImageEngine::ShouldSkipFastLaneForFastFormat(const std::wstring& path) {
 std::vector<EngineEvent> ImageEngine::PollState() {
     std::vector<EngineEvent> batch;
     
+    // 0. Harvest Manual Events (Cache Hits)
+    {
+        std::lock_guard lock(m_manualQueueMutex);
+        if (!m_manualEventQueue.empty()) {
+            batch.insert(batch.end(), std::make_move_iterator(m_manualEventQueue.begin()), std::make_move_iterator(m_manualEventQueue.end()));
+            m_manualEventQueue.clear();
+        }
+    }
+    
     // 1. Harvest FastLane Events
     while (auto e = m_fastLane.TryPopResult()) {
         batch.push_back(std::move(*e));
@@ -384,6 +415,24 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                      RequestFullDecode(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
                      m_stage2Requested = true; // Mark as requested
                      m_pendingJxlHeavyId = 0;  // Consumed
+                }
+            }
+        }
+        
+        // [v8.11 Fix] Cache ALL FullReady events (both current and prefetch)
+        // Previously, only non-current (prefetch) images were cached.
+        // This caused the bug where viewed images weren't cached for return navigation.
+        if (e.type == EventType::FullReady && e.rawFrame && e.rawFrame->IsValid()) {
+            if (m_navigator) {
+                int idx = m_navigator->FindIndex(e.filePath);
+                if (idx != -1) {
+                     AddToCache(idx, e.filePath, e.rawFrame);
+                     
+                     // [v8.15] Remove from pending set
+                     {
+                         std::lock_guard lock(m_pendingMutex);
+                         m_pendingPaths.erase(e.filePath);
+                     }
                 }
             }
         }
@@ -549,30 +598,40 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     // 3. Logic (Zone C)
     // Reconstruct topology from cache
     {
-        std::lock_guard lock(m_cacheMutex);
-        for (int i = -2; i <= 2; ++i) {
-             int slotIdx = i + 2; // 0..4
-             int targetIndex = m_currentViewIndex + i;
+        std::lock_guard cacheLock(m_cacheMutex);
+        
+        // [v8.15] Use atomic loads for thread safety
+        int curViewIdx = m_currentViewIndex.load();
+        int lastDir = m_lastDirectionInt.load();
+        
+        // [v8.12] Populate prefetch state for HUD
+        s.prefetchEnabled = m_prefetchPolicy.enablePrefetch;
+        s.prefetchLookAhead = m_prefetchPolicy.enablePrefetch ? m_prefetchPolicy.lookAheadCount : 0;
+        s.browseDirection = lastDir;
+        
+        static constexpr int OFFSET = TelemetrySnapshot::TOPO_OFFSET;
+        
+        // [v8.15] Lock pending set for checking
+        std::lock_guard pendingLock(m_pendingMutex);
+        
+        for (int i = 0; i < 32; ++i) {
+             int relOffset = i - OFFSET;
+             int targetIndex = curViewIdx + relOffset;
              
              if (!m_navigator || targetIndex < 0 || targetIndex >= (int)m_navigator->Count()) {
-                 s.cacheSlots[slotIdx] = CacheStatus::EMPTY;
+                 s.cacheSlots[i] = CacheStatus::EMPTY;
                  continue;
              }
              
              std::wstring path = m_navigator->GetFile(targetIndex);
              if (m_cache.count(path)) {
-                 s.cacheSlots[slotIdx] = CacheStatus::HEAVY; // Green (Mem)
+                 s.cacheSlots[i] = CacheStatus::HEAVY; // Green (Cached)
+             } else if (m_pendingPaths.count(path)) {
+                 s.cacheSlots[i] = CacheStatus::PENDING; // Blue (Processing)
              } else {
-                 s.cacheSlots[slotIdx] = CacheStatus::EMPTY; 
-                 // If we had a queue check in Dispatcher, could allow BLUE status.
-                 // For now MEM vs OTHER.
+                 s.cacheSlots[i] = CacheStatus::EMPTY; // Gray (Not loaded)
              }
         }
-        
-        // Override Center if Heavy is working on it
-        // Check local state vs heavy pool state?
-        // Actually HUD logic handles "Cur" specifically often.
-        // Let's stick to Cache Status.
     }
     
     // 4. Memory (Zone D)
@@ -779,7 +838,34 @@ void ImageEngine::FastLane::QueueWorker() {
                 e.type = isClear ? EventType::FullReady : EventType::PreviewReady;
                 e.filePath = cmd.path;
                 e.imageId = cmd.id; 
-                e.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame));
+                
+                // [v8.16 Fix] DEEP COPY pixels to heap BEFORE outputting event!
+                // When FastLane immediately starts next job, Arena memory is reused.
+                // Main thread may not have consumed this frame yet -> corruption!
+                auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
+                if (rawFrame.IsSvg()) {
+                    safeFrame->format = rawFrame.format;
+                    safeFrame->width = rawFrame.width;
+                    safeFrame->height = rawFrame.height;
+                    safeFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
+                    safeFrame->svg->xmlData = rawFrame.svg->xmlData;
+                    safeFrame->svg->viewBoxW = rawFrame.svg->viewBoxW;
+                    safeFrame->svg->viewBoxH = rawFrame.svg->viewBoxH;
+                } else {
+                    size_t bufferSize = rawFrame.GetBufferSize();
+                    uint8_t* heapPixels = new uint8_t[bufferSize];
+                    memcpy(heapPixels, rawFrame.pixels, bufferSize);
+                    
+                    safeFrame->pixels = heapPixels;
+                    safeFrame->width = rawFrame.width;
+                    safeFrame->height = rawFrame.height;
+                    safeFrame->stride = rawFrame.stride;
+                    safeFrame->format = rawFrame.format;
+                    safeFrame->formatDetails = rawFrame.formatDetails;
+                    safeFrame->exifOrientation = rawFrame.exifOrientation;
+                    safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
+                }
+                e.rawFrame = safeFrame;
                 
 
                 // [Unified] Populate Metadata instead of ThumbData
@@ -877,18 +963,30 @@ size_t ImageEngine::GetCacheMemoryUsage() const {
     return m_currentCacheBytes;
 }
 
-ComPtr<IWICBitmapSource> ImageEngine::GetCachedImage(const std::wstring& path) {
+int ImageEngine::GetCacheItemCount() const {
+    std::lock_guard lock(m_cacheMutex);
+    return (int)m_cache.size();
+}
+
+std::shared_ptr<QuickView::RawImageFrame> ImageEngine::GetCachedImage(const std::wstring& path) {
     std::lock_guard lock(m_cacheMutex); // Thread-safe copy
     auto it = m_cache.find(path);
     if (it != m_cache.end()) {
-        return it->second.bitmap; // Returns copy, ref count +1
+        return it->second.frame; 
     }
     return nullptr;
 }
 
 void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
-    m_currentViewIndex = currentIndex;
-    m_lastDirection = dir;
+    m_currentViewIndex.store(currentIndex);
+    // [v8.15] Store direction as int for atomic access
+    int dirInt = (dir == BrowseDirection::FORWARD) ? 1 : 
+                 (dir == BrowseDirection::BACKWARD) ? -1 : 0;
+    m_lastDirectionInt.store(dirInt);
+    
+    wchar_t buf[128];
+    swprintf_s(buf, L"[ImageEngine] UpdateView: Idx=%d Dir=%d\n", currentIndex, dirInt);
+    OutputDebugStringW(buf);
     
     // 1. Prune: Cancel old tasks not in visible range
     PruneQueue(currentIndex, dir);
@@ -897,29 +995,46 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     // [v3.1] Cancellation Strategy: Ruthless Purge -> Reschedule
     // ------------------------------------------------------------------------
     
-    // 1. Purge Phase: Clear all pending FastLane tasks
-    // This removes "Old Neighbors" that are no longer relevant.
-    // FastLane running state is Atomic (Gatekeeper), so running tasks finish naturally.
-    m_fastLane.Clear();
+    // 1. [v8.10 Fix] REMOVED m_fastLane.Clear()!
+    //    Clear() was too aggressive - it cleared the current image before the worker could process it.
+    //    FastLane is LIFO, so new items are prioritized anyway.
+    //    Stale prefetch items will be naturally evicted by cache memory limits.
+    //    m_fastLane.Clear(); // REMOVED - causes blank screen on FastLane items
     
-    // 2. Reschedule Phase: LIFO / Critical First
-    // Even if 'currentIndex' was just purged, it's re-queued immediately here.
-    ScheduleJob(currentIndex, Priority::Critical);
+    // 2. [v8.9 Fix] Current index is ALREADY dispatched by NavigateTo->DispatchImageLoad.
+    //    DO NOT reschedule it here! Doing so causes duplicate HeavyPool submissions,
+    //    which leads to two workers decoding the same image simultaneously (wasteful + race conditions).
+    //    ScheduleJob(currentIndex, Priority::Critical); // REMOVED - causes duplicate decode
     
-    int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
-    
-    // 4. If prefetch disabled, stop here (Eco mode)
+    // 4. If prefetch disabled, stop here
     if (!m_prefetchPolicy.enablePrefetch) return;
 
-    // 3. Adjacent: Must-have for fluid navigation
-    ScheduleJob(currentIndex + step, Priority::High);
-    
-    // 5. Anti-regret: One in opposite direction
-    ScheduleJob(currentIndex - step, Priority::Low);
-    
-    // 6. Look-ahead: Based on policy
-    for (int i = 2; i <= m_prefetchPolicy.lookAheadCount; ++i) {
-        ScheduleJob(currentIndex + step * i, Priority::Idle);
+    if (dir == BrowseDirection::IDLE) {
+         // [Startup/Reset] Conservative Bidirectional Prefetch
+         // [v8.8] Fix: Handle wrapping (Previous of 0 -> count-1) using modulo logic
+         int count = (int)m_navigator->Count();
+         if (count > 0) {
+             int nextIdx = (currentIndex + 1) % count;
+             int prevIdx = (currentIndex - 1 + count) % count;
+             
+             // Only fetch immediate neighbors (+/- 1) to save resources.
+             ScheduleJob(nextIdx, Priority::High);
+             ScheduleJob(prevIdx, Priority::High);
+         }
+    } else {
+         // Directional Prefetch
+         int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
+         
+         // 3. Adjacent: High Priority
+         ScheduleJob(currentIndex + step, Priority::High);
+         
+         // 5. Anti-regret: One in opposite direction
+         ScheduleJob(currentIndex - step, Priority::Low);
+         
+         // 6. Look-ahead
+         for (int i = 2; i <= m_prefetchPolicy.lookAheadCount; ++i) {
+             ScheduleJob(currentIndex + step * i, Priority::Idle);
+         }
     }
 }
 
@@ -938,16 +1053,11 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
         if (m_cache.count(path)) return; // Already cached
     }
     
-    // 4. Critical priority = current image, already handled by NavigateTo
-    if (pri == Priority::Critical) {
-        return;
-    }
+    // 4. Critical priority: Allow re-queueing (fixes UpdateView clearing queue)
+    // if (pri == Priority::Critical) return; 
     
-    // 5. For prefetch: only queue High priority (adjacent +1)
-    // Low and Idle will be done on idle (future enhancement)
-    if (pri != Priority::High) {
-        return; // For now, only prefetch immediate neighbor
-    }
+    // 5. Allow all priorities (High/Low/Idle) based on UpdateView loop
+    // if (pri != Priority::High) return; 
     
     // [v4.1] Smart Prefetch logic re-enabled (Unified Dispatch Integration)
 
@@ -959,14 +1069,23 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
         // Small image: push to FastLane
+        {
+            std::lock_guard lock(m_pendingMutex);
+            m_pendingPaths.insert(path);
+        }
         m_fastLane.Push(path, ComputePathHash(path));
     } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
-        // Large image: only prefetch if Heavy Lane is idle
-        // This prevents prefetch from blocking current image decode
-        if (m_heavyPool->IsIdle()) {
+        // Large image: 
+        // Critical: Always submit
+        // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
+        if (pri == Priority::Critical || m_heavyPool->IsIdle()) {
+            {
+                std::lock_guard lock(m_pendingMutex);
+                m_pendingPaths.insert(path);
+            }
             m_heavyPool->Submit(path, ComputePathHash(path)); // [ImageID]
         }
-        // If Heavy is busy, skip prefetch - user might navigate again
+        // If Heavy is busy and not critical, skip prefetch
     }
 }
 
@@ -981,20 +1100,16 @@ void ImageEngine::PruneQueue(int currentIndex, BrowseDirection dir) {
     EvictCache(currentIndex);
 }
 
-void ImageEngine::AddToCache(int index, const std::wstring& path, IWICBitmapSource* bitmap) {
-    if (!bitmap) return;
+void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame> frame) {
+    if (!frame || !frame->IsValid()) return;
     
     // 1. Calculate size (RGBA: W * H * 4)
-    UINT w = 0, h = 0;
-    bitmap->GetSize(&w, &h);
-    size_t newSize = (size_t)w * h * 4;
+    size_t newSize = (size_t)frame->width * frame->height * 4;
     
     std::lock_guard lock(m_cacheMutex);
     
     // 2. Check if already cached
     if (m_cache.count(path)) return;
-    
-    bool isCritical = (index == m_currentViewIndex);
     
     // 3. Memory limit check with eviction
     while (m_currentCacheBytes + newSize > m_prefetchPolicy.maxCacheMemory && !m_lruOrder.empty()) {
@@ -1006,9 +1121,19 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, IWICBitmapSour
             int victimIndex = vit->second.sourceIndex;
             
             // Keep Zone: Cannot evict current ±1
+            // Use m_currentViewIndex which is updated in UpdateView
             if (abs(victimIndex - m_currentViewIndex) <= 1) {
-                // All remaining are protected
-                break;
+                // Check if the TAIL item is protected. 
+                // If it is, we need to scan deeper or just stop eviction?
+                // If the tail is protected, it means we recently accessed it?
+                // No, LRU tail is Least Recently Used.
+                // If the neighbor is at the tail, it means we haven't touched it recently.
+                // But we must protect it.
+                // Complex handling: Move it to front (protect) and try next tail?
+                // For simplicity: If tail is protected, we try to evict the ONE BEFORE tail?
+                // Or just break loop and allow over-limit (Protection > Limit).
+                // "Safety Zone" > Memory Limit.
+                break; 
             }
             
             // Evict victim
@@ -1018,10 +1143,43 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, IWICBitmapSour
         m_lruOrder.pop_back();
     }
     
-    // 4. Add to cache (Critical can exceed limit)
-    if (m_currentCacheBytes + newSize <= m_prefetchPolicy.maxCacheMemory || isCritical) {
+    // 4. Add to cache (ProtectionZone allows exceeding limit)
+    // Only add if we have space OR if it's high priority (neighbor)
+    // If we couldn't evict enough (due to protection), we might exceed limit. That's OK.
+    if (m_currentCacheBytes + newSize <= m_prefetchPolicy.maxCacheMemory || abs(index - m_currentViewIndex) <= 1) {
+        
+        // [v8.13 Fix] DEEP COPY pixel data to heap memory!
+        // The original frame's pixels may point to PMR Arena memory which gets reused.
+        // We must copy the data to independently-owned heap memory for safe caching.
+        auto cachedFrame = std::make_shared<QuickView::RawImageFrame>();
+        
+        if (frame->IsSvg()) {
+            // SVG: Copy the SVG data struct
+            cachedFrame->format = frame->format;
+            cachedFrame->width = frame->width;
+            cachedFrame->height = frame->height;
+            cachedFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
+            cachedFrame->svg->xmlData = frame->svg->xmlData; // Vector copy
+            cachedFrame->svg->viewBoxW = frame->svg->viewBoxW;
+            cachedFrame->svg->viewBoxH = frame->svg->viewBoxH;
+        } else {
+            // Raster: Deep copy pixels to heap
+            size_t bufferSize = frame->GetBufferSize();
+            uint8_t* heapPixels = new uint8_t[bufferSize];
+            memcpy(heapPixels, frame->pixels, bufferSize);
+            
+            cachedFrame->pixels = heapPixels;
+            cachedFrame->width = frame->width;
+            cachedFrame->height = frame->height;
+            cachedFrame->stride = frame->stride;
+            cachedFrame->format = frame->format;
+            cachedFrame->formatDetails = frame->formatDetails;
+            cachedFrame->exifOrientation = frame->exifOrientation;
+            cachedFrame->memoryDeleter = [](uint8_t* p) { delete[] p; }; // Heap cleanup
+        }
+        
         CacheEntry entry;
-        entry.bitmap = bitmap;
+        entry.frame = cachedFrame; // Now owns independent heap memory
         entry.sourceIndex = index;
         entry.sizeBytes = newSize;
         
