@@ -2,6 +2,7 @@
 #include "ImageEngine.h"
 #include "FileNavigator.h"
 #include "HeavyLanePool.h"  // [N+1] Include pool implementation
+#include "EditState.h"      // [v9.9] Access g_runtime.ForceRawDecode for dispatch decisions
 #include <algorithm>
 #include <psapi.h>
 #pragma comment(lib, "psapi.lib")
@@ -132,17 +133,25 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // 2. Recursive RAW Check
     // If it's a RAW file with an embedded thumb, check the preview resolution.
     // "RAW" detection: check if string contains RAW or format check from loader
-    if ((info.format.find(L"RAW") != std::wstring::npos) && info.hasEmbeddedThumb) {
-        int embW = 0, embH = 0;
-        // Call the new method [v6.5 Recursor]
-        if (SUCCEEDED(m_loader->GetEmbeddedPreviewInfo(path.c_str(), &embW, &embH))) {
-            uint64_t embPixels = (uint64_t)embW * embH;
-            // Threshold: 2.5 MP (Conservative)
-            // If embedded preview is huge, it will block FastLane. Force Heavy Lane.
-            if (embPixels > 2500000) { 
-                OutputDebugStringW(L"[Dispatch] RAW Embedded Preview TOO LARGE -> Force Heavy Lane\n");
-                // Override Classification: Treat as Heavy
-                info.type = CImageLoader::ImageType::TypeB_Heavy; 
+    if (info.format.find(L"RAW") != std::wstring::npos) {
+        // [v9.9] If ForceRawDecode is enabled, RAW Full Decode is computationally intensive.
+        // Always route to HeavyLane to avoid blocking FastLane (UI thread responsiveness).
+        if (g_runtime.ForceRawDecode) {
+            OutputDebugStringW(L"[Dispatch] RAW ForceRawDecode=TRUE -> Force Heavy Lane\n");
+            info.type = CImageLoader::ImageType::TypeB_Heavy;
+        }
+        else if (info.hasEmbeddedThumb) {
+            int embW = 0, embH = 0;
+            // Call the new method [v6.5 Recursor]
+            if (SUCCEEDED(m_loader->GetEmbeddedPreviewInfo(path.c_str(), &embW, &embH))) {
+                uint64_t embPixels = (uint64_t)embW * embH;
+                // Threshold: 2.5 MP (Conservative)
+                // If embedded preview is huge, it will block FastLane. Force Heavy Lane.
+                if (embPixels > 2500000) { 
+                    OutputDebugStringW(L"[Dispatch] RAW Embedded Preview TOO LARGE -> Force Heavy Lane\n");
+                    // Override Classification: Treat as Heavy
+                    info.type = CImageLoader::ImageType::TypeB_Heavy; 
+                }
             }
         }
     }
@@ -222,8 +231,9 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         return; // JXL dispatched
     }
     
-    // 6. Specialized Dispatch for TIFF/HEIC/HEIF (30ms budget optimization)
-    if (info.format == L"TIFF" || info.format == L"HEIC" || info.format == L"HEIF" || info.format == L"AVIF") {
+    // 6. Specialized Dispatch for TIFF/HEIC/HEIF/AVIF/PSD/HDR/PIC/PCX/EXR (30ms budget optimization)
+    if (info.format == L"TIFF" || info.format == L"HEIC" || info.format == L"HEIF" || info.format == L"AVIF" ||
+        info.format == L"PSD"  || info.format == L"HDR"  || info.format == L"PIC"  || info.format == L"PCX" || info.format == L"EXR") {
         uint64_t pixels = (uint64_t)info.width * info.height;
         bool isSmall = false;
 
@@ -232,7 +242,28 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             // Uncompressed 5MP is fast. Large compressed TIFFs are slow.
             // [Fix] Ensure pixels > 0 (if header parse failed, assume large)
             isSmall = (pixels > 0 && pixels < 5000000 && info.fileSize < 20971520);
-        } else {
+        } 
+        else if (info.format == L"PSD") {
+            // PSD: < 2.1MP and < 5MB
+            // Parsing layers can be very slow. Even small resolution composite might be slow if file is huge.
+            isSmall = (pixels > 0 && pixels <= 2100000 && info.fileSize < 5242880);
+        }
+        else if (info.format == L"HDR" || info.format == L"PIC") {
+            // HDR/PIC: < 2.1MP
+            // Radiance RGBE decoding is float-based, slightly slower than 8-bit RLE.
+            isSmall = (pixels > 0 && pixels <= 2100000);
+        }
+        else if (info.format == L"PCX") {
+            // PCX: < 3MP
+            // Simple RLE, CPU bound but generally fast. slightly looser threshold.
+            isSmall = (pixels > 0 && pixels <= 3000000);
+        }
+        else if (info.format == L"EXR") {
+            // EXR: < 2.1MP
+            // OpenEXR/TinyEXR involves decompression and float16 conversion.
+            isSmall = (pixels > 0 && pixels <= 2100000);
+        }
+        else {
             // HEIC/HEIF/AVIF: < 2.1MP (FHD)
             // Compute intensive. Limit to FHD for FastLane (target < 30ms).
             // [Fix] Ensure pixels > 0. PeekHeader fails for HEIC (avifDecoder doesn't support HEVC), 

@@ -15,4 +15,7 @@ namespace TinyExrLoader {
     bool LoadEXRFromMemory(const uint8_t* inData, size_t size,
                            int* width, int* height, 
                            std::vector<float>& outData);
+
+    // [v9.9] Fast dimension extraction without full decode
+    bool GetEXRDimensionsFromMemory(const uint8_t* inData, size_t size, int* width, int* height);
 }

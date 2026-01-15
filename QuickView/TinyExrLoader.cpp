@@ -4,12 +4,14 @@
 #include "StbLoader.h" // For ZlibDecode
 
 // Define implementation
-// Define implementation
 // Use system zlib (zlib-ng) for performance
 #define TINYEXR_USE_MINIZ 0
 #undef TINYEXR_USE_STB_ZLIB
 #define TINYEXR_USE_STB_ZLIB 1
 #include <zlib.h>
+
+// [v9.9] Enable multi-threaded decompression for large EXR files
+#define TINYEXR_USE_THREAD 1
 
 // Wrappers moved to StbLoader.cpp to solve linkage
 // Forward decl if needed, but TinyEXR header declares it.
@@ -82,5 +84,31 @@ namespace TinyExrLoader {
 
         free(out);
         return true;
+    }
+    
+    // [v9.9] Fast dimension extraction without full decode
+    bool GetEXRDimensionsFromMemory(const uint8_t* inData, size_t size, int* width, int* height) {
+        if (!inData || size < 8 || !width || !height) return false;
+        
+        EXRVersion exr_version;
+        if (ParseEXRVersionFromMemory(&exr_version, inData, size) != TINYEXR_SUCCESS) {
+            return false;
+        }
+        
+        EXRHeader exr_header;
+        InitEXRHeader(&exr_header);
+        
+        const char* err = nullptr;
+        if (ParseEXRHeaderFromMemory(&exr_header, &exr_version, inData, size, &err) != TINYEXR_SUCCESS) {
+            if (err) FreeEXRErrorMessage(err);
+            return false;
+        }
+        
+        // Extract data window dimensions
+        *width = exr_header.data_window.max_x - exr_header.data_window.min_x + 1;
+        *height = exr_header.data_window.max_y - exr_header.data_window.min_y + 1;
+        
+        FreeEXRHeader(&exr_header);
+        return (*width > 0 && *height > 0);
     }
 }
