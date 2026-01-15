@@ -134,7 +134,7 @@ static std::wstring ReadRegisteredExePath() {
 }
 
 // Register file associations (silent, no MessageBox)
-static bool RegisterFileAssociationsSilent() {
+bool SettingsOverlay::RegisterAssociations() {
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     
@@ -251,9 +251,11 @@ static bool RegisterFileAssociationsSilent() {
 }
 
 // Manual repair (silent, no MessageBox)
-static bool RepairFileAssociations() {
-    RegisterFileAssociationsSilent();
-    return true;
+bool SettingsOverlay::IsRegistrationNeeded() {
+    wchar_t currentExe[MAX_PATH];
+    GetModuleFileNameW(nullptr, currentExe, MAX_PATH);
+    std::wstring regPath = ReadRegisteredExePath();
+    return regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
 }
 
 SettingsOverlay::SettingsOverlay() {
@@ -826,7 +828,7 @@ void SettingsOverlay::BuildMenu() {
     itemFileAssoc.buttonText = L"Add";
     itemFileAssoc.buttonActivatedText = L"Added";
     itemFileAssoc.onChange = [&itemFileAssoc]() {
-        RepairFileAssociations();
+        SettingsOverlay::RegisterAssociations();
     };
     tabImage.items.push_back(itemFileAssoc);
 

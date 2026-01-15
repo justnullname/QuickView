@@ -106,6 +106,10 @@ public:
     void ShowUpdateToast(const std::wstring& version, const std::wstring& changelog);
     bool IsUpdateToastVisible() const { return m_showUpdateToast; } 
 
+    // File Associations
+    static bool RegisterAssociations();
+    static bool IsRegistrationNeeded();
+
 private:
     void CreateResources(ID2D1RenderTarget* pRT);
     

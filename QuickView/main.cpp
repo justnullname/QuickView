@@ -9,7 +9,6 @@
 #include "UIRenderer.h"
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include <d2d1_1helper.h>
-//#include <mimalloc-new-delete.h>
 #include "LosslessTransform.h"
 #include "EditState.h"
 #include "AppStrings.h"
@@ -89,8 +88,6 @@ struct DialogState {
     DialogResult FinalResult = DialogResult::None;
 };
 
-// struct OSDState moved to OSDState.h
-// struct ViewState moved to EditState.h
 
 #include "FileNavigator.h"
 #include "GalleryOverlay.h"
@@ -173,7 +170,7 @@ static bool g_isBlurry = false; // For Motion Blur (Ghost)
 static bool g_transitionFromThumb = false; // Flag: Did we transition from a thumbnail?
 static bool g_isCrossFading = false;
 static DWORD g_crossFadeStart = 0;
-static const DWORD CROSS_FADE_DURATION = 150; // ms (normal)
+static const DWORD CROSS_FADE_DURATION = 90; // ms (faster)
 static const DWORD SLOW_MOTION_DURATION = 2000; // ms (debug)
 bool g_slowMotionMode = false; // [Debug] Slow crossfade for timing analysis
 static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
@@ -384,9 +381,6 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 // ============================================================================
 // UI Grid System - Migrated to UIRenderer
 // ============================================================================
-// TruncateMode, InfoRow, g_infoGrid, MeasureTextWidth, MakeMiddleEllipsis, 
-// MakeEndEllipsis, BuildInfoGrid, DrawInfoGrid, DrawGridTooltip, DrawInfoPanel,
-// DrawCompactInfo, DrawHistogram, DrawNavIndicators have been moved to UIRenderer.
 
 
 // --- Forward Declarations ---
@@ -782,8 +776,6 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
 
 // --- Helper Functions ---
 
-// --- Helper Functions ---
-
 bool FileExists(LPCWSTR path) {
     DWORD dwAttrib = GetFileAttributesW(path);
     return (dwAttrib != INVALID_FILE_ATTRIBUTES && !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
@@ -863,8 +855,6 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
 }
 
 // --- Draw Functions ---
-
-// DrawOSD moved to RenderEngine
 
 // --- Window Controls ---
 enum class WindowHit { None, Pin, Min, Max, Close };
@@ -949,7 +939,6 @@ void CalculateWindowControls(D2D1_SIZE_F size) {
 
 static bool g_showControls = false; 
 
-// --- REFACTOR: DrawWindowControls with Segoe Fluent Icons ---
 // --- REFACTOR: DrawWindowControls with Segoe Fluent Icons ---
 void DrawWindowControls(HWND hwnd, ID2D1DeviceContext* context) {
     if (g_config.AutoHideWindowControls && !g_showControls && g_winControls.HoverState == WindowHit::None) return;
@@ -1569,7 +1558,6 @@ bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format
 }
 
 // --- Persistence ---
-// --- Persistence ---
 void SaveConfig() {
     std::wstring iniPath;
     
@@ -1971,106 +1959,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     LoadConfig();
     
     // Smart Lazy Registration: Check and self-repair file associations
-    {
-        wchar_t currentExe[MAX_PATH];
-        GetModuleFileNameW(nullptr, currentExe, MAX_PATH);
-        
-        // Read registered path from registry
-        std::wstring regPath;
-        HKEY hKey;
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, 
-            L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
-            0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-            wchar_t buffer[MAX_PATH * 2] = {0};
-            DWORD bufSize = sizeof(buffer);
-            if (RegGetValueW(hKey, NULL, NULL, RRF_RT_REG_SZ, NULL, buffer, &bufSize) == ERROR_SUCCESS) {
-                regPath = buffer;
-                // Extract path from "\"path\" \"%1\"" format
-                if (regPath.size() > 2 && regPath[0] == L'"') {
-                    size_t endQuote = regPath.find(L'"', 1);
-                    if (endQuote != std::wstring::npos) {
-                        regPath = regPath.substr(1, endQuote - 1);
-                    }
-                }
-            }
-            RegCloseKey(hKey);
-        }
-        
-        // Check if registration needed
-        bool needsRegister = regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
-        if (needsRegister) {
-            // Register specific ProgIDs and OpenWith
-            const wchar_t* exts[] = {
-                // Standard
-                L".jpg", L".jpeg", L".jpe", L".jfif", L".png", L".bmp", L".dib", L".gif", 
-                L".tif", L".tiff", L".ico", 
-                // Web / Modern
-                L".webp", L".avif", L".heic", L".heif", L".svg", L".svgz", L".jxl",
-                // Professional / HDR / Legacy
-                L".exr", L".hdr", L".pic", L".psd", L".tga", L".pcx", L".qoi", 
-                L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
-                // RAW Formats (LibRaw supported)
-                L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
-                L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw"
-            };
-            
-            for (const auto& ext : exts) {
-                std::wstring extStr = ext;
-                std::wstring baseExt = (extStr.size() > 1) ? extStr.substr(1) : extStr;
-                
-                // Generate ProgID: QuickView.EXT (e.g. QuickView.jpg)
-                std::wstring progId = L"QuickView" + extStr;
-                
-                // Generate Description: "EXT File" (e.g. "JPG File")
-                std::wstring desc = baseExt;
-                std::transform(desc.begin(), desc.end(), desc.begin(), ::towupper);
-                desc += L" File";
-
-                // Create ProgID Key
-                if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                    RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)desc.c_str(), (DWORD)(desc.size()+1)*2);
-                    RegCloseKey(hKey);
-                }
-                
-                // Command
-                if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                    std::wstring cmd = L"\"" + std::wstring(currentExe) + L"\" \"%1\"";
-                    RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
-                    RegCloseKey(hKey);
-                }
-                
-                // Icon
-                if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                    std::wstring icon = std::wstring(currentExe) + L",0";
-                    RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
-                    RegCloseKey(hKey);
-                }
-
-                // Add to OpenWithProgids
-                std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
-                if (RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                    RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, NULL, 0);
-                    RegCloseKey(hKey);
-                }
-            }
-            
-            // Register in Applications for proper display name
-            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe",
-                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                std::wstring friendlyName = L"QuickView";
-                RegSetValueExW(hKey, L"FriendlyAppName", 0, REG_SZ, (BYTE*)friendlyName.c_str(), (DWORD)(friendlyName.size()+1)*2);
-                RegCloseKey(hKey);
-            }
-            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command",
-                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                std::wstring cmd = L"\"" + std::wstring(currentExe) + L"\" \"%1\"";
-                RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
-                RegCloseKey(hKey);
-            }
-            
-            // Refresh Shell
-            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
-        }
+    // Smart Lazy Registration: Check and self-repair file associations
+    if (SettingsOverlay::IsRegistrationNeeded()) {
+        SettingsOverlay::RegisterAssociations();
     }
     
     if (g_config.SingleInstance && alreadyRunning) {

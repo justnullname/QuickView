@@ -1,7 +1,6 @@
 #include "pch.h"
 #include <filesystem>
 
-// NanoSVG Removed per user request
 
 #include "ImageLoader.h"
 #include "EditState.h" // For g_runtime
@@ -16,12 +15,6 @@
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
 #include <jxl/thread_parallel_runner.h>
-#include <jxl/decode_cxx.h>
-#include <jxl/resizable_parallel_runner.h>
-#include <jxl/thread_parallel_runner.h>
-#include <jxl/decode_cxx.h>
-#include <jxl/resizable_parallel_runner.h> // Keep for legacy Check
-#include <jxl/thread_parallel_runner.h>    // Add this for ThreadRunner!
 #include <avif/avif.h> // AVIF
 #include "WuffsLoader.h"
 #include "StbLoader.h"
@@ -308,7 +301,7 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 #include <turbojpeg.h>
 
 // High-Performance Library Includes
-// libpng REMOVED - replaced by Wuffs
+
 #include <webp/decode.h>     // libwebp
 #include <webp/demux.h>
 #include <avif/avif.h>       // libavif
@@ -1498,21 +1491,45 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         return E_FAIL;
     }
 
-    // Convert YUV to RGB
+    // Convert YUV to RGB directly into WIC Bitmap
+    
+    // 1. Create target WIC Bitmap
+    ComPtr<IWICBitmap> pWicBitmap;
+    HRESULT hr = m_wicFactory->CreateBitmap(decoder->image->width, decoder->image->height, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnDemand, &pWicBitmap);
+    if (FAILED(hr)) {
+        avifDecoderDestroy(decoder);
+        return hr;
+    }
+
+    // 2. Lock buffer
+    ComPtr<IWICBitmapLock> pLock;
+    WICRect rc = { 0, 0, (INT)decoder->image->width, (INT)decoder->image->height };
+    hr = pWicBitmap->Lock(&rc, WICBitmapLockWrite, &pLock);
+    if (FAILED(hr)) { avifDecoderDestroy(decoder); return hr; }
+
+    UINT bufSize = 0;
+    BYTE* pBuf = nullptr;
+    UINT stride = 0;
+    pLock->GetDataPointer(&bufSize, &pBuf);
+    pLock->GetStride(&stride);
+
+    // 3. Decode to Buffer
     avifRGBImage rgb;
     avifRGBImageSetDefaults(&rgb, decoder->image);
-    
-    // Configure for WIC (BGRA, 8-bit)
     rgb.format = AVIF_RGB_FORMAT_BGRA;
     rgb.depth = 8;
-    rgb.alphaPremultiplied = AVIF_TRUE; // Re-enabled native premul as per user request
+    rgb.alphaPremultiplied = AVIF_TRUE; 
+    rgb.pixels = pBuf;
+    rgb.rowBytes = stride;
     
-    // Calculate stride and size
-    rgb.rowBytes = rgb.width * 4;
-    std::vector<uint8_t> pixelData(rgb.rowBytes * rgb.height);
-    rgb.pixels = pixelData.data();
+    // Validate buffer size safe-guard
+    if (bufSize < (size_t)stride * rgb.height) {
+        pLock.Reset(); avifDecoderDestroy(decoder); return E_OUTOFMEMORY;
+    }
     
     result = avifImageYUVToRGB(decoder->image, &rgb);
+    pLock.Reset(); // Unlock
+
     if (result != AVIF_RESULT_OK) {
         wchar_t buf[128]; swprintf_s(buf, L"[LoadAVIF] YUVToRGB failed: %hs\n", avifResultToString(result));
         OutputDebugStringW(buf);
@@ -1520,8 +1537,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         return E_FAIL;
     }
 
-    // Create WIC Bitmap
-    HRESULT hr = CreateWICBitmapFromMemory(rgb.width, rgb.height, GUID_WICPixelFormat32bppPBGRA, (UINT)rgb.rowBytes, (UINT)pixelData.size(), pixelData.data(), ppBitmap);
+    *ppBitmap = pWicBitmap.Detach();
 
     // Extract format details (bit depth)
     if (SUCCEEDED(hr)) {

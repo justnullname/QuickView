@@ -275,11 +275,6 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransp
         
         float duration = durationMs / 1000.0f;
         
-        // [Fix] Overlay Fade-Out Pattern
-        // Old approach (dual fade): A=50% + B=50% = 75% visible at midpoint (background bleed-through!)
-        // New approach: New layer = 100% always, Old layer fades out to 0
-        // Result: At any point, opacity = 100% (new) + X% (old fading) = always opaque
-        
         // Old layer: Fade Out (1 -> 0)
         animOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
         animOut->End(duration, 0.0f);
