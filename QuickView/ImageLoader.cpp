@@ -3561,12 +3561,88 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
              // P1-P6: width height maxval(for some)
              int w = readInt();
              int h = readInt();
-             if (w > 0 && h > 0) {
+            if (w > 0 && h > 0) {
                  pInfo->width = w; pInfo->height = h;
                  return S_OK;
              }
          }
          // If parsing fails, E_FAIL (will fall back to slow load if configured, or fail)
+    }
+
+    // --- [v9.9] QOI (Quite OK Image) ---
+    // Magic: "qoif", W at 4-7 (BE), H at 8-11 (BE)
+    if (size >= 14 && data[0] == 'q' && data[1] == 'o' && data[2] == 'i' && data[3] == 'f') {
+        pInfo->format = L"QOI";
+        pInfo->width = ((uint32_t)data[4] << 24) | ((uint32_t)data[5] << 16) | 
+                       ((uint32_t)data[6] << 8) | data[7];
+        pInfo->height = ((uint32_t)data[8] << 24) | ((uint32_t)data[9] << 16) | 
+                        ((uint32_t)data[10] << 8) | data[11];
+        pInfo->channels = data[12]; // 3=RGB, 4=RGBA
+        pInfo->bitDepth = 8;
+        return S_OK;
+    }
+
+    // --- [v9.9] PSD (Photoshop) ---
+    // Magic: "8BPS", Version at 4-5 (BE), H at 14-17 (BE), W at 18-21 (BE)
+    if (size >= 22 && data[0] == '8' && data[1] == 'B' && data[2] == 'P' && data[3] == 'S') {
+        pInfo->format = L"PSD";
+        pInfo->height = ((uint32_t)data[14] << 24) | ((uint32_t)data[15] << 16) | 
+                        ((uint32_t)data[16] << 8) | data[17];
+        pInfo->width = ((uint32_t)data[18] << 24) | ((uint32_t)data[19] << 16) | 
+                       ((uint32_t)data[20] << 8) | data[21];
+        pInfo->bitDepth = (data[22] << 8) | data[23]; // Depth at 22-23
+        return S_OK;
+    }
+
+    // --- [v9.9] HDR (Radiance RGBE) ---
+    // Magic: "#?RADIANCE" or "#?RGBE", dimensions in ASCII header "-Y H +X W"
+    if (size >= 11 && data[0] == '#' && data[1] == '?') {
+        pInfo->format = L"HDR";
+        // Search for resolution string in first 4KB
+        std::string header((const char*)data, std::min(size, (size_t)4096));
+        size_t resPos = header.find("-Y ");
+        if (resPos != std::string::npos) {
+            int h = 0, w = 0;
+            if (sscanf_s(header.c_str() + resPos, "-Y %d +X %d", &h, &w) == 2 ||
+                sscanf_s(header.c_str() + resPos, "-Y %d -X %d", &h, &w) == 2) {
+                pInfo->height = h;
+                pInfo->width = w;
+                pInfo->bitDepth = 32; // RGBE is 32-bit float equivalent
+                return S_OK;
+            }
+        }
+        // Alternate format: "+Y H +X W"
+        resPos = header.find("+Y ");
+        if (resPos != std::string::npos) {
+            int h = 0, w = 0;
+            if (sscanf_s(header.c_str() + resPos, "+Y %d +X %d", &h, &w) == 2) {
+                pInfo->height = h;
+                pInfo->width = w;
+                pInfo->bitDepth = 32;
+                return S_OK;
+            }
+        }
+        // Parsing failed, return format only
+        return S_OK;
+    }
+
+    // --- [v9.9] ICO (Icon) ---
+    // Magic: 00 00 01 00, ICONDIRENTRY at offset 6, use largest entry
+    if (size >= 22 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01 && data[3] == 0x00) {
+        pInfo->format = L"ICO";
+        uint16_t count = data[4] | ((uint16_t)data[5] << 8);
+        int maxW = 0, maxH = 0;
+        for (uint16_t i = 0; i < count && (6 + i * 16 + 4) <= size; ++i) {
+            size_t off = 6 + i * 16;
+            int w = data[off];     // 0 means 256
+            int h = data[off + 1]; // 0 means 256
+            if (w == 0) w = 256;
+            if (h == 0) h = 256;
+            if (w > maxW) { maxW = w; maxH = h; }
+        }
+        pInfo->width = maxW;
+        pInfo->height = maxH;
+        return S_OK;
     }
 
     // --- RAW ---
