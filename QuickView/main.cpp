@@ -4457,6 +4457,15 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
                 g_currentMetadata = finalMetadata;
                 
+                // [v9.9] Extension Mismatch Detection for Toolbar Button
+                // Uses Format field (e.g., "JPEG", "PNG") to detect if file extension is incorrect
+                if (!g_currentMetadata.Format.empty()) {
+                    bool mismatch = CheckExtensionMismatch(g_imagePath, g_currentMetadata.Format);
+                    g_toolbar.SetExtensionWarning(mismatch);
+                } else {
+                    g_toolbar.SetExtensionWarning(false);
+                }
+                
                 // [v5.3] Set EXIF Orientation based on AutoRotate config
                 if (g_config.AutoRotate) {
                     g_viewState.ExifOrientation = evt.metadata.ExifOrientation;
