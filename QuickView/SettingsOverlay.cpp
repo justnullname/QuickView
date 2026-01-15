@@ -171,17 +171,58 @@ static bool RegisterFileAssociationsSilent() {
         RegCloseKey(hKey);
     }
     
-    // 4. Register extensions in OpenWithProgids
+    // 4. Register specific ProgIDs and OpenWith
     const wchar_t* exts[] = {
-        L".jpg", L".jpeg", L".png", L".gif", L".bmp", L".webp", 
-        L".avif", L".heic", L".heif", L".jxl", L".svg", L".ico",
-        L".tif", L".tiff", L".psd", L".exr", L".hdr"
+        // Standard
+        L".jpg", L".jpeg", L".jpe", L".jfif", L".png", L".bmp", L".dib", L".gif", 
+        L".tif", L".tiff", L".ico", 
+        // Web / Modern
+        L".webp", L".avif", L".heic", L".heif", L".svg", L".svgz", L".jxl",
+        // Professional / HDR / Legacy
+        L".exr", L".hdr", L".pic", L".psd", L".tga", L".pcx", L".qoi", 
+        L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
+        // RAW Formats (LibRaw supported)
+        L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
+        L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw"
     };
+
     for (const auto& ext : exts) {
-        std::wstring keyPath = L"Software\\Classes\\" + std::wstring(ext) + L"\\OpenWithProgids";
+        std::wstring extStr = ext;
+        std::wstring baseExt = (extStr.size() > 1) ? extStr.substr(1) : extStr;
+        
+        // Generate ProgID: QuickView.EXT (e.g. QuickView.jpg)
+        std::wstring progId = L"QuickView" + extStr;
+        
+        // Generate Description: "EXT File" (e.g. "JPG File")
+        std::wstring desc = baseExt;
+        std::transform(desc.begin(), desc.end(), desc.begin(), ::towupper);
+        desc += L" File";
+
+        // Create ProgID Key
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)desc.c_str(), (DWORD)(desc.size()+1)*2);
+            RegCloseKey(hKey);
+        }
+        
+        // Command
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" \"%1\"";
+            RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
+            RegCloseKey(hKey);
+        }
+        
+        // Icon
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            std::wstring icon = std::wstring(exePath) + L",0";
+            RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
+            RegCloseKey(hKey);
+        }
+
+        // Add to OpenWithProgids
+        std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
         r = RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
         if (r == ERROR_SUCCESS) {
-            RegSetValueExW(hKey, L"QuickView.Image", 0, REG_SZ, NULL, 0);
+            RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, NULL, 0);
             RegCloseKey(hKey);
         }
     }

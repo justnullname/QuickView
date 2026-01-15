@@ -31,13 +31,19 @@ public:
         if (dir.empty()) return;
 
         // Supported extensions (comprehensive list including RAW formats)
+        // Supported extensions (comprehensive list including RAW formats)
         const std::vector<std::wstring> extensions = {
-            // Standard formats
-            L".jpg", L".jpeg", L".png", L".webp", L".bmp", L".gif", L".tif", L".tiff",
-            // Modern formats  
-            L".heic", L".heif", L".avif", L".jxl", L".exr", L".hdr",
-            // RAW formats
-            L".cr2", L".cr3", L".nef", L".arw", L".orf", L".rw2", L".dng", L".raf", L".pef", L".srw", L".raw"
+            // Standard
+            L".jpg", L".jpeg", L".jpe", L".jfif", L".png", L".bmp", L".dib", L".gif", 
+            L".tif", L".tiff", L".ico", 
+            // Web / Modern
+            L".webp", L".avif", L".heic", L".heif", L".svg", L".svgz", L".jxl",
+            // Professional / HDR / Legacy
+            L".exr", L".hdr", L".pic", L".psd", L".tga", L".pcx", L".qoi", 
+            L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
+            // RAW Formats (LibRaw supported)
+            L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
+            L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw"
         };
 
         try {

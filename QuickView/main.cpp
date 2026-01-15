@@ -1999,38 +1999,57 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         // Check if registration needed
         bool needsRegister = regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
         if (needsRegister) {
-            // Silent register/repair
+            // Register specific ProgIDs and OpenWith
             const wchar_t* exts[] = {
-                L".jpg", L".jpeg", L".png", L".gif", L".bmp", L".webp", 
-                L".avif", L".heic", L".heif", L".jxl", L".svg", L".ico",
-                L".tif", L".tiff", L".psd", L".exr", L".hdr"
+                // Standard
+                L".jpg", L".jpeg", L".jpe", L".jfif", L".png", L".bmp", L".dib", L".gif", 
+                L".tif", L".tiff", L".ico", 
+                // Web / Modern
+                L".webp", L".avif", L".heic", L".heif", L".svg", L".svgz", L".jxl",
+                // Professional / HDR / Legacy
+                L".exr", L".hdr", L".pic", L".psd", L".tga", L".pcx", L".qoi", 
+                L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
+                // RAW Formats (LibRaw supported)
+                L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
+                L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw"
             };
             
-            // Register ProgID
-            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
-                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                std::wstring cmd = L"\"" + std::wstring(currentExe) + L"\" \"%1\"";
-                RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
-                RegCloseKey(hKey);
-            }
-            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\DefaultIcon",
-                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                std::wstring icon = std::wstring(currentExe) + L",0";
-                RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
-                RegCloseKey(hKey);
-            }
-            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image",
-                0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                std::wstring name = L"QuickView Image Viewer";
-                RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)name.c_str(), (DWORD)(name.size()+1)*2);
-                RegCloseKey(hKey);
-            }
-            
-            // Register extensions
             for (const auto& ext : exts) {
-                std::wstring keyPath = L"Software\\Classes\\" + std::wstring(ext) + L"\\OpenWithProgids";
+                std::wstring extStr = ext;
+                std::wstring baseExt = (extStr.size() > 1) ? extStr.substr(1) : extStr;
+                
+                // Generate ProgID: QuickView.EXT (e.g. QuickView.jpg)
+                std::wstring progId = L"QuickView" + extStr;
+                
+                // Generate Description: "EXT File" (e.g. "JPG File")
+                std::wstring desc = baseExt;
+                std::transform(desc.begin(), desc.end(), desc.begin(), ::towupper);
+                desc += L" File";
+
+                // Create ProgID Key
+                if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                    RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)desc.c_str(), (DWORD)(desc.size()+1)*2);
+                    RegCloseKey(hKey);
+                }
+                
+                // Command
+                if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                    std::wstring cmd = L"\"" + std::wstring(currentExe) + L"\" \"%1\"";
+                    RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
+                    RegCloseKey(hKey);
+                }
+                
+                // Icon
+                if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+                    std::wstring icon = std::wstring(currentExe) + L",0";
+                    RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
+                    RegCloseKey(hKey);
+                }
+
+                // Add to OpenWithProgids
+                std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
                 if (RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-                    RegSetValueExW(hKey, L"QuickView.Image", 0, REG_SZ, NULL, 0);
+                    RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, NULL, 0);
                     RegCloseKey(hKey);
                 }
             }
@@ -2089,7 +2108,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     wcex.hIconSm = LoadIconW(hInstance, MAKEINTRESOURCEW(1));  // Load from resource
     
     RegisterClassExW(&wcex);
-    HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+    HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, 800, 600, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
     
     // Set global hwnd for RequestRepaint system
@@ -2190,7 +2209,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         ofn.hwndOwner = hwnd;
         ofn.lpstrFile = szFile;
         ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.avif;*.jxl;*.heic;*.heif;*.tga;*.psd;*.hdr;*.exr;*.svg;*.qoi;*.pcx;*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef;*.pgm;*.ppm\0JPEG\0*.jpg;*.jpeg\0PNG\0*.png\0WebP\0*.webp\0AVIF\0*.avif\0JPEG XL\0*.jxl\0HEIC/HEIF\0*.heic;*.heif\0RAW\0*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef\0All Files\0*.*\0";
+        ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.jpe;*.jfif;*.png;*.bmp;*.dib;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.svg;*.svgz;*.jxl;*.exr;*.hdr;*.pic;*.psd;*.tga;*.pcx;*.qoi;*.wbmp;*.pam;*.pbm;*.pgm;*.ppm;*.wdp;*.hdp;*.arw;*.cr2;*.cr3;*.dng;*.nef;*.orf;*.raf;*.rw2;*.srw;*.x3f;*.mrw;*.mos;*.kdc;*.dcr;*.sr2;*.pef;*.erf;*.3fr;*.mef;*.nrw;*.raw\0All Files\0*.*\0";
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
         if (GetOpenFileNameW(&ofn)) {
             OutputDebugStringW(L"[Main] File Selected\n");
@@ -3870,7 +3889,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             ofn.hwndOwner = hwnd;
             ofn.lpstrFile = szFile;
             ofn.nMaxFile = MAX_PATH;
-            ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.avif;*.jxl;*.heic;*.heif;*.tga;*.psd;*.hdr;*.exr;*.svg;*.qoi;*.pcx;*.raw;*.arw;*.cr2;*.cr3;*.nef;*.dng;*.orf;*.rw2;*.raf;*.pef;*.pgm;*.ppm\0All Files\0*.*\0";
+            ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.jpe;*.jfif;*.png;*.bmp;*.dib;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.svg;*.svgz;*.jxl;*.exr;*.hdr;*.pic;*.psd;*.tga;*.pcx;*.qoi;*.wbmp;*.pam;*.pbm;*.pgm;*.ppm;*.wdp;*.hdp;*.arw;*.cr2;*.cr3;*.dng;*.nef;*.orf;*.raf;*.rw2;*.srw;*.x3f;*.mrw;*.mos;*.kdc;*.dcr;*.sr2;*.pef;*.erf;*.3fr;*.mef;*.nrw;*.raw\0All Files\0*.*\0";
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
             if (GetOpenFileNameW(&ofn)) {
                 g_editState.Reset();
