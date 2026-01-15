@@ -3932,10 +3932,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_DELETE: {
-            if (!g_imagePath.empty()) {
+            // [v9.9 Fix] Handle Deletion during Edit/Transform
+            // Determine actual target to recycle and temp file to map
+            std::wstring recycleTarget = g_imagePath;
+            std::wstring tempToDelete = L"";
+            
+            if (!g_editState.OriginalFilePath.empty()) {
+                // We are in edit mode (Rotate/Flip), so target is the ORIGINAL file
+                recycleTarget = g_editState.OriginalFilePath;
+                // And we must cleanup the temp file too
+                tempToDelete = g_editState.TempFilePath;
+            }
+
+            if (!recycleTarget.empty()) {
                 // Get filename for display
-                size_t lastSlash = g_imagePath.find_last_of(L"\\/");
-                std::wstring filename = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
+                size_t lastSlash = recycleTarget.find_last_of(L"\\/");
+                std::wstring filename = (lastSlash != std::wstring::npos) ? recycleTarget.substr(lastSlash + 1) : recycleTarget;
                 
                 bool confirmed = true; // Default to confirmed if ConfirmDelete is off
                 
@@ -3952,28 +3964,51 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
                 
                 if (confirmed) {
+                    // Peek next using Navigator (which should still track the collection)
                     std::wstring nextPath = g_navigator.PeekNext();
-                    if (nextPath == g_imagePath) nextPath = g_navigator.PeekPrevious();
+                    if (nextPath == recycleTarget) nextPath = g_navigator.PeekPrevious();
                     
-                    // Release image before delete
+                    // Release image before delete (Critical for file lock)
                     ReleaseImageResources();
                     
                     // Use SHFileOperation for recycle bin
-                    std::wstring pathCopy = g_imagePath;
+                    std::wstring pathCopy = recycleTarget;
                     pathCopy.push_back(L'\0'); // Double null terminator
                     SHFILEOPSTRUCTW op = {};
                     op.wFunc = FO_DELETE;
                     op.pFrom = pathCopy.c_str();
                     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+                    
                     if (SHFileOperationW(&op) == 0) {
                         g_osd.Show(hwnd, L"Moved to Recycle Bin", false);
+                        
+                        // [Fix] Verify and delete the temp file if it exists
+                        if (!tempToDelete.empty() && FileExists(tempToDelete.c_str())) {
+                             DeleteFileW(tempToDelete.c_str());
+                        }
+
                         RequestRepaint(PaintLayer::All);
                         g_editState.Reset();
                         g_viewState.Reset();
                         g_imageResource.Reset();
-                        g_navigator.Initialize(nextPath.empty() ? L"" : nextPath.c_str());
-                        if (!nextPath.empty()) LoadImageAsync(hwnd, nextPath);
-                        else RequestRepaint(PaintLayer::All);
+                        
+                        // Re-init navigator if needed (though usually list is handled by next/prev logic, 
+                        // strictly we might want to refresh list, but let's stick to PeekNext flow)
+                        // Ideally we should remove the file from navigator list too, but Initialize handles that.
+                        // For QuickView, re-init is safer to sync with FS changes.
+                        if (!nextPath.empty()) {
+                             // Initialize will scan directory again
+                             // But wait, if we scan, we might lose 'nextPath' context if folder content changed vastly?
+                             // Optimization: Just load nextPath. Initialize inside Navigate will handle it?
+                             // NavigateTo doesn't init navigator. 
+                             // Let's call Initialize(nextPath) to refresh list and set index.
+                             g_navigator.Initialize(nextPath);
+                             LoadImageAsync(hwnd, nextPath);
+                        } else {
+                             // Empty folder?
+                             g_navigator.Initialize(L"");
+                             RequestRepaint(PaintLayer::All);
+                        }
                     }
                 }
             }
