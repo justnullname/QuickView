@@ -796,8 +796,10 @@ bool IsRawFile(const std::wstring& path) {
     std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
     
     static const wchar_t* rawExts[] = { 
-        L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".pef",
-        L".erf", L".mef", L".mos", L".mrw", L".nrw", L".raw", L".rwl", L".sr2", L".x3f", L".iiq", L".3fr"
+        L".3fr", L".ari", L".arw", L".bay", L".braw", L".cr2", L".cr3", L".cap", L".data", L".dcs", L".dcr", 
+        L".dng", L".drf", L".eip", L".erf", L".fff", L".gpr", L".iiq", L".k25", L".kdc", L".mdc", L".mef", 
+        L".mos", L".mrw", L".nef", L".nrw", L".obm", L".orf", L".pef", L".ptx", L".pxn", L".r3d", L".raf", 
+        L".raw", L".rwl", L".rw2", L".rwz", L".sr2", L".srf", L".srw", L".sti", L".x3f"
     };
     for (const auto* e : rawExts) {
         if (ext == e) return true;
@@ -3054,14 +3056,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ToolbarButtonID::LockSize: SendMessage(hwnd, WM_COMMAND, IDM_LOCK_WINDOW_SIZE, 0); break;
                 case ToolbarButtonID::Exif:    SendMessage(hwnd, WM_COMMAND, IDM_SHOW_INFO_PANEL, 0); break;
                 case ToolbarButtonID::RawToggle: {
-                    g_config.ForceRawDecode = !g_config.ForceRawDecode;
-                    g_runtime.ForceRawDecode = g_config.ForceRawDecode; // Sync runtime
+                    // [Fix] Toggle only runtime state (current image), do NOT change global config default
+                    g_runtime.ForceRawDecode = !g_runtime.ForceRawDecode;
+                    
                     g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
                     // Reload
                     ReleaseImageResources(); // Free current
                     LoadImageAsync(hwnd, g_imagePath);
                     
-                    std::wstring msg = g_config.ForceRawDecode ? L"RAW: Full Decode (High Quality)" : L"RAW: Embedded Preview (Fast)";
+                    std::wstring msg = g_runtime.ForceRawDecode ? L"RAW: Full Decode (High Quality)" : L"RAW: Embedded Preview (Fast)";
                     g_osd.Show(hwnd, msg, false);
                     break;
                 }
@@ -4640,6 +4643,12 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     ImageID myImageId = ComputePathHash(path);
     g_currentImageId.store(myImageId);
     
+    // [Fix] Only reset Runtime State if loading a NEW file.
+    // If reloading the same file (e.g. RAW Toggle), preserve g_runtime.ForceRawDecode.
+    if (g_imagePath != path) {
+        g_runtime.ForceRawDecode = g_config.ForceRawDecode;
+    }
+    
     g_imagePath = path; // Set target path immediately for UI consistency
     
     g_isLoading = true;
@@ -4654,6 +4663,9 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     g_currentMetadata = {}; 
     g_currentMetadata.IsFullMetadataLoaded = false;
     
+    // Update Toolbar State for RAW
+    // [Fix] Ensure RAW button visibility is updated immediately on navigation
+    g_toolbar.SetRawState(IsRawFile(path), g_runtime.ForceRawDecode);
     
     // Level 0 Feedback: Immediate OSD before any decode starts
     std::wstring filename = path.substr(path.find_last_of(L"\\/") + 1);
