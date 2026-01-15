@@ -230,37 +230,43 @@ std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, const std::wstring& tex
     return text.substr(0, lo) + L"...";
 }
 
-void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color) {
+void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color, OSDPosition pos) {
     m_osdText = text;
     m_osdOpacity = opacity;
     m_osdColor = color;
-    MarkOSDDirty(); // 浣跨敤缁嗙矑搴﹁剰鏍囪
+    m_osdPos = pos;
+    MarkOSDDirty(); 
 }
 
 RECT UIRenderer::CalculateOSDDirtyRect() {
-    // OSD 浣嶇疆: 搴曢儴灞呬腑锛岃窛绐楀彛搴曢儴 100px
-    // 璁＄畻闇€瑕佸寘鍚笂涓€甯х殑浣嶇疆 (娓呯悊) 鍜屽綋鍓嶅抚鐨勪綅缃?(缁樺埗)
+    // OSD Position
     
     float paddingH = 30.0f;
     float paddingV = 15.0f;
-    float maxOSDWidth = 800.0f;  // 鏈€澶у搴︿及绠?
-    float maxOSDHeight = 80.0f;  // 鏈€澶ч珮搴︿及绠?
+    float maxOSDWidth = 800.0f;  // Estimated max
+    float maxOSDHeight = 80.0f;  // Estimated max
     
-    // 浣跨敤淇濆畧浼扮畻锛岀‘淇濊鐩栨暣涓?OSD 鍖哄煙
+    // Conservative coverage
     float toastW = std::min(maxOSDWidth, (float)m_width * 0.8f);
     float toastH = maxOSDHeight;
     
     float x = (m_width - toastW) / 2.0f;
-    float y = m_height - toastH - 100.0f;
+    float y = 0.0f;
     
-    // 鎵╁睍涓€鐐逛綑閲忎互纭繚瀹屽叏瑕嗙洊
+    if (m_osdPos == OSDPosition::Top) {
+        y = 60.0f; // Top offset
+    } else {
+        y = m_height - toastH - 100.0f; // Bottom offset
+    }
+    
+    // Expand margin
     const float MARGIN = 10.0f;
     x = std::max(0.0f, x - MARGIN);
     y = std::max(0.0f, y - MARGIN);
     float right = std::min((float)m_width, x + toastW + MARGIN * 2);
     float bottom = std::min((float)m_height, y + toastH + MARGIN * 2);
     
-    // 涓庝笂涓€甯х殑浣嶇疆鍚堝苟 (濡傛灉绐楀彛澶у皬鍙樺寲锛岄渶瑕佹竻闄ゆ棫浣嶇疆)
+    // Merge with previous frame rect (to clear old position)
     if (m_lastOSDRect.right > 0) {
         x = std::min(x, m_lastOSDRect.left);
         y = std::min(y, m_lastOSDRect.top);
@@ -268,7 +274,7 @@ RECT UIRenderer::CalculateOSDDirtyRect() {
         bottom = std::max(bottom, m_lastOSDRect.bottom);
     }
     
-    // 淇濆瓨褰撳墠浣嶇疆渚涗笅娆′娇鐢?
+    // Save current rect
     m_lastOSDRect = D2D1::RectF(x, y, right, bottom);
     
     return RECT{ (LONG)x, (LONG)y, (LONG)right, (LONG)bottom };
@@ -535,9 +541,15 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
         toastH = metrics.height + paddingV * 2;
     }
     
-    // Position: center horizontally, 100px from bottom
+    // Position: center horizontally
     float x = (m_width - toastW) / 2.0f;
-    float y = m_height - toastH - 100.0f;
+    float y = 0.0f;
+    
+    if (m_osdPos == OSDPosition::Top) {
+        y = 60.0f; // Top offset (below title bar area)
+    } else {
+        y = m_height - toastH - 100.0f; // Bottom offset
+    }
     
     D2D1_ROUNDED_RECT bgRect = D2D1::RoundedRect(
         D2D1::RectF(x, y, x + toastW, y + toastH), 8.0f, 8.0f

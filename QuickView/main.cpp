@@ -393,7 +393,7 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
-FireAndForget LoadImageAsync(HWND hwnd, std::wstring path);
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true);
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
@@ -1899,11 +1899,10 @@ void AdjustWindowToImage(HWND hwnd) {
 void ReloadCurrentImage(HWND hwnd) {
     if (g_imagePath.empty() && g_editState.OriginalFilePath.empty()) return;
     g_imageResource.Reset();
-    LPCWSTR path;
-    if (g_editState.IsDirty && FileExists(g_editState.TempFilePath.c_str())) path = g_editState.TempFilePath.c_str();
-    else path = g_editState.OriginalFilePath.empty() ? g_imagePath.c_str() : g_editState.OriginalFilePath.c_str();
+    std::wstring path = g_editState.IsDirty ? g_editState.TempFilePath : g_imagePath;
     
-    LoadImageAsync(hwnd, path);
+    // [v4.1] Reload: Skip OSD (to preserve Rotate/Flip messages)
+    LoadImageAsync(hwnd, path.c_str(), false);
     // Note: AdjustWindowToImage is called inside LoadImageAsync upon success
 }
 
@@ -3215,7 +3214,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         float imgH = g_lastSurfaceSize.height;
         if (imgW <= 0 || imgH <= 0) return 0; // Safety check
         
-        float fitScale = std::min((float)rc.right / imgW, (float)rc.bottom / imgH);
+        float scaleW = (float)rc.right / imgW;
+        float scaleH = (float)rc.bottom / imgH;
+        float fitScale = (scaleW < scaleH) ? scaleW : scaleH;
         float currentTotalScale = fitScale * g_viewState.Zoom;
         
         float zoomFactor = (delta > 0) ? 1.1f : 0.90909f;
@@ -4647,7 +4648,7 @@ void ProcessEngineEvents(HWND hwnd) {
     }
 }
 
-void StartNavigation(HWND hwnd, std::wstring path) {
+void StartNavigation(HWND hwnd, std::wstring path, bool showOSD) {
     if (!g_imageEngine || path.empty()) return;
 
     // [Phase 3] Increment token FIRST (deprecated, kept for backward compatibility)
@@ -4682,8 +4683,10 @@ void StartNavigation(HWND hwnd, std::wstring path) {
     g_toolbar.SetRawState(IsRawFile(path), g_runtime.ForceRawDecode);
     
     // Level 0 Feedback: Immediate OSD before any decode starts
-    std::wstring filename = path.substr(path.find_last_of(L"\\/") + 1);
-    g_osd.Show(hwnd, filename.c_str(), false);
+    if (showOSD) {
+        std::wstring filename = path.substr(path.find_last_of(L"\\/") + 1);
+        g_osd.Show(hwnd, filename.c_str(), false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Top);
+    }
     PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
     
 // Kick the Engine
@@ -4724,15 +4727,14 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
     }
 }
 
-FireAndForget LoadImageAsync(HWND hwnd, std::wstring path) {
-    // Redirect to New Engine
-    if (!g_imageLoader || !g_renderEngine) co_return;
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD) {
+    if (path.empty()) co_return;
     
-    // Maintain checks
-    if (!FileExists(path.c_str())) co_return;
+    // Switch to UI thread if needed (though usually called from UI)
+    // auto scheduler = co_await winrt::apartment_context(); // [Fix] winrt namespace not found, assume UI thread
 
-    // Call the synchronous engine starter
-    StartNavigation(hwnd, path);
+    // [v4.1] Centralized Navigation Logic
+    StartNavigation(hwnd, path, showOSD);
     
     co_return; 
 }
@@ -5185,7 +5187,7 @@ void OnPaint(HWND hwnd) {
                     else if (g_osd.IsWarning) osdColor = D2D1::ColorF(D2D1::ColorF::Yellow);
                     else osdColor = D2D1::ColorF(D2D1::ColorF::White);
                 }
-                g_uiRenderer->SetOSD(g_osd.Message, opacity, osdColor);
+                g_uiRenderer->SetOSD(g_osd.Message, opacity, osdColor, g_osd.Position);
             } else {
                 g_uiRenderer->SetOSD(L"", 0);
             }

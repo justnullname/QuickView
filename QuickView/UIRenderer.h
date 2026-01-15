@@ -6,6 +6,7 @@
 #include <array>
 #include "EditState.h"
 #include "ImageEngine.h" // For CacheTopology
+#include "OSDState.h"
 
 // ============================================================================
 // UIRenderer - 多层 UI 渲染器
@@ -98,7 +99,7 @@ public:
     D2D1_RECT_F GetPanelCloseRect() const { return m_panelCloseRect; }
     
     // ===== UI 状态更新 =====
-    void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
+    void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White), OSDPosition pos = OSDPosition::Bottom);
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
     
     // [HUD V4] Zero-Cost Telemetry
@@ -169,6 +170,7 @@ private:
     std::wstring m_osdText;
     float m_osdOpacity = 0.0f;
     D2D1_COLOR_F m_osdColor = D2D1::ColorF(D2D1::ColorF::White);
+    OSDPosition m_osdPos = OSDPosition::Bottom;
     
     // Debug HUD V4 State
     bool m_showDebugHUD = false;
