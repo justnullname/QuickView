@@ -10,10 +10,16 @@
 **Built for Speed. Engineered for Geeks.**
 
 <p>
-    <strong>Direct2D Rendering</strong> • 
+    <strong>Direct2D Native</strong> • 
     <strong>Modern C++23</strong> • 
-    <strong>SIMD Accelerated</strong> • 
+    <strong>Quantum Stream Architecture</strong> • 
     <strong>Portable</strong>
+</p>
+
+<p align="center">
+    <a href="README_zh-CN.md">
+        <img src="https://img.shields.io/badge/Language-%E4%B8%AD%E6%96%87-blue?style=for-the-badge" alt="Chinese README">
+    </a>
 </p>
 
 <p>
@@ -43,26 +49,61 @@
 
 ---
 
-## 🧐 Why QuickView?
+## 🚀 Introduction
 
-Most image viewers today are either **bloated** (slow startup, huge size) or **outdated** (GDI rendering, poor high-DPI support).
+**QuickView** is currently one of the fastest image viewers available on the Windows platform. We focus purely on delivering the ultimate **viewing experience**—leave the heavy editing to professional tools like Photoshop. 
 
-**QuickView is different.** It is a ground-up rewrite using **Direct2D** and **Modern C++**, discarding legacy baggage. We integrate the industry's fastest decoding engines—**Google Wuffs, libjpeg-turbo, dav1d, libjxl**—to deliver:
+Rewritten from scratch using **Direct2D** and **C++23**, QuickView abandons legacy GDI rendering for a game-grade visual architecture. With a startup speed and rendering performance that rivals or exceeds closed-source commercial software, it is designed to handle everything from tiny icons to massive 8K RAW photos with zero latency.
 
-* **Instant Start:** Opens in milliseconds.
-* **60 FPS Rendering:** Silky smooth zooming and panning on 4K/8K monitors.
-* **Technical Transparency:** See the *real* data behind your images (Subsampling, Q-Factor).
+### 📂 Supported Formats
+QuickView supports almost all modern and professional image formats:
+
+* **Classic:** `JPG`, `JPEG`, `PNG`, `BMP`, `GIF`, `TIF`, `TIFF`, `ICO`
+* **Web/Modern:** `WEBP`, `AVIF`, `HEIC`, `HEIF`, `SVG`, `SVGZ`, `JXL`
+* **Pro/HDR:** `EXR`, `HDR`, `PIC`, `PSD`, `TGA`, `PCX`, `QOI`, `WBMP`, `PAM`, `PBM`, `PGM`, `PPM`, `WDP`, `HDP`
+* **RAW (LibRaw):** `ARW`, `CR2`, `CR3`, `DNG`, `NEF`, `ORF`, `RAF`, `RW2`, `SRW`, `X3F`, `MRW`, `MOS`, `KDC`, `DCR`, `SR2`, `PEF`, `ERF`, `3FR`, `MEF`, `NRW`, `RAW`
 
 ---
 
-## ✨ Features Showcase
+# QuickView v3.0.4 - The Quantum Flow Update
+**Release Date**: 2026-01-16
+
+### ⚡ Core Architecture: "Quantum Flow"
+- **Unified Scheduling & Decoding (Quantum Flow)**: Introduced a "Fast/Slow Dual-Channel" architecture (`FastLane` + `HeavyLanePool`) that isolates instant interactions from heavy decoding tasks.
+- **N+1 Hot-Spare Architecture**: Implemented a "Capped N+1" threading model where standby threads are kept warm for immediate response, maximizing CPU throughput without over-subscription.
+- **Deep Cancellation**: Granular "On-Demand" cancellation logic allowed for heavy formats (JXL/RAW/WebP), ensuring stale tasks (e.g., during rapid scrolling) are instantly terminated to save power.
+- **Direct D2D Passthrough**: Established a "Zero-Copy" pipeline where decoded `RawImageFrame` buffers are uploaded directly to GPU memory, bypassing GDI/GDI+ entirely.
+
+### 🎨 Visual & Rendering Refactor
+- **DirectComposition (Game-Grade Rendering)**: Completely abandoned the legacy SwapChain/GDI model in favor of a `DirectComposition` Visual tree.
+    - **Visual Ping-Pong**: Implemented a double-buffered Visual architecture for tear-free, artifact-free crossfades.
+    - **IDCompositionScaleTransform**: Hardware-accelerated high-precision zooming and panning.
+- **Native SVG Engine**: Replaced `nanosvg` with **Direct2D Native SVG** rendering.
+    - **Capabilities**: Supports complex SVG filters, gradients, and CSS transparency.
+    - **2-Stage Lossless Scaling**: Vector-based re-rasterization during deep zoom for infinite sharpness.
+    - *(Requirement: Windows 10 Creators Update 1703 or later)*.
+
+### 💾 Memory & Resource Management
+- **Arena Dynamic Allocation**: Switched to a **TripleArena** strategy using Polymorphic Memory Resources (PMR). Memory is pre-allocated and recycled (Bucket Strategy) to eliminate heap fragmentation.
+- **Smart Directional Prefetch**:
+    - **Auto-Tuning**: Automatically selects `Eco`, `Balanced`, or `Performance` prefetch strategies based on detected system RAM.
+    - **Manual Override**: Full user control over cache behavior.
+    - **Smart Skip**: Prevents "OOM" in Eco mode by intelligently skipping tasks that exceed the cache budget.
+
+### 🧩 Infrastructure & Metadata
+- **Metadata Architecture Refactor**: Decoupled "Fast Header Peeking" (for instant layout) from "Async Rich Metadata" parsing (Exif/IPTC/XMP), solving UI blocking issues.
+- **Debug HUD**: Added a real-time "Matrix" overlay (`F12`) visualizing the topology of the cache, worker lane status, and frame timings.
+
+---
+
+## ✨ Key Features
 
 ### 1. 🏎️ Extreme Performance
 > *"Speed is a feature."*
 
 QuickView leverages **Multi-Threaded Decoding** for modern formats like **JXL** and **AVIF**, delivering up to **6x faster** load times on 8-core CPUs compared to standard viewers.
 * **Zero-Latency Preview:** Smart extraction for massive RAW (ARW, CR2) and PSD files.
-* **Dual-Lane Scheduling:** Background loading never freezes the UI.
+* **Debug HUD:** Press `F12` to see real-time performance metrics (Decode time, Render time, Memory usage).
 
 ### 2. 🎛️ Visual Control Center
 > *No more manual .ini editing.*
@@ -83,12 +124,11 @@ A fully hardware-accelerated **Settings Dashboard**.
 </div>
 
 * **Real-time RGB Histogram:** Translucent waveform overlay.
-* **Reverse Q-Factor:** Algorithmically estimates original JPEG quality (e.g., `Q~98`).
+* **Refactored Metadata Architecture:** Faster and more accurate EXIF/Metadata parsing.
 * **HUD Photo Wall:** Press `T` to summon a high-performance gallery overlay capable of virtualizing 10,000+ images.
-
-### 4. 📡 Native Auto-Update
-* **Silent OTA:** Updates are detected and downloaded quietly in the background.
-* **Zero Interruption:** Installs instantly when you exit the app.
+* **Smart Extension Fix:** Automatically detect and repair incorrect file headers (e.g., PNG saved as JPG).
+* **Instant RAW Dev:** One-click toggle between "Fast Preview" and "Full Quality" decoding for RAW files.
+* **Deep Color Analysis:** Real-time display of **Color Space** (sRGB/P3/Rec.2020), **Color Mode** (YCC/RGB), and **Quality Factor**.
 
 ---
 
@@ -102,12 +142,10 @@ We don't use generic codecs. We use the **State-of-the-Art** libraries for each 
 | **PNG / QOI** | **Google Wuffs** | **Memory-safe**. Outperforms libpng, handles massive dimensions. |
 | **JXL** | **libjxl + threads** | **Parallelized**. Instant decoding for high-res JPEG XL. |
 | **AVIF** | **dav1d + threads** | **Assembly-optimized** AV1 decoding. |
-| **WebP** | **libwebp** | Google's official library. Supports Lossless & Alpha. |
+| **SVG** | **Direct2D Native** | **Hardware Accelerated**. Infinite lossless scaling. |
 | **RAW** | **LibRaw** | Optimized for "Instant Preview" extraction. |
 | **EXR** | **TinyEXR** | Lightweight, industrial-grade OpenEXR support. |
-| **SVG** | **NanoSVG** | Vector rasterization for infinite scaling. |
 | **HEIC / TIFF**| **Windows WIC** | Hardware accelerated (Requires system extensions). |
-| **Other**| **Windows WIC** | Hardware accelerated (Requires system extensions). |
 
 ---
 
@@ -124,7 +162,7 @@ Master these to navigate at the speed of thought:
 | | `0` / `F` | Fit to Screen |
 | | `Enter` | Fullscreen |
 | **Info** | `I` | **Toggle Info/Histogram** |
-| | `Tab` | Lite OSD Info |
+| | `D` | **Toggle Debug HUD** |
 | **Control** | `Ctrl + P` | **Settings Panel** |
 | | `Ctrl + T` | Toggle "Always on Top" |
 | **Edit** | `R` | Rotate |
@@ -132,15 +170,14 @@ Master these to navigate at the speed of thought:
 
 ---
 
-## 🗺️ Roadmap
-
+🗺️ Roadmap
 We are constantly evolving. Here is what's currently in development:
 
-* [ ] **Animation Support**: Full playback for GIF/WebP/APNG.
-* [ ] **Frame Inspector**: Pause and analyze animations frame-by-frame.
-* [ ] **Color Management (CMS)**: ICC Profile support.
-* [ ] **Dual-View Compare**: Side-by-side image comparison.
-* [ ] **Smart Background**: Auto-dimming / Acrylic effect.
+- **Animation Support:** Full playback for GIF/WebP/APNG.
+- **Frame Inspector:** Pause and analyze animations frame-by-frame.
+- **Color Management (CMS):** ICC Profile support.
+- **Dual-View Compare:** Side-by-side image comparison.
+- **Smart Background:** Auto-dimming / Acrylic effect.
 
 ---
 
@@ -148,10 +185,10 @@ We are constantly evolving. Here is what's currently in development:
 
 **QuickView is 100% Portable.**
 
-1. Go to [**Releases**](https://github.com/justnullname/QuickView/releases).
-2. Download `QuickView.zip`.
-3. Unzip anywhere and run `QuickView.exe`.
-4. *(Optional)* Use the in-app Settings to register as default viewer.
+1.  Go to [**Releases**](https://github.com/justnullname/QuickView/releases).
+2.  Download `QuickView.zip`.
+3.  Unzip anywhere and run `QuickView.exe`.
+4.  *(Optional)* Use the in-app Settings to register as default viewer.
 
 ---
 
