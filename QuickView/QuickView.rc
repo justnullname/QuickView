@@ -9,8 +9,8 @@
 
 // Version Information - This sets the display name in Windows
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 3,0,4,0
-PRODUCTVERSION 3,0,4,0
+FILEVERSION 3,0,5,0
+PRODUCTVERSION 3,0,5,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
@@ -23,11 +23,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "QuickView"
             VALUE "FileDescription", "QuickView"
-            VALUE "FileVersion", "3.0.4.0"
+            VALUE "FileVersion", "3.0.5.0"
             VALUE "InternalName", "QuickView"
             VALUE "OriginalFilename", "QuickView.exe"
             VALUE "ProductName", "QuickView"
-            VALUE "ProductVersion", "3.0.4.0"
+            VALUE "ProductVersion", "3.0.5.0"
         END
     END
     BLOCK "VarFileInfo"
