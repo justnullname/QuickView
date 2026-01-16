@@ -222,7 +222,8 @@ bool SettingsOverlay::RegisterAssociations() {
         std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
         r = RegCreateKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
         if (r == ERROR_SUCCESS) {
-            RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, NULL, 0);
+            // Use Empty String ("") instead of NULL for safety
+            RegSetValueExW(hKey, progId.c_str(), 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
             RegCloseKey(hKey);
         }
     }
@@ -236,6 +237,20 @@ bool SettingsOverlay::RegisterAssociations() {
         RegSetValueExW(hKey, L"FriendlyAppName", 0, REG_SZ, (BYTE*)friendlyName.c_str(), (DWORD)(friendlyName.size()+1)*2);
         RegCloseKey(hKey);
     }
+
+    
+    // 5b. Register SupportedTypes (Critical for "Open With" visibility)
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, 
+        L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+        
+        for (const auto& ext : exts) {
+            // Use Empty String ("") instead of NULL for safety
+            RegSetValueExW(hKey, ext, 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
+        }
+        RegCloseKey(hKey);
+    }
+
     r = RegCreateKeyExW(HKEY_CURRENT_USER, 
         L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command",
         0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
@@ -255,6 +270,13 @@ bool SettingsOverlay::IsRegistrationNeeded() {
     wchar_t currentExe[MAX_PATH];
     GetModuleFileNameW(nullptr, currentExe, MAX_PATH);
     std::wstring regPath = ReadRegisteredExePath();
+    // Check if SupportedTypes exists. If not, we need to register.
+    HKEY hKeyTest;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes", 0, KEY_READ, &hKeyTest) != ERROR_SUCCESS) {
+        return true; 
+    }
+    RegCloseKey(hKeyTest);
+
     return regPath.empty() || (_wcsicmp(regPath.c_str(), currentExe) != 0);
 }
 
@@ -262,7 +284,12 @@ SettingsOverlay::SettingsOverlay() {
     m_toastHoverBtn = -1;
     m_showUpdateToast = false;
     m_lastHudX = 0;
+    m_lastHudX = 0;
     m_lastHudY = 0;
+    m_lastHudX = 0;
+    m_lastHudY = 0;
+    m_pendingRebuild = false;
+    m_pendingResetFeedback = false;
 }
 
 SettingsOverlay::~SettingsOverlay() {
@@ -902,6 +929,7 @@ void SettingsOverlay::BuildMenu() {
     SettingsItem itemReset = { L"Reset All Settings", OptionType::ActionButton };
     itemReset.buttonText = L"Restore";
     itemReset.buttonActivatedText = L"Done";
+    itemReset.isDestructive = true;
     itemReset.onChange = [this]() {
          // 1. Delete Config Files
          wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -926,10 +954,11 @@ void SettingsOverlay::BuildMenu() {
          g_config.ToolbarAlpha = 0.85f;
          
          // 4. Force UI refresh
-         this->BuildMenu();
+         // 4. Force UI refresh
+         m_pendingRebuild = true;
+         m_pendingResetFeedback = true;
          
-         // 5. Visual Feedback
-         SetItemStatus(L"Reset All Settings", L"Config Initialized", D2D1::ColorF(0.1f, 0.8f, 0.1f));
+         // 5. Visual Feedback - Deferred to Render()
     };
     tabAdvanced.items.push_back(itemReset);
 
@@ -1015,9 +1044,14 @@ void SettingsOverlay::BuildMenu() {
 
 void SettingsOverlay::SetVisible(bool visible) {
     m_visible = visible;
+    // Check for deferred rebuild (Fixes UAF on Reset)
+    if (m_pendingRebuild) {
+         BuildMenu();
+         m_pendingRebuild = false;
+    }
+
     if (m_visible) {
         m_opacity = 0.0f;
-        BuildMenu();
         
         // Auto-Resize if window is too small
         if (m_hwnd) {
@@ -1040,9 +1074,20 @@ void SettingsOverlay::SetVisible(bool visible) {
 // ----------------------------------------------------------------------------
 
 void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
+    // Check for deferred rebuild (Fixes UAF on Reset)
+    if (m_pendingRebuild) {
+         BuildMenu();
+         m_pendingRebuild = false;
+         
+         if (m_pendingResetFeedback) {
+             SetItemStatus(L"Reset All Settings", L"Config Initialized", D2D1::ColorF(0.1f, 0.8f, 0.1f));
+             m_pendingResetFeedback = false;
+         }
+    }
+
     if (!m_visible && !m_showUpdateToast) return;
     if (!m_brushBg) CreateResources(pRT);
-
+    
     // Use passed window dimensions (Pixels) converted to DIPs
     // This ensures we center based on the ACTUAL window size logic in main.cpp,
     // avoiding potential lag if DComp Surface resize is async/delayed.
@@ -1525,12 +1570,23 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      float btnX = controlX + controlW - btnWidth; // Right-aligned
                      D2D1_RECT_F btnRect = D2D1::RectF(btnX, contentY + 7, btnX + btnWidth, contentY + rowHeight - 7);
                      
-                     // Button color: Blue (lighter on hover)
+                     // Button color: Blue (default) or Red (Destructive)
                      ComPtr<ID2D1SolidColorBrush> btnBrush;
-                     if (isHovered) {
-                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.55f, 0.95f), &btnBrush); // Light blue
+                     
+                     if (item.isDestructive) {
+                         // Red
+                         if (isHovered) {
+                              pRT->CreateSolidColorBrush(D2D1::ColorF(0.9f, 0.2f, 0.2f), &btnBrush); // Lighter Red
+                         } else {
+                              btnBrush = m_brushError; // Standard Red
+                         }
                      } else {
-                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.84f), &btnBrush); // Blue
+                         // Blue
+                         if (isHovered) {
+                             pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.55f, 0.95f), &btnBrush); // Light blue
+                         } else {
+                             pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.84f), &btnBrush); // Blue
+                         }
                      }
                      
                      pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4, 4), btnBrush.Get());

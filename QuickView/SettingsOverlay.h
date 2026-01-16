@@ -62,6 +62,7 @@ struct SettingsItem {
     std::wstring buttonText = L"Select";  // Default button text
     std::wstring buttonActivatedText;     // Text after action (e.g. "Added")
     bool isActivated = false;             // Whether action has been performed
+    bool isDestructive = false;           // If true, button is rendered Red (e.g. Reset/Delete)
 
     // Runtime Feedback (New)
     std::wstring statusText;
@@ -193,4 +194,8 @@ private:
     // Toast Scrolling
     float m_toastScrollY = 0.0f;
     float m_toastTotalHeight = 0.0f;
+    
+    // Async Rebuild (Fix UAF on Reset)
+    bool m_pendingRebuild = false;
+    bool m_pendingResetFeedback = false; 
 };
