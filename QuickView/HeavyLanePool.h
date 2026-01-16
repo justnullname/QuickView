@@ -81,7 +81,7 @@ public:
     
     // Check if any worker is busy (for wait cursor logic)
     bool IsBusy() const { return m_busyCount.load() > 0; }
-    bool IsIdle() const { return m_busyCount.load() == 0 && m_pendingJobs.empty(); }
+    bool IsIdle() const;
 
 private:
     // === Worker Structure ===

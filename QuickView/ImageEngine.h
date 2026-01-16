@@ -353,9 +353,20 @@ private:
     void ScheduleJob(int index, Priority pri);
     void PruneQueue(int currentIndex, BrowseDirection dir);
 
+    void CheckStartupDelay(); // [v9.0] Enable prefetch after 500ms
+    std::atomic<bool> m_startupPrefetchAllowed{false}; // [v9.0] Strict Startup Delay
+
     // [Fix] Manual Event Queue for Cache Hits (and other internal events)
     std::vector<EngineEvent> m_manualEventQueue;
     mutable std::mutex m_manualQueueMutex;
+
+    // [v9.1] Serial Prefetch Queue
+    struct PrefetchTask {
+        int index;
+        Priority priority;
+    };
+    std::deque<PrefetchTask> m_prefetchQueue;
+    void PumpPrefetch();
 public:
     bool HasEmbeddedThumb() const { return m_hasEmbeddedThumb.load(); }
 };

@@ -666,7 +666,7 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         toggleY += 16.0f;
     };
     
-    DrawToggle(L"Scout[Ctl1]", g_runtime.EnableScout);
+    DrawToggle(L"Fast [Ctl1]", g_runtime.EnableScout);
     DrawToggle(L"Heavy[Ctl2]", g_runtime.EnableHeavy);
     DrawToggle(L"SlowM[Ctl3]", g_slowMotionMode);
     

@@ -1591,6 +1591,11 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     HRESULT hr = E_FAIL;
 
     // 4. Decode Loop
+    ComPtr<IWICBitmap> pWicBitmap = nullptr;
+    ComPtr<IWICBitmapLock> pLock = nullptr;
+    BYTE* pWicBuf = nullptr;
+    UINT wicStride = 0;
+    
     for (;;) {
         JxlDecoderStatus status = JxlDecoderProcessInput(dec);
         
@@ -1615,18 +1620,37 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
             color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
             JxlDecoderSetOutputColorProfile(dec, &color_encoding, NULL, 0);
 
-            size_t stride = info.xsize * 4;
-            pixels.resize(stride * info.ysize);
+            // [Optimization] Create WIC Bitmap Early and Lock
+            hr = m_wicFactory->CreateBitmap(info.xsize, info.ysize, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnDemand, &pWicBitmap);
+            if (SUCCEEDED(hr)) {
+                WICRect rc = { 0, 0, (INT)info.xsize, (INT)info.ysize };
+                hr = pWicBitmap->Lock(&rc, WICBitmapLockWrite, &pLock);
+                if (SUCCEEDED(hr)) {
+                    UINT bufSize = 0;
+                    pLock->GetDataPointer(&bufSize, &pWicBuf);
+                    pLock->GetStride(&wicStride);
+                }
+            }
         }
         else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             size_t bufferSize = 0;
             if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &format, &bufferSize)) {
                 hr = E_FAIL; break;
             }
-            if (pixels.size() < bufferSize) {
-                pixels.resize(bufferSize);
+            
+            // [Optimization] Use WIC buffer if stride matches
+            if (pWicBuf && wicStride == info.xsize * 4) {
+                 if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pWicBuf, bufferSize)) {
+                      hr = E_FAIL; break;
+                 }
+            } else {
+                 if (pixels.size() < bufferSize) {
+                    pixels.resize(bufferSize);
+                 }
+                 if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pixels.data(), bufferSize)) {
+                     hr = E_FAIL; break;
+                 }
             }
-            JxlDecoderSetImageOutBuffer(dec, &format, pixels.data(), bufferSize);
         }
         else if (status == JXL_DEC_FULL_IMAGE) {
             hr = S_OK;
@@ -1641,14 +1665,23 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         }
     }
 
-    if (SUCCEEDED(hr) && !pixels.empty()) {
-        // JXL outputs RGBA, WIC/D2D prefers BGRA with premultiplied alpha
-        // Use SIMD-optimized swizzle + premultiply
-        SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pixels.data(), (size_t)info.xsize * info.ysize);
-        
-        // Create WIC bitmap with PBGRA format (premultiplied alpha)
-        hr = CreateWICBitmapFromMemory(info.xsize, info.ysize, GUID_WICPixelFormat32bppPBGRA, info.xsize * 4, (UINT)pixels.size(), pixels.data(), ppBitmap);
+    if (SUCCEEDED(hr)) {
+        if (!pixels.empty()) {
+             // Fallback: Intermediate buffer used
+             SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pixels.data(), (size_t)info.xsize * info.ysize);
+             hr = CreateWICBitmapFromMemory(info.xsize, info.ysize, GUID_WICPixelFormat32bppPBGRA, info.xsize * 4, (UINT)pixels.size(), pixels.data(), ppBitmap);
+        } else if (pWicBitmap) {
+             // Optimization: Direct WIC buffer used
+             // In-place Swizzle
+             SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pWicBuf, (size_t)info.xsize * info.ysize);
+             pLock.Reset(); // Unlock
+             *ppBitmap = pWicBitmap.Detach();
+        }
     }
+    
+    // Clean up if something failed mid-way or if we detached
+    pLock.Reset();
+    pWicBitmap.Reset();
 
     // NOTE: Do NOT destroy global runner!
     JxlDecoderDestroy(dec);
@@ -6366,7 +6399,15 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     // Small JXL -> Fast Full Decode (via fallback if needed? Currently DC only in LoadFastPass)
     // Large JXL -> Fast DC Preview (LoadThumbJXL_DC)
     if (result.format == L"JXL") {
-        result.type = ImageType::TypeA_Sprint;
+        // [v9.3] Fix: Large JXL should be TypeB (Heavy) to align with Dispatch properties.
+        // Previously unconditional TypeA caused FastLane Choke on 89MP images.
+        bool isSmall = (result.fileSize < 1048576) && (pixels < 2000000);
+        
+        if (isSmall) {
+            result.type = ImageType::TypeA_Sprint;
+        } else {
+            result.type = ImageType::TypeB_Heavy;
+        }
     }
     else if (result.format == L"JPEG" || result.format == L"BMP") {
         // JPEG/BMP: ≤8.5MP → Express (full decode is fast)

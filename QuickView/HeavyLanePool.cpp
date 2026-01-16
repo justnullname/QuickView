@@ -645,3 +645,8 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
     }
     *outCount = count;
 }
+
+bool HeavyLanePool::IsIdle() const {
+    std::lock_guard lock(m_poolMutex);
+    return m_busyCount.load() == 0 && m_pendingJobs.empty();
+}

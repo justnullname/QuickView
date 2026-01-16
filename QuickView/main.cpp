@@ -188,8 +188,7 @@ GalleryOverlay g_gallery;  // Non-static for extern access from UIRenderer
 Toolbar g_toolbar;  // Non-static for extern access from UIRenderer
 SettingsOverlay g_settingsOverlay;  // Non-static for extern access from UIRenderer
 CImageLoader::ImageMetadata g_currentMetadata;  // Non-static for extern access from UIRenderer
-static ComPtr<IWICBitmap> g_prefetchedBitmap;
-static std::wstring g_prefetchedPath;
+
 static ComPtr<IDWriteTextFormat> g_pPanelTextFormat;
 static D2D1_RECT_F g_gpsLinkRect = {}; 
 static D2D1_RECT_F g_gpsCoordRect = {};  // GPS Coordinates click area
@@ -4253,7 +4252,7 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
 }
-FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path); // fwd decl
+
 
 void ProcessEngineEvents(HWND hwnd) {
     if (!g_imageEngine) return;
@@ -4456,7 +4455,14 @@ void ProcessEngineEvents(HWND hwnd) {
                 
                 // [v5.3] Set EXIF Orientation based on AutoRotate config
                 if (g_config.AutoRotate) {
-                    g_viewState.ExifOrientation = evt.metadata.ExifOrientation;
+                    // [v9.5 Fix] Source of truth is the Decoder (rawFrame), not PeekHeader (metadata)
+                    // PeekHeader often skips Exif for speed, so evt.metadata.ExifOrientation is 1.
+                    // The decoder (WIC/JXL/LibRaw) has already parsed the correct orientation.
+                    if (evt.rawFrame && evt.rawFrame->exifOrientation != 1) {
+                         g_viewState.ExifOrientation = evt.rawFrame->exifOrientation;
+                    } else {
+                         g_viewState.ExifOrientation = evt.metadata.ExifOrientation;
+                    }
                 } else {
                     g_viewState.ExifOrientation = 1; // Ignore rotation
                 }
@@ -4726,22 +4732,7 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD, BrowseD
     co_return; 
 }
 
-FireAndForget PrefetchImageAsync(HWND hwnd, std::wstring path) {
-    if (path.empty() || path == g_prefetchedPath) co_return;
 
-    co_await ResumeBackground{};
-    
-    ComPtr<IWICBitmap> bitmap;
-    HRESULT hr = g_imageLoader->LoadToMemory(path.c_str(), &bitmap);
-    
-    co_await ResumeMainThread(hwnd);
-    
-    if (SUCCEEDED(hr) && bitmap) {
-        g_prefetchedBitmap = bitmap;
-        g_prefetchedPath = path;
-        // g_osd.Show(L"Prefetched", false, false); // Debug
-    }
-}
 
 void Navigate(HWND hwnd, int direction) {
     if (g_navigator.Count() <= 0) return;

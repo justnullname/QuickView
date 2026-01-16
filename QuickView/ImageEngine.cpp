@@ -236,7 +236,10 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         // Scene A: Small JXL (< 1MB AND < 2MP) -> FastLane Direct Full Decode
         // 1MB = 1048576 bytes
         // 2MP = 2000000 pixels
-        bool isSmall = (info.fileSize < 1048576) && ((uint64_t)info.width * info.height < 2000000);
+        // [v9.2] Fix: Check for valid dimensions! (PeekHeader fail = 0x0)
+        bool isSmall = (info.fileSize < 1048576) && 
+                       (info.width > 0 && info.height > 0) &&
+                       ((uint64_t)info.width * info.height < 2000000);
         
         if (isSmall) {
             OutputDebugStringW(L"[Dispatch] -> JXL Small: FastLane Direct Full\n");
@@ -408,6 +411,9 @@ std::vector<EngineEvent> ImageEngine::PollState() {
             } else if (e.type == EventType::FullReady && !e.isScaled) {
                 m_isViewingScaledImage = false; // Final reached
                 m_stage2Requested = false;      // Reset request flag (job done)
+                
+                // [v9.0] Startup Delay Check
+                CheckStartupDelay();
             } else if (e.type == EventType::LoadError) {
                 // [JXL Scene C] FastLane Aborted (Modular?) -> Trigger Heavy Immediately
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
@@ -419,6 +425,14 @@ std::vector<EngineEvent> ImageEngine::PollState() {
             }
         }
         
+
+        
+        // [v9.2] Fix: Clean up pending paths on Error too (Fixes Blue Light Forever)
+        if (e.type == EventType::LoadError) {
+             std::lock_guard lock(m_pendingMutex);
+             m_pendingPaths.erase(e.filePath);
+        }
+
         // [v8.11 Fix] Cache ALL FullReady events (both current and prefetch)
         // Previously, only non-current (prefetch) images were cached.
         // This caused the bug where viewed images weren't cached for return navigation.
@@ -449,6 +463,9 @@ std::vector<EngineEvent> ImageEngine::PollState() {
              m_pendingJxlHeavyId = 0; // Consumed
         }
     }
+
+    // [v9.1] Pump Serial Prefetch Queue
+    PumpPrefetch();
 
     return batch;
 }
@@ -649,13 +666,8 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
 
 void ImageEngine::ResetDebugCounters() {
     m_fastLane.ResetSkipCount();
-    m_fastLane.ResetSkipCount();
+
 }
-
-// Note: IsFastPassCandidate removed in v3.1 - replaced by PeekHeader() classification
-
-
-
 
 // ============================================================================
 // Fast Lane (The Recon)
@@ -995,47 +1007,41 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     // [v3.1] Cancellation Strategy: Ruthless Purge -> Reschedule
     // ------------------------------------------------------------------------
     
-    // 1. [v8.10 Fix] REMOVED m_fastLane.Clear()!
-    //    Clear() was too aggressive - it cleared the current image before the worker could process it.
-    //    FastLane is LIFO, so new items are prioritized anyway.
-    //    Stale prefetch items will be naturally evicted by cache memory limits.
-    //    m_fastLane.Clear(); // REMOVED - causes blank screen on FastLane items
-    
-    // 2. [v8.9 Fix] Current index is ALREADY dispatched by NavigateTo->DispatchImageLoad.
-    //    DO NOT reschedule it here! Doing so causes duplicate HeavyPool submissions,
-    //    which leads to two workers decoding the same image simultaneously (wasteful + race conditions).
-    //    ScheduleJob(currentIndex, Priority::Critical); // REMOVED - causes duplicate decode
-    
     // 4. If prefetch disabled, stop here
     if (!m_prefetchPolicy.enablePrefetch) return;
 
+    // [v9.1] Serial Queue Population
+    m_prefetchQueue.clear();
+
     if (dir == BrowseDirection::IDLE) {
          // [Startup/Reset] Conservative Bidirectional Prefetch
-         // [v8.8] Fix: Handle wrapping (Previous of 0 -> count-1) using modulo logic
          int count = (int)m_navigator->Count();
          if (count > 0) {
              int nextIdx = (currentIndex + 1) % count;
              int prevIdx = (currentIndex - 1 + count) % count;
              
-             // Only fetch immediate neighbors (+/- 1) to save resources.
-             ScheduleJob(nextIdx, Priority::High);
-             ScheduleJob(prevIdx, Priority::High);
+             // Queue neighbors
+             m_prefetchQueue.push_back({nextIdx, Priority::High});
+             m_prefetchQueue.push_back({prevIdx, Priority::High});
          }
     } else {
          // Directional Prefetch
          int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
          
          // 3. Adjacent: High Priority
-         ScheduleJob(currentIndex + step, Priority::High);
+         m_prefetchQueue.push_back({currentIndex + step, Priority::High});
          
          // 5. Anti-regret: One in opposite direction
-         ScheduleJob(currentIndex - step, Priority::Low);
+         m_prefetchQueue.push_back({currentIndex - step, Priority::Low});
          
          // 6. Look-ahead
          for (int i = 2; i <= m_prefetchPolicy.lookAheadCount; ++i) {
-             ScheduleJob(currentIndex + step * i, Priority::Idle);
+             m_prefetchQueue.push_back({currentIndex + step * i, Priority::Idle});
          }
     }
+    
+    // Pump queue immediately
+    PumpPrefetch();
 }
 
 void ImageEngine::ScheduleJob(int index, Priority pri) {
@@ -1053,11 +1059,12 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
         if (m_cache.count(path)) return; // Already cached
     }
     
-    // 4. Critical priority: Allow re-queueing (fixes UpdateView clearing queue)
-    // if (pri == Priority::Critical) return; 
-    
-    // 5. Allow all priorities (High/Low/Idle) based on UpdateView loop
-    // if (pri != Priority::High) return; 
+    // [v9.0] Strict Startup Delay
+    // If startup prefetch is not allowed yet, BLOCK all non-Critical jobs.
+    // Critical job (Current Image) is allowed always.
+    if (!m_startupPrefetchAllowed && pri != Priority::Critical) {
+        return;
+    }
     
     // [v4.1] Smart Prefetch logic re-enabled (Unified Dispatch Integration)
 
@@ -1066,6 +1073,25 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     
     // 7. Dispatch based on classification
     uintmax_t fileSize = m_navigator->GetFileSize(index);
+
+    // [v9.4] Smart Skip: If single image > Cache Cap, skip prefetch
+    // This prevents "Eco Mode OOM" where a single 90MP image (350MB) 
+    // forces overflow despite the 128MB limit.
+    if (pri != Priority::Critical && m_prefetchPolicy.maxCacheMemory > 0) {
+         uint64_t predictedSize = (uint64_t)info.width * info.height * 4;
+         // Allow a 10% margin just in case, but strictly reject if it consumes > 90% of ENTIRE cache
+         // Actually, user agreed to > 80% rule or Strict Cap.
+         // Let's use Strict Cap to be safe for Eco Mode.
+         if (predictedSize > m_prefetchPolicy.maxCacheMemory) {
+              wchar_t skipBuf[256];
+              swprintf_s(skipBuf, L"[ImageEngine] Smart Skip: %s (%.1f MB) > Cache Cap (%.1f MB) -> Skipped\n", 
+                  path.substr(path.find_last_of(L"\\/") + 1).c_str(), 
+                  predictedSize / 1048576.0, 
+                  m_prefetchPolicy.maxCacheMemory / 1048576.0);
+              OutputDebugStringW(skipBuf);
+              return;
+         }
+    }
     
     if (info.type == CImageLoader::ImageType::TypeA_Sprint) {
         // Small image: push to FastLane
@@ -1078,12 +1104,20 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
         // Large image: 
         // Critical: Always submit
         // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
+        // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
         if (pri == Priority::Critical || m_heavyPool->IsIdle()) {
             {
                 std::lock_guard lock(m_pendingMutex);
                 m_pendingPaths.insert(path);
             }
-            m_heavyPool->Submit(path, ComputePathHash(path)); // [ImageID]
+            
+            // [v9.3] Alignment: JXL uses Direct Full Decode (Two-Stage Cancelled).
+            // Prefetch must also be Full to prevent stuck Scaled/Blurry image.
+            if (info.format == L"JXL") {
+                m_heavyPool->SubmitFullDecode(path, ComputePathHash(path));
+            } else {
+                m_heavyPool->Submit(path, ComputePathHash(path)); // [ImageID]
+            }
         }
         // If Heavy is busy and not critical, skip prefetch
     }
@@ -1291,3 +1325,78 @@ void ImageEngine::RequestFullMetadata() {
         
     }).detach();
 }
+
+// [v9.0] Strict Startup Delay
+void ImageEngine::CheckStartupDelay() {
+    // Only run if not yet allowed
+    if (m_startupPrefetchAllowed) return;
+
+    // Launch detached thread to wait 500ms
+    std::thread([this]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        m_startupPrefetchAllowed = true;
+        
+        // Trigger prefetch pump
+        // Note: UpdateView requires direction, but we can just poke the engine to retry
+        // Since UpdateView stores state, we might need a way to re-trigger.
+        // Actually, ScheduleJob called by UpdateView failed due to flag.
+        // We need to re-invoke UpdateView with current state.
+        
+        // However, safely calling UpdateView from this thread requires ensuring it doesn't race.
+        // UpdateView is generally safe.
+        // Better: Queue a dummy event to wake up Main Loop which calls UpdateView? 
+        // Or just let the next interaction handle it?
+        // User requirement: "Startup -> 500ms -> Start Prefetch". Automatic.
+        
+        // Let's rely on the main thread to notice? No, main thread is idle.
+        // We must push an event or callback.
+        // Simple hack: Re-call UpdateView with current state.
+        int idx = m_currentViewIndex.load();
+        int dirInt = m_lastDirectionInt.load();
+        BrowseDirection dir = (dirInt == 1) ? BrowseDirection::FORWARD : 
+                              (dirInt == -1) ? BrowseDirection::BACKWARD : BrowseDirection::IDLE;
+        
+        if (idx >= 0) {
+            UpdateView(idx, dir);
+        }
+    }).detach();
+}
+
+// [v9.1] Serial Prefetch Pump
+void ImageEngine::PumpPrefetch() {
+    if (m_prefetchQueue.empty()) return;
+    if (!m_startupPrefetchAllowed) return; // Blocked by startup delay
+
+    // Process queue until we find work or run out
+    while (!m_prefetchQueue.empty()) {
+        // Strict Serial Check: Is ANY engine working?
+        // Check HeavyPool
+        if (!m_heavyPool->IsIdle()) return;
+        
+        // Check FastLane (accessing internal state via friend/member)
+        if (m_fastLane.GetQueueSize() > 0 || m_fastLane.m_isWorking.load()) return;
+
+        auto task = m_prefetchQueue.front();
+        m_prefetchQueue.pop_front();
+
+        // Check bounds
+        if (!m_navigator || task.index < 0 || task.index >= (int)m_navigator->Count()) continue;
+
+        // Check cache before scheduling to avoid "scheduling nothing" and stopping
+        std::wstring path = m_navigator->GetFile(task.index);
+        {
+            std::lock_guard lock(m_cacheMutex);
+            if (m_cache.count(path)) continue; // Already cached, try next
+        }
+
+        // Schedule it
+        ScheduleJob(task.index, task.priority);
+        
+        // We assume work started (or was queued).
+        // Since we checked IsIdle above, and ScheduleJob submits,
+        // the engine should now be BUSY (or queued).
+        // So we return to wait for it to finish.
+        return; 
+    }
+}
+
