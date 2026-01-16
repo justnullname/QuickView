@@ -103,5 +103,7 @@ fix_git.bat
 check_braces.ps1
 complete_reset.bat
 
+.agent/
+
 
 
