@@ -62,8 +62,8 @@
     <header class="hero">
         <div class="hero-container">
             <div class="hero-content">
-                <div class="hero-tag" data-i18n="hero.tag">New Release v2.1.0</div>
-                <h1 data-i18n="hero.title">The Performance Monster.</h1>
+                <div class="hero-tag" data-i18n="hero.tag">New Release v3.0.4</div>
+                <h1 data-i18n="hero.title">The Quantum Flow Update.</h1>
                 <p class="subtitle" data-i18n="hero.subtitle">
                     Built on a <strong>vcpkg + Static Linking</strong> hybrid architecture.<br>
                     <span class="highlight">~6.2MB</span> Single EXE. <span class="highlight">0 DLL Hell</span>. <span
@@ -71,10 +71,10 @@
                 </p>
 
                 <div class="tech-stack-hero">
-                    <span>C++23</span>
+                    <span>DirectComposition</span>
                     <span>Direct2D</span>
-                    <span>AVX2</span>
-                    <span>Mimalloc</span>
+                    <span>AVX2/SIMD</span>
+                    <span>Native SVG</span>
                 </div>
 
                 <div class="cta-group">
@@ -85,7 +85,7 @@
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
                         </svg>
-                        <span data-i18n="nav.download">Download v2.1.0</span>
+                        <span data-i18n="nav.download">Download v3.0.4</span>
                     </a>
                     <a href="#engine" class="btn-secondary" data-i18n="cta.explore">Explore Architecture</a>
                 </div>
@@ -109,19 +109,20 @@
                     <div class="icon">📦</div>
                     <h3 data-i18n="card.static.title">Single Static EXE</h3>
                     <p data-i18n="card.static.desc">6.2 MB total size. No DLL dependencies. Compiled with
-                        <code>LTO</code> and <code>/O2</code> optimization. Run it anywhere.</p>
+                        <code>LTO</code> and <code>/O2</code> optimization. Run it anywhere.
+                    </p>
                 </div>
                 <div class="feature-card">
                     <div class="icon">🧠</div>
-                    <h3 data-i18n="card.memory.title">Memory Revolution</h3>
-                    <p data-i18n="card.memory.desc">Integrated Microsoft <strong>Mimalloc</strong>. Replaces global
-                        new/delete for 10-20% faster allocation and zero fragmentation.</p>
+                    <h3 data-i18n="card.memory.title">Intelligent Memory</h3>
+                    <p data-i18n="card.memory.desc">New <strong>TripleArena</strong> system. Zero fragmentation, 30%
+                        less RAM usage, and instant resource recycling.</p>
                 </div>
                 <div class="feature-card">
                     <div class="icon">🏎️</div>
-                    <h3 data-i18n="card.render.title">Render Pipeline</h3>
-                    <p data-i18n="card.render.desc"><strong>DXGI Waitable Swap Chain</strong> for ultra-low latency.
-                        <strong>C++23 Coroutines</strong> for "Fire-and-Forget" async loading.</p>
+                    <h3 data-i18n="card.render.title">Cinematic Rendering</h3>
+                    <p data-i18n="card.render.desc"><strong>DirectComposition</strong> engine delivers tear-free,
+                        artifact-free 60FPS+ animations and lossless zooming.</p>
                 </div>
             </div>
 
@@ -138,8 +139,11 @@
                     <span class="tag-avx2">JPEG: libjpeg-turbo v3 + AVX2</span>
                     <span class="tag-wuffs">PNG/GIF: Google Wuffs (Secure)</span>
                     <span class="tag-av1">AVIF: libavif + dav1d (ASM)</span>
-                    <span class="tag-jxl">JXL: libjxl + Highway (Parallel)</span>
-                    <span class="tag-raw">RAW: LibRaw + OpenMP</span>
+                    <span class="tag-jxl">JXL: Full Resolution 8K Decode</span>
+                    <span class="tag-raw">RAW: Instant Preview + Full Decode</span>
+                    <span class="tag-svg"
+                        style="background: #e67e22; color:white; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold;">SVG:
+                        Direct2D Native Vector</span>
                 </div>
             </div>
         </div>
@@ -155,9 +159,10 @@
 
                     <ul class="feature-list">
                         <li>
-                            <strong data-i18n="feat.mag">Magnetic Time Lock</strong>
-                            <span data-i18n="feat.mag.desc">Zooming through 100% automatically locks the view for 400ms,
-                                providing a tactile "notch" feel.</span>
+                            <strong data-i18n="feat.smart_load">Intelligent Loading</strong>
+                            <span data-i18n="feat.smart_load.desc">Hybrid "Smart Skip" prefetcher predicts your cache
+                                limits
+                                and loads images instantly without freezing.</span>
                         </li>
                         <li>
                             <strong data-i18n="feat.resize">Smart Resize</strong>
@@ -188,14 +193,15 @@
 
                     <ul class="feature-list">
                         <li>
-                            <strong data-i18n="feat.grid">Ultimate Grid Panel</strong>
-                            <span data-i18n="feat.grid.desc">Auto-aligning virtual grid displaying EXIF, GPS (Map Link),
-                                and real-time sparse-sampled RGB Luma Histograms.</span>
+                            <strong data-i18n="feat.matrix_hud">Matrix HUD & Grid</strong>
+                            <span data-i18n="feat.matrix_hud.desc">Press 'F12' for a real-time topology overlay.
+                                Auto-aligning
+                                grid displays Exif, GPS, and RGB Histograms.</span>
                         </li>
                         <li>
-                            <strong data-i18n="feat.info">Deep Format Info</strong>
-                            <span data-i18n="feat.info.desc">Detects Chroma Subsampling (4:2:0), estimates JPEG/WebP
-                                Q-Factor, and identifies color spaces (sRGB/P3).</span>
+                            <strong data-i18n="feat.deep_intel">Deep Format Intelligence</strong>
+                            <span data-i18n="feat.deep_intel.desc">Corrects Exif Orientation automatically using decoder
+                                truth. Detects Chroma Subsampling, Color Spaces (P3/Rec2020), and Real Bit-Depth.</span>
                         </li>
                         <li>
                             <strong data-i18n="feat.osd">Smart OSD</strong>
