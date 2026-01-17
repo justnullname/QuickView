@@ -37,10 +37,8 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     // 2. Create DComp Device (V2 API for Visual3 support)
     hr = DCompositionCreateDevice2(dxgiDevice.Get(), IID_PPV_ARGS(&m_device));
     if (FAILED(hr)) {
-        OutputDebugStringW(L"[DComp] DCompositionCreateDevice2 failed!\n");
         return hr;
     }
-    OutputDebugStringW(L"[DComp] Created IDCompositionDesktopDevice (V2)\n");
     
     // 3. Create Target (bind to HWND)
     hr = m_device->CreateTargetForHwnd(hwnd, TRUE, &m_target);
@@ -75,9 +73,14 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_device->CreateTranslateTransform(&m_translateTransform);
     if (FAILED(hr)) return hr;
     
+    // [Visual Rotation] Create Model Transform
+    hr = m_device->CreateMatrixTransform(&m_modelTransform);
+    if (FAILED(hr)) return hr;
+    
     // Create TransformGroup and apply to ImageContainer
-    IDCompositionTransform* transforms[] = { m_scaleTransform.Get(), m_translateTransform.Get() };
-    hr = m_device->CreateTransformGroup(transforms, 2, &m_transformGroup);
+    // Order: Model (Rot/Flip) -> Scale (Zoom) -> Translate (Pan)
+    IDCompositionTransform* transforms[] = { m_modelTransform.Get(), m_scaleTransform.Get(), m_translateTransform.Get() };
+    hr = m_device->CreateTransformGroup(transforms, 3, &m_transformGroup);
     if (FAILED(hr)) return hr;
     
     m_imageContainer->SetTransform(m_transformGroup.Get());
@@ -138,7 +141,6 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     // 11. Commit initial state
     hr = m_device->Commit();
     
-    OutputDebugStringW(L"[DComp] Initialization complete\n");
     return hr;
 }
 
@@ -153,13 +155,8 @@ HRESULT CompositionEngine::EnsureImageSurface(ImageLayer& layer, UINT width, UIN
     // 1. Layout logic uses layer.width (old large size) causing shrinking.
     // 2. Visual displays full large surface (garbage pixels outside active area).
     if (layer.surface && layer.width == width && layer.height == height) {
-        // OutputDebugStringW(L"[DComp] Reuse Surface\n");
         return S_OK;
     }
-    
-    wchar_t buf[128];
-    swprintf_s(buf, L"[DComp] CreateSurface %ux%u (Old: %ux%u)\n", width, height, layer.width, layer.height);
-    OutputDebugStringW(buf);
     
     // Create new surface
     layer.surface.Reset();
@@ -184,7 +181,6 @@ HRESULT CompositionEngine::EnsureImageSurface(ImageLayer& layer, UINT width, UIN
 // Ping-Pong Image Rendering
 // ============================================================================
 ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height) {
-    OutputDebugStringW(L"[DComp] BeginPendingUpdate\n");
     
     // Get pending layer (opposite of active)
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
@@ -236,7 +232,6 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
 }
 
 HRESULT CompositionEngine::EndPendingUpdate() {
-    OutputDebugStringW(L"[DComp] EndPendingUpdate\n");
     
     if (!m_pendingContext) return E_FAIL;
     
@@ -256,7 +251,6 @@ HRESULT CompositionEngine::EndPendingUpdate() {
 }
 
 HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransparent) {
-    OutputDebugStringW(L"[DComp] PlayPingPongCrossFade\n");
     
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
     // Image A is ALWAYS Top. Image B is ALWAYS Bottom.
@@ -395,7 +389,7 @@ HRESULT CompositionEngine::SetPan(float offsetX, float offsetY) {
 }
 
 HRESULT CompositionEngine::ResetImageTransform() {
-    if (!m_scaleTransform || !m_translateTransform) return E_FAIL;
+    if (!m_scaleTransform || !m_translateTransform || !m_modelTransform) return E_FAIL;
     
     m_scaleTransform->SetScaleX(1.0f);
     m_scaleTransform->SetScaleY(1.0f);
@@ -405,7 +399,15 @@ HRESULT CompositionEngine::ResetImageTransform() {
     m_translateTransform->SetOffsetX(0.0f);
     m_translateTransform->SetOffsetY(0.0f);
     
+    m_modelTransform->SetMatrix(D2D1::Matrix3x2F::Identity());
+    
     return m_device->Commit();
+}
+
+HRESULT CompositionEngine::SetModelTransform(const D2D1_MATRIX_3X2_F& matrix) {
+    if (!m_modelTransform) return E_FAIL;
+    m_modelTransform->SetMatrix(matrix);
+    return S_OK; // Caller must Commit
 }
 
 // ============================================================================
@@ -509,4 +511,66 @@ HRESULT CompositionEngine::Resize(UINT width, UINT height) {
 HRESULT CompositionEngine::Commit() {
     if (!m_device) return E_FAIL;
     return m_device->Commit();
+}
+
+// [Fix] Resize Surfaces ONLY (Atomic Update Support)
+// Does NOT Commit. Allows caller to batch Transform updates (SyncDCompState) in same frame.
+HRESULT CompositionEngine::ResizeSurfaces(UINT width, UINT height) {
+    if (width == 0 || height == 0) return S_OK;
+    // if (width == m_width && height == m_height) return S_OK; // Always allow refresh
+    
+    m_width = width;
+    m_height = height;
+    
+    // Does NOT Commit
+    return CreateAllSurfaces(width, height);
+}
+
+// [Refactor] Virtual Canvas Matrix Chain (VisualState)
+HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, float winH, float zoom, float panX, float panY) {
+    if (!m_modelTransform || !m_scaleTransform || !m_translateTransform) return E_FAIL;
+    
+    // 1. Reset Scale/Translate (Baked into Model)
+    m_scaleTransform->SetScaleX(1.0f);
+    m_scaleTransform->SetScaleY(1.0f);
+    m_scaleTransform->SetCenterX(0.0f);
+    m_scaleTransform->SetCenterY(0.0f);
+    m_translateTransform->SetOffsetX(0.0f);
+    m_translateTransform->SetOffsetY(0.0f);
+    
+    // 2. Build Matrix Chain
+    // Order: Translate(To Origin) -> Rotate -> Scale -> Translate(To Viewport Center) -> Translate(Pan)
+    
+    // A. Center Origin: Move image center to (0,0)
+    float originX = -vs.PhysicalSize.width / 2.0f;
+    float originY = -vs.PhysicalSize.height / 2.0f;
+    D2D1_MATRIX_3X2_F mOrigin = D2D1::Matrix3x2F::Translation(originX, originY);
+    
+    // B. Rotate: Around (0,0)
+    D2D1_MATRIX_3X2_F mRotate = D2D1::Matrix3x2F::Rotation(vs.TotalRotation);
+    
+    // C. Scale: Around (0,0)
+    D2D1_MATRIX_3X2_F mScale = D2D1::Matrix3x2F::Scale(zoom, zoom);
+    
+    // D. Pan: Screen Space Offset (Applied after rotation/scale)
+    D2D1_MATRIX_3X2_F mPan = D2D1::Matrix3x2F::Translation(panX, panY);
+    
+    // E. Center Screen: Move (0,0) to Window Center
+    float screenCenterX = winW / 2.0f;
+    float screenCenterY = winH / 2.0f;
+    D2D1_MATRIX_3X2_F mScreen = D2D1::Matrix3x2F::Translation(screenCenterX, screenCenterY);
+    
+    // Combine: Origin * Rotate * Scale * Pan * Screen
+    // Transforms applied Left-to-Right on the point P:
+    // P_final = P * mOrigin * mRotate * mScale * mPan * mScreen
+    D2D1_MATRIX_3X2_F finalMatrix = mOrigin * mRotate * mScale * mPan * mScreen;
+    
+    m_modelTransform->SetMatrix(finalMatrix);
+    
+    // Update State Tracking
+    m_currentScale = zoom;
+    m_currentPanX = panX;
+    m_currentPanY = panY;
+    
+    return S_OK;
 }

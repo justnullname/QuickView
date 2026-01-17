@@ -7,6 +7,9 @@
 /// <summary>
 /// Current edit state for non-destructive editing
 /// </summary>
+#include <vector>
+#include "LosslessTransform.h"
+
 struct EditState {
     bool IsDirty = false;               // Has unsaved changes
     std::wstring TempFilePath;          // Temp file path
@@ -16,6 +19,9 @@ struct EditState {
     bool FlippedH = false;              // Horizontal flip state
     bool FlippedV = false;              // Vertical flip state
     
+    // [Visual Rotation] Queue of pending operations to be applied on Save
+    std::vector<TransformType> PendingTransforms;
+
     void Reset() {
         IsDirty = false;
         TempFilePath.clear();
@@ -24,6 +30,7 @@ struct EditState {
         FlippedH = false;
         FlippedV = false;
         Quality = EditQuality::Lossless;
+        PendingTransforms.clear();
     }
     
     /// <summary>

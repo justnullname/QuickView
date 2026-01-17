@@ -102,6 +102,9 @@ public:
     // [v5.3] Async Request for Auxiliary Metadata (EXIF/Stats)
     void RequestFullMetadata();
 
+    // [Fix] Invalidate specific cache entry (e.g. after Edit/Save)
+    void InvalidateCache(const std::wstring& path);
+
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
     // This replaces callbacks.

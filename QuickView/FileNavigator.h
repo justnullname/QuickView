@@ -145,6 +145,18 @@ public:
         return m_files[prevIdx];
     }
     
+    // [Fix] Refresh metadata for current file (e.g. after Save)
+    void Refresh() {
+        if (m_currentIndex >= 0 && m_currentIndex < (int)m_files.size()) {
+            try {
+                namespace fs = std::filesystem;
+                m_sizes[m_currentIndex] = fs::file_size(m_files[m_currentIndex]);
+            } catch (...) {
+                m_sizes[m_currentIndex] = 0;
+            }
+        }
+    }
+    
     // Status info
     // Status info
     size_t Count() const { return m_files.size(); }

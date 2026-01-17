@@ -5,6 +5,7 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
+#include "QuickView.h" // For VisualState
 #include <algorithm>
 
 #pragma comment(lib, "dcomp.lib")
@@ -64,6 +65,18 @@ public:
     // ResetImageTransform: Reset to identity (Scale=1, Offset=0)
     HRESULT ResetImageTransform();
     
+    // [Visual Rotation] Set model transform (Rotation/Flip)
+    // Legacy: SetModelTransform(matrix)
+    HRESULT SetModelTransform(const D2D1_MATRIX_3X2_F& matrix);
+    
+    // [New] Virtual Canvas Matrix Chain (T-R-S-T)
+    // Unifies Rotation, Scale, and Pan into a single logic flow.
+    // vs: VisualState (contains Physical Size + Total Rotation)
+    // zoom: Output Scale factor
+    // winW/H: Window Viewport Size
+    // panX/Y: Screen Space Panning Offsets
+    HRESULT UpdateTransformMatrix(VisualState vs, float winW, float winH, float zoom, float panX, float panY);
+    
     // ===== UI Layer Drawing =====
     ID2D1DeviceContext* BeginLayerUpdate(UILayer layer, const RECT* dirtyRect = nullptr);
     HRESULT EndLayerUpdate(UILayer layer);
@@ -79,6 +92,10 @@ public:
     
     // Resize (recreates UI surfaces, NOT image surfaces)
     HRESULT Resize(UINT width, UINT height);
+    
+    // [Fix] Resize Surfaces ONLY (Do not touch Layout/Transforms)
+    // Used by main.cpp when explicit SyncDCompState is handled externally
+    HRESULT ResizeSurfaces(UINT width, UINT height);
     
     // Commit composition
     HRESULT Commit();
@@ -145,6 +162,7 @@ private:
     // Hardware Transforms (applied to m_imageContainer)
     ComPtr<IDCompositionScaleTransform> m_scaleTransform;
     ComPtr<IDCompositionTranslateTransform> m_translateTransform;
+    ComPtr<IDCompositionMatrixTransform> m_modelTransform; // [Visual Rotation]
     ComPtr<IDCompositionTransform> m_transformGroup;
     
     // UI Layers

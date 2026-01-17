@@ -1400,3 +1400,21 @@ void ImageEngine::PumpPrefetch() {
     }
 }
 
+// [Fix] Invalidate specific cache entry (e.g. after Edit/Save)
+void ImageEngine::InvalidateCache(const std::wstring& path) {
+    std::lock_guard lock(m_cacheMutex);
+    
+    auto cit = m_cache.find(path);
+    if (cit != m_cache.end()) {
+        m_currentCacheBytes -= cit->second.sizeBytes;
+        m_cache.erase(cit);
+        
+        // Remove from LRU list (O(N) unfortunately, but safe)
+        // Finding element in list by value needs scan
+        auto lit = std::find(m_lruOrder.begin(), m_lruOrder.end(), path);
+        if (lit != m_lruOrder.end()) {
+            m_lruOrder.erase(lit);
+        }
+    }
+}
+

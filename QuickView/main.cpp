@@ -220,6 +220,22 @@ static bool g_showDebugHUD = false;  // Toggle with F12
 static DWORD g_lastFrameTime = 0;
 static float g_fps = 0.0f;
 
+// Indicates a programmatic resize initiated by zoom/overlay logic.
+// When true, WM_SIZE should not reset g_viewState.Zoom which would cancel
+// the intended zoom change. Cleared by WM_SIZE after handling.
+static bool g_programmaticResize = false;
+// Simple debug logger for zoom/pan/window state
+static void DebugLogState(const wchar_t* tag, HWND hwnd) {
+    wchar_t buf[256];
+    RECT rc; GetWindowRect(hwnd, &rc);
+    int winW = rc.right - rc.left;
+    int winH = rc.bottom - rc.top;
+    swprintf_s(buf, L"[Debug]%s Zoom=%.3f Pan=(%.1f,%.1f) ProgResize=%d Win=%dx%d\n", tag, g_viewState.Zoom, g_viewState.PanX, g_viewState.PanY, g_programmaticResize ? 1 : 0, winW, winH);
+    OutputDebugStringW(buf);
+}
+// True while the user is interactively resizing/moving the window (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)
+static bool g_isInSizeMove = false;
+
 // === Overlay Window State Restore ===
 // Saves window state before overlays (Gallery/Settings) resize the window.
 struct SavedWindowState {
@@ -1473,8 +1489,7 @@ std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName) {
 // --- Logic Functions ---
 
 bool SaveCurrentImage(bool saveAs) {
-    if (!g_editState.IsDirty || g_editState.TempFilePath.empty()) return true;
-    ReleaseImageResources();
+    if (!g_editState.IsDirty && !saveAs) return true;
     
     std::wstring targetPath = g_editState.OriginalFilePath;
     if (saveAs) {
@@ -1488,29 +1503,112 @@ bool SaveCurrentImage(bool saveAs) {
         ofn.lpstrFilter = L"JPEG Files\0*.jpg;*.jpeg\0PNG Files\0*.png\0All Files\0*.*\0";
         ofn.nFilterIndex = 1; ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
         if (GetSaveFileNameW(&ofn)) targetPath = szFile;
-        else { ReloadCurrentImage(GetActiveWindow()); return false; }
+        else { return false; }
     }
     
+    // Show Wait Cursor
+    HCURSOR hOldCursor = SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    
     bool success = false;
-    if (targetPath == g_editState.OriginalFilePath && !saveAs) {
-        if (MoveFileExW(g_editState.TempFilePath.c_str(), targetPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) success = true;
-    } else {
-        if (CopyFileW(g_editState.TempFilePath.c_str(), targetPath.c_str(), FALSE)) {
-            success = true;
-            DeleteFileW(g_editState.TempFilePath.c_str());
+    std::wstring errorMsg;
+    
+    // 1. Prepare Working Temp File (Copy Source)
+    // Use System Temp folder to avoid permission issues in source directory
+    wchar_t tempPath[MAX_PATH];
+    if (GetTempPathW(MAX_PATH, tempPath) == 0) {
+        SetCursor(hOldCursor);
+        MessageBoxW(nullptr, L"Failed to get temporary path.", L"Save Error", MB_ICONERROR);
+        return false;
+    }
+
+    wchar_t tempFile[MAX_PATH];
+    if (GetTempFileNameW(tempPath, L"QV", 0, tempFile) == 0) {
+        SetCursor(hOldCursor);
+        MessageBoxW(nullptr, L"Failed to generate temporary filename.", L"Save Error", MB_ICONERROR);
+        return false;
+    }
+    
+    std::wstring workFile = tempFile;
+
+    if (!CopyFileW(g_editState.OriginalFilePath.c_str(), workFile.c_str(), FALSE)) {
+        DeleteFileW(workFile.c_str());
+        SetCursor(hOldCursor);
+        wchar_t err[256];
+        swprintf_s(err, L"Failed to create working copy.\nError: %d", GetLastError());
+        MessageBoxW(nullptr, err, L"Save Error", MB_ICONERROR);
+        return false;
+    }
+    
+    // 2. Apply Pending Transforms
+    bool transformError = false;
+    for (auto type : g_editState.PendingTransforms) {
+        TransformResult res;
+        if (CLosslessTransform::IsJPEG(workFile.c_str())) {
+            res = CLosslessTransform::TransformJPEG(workFile.c_str(), workFile.c_str(), type);
+        } else {
+            res = CLosslessTransform::TransformGeneric(workFile.c_str(), workFile.c_str(), type);
+        }
+        
+        if (!res.Success) {
+            transformError = true;
+            errorMsg = res.ErrorMessage;
+            break;
         }
     }
     
+    if (transformError) {
+        DeleteFileW(workFile.c_str());
+        SetCursor(hOldCursor);
+        MessageBoxW(nullptr, (L"Transformation failed: " + errorMsg).c_str(), L"Save Error", MB_ICONERROR);
+        return false;
+    }
+    
+    // 3. Move Result to Target
+    // Release resources first to ensure no locks
+    ReleaseImageResources();
+    
+    // Retry logic for final move
+    for (int i=0; i<3; i++) {
+        if (MoveFileExW(workFile.c_str(), targetPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) {
+            success = true;
+            break;
+        }
+        Sleep(100);
+    }
+    
+    if (!success) {
+        // If move failed, try Copy+Delete
+        if (CopyFileW(workFile.c_str(), targetPath.c_str(), FALSE)) {
+            success = true;
+            DeleteFileW(workFile.c_str());
+        }
+    }
+    
+    // Cleanup
+    if (!success) DeleteFileW(workFile.c_str());
+    
+    SetCursor(hOldCursor);
+    
     if (success) {
         g_editState.Reset();
+        g_editState.OriginalFilePath = targetPath; // Update logic if SaveAs changed it
         g_imagePath = targetPath;
+        
+        // [Fix] Invalidate Cache & Refresh File Info
+        // This prevents showing the old (unrotated) image if navigating away and back.
+        if (g_imageEngine) {
+             g_imageEngine->InvalidateCache(targetPath);
+        }
+        // Force refresh of file navigator to pick up new file size/date
+        g_navigator.Refresh();
+        
         ReloadCurrentImage(GetActiveWindow());
+        return true;
     } else {
         MessageBoxW(nullptr, AppStrings::Message_SaveErrorContent, AppStrings::Message_SaveErrorTitle, MB_ICONERROR);
         ReloadCurrentImage(GetActiveWindow());
         return false;
     }
-    return true;
 }
 
 // Helper: Check if file extension matches detected format
@@ -1776,55 +1874,75 @@ bool CheckUnsavedChanges(HWND hwnd) {
     return false;
 }
 
+// [Refactor] Single Truth for Visual State (Physical + Rotation)
+VisualState GetVisualState() {
+    VisualState vs = {};
+    
+    // A. Physical Size (Priority: Surface > Resource > Metadata)
+    if (g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
+        vs.PhysicalSize = D2D1::SizeF((float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
+    } else if (g_imageResource) {
+        vs.PhysicalSize = g_imageResource.GetSize();
+    } else {
+        vs.PhysicalSize = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
+    }
+    
+    // B. Total Rotation (Normalize to 0-360)
+    int exifRot = 0;
+    switch(g_viewState.ExifOrientation) {
+        case 3: exifRot = 180; break;
+        case 6: exifRot = 90; break;
+        case 8: exifRot = 270; break;
+        case 5: exifRot = 90; break; 
+        case 7: exifRot = 270; break; 
+    }
+    
+    int totalAngle = ((int)g_editState.TotalRotation + exifRot) % 360;
+    if (totalAngle < 0) totalAngle += 360;
+    
+    vs.TotalRotation = (float)totalAngle;
+    vs.IsRotated90 = (totalAngle == 90 || totalAngle == 270);
+    
+    // C. Visual Size (Swap W/H if 90/270)
+    if (vs.IsRotated90) {
+        vs.VisualSize = D2D1::SizeF(vs.PhysicalSize.height, vs.PhysicalSize.width);
+    } else {
+        vs.VisualSize = vs.PhysicalSize;
+    }
+    
+    return vs;
+}
+
+// [Refactor] Wrapper around GetVisualState
+D2D1_SIZE_F GetEffectiveImageSize() {
+    return GetVisualState().VisualSize;
+}
+
 void AdjustWindowToImage(HWND hwnd) {
     if (!g_imageResource) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
 
-    // [Fix] Prioritize ACTUAL visual dimensions to ensure perfect fit
-    // Metadata might differ from the embedded preview we are currently displaying
-    float imgWidth, imgHeight;
-    D2D1_SIZE_F resSize = g_imageResource.GetSize();
-    bool isFromResource = false;
+    // [Fix] Use Centralized First-Principles Dimension Logic
+    D2D1_SIZE_F effSize = GetEffectiveImageSize();
+    float imgWidth = effSize.width;
+    float imgHeight = effSize.height;
     
-    if (resSize.width > 0 && resSize.height > 0) {
-        imgWidth = resSize.width;
-        imgHeight = resSize.height;
-        isFromResource = true;
-    } else if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
-        // Fallback to metadata if resource is invalid (unlikely here)
-        imgWidth = (float)g_currentMetadata.Width;
-        imgHeight = (float)g_currentMetadata.Height;
-    } else {
-        return;
-    }
-
-    // [v9.5] Fix: Always swap dimensions for Portrait orientations (5-8).
-    // Direct2D bitmaps store data in original orientation. Rotation is applied at render time.
-    // To adapt the WINDOW to the RENDERED image shape, we must swap w/h here.
-    int orientation = g_viewState.ExifOrientation;
+    if (imgWidth <= 0 || imgHeight <= 0) return;
     
     // Debug Log
     wchar_t dbg[256];
-    swprintf_s(dbg, L"[AdjustWindow] ResW=%.1f ResH=%.1f MetaW=%u MetaH=%u Orient=%d IsFromRes=%d\n",
-        resSize.width, resSize.height, g_currentMetadata.Width, g_currentMetadata.Height, orientation, isFromResource);
+    swprintf_s(dbg, L"[AdjustWindow] EffectiveW=%.1f EffectiveH=%.1f (Includes Exif=%d, Rot=%d)\n",
+        imgWidth, imgHeight, g_viewState.ExifOrientation, g_editState.TotalRotation);
     OutputDebugStringW(dbg);
-
-    if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
-        std::swap(imgWidth, imgHeight);
-        OutputDebugStringW(L"[AdjustWindow] Swapped Dimensions for Portrait\n");
-    }
     
-    // Get DPI
-    float dpi = 96.0f;
-    UINT dpiX = 96, dpiY = 96;
-    if (SUCCEEDED(GetDpiForMonitor(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
-        dpi = (float)dpiX;
-    }
+    // Removed: Manual Swaps (Handled by GetEffectiveImageSize)
     
-    // Convert to Pixels (using EXIF-adjusted dimensions)
-    int windowW = static_cast<int>(imgWidth * (dpi / 96.0f));
-    int windowH = static_cast<int>(imgHeight * (dpi / 96.0f));
+    // [First Principles] Dimensions are already Effective Pixels (from Surface)
+    // Map 1 Image Pixel into 1 Window Logical Unit directly.
+    // DComp will handle the scaling to physical pixels.
+    int windowW = static_cast<int>(imgWidth);
+    int windowH = static_cast<int>(imgHeight);
     
     // Get Monitor Work Area
     HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -1898,64 +2016,167 @@ void ReloadCurrentImage(HWND hwnd) {
     // Note: AdjustWindowToImage is called inside LoadImageAsync upon success
 }
 
+// [Visual Rotation] Helper to calculate accumulated matrix
+// [Fix] Centralized DComp Synchronization Logic
+// Calculates correct Zoom/Pan/Centering based on Visual Dimensions (Rotated)
+static void SyncDCompState(HWND hwnd, float winW, float winH) {
+    if (!g_compEngine || !g_compEngine->IsInitialized() || !g_imageResource) return;
+
+    // [Refactor] Use VisualState for Layout
+    VisualState vs = GetVisualState();
+    if (vs.VisualSize.width <= 0 || vs.VisualSize.height <= 0) return;
+
+    // Calculate Base Fit Scale (Visual -> Window)
+    float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
+    
+    // Calculate Target Zoom (Total Scale)
+    float targetZoom = baseFit * g_viewState.Zoom;
+    
+    // Apply Matrix Chain (using Physical Size & Rotation)
+    // PanX/PanY are explicitly screen-space offsets
+    g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
+    
+    // Commit
+    g_compEngine->Commit();
+}
+
+// [Fix] Draw Internal Background (Grid/Color) explicitly.
+// Used by OnResize to ensure background is drawn in the same frame as Image Transform.
+static void DrawLocalBackground(ID2D1DeviceContext* context, float widthPixels, float heightPixels) {
+    if (!context) return;
+    
+    // DPI Logic
+    float dpiX, dpiY;
+    context->GetDpi(&dpiX, &dpiY);
+    if (dpiX == 0) dpiX = 96.0f;
+    if (dpiY == 0) dpiY = 96.0f;
+    
+    float logicW = widthPixels * 96.0f / dpiX;
+    float logicH = heightPixels * 96.0f / dpiY;
+    
+    context->SetTransform(D2D1::Matrix3x2F::Identity());
+    
+    // Canvas Color: 0=Black, 1=White, 2=Grid, 3=Custom
+    D2D1_COLOR_F bgColor;
+    switch (g_config.CanvasColor) {
+        case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break; // Black
+        case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break; // White
+        case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break; // Grid
+        case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break;
+        default: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
+    }
+    context->Clear(bgColor);
+    
+    // Draw checkerboard grid
+    if (g_config.CanvasColor == 2 || g_config.CanvasShowGrid) {
+        float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
+        D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f);
+
+        ComPtr<ID2D1SolidColorBrush> brushOverlay;
+        context->CreateSolidColorBrush(overlayColor, &brushOverlay);
+        
+        const float gridSize = 16.0f;
+        for (float y = 0; y < logicH; y += gridSize) {
+            for (float x = 0; x < logicW; x += gridSize) {
+                int cx = (int)(x / gridSize);
+                int cy = (int)(y / gridSize);
+                if ((cx + cy) % 2 != 0) {
+                   context->FillRectangle(D2D1::RectF(x, y, x + gridSize, y + gridSize), brushOverlay.Get());
+                }
+            }
+        }
+    }
+}
+
+void UpdateVisualMatrix() {
+    if (!g_compEngine || !g_compEngine->IsInitialized()) return;
+    
+    // [Fix] Use Surface Size (Pixels) instead of Resource Size (DIPs)
+    // This ensures center calculation matches the actual DComp Surface dimensions.
+    // Using DIPs caused "Huge Gaps" on High-DPI screens due to insufficient translation.
+    float w = g_lastSurfaceSize.width;
+    float h = g_lastSurfaceSize.height;
+    
+    if (w <= 0 || h <= 0) {
+        // Fallback or retry? If surface not ready, maybe use GetSize * Scale?
+        // But usually PerformTransform happens after Load.
+        D2D1_SIZE_F sz = g_imageResource.GetSize();
+        // Fallback to Resource if Surface 0 (e.g. init race?)
+        if (sz.width > 0) { w = sz.width; h = sz.height; }
+        else return;
+    }
+    
+    float cx = w / 2.0f;
+    float cy = h / 2.0f;
+    
+    // 1. Move Center to Origin (0,0)
+    D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Translation(-cx, -cy);
+    
+    // 2. Apply Transforms accumulated around Origin
+    for (auto t : g_editState.PendingTransforms) {
+        switch (t) {
+            case TransformType::Rotate90CW:      m = m * D2D1::Matrix3x2F::Rotation(90.0f); break;
+            case TransformType::Rotate90CCW:     m = m * D2D1::Matrix3x2F::Rotation(-90.0f); break;
+            case TransformType::Rotate180:       m = m * D2D1::Matrix3x2F::Rotation(180.0f); break;
+            case TransformType::FlipHorizontal:  m = m * D2D1::Matrix3x2F::Scale(D2D1::SizeF(-1.0f, 1.0f)); break;
+            case TransformType::FlipVertical:    m = m * D2D1::Matrix3x2F::Scale(D2D1::SizeF(1.0f, -1.0f)); break;
+        }
+    }
+    
+    // 3. Move Center back to position New Top-Left at (0,0)
+    // Calculate new dimensions based on net rotation
+    float newW = w;
+    float newH = h;
+    if (g_editState.TotalRotation == 90 || g_editState.TotalRotation == 270) {
+        newW = h;
+        newH = w;
+    }
+    
+    // Translate from (0,0) which is now Center, to (newW/2, newH/2)
+    // This places the Top-Left (-newW/2, -newH/2) at (0,0)
+    m = m * D2D1::Matrix3x2F::Translation(newW / 2.0f, newH / 2.0f);
+    
+    g_compEngine->SetModelTransform(m);
+}
+
 void PerformTransform(HWND hwnd, TransformType type) {
     if (g_imagePath.empty()) return;
     
-    // Set Wait Cursor
-    HCURSOR hOldCursor = SetCursor(LoadCursor(nullptr, IDC_WAIT));
-
-    if (!g_editState.IsDirty && g_editState.OriginalFilePath.empty()) {
-        g_editState.OriginalFilePath = g_imagePath;
-        g_editState.TempFilePath = g_imagePath + L".rotating.tmp";
-    }
-    ReleaseImageResources();
-    TransformResult result;
-    LPCWSTR inputPath = (g_editState.IsDirty && FileExists(g_editState.TempFilePath.c_str())) ? g_editState.TempFilePath.c_str() : g_editState.OriginalFilePath.c_str();
-    LPCWSTR outputPath = g_editState.TempFilePath.c_str();
+    // 1. Update State
+    g_editState.PendingTransforms.push_back(type);
+    g_editState.IsDirty = true;
     
-    if (CLosslessTransform::IsJPEG(inputPath)) result = CLosslessTransform::TransformJPEG(inputPath, outputPath, type);
-    else result = CLosslessTransform::TransformGeneric(inputPath, outputPath, type);
+    // 2. Update Counters (for OSD display only)
+    if (type == TransformType::Rotate90CW) g_editState.TotalRotation = (g_editState.TotalRotation + 90) % 360;
+    else if (type == TransformType::Rotate90CCW) g_editState.TotalRotation = (g_editState.TotalRotation + 270) % 360;
+    else if (type == TransformType::Rotate180) g_editState.TotalRotation = (g_editState.TotalRotation + 180) % 360;
+    else if (type == TransformType::FlipHorizontal) g_editState.FlippedH = !g_editState.FlippedH;
+    else if (type == TransformType::FlipVertical) g_editState.FlippedV = !g_editState.FlippedV;
     
-    // Restore Cursor
-    SetCursor(hOldCursor);
+    // 3. Apply Visual Transform
+    UpdateVisualMatrix();
     
-    if (result.Success) {
-        if (type == TransformType::Rotate90CW) g_editState.TotalRotation = (g_editState.TotalRotation + 90) % 360;
-        else if (type == TransformType::Rotate90CCW) g_editState.TotalRotation = (g_editState.TotalRotation + 270) % 360;
-        else if (type == TransformType::Rotate180) g_editState.TotalRotation = (g_editState.TotalRotation + 180) % 360;
-        else if (type == TransformType::FlipHorizontal) g_editState.FlippedH = !g_editState.FlippedH;
-        else if (type == TransformType::FlipVertical) g_editState.FlippedV = !g_editState.FlippedV;
-        
-        g_editState.Quality = result.Quality;
-        bool isModified = (g_editState.TotalRotation != 0 || g_editState.FlippedH || g_editState.FlippedV);
-        bool hasDataLoss = (result.Quality == EditQuality::EdgeAdapted || result.Quality == EditQuality::Lossy);
-        
-        // Get localized transform name
-        auto GetLocalizedTransformName = [](TransformType t) -> const wchar_t* {
-            switch (t) {
-                case TransformType::Rotate90CW: return AppStrings::Action_RotateCW;
-                case TransformType::Rotate90CCW: return AppStrings::Action_RotateCCW;
-                case TransformType::Rotate180: return AppStrings::Action_Rotate180;
-                case TransformType::FlipHorizontal: return AppStrings::Action_FlipH;
-                case TransformType::FlipVertical: return AppStrings::Action_FlipV;
-                default: return L"Transform";
-            }
-        };
-        const wchar_t* transformName = GetLocalizedTransformName(type);
-        
-        if (!isModified && !hasDataLoss) {
-            g_editState.IsDirty = false;
-            DeleteFileW(g_editState.TempFilePath.c_str());
-            g_osd.Show(hwnd, std::wstring(transformName) + L" (Restored)", false, false, g_editState.GetQualityColor());
-        } else {
-            g_editState.IsDirty = true;
-            g_osd.Show(hwnd, std::wstring(transformName) + L" - " + g_editState.GetQualityText(), false, false, g_editState.GetQualityColor());
+    // 4. Adjust Window & Layout (Handles aspect ratio change)
+    AdjustWindowToImage(hwnd); 
+    // Note: AdjustWindow calls SetWindowPos -> WM_SIZE -> UpdateLayout -> Commit.
+    
+    // 5. Show OSD
+    auto GetLocalizedTransformName = [](TransformType t) -> const wchar_t* {
+        switch (t) {
+            case TransformType::Rotate90CW: return AppStrings::Action_RotateCW;
+            case TransformType::Rotate90CCW: return AppStrings::Action_RotateCCW;
+            case TransformType::Rotate180: return AppStrings::Action_Rotate180;
+            case TransformType::FlipHorizontal: return AppStrings::Action_FlipH;
+            case TransformType::FlipVertical: return AppStrings::Action_FlipV;
+            default: return L"Transform";
         }
-        ReloadCurrentImage(hwnd);
-    } else {
-        g_osd.Show(hwnd, std::wstring(CLosslessTransform::GetTransformName(type)) + L" failed: " + result.ErrorMessage, true);
-        ReloadCurrentImage(hwnd);
+    };
+    
+    std::wstring msg = GetLocalizedTransformName(type);
+    if (g_editState.PendingTransforms.size() > 0) {
+        msg += L" (Unsaved)"; 
     }
+    g_osd.Show(hwnd, msg, false, false, g_editState.GetQualityColor());
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
@@ -2197,6 +2418,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         SetWindowPos(hwnd, nullptr, 0,0,0,0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
         return 0;
     }
+    case WM_ENTERSIZEMOVE: {
+        // User started interactive resize/move session
+        g_isInSizeMove = true;
+        return 0;
+    }
+    case WM_EXITSIZEMOVE: {
+        // Interactive resize/move ended - sync composition state immediately
+        g_isInSizeMove = false;
+        if (g_compEngine && g_compEngine->IsInitialized()) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+            g_compEngine->Commit();
+        }
+        return 0;
+    }
     case WM_NCCALCSIZE: if (wParam) return 0; break;
     case WM_ERASEBKGND: return 1;  // Prevent system background erase (D2D handles this)
     case WM_APP + 1: {
@@ -2385,21 +2621,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
             CalculateWindowControls(D2D1::SizeF((float)LOWORD(lParam), (float)HIWORD(lParam)));
             
-            // [Restore] Reset Zoom on Programmatic Resize (e.g. Image Load / AdjustWindow)
-            // But preserve Zoom during interactive resizing (Dragging)
-            if (!g_viewState.IsInteracting) {
-                g_viewState.Zoom = 1.0f;
-                g_viewState.PanX = 0;
-                g_viewState.PanY = 0;
-            }
+            // NOTE: Do not reset zoom/pan here. Window resize should not implicitly
+            // discard the current view transform. Explicit actions (Fit, Reset)
+            // will call g_viewState.Reset() when needed. Clear programmatic flag.
+            g_programmaticResize = false;
             
             // [DComp Fix] Update Image Layout (Fit + Zoom) logic
             // This ensures image scales correctly with Window Resize AND behaves correctly when Zoom > Screen
             if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
                  float winW = (float)LOWORD(lParam);
                  float winH = (float)HIWORD(lParam);
-                 float imgW = g_lastSurfaceSize.width;
-                 float imgH = g_lastSurfaceSize.height;
+                 // [First Principles] Use Effective Dimensions (Rotated/Exif handled)
+                 D2D1_SIZE_F effSize = GetEffectiveImageSize();
+                 float imgW = effSize.width;
+                 float imgH = effSize.height;
+                 
+                 if (imgW <= 0 || imgH <= 0) return 0;
                  
                  // 1. Calculate Fit Scale (Base)
                  float scaleX = winW / imgW;
@@ -3019,8 +3256,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         ToolbarButtonID tbId;
         if (g_toolbar.OnClick((float)pt.x, (float)pt.y, tbId)) {
             switch (tbId) {
-                case ToolbarButtonID::Prev: Navigate(hwnd, -1); break;
-                case ToolbarButtonID::Next: Navigate(hwnd, 1); break;
+                case ToolbarButtonID::Prev: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break;
+                case ToolbarButtonID::Next: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
                 case ToolbarButtonID::RotateL: PerformTransform(hwnd, TransformType::Rotate90CCW); break;
                 case ToolbarButtonID::RotateR: PerformTransform(hwnd, TransformType::Rotate90CW); break;
                 case ToolbarButtonID::FlipH:   PerformTransform(hwnd, TransformType::FlipHorizontal); break;
@@ -3182,9 +3419,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         RECT rc; GetClientRect(hwnd, &rc);
         
         // Use Surface size for consistency (same as WM_SIZE and Standard Zoom apply section)
-        float imgW = g_lastSurfaceSize.width;
-        float imgH = g_lastSurfaceSize.height;
-        if (imgW <= 0 || imgH <= 0) return 0; // Safety check
+        // [First Principles] Use Effective Dimensions
+        D2D1_SIZE_F effSize = GetEffectiveImageSize();
+        float imgW = effSize.width;
+        float imgH = effSize.height;
+        if (imgW <= 0 || imgH <= 0) return 0;
         
         float scaleW = (float)rc.right / imgW;
         float scaleH = (float)rc.bottom / imgH;
@@ -3234,17 +3473,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              int maxH = (mi.rcWork.bottom - mi.rcWork.top);
              
              // Logic dimensions (already have imgW/imgH from surface size, which matches Window/Visual aspect)
-             float logicImgW = imgW;
-             float logicImgH = imgH;
+             // [Refactor] Use VisualState for Target Dimensions
+             VisualState vs = GetVisualState();
              
-             // [Fix] Do NOT swap here. g_lastSurfaceSize is derived from Window Size, which is already 
-             // adjusted to match the Visual (Protrated) aspect ratio by AdjustWindowToImage.
-             // Double-swapping caused the "Shrink to Strip" bug.
+             // Target matches Visual Aspect Ratio 1:1 at 100% Zoom
+             int targetW = (int)(vs.VisualSize.width * newTotalScale);
+             int targetH = (int)(vs.VisualSize.height * newTotalScale);
              
-             int targetW = (int)(logicImgW * newTotalScale);
-             int targetH = (int)(logicImgH * newTotalScale);
-             
-             // 2. Clamp Window Dimensions (Viewport Clamping)
+             // 2. Clamp Window Dimensions
              bool capped = false;
              int finalWinW = targetW;
              int finalWinH = targetH;
@@ -3254,14 +3490,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              if (finalWinW < 400) finalWinW = 400; // Min size
              if (finalWinH < 300) finalWinH = 300;
              
-             // 3. Apply Window Resize (Physical)
-             RECT rcWin; GetWindowRect(hwnd, &rcWin);
-             int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
-             int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
-             SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, SWP_NOZORDER | SWP_NOACTIVATE);
-             
-             // 4. Calculate Hardware Scale (Visual Override)
-             // If targetW > finalWinW, we need GPU scaling to display the extra size
+             // 3. [Core Fix] PRE-CALCULATE state before window resize
+             // This ensures OnResize -> SyncDCompState sees the correct target scale IMMEDIATELY.
              float hardwareScale = 1.0f;
              if (capped) {
                  float scaleW = (float)targetW / (float)finalWinW;
@@ -3269,39 +3499,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  hardwareScale = std::max(scaleW, scaleH);
              }
              
-             // Update Zoom State (Relative to "Fit in Final Window")
+             // Update ViewState before triggering resize
              g_viewState.Zoom = hardwareScale;
-             
-             // Reset Pan when not capped (keep centered)
              if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+
+             // 4. Apply Window Resize
+             // Using SWP_NOCOPYBITS to prevent Windows from stretching old pixels during resize
+             RECT rcWin; GetWindowRect(hwnd, &rcWin);
+             int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
+             int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
              
-              // 5. Apply to DComp
-              if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0) {
-                  // First, Calculate Base Fit (Surface -> Window)
-                  g_compEngine->UpdateLayout((float)finalWinW, (float)finalWinH,
-                                           (float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
-                  
-                  if (capped) {
-                      // Calculate combined scale for DComp: BaseFit * HardwareScale
-                      float baseFitScale = std::min((float)finalWinW / g_lastSurfaceSize.width, 
-                                                  (float)finalWinH / g_lastSurfaceSize.height);
-                      float finalDCompScale = baseFitScale * hardwareScale;
-                      
-                      // [Fix] Use Top-Left Scaling + Centering Offset
-                      g_compEngine->SetZoom(finalDCompScale, 0.0f, 0.0f);
-                      
-                      // Calculate Offset to center the Scaled Image in the Window
-                      float scaledW = g_lastSurfaceSize.width * finalDCompScale;
-                      float scaledH = g_lastSurfaceSize.height * finalDCompScale;
-                      
-                      float offsetX = (finalWinW - scaledW) / 2.0f;
-                      float offsetY = (finalWinH - scaledH) / 2.0f;
-                      
-                      // Apply Offset + User Pan
-                      g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
-                      g_compEngine->Commit();
-                  }
-              }
+            // Mark programmatic resize so WM_SIZE doesn't reset the zoom we just calculated
+            g_programmaticResize = true;
+            SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, 
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+
+            // Immediately update DComp transforms to reflect new window/client size
+            // This avoids a frame where the window size changed but DComp still uses old transforms.
+            if (g_compEngine && g_compEngine->IsInitialized()) {
+                // Use the FINAL window dimensions we just applied instead of querying
+                // the client rect (which may not be updated synchronously).
+                SyncDCompState(hwnd, (float)finalWinW, (float)finalWinH);
+                g_compEngine->Commit();
+                DebugLogState(L"WheelAfterSyncCommit", hwnd);
+            }
+             
+             // [DComp] Remvoed manual commit. SetWindowPos triggered WM_SIZE -> OnResize -> Commit.
+             
              RequestRepaint(PaintLayer::Dynamic);
              
              // [SVG Two-Tier] Trigger upgrade in window-resize path
@@ -3332,20 +3556,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.PanY *= zoomRatio;
              g_viewState.Zoom = newZoom;
              
-             // [DComp] Apply using consistent approach: Top-Left Scaling + Offset
+             // [DComp] Apply using unified SyncDCompState path for consistency
              if (g_compEngine && g_compEngine->IsInitialized()) {
-                  float finalScale = fitScale * g_viewState.Zoom;
-                  
-                  // Calculate centering offset (same formula as WM_SIZE)
-                  float scaledW = imgW * finalScale;
-                  float scaledH = imgH * finalScale;
-                  float offsetX = (winW - scaledW) / 2.0f;
-                  float offsetY = (winH - scaledH) / 2.0f;
-                  
-                  // Apply zoom from top-left (0,0) and use offset for centering
-                  g_compEngine->SetZoom(finalScale, 0.0f, 0.0f);
-                  g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
-                  g_compEngine->Commit();
+                  SyncDCompState(hwnd, winW, winH);
              }
              RequestRepaint(PaintLayer::Dynamic); // Only OSD update needed
              
@@ -3453,9 +3666,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         switch (wParam) {
         // Navigation
-        case VK_LEFT: Navigate(hwnd, -1); break;
-        case VK_RIGHT: Navigate(hwnd, 1); break;
-        case VK_SPACE: Navigate(hwnd, 1); break;
+        case VK_LEFT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break;
+        case VK_RIGHT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
+        case VK_SPACE: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
         
         // File operations
         case 'O': SendMessage(hwnd, WM_COMMAND, IDM_OPEN, 0); break; // O or Ctrl+O: Open
@@ -3571,13 +3784,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Zoom
         case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
             if (g_imageResource) {
-                D2D1_SIZE_F imgSize = g_imageResource.GetSize();
-                if (imgSize.width > 0 && imgSize.height > 0) {
+                D2D1_SIZE_F effSize = GetEffectiveImageSize();
+                float imgW = effSize.width;
+                float imgH = effSize.height;
+                
+                if (imgW > 0 && imgH > 0) {
                     // Logic to resize window to wrap image at 100% if allowed
                     if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
                          // Target is 100% of image size
-                         int targetW = (int)imgSize.width;
-                         int targetH = (int)imgSize.height;
+                         int targetW = (int)imgW;
+                         int targetH = (int)imgH;
                          
                          // Get Monitor Info
                          HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -3601,12 +3817,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          
                          // Recalculate Fit Scale with NEW window size
                          RECT rcNew; GetClientRect(hwnd, &rcNew);
-                         float newFitScale = std::min((float)rcNew.right / imgSize.width, (float)rcNew.bottom / imgSize.height);
+                         float newFitScale = std::min((float)rcNew.right / imgW, (float)rcNew.bottom / imgH);
                          if (newFitScale > 0) g_viewState.Zoom = 1.0f / newFitScale;
                     } else {
                         // Standard logic (window size static)
                         RECT rc; GetClientRect(hwnd, &rc);
-                        float fitScale = std::min((float)rc.right / imgSize.width, (float)rc.bottom / imgSize.height);
+                        float fitScale = std::min((float)rc.right / imgW, (float)rc.bottom / imgH);
                         if (fitScale > 0) g_viewState.Zoom = 1.0f / fitScale;
                     }
 
@@ -3637,16 +3853,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 int maxClientW = screenW - borderW;
                 int maxClientH = screenH - borderH;
                 
-                // Get Image Size (DIPs -> Pixels)
-                D2D1_SIZE_F imgSize = g_imageResource.GetSize();
-                float dpi = 96.0f;
-                UINT dpiX, dpiY;
-                if (SUCCEEDED(GetDpiForMonitor(hMon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
-                    dpi = (float)dpiX;
-                }
-                float imgPixW = imgSize.width * (dpi / 96.0f);
-                float imgPixH = imgSize.height * (dpi / 96.0f);
-
+                D2D1_SIZE_F effSize = GetEffectiveImageSize();
+                float imgPixW = effSize.width;
+                float imgPixH = effSize.height;
+                
                 if (imgPixW > 0 && imgPixH > 0) {
                      // Scale to fit max client area
                      float ratioW = (float)maxClientW / imgPixW;
@@ -3686,13 +3896,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Get image size
             D2D1_SIZE_F imgSize = g_imageResource.GetSize();
             
-            // [Fix] Swap dimensions for calculation if Rotated (Matches Visual)
-            float calcW = imgSize.width;
-            float calcH = imgSize.height;
-            int orientation = g_viewState.ExifOrientation;
-            if (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8) {
-                std::swap(calcW, calcH);
-            }
+            // [Fix] Use Effective Dimensions
+            D2D1_SIZE_F effSize = GetEffectiveImageSize();
+            float calcW = effSize.width;
+            float calcH = effSize.height;
 
             RECT rc; GetClientRect(hwnd, &rc);
             float fitScale = std::min((float)rc.right / calcW, (float)rc.bottom / calcH);
@@ -3817,6 +4024,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_OPENWITH_DEFAULT: {
+            if (!CheckUnsavedChanges(hwnd)) break;
             // Use rundll32 to show proper "Open With" dialog
             if (!g_imagePath.empty()) {
                 std::wstring args = L"shell32.dll,OpenAs_RunDLL " + g_imagePath;
@@ -3825,6 +4033,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_EDIT: {
+            if (!CheckUnsavedChanges(hwnd)) break;
             // Open with default editor (use "edit" verb, fallback to mspaint)
             if (!g_imagePath.empty()) {
                 HINSTANCE result = ShellExecuteW(hwnd, L"edit", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -3836,6 +4045,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_SHOW_IN_EXPLORER: {
+            if (!CheckUnsavedChanges(hwnd)) break;
             if (!g_imagePath.empty()) {
                 std::wstring cmd = L"/select,\"" + g_imagePath + L"\"";
                 ShellExecuteW(nullptr, nullptr, L"explorer.exe", cmd.c_str(), nullptr, SW_SHOWNORMAL);
@@ -3843,11 +4053,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_COPY_PATH: {
-            // Use original file path if we're in edit mode (image rotated/flipped but unsaved)
+            if (!CheckUnsavedChanges(hwnd)) break;
             std::wstring pathToCopy = g_imagePath;
-            if (!g_editState.OriginalFilePath.empty() && g_editState.IsDirty) {
-                pathToCopy = g_editState.OriginalFilePath;
-            }
             
             if (!pathToCopy.empty() && OpenClipboard(hwnd)) {
                 EmptyClipboard();
@@ -3866,6 +4073,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_COPY_IMAGE: {
+            if (!CheckUnsavedChanges(hwnd)) break;
             // Copy file to clipboard (can paste in Explorer or other apps)
             if (!g_imagePath.empty() && OpenClipboard(hwnd)) {
                 EmptyClipboard();
@@ -3890,6 +4098,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_PRINT: {
+            if (!CheckUnsavedChanges(hwnd)) break;
             if (!g_imagePath.empty()) {
                 // Windows 10/11: Use "print" verb directly - Windows handles the print dialog
                 // This works for most image formats via Windows photo printing
@@ -4278,9 +4487,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
+
+
 void OnResize(HWND hwnd, UINT width, UINT height) { 
     if (g_renderEngine) g_renderEngine->Resize(width, height);
-    if (g_compEngine) g_compEngine->Resize(width, height);
+    if (g_compEngine) {
+        // [Fix] Atomic Update for Rotated Image Lag
+        // 1. ResizeSurfaces: Updates UI layer backing stores (No Commit)
+        // 2. SyncDCompState: Updates Image Transforms (Commits both)
+        // This ensures UI resize and Image visual jump happen in the SAME frame.
+        g_compEngine->ResizeSurfaces(width, height);
+        
+        // [Fix] Draw Background explicitly NOW
+        // Prevent "Window Lag" where background is potentially empty/stale while Image is Transformed.
+        ID2D1DeviceContext* ctx = g_compEngine->BeginLayerUpdate(UILayer::Static);
+        if (ctx) {
+            DrawLocalBackground(ctx, (float)width, (float)height);
+            g_compEngine->EndLayerUpdate(UILayer::Static);
+        }
+        
+        // Pass explicit new dimensions to ensure perfect sync
+        SyncDCompState(hwnd, (float)width, (float)height);
+    }
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
 }
@@ -4526,10 +4754,6 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
                 SetWindowTextW(hwnd, titleBuf);
                 
-                // Update Window Size
-                AdjustWindowToImage(hwnd);
-                
-                // Render
                 // [Fix] Expand transparency detection to include all transparent formats
                 bool hasTransparency = (evt.metadata.Format == L"SVG") ||
                                        (evt.metadata.Format == L"PNG") || 
@@ -4537,11 +4761,17 @@ void ProcessEngineEvents(HWND hwnd) {
                                        (evt.metadata.Format == L"GIF") ||
                                        (evt.metadata.Format.find(L"Alpha") != std::wstring::npos) ||
                                        (evt.rawFrame && evt.rawFrame->format == QuickView::PixelFormat::BGRA8888);
+
                 // [Two-Stage] Detect same-image upgrade (scaled → full)
                 // Fast transition when: was scaled, now full, same image ID
                 bool isSameImageUpgrade = g_isImageScaled && !evt.isScaled && 
                                           (evt.imageId == g_currentImageId.load());
                 RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
+                
+                // [Fix] Update Window Size AFTER RenderImageToDComp
+                // This ensures g_lastSurfaceSize (used by AdjustWindowToImage) is updated with the NEW image dimensions.
+                // Previously, calling this before Render used STALE dimensions, causing layout failures on orientation switch.
+                AdjustWindowToImage(hwnd);
                 
                 // Cleanup
                 g_isLoading = false;
@@ -4686,6 +4916,12 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection
     }
     
     g_imagePath = path; // Set target path immediately for UI consistency
+    
+    // [Fix] Restore OriginalFilePath when loading a new clean image.
+    // If IsDirty is true, we are likely reloading the TempFile, so we must PRESERVE OriginalFilePath.
+    if (!g_editState.IsDirty) {
+        g_editState.OriginalFilePath = path;
+    }
     
     g_isLoading = true;
     g_isCrossFading = false;
@@ -4893,6 +5129,14 @@ void OnPaint(HWND hwnd) {
             g_renderEngine->SetWarpMode(0.0f, 0.0f);
         }
         
+        // [Fix] Sync DComp State (Zoom/Pan) with correct Visual Dimensions
+        // This resolves the "Huge Margins" issue when zooming rotated images.
+        // Logic refactored to centralized function for OnResize access.
+        
+        // Pass explicit client rect dims (Paint runs on current client rect)
+        RECT rcPaint; GetClientRect(hwnd, &rcPaint);
+        SyncDCompState(hwnd, (float)rcPaint.right, (float)rcPaint.bottom);
+
         // [Double-Render Fix] Only draw legacy if DComp is NOT active
         // Check Legacy/Fallback Path
 #if 0
