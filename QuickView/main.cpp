@@ -2873,24 +2873,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_viewState.LastMousePos = pt;
              
              // [DComp] Use hardware pan with proper centering offset
-             if (g_compEngine && g_compEngine->IsInitialized() && g_lastSurfaceSize.width > 0) {
-                 RECT rc; GetClientRect(hwnd, &rc);
-                 float winW = (float)rc.right;
-                 float winH = (float)rc.bottom;
-                 float imgW = g_lastSurfaceSize.width;
-                 float imgH = g_lastSurfaceSize.height;
-                 
-                 // Calculate same centering offset as WM_MOUSEWHEEL
-                 float fitScale = std::min(winW / imgW, winH / imgH);
-                 float finalScale = fitScale * g_viewState.Zoom;
-                 float scaledW = imgW * finalScale;
-                 float scaledH = imgH * finalScale;
-                 float offsetX = (winW - scaledW) / 2.0f;
-                 float offsetY = (winH - scaledH) / 2.0f;
-                 
-                 g_compEngine->SetPan(offsetX + g_viewState.PanX, offsetY + g_viewState.PanY);
-                 g_compEngine->Commit();
-             }
+             // [DComp] Use hardware pan via centralized Sync logic
+             // Fixes jitter by ensuring Visual dimensions (Rotation) are respected
+             RECT rc; GetClientRect(hwnd, &rc);
+             SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
              RequestRepaint(PaintLayer::Dynamic);  // OSD update only
          }
          
