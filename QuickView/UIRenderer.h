@@ -130,7 +130,7 @@ private:
     void DrawNavIndicators(ID2D1DeviceContext* dc);
     
     // 绘制函数
-    void DrawOSD(ID2D1DeviceContext* dc);
+    void DrawOSD(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();

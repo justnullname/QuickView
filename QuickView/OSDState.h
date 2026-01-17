@@ -3,7 +3,7 @@
 #include <d2d1.h>
 #include <d2d1helper.h>
 
-enum class OSDPosition { Bottom, Top };
+enum class OSDPosition { Bottom, Top, TopRight };
 
 struct OSDState {
     std::wstring Message;

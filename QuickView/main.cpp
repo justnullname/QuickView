@@ -2172,11 +2172,41 @@ void PerformTransform(HWND hwnd, TransformType type) {
         }
     };
     
-    std::wstring msg = GetLocalizedTransformName(type);
-    if (g_editState.PendingTransforms.size() > 0) {
-        msg += L" (Unsaved)"; 
+    // Check if we are back to original state (Restored)
+    bool isNeutral = (g_editState.TotalRotation % 360 == 0) && !g_editState.FlippedH && !g_editState.FlippedV;
+    
+    std::wstring msg;
+    D2D1_COLOR_F color;
+
+    if (isNeutral) {
+        g_editState.IsDirty = false;
+        g_editState.PendingTransforms.clear(); // Clear stack as we are back to start
+        
+        msg = AppStrings::OSD_Restored;
+        color = D2D1::ColorF(D2D1::ColorF::LightGreen);
+    } else {
+        // Active Transform
+        std::wstring actionName = GetLocalizedTransformName(type); 
+        
+        const wchar_t* qualityText = L"";
+        switch (g_editState.Quality) {
+            case EditQuality::Lossless:      qualityText = AppStrings::OSD_Lossless; break;
+            case EditQuality::LosslessReenc: qualityText = AppStrings::OSD_ReencodedLossless; break;
+            case EditQuality::EdgeAdapted:   qualityText = AppStrings::OSD_EdgeAdapted; break;
+            case EditQuality::Lossy:         qualityText = AppStrings::OSD_Reencoded; break;
+            default:                         qualityText = AppStrings::OSD_Lossless; break;
+        }
+
+        // Format: "Action (Quality)"
+        wchar_t buf[256];
+        swprintf_s(buf, L"%s (%s)", actionName.c_str(), qualityText);
+        msg = buf;
+
+        color = g_editState.GetQualityColor();
     }
-    g_osd.Show(hwnd, msg, false, false, g_editState.GetQualityColor());
+
+    // Show OSD (Default Position = Bottom, same as Zoom OSD)
+    g_osd.Show(hwnd, msg, false, false, color);
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
@@ -4416,7 +4446,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             g_osd.Show(hwnd, L"Extension Fixed", false);
                         } else {
                             LoadImageAsync(hwnd, g_imagePath); // Reload old
-                            g_osd.Show(hwnd, L"Rename Failed", true);
+                            g_osd.Show(hwnd, std::wstring(L"Rename Failed"), true);
                         }
                     }
                     RequestRepaint(PaintLayer::All);
@@ -5032,9 +5062,9 @@ void Navigate(HWND hwnd, int direction) {
         } else if (g_navigator.HitEnd()) {
             // Show OSD when reaching end without looping
             if (direction > 0) {
-                g_osd.Show(hwnd, AppStrings::OSD_LastImage, false);
+                g_osd.Show(hwnd, std::wstring(AppStrings::OSD_LastImage), false);
             } else {
-                g_osd.Show(hwnd, AppStrings::OSD_FirstImage, false);
+                g_osd.Show(hwnd, std::wstring(AppStrings::OSD_FirstImage), false);
             }
         }
     }

@@ -403,7 +403,7 @@ bool UIRenderer::RenderAll(HWND hwnd) {
                 dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
                 m_whiteBrush = whiteBrush;
                 
-                DrawOSD(dc); // 灞€閮ㄧ粯鍒?
+                DrawOSD(dc, hwnd); // 灞€閮ㄧ粯鍒?
                 m_compEngine->EndLayerUpdate(UILayer::Dynamic);
                 rendered = true;
             }
@@ -484,7 +484,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     m_accentBrush = accentBrush;
     
     // OSD
-    DrawOSD(dc);
+    DrawOSD(dc, hwnd);
     
     // Debug HUD
     if (m_showDebugHUD) DrawDebugHUD(dc);
@@ -517,7 +517,7 @@ void UIRenderer::RenderGalleryLayer(ID2D1DeviceContext* dc) {
 // Drawing Functions
 // ============================================================================
 
-void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
+void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     if (m_osdText.empty() || m_osdOpacity <= 0.01f) return;
     
     // Match original style: bottom position, padding 30/15
@@ -541,24 +541,31 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc) {
         toastH = metrics.height + paddingV * 2;
     }
     
-    // Position: center horizontally
-    float x = (m_width - toastW) / 2.0f;
-    float y = 0.0f;
+    // Calculate Window Width for alignment
+    RECT rc; GetClientRect(hwnd, &rc);
+    float winW = (float)(rc.right - rc.left);
+
+    // Position Determination
+    float x = 0, y = 0;
     
-    if (m_osdPos == OSDPosition::Top) {
-        y = 60.0f; // Top offset (below title bar area)
+    if (m_osdPos == OSDPosition::Bottom) {
+        x = (winW - toastW) / 2.0f;
+        y = (float)m_height - toastH - 80.0f; // Above toolbar
+    } else if (m_osdPos == OSDPosition::TopRight) {
+        x = winW - toastW - 20.0f;
+        y = 60.0f; // Below window controls
     } else {
-        y = m_height - toastH - 100.0f; // Bottom offset
+        // Top
+        x = (winW - toastW) / 2.0f;
+        y = 40.0f;
     }
-    
-    D2D1_ROUNDED_RECT bgRect = D2D1::RoundedRect(
-        D2D1::RectF(x, y, x + toastW, y + toastH), 8.0f, 8.0f
-    );
+
+    D2D1_RECT_F bgRect = D2D1::RectF(x, y, x + toastW, y + toastH);
     
     // Background: semi-transparent black
     ComPtr<ID2D1SolidColorBrush> bgBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f * m_osdOpacity), &bgBrush);
-    dc->FillRoundedRectangle(bgRect, bgBrush.Get());
+    dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, 8.0f, 8.0f), bgBrush.Get());
     
     // Text: use custom color if set, otherwise white
     ComPtr<ID2D1SolidColorBrush> textBrush;

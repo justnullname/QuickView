@@ -122,12 +122,13 @@ namespace AppStrings {
     const wchar_t* OSD_MovedToRecycleBin = nullptr;
     const wchar_t* OSD_WindowLocked = nullptr;
     const wchar_t* OSD_WindowUnlocked = nullptr;
-    const wchar_t* OSD_AlwaysOnTopOn = nullptr;
-    const wchar_t* OSD_AlwaysOnTopOff = nullptr;
+    const wchar_t* OSD_AlwaysOnTopOn = nullptr; // New
+    const wchar_t* OSD_AlwaysOnTopOff = nullptr; // New
     const wchar_t* OSD_WallpaperSet = nullptr;
     const wchar_t* OSD_WallpaperFailed = nullptr;
     const wchar_t* OSD_Renamed = nullptr;
     const wchar_t* OSD_RenameFailed = nullptr;
+    const wchar_t* OSD_Restored = nullptr; // New
     const wchar_t* OSD_ExtensionFixed = nullptr;
     const wchar_t* OSD_FirstImage = nullptr;
     const wchar_t* OSD_LastImage = nullptr;
@@ -218,8 +219,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_NoImage = L"No image loaded";
         static constexpr const wchar_t* OSD_Lossless = L"Lossless";
         static constexpr const wchar_t* OSD_ReencodedLossless = L"Re-encoded (Lossless)";
-        static constexpr const wchar_t* OSD_EdgeAdapted = L"Edge Adapted";
-        static constexpr const wchar_t* OSD_Reencoded = L"Re-encoded";
+        static constexpr const wchar_t* OSD_EdgeAdapted = L"Cropped";
+        static constexpr const wchar_t* OSD_Reencoded = L"Lossy";
         static constexpr const wchar_t* OSD_ReadOnly = L"Access denied - file may be in use or read-only";
         static constexpr const wchar_t* OSD_NotPerfect = L"Transform is not perfect (Edge optimized)";
 
@@ -302,6 +303,7 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_WallpaperFailed = L"Failed to set wallpaper";
         static constexpr const wchar_t* OSD_Renamed = L"Renamed";
         static constexpr const wchar_t* OSD_RenameFailed = L"Rename Failed";
+        static constexpr const wchar_t* OSD_Restored = L"Restored"; // New
         static constexpr const wchar_t* OSD_ExtensionFixed = L"Extension Fixed";
         static constexpr const wchar_t* OSD_FirstImage = L"First image";
         static constexpr const wchar_t* OSD_LastImage = L"Last image";
@@ -626,6 +628,7 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_WallpaperFailed = L"设置壁纸失败";
         static constexpr const wchar_t* OSD_Renamed = L"重命名成功";
         static constexpr const wchar_t* OSD_RenameFailed = L"重命名失败";
+        static constexpr const wchar_t* OSD_Restored = L"已恢复原状"; // New
         static constexpr const wchar_t* OSD_ExtensionFixed = L"扩展名已修复";
         static constexpr const wchar_t* OSD_FirstImage = L"已是第一张";
         static constexpr const wchar_t* OSD_LastImage = L"已是最后一张";
@@ -640,8 +643,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_NoImage = L"沒有載入圖片";
         static constexpr const wchar_t* OSD_Lossless = L"無損";
         static constexpr const wchar_t* OSD_ReencodedLossless = L"重新編碼 (無損)";
-        static constexpr const wchar_t* OSD_EdgeAdapted = L"邊緣優化";
-        static constexpr const wchar_t* OSD_Reencoded = L"重新編碼";
+        static constexpr const wchar_t* OSD_EdgeAdapted = L"剪裁";
+        static constexpr const wchar_t* OSD_Reencoded = L"有損";
         static constexpr const wchar_t* OSD_ReadOnly = L"拒絕存取 - 檔案可能被佔用或唯讀";
         static constexpr const wchar_t* OSD_NotPerfect = L"變換不完美 (已進行邊緣優化)";
         static constexpr const wchar_t* Action_RotateCW = L"順時針旋轉 90\x00B0";
@@ -709,6 +712,7 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_WallpaperFailed = L"設定桌布失敗";
         static constexpr const wchar_t* OSD_Renamed = L"重新命名成功";
         static constexpr const wchar_t* OSD_RenameFailed = L"重新命名失敗";
+        static constexpr const wchar_t* OSD_Restored = L"已恢復原狀";
         static constexpr const wchar_t* OSD_ExtensionFixed = L"副檔名已修復";
         static constexpr const wchar_t* OSD_FirstImage = L"已是第一張";
         static constexpr const wchar_t* OSD_LastImage = L"已是最後一張";
@@ -898,6 +902,7 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_WallpaperFailed = L"壁紙の設定に失敗";
         static constexpr const wchar_t* OSD_Renamed = L"名前変更完了";
         static constexpr const wchar_t* OSD_RenameFailed = L"名前変更失敗";
+        static constexpr const wchar_t* OSD_Restored = L"復元されました";
         static constexpr const wchar_t* OSD_ExtensionFixed = L"拡張子を修正しました";
         static constexpr const wchar_t* OSD_FirstImage = L"最初の画像";
         static constexpr const wchar_t* OSD_LastImage = L"最後の画像";
@@ -1081,12 +1086,13 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"Перемещено в корзину";
         static constexpr const wchar_t* OSD_WindowLocked = L"Размер окна зафиксирован";
         static constexpr const wchar_t* OSD_WindowUnlocked = L"Размер окна разблокирован";
-        static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"Поверх всех окон: ВКЛ";
-        static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"Поверх всех окон: ВЫКЛ";
+        static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"Always on Top: ON";
+        static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"Always on Top: OFF";
         static constexpr const wchar_t* OSD_WallpaperSet = L"Обои установлены";
         static constexpr const wchar_t* OSD_WallpaperFailed = L"Не удалось установить обои";
         static constexpr const wchar_t* OSD_Renamed = L"Переименовано";
         static constexpr const wchar_t* OSD_RenameFailed = L"Ошибка переименования";
+        static constexpr const wchar_t* OSD_Restored = L"Восстановлено";
         static constexpr const wchar_t* OSD_ExtensionFixed = L"Расширение исправлено";
         static constexpr const wchar_t* OSD_FirstImage = L"Первое изображение";
         static constexpr const wchar_t* OSD_LastImage = L"Последнее изображение";
@@ -1276,6 +1282,7 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_WallpaperFailed = L"Hintergrundbild setzen fehlgeschlagen";
         static constexpr const wchar_t* OSD_Renamed = L"Umbenannt";
         static constexpr const wchar_t* OSD_RenameFailed = L"Umbenennung fehlgeschlagen";
+        static constexpr const wchar_t* OSD_Restored = L"Wiederhergestellt";
         static constexpr const wchar_t* OSD_ExtensionFixed = L"Erweiterung repariert";
         static constexpr const wchar_t* OSD_FirstImage = L"Erstes Bild";
         static constexpr const wchar_t* OSD_LastImage = L"Letztes Bild";
@@ -1465,6 +1472,7 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_WallpaperFailed = L"Error al establecer fondo de pantalla";
         static constexpr const wchar_t* OSD_Renamed = L"Renombrado";
         static constexpr const wchar_t* OSD_RenameFailed = L"Error al renombrar";
+        static constexpr const wchar_t* OSD_Restored = L"Restaurado";
         static constexpr const wchar_t* OSD_ExtensionFixed = L"Extensión corregida";
         static constexpr const wchar_t* OSD_FirstImage = L"Primera imagen";
         static constexpr const wchar_t* OSD_LastImage = L"Última imagen";
@@ -1703,6 +1711,7 @@ namespace AppStrings {
         OSD_Renamed = T::OSD_Renamed;
         OSD_RenameFailed = T::OSD_RenameFailed;
         OSD_ExtensionFixed = T::OSD_ExtensionFixed;
+        OSD_Restored = T::OSD_Restored;
         OSD_FirstImage = T::OSD_FirstImage;
         OSD_LastImage = T::OSD_LastImage;
         OSD_HD = T::OSD_HD;

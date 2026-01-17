@@ -114,6 +114,7 @@ namespace AppStrings {
     extern const wchar_t* OSD_WallpaperFailed;
     extern const wchar_t* OSD_Renamed;
     extern const wchar_t* OSD_RenameFailed;
+    extern const wchar_t* OSD_Restored; // New
     extern const wchar_t* OSD_ExtensionFixed;
     extern const wchar_t* OSD_FirstImage;
     extern const wchar_t* OSD_LastImage;
