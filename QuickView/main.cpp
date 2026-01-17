@@ -4970,10 +4970,8 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection
     g_toolbar.SetRawState(IsRawFile(path), g_runtime.ForceRawDecode);
     
     // Level 0 Feedback: Immediate OSD before any decode starts
-    if (showOSD) {
-        std::wstring filename = path.substr(path.find_last_of(L"\\/") + 1);
-        g_osd.Show(hwnd, filename.c_str(), false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Top);
-    }
+    // Level 0 Feedback: Immediate OSD removed as per user request
+    // if (showOSD) { ... }
     PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
     
 // Kick the Engine
