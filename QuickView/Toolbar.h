@@ -16,7 +16,6 @@ enum class ToolbarButtonID {
 struct ToolbarButton {
     ToolbarButtonID id;
     wchar_t iconChar;       // Unicode point for Segoe Fluent Icon
-    std::wstring tooltip;
     D2D1_RECT_F rect;       // Runtime layout rect
     bool isEnabled = true;
     bool isToggled = false; // For Lock/Exif/Raw
@@ -34,7 +33,7 @@ public:
     void Render(ID2D1RenderTarget* pRT);
 
     // Interaction
-    void OnMouseMove(float x, float y);
+    bool OnMouseMove(float x, float y);
     bool OnClick(float x, float y, ToolbarButtonID& outId);
     bool HitTest(float x, float y); // New method to check if point is on toolbar
     

@@ -1506,7 +1506,7 @@ bool SaveCurrentImage(bool saveAs) {
         g_imagePath = targetPath;
         ReloadCurrentImage(GetActiveWindow());
     } else {
-        MessageBoxW(nullptr, L"Failed to save file. File locked?", L"Error", MB_ICONERROR);
+        MessageBoxW(nullptr, AppStrings::Message_SaveErrorContent, AppStrings::Message_SaveErrorTitle, MB_ICONERROR);
         ReloadCurrentImage(GetActiveWindow());
         return false;
     }
@@ -1930,13 +1930,26 @@ void PerformTransform(HWND hwnd, TransformType type) {
         bool isModified = (g_editState.TotalRotation != 0 || g_editState.FlippedH || g_editState.FlippedV);
         bool hasDataLoss = (result.Quality == EditQuality::EdgeAdapted || result.Quality == EditQuality::Lossy);
         
+        // Get localized transform name
+        auto GetLocalizedTransformName = [](TransformType t) -> const wchar_t* {
+            switch (t) {
+                case TransformType::Rotate90CW: return AppStrings::Action_RotateCW;
+                case TransformType::Rotate90CCW: return AppStrings::Action_RotateCCW;
+                case TransformType::Rotate180: return AppStrings::Action_Rotate180;
+                case TransformType::FlipHorizontal: return AppStrings::Action_FlipH;
+                case TransformType::FlipVertical: return AppStrings::Action_FlipV;
+                default: return L"Transform";
+            }
+        };
+        const wchar_t* transformName = GetLocalizedTransformName(type);
+        
         if (!isModified && !hasDataLoss) {
             g_editState.IsDirty = false;
             DeleteFileW(g_editState.TempFilePath.c_str());
-            g_osd.Show(hwnd, std::wstring(CLosslessTransform::GetTransformName(type)) + L" (Restored)", false, false, g_editState.GetQualityColor());
+            g_osd.Show(hwnd, std::wstring(transformName) + L" (Restored)", false, false, g_editState.GetQualityColor());
         } else {
             g_editState.IsDirty = true;
-            g_osd.Show(hwnd, std::wstring(CLosslessTransform::GetTransformName(type)) + L" - " + g_editState.GetQualityText(), false, false, g_editState.GetQualityColor());
+            g_osd.Show(hwnd, std::wstring(transformName) + L" - " + g_editState.GetQualityText(), false, false, g_editState.GetQualityColor());
         }
         ReloadCurrentImage(hwnd);
     } else {
@@ -1946,6 +1959,8 @@ void PerformTransform(HWND hwnd, TransformType type) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
+    AppStrings::Init();
+
     // Enable Per-Monitor DPI Awareness V2 for proper multi-monitor support
     // This enables WM_DPICHANGED messages when window is dragged across monitors
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -1956,6 +1971,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     
     // Load config early to check SingleInstance setting
     LoadConfig();
+    AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+
     
     // Smart Lazy Registration: Check and self-repair file associations
     // Smart Lazy Registration: Check and self-repair file associations
@@ -2248,7 +2265,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Only upgrade if currently at Tier 1 (2×) and zoomed > 1.8×
             if (g_imageResource.isSvg && g_svgRenderedScale < 4.0f && g_viewState.Zoom > 1.8f) {
                 if (UpgradeSvgSurface(hwnd, g_imageResource, 2)) {
-                    g_osd.Show(hwnd, L"HD", false);  // Quick confirmation
+                    g_osd.Show(hwnd, AppStrings::OSD_HD, false);  // Quick confirmation
                 }
             }
             return 0;
@@ -2516,8 +2533,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           // Let's store s_hideRequestTime in a global "g_toolbarHideTime" for simplicity.
           extern DWORD g_toolbarHideTime; // Defined in global scope
           g_toolbarHideTime = s_hideRequestTime; 
-
-          g_toolbar.OnMouseMove((float)pt.x, (float)pt.y);
+          // Toolbar Mouse Move
+        if (g_toolbar.OnMouseMove((float)pt.x, (float)pt.y)) {
+             RequestRepaint(PaintLayer::Static); // Toolbar is on Static layer
+        }
           
           // Set hand cursor when hovering toolbar buttons
           if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
@@ -2886,14 +2905,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                      
                  case UIHitResult::InfoRow:
                      if (CopyToClipboard(hwnd, hit.payload)) {
-                         g_osd.Show(hwnd, L"Copied!", false);
+                         g_osd.Show(hwnd, AppStrings::OSD_Copied, false);
                      }
                      RequestRepaint(PaintLayer::All);
                      return 0;
                      
                  case UIHitResult::GPSCoord:
                      if (CopyToClipboard(hwnd, hit.payload)) {
-                         g_osd.Show(hwnd, L"Coordinates copied!", false);
+                         g_osd.Show(hwnd, AppStrings::OSD_CoordinatesCopied, false);
                      }
                      RequestRepaint(PaintLayer::All);
                      return 0;
@@ -3342,7 +3361,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         bool is100 = (abs(newTotalScale - 1.0f) < 0.001f);
         
         wchar_t zoomBuf[32];
-        swprintf_s(zoomBuf, L"Zoom: %d%%", percent);
+        swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, percent);
         D2D1_COLOR_F color = is100 ? D2D1::ColorF(0.4f, 1.0f, 0.4f) : D2D1::ColorF(D2D1::ColorF::White); // Green if 100%
         
         g_osd.Show(hwnd, zoomBuf, false, false, color);
@@ -3447,7 +3466,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 'C': // Ctrl+C: Copy image, Ctrl+Alt+C: Copy path
             if (ctrl && alt) {
                 if (!g_imagePath.empty() && CopyToClipboard(hwnd, g_imagePath)) {
-                    g_osd.Show(hwnd, L"File path copied!", false);
+                    g_osd.Show(hwnd, AppStrings::OSD_FilePathCopied, false);
                 }
             } else if (ctrl) {
                 SendMessage(hwnd, WM_COMMAND, IDM_COPY_IMAGE, 0);
@@ -3593,7 +3612,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                     g_viewState.PanX = 0;
                     g_viewState.PanY = 0;
-                    g_osd.Show(hwnd, L"Zoom: 100%", false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
+                    g_osd.Show(hwnd, AppStrings::OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
                 }
             }
             RequestRepaint(PaintLayer::All);
@@ -3652,7 +3671,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 
                 // Reset View to Fit
                 g_viewState.Zoom = 1.0f; 
-                g_osd.Show(hwnd, L"Zoom: Fit Screen", false, false, D2D1::ColorF(D2D1::ColorF::White));
+                g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
                 RequestRepaint(PaintLayer::All);
             }
             break;
@@ -3735,7 +3754,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Show Zoom OSD
             int percent = (int)(std::round(newTotalScale * 100.0f));
             wchar_t zoomBuf[32];
-            swprintf_s(zoomBuf, L"Zoom: %d%%", percent);
+            swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, percent);
             g_osd.Show(hwnd, zoomBuf, false, (abs(newTotalScale - 1.0f) < 0.001f), D2D1::ColorF(D2D1::ColorF::White));
             break;
         }
@@ -3824,17 +3843,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_COPY_PATH: {
-            if (!g_imagePath.empty() && OpenClipboard(hwnd)) {
+            // Use original file path if we're in edit mode (image rotated/flipped but unsaved)
+            std::wstring pathToCopy = g_imagePath;
+            if (!g_editState.OriginalFilePath.empty() && g_editState.IsDirty) {
+                pathToCopy = g_editState.OriginalFilePath;
+            }
+            
+            if (!pathToCopy.empty() && OpenClipboard(hwnd)) {
                 EmptyClipboard();
-                size_t len = (g_imagePath.length() + 1) * sizeof(wchar_t);
+                size_t len = (pathToCopy.length() + 1) * sizeof(wchar_t);
                 HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len);
                 if (hMem) {
-                    memcpy(GlobalLock(hMem), g_imagePath.c_str(), len);
+                    memcpy(GlobalLock(hMem), pathToCopy.c_str(), len);
                     GlobalUnlock(hMem);
                     SetClipboardData(CF_UNICODETEXT, hMem);
                 }
                 CloseClipboard();
-                g_osd.Show(hwnd, L"Path copied", false);
+                g_osd.Show(hwnd, AppStrings::OSD_FilePathCopied, false);
                 // Ensure UI updates to show OSD
                 RequestRepaint(PaintLayer::Dynamic);
             }
@@ -3859,7 +3884,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
                 
                 CloseClipboard();
-                g_osd.Show(hwnd, L"File copied to clipboard", false);
+                g_osd.Show(hwnd, AppStrings::OSD_Copied, false);
                 RequestRepaint(PaintLayer::Dynamic);
             }
             break;
@@ -3873,7 +3898,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 if ((intptr_t)result <= 32) {
                     // Fallback: Open in default app and show OSD instructions
                     ShellExecuteW(hwnd, L"open", g_imagePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                    g_osd.Show(hwnd, L"Print: Use Ctrl+P in opened app", false);
+                    g_osd.Show(hwnd, AppStrings::OSD_PrintInstruction, false);
                     RequestRepaint(PaintLayer::Dynamic);
                 }
             }
@@ -3933,7 +3958,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
                     
                     if (SHFileOperationW(&op) == 0) {
-                        g_osd.Show(hwnd, L"Moved to Recycle Bin", false);
+                        g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
                         
                         // [Fix] Verify and delete the temp file if it exists
                         if (!tempToDelete.empty() && FileExists(tempToDelete.c_str())) {
@@ -3970,7 +3995,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case IDM_LOCK_WINDOW_SIZE: {
             g_runtime.LockWindowSize = !g_runtime.LockWindowSize;
             g_toolbar.SetLockState(g_runtime.LockWindowSize);
-            g_osd.Show(hwnd, g_runtime.LockWindowSize ? L"Window Size Locked" : L"Window Size Unlocked", false);
+            g_osd.Show(hwnd, g_runtime.LockWindowSize ? AppStrings::OSD_WindowLocked : AppStrings::OSD_WindowUnlocked, false);
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             break;
         }
@@ -3993,7 +4018,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_config.AlwaysOnTop = !g_config.AlwaysOnTop;
             SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
                          0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-            g_osd.Show(hwnd, g_config.AlwaysOnTop ? L"Always on Top: ON" : L"Always on Top: OFF", false);
+            g_osd.Show(hwnd, g_config.AlwaysOnTop ? AppStrings::OSD_AlwaysOnTopOn : AppStrings::OSD_AlwaysOnTopOff, false);
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             break;
         }
@@ -4085,9 +4110,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     pWallpaper->Release();
                     
                     if (SUCCEEDED(hr)) {
-                        g_osd.Show(hwnd, L"Wallpaper Set", false);
+                        g_osd.Show(hwnd, AppStrings::OSD_WallpaperSet, false);
                     } else {
-                        g_osd.Show(hwnd, L"Failed to set wallpaper", true);
+                        g_osd.Show(hwnd, AppStrings::OSD_WallpaperFailed, true);
                     }
                     RequestRepaint(PaintLayer::Dynamic);
                 }
@@ -4122,10 +4147,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             g_imagePath = newPath;
                             g_navigator.Initialize(newPath.c_str());
                             LoadImageAsync(hwnd, newPath);
-                            g_osd.Show(hwnd, L"Renamed", false);
+                            g_osd.Show(hwnd, AppStrings::OSD_Renamed, false);
                         } else {
                             LoadImageAsync(hwnd, g_imagePath);
-                            g_osd.Show(hwnd, L"Rename Failed", true);
+                            g_osd.Show(hwnd, AppStrings::OSD_RenameFailed, true);
                         }
                         RequestRepaint(PaintLayer::All);
                     }
@@ -4771,9 +4796,9 @@ void Navigate(HWND hwnd, int direction) {
         } else if (g_navigator.HitEnd()) {
             // Show OSD when reaching end without looping
             if (direction > 0) {
-                g_osd.Show(hwnd, L"Last image", false);
+                g_osd.Show(hwnd, AppStrings::OSD_LastImage, false);
             } else {
-                g_osd.Show(hwnd, L"First image", false);
+                g_osd.Show(hwnd, AppStrings::OSD_FirstImage, false);
             }
         }
     }

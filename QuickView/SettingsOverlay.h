@@ -18,6 +18,7 @@ enum class OptionType {
     Toggle,
     Slider,
     Segment,
+    ComboBox, // Dropdown List
     ActionButton,
     CustomColorRow, // Custom UI: Grid Checkbox + Color Preview Button
     Input,
@@ -95,8 +96,9 @@ public:
     void Toggle() { SetVisible(!m_visible); }
 
     // Configuration Binding
-    // We will have a method to Build the Menu Structure
-    void BuildMenu(); 
+    // We will have a method to    // Initialize Settings Tabs
+    void BuildMenu(); // Deprecated name? Keep for compatibility
+    void RebuildMenu(); // New: Reruns BuildMenu but with current strings
     
     // Status Feedback
     // Status Feedback
@@ -118,6 +120,8 @@ private:
     void DrawToggle(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
     void DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered);
     void DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options);
+    void DrawComboBox(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isOpen);
+    void DrawComboDropdown(ID2D1RenderTarget* pRT); // Draws the floating list
     void RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, float hudY, float hudW, float hudH);
 
 
@@ -131,6 +135,8 @@ private:
     // Interaction State
     SettingsItem* m_pActiveSlider = nullptr; // Item currently being dragged
     SettingsItem* m_pHoverItem = nullptr;
+    SettingsItem* m_pActiveCombo = nullptr; // Currently open dropdown
+    int m_comboHoverIdx = -1;
     float m_scrollOffset = 0.0f;
 
     

@@ -1,5 +1,6 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "SettingsOverlay.h"
+#include "AppStrings.h"
 #include "ImageEngine.h"
 #include <algorithm>
 #include <Shlobj.h>
@@ -498,10 +499,27 @@ void SettingsOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.8f, 0.1f), &m_brushSuccess);
     pRT->CreateSolidColorBrush(D2D1::ColorF(0.8f, 0.1f, 0.1f), &m_brushError);
 
+    // Get System Message Font (e.g. Microsoft YaHei UI on CN, Segoe UI on EN)
+    NONCLIENTMETRICSW ncm = { sizeof(NONCLIENTMETRICSW) };
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+    // Use the system font face
+    const wchar_t* fontFace = ncm.lfMessageFont.lfFaceName;
+
+    float fontSizeHeader = 20.0f;
+    float fontSizeItem = 15.0f;
+
+    // Increase font size for CJK languages for better readability
+    if (g_config.Language == (int)AppStrings::Language::ChineseSimplified || 
+        g_config.Language == (int)AppStrings::Language::ChineseTraditional ||
+        g_config.Language == (int)AppStrings::Language::Japanese) {
+        fontSizeHeader = 22.0f;
+        fontSizeItem = 17.0f;
+    }
+
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
 
-    m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f, L"en-us", &m_textFormatHeader);
-    m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f, L"en-us", &m_textFormatItem);
+    m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSizeHeader, L"en-us", &m_textFormatHeader);
+    m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSizeItem, L"en-us", &m_textFormatItem);
     
     // Icon font (Segoe MDL2 Assets)
     m_dwriteFactory->CreateTextFormat(L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 18.0f, L"en-us", &m_textFormatIcon);
@@ -621,35 +639,62 @@ extern AppConfig g_config;
 template<typename T>
 int* BindEnum(T* ptr) { return reinterpret_cast<int*>(ptr); }
 
+
+
+void SettingsOverlay::RebuildMenu() {
+    BuildMenu();
+}
+
 void SettingsOverlay::BuildMenu() {
     m_tabs.clear();
 
     // --- 1. General (常规) ---
     SettingsTab tabGeneral;
-    tabGeneral.name = L"General";
+    tabGeneral.name = AppStrings::Settings_Tab_General;
     tabGeneral.icon = L"\xE713"; 
     
-    tabGeneral.items.push_back({ L"Foundation", OptionType::Header });
-    tabGeneral.items.push_back({ L"Language", OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.Language), nullptr, 0, 0, {L"Auto", L"EN", L"CN"} });
-    tabGeneral.items.push_back({ L"Startup", OptionType::Header });
+    tabGeneral.items.push_back({ AppStrings::Settings_Group_Foundation, OptionType::Header });
+    
+    // Language ComboBox
+    SettingsItem itemLang = { AppStrings::Settings_Label_Language, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.Language) };
+    itemLang.options = { 
+        L"Auto", 
+        L"English", 
+        L"中文 (简体)", 
+        L"中文 (繁體)", 
+        L"日本語", 
+        L"Русский", 
+        L"Deutsch", 
+        L"Español" 
+    };
+    itemLang.onChange = [this]() {
+        AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+        // Force resource recreation to apply new font size
+        m_brushBg.Reset();
+        this->RebuildMenu(); // Rebuild UI with new language
+        if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+    };
+    tabGeneral.items.push_back(itemLang);
+
+    tabGeneral.items.push_back({ AppStrings::Settings_Group_Startup, OptionType::Header });
     
     // Single Instance with restart notification
-    SettingsItem itemSI = { L"Single Instance", OptionType::Toggle, &g_config.SingleInstance };
+    SettingsItem itemSI = { AppStrings::Settings_Label_SingleInstance, OptionType::Toggle, &g_config.SingleInstance };
     itemSI.onChange = [this]() {
-        SetItemStatus(L"Single Instance", L"Restart required", D2D1::ColorF(0.9f, 0.7f, 0.1f));
+        SetItemStatus(AppStrings::Settings_Label_SingleInstance, AppStrings::Settings_Status_RestartRequired, D2D1::ColorF(0.9f, 0.7f, 0.1f));
     };
     tabGeneral.items.push_back(itemSI);
     
-    tabGeneral.items.push_back({ L"Check Updates", OptionType::Toggle, &g_config.CheckUpdates });
+    tabGeneral.items.push_back({ AppStrings::Settings_Label_CheckUpdates, OptionType::Toggle, &g_config.CheckUpdates });
     
-    tabGeneral.items.push_back({ L"Habits", OptionType::Header });
-    tabGeneral.items.push_back({ L"Loop Navigation", OptionType::Toggle, &g_config.LoopNavigation });
-    tabGeneral.items.push_back({ L"Confirm Delete", OptionType::Toggle, &g_config.ConfirmDelete });
+    tabGeneral.items.push_back({ AppStrings::Settings_Group_Habits, OptionType::Header });
+    tabGeneral.items.push_back({ AppStrings::Settings_Label_LoopNav, OptionType::Toggle, &g_config.LoopNavigation });
+    tabGeneral.items.push_back({ AppStrings::Settings_Label_ConfirmDel, OptionType::Toggle, &g_config.ConfirmDelete });
     
 
     
     // Portable Mode with file move logic
-    SettingsItem itemPortable = { L"Portable Mode", OptionType::Toggle, &g_config.PortableMode };
+    SettingsItem itemPortable = { AppStrings::Settings_Label_Portable, OptionType::Toggle, &g_config.PortableMode };
     itemPortable.onChange = [this]() {
         wchar_t exePath[MAX_PATH]; GetModuleFileNameW(nullptr, exePath, MAX_PATH);
         std::wstring exeDir = exePath;
@@ -666,7 +711,7 @@ void SettingsOverlay::BuildMenu() {
             // User turned ON: Move config from AppData to ExeDir
             if (!CheckWritePermission(exeDir)) {
                 g_config.PortableMode = false; // Revert
-                SetItemStatus(L"Portable Mode", L"No Write Permission!", D2D1::ColorF(0.8f, 0.1f, 0.1f));
+                SetItemStatus(AppStrings::Settings_Label_Portable, AppStrings::Settings_Status_NoWritePerm, D2D1::ColorF(0.8f, 0.1f, 0.1f));
                 return;
             }
             
@@ -676,7 +721,7 @@ void SettingsOverlay::BuildMenu() {
             }
             // Save current config to ExeDir
             SaveConfig();
-            SetItemStatus(L"Portable Mode", L"Enabled", D2D1::ColorF(0.1f, 0.8f, 0.1f));
+            SetItemStatus(AppStrings::Settings_Label_Portable, AppStrings::Settings_Status_Enabled, D2D1::ColorF(0.1f, 0.8f, 0.1f));
         } else {
             // User turned OFF: Move config from ExeDir to AppData
             CreateDirectoryW(appDataDir.c_str(), nullptr);
@@ -695,22 +740,24 @@ void SettingsOverlay::BuildMenu() {
 
     m_tabs.push_back(tabGeneral);
 
-    // --- 2. View (界面) ---
-    SettingsTab tabView;
-    tabView.name = L"View";
-    tabView.icon = L"\xE7B3"; 
     
-    tabView.items.push_back({ L"Background", OptionType::Header });
+    // --- 2. Interface (Visuals) ---
+    SettingsTab tabVisuals;
+    tabVisuals.name = AppStrings::Settings_Tab_Visuals;
+    tabVisuals.icon = L"\xE790"; 
+    
+    // Backdrop
+    tabVisuals.items.push_back({ AppStrings::Settings_Header_Backdrop, OptionType::Header });
     
     // Canvas Color Segment
-    SettingsItem itemColor = { L"Canvas Color", OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CanvasColor), nullptr, 0, 0, {L"Black", L"White", L"Grid", L"Custom"} };
+    SettingsItem itemColor = { AppStrings::Settings_Label_CanvasColor, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CanvasColor), nullptr, 0, 0, {AppStrings::Settings_Option_Black, AppStrings::Settings_Option_White, AppStrings::Settings_Option_Grid, AppStrings::Settings_Option_Custom} };
     itemColor.onChange = [this]() { this->BuildMenu(); }; // Rebuild to show/hide sliders
-    tabView.items.push_back(itemColor);
+    tabVisuals.items.push_back(itemColor);
     
     // Grid & Custom Color Row
     if (g_config.CanvasColor == 3) {
         // Custom Mode: Show merged row
-        SettingsItem itemRow = { L"Overlay", OptionType::CustomColorRow };
+        SettingsItem itemRow = { AppStrings::Settings_Label_Overlay, OptionType::CustomColorRow };
         // We can use onChange as the Color Picker callback
         itemRow.onChange = []() {
              HWND hwnd = GetActiveWindow();
@@ -727,30 +774,30 @@ void SettingsOverlay::BuildMenu() {
                 g_config.CanvasCustomB = GetBValue(cc.rgbResult) / 255.0f;
             }
         };
-        tabView.items.push_back(itemRow);
+        tabVisuals.items.push_back(itemRow);
     } else {
         // Standard Mode: Just Grid Toggle
-        tabView.items.push_back({ L"Show Grid Overlay", OptionType::Toggle, &g_config.CanvasShowGrid });
+        tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowGrid, OptionType::Toggle, &g_config.CanvasShowGrid });
     }
     
-    tabView.items.push_back({ L"Window", OptionType::Header });
+    tabVisuals.items.push_back({ AppStrings::Settings_Header_Window, OptionType::Header });
     
     // Always on Top with immediate effect
-    SettingsItem itemAoT = { L"Always on Top", OptionType::Toggle, &g_config.AlwaysOnTop };
+    SettingsItem itemAoT = { AppStrings::Settings_Label_AlwaysOnTop, OptionType::Toggle, &g_config.AlwaysOnTop };
     itemAoT.onChange = []() {
         HWND hwnd = GetActiveWindow();
         SetWindowPos(hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     };
-    tabView.items.push_back(itemAoT);
+    tabVisuals.items.push_back(itemAoT);
     
-    tabView.items.push_back({ L"Resize on Zoom", OptionType::Toggle, &g_config.ResizeWindowOnZoom });
-    tabView.items.push_back({ L"Auto-Hide Title Bar", OptionType::Toggle, &g_config.AutoHideWindowControls });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_ResizeOnZoom, OptionType::Toggle, &g_config.ResizeWindowOnZoom });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_AutoHideTitle, OptionType::Toggle, &g_config.AutoHideWindowControls });
     
-    tabView.items.push_back({ L"Panel", OptionType::Header });
-    tabView.items.push_back({ L"Lock Bottom Toolbar", OptionType::Toggle, &g_config.LockBottomToolbar });
+    tabVisuals.items.push_back({ AppStrings::Settings_Header_Panel, OptionType::Header });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_LockToolbar, OptionType::Toggle, &g_config.LockBottomToolbar });
     
     // Exif Panel Mode (Syncs to Runtime ShowInfoPanel)
-    SettingsItem itemExif = { L"EXIF Panel Mode", OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.ExifPanelMode), nullptr, 0, 0, {L"Off", L"Lite", L"Full"} };
+    SettingsItem itemExif = { AppStrings::Settings_Label_ExifMode, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.ExifPanelMode), nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} };
     itemExif.onChange = []() {
         if (g_config.ExifPanelMode == 0) {
             g_runtime.ShowInfoPanel = false;
@@ -759,27 +806,27 @@ void SettingsOverlay::BuildMenu() {
             g_runtime.InfoPanelExpanded = (g_config.ExifPanelMode == 2); // 1=Lite (false), 2=Full (true)
         }
     };
-    tabView.items.push_back(itemExif);
+    tabVisuals.items.push_back(itemExif);
     
     // Toolbar Info Button Default (Lite/Full)
-    tabView.items.push_back({ L"Toolbar Info Default", OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {L"Lite", L"Full"} });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} });
     
 
 
-    m_tabs.push_back(tabView);
+    m_tabs.push_back(tabVisuals);
 
     // --- 3. Control (操作) ---
     SettingsTab tabControl;
-    tabControl.name = L"Controls";
+    tabControl.name = AppStrings::Settings_Tab_Controls;
     tabControl.icon = L"\xE967"; 
     
-    tabControl.items.push_back({ L"Mouse", OptionType::Header });
-    tabControl.items.push_back({ L"Invert Wheel", OptionType::Toggle, &g_config.InvertWheel });
-    tabControl.items.push_back({ L"Invert Side Buttons", OptionType::Toggle, &g_config.InvertXButton });
+    tabControl.items.push_back({ AppStrings::Settings_Header_Mouse, OptionType::Header });
+    tabControl.items.push_back({ AppStrings::Settings_Label_InvertWheel, OptionType::Toggle, &g_config.InvertWheel });
+    tabControl.items.push_back({ AppStrings::Settings_Label_InvertButtons, OptionType::Toggle, &g_config.InvertXButton });
     
     // Left Drag: {Window=0, Pan=1} -> {WindowDrag=1, PanImage=2}
     // Using g_config.LeftDragIndex helper (0=Window, 1=Pan)
-    SettingsItem itemLeftDrag = { L"Left Drag", OptionType::Segment, nullptr, nullptr, &g_config.LeftDragIndex, nullptr, 0, 0, {L"Window", L"Pan"} };
+    SettingsItem itemLeftDrag = { AppStrings::Settings_Label_LeftDrag, OptionType::Segment, nullptr, nullptr, &g_config.LeftDragIndex, nullptr, 0, 0, {AppStrings::Settings_Option_Window, AppStrings::Settings_Option_Pan} };
     itemLeftDrag.onChange = [this]() {
         // Convert index to enum and set interlock
         if (g_config.LeftDragIndex == 0) {
@@ -795,7 +842,7 @@ void SettingsOverlay::BuildMenu() {
     tabControl.items.push_back(itemLeftDrag);
     
     // Middle Drag: {Window=0, Pan=1} -> {WindowDrag=1, PanImage=2}
-    SettingsItem itemMiddleDrag = { L"Middle Drag", OptionType::Segment, nullptr, nullptr, &g_config.MiddleDragIndex, nullptr, 0, 0, {L"Window", L"Pan"} };
+    SettingsItem itemMiddleDrag = { AppStrings::Settings_Label_MiddleDrag, OptionType::Segment, nullptr, nullptr, &g_config.MiddleDragIndex, nullptr, 0, 0, {AppStrings::Settings_Option_Window, AppStrings::Settings_Option_Pan} };
     itemMiddleDrag.onChange = [this]() {
         // Convert index to enum and set interlock
         if (g_config.MiddleDragIndex == 0) {
@@ -811,7 +858,7 @@ void SettingsOverlay::BuildMenu() {
     tabControl.items.push_back(itemMiddleDrag);
     
     // Middle Click: {None=0, Exit=1} -> {None=0, ExitApp=3}
-    SettingsItem itemMiddleClick = { L"Middle Click", OptionType::Segment, nullptr, nullptr, &g_config.MiddleClickIndex, nullptr, 0, 0, {L"None", L"Exit"} };
+    SettingsItem itemMiddleClick = { AppStrings::Settings_Label_MiddleClick, OptionType::Segment, nullptr, nullptr, &g_config.MiddleClickIndex, nullptr, 0, 0, {AppStrings::Settings_Option_None, AppStrings::Settings_Option_Exit} };
     itemMiddleClick.onChange = []() {
         if (g_config.MiddleClickIndex == 0) {
             g_config.MiddleClickAction = MouseAction::None;
@@ -821,39 +868,39 @@ void SettingsOverlay::BuildMenu() {
     };
     tabControl.items.push_back(itemMiddleClick);
     
-    tabControl.items.push_back({ L"Edge", OptionType::Header });
-    tabControl.items.push_back({ L"Edge Nav Click", OptionType::Toggle, &g_config.EdgeNavClick });
-    tabControl.items.push_back({ L"Nav Indicator", OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {L"Arrow", L"Cursor", L"None"} });
+    tabControl.items.push_back({ AppStrings::Settings_Header_Edge, OptionType::Header });
+    tabControl.items.push_back({ AppStrings::Settings_Label_EdgeNavClick, OptionType::Toggle, &g_config.EdgeNavClick });
+    tabControl.items.push_back({ AppStrings::Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::Settings_Option_Arrow, AppStrings::Settings_Option_Cursor, AppStrings::Settings_Option_None} });
 
     m_tabs.push_back(tabControl);
 
     // --- 4. Image & Edit (图像与编辑) ---
     SettingsTab tabImage;
-    tabImage.name = L"Image"; 
+    tabImage.name = AppStrings::Settings_Tab_Image; 
     tabImage.icon = L"\xE91B";
     
-    tabImage.items.push_back({ L"Render", OptionType::Header });
-    tabImage.items.push_back({ L"Auto Rotate (EXIF)", OptionType::Toggle, &g_config.AutoRotate });
+    tabImage.items.push_back({ AppStrings::Settings_Header_Render, OptionType::Header });
+    tabImage.items.push_back({ AppStrings::Settings_Label_AutoRotate, OptionType::Toggle, &g_config.AutoRotate });
     
     // CMS - Disabled (开发中)
-    SettingsItem itemCms = { L"Color Mgmt (CMS)", OptionType::Toggle, &g_config.ColorManagement };
+    SettingsItem itemCms = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
     itemCms.isDisabled = true;
-    itemCms.disabledText = L"Coming Soon";
+    itemCms.disabledText = AppStrings::Settings_Value_ComingSoon;
     tabImage.items.push_back(itemCms);
     
-    SettingsItem itemRaw = { L"Force RAW Decode", OptionType::Toggle, &g_config.ForceRawDecode };
+    SettingsItem itemRaw = { AppStrings::Settings_Label_ForceRaw, OptionType::Toggle, &g_config.ForceRawDecode };
     itemRaw.onChange = []() { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
     tabImage.items.push_back(itemRaw);
     
-    tabImage.items.push_back({ L"Prompts", OptionType::Header });
-    tabImage.items.push_back({ L"Auto Save (Lossless)", OptionType::Toggle, &g_config.AlwaysSaveLossless });
-    tabImage.items.push_back({ L"Auto Save (Edge Adapted)", OptionType::Toggle, &g_config.AlwaysSaveEdgeAdapted });
-    tabImage.items.push_back({ L"Auto Save (Lossy)", OptionType::Toggle, &g_config.AlwaysSaveLossy });
+    tabImage.items.push_back({ AppStrings::Settings_Header_Prompts, OptionType::Header });
+    tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossless, OptionType::Toggle, &g_config.AlwaysSaveLossless });
+    tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveEdgeAdapted, OptionType::Toggle, &g_config.AlwaysSaveEdgeAdapted });
+    tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossy, OptionType::Toggle, &g_config.AlwaysSaveLossy });
     
-    tabImage.items.push_back({ L"System", OptionType::Header });
-    SettingsItem itemFileAssoc = { L"Add to Open With", OptionType::ActionButton };
-    itemFileAssoc.buttonText = L"Add";
-    itemFileAssoc.buttonActivatedText = L"Added";
+    tabImage.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
+    SettingsItem itemFileAssoc = { AppStrings::Settings_Label_AddToOpenWith, OptionType::ActionButton };
+    itemFileAssoc.buttonText = AppStrings::Settings_Action_Add;
+    itemFileAssoc.buttonActivatedText = AppStrings::Settings_Action_Added;
     itemFileAssoc.onChange = [&itemFileAssoc]() {
         SettingsOverlay::RegisterAssociations();
     };
@@ -863,16 +910,16 @@ void SettingsOverlay::BuildMenu() {
 
     // --- 5. Advanced (高级) ---
     SettingsTab tabAdvanced;
-    tabAdvanced.name = L"Advanced";
+    tabAdvanced.name = AppStrings::Settings_Tab_Advanced;
     tabAdvanced.icon = L"\xE71C"; // Equalizer/Settings icon
     
     // Debug
-    tabAdvanced.items.push_back({ L"Features", OptionType::Header });
-    tabAdvanced.items.push_back({ L"Enable Debug HUD (F12)", OptionType::Toggle, &g_config.EnableDebugFeatures });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Header_Features, OptionType::Header });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Label_DebugHUD, OptionType::Toggle, &g_config.EnableDebugFeatures });
     
     // [Prefetch System]
-    tabAdvanced.items.push_back({ L"Performance", OptionType::Header });
-    SettingsItem itemPrefetch = { L"Prefetch System", OptionType::Segment, nullptr, nullptr, &g_config.PrefetchGear, nullptr, 0, 0, {L"Off", L"Auto", L"Eco", L"Balanced", L"Ultra"} };
+    tabAdvanced.items.push_back({ AppStrings::Settings_Header_Performance, OptionType::Header });
+    SettingsItem itemPrefetch = { AppStrings::Settings_Label_Prefetch, OptionType::Segment, nullptr, nullptr, &g_config.PrefetchGear, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_Eco, AppStrings::Settings_Option_Balanced, AppStrings::Settings_Option_Ultra} };
     itemPrefetch.onChange = [this]() {
          // Apply Policy Immediately
          if (g_pImageEngine) {
@@ -910,25 +957,25 @@ void SettingsOverlay::BuildMenu() {
                  swprintf_s(buf, L"Limit: %d MB | +%d", (int)(policy.maxCacheMemory / 1024 / 1024), policy.lookAheadCount);
                  status = buf;
              } else {
-                 status = L"Disabled";
+                 status = AppStrings::Settings_Option_Off;
              }
-             SetItemStatus(L"Prefetch System", status, D2D1::ColorF(0.1f, 0.8f, 0.1f));
+             SetItemStatus(AppStrings::Settings_Label_Prefetch, status, D2D1::ColorF(0.1f, 0.8f, 0.1f));
          }
     };
     tabAdvanced.items.push_back(itemPrefetch);
 
-    tabAdvanced.items.push_back({ L"Transparency", OptionType::Header });
-    tabAdvanced.items.push_back({ L"Info Panel", OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
-    tabAdvanced.items.push_back({ L"Toolbar", OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });
-    tabAdvanced.items.push_back({ L"Settings", OptionType::Slider, nullptr, &g_config.SettingsAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Header_Transparency, OptionType::Header });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Label_InfoPanelAlpha, OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Label_ToolbarAlpha, OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Label_SettingsAlpha, OptionType::Slider, nullptr, &g_config.SettingsAlpha, nullptr, nullptr, 0.1f, 1.0f });
     
     // System Helpers
-    tabAdvanced.items.push_back({ L"System", OptionType::Header });
+    tabAdvanced.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
     
     // Reset Settings
-    SettingsItem itemReset = { L"Reset All Settings", OptionType::ActionButton };
-    itemReset.buttonText = L"Restore";
-    itemReset.buttonActivatedText = L"Done";
+    SettingsItem itemReset = { AppStrings::Settings_Label_Reset, OptionType::ActionButton };
+    itemReset.buttonText = AppStrings::Settings_Action_Restore;
+    itemReset.buttonActivatedText = AppStrings::Settings_Action_Done;
     itemReset.isDestructive = true;
     itemReset.onChange = [this]() {
          // 1. Delete Config Files
@@ -967,7 +1014,7 @@ void SettingsOverlay::BuildMenu() {
     // --- 6. About (关于) ---
     // --- 6. About (关于) ---
     SettingsTab tabAbout;
-    tabAbout.name = L"About";
+    tabAbout.name = AppStrings::Settings_Tab_About;
     tabAbout.icon = L"\xE946"; 
     
     // 1. Header (Logo + Name + Version)
@@ -978,25 +1025,25 @@ void SettingsOverlay::BuildMenu() {
         std::string s = __DATE__; // "Mmm dd yyyy"
         return std::wstring(s.begin(), s.end());
     };
-    itemHeader.disabledText = L"Version " + GetAppVersion() + L" (Build " + GetBuildDate() + L")";
+    itemHeader.disabledText = std::wstring(AppStrings::Settings_Label_Version) + L" " + GetAppVersion() + L" (" + AppStrings::Settings_Label_Build + L" " + GetBuildDate() + L")";
     tabAbout.items.push_back(itemHeader);
 
     // 2. Action Button (Check for Updates)
-    SettingsItem itemUpdate = { L"Check for Updates", OptionType::AboutVersionCard }; 
+    SettingsItem itemUpdate = { AppStrings::Settings_Action_CheckUpdates, OptionType::AboutVersionCard }; 
     
     // Check Status
     UpdateStatus status = UpdateManager::Get().GetStatus();
     if (status == UpdateStatus::NewVersionFound) {
         std::string v = UpdateManager::Get().GetRemoteVersion().version;
-        itemUpdate.buttonText = L"View Update";
+        itemUpdate.buttonText = AppStrings::Settings_Action_ViewUpdate;
         itemUpdate.statusText = std::wstring(v.begin(), v.end());
     } else if (status == UpdateStatus::Checking) {
-        itemUpdate.buttonText = L"Checking...";
+        itemUpdate.buttonText = AppStrings::Settings_Status_Checking;
     } else if (status == UpdateStatus::UpToDate) {
-        itemUpdate.buttonText = L"Check for Updates";
-        itemUpdate.statusText = L"Up to date";
+        itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
+        itemUpdate.statusText = AppStrings::Settings_Status_UpToDate;
     } else {
-        itemUpdate.buttonText = L"Check for Updates";
+        itemUpdate.buttonText = AppStrings::Settings_Action_CheckUpdates;
     }
 
     itemUpdate.onChange = [this]() {
@@ -1006,7 +1053,7 @@ void SettingsOverlay::BuildMenu() {
          } else {
              UpdateManager::Get().StartBackgroundCheck(0); 
              // Force slight visual feedback
-             SetItemStatus(L"Check for Updates", L"Checking...", D2D1::ColorF(0.5f, 0.5f, 0.5f));
+             SetItemStatus(AppStrings::Settings_Action_CheckUpdates, AppStrings::Settings_Status_Checking, D2D1::ColorF(0.5f, 0.5f, 0.5f));
          }
     };
     tabAbout.items.push_back(itemUpdate);
@@ -1020,8 +1067,8 @@ void SettingsOverlay::BuildMenu() {
     tabAbout.items.push_back(itemLinks);
 
     // 4. Footer Header "Powered by"
-    SettingsItem itemPower = { L"Powered by", OptionType::AboutTechBadges };
-    itemPower.label = L"Powered by"; // Header text
+    SettingsItem itemPower = { AppStrings::Settings_Header_PoweredBy, OptionType::AboutTechBadges };
+    itemPower.label = AppStrings::Settings_Header_PoweredBy; // Header text
     // Comprehensive List
     itemPower.options = { 
         L" [ libjpeg-turbo ] ", L" [ libwebp ] ", L" [ libavif ] ", L" [ dav1d ] ",
@@ -1036,7 +1083,7 @@ void SettingsOverlay::BuildMenu() {
 
     // 6. Copyright Footer
     // 6. Copyright Footer
-    SettingsItem itemCopy = { L"Copyright (c) 2025 justnullname\nLicensed under the GNU GPL v3.0", OptionType::CopyrightLabel };
+    SettingsItem itemCopy = { AppStrings::Settings_Text_Copyright, OptionType::CopyrightLabel };
     tabAbout.items.push_back(itemCopy);
 
     m_tabs.push_back(tabAbout);
@@ -1044,6 +1091,7 @@ void SettingsOverlay::BuildMenu() {
 
 void SettingsOverlay::SetVisible(bool visible) {
     m_visible = visible;
+    
     // Check for deferred rebuild (Fixes UAF on Reset)
     if (m_pendingRebuild) {
          BuildMenu();
@@ -1051,6 +1099,7 @@ void SettingsOverlay::SetVisible(bool visible) {
     }
 
     if (m_visible) {
+        RebuildMenu(); // Ensure strings are up-to-date
         m_opacity = 0.0f;
         
         // Auto-Resize if window is too small
@@ -1066,25 +1115,12 @@ void SettingsOverlay::SetVisible(bool visible) {
                  SetWindowPos(m_hwnd, NULL, 0, 0, std::max(w, minW), std::max(h, minH), SWP_NOMOVE | SWP_NOZORDER);
              }
         }
+    } else {
+        // ... (Cleanup if needed)
     }
 }
 
-// ----------------------------------------------------------------------------
-// Rendering
-// ----------------------------------------------------------------------------
-
 void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
-    // Check for deferred rebuild (Fixes UAF on Reset)
-    if (m_pendingRebuild) {
-         BuildMenu();
-         m_pendingRebuild = false;
-         
-         if (m_pendingResetFeedback) {
-             SetItemStatus(L"Reset All Settings", L"Config Initialized", D2D1::ColorF(0.1f, 0.8f, 0.1f));
-             m_pendingResetFeedback = false;
-         }
-    }
-
     if (!m_visible && !m_showUpdateToast) return;
     if (!m_brushBg) CreateResources(pRT);
     
@@ -1365,7 +1401,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.github.top, r.github.right, r.github.bottom);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(L"GitHub Repo", 11, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(AppStrings::Settings_Link_GitHub, (UINT32)wcslen(AppStrings::Settings_Link_GitHub), m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                 }
 
                 // Issues
@@ -1387,7 +1423,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.issues.top, r.issues.right, r.issues.bottom);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(L"Report Issue", 12, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(AppStrings::Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::Settings_Link_ReportIssue), m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                 }
 
                 // Hotkeys
@@ -1409,7 +1445,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.keys.top, r.keys.right, r.keys.bottom);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(L"Hotkeys", 7, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(AppStrings::Settings_Link_Hotkeys, (UINT32)wcslen(AppStrings::Settings_Link_Hotkeys), m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                 }
                 
                 m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -1660,6 +1696,12 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                      break;
                 }
+                case OptionType::ComboBox: {
+                    // Render Closed State
+                    bool isOpen = (m_pActiveCombo == &item);
+                    DrawComboBox(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, isOpen);
+                    break;
+                }
 
 
                 default: break;
@@ -1676,6 +1718,11 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     // Draw Update Toast on Top (Always check)
     if (m_showUpdateToast) {
         RenderUpdateToast(pRT, hudX, hudY, HUD_WIDTH, HUD_HEIGHT);
+    }
+
+    // Draw Overlay Dropdowns (Z-Order Top)
+    if (m_pActiveCombo) {
+        DrawComboDropdown(pRT);
     }
 } 
 
@@ -1841,6 +1888,38 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // This function is called with screen coords - we need to transform.
     // HACK: Store hudX/hudY as member vars. For now, re-calculate based on known item.rect positions.
 
+    // 0. Active Combo Logic (Priority)
+    if (m_pActiveCombo) {
+        float controlX = m_pActiveCombo->rect.left + 260.0f;
+        float controlW = m_pActiveCombo->rect.right - controlX;
+        float dropY = m_pActiveCombo->rect.bottom;
+        float itemH = 30.0f;
+        int count = (int)m_pActiveCombo->options.size();
+        int maxItems = 8;
+        int visibleItems = (count > maxItems) ? maxItems : count;
+        float dropH = visibleItems * itemH;
+        
+        D2D1_RECT_F dropRect = D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
+        
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+             ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+             int idx = (int)((y - dropRect.top) / itemH);
+             // Scroll support? For now assume simple clamp
+             if (idx >= 0 && idx < count) { // TODO: Add scroll offset logic if > maxItems
+                 if (m_comboHoverIdx != idx) {
+                     m_comboHoverIdx = idx;
+                     return SettingsAction::RepaintStatic;
+                 }
+             }
+             return SettingsAction::None;
+        } else {
+             m_comboHoverIdx = -1;
+        }
+        // If outside dropdown but inside window, fallthrough? 
+        // No, standard behavior is overlay blocks underlying hover?
+        // Let's allow underlying hover but click will close combo.
+    }
+
     // 1. Dragging Slider?
     if (m_pActiveSlider && m_pActiveSlider->pFloatVal) {
         float w = 150.0f;
@@ -1871,6 +1950,12 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         for (auto& item : m_tabs[m_activeTab].items) {
             if (x >= item.rect.left && x <= item.rect.right &&
                 y >= item.rect.top && y <= item.rect.bottom) {
+                
+                // If ComboBox is Active, do NOT verify hover on other items effectively?
+                // Actually, if we want to click outside to close, we should allow hover?
+                // Standard UI: Hover works in background, but click closes popup. 
+                // Let's proceed normal hover logic.
+                
                 m_pHoverItem = &item;
                 
                 // Sub-item Hit Testing
@@ -1962,8 +2047,71 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         return SettingsAction::RepaintStatic; // Clicked sidebar blank area - consume
     }
 
+    // 3. Active Combo Processing
+    if (m_pActiveCombo) {
+        float controlX = m_pActiveCombo->rect.left + 260.0f;
+        float controlW = m_pActiveCombo->rect.right - controlX;
+        float dropY = m_pActiveCombo->rect.bottom;
+        float itemH = 30.0f;
+        int count = (int)m_pActiveCombo->options.size();
+        int maxItems = 8;
+        int visibleItems = (count > maxItems) ? maxItems : count;
+        float dropH = visibleItems * itemH;
+        
+        D2D1_RECT_F dropRect = D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
+        
+        // Click inside Dropdown?
+        if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
+             int idx = (int)((y - dropRect.top) / itemH);
+             if (idx >= 0 && idx < count) {
+                 if (m_pActiveCombo->pIntVal) {
+                     *m_pActiveCombo->pIntVal = idx;
+                     if (m_pActiveCombo->onChange) m_pActiveCombo->onChange();
+                 }
+                 m_pActiveCombo = nullptr; // Close
+                 return SettingsAction::RepaintAll;
+             }
+        }
+        
+        // Click inside the Button itself? (Toggle Close)
+        float btnHeight = m_pActiveCombo->rect.bottom - m_pActiveCombo->rect.top - 10; // Approx
+        // Actually we can reuse HitTest logic below, but we need to intercept Before closing.
+        // If we click on the Active Combo Item again -> Toggle Close.
+        if (x >= m_pActiveCombo->rect.left && x <= m_pActiveCombo->rect.right && 
+            y >= m_pActiveCombo->rect.top && y <= m_pActiveCombo->rect.bottom) {
+            m_pActiveCombo = nullptr;
+            return SettingsAction::RepaintAll;
+        }
+
+        // Click outside -> Close
+        m_pActiveCombo = nullptr;
+        SettingsAction extraAction = SettingsAction::None;
+        
+        // Check if we clicked another item immediately?
+        // Fallthrough to standard logic to pick up new click?
+        // Yes, but we must return RepaintAll because we closed the combo.
+        // If we return RepaintAll, the caller will repaint.
+        // We can let fallthrough happen, but we must ensure we return IsRepaint needed.
+        // Let's just Return RepaintAll and consume click?
+        // Better UX: Close combo AND click the new thing.
+        // Proceed...
+        // But strictly: `OnLButtonDown` returns an action.
+        // If we proceed, `m_pActiveCombo` is now null.
+    }
+
     // 2. Content Click (uses hover item)
     if (m_pHoverItem) {
+        // ComboBox Open
+        if (m_pHoverItem->type == OptionType::ComboBox) {
+             if (m_pActiveCombo == m_pHoverItem) {
+                 m_pActiveCombo = nullptr;
+             } else {
+                 m_pActiveCombo = m_pHoverItem;
+                 m_comboHoverIdx = -1;
+             }
+             return SettingsAction::RepaintAll;
+        }
+
         // Toggle
         if (m_pHoverItem->type == OptionType::Toggle && m_pHoverItem->pBoolVal) {
             *m_pHoverItem->pBoolVal = !(*m_pHoverItem->pBoolVal);
@@ -2034,8 +2182,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     }
 
     // Clicked content background - consume
-    // Clicked content background - consume
-    return SettingsAction::RepaintStatic; 
+    return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::RepaintStatic;
 }
 
 SettingsAction SettingsOverlay::OnLButtonUp(float x, float y) {
@@ -2067,6 +2214,94 @@ void SettingsOverlay::OpenTab(int index) {
         m_scrollOffset = 0.0f;
         SetVisible(true);
     }
+}
+
+void SettingsOverlay::DrawComboBox(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isOpen) {
+    float w = rect.right - rect.left;
+    float h = rect.bottom - rect.top;
+    
+    D2D1_RECT_F boxRect = D2D1::RectF(rect.left, rect.top + 5, rect.right, rect.bottom - 5);
+    
+    // Background
+    pRT->FillRoundedRectangle(D2D1::RoundedRect(boxRect, 4, 4), m_brushControlBg.Get());
+    if (isOpen) {
+        pRT->DrawRoundedRectangle(D2D1::RoundedRect(boxRect, 4, 4), m_brushAccent.Get(), 1.5f);
+    } 
+
+    // Text
+    std::wstring text = L"";
+    if (selectedIdx >= 0 && selectedIdx < (int)options.size()) {
+        text = options[selectedIdx];
+    }
+    
+    D2D1_RECT_F textRect = D2D1::RectF(boxRect.left + 10, boxRect.top, boxRect.right - 30, boxRect.bottom);
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    pRT->DrawTextW(text.c_str(), (UINT32)text.length(), m_textFormatItem.Get(), textRect, m_brushText.Get());
+    
+    // Arrow
+    D2D1_RECT_F arrowRect = D2D1::RectF(boxRect.right - 30, boxRect.top, boxRect.right, boxRect.bottom);
+    m_textFormatIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    m_textFormatIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    
+    const wchar_t* arrow = isOpen ? L"\xE70E" : L"\xE70D"; // Up/Down
+    pRT->DrawTextW(arrow, 1, m_textFormatIcon.Get(), arrowRect, m_brushTextDim.Get());
+    
+    // Restore
+    m_textFormatIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+}
+
+void SettingsOverlay::DrawComboDropdown(ID2D1RenderTarget* pRT) {
+    if (!m_pActiveCombo) return;
+    
+    float controlX = m_pActiveCombo->rect.left + 260.0f;
+    float controlW = m_pActiveCombo->rect.right - controlX;
+    float dropY = m_pActiveCombo->rect.bottom;
+    
+    float itemH = 30.0f;
+    int count = (int)m_pActiveCombo->options.size();
+    int maxItems = 8;
+    int visibleItems = (count > maxItems) ? maxItems : count;
+    
+    float dropH = visibleItems * itemH;
+    D2D1_RECT_F dropRect = D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
+    
+    // Shadow / Background
+    pRT->FillRectangle(dropRect, m_brushControlBg.Get()); // Opaque
+    pRT->DrawRectangle(dropRect, m_brushBorder.Get(), 1.0f);
+    
+    // Items
+    pRT->PushAxisAlignedClip(dropRect, D2D1_ANTIALIAS_MODE_ALIASED);
+    
+    int startIdx = 0; // TODO: Scroll
+    
+    for (int i = 0; i < visibleItems; i++) {
+        int idx = startIdx + i;
+        if (idx >= count) break;
+        
+        float y = dropY + i * itemH;
+        D2D1_RECT_F itemRect = D2D1::RectF(controlX, y, controlX + controlW, y + itemH);
+        
+        // Hover
+        if (idx == m_comboHoverIdx) {
+            pRT->FillRectangle(itemRect, m_brushAccent.Get());
+        }
+        
+        // Selected
+        bool isSel = (m_pActiveCombo->pIntVal && *m_pActiveCombo->pIntVal == idx);
+        if (isSel && idx != m_comboHoverIdx) {
+             ComPtr<ID2D1SolidColorBrush> tint;
+             pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &tint);
+             pRT->FillRectangle(itemRect, tint.Get());
+        }
+        
+        // Text
+        D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10, itemRect.top, itemRect.right - 10, itemRect.bottom);
+        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        pRT->DrawTextW(m_pActiveCombo->options[idx].c_str(), (UINT32)m_pActiveCombo->options[idx].length(), 
+                       m_textFormatItem.Get(), textRect, m_brushText.Get());
+    }
+    
+    pRT->PopAxisAlignedClip();
 }
 
 

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Toolbar.h"
 #include "EditState.h"
+#include "AppStrings.h"
 
 extern AppConfig g_config;
 
@@ -22,21 +23,21 @@ extern AppConfig g_config;
 Toolbar::Toolbar() {
     // Define Buttons
     m_buttons = {
-        { ToolbarButtonID::Prev,        ICON_PREV[0], L"Previous (Left)", {}, true },
-        { ToolbarButtonID::Next,        ICON_NEXT[0], L"Next (Right)", {}, true },
+        { ToolbarButtonID::Prev,        ICON_PREV[0], {}, true },
+        { ToolbarButtonID::Next,        ICON_NEXT[0], {}, true },
         // Spacer? Just gap.
-        { ToolbarButtonID::RotateL,     ICON_ROTATE_L[0], L"Rotate Left (Shift+R)", {}, true },
-        { ToolbarButtonID::RotateR,     ICON_ROTATE_R[0], L"Rotate Right (R)", {}, true },
-        { ToolbarButtonID::FlipH,       ICON_FLIP[0], L"Flip Horizontal (H)", {}, true },
+        { ToolbarButtonID::RotateL,     ICON_ROTATE_L[0], {}, true },
+        { ToolbarButtonID::RotateR,     ICON_ROTATE_R[0], {}, true },
+        { ToolbarButtonID::FlipH,       ICON_FLIP[0], {}, true },
         
-        { ToolbarButtonID::LockSize,    ICON_LOCK[0], L"Lock Window Size", {}, true, false },
-        { ToolbarButtonID::Gallery,     ICON_GALLERY[0], L"Gallery (T)", {}, true },
+        { ToolbarButtonID::LockSize,    ICON_LOCK[0], {}, true, false },
+        { ToolbarButtonID::Gallery,     ICON_GALLERY[0], {}, true },
         
-        { ToolbarButtonID::Exif,        ICON_INFO[0], L"Info Panel", {}, true, false },
-        { ToolbarButtonID::RawToggle,   ICON_RAW[0], L"RAW Preview (Fast)", {}, false, false }, // Hidden/Disabled if not RAW
-        { ToolbarButtonID::FixExtension, ICON_WARNING[0], L"Extension Mismatch (Fix)", {}, false, false, true }, // Hidden if no mismatch
+        { ToolbarButtonID::Exif,        ICON_INFO[0], {}, true, false },
+        { ToolbarButtonID::RawToggle,   ICON_RAW[0], {}, false, false }, // Hidden/Disabled if not RAW
+        { ToolbarButtonID::FixExtension, ICON_WARNING[0], {}, false, false, true }, // Hidden if no mismatch
         
-        { ToolbarButtonID::Pin,         ICON_PIN[0], L"Pin Toolbar", {}, true, false }
+        { ToolbarButtonID::Pin,         ICON_PIN[0], {}, true, false }
     };
 }
 
@@ -124,7 +125,6 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         if (btn.id == ToolbarButtonID::Pin) {
              btn.isToggled = m_isPinned;
              btn.iconChar = m_isPinned ? ICON_UNPIN[0] : ICON_PIN[0];
-             btn.tooltip = m_isPinned ? L"Unpin Toolbar" : L"Pin Toolbar";
         }
         
         if (visible) {
@@ -133,6 +133,23 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         } else {
             btn.rect = D2D1::RectF(0,0,0,0); // Hide
         }
+    }
+}
+
+const wchar_t* GetTooltipText(const ToolbarButton& btn) {
+    switch (btn.id) {
+        case ToolbarButtonID::Prev: return AppStrings::Toolbar_Tooltip_Prev;
+        case ToolbarButtonID::Next: return AppStrings::Toolbar_Tooltip_Next;
+        case ToolbarButtonID::RotateL: return AppStrings::Toolbar_Tooltip_RotateL;
+        case ToolbarButtonID::RotateR: return AppStrings::Toolbar_Tooltip_RotateR;
+        case ToolbarButtonID::FlipH: return AppStrings::Toolbar_Tooltip_FlipH;
+        case ToolbarButtonID::LockSize: return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unlock : AppStrings::Toolbar_Tooltip_Lock;
+        case ToolbarButtonID::Gallery: return AppStrings::Toolbar_Tooltip_Gallery;
+        case ToolbarButtonID::Exif: return AppStrings::Toolbar_Tooltip_Info;
+        case ToolbarButtonID::RawToggle: return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull : AppStrings::Toolbar_Tooltip_RawPreview;
+        case ToolbarButtonID::FixExtension: return AppStrings::Toolbar_Tooltip_FixExtension;
+        case ToolbarButtonID::Pin: return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unpin : AppStrings::Toolbar_Tooltip_Pin;
+        default: return nullptr;
     }
 }
 
@@ -204,7 +221,8 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
     
     // Tooltip for hovered button (rendered OUTSIDE layer for full opacity)
     for (const auto& btn : m_buttons) {
-        if (btn.isHovered && !btn.tooltip.empty()) {
+        const wchar_t* tipText = GetTooltipText(btn);
+        if (btn.isHovered && tipText && tipText[0] != 0) {
             static ComPtr<IDWriteTextFormat> tooltipFormat;
             if (!tooltipFormat && m_dwriteFactory) {
                 m_dwriteFactory->CreateTextFormat(
@@ -218,7 +236,20 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
             }
             
             if (tooltipFormat) {
-                float tipWidth = btn.tooltip.length() * 7.0f + 16.0f;
+                size_t tipLen = wcslen(tipText);
+                
+                // Measure actual text width using DirectWrite for proper Unicode support
+                ComPtr<IDWriteTextLayout> textLayout;
+                float tipWidth = tipLen * 10.0f + 16.0f; // Fallback
+                if (m_dwriteFactory) {
+                    m_dwriteFactory->CreateTextLayout(tipText, (UINT32)tipLen, tooltipFormat.Get(), 500.0f, 30.0f, &textLayout);
+                    if (textLayout) {
+                        DWRITE_TEXT_METRICS metrics;
+                        textLayout->GetMetrics(&metrics);
+                        tipWidth = metrics.width + 16.0f; // Add padding
+                    }
+                }
+                
                 float tipHeight = 22.0f;
                 float tipX = (btn.rect.left + btn.rect.right) / 2 - tipWidth / 2;
                 float tipY = m_bgRect.rect.top - tipHeight - 8.0f;
@@ -229,14 +260,14 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
                 ComPtr<ID2D1SolidColorBrush> tipBg;
                 pRT->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f), &tipBg);
                 pRT->FillRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f, 4.0f), tipBg.Get());
-                pRT->DrawText(btn.tooltip.c_str(), (UINT32)btn.tooltip.length(), tooltipFormat.Get(), tipRect, m_brushIcon.Get());
+                pRT->DrawText(tipText, (UINT32)tipLen, tooltipFormat.Get(), tipRect, m_brushIcon.Get());
             }
             break;
         }
     }
 }
 
-void Toolbar::OnMouseMove(float x, float y) {
+bool Toolbar::OnMouseMove(float x, float y) {
     // Check if near bottom
     // We don't have window height here unless passed or stored.
     // UpdateLayout stores rect.
@@ -254,7 +285,7 @@ void Toolbar::OnMouseMove(float x, float y) {
         }
         if (btn.isHovered != wasHovered) changed = true;
     }
-    // Return changed?
+    return changed;
 }
 
 bool Toolbar::OnClick(float x, float y, ToolbarButtonID& outId) {
@@ -310,7 +341,7 @@ void Toolbar::SetLockState(bool locked) {
         if (btn.id == ToolbarButtonID::LockSize) {
             btn.isToggled = locked;
             // Icon stays the same (E9A6), only color changes via isToggled
-            btn.tooltip = locked ? L"Unlock Window Size" : L"Lock Window Size";
+            // Tooltip handled by GetTooltipText based on isToggled
         }
     }
 }
@@ -330,7 +361,7 @@ void Toolbar::SetRawState(bool isRaw, bool isFullDecode) {
             if (isRaw) {
                 btn.isToggled = isFullDecode;
                 // Icon stays the same (E722), only color changes via isToggled
-                btn.tooltip = isFullDecode ? L"RAW: Full Decode (Click for Preview)" : L"RAW: Preview (Click for Full)";
+                // Tooltip handled by GetTooltipText
             }
         }
     }
