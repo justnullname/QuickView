@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "CompositionEngine.h" // Moved to top
 #include "framework.h"
 #include "QuickView.h"
@@ -224,15 +224,7 @@ static float g_fps = 0.0f;
 // When true, WM_SIZE should not reset g_viewState.Zoom which would cancel
 // the intended zoom change. Cleared by WM_SIZE after handling.
 static bool g_programmaticResize = false;
-// Simple debug logger for zoom/pan/window state
-static void DebugLogState(const wchar_t* tag, HWND hwnd) {
-    wchar_t buf[256];
-    RECT rc; GetWindowRect(hwnd, &rc);
-    int winW = rc.right - rc.left;
-    int winH = rc.bottom - rc.top;
-    swprintf_s(buf, L"[Debug]%s Zoom=%.3f Pan=(%.1f,%.1f) ProgResize=%d Win=%dx%d\n", tag, g_viewState.Zoom, g_viewState.PanX, g_viewState.PanY, g_programmaticResize ? 1 : 0, winW, winH);
-    OutputDebugStringW(buf);
-}
+
 // True while the user is interactively resizing/moving the window (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)
 static bool g_isInSizeMove = false;
 
@@ -558,11 +550,6 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res, int tier) {
     g_compEngine->Commit();
     
     // ViewState unchanged - user's zoom/pan state preserved
-    
-    wchar_t dbg[160];
-    swprintf_s(dbg, L"[SVG Upgrade] Tier=%d Surface=%ux%u DCompScale=%.3f\n", 
-               tier, surfW, surfH, newDCompScale);
-    OutputDebugStringW(dbg);
     
     return true;
 }
@@ -2380,7 +2367,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.jpe;*.jfif;*.png;*.bmp;*.dib;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.svg;*.svgz;*.jxl;*.exr;*.hdr;*.pic;*.psd;*.tga;*.pcx;*.qoi;*.wbmp;*.pam;*.pbm;*.pgm;*.ppm;*.wdp;*.hdp;*.arw;*.cr2;*.cr3;*.dng;*.nef;*.orf;*.raf;*.rw2;*.srw;*.x3f;*.mrw;*.mos;*.kdc;*.dcr;*.sr2;*.pef;*.erf;*.3fr;*.mef;*.nrw;*.raw\0All Files\0*.*\0";
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
         if (GetOpenFileNameW(&ofn)) {
-            OutputDebugStringW(L"[Main] File Selected\n");
             g_navigator.Initialize(szFile);
             LoadImageAsync(hwnd, szFile);
             // [Fix Race] Force check here too
@@ -2521,7 +2507,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             // Only trigger if still showing a scaled image AND not navigating
             if (g_isImageScaled && g_imageEngine && !g_imagePath.empty()) {
-                OutputDebugStringW(L"[Two-Stage] 300ms idle - Requesting full resolution decode\n");
                 
                 // Re-submit current image for full decode (targetWidth=0 means no scaling)
                 g_imageEngine->RequestFullDecode(g_imagePath, g_currentImageId.load());
@@ -3076,8 +3061,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
 
 
-
-
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
@@ -3540,7 +3523,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // the client rect (which may not be updated synchronously).
                 SyncDCompState(hwnd, (float)finalWinW, (float)finalWinH);
                 g_compEngine->Commit();
-                DebugLogState(L"WheelAfterSyncCommit", hwnd);
             }
              
              // [DComp] Remvoed manual commit. SetWindowPos triggered WM_SIZE -> OnResize -> Commit.
@@ -4576,7 +4558,6 @@ void ProcessEngineEvents(HWND hwnd) {
             if (evt.imageId != currentId) {
                 wchar_t idLog[128];
                 swprintf_s(idLog, L"[Main] ID Mismatch: Evt=%llu Cur=%llu\n", evt.imageId, currentId);
-                OutputDebugStringW(idLog);
                 break; 
             }
 
@@ -4634,14 +4615,12 @@ void ProcessEngineEvents(HWND hwnd) {
                      if (SUCCEEDED(hr)) {
                          resourceReady = true;
                      }
-                     else OutputDebugStringW(L"[Main] SVG Resource Creation Failed\n"); // Log HR?
                      
                 } else {
                     // === Bitmap Path ===
                     hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
                     if (FAILED(hr)) {
                         wchar_t buf[128]; swprintf_s(buf, L"[Main] Upload Failed: HR=0x%X\n", hr);
-                        OutputDebugStringW(buf);
                     } else {
                          g_debugMetrics.rawFrameUploadCount++;
                          g_debugMetrics.lastUploadChannel.store(1);
@@ -4841,7 +4820,6 @@ void ProcessEngineEvents(HWND hwnd) {
                 wchar_t debugBuf[256];
                 swprintf_s(debugBuf, L"[Main] Displayed: %s (Blurry=%d, Scaled=%d)\n", 
                     isPreview ? L"Preview" : L"Full", g_isBlurry, g_isImageScaled);
-                OutputDebugStringW(debugBuf);
             }
             break;
         }
@@ -4860,7 +4838,6 @@ void ProcessEngineEvents(HWND hwnd) {
                  wchar_t camBuf[256];
                  swprintf_s(camBuf, L"[Main] MetadataReady Camera: Make='%s', Model='%s'\n", 
                      evt.metadata.Make.c_str(), evt.metadata.Model.c_str());
-                 OutputDebugStringW(camBuf);
                  
                  if (!evt.metadata.ISO.empty()) g_currentMetadata.ISO = evt.metadata.ISO;
                  if (!evt.metadata.Shutter.empty()) g_currentMetadata.Shutter = evt.metadata.Shutter;
@@ -4916,7 +4893,6 @@ void ProcessEngineEvents(HWND hwnd) {
                          swprintf_s(buf, L"[Main] Merged Dim: Frame=%dx%d Meta=%dx%d | HitLimit=%d Match=%d NoImp=%d -> Scaled=%d\n", 
                              evt.rawFrame->width, evt.rawFrame->height, evt.metadata.Width, evt.metadata.Height, 
                              hitLimit, dimensionsMatch, noImprovement, g_isImageScaled);
-                         OutputDebugStringW(buf);
                      }
                  }
                  if (evt.metadata.CreationTime.dwLowDateTime != 0) g_currentMetadata.CreationTime = evt.metadata.CreationTime;
@@ -4925,7 +4901,6 @@ void ProcessEngineEvents(HWND hwnd) {
                  g_currentMetadata.IsFullMetadataLoaded = true;
                  
                  // Refresh UI layers
-                 OutputDebugStringW(L"[Main] MetadataReady: Merged Async Data. Requesting Repaint.\n");
                  RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             }
             }
@@ -4947,7 +4922,6 @@ void ProcessEngineEvents(HWND hwnd) {
     }
     
     if (needsRepaint) {
-        OutputDebugStringW(L"[Main] Calling RequestRepaint(All)\n");
         RequestRepaint(PaintLayer::All);
     }
 }
