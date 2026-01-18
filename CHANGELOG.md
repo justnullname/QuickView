@@ -3,6 +3,26 @@
 All notable changes to QuickView will be documented in this file.
 
 
+## [3.1.0] - The Global Vision Update
+**Release Date**: 2026-01-18
+
+### ✨ New Features
+- **Localization**: Added support for 6 key languages: Chinese (Simplified/Traditional), Japanese, Russian, German, and Spanish.
+- **Resources**: Added proper Application Icon and Version Info resources.
+
+### 🛠 Refactoring & Improvements
+- **Rotation Engine**: Complete rewrite of the rotation logic using Direct2D transforms, fixing multiple state-desync bugs.
+- **UI Cleanliness**: Removed redundant filename OSD display; users should rely on the Info Panel.
+- **Zoom Architecture**: Unified zoom and rotation coordinate systems.
+
+### 🐛 Bug Fixes
+- **Critical Stability**: Fixed application hang (Use-After-Free) when clicking "Reset All Settings".
+- **File Associations**: Fixed registry logic to ensure QuickView appears correctly in "Open With" menu.
+- **Rotation**: Fixed issue where images would get stuck in a rotated state or double-rotate.
+- **Rendering**: Fixed pan jitter and OSD positioning in non-English locales.
+
+---
+
 ## [3.0.4] - The Quantum Flow Update
 **Release Date**: 2026-01-16
 
