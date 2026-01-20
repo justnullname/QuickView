@@ -3281,10 +3281,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ToolbarButtonID::FixExtension: SendMessage(hwnd, WM_COMMAND, IDM_FIX_EXTENSION, 0); break;
                 case ToolbarButtonID::Pin: {
                     g_toolbar.TogglePin();
+                    // [Fix] Force visible immediately if pinned
+                    if (g_toolbar.IsPinned()) g_toolbar.SetVisible(true);
+                    
                     // Refresh layout to update icon
                     RECT rc; GetClientRect(hwnd, &rc);
                     g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
-                    RequestRepaint(PaintLayer::All);
+                    
+                    RequestRepaint(PaintLayer::Static);
+                    InvalidateRect(hwnd, nullptr, FALSE); // Force Paint
                     break;
                 }
                 case ToolbarButtonID::Gallery: 

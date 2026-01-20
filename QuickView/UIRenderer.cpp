@@ -454,6 +454,9 @@ bool UIRenderer::RenderAll(HWND hwnd) {
 
 void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // 鍒涘缓鐢诲埛 (姣忓眰鐙珛 context, 闇€瑕佺嫭绔嬪垱寤?
+    // [Fix] Clear surface before drawing to prevent "ghosting" of previous state (e.g. pinned vs unpinned background)
+    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);

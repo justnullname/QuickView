@@ -105,11 +105,8 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     // Skip layout if window has no valid size yet
     if (winW <= 0 || winH <= 0) return;
     
-    // Cache last size to avoid redundant layout calculations
-    static float s_lastW = 0, s_lastH = 0;
-    if (winW == s_lastW && winH == s_lastH) return;
-    s_lastW = winW;
-    s_lastH = winH;
+    // [Fix] Always update layout to ensure Button State (e.g. Pin Toggle) is synced.
+    // Optimization removed: static float s_lastW... inhibited state updates.
     
     // Simpler: Count visible buttons
     int visibleCount = 0;
