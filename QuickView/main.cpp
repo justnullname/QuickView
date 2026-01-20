@@ -137,6 +137,11 @@ ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
 static CompositionEngine* g_compEngine = nullptr; // [Fix] Raw pointer to avoid unique_ptr include hell
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static InputController g_inputController;  // Quantum Stream: 输入状态机
+
+// [Fix] Fullscreen State Tracking
+static bool g_isFullScreen = false;
+static WINDOWPLACEMENT g_savedWindowPlacement = { sizeof(WINDOWPLACEMENT) };
+
 // [Step 3] Unified Resource Management
 struct ImageResource {
     ComPtr<ID2D1Bitmap> bitmap;
@@ -1961,6 +1966,7 @@ void AdjustWindowToImage(HWND hwnd) {
     if (!g_imageResource) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
+    if (g_isFullScreen) return; // [Fix] Don't resize if in Fullscreen mode
 
     // [Fix] Use Centralized First-Principles Dimension Logic
     D2D1_SIZE_F effSize = GetEffectiveImageSize();
@@ -2603,6 +2609,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_NCHITTEST: {
+        // [Fix] Disable window edge resizing/interaction in Fullscreen
+        if (g_isFullScreen) return HTCLIENT;
+
         LRESULT hit = DefWindowProc(hwnd, message, wParam, lParam);
         if (hit != HTCLIENT) return hit;
         
@@ -2907,7 +2916,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         g_viewState.DragStartTime = GetTickCount();
         
         // Check MiddleDragAction config
+        // Check MiddleDragAction config
         if (g_config.MiddleDragAction == MouseAction::WindowDrag) {
+            // [Fix] Disable Window Drag in Fullscreen
+            if (g_isFullScreen) return 0;
+
             // Start manual window drag with middle button
             RECT rc;
             GetWindowRect(hwnd, &rc);
@@ -3024,8 +3037,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (direction != 0) Navigate(hwnd, direction);
         return TRUE;
     }
+
+
         
     case WM_LBUTTONDBLCLK:
+        // [Fix] Fullscreen Exit on Double Click
+        if (g_isFullScreen) {
+            SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+            return 0;
+        }
+
         // Fit Window - restore from maximized first if needed
         if (IsZoomed(hwnd)) {
             ShowWindow(hwnd, SW_RESTORE);
@@ -3068,7 +3089,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (g_winControls.HoverState != WindowHit::None) {
             switch (g_winControls.HoverState) {
                 case WindowHit::Close: SendMessage(hwnd, WM_CLOSE, 0, 0); return 0;
-                case WindowHit::Max: ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); return 0;
+                case WindowHit::Max: {
+                    // [Fix] Exit Fullscreen if active, else toggle Maximize
+                    if (g_isFullScreen) {
+                        SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+                        // Optional: Reset size to initial? 
+                        // IDM_FULLSCREEN restores placement. 
+                        // User requested "Initial window size" - AdjustWindowToImage or similar?
+                        // For now, toggle Fullscreen restores prior state, which is standard behavior.
+                        // If user wants specific size, standard Restore should handle it via WindowPlacement.
+                    } else {
+                        ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); 
+                    }
+                    return 0;
+                }
                 case WindowHit::Min: ShowWindow(hwnd, SW_MINIMIZE); return 0;
                 case WindowHit::Pin: SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0); return 0;
                 default: break;
@@ -3210,6 +3244,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         
         if (g_config.LeftDragAction == MouseAction::WindowDrag) {
+            // [Fix] Disable Window Drag in Fullscreen
+            if (g_isFullScreen) return 0;
+            
             ReleaseCapture();
             SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
             return 0;
@@ -3472,7 +3509,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (newTotalScale < minScale) newTotalScale = minScale;
         if (newTotalScale > maxScale) newTotalScale = maxScale;
 
-        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize && !g_isFullScreen) {
              // 1. Calculate Target Dimensions (Uncapped)
              HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
              MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
@@ -3921,7 +3958,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (newTotalScale > 20.0f) newTotalScale = 20.0f;
             
             // Apply zoom with window resize if enabled
-            if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+            // [Fix] Disable Resize logic if Fullscreen
+            if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize && !g_isFullScreen) {
                 // Get Monitor Info
                 HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
                 MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
@@ -4120,8 +4158,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         case IDM_FULLSCREEN: {
-            if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
-            else ShowWindow(hwnd, SW_MAXIMIZE);
+            // [Fix] True Fullscreen Implementation
+            DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+            
+            if (g_isFullScreen) {
+                // Restore to Windowed
+                SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+                SetWindowPlacement(hwnd, &g_savedWindowPlacement);
+                SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, 
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                g_isFullScreen = false;
+            } else {
+                // Enter Fullscreen
+                MONITORINFO mi = { sizeof(mi) };
+                if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+                    GetWindowPlacement(hwnd, &g_savedWindowPlacement);
+                    
+                    SetWindowLong(hwnd, GWL_STYLE, dwStyle & ~WS_OVERLAPPEDWINDOW);
+                    SetWindowPos(hwnd, HWND_TOP, 
+                                 mi.rcMonitor.left, mi.rcMonitor.top,
+                                 mi.rcMonitor.right - mi.rcMonitor.left,
+                                 mi.rcMonitor.bottom - mi.rcMonitor.top,
+                                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+                    g_isFullScreen = true;
+                }
+            }
+            // Trigger repaint to center/resize image
+            RequestRepaint(PaintLayer::All);
             break;
         }
         case IDM_DELETE: {
