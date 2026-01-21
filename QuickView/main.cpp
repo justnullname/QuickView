@@ -1962,17 +1962,24 @@ void AdjustWindowToImage(HWND hwnd) {
     }
     
     // Minimum size for UI controls (Preserve Aspect Ratio)
-    // [v9.4] Fix: Independent clamping caused AR distortion/margins
-    int minW = 500;
-    int minH = 400;
+    // [Phase 3] User Requested: Min 100x100. Small images stay at 100% inside this.
+    // If Settings is visible, we might want larger, but AdjustWindowToImage returns early if Settings visible.
+    int minW = 200;
+    int minH = 200;
     
-    if (windowW < minW || windowH < minH) {
+    // [Phase 3] Special handling for small images
+    if (imgWidth < minW && imgHeight < minH) {
+        // If image is intrinsically smaller than min window,
+        // just set window to min size. Do NOT upscale window dimensions (which attempts to preserve AR).
+        // The image will be centered at 1.0 scale by SyncDCompState.
+        if (windowW < minW) windowW = minW;
+        if (windowH < minH) windowH = minH;
+    } 
+    else if (windowW < minW || windowH < minH) {
          float scaleW = (float)minW / windowW;
          float scaleH = (float)minH / windowH;
          float scaleUp = std::max(scaleW, scaleH); // Scale up to satisfy both mins
          
-         // Don't scale up insanely if image is tiny icon?
-         // Limit upsizing to e.g. 5x? No, just let it fill min window.
          windowW = (int)(windowW * scaleUp);
          windowH = (int)(windowH * scaleUp);
     }
@@ -2058,6 +2065,11 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
 
     // Calculate Base Fit Scale (Visual -> Window)
     float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
+
+    // [Phase 3] Small Image Fix: If image is smaller than 200x200, do NOT upscale it to fit window.
+    if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f) {
+        if (baseFit > 1.0f) baseFit = 1.0f;
+    }
     
     // Calculate Target Zoom (Total Scale)
     float targetZoom = baseFit * g_viewState.Zoom;
@@ -2592,14 +2604,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_GETMINMAXINFO: {
         MINMAXINFO* pMMI = (MINMAXINFO*)lParam;
         
-        // 1. Minimum Size (Settings HUD)
-        if (g_settingsOverlay.IsVisible()) {
-            pMMI->ptMinTrackSize.x = 500; 
-            pMMI->ptMinTrackSize.y = 400; 
-        }
+        // [Phase 3] Default minimum window size: 200x200
+        pMMI->ptMinTrackSize.x = 200; 
+        pMMI->ptMinTrackSize.y = 200;
+        
 
-        // 2. [Phase 2] Cross-Monitor: Logic moved to WM_SYSCOMMAND (Fake Maximize) to avoid DWM clipping.
-        // We do NOT override MinMaxInfo for spanning, as native Maximize forces single monitor clipping.
+
+        // [Phase 2] Cross-Monitor: Logic moved to WM_SYSCOMMAND (Fake Maximize) to avoid DWM clipping.
         return 0;
     }
     case WM_NCHITTEST: {
@@ -3406,7 +3417,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             int width = rc.right - rc.left;
             int height = rc.bottom - rc.top;
             
-            if (width > 50 && height > 100) {
+            // [Phase 3] Disable edge nav if window is too narrow
+            if (!g_toolbar.IsWindowTooNarrow() && width > 50 && height > 100) {
                 bool clickValid = false;
                 int direction = 0;
                 
@@ -3487,6 +3499,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         float scaleW = (float)rc.right / imgW;
         float scaleH = (float)rc.bottom / imgH;
         float fitScale = (scaleW < scaleH) ? scaleW : scaleH;
+        
+        // [Fix] Match SyncDCompState Logic for Small Images
+        if (imgW < 200.0f && imgH < 200.0f) {
+            if (fitScale > 1.0f) fitScale = 1.0f;
+        }
         float currentTotalScale = fitScale * g_viewState.Zoom;
         
         float zoomFactor = (delta > 0) ? 1.1f : 0.90909f;
@@ -3548,20 +3565,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 if (finalWinW > maxW) { finalWinW = maxW; capped = true; }
                 if (finalWinH > maxH) { finalWinH = maxH; capped = true; }
              }
-             if (finalWinW < 400) finalWinW = 400; // Min size
-             if (finalWinH < 300) finalWinH = 300;
+             if (finalWinW < 200) { finalWinW = 200; capped = true; } // Min size (User request: 200x200)
+             if (finalWinH < 200) { finalWinH = 200; capped = true; }
              
              // 3. [Core Fix] PRE-CALCULATE state before window resize
              // This ensures OnResize -> SyncDCompState sees the correct target scale IMMEDIATELY.
-             float hardwareScale = 1.0f;
-             if (capped) {
-                 float scaleW = (float)targetW / (float)finalWinW;
-                 float scaleH = (float)targetH / (float)finalWinH;
-                 hardwareScale = std::max(scaleW, scaleH);
+             
+             // [Fix] Unified Zoom Calculation:
+             // Calculate the 'baseFit' that SyncDCompState WILL use for the new window size.
+             // SyncDCompState logic: Fits image to window, BUT if image < 200x200, force 1.0 fit.
+             
+             float baseFit_next = std::min((float)finalWinW / imgW, (float)finalWinH / imgH);
+             if (imgW < 200.0f && imgH < 200.0f) {
+                 if (baseFit_next > 1.0f) baseFit_next = 1.0f;
              }
              
-             // Update ViewState before triggering resize
-             g_viewState.Zoom = hardwareScale;
+             // Calculate required Zoom to match Target Total Scale
+             // TotalScale = BaseFit * Zoom  =>  Zoom = TotalScale / BaseFit
+             g_viewState.Zoom = newTotalScale / baseFit_next;
              if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
 
              // 4. Apply Window Resize

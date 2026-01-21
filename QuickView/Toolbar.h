@@ -52,6 +52,10 @@ public:
     void SetExifState(bool open);
     void SetRawState(bool isRaw, bool isFullDecode);
     void SetExtensionWarning(bool hasMismatch);
+    
+    // [Phase 3] Get minimum required width for toolbar
+    float GetMinWidth() const { return PADDING_X * 2 + 8 * BUTTON_SIZE + 7 * GAP; } // ~400px for 8 buttons
+    bool IsWindowTooNarrow() const { return m_windowTooNarrow; }
 
 private:
     // Layout Constants
@@ -66,6 +70,7 @@ private:
 
     bool m_targetVisible = false;
     bool m_isPinned = false;
+    bool m_windowTooNarrow = false; // [Phase 3] Hide toolbar if window is too narrow
     
     D2D1_ROUNDED_RECT m_bgRect = {};
     std::vector<ToolbarButton> m_buttons;

@@ -105,6 +105,9 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     // Skip layout if window has no valid size yet
     if (winW <= 0 || winH <= 0) return;
     
+    // [Phase 3] Check if window is too narrow for toolbar
+    m_windowTooNarrow = (winW < GetMinWidth());
+    
     // [Fix] Always update layout to ensure Button State (e.g. Pin Toggle) is synced.
     // Optimization removed: static float s_lastW... inhibited state updates.
     
@@ -172,6 +175,9 @@ const wchar_t* GetTooltipText(const ToolbarButton& btn) {
 
 void Toolbar::Render(ID2D1RenderTarget* pRT) {
     if (m_opacity <= 0.0f) return;
+    
+    // [Phase 3] Don't render if window is too narrow
+    if (m_windowTooNarrow) return;
     
     CreateResources(pRT); // Ensure resources
     
@@ -285,6 +291,7 @@ void Toolbar::Render(ID2D1RenderTarget* pRT) {
 }
 
 bool Toolbar::OnMouseMove(float x, float y) {
+    if (m_windowTooNarrow) return false;
     // Check if near bottom
     // We don't have window height here unless passed or stored.
     // UpdateLayout stores rect.
@@ -306,6 +313,7 @@ bool Toolbar::OnMouseMove(float x, float y) {
 }
 
 bool Toolbar::OnClick(float x, float y, ToolbarButtonID& outId) {
+    if (m_windowTooNarrow) return false;
     if (!IsVisible()) return false;
     
     // Check background hit
@@ -326,6 +334,7 @@ bool Toolbar::OnClick(float x, float y, ToolbarButtonID& outId) {
 }
 
 bool Toolbar::HitTest(float x, float y) {
+    if (m_windowTooNarrow) return false;
     if (!IsVisible()) return false;
     return (x >= m_bgRect.rect.left && x <= m_bgRect.rect.right &&
             y >= m_bgRect.rect.top && y <= m_bgRect.rect.bottom);
