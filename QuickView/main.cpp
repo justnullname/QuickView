@@ -3509,21 +3509,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         float zoomFactor = (delta > 0) ? 1.1f : 0.90909f;
         float newTotalScale = currentTotalScale * zoomFactor;
         
-        // --- Magnetic Snap to 100% ---
-        const float SNAP_THRESHOLD = 0.05f;
-        bool isAlreadyAt100 = (abs(currentTotalScale - 1.0f) < 0.001f);
+        // --- Magnetic Snap to 100% Original ---
+        float snapTarget = 1.0f;
+        // Calculate true 100% scale relative to current surface
+        if (g_currentMetadata.Width > 0 && imgW > 0) {
+             VisualState vsSnap = GetVisualState();
+             float origW = (float)(vsSnap.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
+             if (origW > 0) snapTarget = origW / imgW;
+        }
+
+        const float SNAP_THRESHOLD = 0.05f * snapTarget;
+        bool isAlreadyAt100 = (abs(currentTotalScale - snapTarget) < 0.001f);
         
         if (!isAlreadyAt100) {
             bool snapped = false;
-            // Check for crossing 1.0
-            if ((currentTotalScale < 1.0f && newTotalScale > 1.0f) || 
-                (currentTotalScale > 1.0f && newTotalScale < 1.0f)) {
-                newTotalScale = 1.0f;
+            // Check for crossing snapTarget
+            if ((currentTotalScale < snapTarget && newTotalScale > snapTarget) || 
+                (currentTotalScale > snapTarget && newTotalScale < snapTarget)) {
+                newTotalScale = snapTarget;
                 snapped = true;
             }
             // Check for proximity
-            else if (abs(newTotalScale - 1.0f) < SNAP_THRESHOLD) {
-                newTotalScale = 1.0f;
+            else if (abs(newTotalScale - snapTarget) < SNAP_THRESHOLD) {
+                newTotalScale = snapTarget;
                 snapped = true;
             }
             
@@ -3665,9 +3673,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
         }
         
-        // Show Zoom OSD
-        int percent = (int)(std::round(newTotalScale * 100.0f));
-        bool is100 = (abs(newTotalScale - 1.0f) < 0.001f);
+        // Show Zoom OSD relative to Original Image Size
+        float osdScale = newTotalScale;
+        if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+             VisualState vs = GetVisualState();
+             float originalDim = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
+             if (originalDim > 0) {
+                 osdScale = newTotalScale * (effSize.width / originalDim);
+             }
+        }
+        
+        int percent = (int)(std::round(osdScale * 100.0f));
+        bool is100 = (abs(osdScale - 1.0f) < 0.001f);
         
         wchar_t zoomBuf[32];
         swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, percent);
@@ -3880,16 +3897,27 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Zoom
         case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
             if (g_imageResource) {
+                // [Fix] Target 100% of ORIGINAL resolution
+                VisualState vs = GetVisualState();
+                float originalW = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
+                float originalH = (float)(vs.IsRotated90 ? g_currentMetadata.Width : g_currentMetadata.Height);
+                
                 D2D1_SIZE_F effSize = GetEffectiveImageSize();
                 float imgW = effSize.width;
                 float imgH = effSize.height;
                 
+                // Fallback if metadata missing
+                if (originalW <= 0) originalW = imgW;
+                if (originalH <= 0) originalH = imgH;
+                
                 if (imgW > 0 && imgH > 0) {
+                    float renderScaleTarget = (originalW / imgW); // Scale needed to match original
+                    
                     // Logic to resize window to wrap image at 100% if allowed
                     if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
-                         // Target is 100% of image size
-                         int targetW = (int)imgW;
-                         int targetH = (int)imgH;
+                         // Target is 100% of Original size
+                         int targetW = (int)originalW;
+                         int targetH = (int)originalH;
                          
                          // Get Monitor Info
                          HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -3914,12 +3942,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          // Recalculate Fit Scale with NEW window size
                          RECT rcNew; GetClientRect(hwnd, &rcNew);
                          float newFitScale = std::min((float)rcNew.right / imgW, (float)rcNew.bottom / imgH);
-                         if (newFitScale > 0) g_viewState.Zoom = 1.0f / newFitScale;
+                         if (newFitScale > 0) g_viewState.Zoom = renderScaleTarget / newFitScale;
                     } else {
                         // Standard logic (window size static)
                         RECT rc; GetClientRect(hwnd, &rc);
                         float fitScale = std::min((float)rc.right / imgW, (float)rc.bottom / imgH);
-                        if (fitScale > 0) g_viewState.Zoom = 1.0f / fitScale;
+                        if (fitScale > 0) g_viewState.Zoom = renderScaleTarget / fitScale;
                     }
 
                     g_viewState.PanX = 0;
@@ -4055,11 +4083,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
             }
             
-            // Show Zoom OSD
-            int percent = (int)(std::round(newTotalScale * 100.0f));
+            // Show Zoom OSD relative to Original Image Size
+            float osdScale = newTotalScale;
+            if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+                 VisualState vs = GetVisualState();
+                 float originalDim = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
+                 if (originalDim > 0) {
+                     osdScale = newTotalScale * (effSize.width / originalDim);
+                 }
+            }
+            
+            int percent = (int)(std::round(osdScale * 100.0f));
             wchar_t zoomBuf[32];
             swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, percent);
-            g_osd.Show(hwnd, zoomBuf, false, (abs(newTotalScale - 1.0f) < 0.001f), D2D1::ColorF(D2D1::ColorF::White));
+            g_osd.Show(hwnd, zoomBuf, false, (abs(osdScale - 1.0f) < 0.001f), D2D1::ColorF(D2D1::ColorF::White));
             break;
         }
 
