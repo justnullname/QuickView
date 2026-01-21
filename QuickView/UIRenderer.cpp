@@ -26,6 +26,7 @@ extern CImageLoader::ImageMetadata g_currentMetadata;  // [v3.2] For Info Panel
 extern std::wstring g_imagePath;  // [v3.2] For Info Panel
 extern bool g_slowMotionMode; // [Debug] Slow-motion crossfade mode
 extern AppConfig g_config;  // [v3.2] For InfoPanelAlpha
+extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 
 // ============================================================================
 // UIRenderer Implementation - 3-Layer Architecture
@@ -985,14 +986,15 @@ void UIRenderer::BuildInfoGrid() {
     std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
     m_infoGrid.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
     
-    // Row 2: Dimensions + Megapixels
+    // Row 2: Dimensions + Megapixels + Zoom
     if (g_currentMetadata.Width > 0) {
         UINT64 totalPixels = (UINT64)g_currentMetadata.Width * g_currentMetadata.Height;
         double megapixels = totalPixels / 1000000.0;
         wchar_t dimBuf[64];
         swprintf_s(dimBuf, L"%u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
-        wchar_t mpBuf[32];
-        swprintf_s(mpBuf, L"(%.1f MP)", megapixels);
+        wchar_t mpBuf[48];
+        int zoomPct = GetCurrentZoomPercent();
+        swprintf_s(mpBuf, L"(%.1f MP) @ %d%%", megapixels, zoomPct);
         m_infoGrid.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
     }
     

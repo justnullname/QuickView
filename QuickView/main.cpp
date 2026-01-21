@@ -1927,6 +1927,41 @@ D2D1_SIZE_F GetEffectiveImageSize() {
     return GetVisualState().VisualSize;
 }
 
+// [v3.2.3] Get current zoom percentage relative to Original Resolution
+// Shared by OSD and Info Panel to avoid duplicated calculation logic.
+int GetCurrentZoomPercent() {
+    if (!g_imageResource) return 100;
+    if (g_currentMetadata.Width <= 0) return 100;
+    
+    // Get effective surface size and window size
+    D2D1_SIZE_F effSize = GetEffectiveImageSize();
+    if (effSize.width <= 0) return 100;
+    
+    HWND hwnd = g_mainHwnd;
+    RECT rc; GetClientRect(hwnd, &rc);
+    float winW = (float)rc.right;
+    float winH = (float)rc.bottom;
+    if (winW <= 0 || winH <= 0) return 100;
+    
+    // Calculate BaseFit (same as WM_MOUSEWHEEL and SyncDCompState)
+    float fitScale = std::min(winW / effSize.width, winH / effSize.height);
+    if (effSize.width < 200.0f && effSize.height < 200.0f) {
+        if (fitScale > 1.0f) fitScale = 1.0f;
+    }
+    
+    // TotalScale = BaseFit * Zoom
+    float totalScale = fitScale * g_viewState.Zoom;
+    
+    // Convert to "True Scale" relative to Original Resolution
+    VisualState vs = GetVisualState();
+    float originalDim = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
+    if (originalDim > 0) {
+        totalScale = totalScale * (effSize.width / originalDim);
+    }
+    
+    return (int)(std::round(totalScale * 100.0f));
+}
+
 void AdjustWindowToImage(HWND hwnd) {
     if (!g_imageResource) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
