@@ -1336,7 +1336,8 @@ void UIRenderer::DrawGridTooltip(ID2D1DeviceContext* dc) {
 }
 
 void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
-    // Only draw for Arrow mode
+    // Only draw for Arrow mode (0)
+    if (g_config.NavIndicator != 0) return;
     if (!g_viewState.EdgeHoverState) return;
     
     float zoneWidth = m_width * 0.15f;
