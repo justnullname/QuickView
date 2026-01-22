@@ -345,7 +345,7 @@ void Toolbar::SetVisible(bool visible) {
 }
 
 bool Toolbar::UpdateAnimation() {
-    float speed = 0.1f;
+    float speed = 0.34f; // [v10.0] Faster animation (~3 frames)
     if (m_targetVisible) {
         if (m_opacity < 1.0f) {
             m_opacity += speed;

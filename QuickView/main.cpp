@@ -2250,8 +2250,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         MessageBoxW(nullptr, 
             L"QuickView requires a CPU with AVX2 support.\n\n"
             L"Minimum Requirements:\n"
-            L"• Intel: Core 4th Gen (Haswell, 2013) or later\n"
-            L"• AMD: Ryzen (Zen, 2017) or later\n\n"
+            L"Intel: Core 4th Gen (Haswell, 2013) or later\n"
+            L"AMD: Ryzen (Zen, 2017) or later\n\n"
             L"Your CPU does not support AVX2. The application cannot run.",
             L"QuickView - Hardware Not Supported",
             MB_OK | MB_ICONERROR);
@@ -2790,10 +2790,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                   
                   // Arrow mode (0): Full vertical range 30%-70%
                   // Cursor/None mode (1,2): Smaller central range 40%-60%
+                  // Arrow mode (0): Expanded vertical range 20%-80%
+                  // Cursor/None mode (1,2): Expanded central range 30%-70%
                   if (g_config.NavIndicator == 0) {
-                      inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                      inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
                   } else {
-                      inVRange = (pt.y > h * 0.40) && (pt.y < h * 0.60);
+                      inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
                   }
                   
                   if (inHRange && inVRange) {
@@ -3302,9 +3304,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Arrow mode (0): Full vertical range 30%-70%
             // Cursor/None mode (1,2): Smaller central range 40%-60%
             if (g_config.NavIndicator == 0) {
-                inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
             } else {
-                inVRange = (pt.y > h * 0.40) && (pt.y < h * 0.60);
+                inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
             }
             inEdgeZone = inHRange && inVRange;
         }
@@ -3474,17 +3476,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 
                 // Arrow mode (0): Click on edge zones (same as other modes)
                 if (g_config.NavIndicator == 0) {
-                    // Use zone check: Left/Right 15%, vertical 30%-70%
+                    // Use zone check: Left/Right 15%, vertical 20%-80%
                     bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
-                    bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
+                    bool inVRange = (pt.y > height * 0.20) && (pt.y < height * 0.80);
                     if (inHRange && inVRange) {
                         clickValid = true;
                         direction = (pt.x < width * 0.15) ? -1 : 1;
                     }
                 } else {
-                    // Cursor/None mode (1,2): Smaller central range 40%-60%
+                    // Cursor/None mode (1,2): Smaller central range 30%-70%
                     bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
-                    bool inVRange = (pt.y > height * 0.40) && (pt.y < height * 0.60);
+                    bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
                     if (inHRange && inVRange) {
                         clickValid = true;
                         direction = (pt.x < width * 0.15) ? -1 : 1;
