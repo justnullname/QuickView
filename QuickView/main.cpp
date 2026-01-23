@@ -934,6 +934,9 @@ void RequestRepaint(PaintLayer layer) {
 #define MarkGalleryLayerDirty() RequestRepaint(PaintLayer::Gallery)
 #define MarkAllUILayersDirty() RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic | PaintLayer::Gallery)
 
+// Window Controls visibility state (used by WM_MOUSEMOVE for auto-hide logic)
+static bool g_showControls = true;
+
 void CalculateWindowControls(HWND hwnd, D2D1_SIZE_F size) {
     float btnW = 46.0f;
     float btnH = 32.0f;
