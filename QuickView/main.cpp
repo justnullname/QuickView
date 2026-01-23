@@ -71,6 +71,7 @@ struct DialogButton {
 struct DialogLayout {
     D2D1_RECT_F Box;
     D2D1_RECT_F Checkbox;
+    D2D1_RECT_F Input; // New input field rect
     std::vector<D2D1_RECT_F> Buttons;
 };
 
@@ -78,13 +79,21 @@ struct DialogState {
     bool IsVisible = false;
     std::wstring Title;
     std::wstring Message;
-    std::wstring QualityText; // New field for quality info
+    std::wstring QualityText; 
     D2D1_COLOR_F AccentColor = D2D1::ColorF(D2D1::ColorF::DodgerBlue);
     std::vector<DialogButton> Buttons;
     int SelectedButtonIndex = 0;
     bool HasCheckbox = false;
     std::wstring CheckboxText;
     bool IsChecked = false;
+    
+    // [Input Mode]
+    bool HasInput = false;
+    std::wstring InputText;
+    HWND hEdit = nullptr;
+    HWND hInputHost = nullptr; // Host container for visibility
+    WNDPROC oldEditProc = nullptr;
+    
     DialogResult FinalResult = DialogResult::None;
 };
 
@@ -802,11 +811,12 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     
     float contentHeight = (titleLines * titleHeight) + (msgLines * messageHeight);
     float qualityHeight = !g_dialog.QualityText.empty() ? 30.0f : 0.0f; // Add space for quality text
+    float inputHeight = g_dialog.HasInput ? 50.0f : 0.0f; // [Input Mode] Space for edit box
     float checkboxHeight = g_dialog.HasCheckbox ? 45.0f : 0.0f;
     float buttonsHeight = 55.0f;
     float padding = 45.0f; // Increased padding
     
-    float dlgH = padding + contentHeight + qualityHeight + checkboxHeight + buttonsHeight + 30.0f; // More buffer
+    float dlgH = padding + contentHeight + qualityHeight + inputHeight + checkboxHeight + buttonsHeight + 30.0f; // More buffer
     if (dlgH < 200.0f) dlgH = 200.0f;  // Increased minimum height
     if (dlgH > 400.0f) dlgH = 400.0f;  // Increased maximum height
     
@@ -814,8 +824,24 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     float top = (size.height - dlgH) / 2.0f;
     layout.Box = D2D1::RectF(left, top, left + dlgW, top + dlgH);
     
+    // Input Field (Placed below Message)
+    float currentY = top + padding + contentHeight;
+    
+    if (g_dialog.HasInput) {
+        layout.Input = D2D1::RectF(left + 25, currentY + 10, left + dlgW - 25, currentY + 40);
+        currentY += inputHeight;
+    }
+
     // Checkbox area (only used if HasCheckbox)
-    float checkY = top + dlgH - 95;
+    // float checkY = top + dlgH - 95; // Old absolute positioning
+    // Let's stack it properly if we have flexible height
+    float checkY = currentY + qualityHeight + 10; 
+    
+    // Use bottom-aligned logic for checkbox usually to stick to buttons
+    if (g_dialog.HasCheckbox) {
+         // Stick to bottom area above buttons
+         checkY = top + dlgH - 45 - buttonsHeight - 10;
+    }
     layout.Checkbox = D2D1::RectF(left + 25, checkY, left + 45, checkY + 20);
     
     // Buttons area
@@ -1088,11 +1114,31 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         
     // Message (below title with proper spacing)
     float msgTop = titleBottom + 8;
-    // Message ends 25px above QualityText
+    // Message ends 25px above QualityText/Input
     float msgBottom = layout.Checkbox.top - 55.0f;
+    if (g_dialog.HasInput) msgBottom = layout.Input.top - 10.0f;
+    
     context->DrawText(g_dialog.Message.c_str(), (UINT32)g_dialog.Message.length(), fmtBody.Get(), 
         D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     
+    // [Input Mode] Draw Input Field Background
+    if (g_dialog.HasInput) {
+        ComPtr<ID2D1SolidColorBrush> pInputBg;
+        context->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.12f, 0.12f), &pInputBg);
+        context->FillRoundedRectangle(D2D1::RoundedRect(layout.Input, 6.0f, 6.0f), pInputBg.Get());
+        
+        // Border
+        ComPtr<ID2D1SolidColorBrush> pInputBorder;
+        context->CreateSolidColorBrush(D2D1::ColorF(0.35f, 0.35f, 0.35f), &pInputBorder);
+        D2D1_RECT_F borderRect = layout.Input;
+        context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, 6.0f, 6.0f), pInputBorder.Get(), 1.0f);
+        
+        // Focus Highlight (Accent Color)
+        if (g_dialog.hEdit && GetFocus() == g_dialog.hEdit) {
+             context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, 6.0f, 6.0f), pBorderBrush.Get(), 2.0f);
+        }
+    }
+
     // Quality Info (Colored) - positioned with more space above checkbox
     if (!g_dialog.QualityText.empty()) {
         float qualityY = layout.Checkbox.top - 45.0f; // 45px above checkbox
@@ -1132,6 +1178,126 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
 
 // --- Modal Dialog Loop ---
 
+// [Input Mode] Logic Helpers
+
+// Host Window Procedure (Container for Edit to ensure visibility over DComp and styling)
+LRESULT CALLBACK InputHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_CTLCOLOREDIT) {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, RGB(255, 255, 255));
+        SetBkColor(hdc, RGB(30, 30, 30)); // Match D2D Dialog BG
+        static HBRUSH hBrush = CreateSolidBrush(RGB(30, 30, 30));
+        return (LRESULT)hBrush;
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+// Subclass Procedure for Edit Control to handle Enter/Esc
+LRESULT CALLBACK EditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    if (uMsg == WM_KEYDOWN) {
+        if (wParam == VK_RETURN) {
+            // Commit
+            int len = GetWindowTextLengthW(hWnd);
+            if (len > 0) {
+                std::vector<wchar_t> buf(len + 1);
+                GetWindowTextW(hWnd, buf.data(), len + 1);
+                g_dialog.InputText = buf.data();
+                
+                // Select Rename button
+                g_dialog.SelectedButtonIndex = 0;
+                if (!g_dialog.Buttons.empty()) {
+                     g_dialog.FinalResult = g_dialog.Buttons[0].Result;
+                } else {
+                     g_dialog.FinalResult = DialogResult::Yes;
+                }
+                g_dialog.IsVisible = false;
+            }
+            return 0;
+        } 
+        else if (wParam == VK_ESCAPE) {
+            // Cancel
+            g_dialog.FinalResult = DialogResult::None; 
+            g_dialog.IsVisible = false;
+            return 0;
+        }
+    }
+    else if (uMsg == WM_CHAR) {
+        if (wParam == VK_RETURN || wParam == VK_ESCAPE) return 0;
+    }
+    
+    return CallWindowProc(g_dialog.oldEditProc, hWnd, uMsg, wParam, lParam);
+}
+
+void CreateDialogInput(HWND parent) {
+    if (g_dialog.hInputHost) return; 
+    
+    // Register Host Class (Once)
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc = InputHostWndProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = L"QuickViewInputHost";
+        wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30));
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    // Calculate Screen Rect
+    RECT rcClient; GetClientRect(parent, &rcClient);
+    D2D1_SIZE_F size = D2D1::SizeF((float)(rcClient.right - rcClient.left), (float)(rcClient.bottom - rcClient.top));
+    DialogLayout layout = CalculateDialogLayout(size);
+    D2D1_RECT_F r = layout.Input; // Relative to Client
+    
+    // Map to Screen Coords for Popup
+    POINT ptTL = { (LONG)r.left, (LONG)r.top };
+    POINT ptBR = { (LONG)r.right, (LONG)r.bottom };
+    ClientToScreen(parent, &ptTL);
+    ClientToScreen(parent, &ptBR);
+    
+    // Adjust logic to match D2D padding (Left +8, Top +6 from box edge)
+    int x = ptTL.x + 8;
+    int y = ptTL.y + 6;
+    int w = (ptBR.x - ptTL.x) - 16;
+    int h = (ptBR.y - ptTL.y) - 12;
+
+    // Create Host Popup (TopMost to ensure it floats over DComp)
+    g_dialog.hInputHost = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"QuickViewInputHost", L"", 
+        WS_POPUP | WS_VISIBLE, x, y, w, h, parent, nullptr, GetModuleHandle(nullptr), nullptr);
+        
+    if (g_dialog.hInputHost) {
+        // Create Edit Child (Fill Host)
+        RECT rcHost; GetClientRect(g_dialog.hInputHost, &rcHost);
+        g_dialog.hEdit = CreateWindowExW(0, L"EDIT", g_dialog.InputText.c_str(),
+            WS_CHILD | WS_VISIBLE | ES_LEFT | ES_AUTOHSCROLL,
+            0, 0, rcHost.right, rcHost.bottom,
+            g_dialog.hInputHost, nullptr, GetModuleHandle(nullptr), nullptr);
+            
+        if (g_dialog.hEdit) {
+            HFONT hFont = CreateFontW(22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, 
+                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+            SendMessage(g_dialog.hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+            g_dialog.oldEditProc = (WNDPROC)SetWindowLongPtr(g_dialog.hEdit, GWLP_WNDPROC, (LONG_PTR)EditSubclassProc);
+            SetFocus(g_dialog.hEdit);
+            SendMessage(g_dialog.hEdit, EM_SETSEL, 0, -1);
+        }
+    }
+}
+
+void DestroyDialogInput() {
+    if (g_dialog.hEdit) {
+        if (g_dialog.oldEditProc) {
+            SetWindowLongPtr(g_dialog.hEdit, GWLP_WNDPROC, (LONG_PTR)g_dialog.oldEditProc);
+        }
+        g_dialog.hEdit = nullptr;
+    }
+    if (g_dialog.hInputHost) {
+        DestroyWindow(g_dialog.hInputHost);
+        g_dialog.hInputHost = nullptr;
+    }
+}
+
 DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std::wstring& messageContent, 
                              D2D1_COLOR_F accentColor, const std::vector<DialogButton>& buttons,
                              bool hasChecbox = false, const std::wstring& checkboxText = L"", const std::wstring& qualityText = L"") 
@@ -1146,7 +1312,34 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     g_dialog.HasCheckbox = hasChecbox;
     g_dialog.CheckboxText = checkboxText;
     g_dialog.IsChecked = false;
+    
+    // Reset Input Mode
+    g_dialog.HasInput = false;
+    g_dialog.hEdit = nullptr;
+    
     g_dialog.FinalResult = DialogResult::None;
+    
+    // [Auto-Resize] If window is too small for dialog, expand it
+    {
+        RECT clientRect; GetClientRect(hwnd, &clientRect);
+        float currentW = (float)(clientRect.right - clientRect.left);
+        float currentH = (float)(clientRect.bottom - clientRect.top);
+        
+        // Calculate needed size using dummy large container
+        DialogLayout layout = CalculateDialogLayout(D2D1::SizeF(2000, 2000));
+        float dlgW = layout.Box.right - layout.Box.left;
+        float dlgH = layout.Box.bottom - layout.Box.top;
+        
+        float requiredW = dlgW + 60.0f; // Padding
+        float requiredH = dlgH + 60.0f;
+        
+        if (currentW < requiredW || currentH < requiredH) {
+            SetWindowPos(hwnd, NULL, 0, 0, 
+                (int)std::max(currentW, requiredW), 
+                (int)std::max(currentH, requiredH), 
+                SWP_NOMOVE | SWP_NOZORDER);
+        }
+    }
     
     RequestRepaint(PaintLayer::Dynamic);
     UpdateWindow(hwnd); 
@@ -1218,238 +1411,130 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     return g_dialog.FinalResult;
 }
 
-// --- Rename Dialog (Pseudo-OSD) ---
-static std::wstring g_renameResult;
-static HWND g_hRenameEdit;
-static WNDPROC g_oldEditProc;
-
-// Custom Button State
-static int g_hoverBtn = -1; // 0=OK, 1=Cancel, -1=None
-static bool g_isMouseDown = false;
-static const RECT g_rcOk = { 115, 60, 195, 86 };
-static const RECT g_rcCancel = { 205, 60, 285, 86 };
-
-// Subclass procedure for the Edit control to handle Enter/Esc
-LRESULT CALLBACK EditSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_KEYDOWN:
-        if (wParam == VK_RETURN) {
-            SendMessage(GetParent(hwnd), WM_COMMAND, IDOK, 0);
-            return 0;
+// [Rename Dialog]
+std::wstring ShowQuickViewInputDialog(HWND hwnd, const std::wstring& title, const std::wstring& message, const std::wstring& initialText) 
+{
+    g_dialog.IsVisible = true;
+    g_dialog.Title = title;
+    g_dialog.Message = message;
+    g_dialog.QualityText.clear();
+    g_dialog.AccentColor = D2D1::ColorF(D2D1::ColorF::Orange); 
+    g_dialog.Buttons = { { DialogResult::Yes, L"Rename", true }, { DialogResult::None, L"Cancel" } };
+    g_dialog.SelectedButtonIndex = 0;
+    g_dialog.HasCheckbox = false;
+    g_dialog.HasInput = true;
+    g_dialog.InputText = initialText;
+    g_dialog.FinalResult = DialogResult::None;
+    
+    // Auto-Resize logic 
+    {
+        RECT clientRect; GetClientRect(hwnd, &clientRect);
+        float currentW = (float)(clientRect.right - clientRect.left);
+        float currentH = (float)(clientRect.bottom - clientRect.top);
+        
+        DialogLayout layout = CalculateDialogLayout(D2D1::SizeF(2000, 2000));
+        float dlgW = layout.Box.right - layout.Box.left;
+        float dlgH = layout.Box.bottom - layout.Box.top;
+        float requiredW = dlgW + 60.0f;
+        float requiredH = dlgH + 60.0f;
+        
+        if (currentW < requiredW || currentH < requiredH) {
+            SetWindowPos(hwnd, NULL, 0, 0, (int)std::max(currentW, requiredW), (int)std::max(currentH, requiredH), SWP_NOMOVE | SWP_NOZORDER);
         }
-        if (wParam == VK_ESCAPE) {
-            SendMessage(GetParent(hwnd), WM_COMMAND, IDCANCEL, 0);
-            return 0;
-        }
-        break;
     }
-    return CallWindowProc(g_oldEditProc, hwnd, msg, wParam, lParam);
-}
+    
+    CreateDialogInput(hwnd);
+    RequestRepaint(PaintLayer::Dynamic);
+    UpdateWindow(hwnd); 
+    
+    MSG msgStruct;
+    // Force Arrow Cursor initially for the modal
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
 
-static HBRUSH g_hDarkBrush = nullptr;
+    while (g_dialog.IsVisible && GetMessage(&msgStruct, NULL, 0, 0)) {
+        bool handled = false;
 
-LRESULT CALLBACK RenameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_CTLCOLOREDIT: {
-        HDC hdc = (HDC)wParam;
-        SetBkColor(hdc, RGB(30, 30, 30)); // Dark Gray
-        SetTextColor(hdc, RGB(255, 255, 255)); // White
-        if (!g_hDarkBrush) g_hDarkBrush = CreateSolidBrush(RGB(30,30,30));
-        return (LRESULT)g_hDarkBrush;
-    }
-    case WM_CREATE: {
-        NONCLIENTMETRICSW ncm = { sizeof(NONCLIENTMETRICSW) };
-        SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
-        ncm.lfMessageFont.lfHeight = -24; // 24px height
-        ncm.lfMessageFont.lfWeight = 600; // Semi-bold
-        HFONT hFont = CreateFontIndirectW(&ncm.lfMessageFont);
+        // Modal Logic: Trap inputs for Main Window to prevent background interaction
+        if (msgStruct.hwnd == hwnd) {
+            switch (msgStruct.message) {
+                case WM_KEYDOWN:
+                    if (msgStruct.wParam == VK_ESCAPE) {
+                         g_dialog.IsVisible = false;
+                         g_dialog.FinalResult = DialogResult::None;
+                         handled = true;
+                    }
+                    else if (msgStruct.wParam == VK_TAB) {
+                        handled = true; // Swallow TAB on main window
+                    }
+                    break;
 
-        // Edit Control moved down slightly, taller to avoid clipping
-        g_hRenameEdit = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | ES_CENTER | ES_AUTOHSCROLL, 
-            10, 15, 380, 30, hwnd, (HMENU)100, GetModuleHandle(nullptr), nullptr);
-        
-        SendMessage(g_hRenameEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
-        
-        // Subclass to hijack Enter/Esc
-        g_oldEditProc = (WNDPROC)SetWindowLongPtr(g_hRenameEdit, GWLP_WNDPROC, (LONG_PTR)EditSubclassProc);
-        
-        g_hoverBtn = -1;
-        g_isMouseDown = false;
-        return 0;
-    }
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        
-        // Background
-        HBRUSH hBg = CreateSolidBrush(RGB(30, 30, 30));
-        FillRect(hdc, &ps.rcPaint, hBg);
-        DeleteObject(hBg);
-
-        // Draw Buttons
-        auto DrawBtn = [&](const RECT& rc, const wchar_t* text, int id) {
-            bool isHover = (g_hoverBtn == id);
-            COLORREF bgCol = isHover ? (g_isMouseDown ? RGB(80, 80, 80) : RGB(60, 60, 60)) : RGB(45, 45, 45);
-            HBRUSH hBr = CreateSolidBrush(bgCol);
-            FillRect(hdc, &rc, hBr);
-            DeleteObject(hBr);
-            
-            // Border (optional, maybe just flat)
-            // FrameRect(hdc, &rc, (HBRUSH)GetStockObject(LTGRAY_BRUSH));
-
-            SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, RGB(220, 220, 220));
-            DrawTextW(hdc, text, -1, (LPRECT)&rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        };
-
-        // Use system font for buttons
-        HFONT hOldFont = (HFONT)SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT)); 
-        // Or better, create a specific font? Standard GUI font is ugly. 
-        // Let's use the one from Edit control or similar? 
-        // Ideally we should cache the button font. For now, DEFAULT_GUI_FONT is safe but ugly.
-        // Actually, let's re-create the button font on the fly or better cache it.
-        // To be safe and quick, I'll use simple variable.
-        
-        NONCLIENTMETRICSW ncm = { sizeof(NONCLIENTMETRICSW) };
-        SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
-        ncm.lfMessageFont.lfHeight = -16; // Button font
-        HFONT hBtnFont = CreateFontIndirectW(&ncm.lfMessageFont);
-        SelectObject(hdc, hBtnFont);
-
-        DrawBtn(g_rcOk, L"OK", 0);
-        DrawBtn(g_rcCancel, L"Cancel", 1);
-
-        SelectObject(hdc, hOldFont);
-        DeleteObject(hBtnFont);
-
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    case WM_MOUSEMOVE: {
-        POINT pt = { LOWORD(lParam), HIWORD(lParam) };
-        int oldHover = g_hoverBtn;
-        if (PtInRect(&g_rcOk, pt)) g_hoverBtn = 0;
-        else if (PtInRect(&g_rcCancel, pt)) g_hoverBtn = 1;
-        else g_hoverBtn = -1;
-
-        if (oldHover != g_hoverBtn) {
-            RequestRepaint(PaintLayer::Dynamic); // Redraw
-            
-            if (g_hoverBtn != -1) { // Track mouse leave
-                TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
-                TrackMouseEvent(&tme);
+                case WM_LBUTTONDOWN: {
+                     // Handle clicks on Dialog Buttons
+                     RECT clientRect; GetClientRect(hwnd, &clientRect);
+                     D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
+                     DialogLayout layout = CalculateDialogLayout(size);
+                     float mouseX = (float)((short)LOWORD(msgStruct.lParam));
+                     float mouseY = (float)((short)HIWORD(msgStruct.lParam));
+                     
+                     // Check Buttons
+                     for (size_t i = 0; i < layout.Buttons.size(); ++i) {
+                        if (mouseX >= layout.Buttons[i].left && mouseX <= layout.Buttons[i].right &&
+                            mouseY >= layout.Buttons[i].top && mouseY <= layout.Buttons[i].bottom) {
+                            
+                            if (i == 0) { // Rename (Commit)
+                                 int len = GetWindowTextLengthW(g_dialog.hEdit);
+                                 if (len > 0) {
+                                    std::vector<wchar_t> buf(len + 1);
+                                    GetWindowTextW(g_dialog.hEdit, buf.data(), len + 1);
+                                    g_dialog.InputText = buf.data();
+                                    g_dialog.FinalResult = DialogResult::Yes;
+                                 } else {
+                                    g_dialog.FinalResult = DialogResult::None;
+                                 }
+                            } else { // Cancel
+                                 g_dialog.FinalResult = DialogResult::None;
+                            }
+                            g_dialog.IsVisible = false;
+                            break;
+                        }
+                     }
+                     
+                     // Always consume click (prevent panning background)
+                     handled = true;
+                     break;
+                }
+                
+                case WM_RBUTTONDOWN:
+                case WM_MBUTTONDOWN:
+                case WM_MOUSEWHEEL:
+                case WM_LBUTTONDBLCLK:
+                    // Swallow background interactions
+                    handled = true;
+                    break;
+                    
+                case WM_MOUSEMOVE:
+                    // Force Arrow Cursor and swallow to prevent toolbar/edge-nav activation
+                    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                    handled = true;
+                    break;
             }
         }
-        return 0;
-    }
-    case WM_MOUSELEAVE: {
-        if (g_hoverBtn != -1) {
-            g_hoverBtn = -1;
-            RequestRepaint(PaintLayer::Dynamic);
+        
+        if (!handled) {
+            TranslateMessage(&msgStruct); DispatchMessage(&msgStruct);
         }
-        return 0;
     }
-    case WM_LBUTTONDOWN: {
-        POINT pt = { LOWORD(lParam), HIWORD(lParam) };
-        if (PtInRect(&g_rcOk, pt) || PtInRect(&g_rcCancel, pt)) {
-            g_isMouseDown = true;
-            SetCapture(hwnd);
-            RequestRepaint(PaintLayer::Dynamic);
-        }
-        return 0;
+    
+    DestroyDialogInput();
+    RequestRepaint(PaintLayer::Dynamic);
+    
+    if (g_dialog.FinalResult == DialogResult::Yes) {
+        return g_dialog.InputText;
     }
-    case WM_LBUTTONUP: {
-        if (g_isMouseDown) {
-            g_isMouseDown = false;
-            ReleaseCapture();
-            RequestRepaint(PaintLayer::Dynamic);
-            
-            POINT pt = { LOWORD(lParam), HIWORD(lParam) };
-            if (g_hoverBtn == 0 && PtInRect(&g_rcOk, pt)) {
-                SendMessage(hwnd, WM_COMMAND, IDOK, 0);
-            } else if (g_hoverBtn == 1 && PtInRect(&g_rcCancel, pt)) {
-                SendMessage(hwnd, WM_COMMAND, IDCANCEL, 0);
-            }
-        }
-        return 0;
-    }
-    case WM_COMMAND: {
-        if (LOWORD(wParam) == IDOK) {
-            int len = GetWindowTextLengthW(g_hRenameEdit);
-            std::vector<wchar_t> buf(len + 1);
-            if (len > 0) GetWindowTextW(g_hRenameEdit, &buf[0], len + 1);
-            g_renameResult = buf.data() ? buf.data() : L"";
-            DestroyWindow(hwnd);
-            return 0;
-        }
-        if (LOWORD(wParam) == IDCANCEL) {
-            g_renameResult.clear();
-            DestroyWindow(hwnd);
-            return 0;
-        }
-        break;
-    }
-    case WM_ACTIVATE:
-        // Keep focus on edit if activated
-        if (LOWORD(wParam) != WA_INACTIVE) {
-            SetFocus(g_hRenameEdit);
-        }
-        break;
-    case WM_CLOSE:
-        g_renameResult.clear();
-        DestroyWindow(hwnd);
-        return 0;
-    case WM_DESTROY:
-        g_thumbMgr.Shutdown();
-        PostQuitMessage(0);
-        return 0;
-    }
-    return DefWindowProc(hwnd, msg, wParam, lParam);
+    return L"";
 }
 
-std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName) {
-    g_renameResult.clear();
-    
-    WNDCLASSEXW wc = { sizeof(wc) };
-    wc.lpfnWndProc = RenameWndProc;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = L"QuickViewRenameOSD";
-    wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30)); // Match Edit BG
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    RegisterClassExW(&wc);
-    
-    RECT rcOwner; GetWindowRect(hParent, &rcOwner);
-    int w = 400, h = 100; // Taller for better layout
-    int x = rcOwner.left + (rcOwner.right - rcOwner.left - w) / 2;
-    int y = rcOwner.top + (rcOwner.bottom - rcOwner.top - h) / 2;
-
-    // WS_POPUP, No Border, TopMost (Removed WS_EX_LAYERED to keep buttons opaque)
-    HWND hDlg = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"QuickViewRenameOSD", L"", 
-        WS_POPUP | WS_VISIBLE, x, y, w, h, hParent, nullptr, wc.hInstance, nullptr);
-
-    // Enable rounded corners (Windows 11)
-    // Constants: DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
-    enum { DWMWA_WINDOW_CORNER_PREFERENCE_LOCAL = 33 };
-    enum { DWMWCP_ROUND_LOCAL = 2 };
-    int cornerPref = DWMWCP_ROUND_LOCAL;
-    DwmSetWindowAttribute(hDlg, DWMWA_WINDOW_CORNER_PREFERENCE_LOCAL, &cornerPref, sizeof(cornerPref));
-
-    SetWindowTextW(g_hRenameEdit, oldName.c_str());
-    SendMessage(g_hRenameEdit, EM_SETSEL, 0, -1);
-    SetFocus(g_hRenameEdit);
-
-    EnableWindow(hParent, FALSE);
-    
-    MSG msg;
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-    
-    EnableWindow(hParent, TRUE);
-    SetForegroundWindow(hParent);
-    return g_renameResult;
-}
+// (Old Rename logic removed)
 
 // --- Logic Functions ---
 
@@ -2489,6 +2574,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     static bool isTracking = false;
     switch (message) {
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wParam;
+        HWND hEdit = (HWND)lParam;
+        if (g_dialog.IsVisible && hEdit == g_dialog.hEdit) {
+            SetTextColor(hdc, RGB(255, 255, 255));
+            SetBkColor(hdc, RGB(30, 30, 30));
+            static HBRUSH hBrush = CreateSolidBrush(RGB(30, 30, 30)); 
+            return (LRESULT)hBrush;
+        }
+        break;
+    }
     case WM_CREATE: {
         MARGINS margins = { 0, 0, 0, 1 }; 
         DwmExtendFrameIntoClientArea(hwnd, &margins); 
@@ -2698,6 +2794,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
 
     
+    case WM_MOVE:
+        if (g_dialog.IsVisible && g_dialog.HasInput && g_dialog.hInputHost) {
+            RECT rcClient; GetClientRect(hwnd, &rcClient);
+            D2D1_SIZE_F size = D2D1::SizeF((float)(rcClient.right - rcClient.left), (float)(rcClient.bottom - rcClient.top));
+            DialogLayout layout = CalculateDialogLayout(size);
+            D2D1_RECT_F r = layout.Input; // Relative to Client
+            
+            POINT ptTL = { (LONG)r.left, (LONG)r.top };
+            ClientToScreen(hwnd, &ptTL);
+            
+            // Adjust logic to match D2D padding (Left +8, Top +6)
+            int x = ptTL.x + 8;
+            int y = ptTL.y + 6;
+            
+            SetWindowPos(g_dialog.hInputHost, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return 0;
+
     case WM_SIZE: 
         if (wParam != SIZE_MINIMIZED) {
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
@@ -4365,6 +4479,57 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RequestRepaint(PaintLayer::All);
             break;
         }
+        case IDM_RENAME: {
+            if (!CheckUnsavedChanges(hwnd)) break;
+            if (!g_imagePath.empty()) {
+                std::wstring currentFolder = L"";
+                std::wstring currentName = L"";
+                size_t lastSlash = g_imagePath.find_last_of(L"\\/");
+                if (lastSlash != std::wstring::npos) {
+                    currentFolder = g_imagePath.substr(0, lastSlash + 1);
+                    currentName = g_imagePath.substr(lastSlash + 1);
+                } else {
+                    currentName = g_imagePath;
+                }
+                
+                // Show Input Dialog
+                std::wstring newName = ShowQuickViewInputDialog(hwnd, AppStrings::Context_Rename, L"Enter new filename:", currentName);
+                
+                // [Feature] Auto-append extension if missing
+                if (!newName.empty()) {
+                    bool newHasExt = (newName.find_last_of(L'.') != std::wstring::npos);
+                    if (!newHasExt) {
+                         size_t dotPos = currentName.find_last_of(L'.');
+                         if (dotPos != std::wstring::npos) {
+                             newName += currentName.substr(dotPos);
+                         }
+                    }
+                }
+                
+                if (!newName.empty() && newName != currentName) {
+                    std::wstring newPath = currentFolder + newName;
+                    
+                    // Release resources before rename (Critical)
+                    ReleaseImageResources();
+                    
+                    if (MoveFileW(g_imagePath.c_str(), newPath.c_str())) {
+                        g_imagePath = newPath;
+                        g_navigator.Initialize(newPath); // Update navigator list explicitly
+                        
+                        // Reload image from new path
+                        LoadImageAsync(hwnd, newPath); 
+                        
+                        g_osd.Show(hwnd, L"Renamed", false);
+                    } else {
+                        // Failed, reload original
+                        LoadImageAsync(hwnd, g_imagePath); 
+                        g_osd.Show(hwnd, L"Rename Failed", true);
+                    }
+                }
+                RequestRepaint(PaintLayer::All);
+            }
+            break;
+        }
         case IDM_DELETE: {
             // [v9.9 Fix] Handle Deletion during Edit/Transform
             // Determine actual target to recycle and temp file to map
@@ -4593,45 +4758,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             break;
         }
-        case IDM_RENAME: {
-            if (!g_imagePath.empty()) {
-                // Get current filename
-                size_t lastSlash = g_imagePath.find_last_of(L"\\/");
-                std::wstring dir = (lastSlash != std::wstring::npos) ? g_imagePath.substr(0, lastSlash + 1) : L"";
-                std::wstring oldName = (lastSlash != std::wstring::npos) ? g_imagePath.substr(lastSlash + 1) : g_imagePath;
-                
-                // Custom Rename Dialog
-                std::wstring newName = ShowRenameDialog(hwnd, oldName);
-                
-                if (!newName.empty()) {
-                    // Auto-append extension if missing (User request)
-                    if (newName.find_last_of(L'.') == std::wstring::npos) {
-                        size_t oldDot = oldName.find_last_of(L'.');
-                        if (oldDot != std::wstring::npos) {
-                            newName += oldName.substr(oldDot);
-                        }
-                    }
 
-                    if (newName != oldName) {
-                    std::wstring newPath = dir + newName;
-                    if (newPath != g_imagePath) {
-                        ReleaseImageResources();
-                        if (MoveFileW(g_imagePath.c_str(), newPath.c_str())) {
-                            g_imagePath = newPath;
-                            g_navigator.Initialize(newPath.c_str());
-                            LoadImageAsync(hwnd, newPath);
-                            g_osd.Show(hwnd, AppStrings::OSD_Renamed, false);
-                        } else {
-                            LoadImageAsync(hwnd, g_imagePath);
-                            g_osd.Show(hwnd, AppStrings::OSD_RenameFailed, true);
-                        }
-                        RequestRepaint(PaintLayer::All);
-                    }
-                }
-                }
-            }
-            break;
-        }
         case IDM_FIX_EXTENSION: {
             if (!g_imagePath.empty() && !g_currentMetadata.Format.empty()) {
                 std::wstring fmt = g_currentMetadata.Format;

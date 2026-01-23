@@ -55,6 +55,8 @@
 
 Rewritten from scratch using **Direct2D** and **C++23**, QuickView abandons legacy GDI rendering for a game-grade visual architecture. With a startup speed and rendering performance that rivals or exceeds closed-source commercial software, it is designed to handle everything from tiny icons to massive 8K RAW photos with zero latency.
 
+🌐 **Multi-Language Support:** English, 简体中文, 繁體中文, 日本語, Deutsch, Español, Русский
+
 ### 📂 Supported Formats
 QuickView supports almost all modern and professional image formats:
 
@@ -160,10 +162,10 @@ Master these to navigate at the speed of thought:
 | | `T` | **Photo Wall (HUD)** |
 | **View** | `1` / `Z` | **100% Actual Size** |
 | | `0` / `F` | Fit to Screen |
-| | `Enter` | Fullscreen |
+| | `Enter` / `F11` | Fullscreen |
 | **Info** | `I` | **Toggle Info/Histogram** |
-| | `D` | **Toggle Debug HUD** |
-| **Control** | `Ctrl + P` | **Settings Panel** |
+| | `Tab` | **Toggle Lite Info Panel** |
+| **Control** | `Ctrl + F11` | **Span Displays (Video Wall)** |
 | | `Ctrl + T` | Toggle "Always on Top" |
 | **Edit** | `R` | Rotate |
 | | `Del` | Delete File |
