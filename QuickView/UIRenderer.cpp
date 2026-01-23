@@ -611,10 +611,11 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     float btnW = 46.0f;
     float btnH = 32.0f;
     
-    // [Fix] Offset buttons when maximized to avoid being clipped by screen edge
+    // [Fix] Only apply offset when MAXIMIZED (has hidden border)
+    // Fullscreen has NO border, so no offset needed
     float xOffset = 0.0f;
     float yOffset = 0.0f;
-    if (IsZoomed(hwnd)) {
+    if (IsZoomed(hwnd) && !m_isFullscreen) {
         int frameX = GetSystemMetrics(SM_CXSIZEFRAME);
         int frameY = GetSystemMetrics(SM_CYSIZEFRAME);
         int paddedBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
@@ -627,6 +628,12 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     D2D1_RECT_F maxRect = D2D1::RectF(rightEdge - btnW * 2, yOffset, rightEdge - btnW, btnH + yOffset);
     D2D1_RECT_F minRect = D2D1::RectF(rightEdge - btnW * 3, yOffset, rightEdge - btnW * 2, btnH + yOffset);
     D2D1_RECT_F pinRect = D2D1::RectF(rightEdge - btnW * 4, yOffset, rightEdge - btnW * 3, btnH + yOffset);
+    
+    // [NEW] Cache hit rects for HitTestWindowControls
+    m_winCloseRect = closeRect;
+    m_winMaxRect = maxRect;
+    m_winMinRect = minRect;
+    m_winPinRect = pinRect;
     
     // Hover backgrounds
     if (m_winCtrlHover == 0) {
@@ -656,8 +663,27 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     DrawIcon(pinIcon, pinRect, pinBrush);
     
     DrawIcon(L'\uE921', minRect, m_whiteBrush.Get());
-    DrawIcon(IsZoomed(hwnd) ? L'\uE923' : L'\uE922', maxRect, m_whiteBrush.Get());
+    DrawIcon((IsZoomed(hwnd) || m_isFullscreen) ? L'\uE923' : L'\uE922', maxRect, m_whiteBrush.Get());
     DrawIcon(L'\uE8BB', closeRect, m_whiteBrush.Get());
+}
+
+// ============================================================================
+// Window Controls Hit Testing (Unified with DrawWindowControls)
+// ============================================================================
+WindowControlHit UIRenderer::HitTestWindowControls(float x, float y) {
+    if (!m_showControls) return WindowControlHit::None;
+    
+    // Helper: Point in rect
+    auto PtInRect = [](float px, float py, const D2D1_RECT_F& r) {
+        return px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;
+    };
+    
+    if (PtInRect(x, y, m_winCloseRect)) return WindowControlHit::Close;
+    if (PtInRect(x, y, m_winMaxRect)) return WindowControlHit::Maximize;
+    if (PtInRect(x, y, m_winMinRect)) return WindowControlHit::Minimize;
+    if (PtInRect(x, y, m_winPinRect)) return WindowControlHit::Pin;
+    
+    return WindowControlHit::None;
 }
 
 // ============================================================================

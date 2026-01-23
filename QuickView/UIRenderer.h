@@ -56,6 +56,9 @@ enum class UIHitResult {
     InfoRow         // Click to copy row content
 };
 
+// Window Controls Hit Test Result
+enum class WindowControlHit { None, Close, Maximize, Minimize, Pin };
+
 struct HitTestResult {
     UIHitResult type = UIHitResult::None;
     std::wstring payload;  // Text to copy or URL to open
@@ -109,7 +112,11 @@ public:
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
     void SetControlsVisible(bool visible) { m_showControls = visible; MarkStaticDirty(); }
     void SetPinActive(bool active) { m_pinActive = active; MarkStaticDirty(); }
+    void SetFullscreenState(bool isFullscreen) { m_isFullscreen = isFullscreen; }
     void OnResize(UINT width, UINT height);
+    
+    // ===== Window Controls Hit Testing =====
+    WindowControlHit HitTestWindowControls(float x, float y);
     
     // 兼容旧接口
     bool Render(HWND hwnd) { return RenderAll(hwnd); }
@@ -182,6 +189,13 @@ private:
     int m_winCtrlHover = -1;
     bool m_showControls = true;
     bool m_pinActive = false;
+    bool m_isFullscreen = false;
+    
+    // Window Controls cached hit rects (updated during DrawWindowControls)
+    D2D1_RECT_F m_winCloseRect = {};
+    D2D1_RECT_F m_winMaxRect = {};
+    D2D1_RECT_F m_winMinRect = {};
+    D2D1_RECT_F m_winPinRect = {};
     
     // 脏标记
     bool m_isStaticDirty = true;

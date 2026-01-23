@@ -863,15 +863,9 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
 // --- Draw Functions ---
 
 // --- Window Controls ---
-enum class WindowHit { None, Pin, Min, Max, Close };
-struct WindowControls {
-    D2D1_RECT_F PinRect;   // Pin (Always on Top) button - leftmost
-    D2D1_RECT_F MinRect;
-    D2D1_RECT_F MaxRect;
-    D2D1_RECT_F CloseRect;
-    WindowHit HoverState = WindowHit::None;
-};
-static WindowControls g_winControls;
+// [Refactored] Hit testing moved to UIRenderer::HitTestWindowControls
+// Hover state tracked as index: -1=None, 0=Close, 1=Max, 2=Min, 3=Pin
+static int g_winCtrlHoverState = -1;
 
 // ============================================================================
 // Unified Repaint Request System - 统一重绘请求系统
@@ -937,29 +931,8 @@ void RequestRepaint(PaintLayer layer) {
 // Window Controls visibility state (used by WM_MOUSEMOVE for auto-hide logic)
 static bool g_showControls = true;
 
-void CalculateWindowControls(HWND hwnd, D2D1_SIZE_F size) {
-    float btnW = 46.0f;
-    float btnH = 32.0f;
-    
-    // [Fix] Offset buttons when maximized to avoid being clipped by screen edge
-    float xOffset = 0.0f;
-    float yOffset = 0.0f;
-    if (IsZoomed(hwnd)) {
-        int frameX = GetSystemMetrics(SM_CXSIZEFRAME);
-        int frameY = GetSystemMetrics(SM_CYSIZEFRAME);
-        int paddedBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
-        xOffset = (float)(frameX + paddedBorder);
-        yOffset = (float)(frameY + paddedBorder);
-    }
+// --- REFACTOR: CalculateWindowControls removed, hit testing now in UIRenderer ---
 
-    float rightEdge = size.width - xOffset;
-    g_winControls.CloseRect = D2D1::RectF(rightEdge - btnW, yOffset, rightEdge, btnH + yOffset);
-    g_winControls.MaxRect = D2D1::RectF(rightEdge - btnW * 2, yOffset, rightEdge - btnW, btnH + yOffset);
-    g_winControls.MinRect = D2D1::RectF(rightEdge - btnW * 3, yOffset, rightEdge - btnW * 2, btnH + yOffset);
-    g_winControls.PinRect = D2D1::RectF(rightEdge - btnW * 4, yOffset, rightEdge - btnW * 3, btnH + yOffset);
-}
-
-// --- REFACTOR: UI Rendering moved to UIRenderer.cpp (DComp implementation) ---
 
 void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     if (!g_dialog.IsVisible || !context) return;
@@ -2405,7 +2378,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     {
         RECT rc; GetClientRect(hwnd, &rc);
         g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
-        CalculateWindowControls(hwnd, D2D1::SizeF((float)rc.right, (float)rc.bottom));
         // Force initial render of all UI layers
         RequestRepaint(PaintLayer::All);
     }
@@ -2751,7 +2723,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         if (wParam != SIZE_MINIMIZED) {
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
-            CalculateWindowControls(hwnd, D2D1::SizeF((float)LOWORD(lParam), (float)HIWORD(lParam)));
             
             // NOTE: Do not reset zoom/pan here. Window resize should not implicitly
             // reset user's manual zoom state.
@@ -2909,49 +2880,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           SetTimer(hwnd, 997, 16, nullptr); // Drive animation logic
           // Note: Toolbar.OnMouseMove handles hover state changes and 
           // WM_TIMER 997 will refresh if animation is active
-         // Update Button Hover
-         WindowHit oldHit = g_winControls.HoverState;
-         g_winControls.HoverState = WindowHit::None;
-         
-         // Auto-Show Controls Logic
-         RECT rcClient; GetClientRect(hwnd, &rcClient);
-         bool inTopArea = (pt.y <= 60); // 60px top area
-         
-         if (g_config.AutoHideWindowControls) {
-             bool shouldShow = inTopArea || (oldHit != WindowHit::None); // Keep showing if previously hovering button? 
-             // Simpler: Just rely on mouse Y.
-             if (inTopArea != g_showControls) {
-                 g_showControls = inTopArea;
-                 RequestRepaint(PaintLayer::Static);  // WinControls are on Static layer
-             }
-         } else {
-             if (!g_showControls) { g_showControls = true; RequestRepaint(PaintLayer::Static); }
-         }
-         
-         if (g_showControls) {
-             if (pt.x >= (long)g_winControls.CloseRect.left && pt.x <= (long)g_winControls.CloseRect.right && pt.y <= (long)g_winControls.CloseRect.bottom) 
-                 g_winControls.HoverState = WindowHit::Close;
-             else if (pt.x >= (long)g_winControls.MaxRect.left && pt.x <= (long)g_winControls.MaxRect.right && pt.y <= (long)g_winControls.MaxRect.bottom) 
-                 g_winControls.HoverState = WindowHit::Max;
-             else if (pt.x >= (long)g_winControls.MinRect.left && pt.x <= (long)g_winControls.MinRect.right && pt.y <= (long)g_winControls.MinRect.bottom) 
-                 g_winControls.HoverState = WindowHit::Min;
-             else if (pt.x >= (long)g_winControls.PinRect.left && pt.x <= (long)g_winControls.PinRect.right && pt.y <= (long)g_winControls.PinRect.bottom) 
-                 g_winControls.HoverState = WindowHit::Pin;
-             
-             // Hand cursor for window control buttons
-             if (g_winControls.HoverState != WindowHit::None) {
-                 SetCursor(LoadCursor(nullptr, IDC_HAND));
-             }
-         }
+          
+          // Update Button Hover using UIRenderer::HitTestWindowControls
+          int oldHoverIdx = g_winCtrlHoverState;
+          g_winCtrlHoverState = -1;
+          
+          // Auto-Show Controls Logic
+          RECT rcClient; GetClientRect(hwnd, &rcClient);
+          bool inTopArea = (pt.y <= 60); // 60px top area
+          
+          if (g_config.AutoHideWindowControls) {
+              // Simpler: Just rely on mouse Y.
+              if (inTopArea != g_showControls) {
+                  g_showControls = inTopArea;
+                  if (g_uiRenderer) g_uiRenderer->SetControlsVisible(g_showControls);
+                  RequestRepaint(PaintLayer::Static);  // WinControls are on Static layer
+              }
+          } else {
+              if (!g_showControls) { 
+                  g_showControls = true; 
+                  if (g_uiRenderer) g_uiRenderer->SetControlsVisible(g_showControls);
+                  RequestRepaint(PaintLayer::Static); 
+              }
+          }
+          
+          if (g_showControls && g_uiRenderer) {
+              // Use UIRenderer's unified hit testing
+              WindowControlHit hit = g_uiRenderer->HitTestWindowControls((float)pt.x, (float)pt.y);
+              switch (hit) {
+                  case WindowControlHit::Close:    g_winCtrlHoverState = 0; break;
+                  case WindowControlHit::Maximize: g_winCtrlHoverState = 1; break;
+                  case WindowControlHit::Minimize: g_winCtrlHoverState = 2; break;
+                  case WindowControlHit::Pin:      g_winCtrlHoverState = 3; break;
+                  default: break;
+              }
+              
+              // Hand cursor for window control buttons
+              if (g_winCtrlHoverState != -1) {
+                  SetCursor(LoadCursor(nullptr, IDC_HAND));
+              }
+          }
 
-         if (oldHit != g_winControls.HoverState) {
-             if (!isTracking) {
-                TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0 };
-                TrackMouseEvent(&tme);
-                isTracking = true;
-             }
-             MarkStaticLayerDirty();  // Window Controls hover change (includes InvalidateRect)
-         }
+          if (oldHoverIdx != g_winCtrlHoverState) {
+              if (!isTracking) {
+                 TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0 };
+                 TrackMouseEvent(&tme);
+                 isTracking = true;
+              }
+              if (g_uiRenderer) g_uiRenderer->SetWindowControlHover(g_winCtrlHoverState);
+              MarkStaticLayerDirty();  // Window Controls hover change (includes InvalidateRect)
+          }
          
          // Middle button window drag
          if (g_viewState.IsMiddleDragWindow) {
@@ -3000,8 +2978,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
          return 0;
     }
     case WM_MOUSELEAVE:
-        g_winControls.HoverState = WindowHit::None;
-        if (g_config.AutoHideWindowControls) { g_showControls = false; }
+        g_winCtrlHoverState = -1;
+        if (g_uiRenderer) g_uiRenderer->SetWindowControlHover(-1);
+        if (g_config.AutoHideWindowControls) { 
+            g_showControls = false; 
+            if (g_uiRenderer) g_uiRenderer->SetControlsVisible(false);
+        }
         isTracking = false;
         RequestRepaint(PaintLayer::Static);  // WinControls are on Static layer
         return 0;
@@ -3185,11 +3167,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         
-        // 0. Window control buttons - HIGHEST PRIORITY
-        if (g_winControls.HoverState != WindowHit::None) {
-            switch (g_winControls.HoverState) {
-                case WindowHit::Close: SendMessage(hwnd, WM_CLOSE, 0, 0); return 0;
-                case WindowHit::Max: {
+        // 0. Window control buttons - HIGHEST PRIORITY (using cached hover state)
+        if (g_winCtrlHoverState != -1) {
+            switch (g_winCtrlHoverState) {
+                case 0: SendMessage(hwnd, WM_CLOSE, 0, 0); return 0; // Close
+                case 1: { // Maximize
                     // [Fix] Exit Fullscreen if active, else toggle Maximize
                     if (g_isFullScreen) {
                         SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
@@ -3231,8 +3213,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     }
                     return 0;
                 }
-                case WindowHit::Min: ShowWindow(hwnd, SW_MINIMIZE); return 0;
-                case WindowHit::Pin: SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0); return 0;
+                case 2: ShowWindow(hwnd, SW_MINIMIZE); return 0; // Min
+                case 3: SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0); return 0; // Pin
                 default: break;
             }
         }
@@ -3327,15 +3309,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
         }
         
-        // Buttons (Window Controls)
-        if (g_showControls) {
-             if (g_winControls.HoverState == WindowHit::Close) { PostMessage(hwnd, WM_CLOSE, 0, 0); return 0; }
-             if (g_winControls.HoverState == WindowHit::Max) { 
-                 if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE); else ShowWindow(hwnd, SW_MAXIMIZE); 
-                 return 0; 
-             }
-             if (g_winControls.HoverState == WindowHit::Min) { ShowWindow(hwnd, SW_MINIMIZE); return 0; }
-        }
+        // Window control clicks are already handled at the top of WM_LBUTTONDOWN
 
         // Toolbar Interaction - Prevent Window Drag if clicking toolbar
         if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
@@ -5691,7 +5665,7 @@ void OnPaint(HWND hwnd) {
         // CalculateWindowControls(logicW, logicH); // Actually CalculateWindowControls takes size.
         // But logicW/logicH IS the size in DIPs.
         D2D1_SIZE_F logicSize = D2D1::SizeF(logicW, logicH);
-        CalculateWindowControls(hwnd, logicSize);
+        // CalculateWindowControls removed - hit testing now in UIRenderer
         // DrawWindowControls, OSD, InfoPanel, etc moved to UIRenderer (DComp Surface)
         // Legacy SwapChain rendering logic removed.
     }
@@ -5775,16 +5749,14 @@ void OnPaint(HWND hwnd) {
             }
         }
         
-        // Sync hover state: convert WindowHit enum to int
-        int hoverIdx = -1;
-        if (g_winControls.HoverState == WindowHit::Close) hoverIdx = 0;
-        else if (g_winControls.HoverState == WindowHit::Max) hoverIdx = 1;
-        else if (g_winControls.HoverState == WindowHit::Min) hoverIdx = 2;
-        else if (g_winControls.HoverState == WindowHit::Pin) hoverIdx = 3;
-        g_uiRenderer->SetWindowControlHover(hoverIdx);
+        // Sync window control hover state (already tracked in g_winCtrlHoverState)
+        g_uiRenderer->SetWindowControlHover(g_winCtrlHoverState);
         
         // Sync visibility (auto-hide logic)
         g_uiRenderer->SetControlsVisible(g_showControls);
+        
+        // [Unified] Sync fullscreen state for correct button positioning
+        g_uiRenderer->SetFullscreenState(g_isFullScreen);
         
         // Sync pin state
         g_uiRenderer->SetPinActive(g_config.AlwaysOnTop);
