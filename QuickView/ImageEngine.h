@@ -105,6 +105,9 @@ public:
     // [Fix] Invalidate specific cache entry (e.g. after Edit/Save)
     void InvalidateCache(const std::wstring& path);
 
+    // [v9.0] Force Refresh Signal (Atomic One-Shot)
+    void SetForceRefresh(bool force) { m_forceRefresh = force; }
+
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
     // This replaces callbacks.
@@ -370,6 +373,10 @@ private:
     };
     std::deque<PrefetchTask> m_prefetchQueue;
     void PumpPrefetch();
+    
+    // [v9.0] Force Refresh Flag
+    std::atomic<bool> m_forceRefresh{false};
+
 public:
     bool HasEmbeddedThumb() const { return m_hasEmbeddedThumb.load(); }
 };

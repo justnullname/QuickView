@@ -28,6 +28,12 @@ enum class PixelFormat : uint8_t {
     SVG_XML             // [D2D Native] Raw SVG XML Data
 };
 
+// [v9.0] Decode Quality Tag (for Cache Validation)
+enum class DecodeQuality : uint8_t {
+    Preview = 0, // Embedded Thumb / Scaled / Fast
+    Full = 1     // Full Resolution / Raw Decode
+};
+
 // ============================================================================
 // RawImageFrame - The Standardized Cargo Box
 // ============================================================================
@@ -46,6 +52,9 @@ struct RawImageFrame {
     int stride = 0;             // Bytes per row (pitch), must be aligned
     PixelFormat format = PixelFormat::BGRA8888;
     
+    // [v9.0] Quality Tag (Default to Preview to be safe)
+    DecodeQuality quality = DecodeQuality::Preview;
+
     // [v5.4] Intrinsic Decoder Details (e.g. "4:2:0", "Progressive")
     std::wstring formatDetails;
     

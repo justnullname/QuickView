@@ -3613,16 +3613,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ToolbarButtonID::LockSize: SendMessage(hwnd, WM_COMMAND, IDM_LOCK_WINDOW_SIZE, 0); break;
                 case ToolbarButtonID::Exif:    SendMessage(hwnd, WM_COMMAND, IDM_SHOW_INFO_PANEL, 0); break;
                 case ToolbarButtonID::RawToggle: {
-                    // [Fix] Toggle only runtime state (current image), do NOT change global config default
-                    g_runtime.ForceRawDecode = !g_runtime.ForceRawDecode;
-                    
-                    g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
-                    // Reload
-                    ReleaseImageResources(); // Free current
-                    LoadImageAsync(hwnd, g_imagePath);
-                    
-                    std::wstring msg = g_runtime.ForceRawDecode ? L"RAW: Full Decode (High Quality)" : L"RAW: Embedded Preview (Fast)";
-                    g_osd.Show(hwnd, msg, false);
+                    // [Refactor] Use Centralized Command Handler (same as Menu)
+                    // This ensures proper Config Update + Force Refresh logic is applied.
+                    SendMessage(hwnd, WM_COMMAND, IDM_RENDER_RAW, 0); 
                     break;
                 }
                 case ToolbarButtonID::FixExtension: SendMessage(hwnd, WM_COMMAND, IDM_FIX_EXTENSION, 0); break;
@@ -4617,6 +4610,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
              
              if (!g_imagePath.empty()) {
+                 if (g_imageEngine) {
+                     g_imageEngine->UpdateConfig(g_runtime); // [Fix] Push config to engine
+                     g_imageEngine->SetForceRefresh(true);
+                 }
                  ReleaseImageResources();
                  LoadImageAsync(hwnd, g_imagePath.c_str()); 
              }

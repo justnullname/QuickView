@@ -448,6 +448,13 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             // [v5.4] Extract FormatDetails
             meta.FormatDetails = rawFrame.formatDetails;
             
+            // [v9.0] Set Quality Tag
+            if (isFullDecode) {
+                rawFrame.quality = QuickView::DecodeQuality::Full;
+            } else {
+                rawFrame.quality = QuickView::DecodeQuality::Preview;
+            }
+
             // [FIX] Ensure metadata dimensions match the actual decoded image
             if (meta.Width == 0 || meta.Height == 0) {
                  meta.Width = rawFrame.width;
@@ -486,6 +493,9 @@ void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
             // HeavyPool uses shared Arena from TripleArenaPool.
             // If another worker uses the arena, or this worker starts a new job, memory is reset.
             auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
+            // [v9.0 Fix] Propagate Quality Tag
+            safeFrame->quality = rawFrame.quality;
+
             if (rawFrame.IsSvg()) {
                 safeFrame->format = rawFrame.format;
                 safeFrame->width = rawFrame.width;
