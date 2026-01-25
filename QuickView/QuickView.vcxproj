@@ -119,6 +119,7 @@
     <ClInclude Include="ThumbnailManager.h" />
     <ClInclude Include="Toolbar.h" />
     <ClInclude Include="SettingsOverlay.h" />
+    <ClInclude Include="HelpOverlay.h" />
     <ClInclude Include="UpdateManager.h" />
     <ClInclude Include="PreviewExtractor.h" />
     <ClInclude Include="ImageEngine.h" />
@@ -151,6 +152,7 @@
     <ClCompile Include="ThumbnailManager.cpp" />
     <ClCompile Include="Toolbar.cpp" />
     <ClCompile Include="SettingsOverlay.cpp" />
+    <ClCompile Include="HelpOverlay.cpp" />
     <ClCompile Include="UpdateManager.cpp" />
     <ClCompile Include="PreviewExtractor.cpp" />
     <ClCompile Include="ImageEngine.cpp" />

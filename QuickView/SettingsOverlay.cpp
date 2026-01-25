@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "SettingsOverlay.h"
+#include "HelpOverlay.h"
 #include "AppStrings.h"
 #include "ImageEngine.h"
 #include <algorithm>
@@ -22,6 +23,7 @@ extern ImageEngine* g_pImageEngine;
 extern AppConfig g_config;
 extern RuntimeConfig g_runtime;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
+extern HelpOverlay g_helpOverlay;
 
 
 static std::wstring GetAppVersion() {
@@ -1585,12 +1587,13 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      D2D1_RECT_F iconR = D2D1::RectF(startX, r.keys.top, startX + 20, r.keys.bottom); 
                      m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); 
                      m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     pRT->DrawText(L"\xE92E", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     // [Fix] Update Icon to Help (\xE897) instead of Keyboard (\xE92E)
+                     pRT->DrawText(L"\xE897", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                      
                      D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.keys.top, r.keys.right, r.keys.bottom);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(AppStrings::Settings_Link_Hotkeys, (UINT32)wcslen(AppStrings::Settings_Link_Hotkeys), m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(L"Help / Keys", 11, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                 }
                 
                 m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -2332,7 +2335,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                  ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
              }
              else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) {
-                 MessageBoxW(NULL, L"Hotkeys:\nF1 / Space: Help\nArrows: Navigate\nEsc: Close", L"QuickView Hotkeys", MB_OK);
+                 // Trigger Handoff to Main Window logic
+                 return SettingsAction::OpenHelp;
              }
              return SettingsAction::None;
         }

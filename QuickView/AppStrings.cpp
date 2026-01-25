@@ -219,6 +219,37 @@ namespace AppStrings {
     const wchar_t* Settings_Option_Balanced = nullptr;
     const wchar_t* Settings_Option_Ultra = nullptr;
 
+    const wchar_t* Help_Header_Shortcuts = nullptr;
+    const wchar_t* Help_Header_Mouse = nullptr;
+    const wchar_t* Help_Item_NextPrev = nullptr;
+    const wchar_t* Help_Item_Zoom = nullptr;
+    const wchar_t* Help_Item_Pan = nullptr;
+    const wchar_t* Help_Item_Rotate = nullptr;
+    const wchar_t* Help_Item_Fit = nullptr;
+    const wchar_t* Help_Item_Delete = nullptr;
+    const wchar_t* Help_Item_Fullscreen = nullptr;
+    const wchar_t* Help_Item_Close = nullptr;
+    const wchar_t* Help_Mouse_Left = nullptr;
+    const wchar_t* Help_Mouse_Middle = nullptr;
+    const wchar_t* Help_Mouse_Wheel = nullptr;
+    const wchar_t* Help_Mouse_Right = nullptr;
+    const wchar_t* Help_Action_MoveWindow = nullptr;
+    const wchar_t* Help_Action_PanImage = nullptr;
+    const wchar_t* Help_Action_ContextMenu = nullptr;
+    const wchar_t* Help_Action_NextPrev = nullptr;
+    const wchar_t* Help_Action_Zoom = nullptr;
+    const wchar_t* Help_Desc_Copy = nullptr;
+    const wchar_t* Help_Desc_Edit = nullptr;
+    
+    // Glossary
+    const wchar_t* Help_Header_Tips = nullptr;
+    const wchar_t* Help_Tip_ContextScope = nullptr;
+    const wchar_t* Help_Tip_Rotation = nullptr;
+    const wchar_t* Help_Tip_VideoWall = nullptr;
+    const wchar_t* Help_Tip_DesignerMode = nullptr;
+    const wchar_t* Help_Tip_Raw = nullptr;
+    const wchar_t* Help_Tip_JpegQ = nullptr;
+
     // ----------------------------------------------------------------
     // English Table (Source of Truth)
     // ----------------------------------------------------------------
@@ -416,7 +447,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Status_UpToDate = L"Up to date";
         static constexpr const wchar_t* Settings_Link_GitHub = L"GitHub Repo";
         static constexpr const wchar_t* Settings_Link_ReportIssue = L"Report Issue";
-        static constexpr const wchar_t* Settings_Link_Hotkeys = L"Hotkeys";
+        static constexpr const wchar_t* Settings_Link_Hotkeys = L"Help (F1)";
         static constexpr const wchar_t* Settings_Label_Version = L"Version";
         static constexpr const wchar_t* Settings_Label_Build = L"Build";
     
@@ -437,6 +468,36 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"Eco";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Balanced";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ultra";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"Keyboard Shortcuts";
+        static constexpr const wchar_t* Help_Header_Mouse = L"Mouse Actions";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"Next / Previous Image";
+        static constexpr const wchar_t* Help_Item_Zoom = L"Zoom In / Out";
+        static constexpr const wchar_t* Help_Item_Pan = L"Pan Image";
+        static constexpr const wchar_t* Help_Item_Rotate = L"Rotate";
+        static constexpr const wchar_t* Help_Item_Fit = L"Fit to Screen";
+        static constexpr const wchar_t* Help_Item_Delete = L"Delete Image";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"Fullscreen";
+        static constexpr const wchar_t* Help_Item_Close = L"Close";
+        static constexpr const wchar_t* Help_Mouse_Left = L"Left Button";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"Middle Button";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"Wheel";
+        static constexpr const wchar_t* Help_Mouse_Right = L"Right Button";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Move Window";
+        static constexpr const wchar_t* Help_Action_PanImage = L"Pan Image";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"Context Menu";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"Next/Prev Image";
+        static constexpr const wchar_t* Help_Action_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
+        static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
+        
+        static constexpr const wchar_t* Help_Header_Tips = L"Tips & Glossary";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"Note: Shortcuts apply to the current window only. Settings are global.";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"Rotation: 'Edge Adapted' means minor cropping to align with codec blocks (lossless). 'Lossy' means re-encoding is required.";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"Video Wall (Ctrl+F11): Spans all screens. If the close button is hidden, double-click anywhere to exit.";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window + Lock Size. Use Zoom/Pan to focus on details. Useful for reference images.";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW: Shows embedded preview by default for speed. Click the RAW button to fully decode (colors may vary).";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q-value. May differ slightly from save settings due to encoder variance (e.g. PS 100% \u2248 98%), which is normal.";
     };
 
     // ----------------------------------------------------------------
@@ -555,7 +616,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Status_UpToDate = L"已是最新";
         static constexpr const wchar_t* Settings_Link_GitHub = L"GitHub 仓库";
         static constexpr const wchar_t* Settings_Link_ReportIssue = L"反馈问题";
-        static constexpr const wchar_t* Settings_Link_Hotkeys = L"快捷键";
+        static constexpr const wchar_t* Settings_Link_Hotkeys = L"帮助 (F1)";
         static constexpr const wchar_t* Settings_Label_Version = L"版本";
         static constexpr const wchar_t* Settings_Label_Build = L"构建";
     
@@ -576,6 +637,26 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"节能";
         static constexpr const wchar_t* Settings_Option_Balanced = L"平衡";
         static constexpr const wchar_t* Settings_Option_Ultra = L"极速";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"键盘快捷键";
+        static constexpr const wchar_t* Help_Header_Mouse = L"鼠标操作";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"切换图片";
+        static constexpr const wchar_t* Help_Item_Zoom = L"缩放";
+        static constexpr const wchar_t* Help_Item_Pan = L"平移图片";
+        static constexpr const wchar_t* Help_Item_Rotate = L"旋转";
+        static constexpr const wchar_t* Help_Item_Fit = L"适应屏幕";
+        static constexpr const wchar_t* Help_Item_Delete = L"删除图片";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"全屏";
+        static constexpr const wchar_t* Help_Item_Close = L"关闭";
+        static constexpr const wchar_t* Help_Mouse_Left = L"左键";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"中键";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"滚轮";
+        static constexpr const wchar_t* Help_Mouse_Right = L"右键";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"移动窗口";
+        static constexpr const wchar_t* Help_Action_PanImage = L"平移图片";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"上下文菜单";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"切换图片";
+        static constexpr const wchar_t* Help_Action_Zoom = L"缩放";
 
         // Context Menu
         static constexpr const wchar_t* Context_Open = L"打开...\tCtrl+O";
@@ -656,6 +737,18 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_LastImage = L"已是最后一张";
         static constexpr const wchar_t* OSD_HD = L"全高清";
         static constexpr const wchar_t* OSD_ZoomPrefix = L"缩放: ";
+        
+        // static constexpr const wchar_t* Help_Action_Zoom = L"缩放";
+        static constexpr const wchar_t* Help_Desc_Copy = L"复制图像";
+        static constexpr const wchar_t* Help_Desc_Edit = L"编辑";
+        
+        static constexpr const wchar_t* Help_Header_Tips = L"提示与术语";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"注意：快捷键仅对当前窗口生效，设置选项为全局永久生效。";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"旋转说明：'边缘适配' 指为匹配编码块边界进行的微量裁剪(无损)；'有损' 指必须要进行重编码。";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"跨屏模式 (Ctrl+F11)：合并所有显示器。若关闭按钮不可见(如L型布局)，双击任意处即可退出。";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"设计师参考图：窗口置顶+锁定尺寸。配合缩放平移，可作为固定参考悬浮窗使用。";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW 按钮可进行完整解码(色彩可能不同)。";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 质量：基于算法估算的 Q 值。因编码器差异，可能与保存数值有微小偏差(如 PS 100% \u2248 98%)，属正常现象。";
     };
 
     // ----------------------------------------------------------------
@@ -853,6 +946,36 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"節能";
         static constexpr const wchar_t* Settings_Option_Balanced = L"平衡";
         static constexpr const wchar_t* Settings_Option_Ultra = L"極速";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"鍵盤快速鍵";
+        static constexpr const wchar_t* Help_Header_Mouse = L"滑鼠操作";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"切換圖片";
+        static constexpr const wchar_t* Help_Item_Zoom = L"縮放";
+        static constexpr const wchar_t* Help_Item_Pan = L"平移圖片";
+        static constexpr const wchar_t* Help_Item_Rotate = L"旋轉";
+        static constexpr const wchar_t* Help_Item_Fit = L"適應螢幕";
+        static constexpr const wchar_t* Help_Item_Delete = L"刪除圖片";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"全螢幕";
+        static constexpr const wchar_t* Help_Item_Close = L"關閉";
+        static constexpr const wchar_t* Help_Mouse_Left = L"左鍵";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"中鍵";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"滾輪";
+        static constexpr const wchar_t* Help_Mouse_Right = L"右鍵";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"移動視窗";
+        static constexpr const wchar_t* Help_Action_PanImage = L"平移圖片";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"右鍵選單";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"切換圖片";
+        static constexpr const wchar_t* Help_Action_Zoom = L"縮放";
+        static constexpr const wchar_t* Help_Desc_Copy = L"復制圖像";
+        static constexpr const wchar_t* Help_Desc_Edit = L"編輯";
+        
+        static constexpr const wchar_t* Help_Header_Tips = L"提示與術語";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"注意：快捷鍵或右鍵操作僅影響當前進程，設置中的配置為程序永久配置。";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"旋轉說明：/邊緣適配/有損 是由於某些圖片格式特性造成的無法完整無損操作。邊緣適配通常只損失邊緣N個像素，接近無損。";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"電視牆模式 (Ctrl+F11)：將所有顯示器視為一塊屏幕。若關閉按鈕位於顯示區外 (如L型排布)，雙擊即可退出全屏。";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"設計師參考圖模式：設定窗口置頂，調整尺寸並鎖定，使用縮放/平移定位局部細節，拖動窗口至合適位置參考。";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW 按鈕：QuickView 默認顯示 RAW 預覽圖。點擊此按鈕將使用默認參數完整渲染 RAW 文件 (結果可能與預覽不同)。";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 壓縮率：信息面板顯示的 Q 值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% 可能顯示為 98)，屬正常情況。";
     };
 
     // ----------------------------------------------------------------
@@ -1050,6 +1173,36 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"エコ";
         static constexpr const wchar_t* Settings_Option_Balanced = L"バランス";
         static constexpr const wchar_t* Settings_Option_Ultra = L"ウルトラ";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"キーボードショートカット";
+        static constexpr const wchar_t* Help_Header_Mouse = L"マウス操作";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"次の/前の画像";
+        static constexpr const wchar_t* Help_Item_Zoom = L"ズームイン/アウト";
+        static constexpr const wchar_t* Help_Item_Pan = L"画像をパン";
+        static constexpr const wchar_t* Help_Item_Rotate = L"回転";
+        static constexpr const wchar_t* Help_Item_Fit = L"画面に合わせる";
+        static constexpr const wchar_t* Help_Item_Delete = L"画像を削除";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"全画面";
+        static constexpr const wchar_t* Help_Item_Close = L"閉じる";
+        static constexpr const wchar_t* Help_Mouse_Left = L"左ボタン";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"中ボタン";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"ホイール";
+        static constexpr const wchar_t* Help_Mouse_Right = L"右ボタン";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"ウィンドウ移動";
+        static constexpr const wchar_t* Help_Action_PanImage = L"画像をパン";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"コンテキストメニュー";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"次/前の画像";
+        static constexpr const wchar_t* Help_Action_Zoom = L"ズーム";
+        static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
+        static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
+
+        static constexpr const wchar_t* Help_Header_Tips = L"Tips & Glossary";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"Note: Shortcuts and context menu actions affect the current process only. Settings are permanent.";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries (lossless data). 'Lossy' means full re-encoding.";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, double-click to exit.";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
     };
 
     // ----------------------------------------------------------------
@@ -1247,6 +1400,36 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"Эко";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Баланс";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ультра";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"Горячие клавиши";
+        static constexpr const wchar_t* Help_Header_Mouse = L"Мышь";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"След./Пред. изображение";
+        static constexpr const wchar_t* Help_Item_Zoom = L"Масштабирование";
+        static constexpr const wchar_t* Help_Item_Pan = L"Панорамирование";
+        static constexpr const wchar_t* Help_Item_Rotate = L"Поворот";
+        static constexpr const wchar_t* Help_Item_Fit = L"По размеру экрана";
+        static constexpr const wchar_t* Help_Item_Delete = L"Удалить изображение";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"Полный экран";
+        static constexpr const wchar_t* Help_Item_Close = L"Закрыть";
+        static constexpr const wchar_t* Help_Mouse_Left = L"Левая кнопка";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"Средняя кнопка";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"Колесо";
+        static constexpr const wchar_t* Help_Mouse_Right = L"Правая кнопка";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Перемещение окна";
+        static constexpr const wchar_t* Help_Action_PanImage = L"Панорамирование";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"Контекстное меню";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"След./Пред.";
+        static constexpr const wchar_t* Help_Action_Zoom = L"Зум";
+        static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
+        static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
+
+        static constexpr const wchar_t* Help_Header_Tips = L"Tips & Glossary";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"Note: Shortcuts and context menu actions affect the current process only. Settings are permanent.";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries (lossless data). 'Lossy' means full re-encoding.";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, double-click to exit.";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
     };
 
     // ----------------------------------------------------------------
@@ -1444,6 +1627,36 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"Öko";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Ausgewogen";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ultra";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"Tastenkürzel";
+        static constexpr const wchar_t* Help_Header_Mouse = L"Mausaktionen";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"Nächstes/Vorheriges Bild";
+        static constexpr const wchar_t* Help_Item_Zoom = L"Zoomen";
+        static constexpr const wchar_t* Help_Item_Pan = L"Bild schwenken";
+        static constexpr const wchar_t* Help_Item_Rotate = L"Drehen";
+        static constexpr const wchar_t* Help_Item_Fit = L"An Bildschirm anpassen";
+        static constexpr const wchar_t* Help_Item_Delete = L"Bild löschen";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"Vollbild";
+        static constexpr const wchar_t* Help_Item_Close = L"Schließen";
+        static constexpr const wchar_t* Help_Mouse_Left = L"Linke Taste";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"Mittlere Taste";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"Mausrad";
+        static constexpr const wchar_t* Help_Mouse_Right = L"Rechte Taste";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Fenster bewegen";
+        static constexpr const wchar_t* Help_Action_PanImage = L"Bild schwenken";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"Kontextmenü";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"Weiter/Zurück";
+        static constexpr const wchar_t* Help_Action_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
+        static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
+
+        static constexpr const wchar_t* Help_Header_Tips = L"Tips & Glossary";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"Note: Shortcuts and context menu actions affect the current process only. Settings are permanent.";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries (lossless data). 'Lossy' means full re-encoding.";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, double-click to exit.";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
     };
 
     // ----------------------------------------------------------------
@@ -1641,6 +1854,36 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Eco = L"Eco";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Equilibrado";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ultra";
+
+        static constexpr const wchar_t* Help_Header_Shortcuts = L"Atajos de teclado";
+        static constexpr const wchar_t* Help_Header_Mouse = L"Acciones del ratón";
+        static constexpr const wchar_t* Help_Item_NextPrev = L"Siguiente / Anterior";
+        static constexpr const wchar_t* Help_Item_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Item_Pan = L"Mover imagen";
+        static constexpr const wchar_t* Help_Item_Rotate = L"Girar";
+        static constexpr const wchar_t* Help_Item_Fit = L"Ajustar a pantalla";
+        static constexpr const wchar_t* Help_Item_Delete = L"Eliminar imagen";
+        static constexpr const wchar_t* Help_Item_Fullscreen = L"Pantalla completa";
+        static constexpr const wchar_t* Help_Item_Close = L"Cerrar";
+        static constexpr const wchar_t* Help_Mouse_Left = L"Botón izquierdo";
+        static constexpr const wchar_t* Help_Mouse_Middle = L"Botón central";
+        static constexpr const wchar_t* Help_Mouse_Wheel = L"Rueda";
+        static constexpr const wchar_t* Help_Mouse_Right = L"Botón derecho";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Mover ventana";
+        static constexpr const wchar_t* Help_Action_PanImage = L"Mover imagen";
+        static constexpr const wchar_t* Help_Action_ContextMenu = L"Menú contextual";
+        static constexpr const wchar_t* Help_Action_NextPrev = L"Sig./Ant.";
+        static constexpr const wchar_t* Help_Action_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
+        static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
+
+        static constexpr const wchar_t* Help_Header_Tips = L"Tips & Glossary";
+        static constexpr const wchar_t* Help_Tip_ContextScope = L"Note: Shortcuts and context menu actions affect the current process only. Settings are permanent.";
+        static constexpr const wchar_t* Help_Tip_Rotation = L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries (lossless data). 'Lossy' means full re-encoding.";
+        static constexpr const wchar_t* Help_Tip_VideoWall = L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, double-click to exit.";
+        static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
+        static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
+        static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
     };
 
     // ----------------------------------------------------------------
@@ -1860,6 +2103,36 @@ namespace AppStrings {
         Settings_Option_Eco = T::Settings_Option_Eco;
         Settings_Option_Balanced = T::Settings_Option_Balanced;
         Settings_Option_Ultra = T::Settings_Option_Ultra;
+
+        Help_Header_Shortcuts = T::Help_Header_Shortcuts;
+        Help_Header_Mouse = T::Help_Header_Mouse;
+        Help_Item_NextPrev = T::Help_Item_NextPrev;
+        Help_Item_Zoom = T::Help_Item_Zoom;
+        Help_Item_Pan = T::Help_Item_Pan;
+        Help_Item_Rotate = T::Help_Item_Rotate;
+        Help_Item_Fit = T::Help_Item_Fit;
+        Help_Item_Delete = T::Help_Item_Delete;
+        Help_Item_Fullscreen = T::Help_Item_Fullscreen;
+        Help_Item_Close = T::Help_Item_Close;
+        Help_Mouse_Left = T::Help_Mouse_Left;
+        Help_Mouse_Middle = T::Help_Mouse_Middle;
+        Help_Mouse_Wheel = T::Help_Mouse_Wheel;
+        Help_Mouse_Right = T::Help_Mouse_Right;
+        Help_Action_MoveWindow = T::Help_Action_MoveWindow;
+        Help_Action_PanImage = T::Help_Action_PanImage;
+        Help_Action_ContextMenu = T::Help_Action_ContextMenu;
+        Help_Action_NextPrev = T::Help_Action_NextPrev;
+        Help_Action_Zoom = T::Help_Action_Zoom;
+        Help_Desc_Copy = T::Help_Desc_Copy;
+        Help_Desc_Edit = T::Help_Desc_Edit;
+        
+        Help_Header_Tips = T::Help_Header_Tips;
+        Help_Tip_ContextScope = T::Help_Tip_ContextScope;
+        Help_Tip_Rotation = T::Help_Tip_Rotation;
+        Help_Tip_VideoWall = T::Help_Tip_VideoWall;
+        Help_Tip_DesignerMode = T::Help_Tip_DesignerMode;
+        Help_Tip_Raw = T::Help_Tip_Raw;
+        Help_Tip_JpegQ = T::Help_Tip_JpegQ;
     }
 
     void Init() {

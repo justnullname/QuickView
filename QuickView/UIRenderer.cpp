@@ -4,6 +4,7 @@
 #include "Toolbar.h"
 #include "GalleryOverlay.h"
 #include "SettingsOverlay.h"
+#include "HelpOverlay.h"
 #include "EditState.h"
 #include <psapi.h>
 
@@ -15,6 +16,7 @@
 extern Toolbar g_toolbar;
 extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
+extern HelpOverlay g_helpOverlay;
 extern ImageEngine* g_pImageEngine; // [v3.1] Accessor (renamed from g_imageEngine)
 
 // DrawDialog is still in main.cpp (modal dialog handling)
@@ -491,6 +493,9 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     
     // Settings Overlay
     g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
+    
+    // Help Overlay (Top of Static Layer)
+    g_helpOverlay.Render(dc, (float)m_width, (float)m_height);
 }
 
 // ============================================================================

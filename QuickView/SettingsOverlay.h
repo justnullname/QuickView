@@ -11,7 +11,8 @@
 enum class SettingsAction {
     None,
     RepaintStatic, // Only UI layer needs update (Tab switch, Hover)
-    RepaintAll     // Config changed, partial or full image redraw might be needed
+    RepaintAll,    // Config changed, partial or full image redraw might be needed
+    OpenHelp       // Close Settings and Open Help Overlay (Handoff)
 };
 
 enum class OptionType {

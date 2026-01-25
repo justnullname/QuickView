@@ -102,6 +102,7 @@ struct DialogState {
 #include "GalleryOverlay.h"
 #include "Toolbar.h"
 #include "SettingsOverlay.h"
+#include "HelpOverlay.h"
 #include "UpdateManager.h"
 #pragma comment(lib, "version.lib")
 
@@ -131,13 +132,10 @@ static std::string GetAppVersionUTF8() {
 }
 
 // Function Prototypes
-// Function Prototypes
-static void SyncDCompState(HWND hwnd, float winW, float winH);
-RECT GetVirtualScreenRect();
+
 
 // --- Globals ---
 
-#define WM_UPDATE_FOUND (WM_APP + 2)
 #define WM_UPDATE_FOUND (WM_APP + 2)
 #define WM_ENGINE_EVENT (WM_APP + 3)
 
@@ -208,6 +206,7 @@ static ThumbnailManager g_thumbMgr;
 GalleryOverlay g_gallery;  // Non-static for extern access from UIRenderer
 Toolbar g_toolbar;  // Non-static for extern access from UIRenderer
 SettingsOverlay g_settingsOverlay;  // Non-static for extern access from UIRenderer
+HelpOverlay g_helpOverlay; // Non-static for extern access
 CImageLoader::ImageMetadata g_currentMetadata;  // Non-static for extern access from UIRenderer
 
 static ComPtr<IDWriteTextFormat> g_pPanelTextFormat;
@@ -245,6 +244,11 @@ static float g_fps = 0.0f;
 // When true, WM_SIZE should not reset g_viewState.Zoom which would cancel
 // the intended zoom change. Cleared by WM_SIZE after handling.
 static bool g_programmaticResize = false;
+
+// Forward Declaration needed for UpgradeSvgSurface and Helpers
+static void SyncDCompState(HWND hwnd, float w, float h);
+
+
 
 // True while the user is interactively resizing/moving the window (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)
 static bool g_isInSizeMove = false;
@@ -930,6 +934,139 @@ void RequestRepaint(PaintLayer layer) {
 
 // Window Controls visibility state (used by WM_MOUSEMOVE for auto-hide logic)
 static bool g_showControls = true;
+
+// --- Helpers for Zoom Consistency [Unification] ---
+
+// [Fix] Robust Size Calculation using Renderer Metrics
+// Recovers the VISUAL (Rotated) dimensions from the DComp surface.
+// Bypasses complex/fragile Exif parsing.
+static D2D1_SIZE_F GetVisualImageSize() {
+    // Primary: Reconstruct from Rendered Surface (Exif is already baked in here)
+    D2D1_SIZE_F result = {0, 0};
+    
+    if (g_lastFitScale > 0.0001f && g_lastSurfaceSize.width > 0) {
+        result = D2D1::SizeF(
+            g_lastSurfaceSize.width / g_lastFitScale, 
+            g_lastSurfaceSize.height / g_lastFitScale
+        );
+    } else {
+        // Fallback
+        result = g_imageResource ? g_imageResource.GetSize() : D2D1::SizeF(0,0);
+    }
+    
+    // [Fix Regression] Manual Rotation is applied ON TOP of the surface
+    // So we must swap dimensions if the user manually rotated 90/270 degrees.
+    bool manualSwap = (g_editState.TotalRotation % 180 != 0);
+    if (manualSwap) {
+        return D2D1::SizeF(result.height, result.width);
+    }
+    
+    return result;
+}
+
+// Inlined Logic to avoid dependency on local lambdas
+static void PerformZoom100(HWND hwnd) {
+    if (g_imageResource) {
+        // [Fix] Use Robust Visual Size
+        D2D1_SIZE_F effSize = GetVisualImageSize();
+        float imgW = effSize.width;
+        float imgH = effSize.height;
+        
+        // [Inlined] Original Size Logic
+        // Original logic checked rotation to pick Metadata Width vs Height.
+        // We can just use imgW/imgH as "Original" if metadata is missing or mismatch.
+        // Assuming current rotation is desired "Original" shape.
+        float originalW = imgW; 
+        float originalH = imgH;
+        
+        // If metadata available, ensure we respect its scale magnitude?
+        // Actually, imgW/imgH *is* the pixel resolution (unscaled).
+        if (imgW > 0 && imgH > 0) {
+            float renderScaleTarget = (imgW / imgW); // 1.0 (Logic simplification)
+            
+            // Logic to resize window to wrap image at 100% if allowed
+            if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+                 int targetW = (int)imgW; // Target unscaled pixel width
+                 int targetH = (int)imgH;
+                 
+                 HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                 MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                 int maxW = (mi.rcWork.right - mi.rcWork.left);
+                 int maxH = (mi.rcWork.bottom - mi.rcWork.top);
+                 
+                 if (targetW > maxW) targetW = maxW;
+                 if (targetH > maxH) targetH = maxH;
+                 if (targetW < 400) targetW = 400; 
+                 if (targetH < 300) targetH = 300;
+                 
+                 RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                 int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
+                 int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
+                 
+                 SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+                 
+                 RECT rcNew; GetClientRect(hwnd, &rcNew);
+                 float newFitScale = std::min((float)rcNew.right / imgW, (float)rcNew.bottom / imgH);
+                 if (newFitScale > 0) g_viewState.Zoom = renderScaleTarget / newFitScale;
+            } else {
+                RECT rc; GetClientRect(hwnd, &rc);
+                float fitScale = std::min((float)rc.right / imgW, (float)rc.bottom / imgH);
+                if (fitScale > 0) g_viewState.Zoom = renderScaleTarget / fitScale;
+            }
+
+            g_viewState.PanX = 0;
+            g_viewState.PanY = 0;
+            g_osd.Show(hwnd, AppStrings::OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
+        }
+    }
+    RequestRepaint(PaintLayer::All);
+}
+
+static void PerformZoomFit(HWND hwnd) {
+    if (g_imageResource) {
+        // [Existing Logic 0]
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+        int screenW = mi.rcWork.right - mi.rcWork.left;
+        int screenH = mi.rcWork.bottom - mi.rcWork.top;
+        
+        RECT rcWin, rcClient;
+        GetWindowRect(hwnd, &rcWin);
+        GetClientRect(hwnd, &rcClient);
+        int borderW = (rcWin.right - rcWin.left) - (rcClient.right - rcClient.left);
+        int borderH = (rcWin.bottom - rcWin.top) - (rcClient.bottom - rcClient.top);
+        
+        int maxClientW = screenW - borderW;
+        int maxClientH = screenH - borderH;
+        
+        // [Inlined] Rotation/Effective Size
+        // [Fix] Use Robust Visual Size
+        D2D1_SIZE_F effSize = GetVisualImageSize();
+        float imgPixW = effSize.width;
+        float imgPixH = effSize.height;
+        
+        if (imgPixW > 0 && imgPixH > 0) {
+             float ratioW = (float)maxClientW / imgPixW;
+             float ratioH = (float)maxClientH / imgPixH;
+             float scale = std::min(ratioW, ratioH);
+             
+             int targetClientW = (int)(imgPixW * scale);
+             int targetClientH = (int)(imgPixH * scale);
+             
+             int targetWinW = targetClientW + borderW;
+             int targetWinH = targetClientH + borderH;
+             
+             int x = mi.rcWork.left + (screenW - targetWinW) / 2;
+             int y = mi.rcWork.top + (screenH - targetWinH) / 2;
+             
+             SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        
+        g_viewState.Zoom = 1.0f; 
+        g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
+        RequestRepaint(PaintLayer::All);
+    }
+}
 
 // --- REFACTOR: CalculateWindowControls removed, hit testing now in UIRenderer ---
 
@@ -2360,6 +2497,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
     g_gallery.Initialize(&g_thumbMgr, &g_navigator);
     g_settingsOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
+    g_helpOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
     DragAcceptFiles(hwnd, TRUE);
     
     // Apply Always on Top
@@ -2514,6 +2652,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return TRUE;
     }
+
+
     case WM_UPDATE_FOUND: {
         bool found = (wParam != 0);
         if (found) {
@@ -2867,6 +3007,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           // Let's store s_hideRequestTime in a global "g_toolbarHideTime" for simplicity.
           extern DWORD g_toolbarHideTime; // Defined in global scope
           g_toolbarHideTime = s_hideRequestTime; 
+          
+          if (g_helpOverlay.IsVisible()) {
+              g_helpOverlay.OnMouseMove((float)pt.x, (float)pt.y);
+              RequestRepaint(PaintLayer::Static);
+              // Allow fallthrough so we can still drag window if needed? 
+              // Usually overlay blocks underlying.
+              // But let's allow fallthrough for now unless we want modal block.
+          }
+
           // Toolbar Mouse Move
         if (g_toolbar.OnMouseMove((float)pt.x, (float)pt.y)) {
              RequestRepaint(PaintLayer::Static); // Toolbar is on Static layer
@@ -2990,6 +3139,40 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
 
         
+    case WM_LBUTTONDBLCLK:
+        // [Fix] Fullscreen Exit on Double Click
+        if (g_isFullScreen) {
+            SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+            return 0;
+        }
+
+        if (g_imageResource) {
+            // [Logic 2.0] Smart Toggle: If at 100% view, go Fit. Otherwise go 100%.
+            D2D1_SIZE_F effSize = GetVisualImageSize();
+            float imgW = effSize.width;
+            float imgH = effSize.height;
+            
+            RECT rc; GetClientRect(hwnd, &rc);
+            float winW = (float)(rc.right - rc.left);
+            float winH = (float)(rc.bottom - rc.top);
+            
+            // Fit Scale (without Zoom)
+            float fitScale = std::min(winW / imgW, winH / imgH);
+            
+            // Total Scale = FitScale * Zoom
+            float totalScale = fitScale * g_viewState.Zoom;
+            
+            // 2. Check if effectively at 100% (Scale ~ 1.0)
+            if (abs(totalScale - 1.0f) < 0.05f) {
+                 // Is 100% -> Go Fit
+                 PerformZoomFit(hwnd);
+            } else {
+                 // Is Not 100% (either Fit or Zoomed) -> Go 100%
+                 PerformZoom100(hwnd);
+            }
+        }
+        return 0;
+
     case WM_MBUTTONDOWN: {
         // Record start position/time for click vs drag detection
         g_viewState.LastMousePos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
@@ -3122,21 +3305,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
 
         
-    case WM_LBUTTONDBLCLK:
-        // [Fix] Fullscreen Exit on Double Click
-        if (g_isFullScreen) {
-            SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
-            return 0;
-        }
 
-        // Fit Window - restore from maximized first if needed
-        if (IsZoomed(hwnd)) {
-            ShowWindow(hwnd, SW_RESTORE);
-        }
-        g_viewState.Reset();
-        AdjustWindowToImage(hwnd); // Reset window size too
-        RequestRepaint(PaintLayer::All);
-        return 0;
         
     case WM_PAINT:
         OnPaint(hwnd);
@@ -3223,10 +3392,27 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         bool wasSettingsVisible = g_settingsOverlay.IsVisible();
         SettingsAction action = g_settingsOverlay.OnLButtonDown((float)pt.x, (float)pt.y);
         
-        // Check if Settings closed itself (e.g. Back button)
+        if (g_helpOverlay.IsVisible()) {
+            g_helpOverlay.OnLButtonDown((float)pt.x, (float)pt.y);
+            RequestRepaint(PaintLayer::Static); // Force repaint to ensure close immediately
+        }
+        
+        // Check if Settings closed itself (e.g. Back button or Help transition)
         if (wasSettingsVisible && !g_settingsOverlay.IsVisible()) {
-             RestoreOverlayWindowState(hwnd);
+             // [Fix] Only restore window state if we are NOT transitioning to Help Overlay
+             if (!g_helpOverlay.IsVisible()) {
+                 RestoreOverlayWindowState(hwnd);
+             }
              RequestRepaint(PaintLayer::Static);
+             return 0;
+        }
+
+        if (action == SettingsAction::OpenHelp) {
+             // Seamless Handoff: Close Settings -> Open Help
+             // Crucial: Do NOT restore window state here. Help Overlay inherits current expanded state.
+             g_settingsOverlay.SetVisible(false);
+             g_helpOverlay.SetVisible(true);
+             RequestRepaint(PaintLayer::All);
              return 0;
         }
 
@@ -3345,14 +3531,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         
-        if (g_config.LeftDragAction == MouseAction::WindowDrag) {
+        bool isCtrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        
+        // [Feature] Ctrl+Left Drag maps to Middle Drag Action
+        MouseAction effectiveAction = g_config.LeftDragAction;
+        
+        if (isCtrl) {
+            effectiveAction = g_config.MiddleDragAction;
+        }
+        
+        if (effectiveAction == MouseAction::WindowDrag) {
             // [Fix] Disable Window Drag in Fullscreen
             if (g_isFullScreen) return 0;
             
+            // Use HTCAPTION for smooth system window dragging (Left Button only)
+            // Note: Middle button uses manual drag implementation because NCLBUTTONDOWN expects Left Button.
+            // Since we are responding to LBUTTONDOWN here, HTCAPTION works perfectly even if mapped from Middle Setting.
             ReleaseCapture();
             SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
             return 0;
-        } else if (g_config.LeftDragAction == MouseAction::PanImage) {
+        } else if (effectiveAction == MouseAction::PanImage) {
             // Only allow panning if image exceeds window bounds
             if (CanPan(hwnd)) {
                 SetCapture(hwnd);
@@ -3531,6 +3729,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     case WM_MOUSEWHEEL: {
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
+        
+        if (g_helpOverlay.IsVisible()) {
+            if (g_helpOverlay.OnMouseWheel(wheelDelta * 120.0f)) { // HelpOverlay expects raw delta
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
+        }
+        
         if (g_settingsOverlay.OnMouseWheel(wheelDelta)) {
             RequestRepaint(PaintLayer::Static);  // Settings panel is on Static layer
             return 0;
@@ -3566,8 +3772,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         RECT rc; GetClientRect(hwnd, &rc);
         
         // Use Surface size for consistency (same as WM_SIZE and Standard Zoom apply section)
-        // [First Principles] Use Effective Dimensions
-        D2D1_SIZE_F effSize = GetEffectiveImageSize();
+        // [Fix] Use Robust Visual Size (derived from rendered surface) instead of fragile calculations
+        D2D1_SIZE_F effSize = GetVisualImageSize();
         float imgW = effSize.width;
         float imgH = effSize.height;
         if (imgW <= 0 || imgH <= 0) return 0;
@@ -3625,7 +3831,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (newTotalScale < minScale) newTotalScale = minScale;
         if (newTotalScale > maxScale) newTotalScale = maxScale;
 
-        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize && !g_isFullScreen) {
+        // [Feature] Ctrl+Wheel = Temporary Lock Window (Supersede Resize Config)
+        bool isCtrl = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL);
+
+        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize && !g_isFullScreen && !isCtrl) {
              // 1. Calculate Target Dimensions (Uncapped)
              HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
              MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
@@ -3812,6 +4021,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 return 0;
             }
         }
+        
+        // Help handling
+        if (g_helpOverlay.IsVisible()) {
+            if (wParam == VK_ESCAPE) {
+                g_helpOverlay.SetVisible(false);
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
+        }
 
         // Gallery handling
         if (g_gallery.IsVisible()) {
@@ -3857,11 +4075,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Navigation
         case VK_LEFT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break;
         case VK_RIGHT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
+        case VK_UP: SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); break; // Up: Zoom In
+        case VK_DOWN: SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0); break; // Down: Zoom Out
         case VK_SPACE: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
         
         // File operations
         case 'O': SendMessage(hwnd, WM_COMMAND, IDM_OPEN, 0); break; // O or Ctrl+O: Open
         case 'E': SendMessage(hwnd, WM_COMMAND, IDM_EDIT, 0); break; // E: Edit
+        case VK_F1: // Help
+             if (g_settingsOverlay.IsVisible()) g_settingsOverlay.SetVisible(false);
+             g_helpOverlay.Toggle();
+             RequestRepaint(PaintLayer::Static);
+             break;
         case VK_F2: SendMessage(hwnd, WM_COMMAND, IDM_RENAME, 0); break; // F2: Rename
         case VK_DELETE: SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0); break; // Del: Delete
         case 'P': if (ctrl) { SendMessage(hwnd, WM_COMMAND, IDM_PRINT, 0); } break; // Ctrl+P: Print
@@ -3972,118 +4197,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Zoom
         // Zoom
         case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
-            if (g_imageResource) {
-                // [Fix] Target 100% of ORIGINAL resolution
-                VisualState vs = GetVisualState();
-                float originalW = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
-                float originalH = (float)(vs.IsRotated90 ? g_currentMetadata.Width : g_currentMetadata.Height);
-                
-                D2D1_SIZE_F effSize = GetEffectiveImageSize();
-                float imgW = effSize.width;
-                float imgH = effSize.height;
-                
-                // Fallback if metadata missing
-                if (originalW <= 0) originalW = imgW;
-                if (originalH <= 0) originalH = imgH;
-                
-                if (imgW > 0 && imgH > 0) {
-                    float renderScaleTarget = (originalW / imgW); // Scale needed to match original
-                    
-                    // Logic to resize window to wrap image at 100% if allowed
-                    if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
-                         // Target is 100% of Original size
-                         int targetW = (int)originalW;
-                         int targetH = (int)originalH;
-                         
-                         // Get Monitor Info
-                         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                         MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
-                         int maxW = (mi.rcWork.right - mi.rcWork.left);
-                         int maxH = (mi.rcWork.bottom - mi.rcWork.top);
-                         
-                         // Clamp to screen
-                         if (targetW > maxW) targetW = maxW;
-                         if (targetH > maxH) targetH = maxH;
-                         // Min size safety
-                         if (targetW < 400) targetW = 400; 
-                         if (targetH < 300) targetH = 300;
-                         
-                         // Center Window
-                         RECT rcWin; GetWindowRect(hwnd, &rcWin);
-                         int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
-                         int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
-                         
-                         SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
-                         
-                         // Recalculate Fit Scale with NEW window size
-                         RECT rcNew; GetClientRect(hwnd, &rcNew);
-                         float newFitScale = std::min((float)rcNew.right / imgW, (float)rcNew.bottom / imgH);
-                         if (newFitScale > 0) g_viewState.Zoom = renderScaleTarget / newFitScale;
-                    } else {
-                        // Standard logic (window size static)
-                        RECT rc; GetClientRect(hwnd, &rc);
-                        float fitScale = std::min((float)rc.right / imgW, (float)rc.bottom / imgH);
-                        if (fitScale > 0) g_viewState.Zoom = renderScaleTarget / fitScale;
-                    }
-
-                    g_viewState.PanX = 0;
-                    g_viewState.PanY = 0;
-                    g_osd.Show(hwnd, AppStrings::OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
-                }
-            }
-            RequestRepaint(PaintLayer::All);
+            PerformZoom100(hwnd);
             break;
             
         case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
-            if (g_imageResource) {
-                // Get Monitor & Work Area
-                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
-                int screenW = mi.rcWork.right - mi.rcWork.left;
-                int screenH = mi.rcWork.bottom - mi.rcWork.top;
-                
-                // Get Window Borders
-                RECT rcWin, rcClient;
-                GetWindowRect(hwnd, &rcWin);
-                GetClientRect(hwnd, &rcClient);
-                int borderW = (rcWin.right - rcWin.left) - (rcClient.right - rcClient.left);
-                int borderH = (rcWin.bottom - rcWin.top) - (rcClient.bottom - rcClient.top);
-                
-                // Max Client Size available
-                int maxClientW = screenW - borderW;
-                int maxClientH = screenH - borderH;
-                
-                D2D1_SIZE_F effSize = GetEffectiveImageSize();
-                float imgPixW = effSize.width;
-                float imgPixH = effSize.height;
-                
-                if (imgPixW > 0 && imgPixH > 0) {
-                     // Scale to fit max client area
-                     float ratioW = (float)maxClientW / imgPixW;
-                     float ratioH = (float)maxClientH / imgPixH;
-                     float scale = std::min(ratioW, ratioH);
-                     
-                     // Target Client Size
-                     int targetClientW = (int)(imgPixW * scale);
-                     int targetClientH = (int)(imgPixH * scale);
-                     
-
-                     // Target Window Size
-                     int targetWinW = targetClientW + borderW;
-                     int targetWinH = targetClientH + borderH;
-                     
-                     // Center on Screen
-                     int x = mi.rcWork.left + (screenW - targetWinW) / 2;
-                     int y = mi.rcWork.top + (screenH - targetWinH) / 2;
-                     
-                     SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
-                }
-                
-                // Reset View to Fit
-                g_viewState.Zoom = 1.0f; 
-                g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
-                RequestRepaint(PaintLayer::All);
-            }
+            PerformZoomFit(hwnd);
             break;
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In

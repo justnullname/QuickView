@@ -250,6 +250,39 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_Version;
     extern const wchar_t* Settings_Label_Build;
 
+    // Help Overlay
+    extern const wchar_t* Help_Header_Shortcuts;
+    extern const wchar_t* Help_Header_Mouse;
+    extern const wchar_t* Help_Item_NextPrev;
+    extern const wchar_t* Help_Item_Zoom;
+    extern const wchar_t* Help_Item_Pan;
+    extern const wchar_t* Help_Item_Rotate;
+    extern const wchar_t* Help_Item_Fit;
+    extern const wchar_t* Help_Item_Delete;
+    extern const wchar_t* Help_Item_Fullscreen;
+    extern const wchar_t* Help_Item_Close;
+    extern const wchar_t* Help_Mouse_Left;
+    extern const wchar_t* Help_Mouse_Middle;
+    extern const wchar_t* Help_Mouse_Wheel;
+    extern const wchar_t* Help_Mouse_Right;
+    extern const wchar_t* Help_Action_MoveWindow;
+    extern const wchar_t* Help_Action_PanImage;
+    extern const wchar_t* Help_Action_ContextMenu;
+    extern const wchar_t* Help_Action_NextPrev;
+    extern const wchar_t* Help_Action_Zoom;
+    extern const wchar_t* Help_Desc_Copy;
+    extern const wchar_t* Help_Desc_Edit;
+    
+    // Glossary / Tips
+    extern const wchar_t* Help_Header_Tips;
+    extern const wchar_t* Help_Tip_ContextScope;
+    extern const wchar_t* Help_Tip_Rotation;
+    extern const wchar_t* Help_Tip_VideoWall;
+    extern const wchar_t* Help_Tip_DesignerMode;
+    extern const wchar_t* Help_Tip_Raw;
+    extern const wchar_t* Help_Tip_JpegQ;
+
+
     extern const wchar_t* Settings_Option_Auto;
     extern const wchar_t* Settings_Option_Eco;
     extern const wchar_t* Settings_Option_Balanced;
