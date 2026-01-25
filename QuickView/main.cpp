@@ -253,6 +253,9 @@ static void SyncDCompState(HWND hwnd, float w, float h);
 // True while the user is interactively resizing/moving the window (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)
 static bool g_isInSizeMove = false;
 
+// [v3.1.5] Auto-Lock State for Unified Scaling Logic (< 200x200)
+static bool g_isAutoLocked = false; 
+
 // === Overlay Window State Restore ===
 // Saves window state before overlays (Gallery/Settings) resize the window.
 struct SavedWindowState {
@@ -944,10 +947,10 @@ static D2D1_SIZE_F GetVisualImageSize() {
     // Primary: Reconstruct from Rendered Surface (Exif is already baked in here)
     D2D1_SIZE_F result = {0, 0};
     
-    if (g_lastFitScale > 0.0001f && g_lastSurfaceSize.width > 0) {
+    if (g_lastSurfaceSize.width > 0) {
         result = D2D1::SizeF(
-            g_lastSurfaceSize.width / g_lastFitScale, 
-            g_lastSurfaceSize.height / g_lastFitScale
+            g_lastSurfaceSize.width, 
+            g_lastSurfaceSize.height
         );
     } else {
         // Fallback
@@ -2129,6 +2132,9 @@ void AdjustWindowToImage(HWND hwnd) {
          windowW = (int)(windowW * scaleUp);
          windowH = (int)(windowH * scaleUp);
     }
+    
+    // [Revert] Empirical Border Calculation removed as per request
+    // Window Size = Content Size (let OS handle borders)
     
     // Center logic
     RECT rcWindow; GetWindowRect(hwnd, &rcWindow);
@@ -3834,39 +3840,100 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // [Feature] Ctrl+Wheel = Temporary Lock Window (Supersede Resize Config)
         bool isCtrl = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL);
 
-        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize && !g_isFullScreen && !isCtrl) {
-             // 1. Calculate Target Dimensions (Uncapped)
+        // [v3.1.5] Unified Scaling Logic: Pre-calculate Target Window Size
+        // We need 'targetW/targetH' early to determine if we should Auto-Lock or Auto-Unlock.
+        
+        bool willResizeWindow = false;
+        int finalWinW = 0;
+        int finalWinH = 0;
+        
+        // Conditions eligible for resize (if not locked)
+        bool canResizeConfig = g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_isFullScreen && !isCtrl;
+        
+        if (canResizeConfig) {
+             // Calculate Target Dimensions (Uncapped) based on Zoom
              HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
              MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
              int maxW = (mi.rcWork.right - mi.rcWork.left);
              int maxH = (mi.rcWork.bottom - mi.rcWork.top);
              
-             // Logic dimensions (already have imgW/imgH from surface size, which matches Window/Visual aspect)
-             // [Refactor] Use VisualState for Target Dimensions
              VisualState vs = GetVisualState();
              
-             // Target matches Visual Aspect Ratio 1:1 at 100% Zoom
+             // Target matches Visual Aspect Ratio 1:1 at 100% Zoom logic
+             // Note: newTotalScale is the requested scale
              int targetW = (int)(vs.VisualSize.width * newTotalScale);
              int targetH = (int)(vs.VisualSize.height * newTotalScale);
              
-             // 2. Clamp Window Dimensions
-             bool capped = false;
-             int finalWinW = targetW;
-             int finalWinH = targetH;
-             
-             if (!g_config.EnableCrossMonitor) {
-                if (finalWinW > maxW) { finalWinW = maxW; capped = true; }
-                if (finalWinH > maxH) { finalWinH = maxH; capped = true; }
+             // --- Auto-Unlock Logic ---
+             // If we are currently Locked AND it was an Auto-Lock, check if we should Unlock
+             if (g_runtime.LockWindowSize && g_isAutoLocked) {
+                 if (targetW > 200 && targetH > 200) {
+                     g_runtime.LockWindowSize = false;
+                     g_isAutoLocked = false;
+                     // proceed to standard resize logic below
+                 }
              }
-             if (finalWinW < 200) { finalWinW = 200; capped = true; } // Min size (User request: 200x200)
-             if (finalWinH < 200) { finalWinH = 200; capped = true; }
+
+             // --- Auto-Lock Logic ---
+             // If we are NOT Locked, check if we should Lock due to small size
+             if (!g_runtime.LockWindowSize) {
+                 if (targetW < 200 || targetH < 200) {
+                     // [Fix] Auto-Lock: Clamp to Min(200), don't force square 200x200
+                     // Use max(200, target) to preserve aspect ratio as much as possible
+                     // while ensuring we don't go below 200.
+                     int clientW = std::max(200, targetW);
+                     int clientH = std::max(200, targetH);
+                     
+                     finalWinW = clientW;
+                     finalWinH = clientH;
+                     
+                     // Engage Lock
+                     g_runtime.LockWindowSize = true;
+                     g_isAutoLocked = true;
+                     
+                     // Apply the clamped size immediately
+                     RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                     int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
+                     int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
+                     
+                     g_programmaticResize = true;
+                     SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, 
+                                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+                                  
+                     if (g_compEngine && g_compEngine->IsInitialized()) {
+                        // [Fix] Consistency: Always use GetClientRect for true drawing area
+                        RECT rc; GetClientRect(hwnd, &rc);
+                        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                        g_compEngine->Commit();
+                     }
+                 } else {
+                     // Normal Resize State ( > 200x200 )
+                     willResizeWindow = true; // Use the Resize Path
+                     
+                     bool capped = false;
+                     // Target is Content size
+                     finalWinW = targetW;
+                     finalWinH = targetH;
+                     
+                     if (!g_config.EnableCrossMonitor) {
+                        if (finalWinW > maxW) { finalWinW = maxW; capped = true; }
+                        if (finalWinH > maxH) { finalWinH = maxH; capped = true; }
+                     }
+                     
+                     // Standard clamp
+                     if (finalWinW < 200) finalWinW = 200;
+                     if (finalWinH < 200) finalWinH = 200;
+                     
+                     if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+                 }
+             }
+        }
+
+        if (willResizeWindow) {
+             // --- Resize Window Path (Unlocked & Large Enough) ---
              
-             // 3. [Core Fix] PRE-CALCULATE state before window resize
-             // This ensures OnResize -> SyncDCompState sees the correct target scale IMMEDIATELY.
-             
-             // [Fix] Unified Zoom Calculation:
-             // Calculate the 'baseFit' that SyncDCompState WILL use for the new window size.
-             // SyncDCompState logic: Fits image to window, BUT if image < 200x200, force 1.0 fit.
+             // [Core Fix] PRE-CALCULATE state before window resize
+             // Use finalWinW (Content Size) for fit calculation
              
              float baseFit_next = std::min((float)finalWinW / imgW, (float)finalWinH / imgH);
              if (imgW < 200.0f && imgH < 200.0f) {
@@ -3874,31 +3941,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
              
              // Calculate required Zoom to match Target Total Scale
-             // TotalScale = BaseFit * Zoom  =>  Zoom = TotalScale / BaseFit
              g_viewState.Zoom = newTotalScale / baseFit_next;
-             if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
 
-             // 4. Apply Window Resize
-             // Using SWP_NOCOPYBITS to prevent Windows from stretching old pixels during resize
+             // Apply Window Resize
              RECT rcWin; GetWindowRect(hwnd, &rcWin);
              int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
              int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
              
-            // Mark programmatic resize so WM_SIZE doesn't reset the zoom we just calculated
-            g_programmaticResize = true;
-            SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, 
-                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+             g_programmaticResize = true;
+             SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, 
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
 
-            // Immediately update DComp transforms to reflect new window/client size
-            // This avoids a frame where the window size changed but DComp still uses old transforms.
-            if (g_compEngine && g_compEngine->IsInitialized()) {
-                // Use the FINAL window dimensions we just applied instead of querying
-                // the client rect (which may not be updated synchronously).
-                SyncDCompState(hwnd, (float)finalWinW, (float)finalWinH);
-                g_compEngine->Commit();
-            }
-             
-             // [DComp] Remvoed manual commit. SetWindowPos triggered WM_SIZE -> OnResize -> Commit.
+             if (g_compEngine && g_compEngine->IsInitialized()) {
+                 RECT rc; GetClientRect(hwnd, &rc);
+                 SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                 g_compEngine->Commit();
+             }
              
              RequestRepaint(PaintLayer::Dynamic);
              
@@ -3907,21 +3965,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                  SetTimer(hwnd, IDT_SVG_RERENDER, 300, nullptr);
              }
         } else {
-             // Standard Zoom (Window size fixed or Maxed)
+             // --- Standard Zoom Path (Window Locked OR Auto-Locked at 200) ---
+             
              // [Fix] Use same approach as WM_SIZE: Top-Left Scaling + Centering Offset
              RECT rcNew; GetClientRect(hwnd, &rcNew);
              float winW = (float)rcNew.right;
              float winH = (float)rcNew.bottom;
              
-             // Image dimensions (surface size)
-             float imgW = g_lastSurfaceSize.width;
-             float imgH = g_lastSurfaceSize.height;
+             // [Fix] Use Robust Visual Size (Logical) instead of Physical Surface Size
+             // This unifies the units with the 'newTotalScale' calculation above.
+             // Previous bug: 'imgW' was Physical pixels, but 'newTotalScale' implies Logical scale factor.
+             D2D1_SIZE_F effSize = GetVisualImageSize();
+             float imgW = effSize.width;
+             float imgH = effSize.height;
              
-             if (imgW <= 0 || imgH <= 0) break; // Safety check
+             if (imgW <= 0 || imgH <= 0) return 0; // Safety check
              
-             // Calculate fit scale and new zoom
              // Calculate fit scale and new zoom
              float fitScale = std::min(winW / imgW, winH / imgH);
+             
+             // [Fix] Match SyncDCompState Logic for Small Images
+             if (imgW < 200.0f && imgH < 200.0f) {
+                 if (fitScale > 1.0f) fitScale = 1.0f;
+             }
+             
              float oldZoom = g_viewState.Zoom;
              float newZoom = newTotalScale / fitScale;
              
@@ -5228,6 +5295,16 @@ void ProcessEngineEvents(HWND hwnd) {
                 // This ensures g_lastSurfaceSize is updated with the NEW image dimensions.
                 AdjustWindowToImage(hwnd);
                 
+                // [Fix] Explicitly Sync DComp State immediately after Window Adjustment
+                // This covers the case where the Window Size DOES NOT CHANGE (e.g. Locked or Maximized),
+                // so WM_SIZE is never fired, leaving the DComp Transform Matrix stale (using old image AR).
+                // This fixes the "Initial Clipping/Jump" issue.
+                if (g_compEngine && g_compEngine->IsInitialized()) {
+                    RECT rc; GetClientRect(hwnd, &rc);
+                    SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                    g_compEngine->Commit();
+                }
+
                 // Cleanup
                 g_isLoading = false;
                 
