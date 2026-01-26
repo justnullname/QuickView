@@ -142,13 +142,17 @@ private:
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
     
+public:
     // Text Truncation Helpers
-    std::wstring MakeMiddleEllipsis(float maxWidth, const std::wstring& text);
-    std::wstring MakeEndEllipsis(float maxWidth, const std::wstring& text);
-    float MeasureTextWidth(const std::wstring& text);
-    
+    std::wstring MakeMiddleEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format = nullptr);
+    std::wstring MakeEndEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format = nullptr);
+    float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format = nullptr);
+
+private:
     // Dirty Rects 计算
     RECT CalculateOSDDirtyRect();
+    
+private:
     
     CompositionEngine* m_compEngine = nullptr;
     IDWriteFactory* m_dwriteFactory = nullptr;

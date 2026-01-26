@@ -1231,11 +1231,13 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &pWhite);
     
     // Title (truncate to show end of filename with extension, single line)
+    // [Fix] Use robust visual truncation instead of hardcoded char limit
     std::wstring displayTitle = g_dialog.Title;
-    const size_t maxLen = 30;
-    if (displayTitle.length() > maxLen) {
-        displayTitle = L"..." + displayTitle.substr(displayTitle.length() - (maxLen - 3));
+    if (g_uiRenderer && fmtTitle) {
+        float availableWidth = (layout.Box.right - layout.Box.left) - 50.0f; // Padding 25px each side
+        displayTitle = g_uiRenderer->MakeMiddleEllipsis(availableWidth, g_dialog.Title, fmtTitle.Get());
     }
+
     float titleTop = layout.Box.top + 18;
     float titleBottom = layout.Box.top + 48;
     context->DrawText(displayTitle.c_str(), (UINT32)displayTitle.length(), fmtTitle.Get(), 
@@ -4484,6 +4486,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                                                                  D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
                     confirmed = (dlgResult == DialogResult::Yes);
                 }
+
                 
                 if (confirmed) {
                     // Peek next using Navigator (which should still track the collection)

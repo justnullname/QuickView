@@ -165,13 +165,14 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
 // Text Measurement Helpers
 // ============================================================================
 
-float UIRenderer::MeasureTextWidth(const std::wstring& text) {
-    if (text.empty() || !m_panelFormat || !m_dwriteFactory) return 0.0f;
+float UIRenderer::MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) {
+    IDWriteTextFormat* useFormat = format ? format : m_panelFormat.Get();
+    if (text.empty() || !useFormat || !m_dwriteFactory) return 0.0f;
     
     ComPtr<IDWriteTextLayout> layout;
     m_dwriteFactory->CreateTextLayout(
         text.c_str(), (UINT32)text.length(),
-        m_panelFormat.Get(), 2000.0f, 100.0f, &layout
+        useFormat, 2000.0f, 100.0f, &layout
     );
     
     if (!layout) return 0.0f;
@@ -181,43 +182,56 @@ float UIRenderer::MeasureTextWidth(const std::wstring& text) {
     return metrics.width;
 }
 
-std::wstring UIRenderer::MakeMiddleEllipsis(float maxWidth, const std::wstring& text) {
+std::wstring UIRenderer::MakeMiddleEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format) {
     if (text.empty()) return text;
     
-    float fullWidth = MeasureTextWidth(text);
+    // Quick check full text
+    float fullWidth = MeasureTextWidth(text, format);
     if (fullWidth <= maxWidth) return text;
     
-    float ellipsisWidth = MeasureTextWidth(L"...");
+    float ellipsisWidth = MeasureTextWidth(L"...", format);
     float availWidth = maxWidth - ellipsisWidth;
     if (availWidth <= 0) return L"...";
     
-    // Approximate: keep 1/3 at start, 2/3 at end
-    size_t total = text.length();
-    size_t keepStart = total / 3;
-    size_t keepEnd = total / 2;
+    // Binary Search for Maximum 'Keep Characters'
+    // We want to maximize 'len' such that width( text[0..left] + "..." + text[end-right..end] ) <= maxWidth
+    // where left + right = len.
     
-    // Refine by measuring
-    for (int i = 0; i < 5; i++) {
-        std::wstring candidate = text.substr(0, keepStart) + L"..." + text.substr(total - keepEnd);
-        float width = MeasureTextWidth(candidate);
-        if (width <= maxWidth) return candidate;
-        keepStart = keepStart * 9 / 10;
-        keepEnd = keepEnd * 9 / 10;
-        if (keepStart < 3 || keepEnd < 3) break;
+    size_t minLen = 2; // At least 1 char on each side
+    size_t maxLen = text.length() - 1; 
+    std::wstring bestResult = text.substr(0, 1) + L"..." + text.substr(text.length() - 1); // Baseline fallback
+    
+    while (minLen <= maxLen) {
+        size_t mid = minLen + (maxLen - minLen) / 2;
+        
+        // Split mid characters: prioritize end for filenames (often extension is important)?
+        // Actually for filenames: Start...End is standard.
+        // Let's split roughly even, maybe favor start slightly?
+        // text: "Microsoft Word.lnk" -> "Micro...lnk"
+        size_t keepEnd = mid / 2;
+        size_t keepStart = mid - keepEnd;
+        
+        std::wstring candidate = text.substr(0, keepStart) + L"..." + text.substr(text.length() - keepEnd);
+        float w = MeasureTextWidth(candidate, format);
+        
+        if (w <= maxWidth) {
+            bestResult = candidate;
+            minLen = mid + 1; // Try more chars
+        } else {
+            maxLen = mid - 1; // Too long, try fewer
+        }
     }
     
-    // Fallback: very short
-    if (total > 10) return text.substr(0, 4) + L"..." + text.substr(total - 4);
-    return text.substr(0, 3) + L"...";
+    return bestResult;
 }
 
-std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, const std::wstring& text) {
+std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format) {
     if (text.empty()) return text;
     
-    float fullWidth = MeasureTextWidth(text);
+    float fullWidth = MeasureTextWidth(text, format);
     if (fullWidth <= maxWidth) return text;
     
-    float ellipsisWidth = MeasureTextWidth(L"...");
+    float ellipsisWidth = MeasureTextWidth(L"...", format);
     float availWidth = maxWidth - ellipsisWidth;
     if (availWidth <= 0) return L"...";
     
@@ -225,7 +239,7 @@ std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, const std::wstring& tex
     size_t lo = 0, hi = text.length();
     while (lo < hi) {
         size_t mid = (lo + hi + 1) / 2;
-        float w = MeasureTextWidth(text.substr(0, mid));
+        float w = MeasureTextWidth(text.substr(0, mid), format);
         if (w <= availWidth) lo = mid;
         else hi = mid - 1;
     }
