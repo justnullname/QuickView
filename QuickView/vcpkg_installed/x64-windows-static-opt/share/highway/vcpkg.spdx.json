@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/highway-x64-windows-static-opt-1.3.0-e810fb2c-a98f-4523-95dc-126d5c415e93",
-  "name": "highway:x64-windows-static-opt@1.3.0 6b9a4627fcb5284cfef53b9562c7c0b0d3f576a511b1d7df74933a6919e45acd",
+  "documentNamespace": "https://spdx.org/spdxdocs/highway-x64-windows-static-opt-1.3.0-6c3b7aa0-3d84-46c5-bb22-688e3fb4563e",
+  "name": "highway:x64-windows-static-opt@1.3.0 719c8a8ec8f072bc98623307d1afc5d79f3e3feff516c171b33b19c5d2509c28",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T04:35:21Z"
+    "created": "2026-01-29T05:52:45Z"
   },
   "relationships": [
     {
@@ -283,7 +283,7 @@
       "name": "highway",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "1.3.0",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/highway",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@5f81b96695f9e09191745ddb2308fb98ac33164c",
       "homepage": "https://github.com/google/highway",
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "NOASSERTION",
@@ -294,7 +294,7 @@
     {
       "name": "highway:x64-windows-static-opt",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "6b9a4627fcb5284cfef53b9562c7c0b0d3f576a511b1d7df74933a6919e45acd",
+      "versionInfo": "719c8a8ec8f072bc98623307d1afc5d79f3e3feff516c171b33b19c5d2509c28",
       "downloadLocation": "NONE",
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "NOASSERTION",
@@ -371,7 +371,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "13a1a9d92579235eb557b4fe6391db689e4b9e66113e125317521aa9bbeaa4ee"
+          "checksumValue": "ac6cc73ae0328011178138eb0b6c294ef6b8e1c6cea23259f1f020f659290d19"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -839,7 +839,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "e60ec8104de031ee09684239edf73e24c3ccd5510fc00924a4f944cda46103c4"
+          "checksumValue": "bfb1191de9dc2f4719552b2f42e0c9091d1c798e20c072cab1a57e1209838626"
         }
       ],
       "licenseConcluded": "NOASSERTION",

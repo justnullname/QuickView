@@ -6,6 +6,7 @@
 #include "WuffsLoader.h"
 #include "ImageTypes.h"    // [Direct D2D] RawImageFrame
 #include <memory_resource>
+#include "TileMemoryManager.h" // [Titan]
 
 /// <summary>
 /// Image Loader
@@ -227,6 +228,29 @@ public:
                         CancelPredicate checkCancel = nullptr,
                         ImageMetadata* pMetadata = nullptr);
 
+    // ============================================================================
+    // [Titan Engine] Region Decoding API
+    // ============================================================================
+    
+    struct RegionRect {
+        int x, y, w, h;
+    };
+
+    /// <summary>
+    /// Load a specific region of the image.
+    /// Used by Titan Engine for tile-based decoding.
+    /// </summary>
+    /// <param name="filePath">Path to image file</param>
+    /// <param name="srcRect">Source rectangle in original image coordinates</param>
+    /// <param name="scale">Downscale factor (0.5 = half size, 1.0 = full size)</param>
+    /// <param name="outFrame">Output frame</param>
+    HRESULT LoadRegionToFrame(LPCWSTR filePath, RegionRect srcRect, float scale,
+                              QuickView::RawImageFrame* outFrame,
+                              QuickView::TileMemoryManager* tileManager = nullptr,
+                              class QuantumArena* arena = nullptr,
+                              std::wstring* pLoaderName = nullptr,
+                              CancelPredicate checkCancel = nullptr);
+
 
     /// <summary>
     /// NEW: Load Thumbnail (Raw Data)
@@ -302,6 +326,12 @@ private:
     static std::mutex s_jxlRunnerMutex;
 
     // Specialized High-Performance Loaders
+    HRESULT LoadRegionGeneric_StrategyB(LPCWSTR filePath, RegionRect srcRect, float scale, 
+                                       QuickView::RawImageFrame* outFrame, 
+                                       QuickView::TileMemoryManager* tileManager, 
+                                       QuantumArena* arena, 
+                                       CancelPredicate checkCancel);
+
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
     HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
     HRESULT LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for in-memory buffers

@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/brotli-x64-windows-static-opt-1.2.0-df18de89-36bf-470b-afd2-8f6fa4660125",
-  "name": "brotli:x64-windows-static-opt@1.2.0 824a867f76781ace81c915d1d235360549eb88bca5c64b15905a631e3f86c408",
+  "documentNamespace": "https://spdx.org/spdxdocs/brotli-x64-windows-static-opt-1.2.0-2b33166e-14aa-469a-8879-484d7c2864d0",
+  "name": "brotli:x64-windows-static-opt@1.2.0 bb6977612bff248a7a257c75a7cff08a955d99e192acb484bb17fb5eaa6cf18b",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T04:35:34Z"
+    "created": "2026-01-29T05:52:59Z"
   },
   "relationships": [
     {
@@ -173,7 +173,7 @@
       "name": "brotli",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "1.2.0",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/brotli",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@0fb79bb13588702a9e06057745b4aed95ce5c861",
       "homepage": "https://github.com/google/brotli",
       "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
@@ -184,7 +184,7 @@
     {
       "name": "brotli:x64-windows-static-opt",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "824a867f76781ace81c915d1d235360549eb88bca5c64b15905a631e3f86c408",
+      "versionInfo": "bb6977612bff248a7a257c75a7cff08a955d99e192acb484bb17fb5eaa6cf18b",
       "downloadLocation": "NONE",
       "licenseConcluded": "MIT",
       "licenseDeclared": "NOASSERTION",
@@ -285,7 +285,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "b35d7f30aa6d2c7b6ac02ee7bf1f87649ef1716ef0ae86bf089e154dd73137bb"
+          "checksumValue": "ef0d6f02ed779ef7c03026422af149bd33a248ab84cdce65aea5e586a00fef94"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -297,7 +297,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "748163f8e56e506947d44ea03294e6117d4507d7ea2e595376a9aab7d658a2d7"
+          "checksumValue": "6aa1496e5fb8674ac4d3dcedb24285e356ead47785f33529f9195d5c311ea42f"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -309,7 +309,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "5f89eb4123449241c7884e2b23e5d2fc2a609deab8b3cbcc0f71f84b0c1efc95"
+          "checksumValue": "787c467ccf6fbd2816e4248b6d6af03d5c9cae4673d4e3acb0ce5a05dcbeb335"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -417,7 +417,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "041c3bf1ca6bb896faa93dcb67fc33ba0aaed809ae6f61281f645670d820e5fe"
+          "checksumValue": "adab3213acd58246c16d7dc154f5c0cb7f9c89ad7429cfff35675e71d4dfe1bd"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -429,7 +429,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "51081db7f539902dcf0bb44cfdaf9fc2b773e7f724c788f0c55d2d75df868cb9"
+          "checksumValue": "0e23c12c72676dc1ac7ce5b33339c0b0e55c91bf9913e4b20e4dab7ec58ab064"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -441,7 +441,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "82e40ec01c729837c9866d488bd4d0c5b401bd900b57dd3cbff611b7601bdf41"
+          "checksumValue": "6c0a8370be3c5bfa3bb058ec18207a3fd0094e77173a092959103c74e80b0c49"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -549,7 +549,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "eda0d973462482d9af6da17c1394b378100965859ea07055448b99ad12b93f27"
+          "checksumValue": "0507de3964142f5644e5a33725917a5601602dc17d38d62ceda33b7682ccd664"
         }
       ],
       "licenseConcluded": "NOASSERTION",

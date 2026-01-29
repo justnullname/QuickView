@@ -1,5 +1,17 @@
 #include "pch.h"
 #include <filesystem>
+#include <fstream> 
+
+// Helper
+static std::vector<uint8_t> ReadFileToVector(const std::wstring& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return {};
+    size_t size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(size);
+    if (file.read((char*)buffer.data(), size)) return buffer;
+    return {};
+}
 
 
 #include "ImageLoader.h"
@@ -18,6 +30,9 @@
 #include <avif/avif.h> // AVIF
 #include "WuffsLoader.h"
 #include "StbLoader.h"
+#include "PreviewExtractor.h" // [Titan]
+
+using namespace QuickView;
 #include "TinyExrLoader.h"
 #include <immintrin.h> // SIMD
 #include "SIMDUtils.h"
@@ -603,8 +618,368 @@ static int GetJpegQualityFromBuffer(const uint8_t* data, size_t size) {
 }
 
 // ----------------------------------------------------------------------------
-// JPEG (libjpeg-turbo)
+// [Titan Engine] Region Decoding Implementation
 // ----------------------------------------------------------------------------
+
+// Forward declaration
+static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, CImageLoader::RegionRect rect, float scale, QuickView::RawImageFrame* out, TileMemoryManager* tileManager, QuantumArena* arena);
+
+// [Safety] SEH Helper to isolate C++ Unwinding from __try/__except (Fix C2712)
+// This function must NOT have any local C++ objects with destructors.
+static HRESULT SafeLoadJpegRegion(
+    const uint8_t* data, size_t size, 
+    CImageLoader::RegionRect rect, float scale, 
+    QuickView::RawImageFrame* out, 
+    TileMemoryManager* tileManager, QuantumArena* arena) 
+{
+    __try {
+        return LoadJpegRegion_V3(data, size, rect, scale, out, tileManager, arena);
+    }
+    __except (GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        OutputDebugStringW(L"[ImageLoader] CRITICAL: ReadFile fault (Network lost?)\n");
+        return HRESULT_FROM_WIN32(ERROR_READ_FAULT);
+    }
+}
+
+// [Optimization] Shared/Persistent File Mapping
+// Designed to be held by a Cache, thread-safe.
+class SharedFileMapping {
+public:
+    SharedFileMapping(LPCWSTR path) {
+        hFile = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) return;
+
+        hMapping = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        if (!hMapping) return;
+
+        pData = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+        
+        LARGE_INTEGER size;
+        if (GetFileSizeEx(hFile, &size)) {
+            dataSize = (size_t)size.QuadPart;
+        }
+    }
+
+    ~SharedFileMapping() {
+        if (pData) UnmapViewOfFile(pData);
+        if (hMapping) CloseHandle(hMapping);
+        if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+    }
+
+    // Disable copy
+    SharedFileMapping(const SharedFileMapping&) = delete;
+    SharedFileMapping& operator=(const SharedFileMapping&) = delete;
+
+    bool IsValid() const { return pData != nullptr; }
+    const uint8_t* GetData() const { return (const uint8_t*)pData; }
+    size_t GetSize() const { return dataSize; }
+
+private:
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+    HANDLE hMapping = nullptr;
+    void* pData = nullptr;
+    size_t dataSize = 0;
+};
+
+// [Optimization] Simple Thread-Safe LRU Cache for File Mappings
+// Reuse mapping for Titan Tiles to avoid Open/Close overhead per tile.
+class FileMappingCache {
+public:
+    static std::shared_ptr<SharedFileMapping> Get(const std::wstring& path) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        // Hit?
+        for (auto it = m_cache.begin(); it != m_cache.end(); ++it) {
+            if (it->path == path) {
+                // Move to front (LRU)
+                auto item = *it;
+                m_cache.erase(it);
+                m_cache.push_front(item);
+                return item.mapping;
+            }
+        }
+
+        // Miss - Create new
+        auto mapping = std::make_shared<SharedFileMapping>(path.c_str());
+        if (!mapping->IsValid()) return nullptr;
+
+        // Insert
+        m_cache.push_front({ path, mapping });
+
+        // Prune
+        if (m_cache.size() > 4) { // Keep last 4 heavy files mapped
+             m_cache.pop_back();
+        }
+
+        return mapping;
+    }
+
+private:
+    struct Entry {
+        std::wstring path;
+        std::shared_ptr<SharedFileMapping> mapping;
+    };
+    
+    // Static members need definition in cpp
+    static std::list<Entry> m_cache;
+    static std::mutex m_mutex;
+};
+
+// Define statics
+std::list<FileMappingCache::Entry> FileMappingCache::m_cache;
+std::mutex FileMappingCache::m_mutex;
+
+HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, RegionRect srcRect, float scale,
+                          QuickView::RawImageFrame* outFrame,
+                          class TileMemoryManager* tileManager,
+                          class QuantumArena* arena,
+                          std::wstring* pLoaderName,
+                          CancelPredicate checkCancel) 
+{
+    if (!filePath || !outFrame) return E_INVALIDARG;
+
+    // Detect format to choose the best strategy
+    std::wstring format = DetectFormatFromContent(filePath);
+    
+    // --- Strategy 1: TurboJPEG Region Decoding (The most optimized path) ---
+    if (format == L"JPEG") {
+        if (pLoaderName) *pLoaderName = L"TurboJPEG Region";
+        
+        auto mapping = FileMappingCache::Get(filePath);
+        if (!mapping || !mapping->IsValid()) return E_FAIL;
+        
+        if (checkCancel && checkCancel()) return E_ABORT;
+        return SafeLoadJpegRegion(mapping->GetData(), mapping->GetSize(), srcRect, scale, outFrame, tileManager, arena);
+    }
+
+    // --- Strategy 2: Strategy B (Load Full & Crop/Resize) ---
+    // For formats without native region decoding support (WebP, PNG)
+    if (format == L"WEBP" || format == L"PNG") {
+        if (pLoaderName) *pLoaderName = (format + L" Strategy-B").c_str();
+        return LoadRegionGeneric_StrategyB(filePath, srcRect, scale, outFrame, tileManager, arena, checkCancel);
+    }
+    
+    return E_NOTIMPL; 
+}
+
+HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, RegionRect srcRect, float scale, 
+                                               QuickView::RawImageFrame* outFrame, 
+                                               TileMemoryManager* tileManager, 
+                                               QuantumArena* arena, 
+                                               CancelPredicate checkCancel) 
+{
+    // 1. Load the full image first
+    QuickView::RawImageFrame fullFrame;
+    HRESULT hr = LoadToFrame(filePath, &fullFrame, arena, 0, 0, nullptr, checkCancel);
+    if (FAILED(hr)) return hr;
+
+    // 2. Extract and Resize the region
+    outFrame->width = (int)(srcRect.w * scale + 0.5f);
+    outFrame->height = (int)(srcRect.h * scale + 0.5f);
+    outFrame->stride = CalculateAlignedStride(outFrame->width, 4);
+    outFrame->format = fullFrame.format;
+    
+    size_t totalSize = outFrame->GetBufferSize();
+    if (tileManager && totalSize <= TILE_SLAB_SIZE) {
+        outFrame->pixels = (uint8_t*)tileManager->Allocate();
+        if (outFrame->pixels) {
+            outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+        }
+    }
+    
+    if (!outFrame->pixels) {
+        outFrame->pixels = (uint8_t*)_aligned_malloc(totalSize, 64);
+        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+    }
+    
+    if (!outFrame->pixels) return E_OUTOFMEMORY;
+
+    // TODO: Direct Cropping if scale == 1.0
+    // For now, use the optimized ResizeBilinear (which handles sub-regions via srcStride)
+    SIMDUtils::ResizeBilinear(fullFrame.pixels + (size_t)srcRect.y * fullFrame.stride + (size_t)srcRect.x * 4,
+                            (int)srcRect.w, (int)srcRect.h, (int)fullFrame.stride,
+                            outFrame->pixels, outFrame->width, outFrame->height);
+
+    return S_OK;
+}
+
+
+// Logic: Robust TurboJPEG 3 Region Decoding
+// Logic: Robust TurboJPEG 3 Region Decoding with Software Resize Support
+static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, CImageLoader::RegionRect rect, float scale, QuickView::RawImageFrame* outFrame, TileMemoryManager* tileManager, QuantumArena* arena)
+{
+    // Initialize v3 Decompressor
+    tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+    if (!tj) return E_FAIL;
+    struct TjGuard { tjhandle h; ~TjGuard() { if(h) tj3Destroy(h); } } guard{tj};
+
+    if (tj3DecompressHeader(tj, buf, bufSize) != 0) return E_FAIL;
+
+    int width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+    int height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+
+    // 1. Calculate Scaling Factor
+    int numFactors;
+    tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+    tjscalingfactor chosen = {1, 1};
+    
+    // TurboJPEG supports max 1/8.
+    // If user wants 0.033 (1/30), TurboJPEG gives 1/8.
+    // We pick the closest one that is >= requested scale (or closest overall).
+    // Actually, picking closest might be smaller? No, we need quality so >=.
+    // But let's stick to existing logic for logic compatibility.
+    // Existing logic picks closest abs diff.
+    
+    float bestDiff = 100.0f;
+    for (int i = 0; i < numFactors; i++) {
+        float f = (float)factors[i].num / factors[i].denom;
+        float diff = std::abs(f - scale);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            chosen = factors[i];
+        }
+    }
+    
+    if (tj3SetScalingFactor(tj, chosen) != 0) return E_FAIL;
+
+    // 2. Calculate Cropping in SCALED coordinates (TurboJPEG space)
+    int tjScdX = TJSCALED(rect.x, chosen);
+    int tjScdY = TJSCALED(rect.y, chosen);
+    int tjScdW = TJSCALED(rect.w, chosen);
+    int tjScdH = TJSCALED(rect.h, chosen);
+    
+    // Bounds check
+    int fullScaledW = TJSCALED(width, chosen);
+    int fullScaledH = TJSCALED(height, chosen);
+    if (tjScdX + tjScdW > fullScaledW) tjScdW = fullScaledW - tjScdX;
+    if (tjScdY + tjScdH > fullScaledH) tjScdH = fullScaledH - tjScdY;
+    
+    if (tjScdW <= 0 || tjScdH <= 0 || tjScdX < 0 || tjScdY < 0) return E_FAIL;
+
+    // 3. Set Cropping Region
+    tjregion cropRegion = { tjScdX, tjScdY, tjScdW, tjScdH };
+    if (tj3SetCroppingRegion(tj, cropRegion) != 0) return E_FAIL;
+
+    // 4. Determine Input vs Output Size
+    // Requested Target Size = rect.w * scale.
+    // (e.g. 15500 * 0.033 = 511.5 -> 512).
+    // tjScdW is e.g. 1937.
+    
+    int targetW = (int)(rect.w * scale + 0.5f);
+    int targetH = (int)(rect.h * scale + 0.5f);
+    
+    if (targetW <= 0) targetW = 1;
+    if (targetH <= 0) targetH = 1;
+    
+    // Check if we need software downscaling
+    // Threshold: if tjScdW > targetW * 1.2 (20% larger), we resize.
+    // Otherwise we trust caller to handle it (or it's close enough).
+    bool needResize = (tjScdW > (int)(targetW * 1.2f)) || (tjScdH > (int)(targetH * 1.2f));
+
+    // Allocate Pixel Buffer
+    uint8_t* pDecodeBuf = nullptr;
+    int decodeStride = 0;
+    
+    if (needResize) {
+        // [Intermediate Decode]
+        // We decode to a temporary buffer (potentially large: 1937x1937x4 = 15MB)
+        // We can use Arena for this? Arena is usually 16MB per thread.
+        // If it fits, great.
+        decodeStride = tjScdW * 4;
+        size_t decodeSize = (size_t)decodeStride * tjScdH;
+        
+        if (arena) {
+            // Use aligned alloc from arena with fallback
+            // note: Arena->Allocate might return nullptr if full.
+            // But QuantumArena is linear.
+            // For large blocks, we might want independent allocation if arena is "hot".
+            // Let's try arena first.
+            pDecodeBuf = (uint8_t*)arena->Allocate(decodeSize, 64);
+        }
+        
+        if (!pDecodeBuf) {
+            pDecodeBuf = (uint8_t*)_aligned_malloc(decodeSize, 64);
+        }
+        
+        if (!pDecodeBuf) return E_OUTOFMEMORY;
+        
+        // Decompress to Temp
+        if (tj3Decompress8(tj, buf, bufSize, pDecodeBuf, decodeStride, TJPF_BGRX) != 0) {
+            if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
+            return E_FAIL;
+        }
+
+        // [Final Output]
+        // Allocate correct small size (512x512)
+        // Try Slab Allocator first (since it is small!)
+        outFrame->width = targetW;
+        outFrame->height = targetH;
+        outFrame->stride = CalculateAlignedStride(targetW, 4);
+        outFrame->format = PixelFormat::BGRA8888;
+        outFrame->formatDetails = L"JPEG Region (Resized)";
+
+        size_t finalSize = outFrame->GetBufferSize();
+        
+        if (tileManager && finalSize <= TILE_SLAB_SIZE) {
+            outFrame->pixels = (uint8_t*)tileManager->Allocate();
+             if (outFrame->pixels) {
+                outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+            }
+        }
+        if (!outFrame->pixels) {
+            // Fallback to heap
+            outFrame->pixels = (uint8_t*)_aligned_malloc(finalSize, 64);
+            outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        }
+        
+        if (!outFrame->pixels) {
+            if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
+            return E_OUTOFMEMORY;
+        }
+
+        // Software Resize
+        // [v2] ResizeBilinear now takes srcStride. 0 = w*4.
+        SIMDUtils::ResizeBilinear(pDecodeBuf, tjScdW, tjScdH, 0 /*stride*/, outFrame->pixels, targetW, targetH, outFrame->stride);
+        
+        // Free temp
+        if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
+        
+    } else {
+        // [Direct Decode] - No resize needed (or close enough)
+        outFrame->width = tjScdW;
+        outFrame->height = tjScdH;
+        outFrame->stride = CalculateAlignedStride(tjScdW, 4);
+        outFrame->format = PixelFormat::BGRA8888;
+        outFrame->formatDetails = L"JPEG Region";
+        
+        size_t totalSize = outFrame->GetBufferSize();
+        
+        if (tileManager && totalSize <= TILE_SLAB_SIZE) {
+            outFrame->pixels = (uint8_t*)tileManager->Allocate();
+            if (outFrame->pixels) {
+                outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+            }
+        }
+        
+        if (!outFrame->pixels) {
+             if (arena) {
+                outFrame->pixels = (uint8_t*)arena->Allocate(totalSize, 64);
+                outFrame->memoryDeleter = nullptr; // Arena managed
+            } else {
+                outFrame->pixels = (uint8_t*)_aligned_malloc(totalSize, 64);
+                outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+            }
+        }
+        
+        if (!outFrame->pixels) return E_OUTOFMEMORY;
+        
+        if (tj3Decompress8(tj, buf, bufSize, outFrame->pixels, outFrame->stride, TJPF_BGRX) != 0) {
+            return E_FAIL;
+        }
+    }
+
+    return S_OK;
+}
 HRESULT CImageLoader::LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     std::vector<uint8_t> jpegBuf;
     if (!ReadFileToVector(filePath, jpegBuf)) return E_FAIL;
@@ -2238,6 +2613,12 @@ namespace QuickView {
                     return E_ABORT;
                 }
 
+                // [v5.3] Fill metadata directly
+                // result.metadata.FormatDetails already populated above
+                if (cinfo.output_width < cinfo.image_width) result.metadata.FormatDetails += L" [Scaled]";
+                result.metadata.Width = cinfo.image_width; // Original size
+                result.metadata.Height = cinfo.image_height;
+
                 jpeg_finish_decompress(&cinfo);
                 jpeg_destroy_decompress(&cinfo);
 
@@ -2247,12 +2628,6 @@ namespace QuickView {
                 result.stride = stride;
                 result.format = ctx.format;
                 result.success = true;
-
-                // [v5.3] Fill metadata directly
-                // result.metadata.FormatDetails already populated above
-                if (cinfo.output_width < cinfo.image_width) result.metadata.FormatDetails += L" [Scaled]";
-                result.metadata.Width = cinfo.image_width; // Original size
-                result.metadata.Height = cinfo.image_height;
                 
                 // [Fix] Respect EasyExif result if available. Fallback to Raw Scan only if needed.
                 if (result.metadata.ExifOrientation == 1) {
@@ -4764,6 +5139,10 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
         
         bool success = false;
         if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+             // [v10.0] Fix: Always extract dimensions natively to prevent WIC 2633px preview regression
+             pMetadata->Width = cinfo.image_width;
+             pMetadata->Height = cinfo.image_height;
+
              std::vector<uint8_t> iccData;
              
              for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {

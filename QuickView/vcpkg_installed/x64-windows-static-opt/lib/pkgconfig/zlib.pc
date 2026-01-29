@@ -1,14 +1,16 @@
 prefix=${pcfiledir}/../..
 exec_prefix=${prefix}
-libdir=${prefix}/lib
-sharedlibdir=${prefix}/lib
+symbol_prefix=
+bindir=${exec_prefix}/bin
+libdir=${exec_prefix}/lib
+sharedlibdir=${libdir}
 includedir=${prefix}/include
 
 Name: zlib
-Description: zlib compression library
-Version: 1.3.1
+Description: zlib-ng compression library
+Version: 1.3.1.zlib-ng
 
 
-Libs: "-L${libdir}" "-L${sharedlibdir}" -lzlib
+Libs: "-L${libdir}" "-L${sharedlibdir}" -lzlibstatic
 Requires: 
-Cflags: "-I${includedir}"
+Cflags: "-I${includedir}" -DWITH_GZFILEOP

@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/libyuv-x64-windows-static-opt-1916-b605eaca-d2fe-4260-a876-734dd3af7ab5",
-  "name": "libyuv:x64-windows-static-opt@1916 2880519475dd2159fa6a127de855f5e9a04ff124e7d0a8aad74a6b87d3a706a9",
+  "documentNamespace": "https://spdx.org/spdxdocs/libyuv-x64-windows-static-opt-1916-293d9f61-4475-4900-81f7-533af1294f29",
+  "name": "libyuv:x64-windows-static-opt@1916 798073bc75bd5eb081a59fbddf825f2ad614d41306e9a1b846ac3bf66265fee4",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T04:34:13Z"
+    "created": "2026-01-29T05:51:49Z"
   },
   "relationships": [
     {
@@ -228,7 +228,7 @@
       "name": "libyuv",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "1916",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/libyuv",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@557f40e7241d91a80b55f849a18376613c45f13a",
       "homepage": "https://chromium.googlesource.com/libyuv/libyuv",
       "licenseConcluded": "LicenseRef-vcpkg-null",
       "licenseDeclared": "NOASSERTION",
@@ -239,7 +239,7 @@
     {
       "name": "libyuv:x64-windows-static-opt",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "2880519475dd2159fa6a127de855f5e9a04ff124e7d0a8aad74a6b87d3a706a9",
+      "versionInfo": "798073bc75bd5eb081a59fbddf825f2ad614d41306e9a1b846ac3bf66265fee4",
       "downloadLocation": "NONE",
       "licenseConcluded": "LicenseRef-vcpkg-null",
       "licenseDeclared": "NOASSERTION",
@@ -334,7 +334,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "b4a6b987f3552bfe0d39ace1e75d9a7f297e5e5a82b799ad974506995a4c432b"
+          "checksumValue": "e40c0c26b4c3a8efc77180c3f46a5b8c2c95d75e98c3fe42b8c47612c0f44304"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -658,7 +658,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "5e90ecf2ac31aa06af723cf2553e00f1ff5e8a08e05af379f7bb1ddac702570a"
+          "checksumValue": "376f887b41bb6f706c12a2e18b42fe56a2f78d98fa0882fe03937aa6ba39979e"
         }
       ],
       "licenseConcluded": "NOASSERTION",

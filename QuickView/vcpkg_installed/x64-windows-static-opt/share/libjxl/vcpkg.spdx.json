@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/libjxl-x64-windows-static-opt-0.11.1#4-4e4c4da6-279b-4d83-a36d-5e893fa0b341",
-  "name": "libjxl:x64-windows-static-opt@0.11.1#4 eea68942c22844dd09a70b5bfad7e32a6ae1cfab6608b6e8070a2609cbaff5db",
+  "documentNamespace": "https://spdx.org/spdxdocs/libjxl-x64-windows-static-opt-0.11.1#4-fb1a6344-17bb-4bd4-9d82-f986da2b23d4",
+  "name": "libjxl:x64-windows-static-opt@0.11.1#4 651d967a6084f0f97f3395d5356f6fb9f9dfe9ae2d90bdead0ae8725fb970e9f",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T04:36:29Z"
+    "created": "2026-01-29T05:54:06Z"
   },
   "relationships": [
     {
@@ -238,7 +238,7 @@
       "name": "libjxl",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "0.11.1#4",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/libjxl",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@ac044181841dbaf63e6403aa3931b944574b2bdf",
       "homepage": "https://github.com/libjxl/libjxl",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "NOASSERTION",
@@ -249,7 +249,7 @@
     {
       "name": "libjxl:x64-windows-static-opt",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "eea68942c22844dd09a70b5bfad7e32a6ae1cfab6608b6e8070a2609cbaff5db",
+      "versionInfo": "651d967a6084f0f97f3395d5356f6fb9f9dfe9ae2d90bdead0ae8725fb970e9f",
       "downloadLocation": "NONE",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "NOASSERTION",
@@ -362,7 +362,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "8dc7ec546d53ee2b3b08e2ab78fc203c4eff5a0f56c45dad4983b6773f6acdfb"
+          "checksumValue": "4ff7030492d1097cf782b80ac51987afe0074983dfe5383b6438b22a81cee88c"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -374,7 +374,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "e888f7add56edb1092d9e2be55ec771605502fa8738cdac4bc8bfa9c8b87c9d8"
+          "checksumValue": "582b9f0d567da90b8484544ac6052d243a570fade2a14559eaea59832234b8f3"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -386,7 +386,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "420ae3713d1592c9007968584c2c056c882316d5b4f929af89f3098738958972"
+          "checksumValue": "730caaece17b3700d1b430dfe5dcdd0c3a5cf2905ba3fc82b3616f352598bae1"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -698,7 +698,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "e2e13896bc4e8edd6c392eee9012c8330787a72700ffabcce0d7cb3bb10b337d"
+          "checksumValue": "f3c2290eac4f2bbbea4442c74c9287deac73683e556e717915d5a56161bd6d57"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -710,7 +710,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "446a5fed5d9c80606bfacbd4b3d0aaa360498f30558466077214191f03d983f3"
+          "checksumValue": "13c03a56322db34cb95002c7eba06f9b34c346ba024ccd86accd8c4a4a11de23"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -722,7 +722,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "7589aa8c22e4099545cba52d2c981fffadc6806ef421ead7d81301e407d92788"
+          "checksumValue": "72834415ba9b026f9e4a858336ecca34ba1f50feb5307eb911940e536ec1693d"
         }
       ],
       "licenseConcluded": "NOASSERTION",

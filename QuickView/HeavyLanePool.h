@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "SystemInfo.h"
 #include "MemoryArena.h"
+#include "TileMemoryManager.h" // [Titan]
 #include "ImageLoader.h"
 #include "ImageEngine.h"  // For EngineEvent complete type
 #include <vector>
@@ -13,7 +14,7 @@
 #include <chrono>
 #include <condition_variable>
 
-// ImageEngine is now defined via include
+#include "TileTypes.h" // [Titan]
 
 // ============================================================================
 // Worker State Machine
@@ -24,6 +25,10 @@ enum class WorkerState {
     BUSY,        // Currently decoding
     DRAINING     // About to be destroyed (finishing cleanup)
 };
+
+// ============================================================================
+// HeavyLanePool: N+1 Hot-Spare Architecture
+// ============================================================================
 
 // ============================================================================
 // HeavyLanePool: N+1 Hot-Spare Architecture
@@ -47,6 +52,12 @@ public:
     
     // [Two-Stage] Submit for full resolution decode (no scaling)
     void SubmitFullDecode(const std::wstring& path, ImageID imageId);
+    
+    // [Titan Engine] Submit a tile decode task
+    void SubmitTile(const std::wstring& path, ImageID imageId, QuickView::TileCoord coord, QuickView::RegionRequest region, int priority = 0);
+    
+    // [Titan Engine] Batch Submission for MacroTiles (reduces locking overhead)
+    void SubmitTileBatch(const std::wstring& path, ImageID imageId, const std::vector<std::pair<QuickView::TileCoord, QuickView::RegionRequest>>& batch, int priority = 0);
     
     // === Cancellation ===
     // [ImageID] Cancel tasks that don't match the current imageId
@@ -125,10 +136,27 @@ private:
     // Job queue
     mutable std::mutex m_poolMutex;
     std::condition_variable m_poolCv;
+    
+    // [Titan Engine] Job Type (Standard vs Tile)
+    enum class JobType {
+        Standard,
+        Tile
+    };
+    
     struct JobInfo {
+        JobType type = JobType::Standard;
+        int priority = 0; // Higher = Earlier
+        
+        // Common
         std::wstring path;
         ImageID imageId;
+        
+        // Standard
         bool isFullDecode = false;  // [Two-Stage] true = full resolution, false = scaled
+        
+        // Tile
+        QuickView::RegionRequest region; // [Titan] Rect + Scale
+        QuickView::TileCoord tileCoord;  // [Titan] For result indentification
     };
     std::deque<JobInfo> m_pendingJobs;
     
@@ -144,8 +172,8 @@ private:
     void ShrinkerLoop(std::stop_token st);
     
     // Perform actual decode (calls into ImageLoader)
-    // [Two-Stage] isFullDecode=true for full resolution, false for fit-to-screen IDCT scaling
-    void PerformDecode(int workerId, const std::wstring& path, ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode = false);
+    // [Two-Stage] unpacks job info
+    void PerformDecode(int workerId, const JobInfo& job, std::stop_token st, std::wstring* outLoaderName);
     
     // Expansion/Shrink logic
     void TryExpand();  // Called when job submitted
@@ -157,4 +185,32 @@ private:
     
     // Queue event to parent for main thread notification
     void QueueResult(EngineEvent&& evt);
+
+    // [Titan] Memory Manager for Tile allocations
+    // We keep it here to be shared by all workers
+    QuickView::TileMemoryManager m_tileMemory;
+
+    // [Safety] Atomic Tracking for Lifecycle Management
+    std::atomic<int> m_activeTileJobs = 0;
+    
+    // ============================================================================
+    // [Optimization] Full Image Cache (RAM Preload)
+    // ============================================================================
+    // Strategy: For medium-large images (< 2GB), decode the entire image to RAM once.
+    // This eliminates the O(N) seek penalty of TurboJPEG partial decoding.
+    // 1. Initial access starts "Preload Task" (background).
+    // 2. Tiles use "Slow Path" (Disk) until preload finishes.
+    // 3. Once Preload ready, Tiles switch to "Fast Path" (memcpy/resize from RAM).
+    
+    std::mutex m_cacheMutex;
+    std::map<std::wstring, std::shared_ptr<QuickView::RawImageFrame>> m_fullImageCache; 
+    std::atomic<bool> m_isPreloading = false; // Simple flag to avoid duplicate triggers for same image
+    std::wstring m_preloadingPath; // Which path is currently being preloaded?
+
+    void TriggerPreload(const std::wstring& path);
+    bool GetCachedRegion(const std::wstring& path, QuickView::RegionRequest region, QuickView::RawImageFrame* outFrame);
+
+public:
+    void WaitForTileJobs(); // Spin-wait for active tile jobs to finish
 };
+

@@ -1,6 +1,6 @@
 include(CMakeFindDependencyMacro)
 
-if(TRUE)
+if()
     find_dependency(Jasper)
 endif()
 

@@ -7,6 +7,10 @@
 
 #pragma comment(lib, "dwrite.lib")
 
+#include <unordered_map>
+#include "TileTypes.h"  // [Titan]
+#include "ComputeEngine.h"
+
 // Direct2D Effects GUIDs
 #include <d2d1effects.h>
 
@@ -156,4 +160,36 @@ public:
     float m_warpDimming = 0.0f;             // 当前压暗强度
     
     HRESULT CreateWarpEffects(); // Effect 预热
+
+    // ============================================================================
+    // [Titan] Tile Rendering
+    // ============================================================================
+    
+    /// <summary>
+    /// Upload a single tile to the GPU cache.
+    /// </summary>
+    HRESULT UploadTile(const QuickView::TileCoord& coord, const QuickView::RawImageFrame& frame);
+    
+    /// <summary>
+    /// Draw the grid of tiles. 
+    /// Tiles are drawn in Image Space coordinates. 
+    /// Caller must set appropriate D2D Transform before calling.
+    /// </summary>
+    /// <param name="visibleTiles">List of tiles to draw</param>
+    void DrawTileGrid(const std::vector<QuickView::TileCoord>& visibleTiles, bool showDebugGrid = false);
+    
+    /// <summary>
+    /// Clear all cached tiles (call when image changes).
+    /// </summary>
+    void ClearTiles();
+
+private:
+    // Tile Cache: Hash(TileCoord) -> Bitmap
+    std::unordered_map<size_t, ComPtr<ID2D1Bitmap>> m_tileCache;
+    
+    // Debug: Tile Borders
+    ComPtr<ID2D1SolidColorBrush> m_debugBrush;
+    HRESULT CreateDebugResources();
+
+    std::unique_ptr<QuickView::ComputeEngine> m_computeEngine;
 };

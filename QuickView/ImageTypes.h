@@ -34,6 +34,21 @@ enum class DecodeQuality : uint8_t {
     Full = 1     // Full Resolution / Raw Decode
 };
 
+// [v9.1] Navigation Direction (for Prefetch)
+enum class BrowseDirection {
+    BACKWARD = -1,
+    IDLE = 0,
+    FORWARD = 1
+};
+
+// [v9.1] Task Priority
+enum class Priority {
+    Critical = 0, // On Screen (was Visible)
+    High = 1,     // Next/Prev (was Preload)
+    Low = 2,      // Further out (was Cached)
+    Idle = 3      // Background
+};
+
 // ============================================================================
 // RawImageFrame - The Standardized Cargo Box
 // ============================================================================
@@ -196,7 +211,7 @@ private:
 /// @param bytesPerPixel Bytes per pixel (4 for BGRA, 16 for float RGBA)
 /// @param alignment Alignment in bytes (default 16 for D2D)
 /// @return Aligned stride in bytes
-[[nodiscard]] inline int CalculateAlignedStride(int width, int bytesPerPixel, int alignment = 16) noexcept {
+[[nodiscard]] inline int CalculateAlignedStride(int width, int bytesPerPixel, int alignment = 4) noexcept {
     const int rawStride = width * bytesPerPixel;
     return (rawStride + alignment - 1) & ~(alignment - 1);
 }

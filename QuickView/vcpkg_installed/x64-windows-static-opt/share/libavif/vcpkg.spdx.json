@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/libavif-x64-windows-static-opt-1.3.0#1-1efc3c52-e8f7-4270-8e6e-d9eb70675a0e",
-  "name": "libavif:x64-windows-static-opt@1.3.0#1 a2888154594737ae98e00f6f12d00f04f6cd0faad691e9fc49112614fccd678d",
+  "documentNamespace": "https://spdx.org/spdxdocs/libavif-x64-windows-static-opt-1.3.0#1-6be23770-ed13-4cbe-9e65-04b54f7e75b3",
+  "name": "libavif:x64-windows-static-opt@1.3.0#1 9a3690c2bc1b85e912372c37401adc11592f8b4722e19b03dcf3b77e2d721d1c",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T07:49:16Z"
+    "created": "2026-01-29T05:52:01Z"
   },
   "relationships": [
     {
@@ -113,7 +113,7 @@
       "name": "libavif",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "1.3.0#1",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/libavif",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@d6a71c6784163a5c5b285a761033389723974387",
       "homepage": "https://github.com/AOMediaCodec/libavif",
       "licenseConcluded": "Apache-2.0 AND BSD-2-Clause",
       "licenseDeclared": "NOASSERTION",
@@ -124,7 +124,7 @@
     {
       "name": "libavif:x64-windows-static-opt",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "a2888154594737ae98e00f6f12d00f04f6cd0faad691e9fc49112614fccd678d",
+      "versionInfo": "9a3690c2bc1b85e912372c37401adc11592f8b4722e19b03dcf3b77e2d721d1c",
       "downloadLocation": "NONE",
       "licenseConcluded": "Apache-2.0 AND BSD-2-Clause",
       "licenseDeclared": "NOASSERTION",
@@ -213,7 +213,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "d6f826653e21858404ea1756489eaac5cd9505ab88f2767a29aebb17da8fb1d4"
+          "checksumValue": "617a1fee181fda2a362f4b614dc8c3846778b937d44f460591a579d7e5b34dc0"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -261,7 +261,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "a73dd1a40e096adcb3d43a2a9087e41df38cb3d4013b6ce4c047fca6d4387213"
+          "checksumValue": "c7dac85e8ada23bef953dd6a6f1da3db304d78cb94f3e79b4d3a641cbc3e59a9"
         }
       ],
       "licenseConcluded": "NOASSERTION",

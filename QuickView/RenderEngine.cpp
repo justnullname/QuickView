@@ -55,6 +55,13 @@ HRESULT CRenderEngine::Initialize(HWND hwnd) {
         OutputDebugStringA("Warning: Failed to create Warp effects, blur disabled.\n");
     }
 
+    // 6. Compute Engine Initialization
+    m_computeEngine = std::make_unique<QuickView::ComputeEngine>();
+    hr = m_computeEngine->Initialize(m_d3dDevice.Get());
+    if (FAILED(hr)) {
+        OutputDebugStringA("Warning: Failed to initialize ComputeEngine.\n");
+    }
+
     return S_OK;
 }
 
@@ -412,8 +419,22 @@ HRESULT CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame& frame
         96.0f, 96.0f  // Standard DPI
     );
     
-    // Direct Upload - Data is copied to GPU synchronously
-    // After this call returns, the CPU memory can be safely released
+    // [Optimization] Use GPU Compute for non-native format conversion
+    if (m_computeEngine && m_computeEngine->IsAvailable() && 
+        frame.format != QuickView::PixelFormat::BGRA8888 && frame.pixels) 
+    {
+        ComPtr<ID3D11Texture2D> pTex;
+        if (SUCCEEDED(m_computeEngine->UploadAndConvert(frame.pixels, (int)frame.width, (int)frame.height, frame.format, &pTex))) {
+            ComPtr<IDXGISurface> dxgiSurface;
+            if (SUCCEEDED(pTex.As(&dxgiSurface))) {
+                // Adjust props for the converted texture (always BGRA)
+                props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+                return m_d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, reinterpret_cast<ID2D1Bitmap1**>(outBitmap));
+            }
+        }
+    }
+
+    // Direct Upload Fallback
     HRESULT hr = m_d2dContext->CreateBitmap(
         D2D1::SizeU(static_cast<UINT32>(frame.width), static_cast<UINT32>(frame.height)),
         frame.pixels,
@@ -508,7 +529,6 @@ void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& d
     );
     
     // === Dimming (压暗) ===
-    // 使用半透明黑色矩形叠加，这比 Brightness Effect 更快且更可靠
     if (m_warpDimming > 0.01f) {
         // 创建或获取黑色画刷 (可以缓存，这里为简洁直接创建)
         ComPtr<ID2D1SolidColorBrush> dimBrush;
@@ -518,4 +538,77 @@ void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& d
         }
     }
 }
+
+// ============================================================================
+// [Titan] Tile Rendering Implementation
+// ============================================================================
+
+void CRenderEngine::ClearTiles() {
+    m_tileCache.clear();
+}
+
+HRESULT CRenderEngine::UploadTile(const QuickView::TileCoord& coord, const QuickView::RawImageFrame& frame) {
+    if (!frame.IsValid()) return E_INVALIDARG;
+    
+    // Create Bitmap using existing helper
+    ComPtr<ID2D1Bitmap> bitmap;
+    HRESULT hr = UploadRawFrameToGPU(frame, &bitmap); // Uses ID2D1Bitmap1** internally safe cast
+    
+    if (SUCCEEDED(hr)) {
+        size_t hash = QuickView::TileCoord::Hash()(coord);
+        m_tileCache[hash] = bitmap;
+    }
+    return hr;
+}
+
+void CRenderEngine::DrawTileGrid(const std::vector<QuickView::TileCoord>& visibleTiles, bool showDebugGrid) {
+    if (!m_d2dContext) return;
+
+    // Create Debug Brush if needed
+    if (!m_debugBrush) {
+         m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red, 0.5f), &m_debugBrush);
+    }
+
+    // Grid Parameters
+    constexpr float TILE_SIZE = 512.0f;
+
+    for (const auto& coord : visibleTiles) {
+        size_t hash = QuickView::TileCoord::Hash()(coord);
+        auto it = m_tileCache.find(hash);
+        
+        // Draw in Image Space coordinates
+        // LOD 0 = 512x512, LOD 1 = 1024x1024, etc.
+        float lodScale = static_cast<float>(1 << coord.lod);
+        float imgX = coord.col * TILE_SIZE * lodScale;
+        float imgY = coord.row * TILE_SIZE * lodScale;
+        float drawSize = TILE_SIZE * lodScale;
+        
+        // Overlap by 0.5px to fix gaps
+        D2D1_RECT_F destRect = D2D1::RectF(imgX, imgY, imgX + drawSize + 0.5f, imgY + drawSize + 0.5f);
+        
+        if (it != m_tileCache.end() && it->second) {
+            // Draw Tile
+            // Use Linear for tiles (assumed 1:1 or zoomed in), unless zooming out far.
+            // Since we use LOD, we should be close to 1:1.
+            m_d2dContext->DrawBitmap(
+                it->second.Get(),
+                destRect,
+                1.0f,
+                D2D1_INTERPOLATION_MODE_LINEAR
+            );
+            
+            // Debug: Draw Borders
+            if (showDebugGrid && m_debugBrush) {
+                 m_d2dContext->DrawRectangle(destRect, m_debugBrush.Get(), 1.0f);
+            }
+        } else {
+             // Debug: Missing Tile (Only if Debug enabled?) 
+             // Or maybe always show missing tiles as warning? User said "Debug HUD", let's hide all lines.
+             if (showDebugGrid && m_debugBrush) {
+                m_d2dContext->DrawRectangle(destRect, m_debugBrush.Get(), 3.0f); // Thick border for missing
+             }
+        }
+    }
+}
+
 

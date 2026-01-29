@@ -1,15 +1,8 @@
-Package: vcpkg-cmake-config
-Version: 2024-05-23
-Architecture: x64-windows
-Multi-Arch: same
-Abi: 53bd534ef772f90f44e18f1b3a910a5607952e7d5bcbc401ee814c16ecdb2b67
-Status: install ok installed
-
 Package: vcpkg-cmake
 Version: 2024-04-23
 Architecture: x64-windows
 Multi-Arch: same
-Abi: eb305064a303e5ed6b4528aa9e238005311596f545ecb704db0ba1214a9b8b7c
+Abi: b80d477a4c58ebe9d94d2f8b59945e2e0921ea40c2e344d21b4cac8135db3d99
 Status: install ok installed
 
 Package: vcpkg-cmake-get-vars
@@ -17,7 +10,33 @@ Version: 2025-05-29
 Depends: vcpkg-cmake
 Architecture: x64-windows
 Multi-Arch: same
-Abi: 146eef8e807871542e6327165ffca837b7fe887a34ff65cff5b7e123e2d00b0d
+Abi: 5d85e2f0a5c2cd5d8d533a3fd814e378221597be7817d1faec845947b6142e73
+Status: install ok installed
+
+Package: vcpkg-tool-meson
+Version: 1.9.0
+Port-Version: 3
+Depends: vcpkg-cmake-get-vars
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 3a482722d14b00a1f88fbbac021cda863d32ebdd2385d2bfa3a34299519ed78b
+Description: Meson build system
+Status: install ok installed
+
+Package: dav1d
+Version: 1.5.2
+Depends: vcpkg-tool-meson:x64-windows
+Architecture: x64-windows-static-opt
+Multi-Arch: same
+Abi: ea80044c2a4eb29fa951868df2f9aacb845a34e281f10d3dff194d8fa292a54e
+Description: dav1d is a new open-source AV1 decoder developed by the VideoLAN and FFmpeg communities and sponsored by the Alliance for Open Media.
+Status: install ok installed
+
+Package: vcpkg-cmake-config
+Version: 2024-05-23
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 55e6572e5c58215481c66d2c447d8809f9c2ba638b622dd9a754db22f8302452
 Status: install ok installed
 
 Package: libjpeg-turbo
@@ -25,7 +44,7 @@ Version: 3.1.3
 Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 1a8e45e50e493c9f9fabbe336ea3b452b5554a80b17de896ba4a8d7a25bf3f8b
+Abi: 2ff667101cfbea63a71b23bef5524eb553564b7958ad7c503e519aef2f3e23cb
 Description: libjpeg-turbo is a JPEG image codec that uses SIMD instructions (MMX, SSE2, NEON, AltiVec) to accelerate baseline JPEG compression and decompression on x86, x86-64, ARM, and PowerPC systems.
 Status: install ok installed
 
@@ -34,7 +53,7 @@ Version: 1916
 Depends: libjpeg-turbo, vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows, vcpkg-cmake-get-vars:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 2880519475dd2159fa6a127de855f5e9a04ff124e7d0a8aad74a6b87d3a706a9
+Abi: 798073bc75bd5eb081a59fbddf825f2ad614d41306e9a1b846ac3bf66265fee4
 Description: libyuv is an open source project that includes YUV scaling and conversion functionality
 Status: install ok installed
 
@@ -44,26 +63,24 @@ Port-Version: 1
 Depends: libyuv, vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: a2888154594737ae98e00f6f12d00f04f6cd0faad691e9fc49112614fccd678d
+Abi: 9a3690c2bc1b85e912372c37401adc11592f8b4722e19b03dcf3b77e2d721d1c
 Description: Library for encoding and decoding AVIF files
 Status: install ok installed
 
-Package: vcpkg-tool-meson
-Version: 1.9.0
-Port-Version: 3
-Depends: vcpkg-cmake-get-vars
-Architecture: x64-windows
+Package: libavif
+Feature: dav1d
+Depends: dav1d
+Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 6adfd34aa1c3b3ab93daf55ed644e75ff0b8fd6fe55139396a80c703f0967d58
-Description: Meson build system
+Description: dav1d decoder library
 Status: install ok installed
 
 Package: lcms
-Version: 2.17
+Version: 2.18
 Depends: vcpkg-tool-meson:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: be2dffd1b19e8c0a43d58113ebdfa7429f808e68e295aa78754c207f79a46eeb
+Abi: a639b7f2ef7c6fb72d3b78ec4dc936e4387689ed3712163ce5a973fb338f8b47
 Description: Little CMS.
 Status: install ok installed
 
@@ -72,7 +89,7 @@ Version: 1.3.0
 Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 6b9a4627fcb5284cfef53b9562c7c0b0d3f576a511b1d7df74933a6919e45acd
+Abi: 719c8a8ec8f072bc98623307d1afc5d79f3e3feff516c171b33b19c5d2509c28
 Description: Performance-portable, length-agnostic SIMD with runtime dispatch
 Status: install ok installed
 
@@ -81,7 +98,7 @@ Version: 1.2.0
 Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 824a867f76781ace81c915d1d235360549eb88bca5c64b15905a631e3f86c408
+Abi: bb6977612bff248a7a257c75a7cff08a955d99e192acb484bb17fb5eaa6cf18b
 Description: a generic-purpose lossless compression algorithm that compresses data using a combination of a modern variant of the LZ77 algorithm, Huffman coding and 2nd order context modeling.
 Status: install ok installed
 
@@ -91,17 +108,27 @@ Port-Version: 4
 Depends: brotli, highway, lcms, vcpkg-cmake:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: eea68942c22844dd09a70b5bfad7e32a6ae1cfab6608b6e8070a2609cbaff5db
+Abi: 651d967a6084f0f97f3395d5356f6fb9f9dfe9ae2d90bdead0ae8725fb970e9f
 Description: JPEG XL image format reference implementation
+Status: install ok installed
+
+Package: zlib-ng
+Version: 2.3.2
+Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
+Architecture: x64-windows-static-opt
+Multi-Arch: same
+Abi: 16917be5f5a13daee8157bcfbb0a2a67965335e2fe04a6772370ac171483bd41
+Description: zlib replacement with optimizations for 'next generation' systems
 Status: install ok installed
 
 Package: zlib
 Version: 1.3.1
-Depends: vcpkg-cmake:x64-windows
+Port-Version: 1
+Depends: zlib-ng
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 36c7fc1abd222cd994fb416f8fe152713ae1fe403b1dc90d7cfe46d1c9ea90b6
-Description: A compression library
+Abi: 7c9c560c66fa4d69e75a355ddd5390bfbc8ab04550b2d90f70e54c0329ef78cf
+Description: Redirect to zlib-ng (faster, SIMD-optimized)
 Status: install ok installed
 
 Package: jasper
@@ -109,16 +136,16 @@ Version: 4.2.8
 Depends: libjpeg-turbo, vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 2f7b805890064de62b60fd77ec445c76fd156aaa68a215fc9f0b9c4a3823bfb5
+Abi: caf9ff960355192aa07824a5e35fb5532da9c18876563e510c882eaa14a86834
 Description: Open source implementation of the JPEG-2000 Part-1 standard
 Status: install ok installed
 
 Package: libraw
-Version: 0.21.4
+Version: 0.22.0
 Depends: jasper, lcms, vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows, zlib
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 4d756583de712b94557b1a5abbfa641402a4c5583a74947a59fe5faccb2f2935
+Abi: 9017a5c4962bf312a77ec46b255c037119dbced5f08e1cfcb484db1e20a54e16
 Description: raw image decoder library
 Status: install ok installed
 
@@ -128,7 +155,7 @@ Port-Version: 2
 Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 3f7b80057bc31f665199e407080aed07d4950a425a4bbb42a0a3062fa208933c
+Abi: f95b06d2528792f66246ab1f34625996162869c9ca3189d2bc27e6aa832823b0
 Description: WebP codec: library to encode and decode images in WebP format
 Default-Features: libwebpmux, nearlossless, simd
 Status: install ok installed
@@ -161,47 +188,12 @@ Multi-Arch: same
 Description: Build Unicode executables. (Adds definition UNICODE and _UNICODE)
 Status: install ok installed
 
-Package: dav1d
-Version: 1.5.1
-Port-Version: 1
-Depends: vcpkg-tool-meson:x64-windows
-Architecture: x64-windows-static-opt
-Multi-Arch: same
-Abi: 1432209e0b256ee68a441f02b5c5fbec1c9fb804f26b50e5f5f7a45bc0ef5e5e
-Description: dav1d is a new open-source AV1 decoder developed by the VideoLAN and FFmpeg communities and sponsored by the Alliance for Open Media.
-Status: install ok installed
-
-Package: aom
-Version: 3.13.1
-Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
-Architecture: x64-windows-static-opt
-Multi-Arch: same
-Abi: b352973a901c69217151a9ea8505b28fa8a0b9b3d1991439e30749db1e1bcb27
-Description: AV1 codec library
-Status: purge ok not-installed
-
-Package: libavif
-Feature: aom
-Depends: aom
-Architecture: x64-windows-static-opt
-Multi-Arch: same
-Description: AV1 codec library
-Status: purge ok not-installed
-
-Package: libavif
-Feature: dav1d
-Depends: dav1d
-Architecture: x64-windows-static-opt
-Multi-Arch: same
-Description: dav1d decoder library
-Status: install ok installed
-
 Package: mimalloc
-Version: 2.2.4
+Version: 3.2.7
 Depends: vcpkg-cmake:x64-windows, vcpkg-cmake-config:x64-windows
 Architecture: x64-windows-static-opt
 Multi-Arch: same
-Abi: 56d900b73d5414a35a6cc5f6d3c5d00f9d4fe9825543002d7d9373cbdf4d4291
+Abi: 2b0852072567e0df0fc3a02f5f3b025d6843c30cbdc16d2fbd52621c837c3eea
 Description: Compact general purpose allocator with excellent performance
 Status: install ok installed
 

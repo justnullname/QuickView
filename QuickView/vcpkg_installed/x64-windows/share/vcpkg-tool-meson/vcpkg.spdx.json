@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/vcpkg-tool-meson-x64-windows-1.9.0#3-295f7747-4f23-4658-84af-e9180c2b3b54",
-  "name": "vcpkg-tool-meson:x64-windows@1.9.0#3 6adfd34aa1c3b3ab93daf55ed644e75ff0b8fd6fe55139396a80c703f0967d58",
+  "documentNamespace": "https://spdx.org/spdxdocs/vcpkg-tool-meson-x64-windows-1.9.0#3-c2066c5e-48b7-4a76-9805-eb35a4f52466",
+  "name": "vcpkg-tool-meson:x64-windows@1.9.0#3 3a482722d14b00a1f88fbbac021cda863d32ebdd2385d2bfa3a34299519ed78b",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T04:34:38Z"
+    "created": "2026-01-29T05:49:23Z"
   },
   "relationships": [
     {
@@ -143,7 +143,7 @@
       "name": "vcpkg-tool-meson",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "1.9.0#3",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/vcpkg-tool-meson",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@165684a9f99a44f025f61276320bbd412026400a",
       "homepage": "https://github.com/mesonbuild/meson",
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "NOASSERTION",
@@ -154,7 +154,7 @@
     {
       "name": "vcpkg-tool-meson:x64-windows",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "6adfd34aa1c3b3ab93daf55ed644e75ff0b8fd6fe55139396a80c703f0967d58",
+      "versionInfo": "3a482722d14b00a1f88fbbac021cda863d32ebdd2385d2bfa3a34299519ed78b",
       "downloadLocation": "NONE",
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "NOASSERTION",

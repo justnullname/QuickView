@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.2",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/jasper-x64-windows-static-opt-4.2.8-d2726f2c-1808-481c-b43b-f9d8fd2eaf6c",
-  "name": "jasper:x64-windows-static-opt@4.2.8 2f7b805890064de62b60fd77ec445c76fd156aaa68a215fc9f0b9c4a3823bfb5",
+  "documentNamespace": "https://spdx.org/spdxdocs/jasper-x64-windows-static-opt-4.2.8-8abb8131-a7af-47b8-8877-c76e82d48023",
+  "name": "jasper:x64-windows-static-opt@4.2.8 caf9ff960355192aa07824a5e35fb5532da9c18876563e510c882eaa14a86834",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2025-12-16-44bb3ce006467fc13ba37ca099f64077b8bbf84d"
     ],
-    "created": "2025-12-23T04:37:15Z"
+    "created": "2026-01-29T05:55:26Z"
   },
   "relationships": [
     {
@@ -198,7 +198,7 @@
       "name": "jasper",
       "SPDXID": "SPDXRef-port",
       "versionInfo": "4.2.8",
-      "downloadLocation": "git+https://github.com/Microsoft/vcpkg#ports/jasper",
+      "downloadLocation": "git+https://github.com/Microsoft/vcpkg@63419e881eced5c0d8d125ab9f888561a1415ec5",
       "homepage": "https://github.com/jasper-software/jasper",
       "licenseConcluded": "LicenseRef-vcpkg-null",
       "licenseDeclared": "NOASSERTION",
@@ -209,7 +209,7 @@
     {
       "name": "jasper:x64-windows-static-opt",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "2f7b805890064de62b60fd77ec445c76fd156aaa68a215fc9f0b9c4a3823bfb5",
+      "versionInfo": "caf9ff960355192aa07824a5e35fb5532da9c18876563e510c882eaa14a86834",
       "downloadLocation": "NONE",
       "licenseConcluded": "LicenseRef-vcpkg-null",
       "licenseDeclared": "NOASSERTION",
@@ -310,7 +310,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "047bb843b2c9c3785556cc5b35608347125da9b35eb9474f672f18a11866327c"
+          "checksumValue": "e27396c28def72585044f6437656e5bedd259333854e6b9fef8a29d97e8f7c0b"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -610,7 +610,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "f1a1aa8a681c857afdb280ec07975af7d11656b19eede2633fc85c3d92e475d1"
+          "checksumValue": "b60314b43e1da3059b7ba81bb7ae7ce4d02f2d34f72838f49c74b9d67cc7505d"
         }
       ],
       "licenseConcluded": "NOASSERTION",

@@ -422,7 +422,7 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
-FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, BrowseDirection dir = BrowseDirection::IDLE);
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
@@ -887,11 +887,11 @@ enum class PaintLayer : uint32_t {
     Static  = 1 << 0,   // Toolbar, Window Controls, Info Panel, Settings
     Dynamic = 1 << 1,   // HUD, OSD, Tooltip, Dialog
     Gallery = 1 << 2,   // Gallery Overlay
-    Image   = 1 << 3,   // Main SwapChain (图片层)
+    Image   = 1 << 3,   // Main SwapChain (图片�?
     All     = 0xFF
 };
 
-// 支持位运算
+// 支持位运�?
 inline PaintLayer operator|(PaintLayer a, PaintLayer b) {
     return static_cast<PaintLayer>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
@@ -905,9 +905,9 @@ inline bool HasLayer(PaintLayer flags, PaintLayer layer) {
 // Global window handle for RequestRepaint (set in wWinMain)
 static HWND g_mainHwnd = nullptr;
 
-// ✅ 统一重绘请求入口 - 所有地方只调这个函数
+// �?统一重绘请求入口 - 所有地方只调这个函�?
 void RequestRepaint(PaintLayer layer) {
-    // 1. 设置对应层的脏标记
+    // 1. 设置对应层的脏标�?
     if (g_uiRenderer) {
         if (HasLayer(layer, PaintLayer::Static))  { g_uiRenderer->MarkStaticDirty();  g_debugMetrics.dirtyTriggerStatic = 5; }
         if (HasLayer(layer, PaintLayer::Dynamic)) { g_uiRenderer->MarkDynamicDirty(); g_debugMetrics.dirtyTriggerDynamic = 5; }
@@ -924,13 +924,13 @@ void RequestRepaint(PaintLayer layer) {
     }
     
     // 2. 触发 Windows 消息循环唤醒 WM_PAINT
-    // 在 DComp 架构下，这只是唤醒 OnPaint，实际画什么由脏标记决定
+    // �?DComp 架构下，这只是唤�?OnPaint，实际画什么由脏标记决�?
     if (g_mainHwnd) {
         ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
     }
 }
 
-// 便捷宏 (保持向后兼容)
+// 便捷�?(保持向后兼容)
 #define MarkStaticLayerDirty() RequestRepaint(PaintLayer::Static)
 #define MarkDynamicLayerDirty() RequestRepaint(PaintLayer::Dynamic)
 #define MarkGalleryLayerDirty() RequestRepaint(PaintLayer::Gallery)
@@ -2072,7 +2072,21 @@ VisualState GetVisualState() {
     VisualState vs = {};
     
     // A. Physical Size (Priority: Surface > Resource > Metadata)
-    if (g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
+    // A. Physical Size (Priority: Titan Scheduler > Metadata > Surface > Resource)
+    bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+    
+    if (isTitan) {
+         // [Titan Fix] Source of Truth is the Scheduler (initialized by Dispatch with confirmed file dims)
+         // This bypasses any g_currentMetadata corruption (e.g. from Preview overwrite)
+         float tW = g_imageEngine->GetTileScheduler()->GetWidth();
+         float tH = g_imageEngine->GetTileScheduler()->GetHeight();
+         if (tW > 0 && tH > 0) {
+             vs.PhysicalSize = D2D1::SizeF(tW, tH);
+         } else {
+             vs.PhysicalSize = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
+         }
+    }
+    else if (g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
         vs.PhysicalSize = D2D1::SizeF((float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
     } else if (g_imageResource) {
         vs.PhysicalSize = g_imageResource.GetSize();
@@ -2195,10 +2209,27 @@ void AdjustWindowToImage(HWND hwnd) {
     D2D1_SIZE_F effSize = GetEffectiveImageSize();
     float imgWidth = effSize.width;
     float imgHeight = effSize.height;
+
+    // [Titan Fix] For Titan Mode, the "Effective Size" from GetVisualState might be the small preview/thumbnail.
+    // We MUST use the Metadata (Virtual) dimensions to size the window correctly, otherwise the window shrinks.
+    // This local override ensures OSD/Zoom logic (which calls GetVisualState) remains consistent for normal images,
+    // while the initial Window Layout gets the correct "Canvas Size".
+    bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+    if (isTitan && g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+        // Use Metadata Dimensions for Window Sizing, swapping for rotation if needed
+        VisualState vs = GetVisualState(); // Get rotation info
+        if (vs.IsRotated90) {
+             imgWidth = (float)g_currentMetadata.Height;
+             imgHeight = (float)g_currentMetadata.Width;
+        } else {
+             imgWidth = (float)g_currentMetadata.Width;
+             imgHeight = (float)g_currentMetadata.Height;
+        }
+    }
     
     if (imgWidth <= 0 || imgHeight <= 0) return;
     
-    VisualState vs = GetVisualState();
+    VisualState vs = GetVisualState(); // Refresh VS (Rotation state)
     
     // [First Principles] Map 1 Image Pixel into 1 Window Logical Unit directly.
     // DComp will handle the scaling to physical pixels.
@@ -2569,7 +2600,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     
     // [Prefetch System] Apply Initial Policy from Config
     {
-         PrefetchPolicy policy;
+         ImageEngine::PrefetchPolicy policy;
          switch (g_config.PrefetchGear) {
              case 0: policy.enablePrefetch = false; break;
              case 1: // Auto
@@ -3914,6 +3945,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              float originalDim = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
              if (originalDim > 0) {
                  osdScale = newTotalScale * (visualSize.width / originalDim);
+                 
+                 // [Debug OSD]
+                 wchar_t dbg[256];
+                 swprintf_s(dbg, L"[OSD] VisualW=%.0f MetaW=%.0f NewScale=%.4f OSD=%.4f\n", visualSize.width, originalDim, newTotalScale, osdScale);
+                 OutputDebugStringW(dbg);
              }
         }
         
@@ -4007,17 +4043,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Not Visible - Handled in switch below
         }
 
-        // 重复键过滤 (Bit 30: The previous key state)
-        // 注意: Warp 测试逻辑需要处理长按，所以不在这里过滤重复
+        // 重复键过�?(Bit 30: The previous key state)
+        // 注意: Warp 测试逻辑需要处理长按，所以不在这里过滤重�?
         
         bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         
-        // 让 F10 穿透 (F10 通常产生 WM_SYSKEYDOWN)
+        // �?F10 穿�?(F10 通常产生 WM_SYSKEYDOWN)
         // 其他系统键仍交给 DefWindowProc 处理
         if (message == WM_SYSKEYDOWN && wParam != VK_F10) {
-            break; // 其他系统键交给默认处理
+            break; // 其他系统键交给默认处�?
         }
         
         switch (wParam) {
@@ -4886,6 +4922,8 @@ void ProcessEngineEvents(HWND hwnd) {
             // [Texture Promotion] 
             // - If we are at Level 2 (Full), ignore Level 1 (Preview).
             if (g_imageQualityLevel >= 2 && isPreview) break;
+
+
             // - If we are at Level 2 (Full), ignore another Level 2 unless "Scaled" (Upgrade).
             if (g_imageQualityLevel >= 2 && !g_isImageScaled && !isPreview) break;
 
@@ -4984,9 +5022,10 @@ void ProcessEngineEvents(HWND hwnd) {
                 // The ReadMetadata (Async) is the source of truth for EXIF/Details.
                 
                 // 1. Dimensions: Decoder knows best. Async might fail (WIC).
-                if (finalMetadata.Width == 0 && g_currentMetadata.Width > 0) {
-                    finalMetadata.Width = g_currentMetadata.Width;
-                    finalMetadata.Height = g_currentMetadata.Height;
+                // [v10.0] Shrink Protection: Never overwrite full dimensions with smaller preview dimensions.
+                if (finalMetadata.Width >= g_currentMetadata.Width) {
+                    g_currentMetadata.Width = finalMetadata.Width;
+                    g_currentMetadata.Height = finalMetadata.Height;
                 }
                 
                 // 2. File Stats: Always trust non-zero (Source fix ensures Async has it, but safety first)
@@ -5114,13 +5153,28 @@ void ProcessEngineEvents(HWND hwnd) {
                                        (evt.metadata.Format.find(L"Alpha") != std::wstring::npos) ||
                                        (evt.rawFrame && evt.rawFrame->format == QuickView::PixelFormat::BGRA8888);
 
-                // [Two-Stage] Detect same-image upgrade (scaled → full)
+                // [Two-Stage] Detect same-image upgrade (scaled �?full)
                 // Fast transition when: was scaled, now full, same image ID
                 bool isSameImageUpgrade = g_isImageScaled && !evt.isScaled && 
                                           (evt.imageId == g_currentImageId.load());
 
 
-                RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
+                // [Titan] Titan Mode Strategy
+                // For huge images, we render manually in OnPaint (Window Surface) to support tiling.
+                // We MUST skip DComp Image Visual (or clear it) because it sits ON TOP of the Window Surface
+                // and would obscure our tiles.
+                bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+                
+                if (isTitan) {
+                    // Clear DComp Visual (pBitmap = nullptr) so it is transparent.
+                    // We must do this, otherwise the previous image (or a stale preview) might persist on top.
+                    // We use RenderImageToDComp with a temporary empty resource.
+                    ImageResource emptyRes; 
+                    RenderImageToDComp(hwnd, emptyRes, hasTransparency, isSameImageUpgrade);
+                } else {
+                    // Standard Path: Update DComp Visual
+                    RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
+                }
                 
                 // [Optimization] GPU-Assistant Surface Rotation Complete
                 // The Surface is now physically rotated. Neutralize global Exif.
@@ -5191,7 +5245,6 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.MeteringMode.empty()) g_currentMetadata.MeteringMode = evt.metadata.MeteringMode;
                  if (!evt.metadata.ExposureProgram.empty()) g_currentMetadata.ExposureProgram = evt.metadata.ExposureProgram;
                  if (!evt.metadata.ColorSpace.empty()) g_currentMetadata.ColorSpace = evt.metadata.ColorSpace;
-                 if (!evt.metadata.ColorSpace.empty()) g_currentMetadata.ColorSpace = evt.metadata.ColorSpace;
                  if (evt.metadata.HasEmbeddedColorProfile) g_currentMetadata.HasEmbeddedColorProfile = true;
                  
                  // [v6.3] Propagate Format Details & Format
@@ -5209,7 +5262,7 @@ void ProcessEngineEvents(HWND hwnd) {
                  // File Attributes
                  if (evt.metadata.FileSize > 0) g_currentMetadata.FileSize = evt.metadata.FileSize;
                  // [v5.8] Dimensions (if generic/RAW metadata has them)
-                 if (evt.metadata.Width > 0 && evt.metadata.Height > 0) {
+                 if (evt.metadata.Width >= g_currentMetadata.Width && evt.metadata.Height > 0) {
                      g_currentMetadata.Width = evt.metadata.Width;
                      g_currentMetadata.Height = evt.metadata.Height;
                      
@@ -5244,6 +5297,18 @@ void ProcessEngineEvents(HWND hwnd) {
             }
             break;
 
+    case EventType::TileReady:
+        if (evt.imageId == g_currentImageId.load() && evt.tileCoord.has_value() && evt.rawFrame) {
+            if (g_renderEngine) {
+                g_renderEngine->UploadTile(evt.tileCoord.value(), *evt.rawFrame);
+                if (g_imageEngine && g_imageEngine->GetTileScheduler()) {
+                    g_imageEngine->GetTileScheduler()->OnTileComplete(evt.tileCoord.value());
+                }
+                needsRepaint = true;
+            }
+        }
+        break;
+
 
          }
     }
@@ -5265,7 +5330,9 @@ void ProcessEngineEvents(HWND hwnd) {
 }
 
 // [v8.16] Added BrowseDirection to prevent resetting direction to IDLE
-void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection dir) {
+// [v8.16] Added BrowseDirection to prevent resetting direction to IDLE
+void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::BrowseDirection dir) {
+
     if (!g_imageEngine || path.empty()) return;
 
     // [Phase 3] Increment token FIRST (deprecated, kept for backward compatibility)
@@ -5299,6 +5366,7 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection
     g_ghostBitmap = nullptr; // Clear previous ghost
     g_isBlurry = true; // Reset for new image
     g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
+    g_lastSurfaceSize = {0, 0}; // [Fix] Clear stale surface size to prevents layout bugs
 
 // [v3.1] Global Quality Level (0=Default/Bilinear, 1=Bicubic, 2=Nearest)
     // [v5.5 Fix] Reset global metadata to prevent stale data merging
@@ -5357,7 +5425,7 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
     }
 }
 
-FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD, BrowseDirection dir) {
+FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD, QuickView::BrowseDirection dir) {
     if (path.empty()) co_return;
     
     // Switch to UI thread if needed (though usually called from UI)
@@ -5388,9 +5456,9 @@ void Navigate(HWND hwnd, int direction) {
             
             // [Phase 3] Notify prefetch system of navigation direction
             // [Phase 3] Notify prefetch system of navigation direction
-            BrowseDirection browseDir = (direction > 0) 
-                ? BrowseDirection::FORWARD 
-                : BrowseDirection::BACKWARD;
+            QuickView::BrowseDirection browseDir = (direction > 0) 
+                ? QuickView::BrowseDirection::FORWARD 
+                : QuickView::BrowseDirection::BACKWARD;
             
             // [v8.16 Fix] Pass direction to LoadImageAsync -> StartNavigation
             // Do NOT call UpdateView directly here, as LoadImageAsync calls StartNavigation which calls UpdateView.
@@ -5489,7 +5557,7 @@ void OnPaint(HWND hwnd) {
         }
         
         // === Quantum Stream: Warp Mode Integration ===
-        // 根据 InputController 状态设置 RenderEngine 模糊效果
+        // 根据 InputController 状态设�?RenderEngine 模糊效果
         if (g_inputController.GetState() == ScrollState::Warp) {
             float blurIntensity = g_inputController.CalculateBlurIntensity();
             float dimIntensity = g_inputController.CalculateDimIntensity();
@@ -5505,6 +5573,84 @@ void OnPaint(HWND hwnd) {
         // Pass explicit client rect dims (Paint runs on current client rect)
         RECT rcPaint; GetClientRect(hwnd, &rcPaint);
         SyncDCompState(hwnd, (float)rcPaint.right, (float)rcPaint.bottom);
+
+        // [Titan] Manual Tile Rendering Path
+        bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+        if (isTitan) {
+             auto* scheduler = g_imageEngine->GetTileScheduler();
+
+             // 1. Calculate Dimensions (Sync with Scheduler if Metadata not ready)
+             float imgFullW = (g_currentMetadata.Width > 0) ? (float)g_currentMetadata.Width : (float)scheduler->GetWidth();
+             float imgFullH = (g_currentMetadata.Height > 0) ? (float)g_currentMetadata.Height : (float)scheduler->GetHeight();
+
+             // 2. Calculate Absolute Scale (Consistent with Legacy: relative zoom 1.0 = Fit)
+             float fitScale = std::min(logicW / imgFullW, logicH / imgFullH);
+             float absoluteZoom = fitScale * g_viewState.Zoom; 
+             float invZoom = 1.0f / absoluteZoom;
+             
+             // Centers
+             float sCW = logicW / 2.0f;
+             float sCH = logicH / 2.0f;
+             float iCW = imgFullW / 2.0f;
+             float iCH = imgFullH / 2.0f;
+             
+             // Viewport Top-Left in Image Space
+             float viewL = (0.0f - sCW - g_viewState.PanX) * invZoom + iCW;
+             float viewT = (0.0f - sCH - g_viewState.PanY) * invZoom + iCH;
+             float viewW = logicW * invZoom;
+             float viewH = logicH * invZoom;
+             
+             QuickView::RegionRect vp = { (int)viewL, (int)viewT, (int)viewW, (int)viewH };
+             
+             // Update Scheduler (Dispatch new tiles if needed)
+             // [Titan] Calculate Base Preview Ratio for Trigger Threshold
+             float basePreviewRatio = 0.0f;
+             if (g_currentMetadata.Width > 0 && g_imageResource.bitmap) {
+                 float previewW = (float)g_imageResource.bitmap->GetPixelSize().width;
+                 basePreviewRatio = previewW / (float)g_currentMetadata.Width;
+                 
+                 // [Debug Titan Trigger]
+                 static int s_logCounter = 0;
+                 if (++s_logCounter % 60 == 0) { // Log every ~1 sec (60fps)
+                     wchar_t buf[256];
+                     swprintf_s(buf, L"[Titan] OnPaint: AbsZoom=%.4f PreviewW=%.0f MetaW=%.0f Ratio=%.4f Trigger=%.4f\n", 
+                         absoluteZoom, previewW, (float)g_currentMetadata.Width, basePreviewRatio, basePreviewRatio * 1.1f);
+                     OutputDebugStringW(buf);
+                 }
+             }
+             scheduler->UpdateViewport(vp, absoluteZoom, basePreviewRatio);
+             
+             // 2. Setup Transform for Drawing
+             // Transform: Image Space -> Screen Space
+             D2D1::Matrix3x2F transform = 
+                 D2D1::Matrix3x2F::Translation(-iCW, -iCH) *
+                 D2D1::Matrix3x2F::Scale(absoluteZoom, absoluteZoom) *
+                 D2D1::Matrix3x2F::Translation(sCW + g_viewState.PanX, sCH + g_viewState.PanY);
+                 
+             context->SetTransform(transform);
+             
+             // 3. Draw Preview (Base Layer)
+             // Drawn in Image Space (0..W, 0..H). 
+             if (g_imageResource.bitmap) {
+                  // Preview is usually smaller, so we draw it stretched to Full Image Dimensions.
+                  D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)g_currentMetadata.Width, (float)g_currentMetadata.Height); 
+                  
+                  // Note: Use Linear for background stretch? Or Cubic? RenderEngine defaults to Cubic.
+                  // Since it's a blurry preview, Cubic is fine.
+                  g_renderEngine->DrawBitmap(g_imageResource.bitmap.Get(), destRect);
+             }
+             
+             // 4. Draw Tiles (Top Layer)
+             // Tiles are drawn at their exact Image Coords (0..W).
+             // Ensure Transform is Active (Paranoia Check)
+             context->SetTransform(transform); 
+             
+             auto visibleTiles = scheduler->GetVisibleTiles();
+             g_renderEngine->DrawTileGrid(visibleTiles, g_showDebugHUD);
+             
+             // Reset Transform
+             context->SetTransform(D2D1::Matrix3x2F::Identity());
+        }
 
         // [Double-Render Fix] Only draw legacy if DComp is NOT active
         // Check Legacy/Fallback Path
@@ -5663,7 +5809,7 @@ void OnPaint(HWND hwnd) {
                 }
             }
             else {
-                // Static 模式：正常绘制
+                // Static 模式：正常绘�?
                 D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
                     ? D2D1_INTERPOLATION_MODE_LINEAR 
                     : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC; // Mipmap-based for extreme downscale

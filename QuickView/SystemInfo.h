@@ -16,6 +16,9 @@ struct SystemInfo {
     size_t totalRAM = 0;       // Total system RAM (bytes)
     size_t availableRAM = 0;   // Currently available RAM (bytes)
     
+    bool hasAVX2 = false;
+    bool hasAVX512F = false;
+
     static SystemInfo Detect() {
         SystemInfo info;
         
@@ -32,6 +35,17 @@ struct SystemInfo {
         if (GlobalMemoryStatusEx(&memStatus)) {
             info.totalRAM = static_cast<size_t>(memStatus.ullTotalPhys);
             info.availableRAM = static_cast<size_t>(memStatus.ullAvailPhys);
+        }
+
+        // SIMD Detection (CPUID)
+        int cpuInfo[4];
+        __cpuid(cpuInfo, 0);
+        int nIds = cpuInfo[0];
+
+        if (nIds >= 7) {
+            __cpuid(cpuInfo, 7); // EAX=7, ECX=0
+            info.hasAVX2 = (cpuInfo[1] & (1 << 5)) != 0;       // EBX bit 5
+            info.hasAVX512F = (cpuInfo[1] & (1 << 16)) != 0;   // EBX bit 16
         }
 #else
         // Fallback for non-Windows

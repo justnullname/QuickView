@@ -6,8 +6,8 @@ includedir=${prefix}/include
 Name: libraw
 Description: Raw image decoder library (non-thread-safe)
 URL: http://www.libraw.org
-Version: 0.21.4
+Version: 0.22.0
 
 Libs: "-L${libdir}" -lraw
-Requires:  lcms2 zlib jasper
+Requires:  lcms2 zlib
 Cflags: "-I${includedir}" "-I${includedir}/libraw"

@@ -1100,7 +1100,7 @@ void SettingsOverlay::BuildMenu() {
     itemPrefetch.onChange = [this]() {
          // Apply Policy Immediately
          if (g_pImageEngine) {
-             PrefetchPolicy policy;
+             ImageEngine::PrefetchPolicy policy;
              switch (g_config.PrefetchGear) {
                  case 0: policy.enablePrefetch = false; break;
                  case 1: { // Auto

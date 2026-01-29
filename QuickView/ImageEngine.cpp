@@ -17,6 +17,7 @@
 ImageEngine::ImageEngine(CImageLoader* loader)
     : m_loader(loader)
     , m_fastLane(this, loader)
+    , m_tileScheduler(nullptr) 
 {
     // [N+1] Detect hardware and create pool
     SystemInfo sysInfo = SystemInfo::Detect();
@@ -27,6 +28,9 @@ ImageEngine::ImageEngine(CImageLoader* loader)
     
     m_heavyPool = std::make_unique<HeavyLanePool>(this, loader, &m_pool, m_engineConfig);
     
+    // [Titan] Late-bind the pool to the scheduler
+    m_tileScheduler.SetPool(m_heavyPool.get());
+
     // Debug output
     wchar_t buf[256];
     swprintf_s(buf, L"[ImageEngine] N+1 Pool: Tier=%s (Arena: %s), MaxWorkers=%d\n",
@@ -106,8 +110,36 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     if (m_forceRefresh.exchange(false)) {
         InvalidateCache(path);
     }
+    
+    // [Titan] Initialize Tile Scheduler
+    // Threshold: > 8K in any dimension OR > 50MP total?
+    // Let's start conservative: Only explicit Titan triggering for now?
+    // No, logic should be automatic.
+    // For V1 Titan: Enable for images > 8192 on either side AND supported format (JPEG).
+    // TODO: Add Wuffs/LibRaw support for PNG/WebP/Raw tiling in V2.
+    std::wstring fmtUpper = info.format;
+    std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
+    
+    // [Titan] Trigger Conditions
+    // 1. Format support: JPEG, WebP, PNG
+    bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || fmtUpper == L"WEBP" || fmtUpper == L"PNG");
 
-    // [Prefetch System] Cache Check
+    // 2. Size triggers: Any side > 8192 OR Total pixels > 50MP
+    bool sizeTrigger = (info.width > 8192 || info.height > 8192);
+    bool pixelTrigger = ((uint64_t)info.width * info.height > 50000000);
+
+    bool enableTitan = (sizeTrigger || pixelTrigger) && isSupportedFormat;
+    
+    if (enableTitan) {
+         m_tileScheduler.Reset(info.width, info.height, path, imageId);
+         wchar_t debugBuf[256];
+         swprintf_s(debugBuf, L"[Dispatch] Titan Mode ENABLED (%dx%d, %s)\n", info.width, info.height, fmtUpper.c_str());
+         OutputDebugStringW(debugBuf);
+    } else {
+         m_tileScheduler.Reset(0, 0, L"", 0); // Disable
+    }
+
+    // [Prefetch System] Cache Check ...
     // If the image is already in memory (from prefetch), use it immediately!
     {
         auto cachedFrame = GetCachedImage(path);
@@ -176,6 +208,13 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool useFastLane = m_config.EnableScout;
     bool useHeavy = m_config.EnableHeavy;
     
+    // [Titan] Compliance: Force Heavy Lane for Base Layer
+    if (enableTitan) {
+        useHeavy = true;
+        useFastLane = false; 
+        OutputDebugStringW(L"[Dispatch] Titan Active: Routing Base Layer to Heavy Lane\n");
+    }
+    
     // 2. Recursive RAW Check
     // If it's a RAW file with an embedded thumb, check the preview resolution.
     // "RAW" detection: check if string contains RAW or format check from loader
@@ -237,7 +276,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     } 
     else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Large Image -> Heavy Only (FastLane ignored)
-        useFastLane = false;
+        if (!enableTitan) useFastLane = false; 
         
         // [v7.2 Fix] Check WebP Heavy here too (if flagged as TypeB by PeekHeader)
         std::wstring fmtLower = info.format;
@@ -910,22 +949,15 @@ void ImageEngine::FastLane::QueueWorker() {
 
                 // [Unified] Populate Metadata instead of ThumbData
                 e.metadata.Width = info.width;
-               // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
-            // No need to call ReadMetadata separately or access global variables.
-            
-            // This section of code appears to be intended for a different function (e.g., HeavyLanePool::PerformDecode)
-            // and is not part of the current document's FastLane::QueueWorker.
-            // As per instructions, I will only apply changes to the provided document.
-            // If this block was meant to be inserted into a function not present, it cannot be applied.
-            // Assuming the user intended to replace the metadata population logic in FastLane::QueueWorker
-            // with this, but the context doesn't fully align.
-            // Given the instruction "In HeavyLanePool::PerformDecode, set quality based on isFullDecode/target dimensions."
-            // and the provided snippet, this block is for HeavyLanePool::PerformDecode.
-            // Since HeavyLanePool::PerformDecode is not in the provided document, this part of the instruction
-            // cannot be fulfilled within the scope of the given document content.
-            // I will proceed with the other changes that *do* fit the provided document.
-            
-            // [Fix] Propagate EXIF Orientation from Decoder to Metadata (Critical for AutoRotate)
+                e.metadata.Height = info.height;
+                // [Debug] Verify Metadata vs PeekHeader
+                wchar_t buf[128];
+                swprintf_s(buf, L"[FastLane] PeekHeader Width: %d, Height: %d, Path: %s\n", info.width, info.height, cmd.path.c_str());
+                OutputDebugStringW(buf);
+                // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
+                // No need to call ReadMetadata separately or access global variables.
+                
+                // [Fix] Propagate EXIF Orientation from Decoder to Metadata (Critical for AutoRotate)
                 e.metadata.ExifOrientation = rawFrame.exifOrientation;
                 
                 // [v5.3 Lazy] Reverted Sync ReadMetadata. 
@@ -941,6 +973,8 @@ void ImageEngine::FastLane::QueueWorker() {
 
                 // [FIX] Store result in m_results for PollState to retrieve
                 // Previously QueueEvent only sent notification but dropped the event!
+
+                
                 {
                     std::lock_guard lock(m_queueMutex);
                     m_results.push_back(std::move(e));
@@ -1026,11 +1060,11 @@ std::shared_ptr<QuickView::RawImageFrame> ImageEngine::GetCachedImage(const std:
     return nullptr;
 }
 
-void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
+void ImageEngine::UpdateView(int currentIndex, QuickView::BrowseDirection dir) {
     m_currentViewIndex.store(currentIndex);
     // [v8.15] Store direction as int for atomic access
-    int dirInt = (dir == BrowseDirection::FORWARD) ? 1 : 
-                 (dir == BrowseDirection::BACKWARD) ? -1 : 0;
+    int dirInt = (dir == QuickView::BrowseDirection::FORWARD) ? 1 : 
+                 (dir == QuickView::BrowseDirection::BACKWARD) ? -1 : 0;
     m_lastDirectionInt.store(dirInt);
     
     wchar_t buf[128];
@@ -1050,7 +1084,7 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     // [v9.1] Serial Queue Population
     m_prefetchQueue.clear();
 
-    if (dir == BrowseDirection::IDLE) {
+    if (dir == QuickView::BrowseDirection::IDLE) {
          // [Startup/Reset] Conservative Bidirectional Prefetch
          int count = (int)m_navigator->Count();
          if (count > 0) {
@@ -1058,22 +1092,22 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
              int prevIdx = (currentIndex - 1 + count) % count;
              
              // Queue neighbors
-             m_prefetchQueue.push_back({nextIdx, Priority::High});
-             m_prefetchQueue.push_back({prevIdx, Priority::High});
+             m_prefetchQueue.push_back({nextIdx, QuickView::Priority::High});
+             m_prefetchQueue.push_back({prevIdx, QuickView::Priority::High});
          }
     } else {
          // Directional Prefetch
-         int step = (dir == BrowseDirection::BACKWARD) ? -1 : 1;
+         int step = (dir == QuickView::BrowseDirection::BACKWARD) ? -1 : 1;
          
          // 3. Adjacent: High Priority
-         m_prefetchQueue.push_back({currentIndex + step, Priority::High});
+         m_prefetchQueue.push_back({currentIndex + step, QuickView::Priority::High});
          
          // 5. Anti-regret: One in opposite direction
-         m_prefetchQueue.push_back({currentIndex - step, Priority::Low});
+         m_prefetchQueue.push_back({currentIndex - step, QuickView::Priority::Low});
          
          // 6. Look-ahead
          for (int i = 2; i <= m_prefetchPolicy.lookAheadCount; ++i) {
-             m_prefetchQueue.push_back({currentIndex + step * i, Priority::Idle});
+             m_prefetchQueue.push_back({currentIndex + step * i, QuickView::Priority::Idle});
          }
     }
     
@@ -1081,7 +1115,7 @@ void ImageEngine::UpdateView(int currentIndex, BrowseDirection dir) {
     PumpPrefetch();
 }
 
-void ImageEngine::ScheduleJob(int index, Priority pri) {
+void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     // 1. Bounds check
     if (!m_navigator) return;
     if (index < 0 || index >= (int)m_navigator->Count()) return;
@@ -1099,7 +1133,7 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     // [v9.0] Strict Startup Delay
     // If startup prefetch is not allowed yet, BLOCK all non-Critical jobs.
     // Critical job (Current Image) is allowed always.
-    if (!m_startupPrefetchAllowed && pri != Priority::Critical) {
+    if (!m_startupPrefetchAllowed && pri != QuickView::Priority::Critical) {
         return;
     }
     
@@ -1114,7 +1148,7 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     // [v9.4] Smart Skip: If single image > Cache Cap, skip prefetch
     // This prevents "Eco Mode OOM" where a single 90MP image (350MB) 
     // forces overflow despite the 128MB limit.
-    if (pri != Priority::Critical && m_prefetchPolicy.maxCacheMemory > 0) {
+    if (pri != QuickView::Priority::Critical && m_prefetchPolicy.maxCacheMemory > 0) {
          uint64_t predictedSize = (uint64_t)info.width * info.height * 4;
          // Allow a 10% margin just in case, but strictly reject if it consumes > 90% of ENTIRE cache
          // Actually, user agreed to > 80% rule or Strict Cap.
@@ -1142,7 +1176,7 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
         // Critical: Always submit
         // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
         // Prefetch: Only if Heavy Lane is idle to avoid blocking Critical
-        if (pri == Priority::Critical || m_heavyPool->IsIdle()) {
+        if (pri == QuickView::Priority::Critical || m_heavyPool->IsIdle()) {
             {
                 std::lock_guard lock(m_pendingMutex);
                 m_pendingPaths.insert(path);
@@ -1160,7 +1194,7 @@ void ImageEngine::ScheduleJob(int index, Priority pri) {
     }
 }
 
-void ImageEngine::PruneQueue(int currentIndex, BrowseDirection dir) {
+void ImageEngine::PruneQueue(int currentIndex, QuickView::BrowseDirection dir) {
     // Calculate valid range based on direction
     int minValid = currentIndex - 2;
     int maxValid = currentIndex + m_prefetchPolicy.lookAheadCount + 1;
@@ -1415,8 +1449,8 @@ void ImageEngine::CheckStartupDelay() {
         // Simple hack: Re-call UpdateView with current state.
         int idx = m_currentViewIndex.load();
         int dirInt = m_lastDirectionInt.load();
-        BrowseDirection dir = (dirInt == 1) ? BrowseDirection::FORWARD : 
-                              (dirInt == -1) ? BrowseDirection::BACKWARD : BrowseDirection::IDLE;
+        QuickView::BrowseDirection dir = (dirInt == 1) ? QuickView::BrowseDirection::FORWARD : 
+                              (dirInt == -1) ? QuickView::BrowseDirection::BACKWARD : QuickView::BrowseDirection::IDLE;
         
         if (idx >= 0) {
             UpdateView(idx, dir);
@@ -1478,5 +1512,9 @@ void ImageEngine::InvalidateCache(const std::wstring& path) {
             m_lruOrder.erase(lit);
         }
     }
+}
+
+void ImageEngine::UpdateTileViewport(QuickView::RegionRect viewport, float scale) {
+    m_tileScheduler.UpdateViewport(viewport, scale, 0.0f);
 }
 

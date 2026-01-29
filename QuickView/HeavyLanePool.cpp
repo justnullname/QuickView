@@ -1,8 +1,12 @@
 #include "pch.h"
 #include "HeavyLanePool.h"
 #include "ImageEngine.h"
+#include "SIMDUtils.h"
 #include <filesystem>
 #include <chrono>
+
+
+using namespace QuickView;
 
 // ============================================================================
 // HeavyLanePool Implementation
@@ -48,6 +52,10 @@ HeavyLanePool::~HeavyLanePool() {
     m_poolCv.notify_all();
     if (m_shrinker.joinable()) m_shrinker.join();
     
+    // [Safety] Ensure all tile jobs are finished before we kill workers
+    // This prevents workers from accessing m_tileMemory after it's gone
+    WaitForTileJobs();
+
     // Stop all workers
     for (auto& w : m_workers) {
         if (w.thread.joinable()) {
@@ -71,86 +79,79 @@ HeavyLanePool::~HeavyLanePool() {
 void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId) {
     std::lock_guard lock(m_poolMutex);
     
-    // Add to queue (isFullDecode = false for normal scaled decode)
-    m_pendingJobs.push_back({path, imageId, false});
+    JobInfo job;
+    job.type = JobType::Standard;
+    job.path = path;
+    job.imageId = imageId;
+    job.isFullDecode = false; 
+    job.priority = 200; // Higher than tiles
     
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] Submit: path=%s, ImageID=%zu, pendingJobs=%d\n",
-        path.substr(path.find_last_of(L"\\/") + 1).c_str(),
-        imageId, (int)m_pendingJobs.size());
-    OutputDebugStringW(buf);
-    
-    // Try to expand if all workers are busy
+    m_pendingJobs.push_back(job);
+    std::stable_sort(m_pendingJobs.begin(), m_pendingJobs.end(), [](const JobInfo& a, const JobInfo& b) {
+        return a.priority > b.priority;
+    });
+
     TryExpand();
-    
-    // Wake up a waiting worker
     m_poolCv.notify_one();
 }
 
-// [Two-Stage] Submit for full resolution decode (no scaling)
 void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId) {
     std::lock_guard lock(m_poolMutex);
     
-    // Add to queue with isFullDecode = true
-    m_pendingJobs.push_back({path, imageId, true});
+    JobInfo job;
+    job.type = JobType::Standard;
+    job.path = path;
+    job.imageId = imageId;
+    job.isFullDecode = true; 
+    job.priority = 150; 
     
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] SubmitFullDecode: path=%s, ImageID=%zu\n",
-        path.substr(path.find_last_of(L"\\/") + 1).c_str(), imageId);
-    OutputDebugStringW(buf);
-    
-    // Try to expand if all workers are busy
+    m_pendingJobs.push_back(job);
+    std::stable_sort(m_pendingJobs.begin(), m_pendingJobs.end(), [](const JobInfo& a, const JobInfo& b) {
+        return a.priority > b.priority;
+    });
+
     TryExpand();
-    
-    // Wake up a waiting worker
     m_poolCv.notify_one();
 }
 
-
-
-void HeavyLanePool::TryExpand() {
-    // Already holding m_poolMutex
-    
-    // Count worker states
-    int standbyCount = 0;
-    int sleepingCount = 0;
-    int busyCount = 0;
-    for (const auto& w : m_workers) {
-        if (w.state == WorkerState::STANDBY) standbyCount++;
-        else if (w.state == WorkerState::SLEEPING) sleepingCount++;
-        else if (w.state == WorkerState::BUSY) busyCount++;
-    }
-    
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] TryExpand: standby=%d, sleeping=%d, busy=%d, cap=%d\n",
-        standbyCount, sleepingCount, busyCount, m_cap);
-    OutputDebugStringW(buf);
-    
-    // If we have hot-spares, no need to expand
-    if (standbyCount > 0) return;
-    
-    // All workers busy, try to activate a sleeping one
-    if (m_activeCount.load() < m_cap) {
-        for (int i = 0; i < (int)m_workers.size(); i++) {
-            auto& w = m_workers[i];
-            if (w.state == WorkerState::SLEEPING) {
-                // Start new worker thread
-                w.stopSource = std::stop_source();
-                w.thread = std::jthread([this, i](std::stop_token st) {
-                    WorkerLoop(i, st);
-                });
-                w.state = WorkerState::STANDBY;
-                w.lastActiveTime = std::chrono::steady_clock::now();
-                m_activeCount.fetch_add(1);
-                
-                OutputDebugStringW(L"[HeavyPool] Expanded: new worker activated\n");
-                break;
-            }
-        }
-    }
-    // If at cap, job will queue until a worker is free
+void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, TileCoord coord, RegionRequest region, int priority) {
+    std::lock_guard lock(m_poolMutex);
+    JobInfo job;
+    job.type = JobType::Tile;
+    job.path = path;
+    job.imageId = imageId;
+    job.tileCoord = coord;
+    job.region = region;
+    job.priority = priority; 
+    m_pendingJobs.push_back(job);
+    std::stable_sort(m_pendingJobs.begin(), m_pendingJobs.end(), [](const JobInfo& a, const JobInfo& b) {
+        return a.priority > b.priority;
+    });
+    TryExpand();
+    m_activeTileJobs.fetch_add(1);
+    m_poolCv.notify_one();
 }
 
+void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, const std::vector<std::pair<QuickView::TileCoord, QuickView::RegionRequest>>& batch, int priority) {
+    if (batch.empty()) return;
+    std::lock_guard lock(m_poolMutex);
+    for (const auto& item : batch) {
+        JobInfo job;
+        job.type = JobType::Tile;
+        job.path = path;
+        job.imageId = imageId;
+        job.tileCoord = item.first;
+        job.region = item.second;
+        job.priority = priority;
+        m_pendingJobs.push_back(job);
+    }
+    std::stable_sort(m_pendingJobs.begin(), m_pendingJobs.end(), [](const JobInfo& a, const JobInfo& b) {
+        return a.priority > b.priority;
+    });
+    TryExpand();
+    m_activeTileJobs.fetch_add((int)batch.size());
+    m_poolCv.notify_all();
+}
 // ============================================================================
 // Cancellation
 // ============================================================================
@@ -158,40 +159,31 @@ void HeavyLanePool::TryExpand() {
 void HeavyLanePool::CancelOthers(ImageID currentId) {
     std::lock_guard lock(m_poolMutex);
     
-    // Remove stale jobs from queue (keep only jobs matching currentId)
-    auto oldSize = m_pendingJobs.size();
-    m_pendingJobs.erase(
-        std::remove_if(m_pendingJobs.begin(), m_pendingJobs.end(),
-            [currentId](const auto& job) { return job.imageId != currentId; }),
-        m_pendingJobs.end()
-    );
-    
-    auto removed = oldSize - m_pendingJobs.size();
-    if (removed > 0) {
-        m_cancelCount.fetch_add(static_cast<int>(removed));
+    // 1. Clear Job Queue of non-matching IDs
+    auto it = m_pendingJobs.begin();
+    while (it != m_pendingJobs.end()) {
+        if (it->imageId != currentId) {
+            it = m_pendingJobs.erase(it);
+            m_cancelCount++;
+        } else {
+            ++it;
+        }
     }
     
-    // [ImageID] Request stop on workers with different ImageID
-    // Deep cancellation for specific decoders
+    // 2. Stop BUSY workers working on old IDs
     for (auto& w : m_workers) {
         if (w.state == WorkerState::BUSY && w.currentId != currentId) {
             w.stopSource.request_stop();
-            m_cancelCount.fetch_add(1);
+            // Note: worker continues life after this job if ShouldBecomeHotSpare returns true
         }
     }
 }
 
 void HeavyLanePool::CancelAll() {
     std::lock_guard lock(m_poolMutex);
-    
-    m_cancelCount.fetch_add(static_cast<int>(m_pendingJobs.size()));
     m_pendingJobs.clear();
-    
     for (auto& w : m_workers) {
-        if (w.state == WorkerState::BUSY) {
-            w.stopSource.request_stop();
-            m_cancelCount.fetch_add(1);
-        }
+        w.stopSource.request_stop();
     }
 }
 
@@ -207,9 +199,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
     OutputDebugStringW(buf);
     
     while (!st.stop_requested()) {
-        std::wstring path;
-        ImageID imageId = 0;  // [ImageID]
-        bool isFullDecode = false;  // [Two-Stage] 
+        JobInfo job;
         
         // Wait for job
         {
@@ -222,34 +212,28 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             if (m_pendingJobs.empty()) continue;
             
             // Take job
-            auto job = m_pendingJobs.front();
+            job = m_pendingJobs.front();
             m_pendingJobs.pop_front();
-            path = job.path;
-            imageId = job.imageId;
-            isFullDecode = job.isFullDecode;  // [Two-Stage]
             
-            self.currentPath = path;
-            self.currentId = imageId;  // [ImageID]
+            self.currentPath = job.path;
+            self.currentId = job.imageId;  // [ImageID]
             self.stopSource = std::stop_source();  // Fresh stop source for this job
             self.state = WorkerState::BUSY;
             m_busyCount.fetch_add(1);
-            
-            wchar_t dbg[128];
-            swprintf_s(dbg, L"[HeavyPool] Worker %d Job: ID=%zu Full=%d\n", 
-                workerId, imageId, isFullDecode);
-            OutputDebugStringW(dbg);
         }
         
         // Perform decode
         auto t0 = std::chrono::steady_clock::now();
-        PerformDecode(workerId, path, imageId, st, &self.loaderName, isFullDecode);
+        
+        // Pass the whole job info
+        PerformDecode(workerId, job, st, &self.loaderName);
+        
         auto t1 = std::chrono::steady_clock::now();
         
         // Decode complete
         m_busyCount.fetch_sub(1);
         self.lastActiveTime = t1;
-        // [Dual Timing] Times are now set inside PerformDecode
-        self.isFullDecode = isFullDecode; // [Two-Stage] Save status
+        self.isFullDecode = job.isFullDecode; // [Two-Stage] Save status
         
         // [User Feedback] Decision: become hot-spare or destroy?
         if (ShouldBecomeHotSpare(workerId)) {
@@ -264,302 +248,256 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
     // Cleanup
     self.state = WorkerState::SLEEPING;
     m_activeCount.fetch_sub(1);
-    
-    swprintf_s(buf, L"[HeavyPool] Worker %d stopped\n", workerId);
-    OutputDebugStringW(buf);
 }
 
 // ============================================================================
-// Standby-or-Destroy Decision
+// Pool Expansion / Shrinking
 // ============================================================================
 
-bool HeavyLanePool::ShouldBecomeHotSpare(int workerId) {
-    // [User Feedback] Worker completion needs standby-or-destroy decision
+void HeavyLanePool::TryExpand() {
+    // [Optimization] Aggressive Expansion Strategy
+    // Goal: Maintain (Active Workers == Pending Jobs + 1 Hot Spare)
+    // Limits: Cannot exceed m_cap.
     
-    std::lock_guard lock(m_poolMutex);
+    int pending = (int)m_pendingJobs.size();
+    int idle = 0;
     
-    // Count current standbys (excluding this worker)
-    int standbyCount = 0;
-    for (int i = 0; i < (int)m_workers.size(); i++) {
-        if (i != workerId && m_workers[i].state == WorkerState::STANDBY) {
-            standbyCount++;
+    // Count current state
+    for (const auto& w : m_workers) {
+        if (w.state == WorkerState::STANDBY) idle++;
+    }
+    
+    // We want enough workers to cover all pending jobs, PLUS one extra for immediate response
+    // if a new high-priority job comes in during this batch.
+    int targetIdle = 1; 
+    
+    // If we have 10 jobs and 0 idle, we need 11 workers total (implied).
+    // Actually, simpler logic:
+    // If (idle < pending + 1), try to spawn more.
+    
+    // Iterate and fill slots until satisfied or full
+    for (int i = 0; i < m_cap; ++i) {
+        if (idle >= pending + targetIdle) break; // Have enough coverage
+        
+        if (m_workers[i].state == WorkerState::SLEEPING) {
+            // Found a slot! Spawn.
+            m_workers[i].thread = std::jthread([this, i](std::stop_token st) {
+                WorkerLoop(i, st);
+            });
+            m_workers[i].state = WorkerState::STANDBY;
+            m_workers[i].lastActiveTime = std::chrono::steady_clock::now();
+            
+            m_activeCount.fetch_add(1);
+            idle++; // Now we have one more idle worker
+            
+            // Debug logging (throttled or batched usually, but here fine)
+            // wchar_t buf[128];
+            // swprintf_s(buf, L"[HeavyPool] Expanded: Worker %d started. Active: %d, Pending: %d\n", i, m_activeCount.load(), pending);
+            // OutputDebugStringW(buf);
         }
     }
-    
-    // Always keep at least minHotSpares as standbys
-    if (standbyCount < m_config.minHotSpares) {
-        return true;  // Become hot-spare
-    }
-    
-    // If there are pending jobs, stay as hot-spare
-    if (!m_pendingJobs.empty()) {
-        return true;
-    }
-    
-    // Otherwise, can be destroyed (shrinker will handle)
-    return true;  // For now, default to standby; shrinker will clean up idle ones
 }
-
-// ============================================================================
-// Shrinker Loop
-// ============================================================================
 
 void HeavyLanePool::ShrinkerLoop(std::stop_token st) {
     while (!st.stop_requested()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        
+        // Run every 1 second
+        std::this_thread::sleep_for(std::chrono::seconds(1));
         if (st.stop_requested()) break;
         
+        std::lock_guard lock(m_poolMutex);
         auto now = std::chrono::steady_clock::now();
-        bool shrank = false;
         
-        {
-            std::lock_guard lock(m_poolMutex);
-            
-            // Count standbys
-            int standbyCount = 0;
-            for (const auto& w : m_workers) {
-                if (w.state == WorkerState::STANDBY) {
-                    standbyCount++;
+        // Timeout for hot-spares (e.g., 5 seconds)
+        const auto timeout = std::chrono::seconds(5);
+        
+        // We always want to keep AT LEAST 1 worker alive (if cap > 0)
+        int stayAliveCount = 0;
+        
+        for (int i = 0; i < m_cap; ++i) {
+            if (m_workers[i].state == WorkerState::STANDBY) {
+                // If this is the FIRST STANDBY/BUSY worker, don't kill it (keep as hot-spare)
+                // Actually, let's keep one worker Slot 0 alive if possible.
+                if (i == 0) {
+                    stayAliveCount++;
+                    continue; 
                 }
-            }
-            
-            // Shrink idle workers beyond minHotSpares
-            for (int i = 0; i < (int)m_workers.size(); i++) {
-                auto& w = m_workers[i];
                 
-                if (w.state == WorkerState::STANDBY && standbyCount > m_config.minHotSpares) {
-                    auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - w.lastActiveTime).count();
+                if (now - m_workers[i].lastActiveTime > timeout) {
+                    // Signal stop via jthread stop_token indirectly? 
+                    // No, WorkerLoop breaks if ShouldBecomeHotSpare returns false.
+                    // But if it's already in STANDBY, it's blocked on CV.
+                    // We must WAKE it up and tell it to quit.
                     
-                    if (idleMs > m_config.idleTimeoutMs) {
-                        // Idle too long, shrink this worker
-                        w.thread.request_stop();
-                        w.state = WorkerState::DRAINING;
-                        standbyCount--;
-                        shrank = true;
-                        
-                        OutputDebugStringW(L"[HeavyPool] Shrinking idle worker\n");
-                    }
-                }
-                
-                // Clean up drained workers
-                if (w.state == WorkerState::DRAINING) {
-                    if (w.thread.joinable()) {
-                        // Thread should exit soon
-                    }
+                    // Signal stop for this worker's current wait
+                    m_workers[i].thread.request_stop(); 
+                    // Notify to wake up the CV wait in WorkerLoop
+                    m_poolCv.notify_all();
                 }
             }
-        }
-        
-        // [FIX] Wake up workers after request_stop so they can exit
-        if (shrank) {
-            m_poolCv.notify_all();
         }
     }
 }
 
-// ============================================================================
-// Decode Execution
-// ============================================================================
+bool HeavyLanePool::ShouldBecomeHotSpare(int workerId) {
+    // Decision logic:
+    // 1. Total active workers should not exceed some "baseline" if idle for too long.
+    // 2. But if we JUST finished a job, we usually stay STANDBY for at least a few seconds.
+    // The shrinker thread handles the actual timeout.
+    // Here we just return true unless we are shutting down.
+    return true; 
+}
 
-void HeavyLanePool::PerformDecode(int workerId, const std::wstring& path,
-                                   ImageID imageId, std::stop_token st, std::wstring* outLoaderName, bool isFullDecode) {
-    if (path.empty()) return;
+void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_token st, std::wstring* outLoaderName) {
+    // [Safety] RAII Decrement for Tile Jobs
+    struct TileJobGuard {
+        std::atomic<int>* counter;
+        bool isTile;
+        ~TileJobGuard() { if (isTile) counter->fetch_sub(1); }
+    } guard{ &m_activeTileJobs, job.type == JobType::Tile };
+
+    if (job.path.empty()) return;
     
     auto start = std::chrono::high_resolution_clock::now();
+
+    // Access worker to check stopSource
+    Worker& self = m_workers[workerId]; 
     
     try {
-        // Check if cancelled before starting
-        if (st.stop_requested()) return;
-        
+        auto cancelPred = [&]() {
+            return st.stop_requested() || self.stopSource.stop_requested();
+        };
+
+        if (cancelPred()) return;
+
         // [Unified Architecture] Always use the Back Arena for new decoding jobs
-    // Note: ResetBackHeavy() is handled by ImageEngine at critical boundaries.
-    // Here we just allocate from the shared pool.
-    QuantumArena& arena = m_pool->GetBackHeavyArena();
-    
-    // [Direct D2D] Load directly to RawImageFrame (Zero-Copy)
-    QuickView::RawImageFrame rawFrame;
-    std::wstring loaderName; // [Fix] Define local variable for metadata usage
-    
-    // [Two-Stage Decode] Calculate target size based on isFullDecode flag
-    // If isFullDecode=true, use 0 (forces full resolution decode)
-    // If isFullDecode=false, use screen size (enables IDCT scaling for large JPEGs)
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    
-    int targetW = 0;
-    int targetH = 0;
-    
-    if (!isFullDecode) {
-        // [Two-Stage Fix] Stage 1: Use screen size to enable IDCT scaling
-        // This is the key fix - previously targetW/H were hardcoded to 0
-        targetW = screenW;
-        targetH = screenH;
-    }
-    // isFullDecode: targetW/H remain 0 -> forces full resolution decode
-
-    // [v5.3] Metadata container (populated by LoadToFrame directly)
-    CImageLoader::ImageMetadata meta;
-
-    // Call ImageLoader with shared Arena
-    auto decodeStart = std::chrono::high_resolution_clock::now();
-    HRESULT hr = m_loader->LoadToFrame(path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
-        [&]() { return st.stop_requested(); },
-        &meta);
-    
-    // [Debug] Ctrl+4 forces WIC fallback logic in ImageLoader, but if we need to enforce valid frame output...
-    // Note: ImageLoader.cpp handles DisableDirectD2D check now.
-    
-    // [Fix] If ForceWIC caused failure, we might need to handle it?
-    // ImageLoader returns E_FAIL. HeavyLane handles it (catch blocks).
-    // So Ctrl+4 disables HeavyLane image loading effectively.
-    // BUT we want ForceWIC to *fall back* to WIC, not fail.
-    // In ImageLoader.cpp, I added "if (DisableDirectD2D) return E_FAIL" inside TurboJPEG block.
-    // ImageLoader's `LoadUsingTurboJpeg` returns failure, so `Load` should proceed to try WIC?
-    // Let's verify ImageLoader.cpp structure (viewed in Step 1205).
-    // Step 1205 showed `if (format == L"JPEG") { ... return E_FAIL; }`
-    // It did NOT show "else fallback".
-    // I need to confirm `Load` function structure.
-    // If `Load` function has:
-    // if (JPEG) { try TJ; if ok return; }
-    // ... WIC fallback ...
-    // Then returning E_FAIL makes it fall through to WIC. Which is correct.
-    // So HeavyLane logic is fine.
-    
-    auto decodeEnd = std::chrono::high_resolution_clock::now();
-        int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+        // Note: For Tiles, we should ideally use SlabAllocator.
+        // For now, reuse the heavy arena (it resets anyway).
+        QuantumArena& arena = m_pool->GetBackHeavyArena();
         
-        if (st.stop_requested() || hr == E_ABORT) {
+        QuickView::RawImageFrame rawFrame;
+        std::wstring loaderName;
+        CImageLoader::ImageMetadata meta;
+        HRESULT hr = E_FAIL;
+        
+        auto decodeStart = std::chrono::high_resolution_clock::now();
+
+         if (job.type == JobType::Standard) {
+              // --- Standard Decode (Full/Scaled) ---
+              int targetW = 0, targetH = 0;
+              if (!job.isFullDecode) {
+                  targetW = GetSystemMetrics(SM_CXSCREEN);
+                  targetH = GetSystemMetrics(SM_CYSCREEN);
+              }
+              
+              hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
+                 cancelPred, &meta);
+         }
+         else if (job.type == JobType::Tile) {
+              // --- Tile Decode ---
+              
+              // [Optimization] Fast Path: Check RAM Cache
+              if (GetCachedRegion(job.path, job.region, &rawFrame)) {
+                   loaderName = L"RAM Cache";
+                   hr = S_OK;
+              } 
+              else {
+                  // Cache Miss - Trigger Background Preload (if not already running)
+                  TriggerPreload(job.path);
+
+                  float scaleX = (float)job.region.dstWidth / job.region.srcRect.w;
+                  float scaleY = (float)job.region.dstHeight / job.region.srcRect.h;
+                  float scale = (scaleX < scaleY) ? scaleX : scaleY; 
+                  
+                  // Diagnostic: Start Decode
+                  wchar_t startLog[256];
+                  swprintf_s(startLog, L"[HeavyPool] Worker %d: Decode Tile (LOD %d, C%d R%d) Scale=%.3f\n", 
+                     workerId, job.tileCoord.lod, job.tileCoord.col, job.tileCoord.row, scale);
+                  OutputDebugStringW(startLog);
+    
+                  // For Tile Loading, we use LoadRegionToFrame
+                  CImageLoader::RegionRect rect = { job.region.srcRect.x, job.region.srcRect.y, job.region.srcRect.w, job.region.srcRect.h };
+                  
+                  // [Titan] Use Shareable Slab Allocator
+                  hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName,
+                     cancelPred);
+              }
+         }
+
+         auto decodeEnd = std::chrono::high_resolution_clock::now();
+         int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+         
+         // Diagnostic: Result
+         wchar_t resultLog[256];
+         swprintf_s(resultLog, L"[HeavyPool] Worker %d: %s %s in %d ms (Loader: %s)\n", 
+             workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), decodeMs, loaderName.c_str());
+         OutputDebugStringW(resultLog);
+        
+        if (cancelPred() || hr == E_ABORT) {
             m_cancelCount++;
             return;
         }
         
         if (SUCCEEDED(hr) && rawFrame.IsValid()) {
-            if (st.stop_requested()) return;
+            if (cancelPred()) return;
             
-            if (st.stop_requested()) return;
-            
-            // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
-            // No need to call ReadMetadata separately or access global variables.
-            
-            if (outLoaderName) *outLoaderName = loaderName; // [Phase 11] Bubble up name
-            
-            // [v5.4] Extract FormatDetails
+            if (outLoaderName) *outLoaderName = loaderName; 
             meta.FormatDetails = rawFrame.formatDetails;
             
-            // [v9.0] Set Quality Tag
-            if (isFullDecode) {
-                rawFrame.quality = QuickView::DecodeQuality::Full;
-            } else {
-                rawFrame.quality = QuickView::DecodeQuality::Preview;
-            }
-
-            // [FIX] Ensure metadata dimensions match the actual decoded image
-            if (meta.Width == 0 || meta.Height == 0) {
-                 meta.Width = rawFrame.width;
-                 meta.Height = rawFrame.height;
-            }
-            
-            // [Fix] Set Format from file extension if LoadToFrame didn't set it
-            // Critical for ROI detection (requires Format == L"SVG")
-            if (meta.Format.empty()) {
-                size_t dotPos = path.find_last_of(L'.');
-                if (dotPos != std::wstring::npos) {
-                    std::wstring ext = path.substr(dotPos + 1);
-                    for (auto& c : ext) c = towupper(c);
-                    meta.Format = ext;
-                }
-            }
-            
-            // [v5.3 Lazy] No Sync ReadMetadata here. 
-            // Full EXIF will be loaded ASYNC via RequestFullMetadata when Info Panel opens.
-            
-            // [v5.3 Eager Histogram] Compute Histogram in Background (<1ms)
-            // We do this here because we don't cache pixels. Lazy histogram would require re-decode.
-            m_loader->ComputeHistogramFromFrame(rawFrame, &meta);
-            // [DEBUG] Trace histogram
-            wchar_t debugBuf[256];
-            swprintf_s(debugBuf, L"[HeavyLane] Histogram R=%zu (Eager)\n", meta.HistR.size());
-            OutputDebugStringW(debugBuf);
-            
-            // Build event with rawFrame (new Direct D2D path)
+            // Generate Event
             EngineEvent evt;
-            evt.type = EventType::FullReady;
-            evt.filePath = path;
-            evt.imageId = imageId;
+            evt.filePath = job.path;
+            evt.imageId = job.imageId;
             
-            // [v8.16 Fix] DEEP COPY pixels to heap!
-            // HeavyPool uses shared Arena from TripleArenaPool.
-            // If another worker uses the arena, or this worker starts a new job, memory is reset.
-            auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
-            // [v9.0 Fix] Propagate Quality Tag
-            safeFrame->quality = rawFrame.quality;
-
-            if (rawFrame.IsSvg()) {
-                safeFrame->format = rawFrame.format;
-                safeFrame->width = rawFrame.width;
-                safeFrame->height = rawFrame.height;
-                safeFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
-                safeFrame->svg->xmlData = rawFrame.svg->xmlData;
-                safeFrame->svg->viewBoxW = rawFrame.svg->viewBoxW;
-                safeFrame->svg->viewBoxH = rawFrame.svg->viewBoxH;
+            if (job.type == JobType::Tile) {
+                evt.type = EventType::TileReady;
+                evt.tileCoord = job.tileCoord; // Pass TileCoord
+                
+                // [Titan] Zero-Copy Move (Frame owns Slab memory via custom deleter)
+                // We do NOT copy to heap.
+                evt.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame));
+                
             } else {
+                evt.type = EventType::FullReady; 
+
+                // [Standard] Deep Copy to Heap (since Arena is reused/reset)
+                auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
+                safeFrame->quality = rawFrame.quality;
+
                 size_t bufferSize = rawFrame.GetBufferSize();
                 uint8_t* heapPixels = new uint8_t[bufferSize];
                 memcpy(heapPixels, rawFrame.pixels, bufferSize);
-                
                 safeFrame->pixels = heapPixels;
                 safeFrame->width = rawFrame.width;
                 safeFrame->height = rawFrame.height;
                 safeFrame->stride = rawFrame.stride;
                 safeFrame->format = rawFrame.format;
                 safeFrame->formatDetails = rawFrame.formatDetails;
-                safeFrame->exifOrientation = rawFrame.exifOrientation;
                 safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
+                
+                evt.rawFrame = safeFrame;
             }
-            evt.rawFrame = safeFrame;
+
             evt.metadata = std::move(meta);
-            
-            // Determine if scaled
-            bool wasScaled = (evt.rawFrame->width < (int)(evt.metadata.Width - 8) || 
-                              evt.rawFrame->height < (int)(evt.metadata.Height - 8));
-            evt.isScaled = wasScaled;
             
             QueueResult(std::move(evt));
         }
         
-        // [Dual Timing] Store decode time in worker
+        // Debug Stats Update
         {
             std::lock_guard lock(m_poolMutex);
             m_workers[workerId].lastDecodeMs = decodeMs;
         }
-        
-        // [Fix V2] Always update loader name (even on failure) to prevent stale "[Scaled]"
-        if (outLoaderName) *outLoaderName = loaderName;
     }
     catch (...) {
-        // Silently ignore decode errors
         if (outLoaderName) *outLoaderName = L"Worker Exception";
     }
     
-    auto end = std::chrono::high_resolution_clock::now();
-    int totalMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    self.lastTotalMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
+    self.lastImageId = job.imageId; 
     
-    // Store times in worker (only if HUD might use it later)
-    {
-        std::lock_guard lock(m_poolMutex);
-        // decodeMs was captured earlier inside try block, use lastDecodeMs as temp storage
-        m_workers[workerId].lastTotalMs = totalMs;
-        m_workers[workerId].lastImageId = imageId;
-    }
-    
-    m_lastDecodeTimeMs.store((double)totalMs); // Legacy compatibility
-    m_lastDecodeId.store(imageId);
-    
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] Worker %d: total=%dms\n", workerId, totalMs);
-    OutputDebugStringW(buf);
+    // Update global for HUD
+    m_lastDecodeTimeMs = (double)self.lastTotalMs;
+    m_lastDecodeId = job.imageId;
 }
 
 // ============================================================================
@@ -660,3 +598,167 @@ bool HeavyLanePool::IsIdle() const {
     std::lock_guard lock(m_poolMutex);
     return m_busyCount.load() == 0 && m_pendingJobs.empty();
 }
+
+// ============================================================================
+// [Optimization] Full Image Cache Implementation
+// ============================================================================
+
+void HeavyLanePool::TriggerPreload(const std::wstring& path) {
+    bool expected = false;
+    // Check global flag prevents spawning multiple threads for same image
+    // (Optimization: could use a set of paths if we want multiple images preloaded, 
+    // but typically user focuses on one Titan image at a time)
+    if (m_isPreloading.compare_exchange_strong(expected, true)) {
+        
+        // Check if already in cache
+        {
+            std::lock_guard lock(m_cacheMutex);
+            if (m_fullImageCache.find(path) != m_fullImageCache.end()) {
+                m_isPreloading = false;
+                return;
+            }
+            if (m_preloadingPath == path) {
+                // Another thread is handling this exact path but flag was reset?
+                // Should not happen with atomic flag logic unless complete.
+            }
+            m_preloadingPath = path; 
+        }
+
+        // Spawn detached thread for loading
+        // We use std::thread because this is a long running I/O op independent of worker pool
+        std::thread([this, path]() {
+            // [Safety] Check file size to avoid OOM
+            // 2GB limit for now (~500MP RGBA)
+            // Implementation: Check file size. JPEG 10:1 ratio. 2GB RAM ~= 200MB File.
+            // Actually JPEGs can be high quality. Let's say 4GB RAM limit.
+            // User has 8GB+ (Pro). 
+            // Let's rely on ImageLoader internal alloc failure if OOM.
+            
+            QuickView::RawImageFrame* fullFrame = new QuickView::RawImageFrame();
+            std::wstring name;
+            
+            // Priority: Low (Background)
+            // But we want it to finish reasonably fast.
+            // Call LoadToFrame (Standard)
+            // NO Scaling (full res) -> width=0, height=0
+            
+            HRESULT hr = m_loader->LoadToFrame(path.c_str(), fullFrame, nullptr, 0, 0, &name, nullptr, nullptr);
+            
+            if (SUCCEEDED(hr) && fullFrame->IsValid()) {
+                std::lock_guard lock(m_cacheMutex);
+                
+                // Clear old cache to free memory?
+                // Strategy: Keep 1 active Titan image.
+                if (m_fullImageCache.size() > 0) {
+                     m_fullImageCache.clear();
+                }
+                
+                m_fullImageCache[path] = std::shared_ptr<QuickView::RawImageFrame>(fullFrame);
+                
+                wchar_t buf[256];
+                swprintf_s(buf, L"[HeavyPool] Preload Complete: %s (%.1f MB)\n", path.c_str(), fullFrame->GetBufferSize() / 1024.0 / 1024.0);
+                OutputDebugStringW(buf);
+            } else {
+                delete fullFrame;
+                OutputDebugStringW(L"[HeavyPool] Preload Failed or OOM.\n");
+            }
+            
+            m_isPreloading = false;
+        }).detach();
+    }
+}
+
+bool HeavyLanePool::GetCachedRegion(const std::wstring& path, QuickView::RegionRequest region, QuickView::RawImageFrame* outFrame) {
+    std::lock_guard lock(m_cacheMutex);
+    
+    auto it = m_fullImageCache.find(path);
+    if (it == m_fullImageCache.end()) return false;
+    
+    auto& srcFrame = it->second;
+    if (!srcFrame || !srcFrame->pixels) return false;
+    
+    // Perform Blit / Resize from RAM
+    int tilesize = 512; // Typical
+    
+    // Calculate Target Dimensions
+    // RegionRequest has srcRect and dstWidth/Height
+    // Scale = dst / src
+    float scaleX = (float)region.dstWidth / region.srcRect.w;
+    float scaleY = (float)region.dstHeight / region.srcRect.h;
+    
+    // Bounds Check Source
+    int sx = std::max(0, region.srcRect.x);
+    int sy = std::max(0, region.srcRect.y);
+    int sw = region.srcRect.w;
+    int sh = region.srcRect.h;
+    
+    // Clip to image
+    if (sx >= srcFrame->width || sy >= srcFrame->height) return false; // Out of bounds
+    if (sx + sw > srcFrame->width) sw = srcFrame->width - sx;
+    if (sy + sh > srcFrame->height) sh = srcFrame->height - sy;
+    
+    if (sw <= 0 || sh <= 0) return false;
+    
+    // Recalculate Dst based on clipped Src
+    int dw = (int)(sw * scaleX);
+    int dh = (int)(sh * scaleY);
+    
+    if (dw <= 0 || dh <= 0) return false;
+
+    // Allocate Output
+    outFrame->width = dw;
+    outFrame->height = dh;
+    outFrame->stride = QuickView::CalculateAlignedStride(dw, 4);
+    outFrame->format = PixelFormat::BGRA8888;
+    outFrame->formatDetails = L"RAM Cache";
+    
+    size_t outSize = outFrame->GetBufferSize();
+    
+    // Use Slab Allocator
+    if (outSize <= TILE_SLAB_SIZE) {
+        outFrame->pixels = (uint8_t*)m_tileMemory.Allocate();
+        if (outFrame->pixels) {
+            outFrame->memoryDeleter = [this](uint8_t* p) { m_tileMemory.Free(p); };
+        }
+    }
+    
+    if (!outFrame->pixels) {
+        // Fallback
+         outFrame->pixels = (uint8_t*)_aligned_malloc(outSize, 64);
+         outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+    }
+    
+    if (!outFrame->pixels) return false; // OOM?
+    
+    // Execute Resize/Copy
+    // Src Pointer: pixels + sy * stride + sx * 4
+    const uint8_t* pSrc = srcFrame->pixels + (size_t)sy * srcFrame->stride + (size_t)sx * 4;
+    
+    SIMDUtils::ResizeBilinear(pSrc, sw, sh, srcFrame->stride, outFrame->pixels, dw, dh);
+    
+    return true;
+}
+
+// ============================================================================
+// Lifecycle Safety
+// ============================================================================
+void HeavyLanePool::WaitForTileJobs() {
+    int active = m_activeTileJobs.load();
+    if (active == 0) return;
+
+    OutputDebugStringW(L"[HeavyPool] WaitForTileJobs: Waiting for workers to finish...\n");
+    
+    // Spin-wait with timeout (to prevent total freeze if bug)
+    auto start = std::chrono::steady_clock::now();
+    while (m_activeTileJobs.load() > 0) {
+        std::this_thread::yield();
+        
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() > 5000) {
+            OutputDebugStringW(L"[HeavyPool] WaitForTileJobs: TIMEOUT! Forced continue. (Possible Leak)\n");
+            break;
+        }
+    }
+}
+
+
