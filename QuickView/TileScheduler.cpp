@@ -36,12 +36,13 @@ void TileScheduler::UpdateViewport(QuickView::RegionRect viewport, float scale, 
     m_lastScale = scale;
 
     // [Titan] Adaptive Tiling Trigger
-    // We only trigger tiles if the "Displayed Resolution" exceeds the "Base Preview Resolution".
     // "Scale" is ScreenPixels / OriginalPixels.
     // "BasePreviewRatio" is PreviewPixels / OriginalPixels.
-    // So if scale > basePreviewRatio, we are stretching the preview -> Load Tiles.
-    // Add 10% tolerance (1.1f) to avoid triggering exactly at 1:1 fit if slightly off.
-    if (scale <= basePreviewRatio * 1.1f) {
+    // [User Requirement] Start tile decoding ONLY when zooming beyond 100% of the BASE IMAGE (Preview).
+    // If scale <= basePreviewRatio, the preview is displayed at 1:1 or smaller (downscaled), so it looks sharp.
+    // Once scale > basePreviewRatio, the preview is upscaled and blurry -> Trigger Tiles.
+    // Tolerance 1.01f (1%) to avoid triggering exactly at 1:1.
+    if (scale <= basePreviewRatio * 1.01f) {
         // [Debug] Log occasionally or via flag
         // Clear visible state to ensure only base image is drawn
         m_lastViewport = { 0, 0, 0, 0 }; 
@@ -72,7 +73,13 @@ void TileScheduler::UpdateViewport(QuickView::RegionRect viewport, float scale, 
     float centerY = viewport.y + viewport.h / 2.0f;
 
     for (int r = rowStart; r < rowEnd; r++) {
+         // Boundary Check (Row)
+         if (r * tileSizeLOD >= m_imageH) continue;
+
          for (int c = colStart; c < colEnd; c++) {
+              // Boundary Check (Col) - Fix for C6 bug (Requesting out of bounds tile)
+              if (c * tileSizeLOD >= m_imageW) continue;
+
               TileCoord coord;
               coord.col = c;
               coord.row = r;

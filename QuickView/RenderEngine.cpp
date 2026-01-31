@@ -34,28 +34,11 @@ HRESULT CRenderEngine::Initialize(HWND hwnd) {
     );
     if (FAILED(hr)) return hr;
 
-
-
     // 2. Create D3D11 device and D2D factory
     hr = CreateDeviceResources();
     if (FAILED(hr)) return hr;
 
-    // 3. Create SwapChain
-    hr = CreateSwapChain(hwnd);
-    if (FAILED(hr)) return hr;
-
-    // 4. Create render target
-    hr = CreateRenderTarget();
-    if (FAILED(hr)) return hr;
-
-    // 5. Warp Effect 预热 (避免首次使用时的卡顿)
-    hr = CreateWarpEffects();
-    // 非致命错误 - 降级到无模糊模式
-    if (FAILED(hr)) {
-        OutputDebugStringA("Warning: Failed to create Warp effects, blur disabled.\n");
-    }
-
-    // 6. Compute Engine Initialization
+    // 3. Compute Engine Initialization
     m_computeEngine = std::make_unique<QuickView::ComputeEngine>();
     hr = m_computeEngine->Initialize(m_d3dDevice.Get());
     if (FAILED(hr)) {
@@ -69,6 +52,7 @@ HRESULT CRenderEngine::CreateDeviceResources() {
     HRESULT hr = S_OK;
 
     // D3D11 device creation flags
+    // Note: BGRA_SUPPORT is required for D2D/DComp
     UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 #ifdef _DEBUG
     creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
@@ -121,7 +105,7 @@ HRESULT CRenderEngine::CreateDeviceResources() {
     hr = m_d2dFactory->CreateDevice(dxgiDevice.Get(), &m_d2dDevice);
     if (FAILED(hr)) return hr;
 
-    // Create D2D device context
+    // Create D2D device context (Unbound, for resource creation)
     hr = m_d2dDevice->CreateDeviceContext(
         D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
         &m_d2dContext
@@ -130,182 +114,6 @@ HRESULT CRenderEngine::CreateDeviceResources() {
 
     return S_OK;
 }
-
-HRESULT CRenderEngine::CreateSwapChain(HWND hwnd) {
-    HRESULT hr = S_OK;
-
-    // Get DXGI factory
-    ComPtr<IDXGIDevice1> dxgiDevice;
-    hr = m_d3dDevice.As(&dxgiDevice);
-    if (FAILED(hr)) return hr;
-
-    ComPtr<IDXGIAdapter> dxgiAdapter;
-    hr = dxgiDevice->GetAdapter(&dxgiAdapter);
-    if (FAILED(hr)) return hr;
-
-    ComPtr<IDXGIFactory2> dxgiFactory;
-    hr = dxgiAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory));
-    if (FAILED(hr)) return hr;
-
-    // SwapChain description - Flip Model
-    DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-    swapChainDesc.Width = 0;  // Auto from HWND
-    swapChainDesc.Height = 0;
-    swapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    swapChainDesc.Stereo = FALSE;
-    swapChainDesc.SampleDesc.Count = 1;
-    swapChainDesc.SampleDesc.Quality = 0;
-    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapChainDesc.BufferCount = 2;  // Double buffering
-    swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
-    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-    swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_IGNORE; // [Fix] Force Opaque Window
-    swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-
-    // Create SwapChain (try with Waitable Object first)
-    ComPtr<IDXGISwapChain1> swapChain1;
-    hr = dxgiFactory->CreateSwapChainForHwnd(
-        m_d3dDevice.Get(),
-        hwnd,
-        &swapChainDesc,
-        nullptr, nullptr,
-        &swapChain1
-    );
-
-    bool waitable = true;
-    if (FAILED(hr)) {
-        // Fallback: Try without Waitable Object
-        swapChainDesc.Flags = 0;
-        hr = dxgiFactory->CreateSwapChainForHwnd(
-            m_d3dDevice.Get(),
-            hwnd,
-            &swapChainDesc,
-            nullptr, nullptr,
-            &swapChain1
-        );
-        waitable = false;
-    }
-    if (FAILED(hr)) return hr;
-
-    // Query IDXGISwapChain2
-    hr = swapChain1.As(&m_swapChain);
-    if (FAILED(hr)) return hr;
-
-    if (waitable) {
-        // Set Maximum Frame Latency to 1 (Min latency)
-        hr = m_swapChain->SetMaximumFrameLatency(1);
-        if (SUCCEEDED(hr)) {
-             m_frameLatencyWaitableObject = m_swapChain->GetFrameLatencyWaitableObject();
-        }
-    }
-    
-    // Disable Alt+Enter fullscreen toggle
-    dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
-
-    return S_OK;
-}
-
-HRESULT CRenderEngine::CreateRenderTarget() {
-    HRESULT hr = S_OK;
-
-    // Get SwapChain back buffer
-    ComPtr<IDXGISurface> dxgiBackBuffer;
-    hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&dxgiBackBuffer));
-    if (FAILED(hr)) return hr;
-
-    // Create D2D bitmap properties
-    D2D1_BITMAP_PROPERTIES1 bitmapProperties = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
-    );
-
-    // Create D2D bitmap from DXGI surface
-    hr = m_d2dContext->CreateBitmapFromDxgiSurface(
-        dxgiBackBuffer.Get(),
-        &bitmapProperties,
-        &m_targetBitmap
-    );
-    if (FAILED(hr)) return hr;
-
-    // Set render target
-    m_d2dContext->SetTarget(m_targetBitmap.Get());
-
-    return S_OK;
-}
-
-HRESULT CRenderEngine::Resize(UINT width, UINT height) {
-    if (!m_swapChain) return E_FAIL;
-    if (width == 0 || height == 0) return S_OK;
-
-    // Release old render target
-    m_d2dContext->SetTarget(nullptr);
-    m_targetBitmap.Reset();
-
-    // Resize SwapChain
-    HRESULT hr = m_swapChain->ResizeBuffers(
-        0,      // Keep buffer count
-        width,
-        height,
-        DXGI_FORMAT_UNKNOWN,  // Keep format
-        m_frameLatencyWaitableObject ? DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT : 0
-    );
-    if (FAILED(hr)) return hr;
-
-    // Reset Latency and Re-query Waitable Object (Required after ResizeBuffers IF waitable)
-    if (m_frameLatencyWaitableObject) {
-         m_swapChain->SetMaximumFrameLatency(1);
-         m_frameLatencyWaitableObject = m_swapChain->GetFrameLatencyWaitableObject();
-         if (!m_frameLatencyWaitableObject) return E_FAIL;
-    }
-
-    // Recreate render target
-    return CreateRenderTarget();
-}
-
-void CRenderEngine::WaitForGPU() {
-    if (m_frameLatencyWaitableObject) {
-        DWORD result = WaitForSingleObjectEx(m_frameLatencyWaitableObject, 100, true); // Reduced timeout: 100ms
-        if (result == WAIT_TIMEOUT) {
-            // Timeout occurred - GPU may be stuck, skip waiting
-            // This prevents hang when D2D/WIC enters error state
-        }
-    }
-}
-
-void CRenderEngine::BeginDraw() {
-    WaitForGPU();
-    m_d2dContext->BeginDraw();
-}
-
-void CRenderEngine::Clear(const D2D1_COLOR_F& color) {
-    m_d2dContext->Clear(color);
-}
-
-void CRenderEngine::DrawBitmap(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect) {
-    if (!bitmap) return;
-
-    // Default to high quality - caller handles dynamic mode selection if needed
-    m_d2dContext->DrawBitmap(
-        bitmap,
-        destRect,
-        1.0f,  // Opacity
-        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC // Mipmap-based for best downscale quality
-    );
-}
-
-HRESULT CRenderEngine::EndDraw() {
-    return m_d2dContext->EndDraw();
-}
-
-HRESULT CRenderEngine::Present() {
-    // Check if SwapChain exists before presenting
-    if (!m_swapChain) return S_OK;
-
-    // VSync handled by Waitable Object pacing (SyncInterval=0 to reduce latency/blocking)
-    return m_swapChain->Present(0, 0);
-}
-
-
 
 HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bitmap** d2dBitmap) {
     if (!wicBitmap || !d2dBitmap) return E_INVALIDARG;
@@ -341,13 +149,12 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
     }
 
     // Use PREMULTIPLIED mode for proper transparency support
-    // This allows transparent images to display with checkerboard background
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
 
-    // Create D2D bitmap from WIC
+    // Create D2D bitmap from WIC using Resource Context
     hr = m_d2dContext->CreateBitmapFromWicBitmap(
         srcToUse,
         &props,
@@ -370,10 +177,6 @@ HRESULT CRenderEngine::CreateBitmapFromMemory(const void* data, UINT width, UINT
     return m_d2dContext->CreateBitmap(D2D1::SizeU(width, height), data, stride, &props, reinterpret_cast<ID2D1Bitmap1**>(ppBitmap));
 }
 
-// ============================================================================
-// [Direct D2D] Zero-Copy Upload from RawImageFrame
-// ============================================================================
-
 HRESULT CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap) {
     if (!m_d2dContext) return E_POINTER;
     if (!outBitmap) return E_INVALIDARG;
@@ -385,38 +188,32 @@ HRESULT CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame& frame
     
     switch (frame.format) {
         case QuickView::PixelFormat::BGRA8888:
-            // D2D Native - Best Performance
             dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
             break;
 
         case QuickView::PixelFormat::BGRX8888:
-            // JPEG via TurboJPEG - X8 format ignores alpha channel (opaque)
             dxgiFormat = DXGI_FORMAT_B8G8R8X8_UNORM; 
             alphaMode = D2D1_ALPHA_MODE_IGNORE;
             break;
             
         case QuickView::PixelFormat::RGBA8888:
-            // Compatible - Some older GPUs may have slight overhead
             dxgiFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
             break;
             
         case QuickView::PixelFormat::R32G32B32A32_FLOAT:
-            // HDR (TinyEXR) - 128-bit floating point
             dxgiFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
-            alphaMode = D2D1_ALPHA_MODE_STRAIGHT; // HDR typically uses straight alpha
+            alphaMode = D2D1_ALPHA_MODE_STRAIGHT;
             break;
             
-        default:
-            // Fallback to BGRA
+default:
             dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
             break;
     }
     
-    // Create D2D Bitmap Properties
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(dxgiFormat, alphaMode),
-        96.0f, 96.0f  // Standard DPI
+        96.0f, 96.0f
     );
     
     // [Optimization] Use GPU Compute for non-native format conversion
@@ -427,7 +224,6 @@ HRESULT CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame& frame
         if (SUCCEEDED(m_computeEngine->UploadAndConvert(frame.pixels, (int)frame.width, (int)frame.height, frame.format, &pTex))) {
             ComPtr<IDXGISurface> dxgiSurface;
             if (SUCCEEDED(pTex.As(&dxgiSurface))) {
-                // Adjust props for the converted texture (always BGRA)
                 props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
                 return m_d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, reinterpret_cast<ID2D1Bitmap1**>(outBitmap));
             }
@@ -445,170 +241,3 @@ HRESULT CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame& frame
     
     return hr;
 }
-
-
-// ============================================================================
-// Warp Mode (Motion Blur) 实现
-// ============================================================================
-
-HRESULT CRenderEngine::CreateWarpEffects() {
-    if (!m_d2dContext) return E_FAIL;
-    
-    HRESULT hr = S_OK;
-    
-    // 1. 创建方向性模糊效果 (垂直方向 - 模拟滚动)
-    hr = m_d2dContext->CreateEffect(CLSID_D2D1DirectionalBlur, &m_blurEffect);
-    if (FAILED(hr)) {
-        // 降级: 尝试高斯模糊
-        hr = m_d2dContext->CreateEffect(CLSID_D2D1GaussianBlur, &m_blurEffect);
-    }
-    if (FAILED(hr)) return hr;
-    
-    // 设置默认属性
-    if (m_blurEffect) {
-        // DirectionalBlur: Angle = 90 度 (垂直方向)
-        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_ANGLE, 90.0f);
-        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_STANDARD_DEVIATION, 0.0f);
-        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_SOFT);
-    }
-    
-    // 2. 创建亮度效果 (压暗)
-    hr = m_d2dContext->CreateEffect(CLSID_D2D1Brightness, &m_brightnessEffect);
-    if (SUCCEEDED(hr) && m_brightnessEffect) {
-        // 默认不压暗
-        D2D1_VECTOR_2F blackPoint = { 0.0f, 0.0f };
-        D2D1_VECTOR_2F whitePoint = { 1.0f, 1.0f };
-        m_brightnessEffect->SetValue(D2D1_BRIGHTNESS_PROP_BLACK_POINT, blackPoint);
-        m_brightnessEffect->SetValue(D2D1_BRIGHTNESS_PROP_WHITE_POINT, whitePoint);
-    }
-    
-    return S_OK;
-}
-
-void CRenderEngine::SetWarpMode(float intensity, float dimming) {
-    m_warpIntensity = std::clamp(intensity, 0.0f, 1.0f);
-    m_warpDimming = std::clamp(dimming, 0.0f, 0.5f);
-    
-    // 更新模糊强度
-    if (m_blurEffect) {
-        // 最大模糊半径 = 30 像素 (强烈的动态模糊)
-        float blurRadius = m_warpIntensity * 30.0f;
-        m_blurEffect->SetValue(D2D1_DIRECTIONALBLUR_PROP_STANDARD_DEVIATION, blurRadius);
-    }
-    
-    // 更新压暗强度
-    if (m_brightnessEffect) {
-        // 压暗通过降低白点实现
-        float whiteLevel = 1.0f - m_warpDimming;
-        D2D1_VECTOR_2F whitePoint = { whiteLevel, 1.0f };
-        m_brightnessEffect->SetValue(D2D1_BRIGHTNESS_PROP_WHITE_POINT, whitePoint);
-    }
-}
-
-void CRenderEngine::DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect) {
-    if (!bitmap || !m_d2dContext) return;
-    
-    // 如果没有 Effect 或强度为 0，直接绘制
-    if (!m_blurEffect || m_warpIntensity < 0.01f) {
-        m_d2dContext->DrawBitmap(bitmap, destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-        return;
-    }
-    
-    // 绘制 Effect 输出 (仅模糊)
-    // 注意: 不而在内部 SetTransform，而是直接利用调用者设置好的 World Transform
-    m_blurEffect->SetInput(0, bitmap);
-    
-    D2D1_SIZE_F bmpSize = bitmap->GetSize();
-    
-    m_d2dContext->DrawImage(
-        m_blurEffect.Get(),
-        D2D1::Point2F(destRect.left, destRect.top), // Offset
-        D2D1::RectF(0, 0, bmpSize.width, bmpSize.height), // Source Rect
-        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-        D2D1_COMPOSITE_MODE_SOURCE_OVER
-    );
-    
-    // === Dimming (压暗) ===
-    if (m_warpDimming > 0.01f) {
-        // 创建或获取黑色画刷 (可以缓存，这里为简洁直接创建)
-        ComPtr<ID2D1SolidColorBrush> dimBrush;
-        m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, m_warpDimming), &dimBrush);
-        if (dimBrush) {
-            m_d2dContext->FillRectangle(destRect, dimBrush.Get());
-        }
-    }
-}
-
-// ============================================================================
-// [Titan] Tile Rendering Implementation
-// ============================================================================
-
-void CRenderEngine::ClearTiles() {
-    m_tileCache.clear();
-}
-
-HRESULT CRenderEngine::UploadTile(const QuickView::TileCoord& coord, const QuickView::RawImageFrame& frame) {
-    if (!frame.IsValid()) return E_INVALIDARG;
-    
-    // Create Bitmap using existing helper
-    ComPtr<ID2D1Bitmap> bitmap;
-    HRESULT hr = UploadRawFrameToGPU(frame, &bitmap); // Uses ID2D1Bitmap1** internally safe cast
-    
-    if (SUCCEEDED(hr)) {
-        size_t hash = QuickView::TileCoord::Hash()(coord);
-        m_tileCache[hash] = bitmap;
-    }
-    return hr;
-}
-
-void CRenderEngine::DrawTileGrid(const std::vector<QuickView::TileCoord>& visibleTiles, bool showDebugGrid) {
-    if (!m_d2dContext) return;
-
-    // Create Debug Brush if needed
-    if (!m_debugBrush) {
-         m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red, 0.5f), &m_debugBrush);
-    }
-
-    // Grid Parameters
-    constexpr float TILE_SIZE = 512.0f;
-
-    for (const auto& coord : visibleTiles) {
-        size_t hash = QuickView::TileCoord::Hash()(coord);
-        auto it = m_tileCache.find(hash);
-        
-        // Draw in Image Space coordinates
-        // LOD 0 = 512x512, LOD 1 = 1024x1024, etc.
-        float lodScale = static_cast<float>(1 << coord.lod);
-        float imgX = coord.col * TILE_SIZE * lodScale;
-        float imgY = coord.row * TILE_SIZE * lodScale;
-        float drawSize = TILE_SIZE * lodScale;
-        
-        // Overlap by 0.5px to fix gaps
-        D2D1_RECT_F destRect = D2D1::RectF(imgX, imgY, imgX + drawSize + 0.5f, imgY + drawSize + 0.5f);
-        
-        if (it != m_tileCache.end() && it->second) {
-            // Draw Tile
-            // Use Linear for tiles (assumed 1:1 or zoomed in), unless zooming out far.
-            // Since we use LOD, we should be close to 1:1.
-            m_d2dContext->DrawBitmap(
-                it->second.Get(),
-                destRect,
-                1.0f,
-                D2D1_INTERPOLATION_MODE_LINEAR
-            );
-            
-            // Debug: Draw Borders
-            if (showDebugGrid && m_debugBrush) {
-                 m_d2dContext->DrawRectangle(destRect, m_debugBrush.Get(), 1.0f);
-            }
-        } else {
-             // Debug: Missing Tile (Only if Debug enabled?) 
-             // Or maybe always show missing tiles as warning? User said "Debug HUD", let's hide all lines.
-             if (showDebugGrid && m_debugBrush) {
-                m_d2dContext->DrawRectangle(destRect, m_debugBrush.Get(), 3.0f); // Thick border for missing
-             }
-        }
-    }
-}
-
-

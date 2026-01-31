@@ -15,9 +15,8 @@
 #include <d2d1effects.h>
 
 /// <summary>
-/// Direct2D Render Engine (Simplified)
-/// Focuses on accurate image rendering without color adjustments
-/// Manages D3D11 device, D2D context, DXGI SwapChain (Flip Model)
+/// Direct2D Resource Manager (Pure DComp Backend)
+/// Manages D3D11/D2D Devices and shared resources for DirectComposition.
 /// </summary>
 class CRenderEngine {
 public:
@@ -25,39 +24,9 @@ public:
     ~CRenderEngine();
 
     /// <summary>
-    /// Initialize render engine
+    /// Initialize devices (D3D/D2D)
     /// </summary>
     HRESULT Initialize(HWND hwnd);
-
-    /// <summary>
-    /// Resize SwapChain (call on window resize)
-    /// </summary>
-    HRESULT Resize(UINT width, UINT height);
-
-    /// <summary>
-    /// Begin frame drawing
-    /// </summary>
-    void BeginDraw();
-
-    /// <summary>
-    /// Clear background color
-    /// </summary>
-    void Clear(const D2D1_COLOR_F& color);
-
-    /// <summary>
-    /// Draw bitmap to specified rectangle with high quality interpolation
-    /// </summary>
-    void DrawBitmap(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect);
-
-    /// <summary>
-    /// End drawing and commit
-    /// </summary>
-    HRESULT EndDraw();
-
-    /// <summary>
-    /// Present frame (Flip Model zero-copy)
-    /// </summary>
-    HRESULT Present();
 
     /// <summary>
     /// Create D2D bitmap from WIC bitmap
@@ -83,32 +52,6 @@ public:
     /// <returns>S_OK on success, error code on failure</returns>
     HRESULT UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap);
 
-
-    // === Warp Mode (Motion Blur) ===
-    
-    /// <summary>
-    /// 设置 Warp 模式 (高速滚动时的视觉惯性效果)
-    /// </summary>
-    /// <param name="intensity">模糊强度 0.0-1.0</param>
-    /// <param name="dimming">压暗强度 0.0-0.5</param>
-    void SetWarpMode(float intensity, float dimming = 0.0f);
-    
-    /// <summary>
-    /// 检查是否处于 Warp 模式
-    /// </summary>
-    bool IsWarpMode() const { return m_warpIntensity > 0.01f; }
-    
-    /// <summary>
-    /// 绘制带模糊效果的位图 (Warp 模式下使用)
-    /// </summary>
-    void DrawBitmapWithBlur(ID2D1Bitmap* bitmap, const D2D1_RECT_F& destRect);
-
-
-    /// <summary>
-    /// Get D2D device context
-    /// </summary>
-    ID2D1DeviceContext* GetDeviceContext() const { return m_d2dContext.Get(); }
-
     /// <summary>
     /// Get WIC factory
     /// </summary>
@@ -116,13 +59,14 @@ public:
     
     // === DComp Integration Getters ===
     ID3D11Device* GetD3DDevice() const { return m_d3dDevice.Get(); }
+    IDWriteFactory* GetDWriteFactory() const { return m_dwriteFactory.Get(); }
     ID2D1Device* GetD2DDevice() const { return m_d2dDevice.Get(); }
-    IDXGISwapChain1* GetSwapChain() const { return m_swapChain.Get(); }
+
+    // Context for Resource Creation (not drawing to screen)
+    ID2D1DeviceContext* GetDeviceContext() const { return m_d2dContext.Get(); }
 
 private:
     HRESULT CreateDeviceResources();
-    HRESULT CreateSwapChain(HWND hwnd);
-    HRESULT CreateRenderTarget();
 
     HWND m_hwnd = nullptr;
 
@@ -130,66 +74,16 @@ private:
     ComPtr<ID3D11Device> m_d3dDevice;
     ComPtr<ID3D11DeviceContext> m_d3dContext;
     
-    // DXGI resources
-    ComPtr<IDXGISwapChain2> m_swapChain;
-    HANDLE m_frameLatencyWaitableObject = nullptr;
-
-public:
-    void WaitForGPU();
-    bool IsWaitable() const { return m_frameLatencyWaitableObject != nullptr; }
-
-
-
     // D2D resources
     ComPtr<ID2D1Factory1> m_d2dFactory;
     ComPtr<ID2D1Device> m_d2dDevice;
-    ComPtr<ID2D1DeviceContext> m_d2dContext;
-    ComPtr<ID2D1Bitmap1> m_targetBitmap;
+    ComPtr<ID2D1DeviceContext> m_d2dContext; // Kept for resource creation (bitmaps), not bound to target
 
     // DirectWrite resources
     ComPtr<IDWriteFactory> m_dwriteFactory;
 
-
     // WIC resources
     ComPtr<IWICImagingFactory> m_wicFactory;
     
-    // === Warp Mode Effects (预热) ===
-    ComPtr<ID2D1Effect> m_blurEffect;      // DirectionalBlur
-    ComPtr<ID2D1Effect> m_brightnessEffect; // 压暗效果
-    float m_warpIntensity = 0.0f;           // 当前模糊强度
-    float m_warpDimming = 0.0f;             // 当前压暗强度
-    
-    HRESULT CreateWarpEffects(); // Effect 预热
-
-    // ============================================================================
-    // [Titan] Tile Rendering
-    // ============================================================================
-    
-    /// <summary>
-    /// Upload a single tile to the GPU cache.
-    /// </summary>
-    HRESULT UploadTile(const QuickView::TileCoord& coord, const QuickView::RawImageFrame& frame);
-    
-    /// <summary>
-    /// Draw the grid of tiles. 
-    /// Tiles are drawn in Image Space coordinates. 
-    /// Caller must set appropriate D2D Transform before calling.
-    /// </summary>
-    /// <param name="visibleTiles">List of tiles to draw</param>
-    void DrawTileGrid(const std::vector<QuickView::TileCoord>& visibleTiles, bool showDebugGrid = false);
-    
-    /// <summary>
-    /// Clear all cached tiles (call when image changes).
-    /// </summary>
-    void ClearTiles();
-
-private:
-    // Tile Cache: Hash(TileCoord) -> Bitmap
-    std::unordered_map<size_t, ComPtr<ID2D1Bitmap>> m_tileCache;
-    
-    // Debug: Tile Borders
-    ComPtr<ID2D1SolidColorBrush> m_debugBrush;
-    HRESULT CreateDebugResources();
-
     std::unique_ptr<QuickView::ComputeEngine> m_computeEngine;
 };

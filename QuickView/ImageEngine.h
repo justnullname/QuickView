@@ -18,6 +18,10 @@
 #include "SystemInfo.h"  // [N+1] Hardware detection & auto-config
 #include "FileNavigator.h"  // [ImageID] For ImageID type and ComputePathHash
 
+// Forward declarations
+class HeavyLanePool; 
+namespace QuickView { class TileManager; }
+
 class HeavyLanePool; // [N+1] Forward declaration
 
 // [N+1] Feature flag for gradual migration
@@ -100,6 +104,10 @@ public:
     // [v9.0] Force Refresh Signal (Atomic One-Shot)
     void SetForceRefresh(bool force) { m_forceRefresh = force; }
 
+    // [Infinity Engine]
+    std::shared_ptr<QuickView::TileManager> GetTileManager() { return m_tileManager; }
+    void UpdateTileViewport(QuickView::RegionRect viewport, float scale, int imageW, int imageH, float basePreviewRatio, float velocityX = 0, float velocityY = 0);
+
     // The Main Output: Poll this every frame (or via timer)
     // Yields events as they happen.
     // This replaces callbacks.
@@ -164,6 +172,9 @@ public:
         wchar_t loaderName[64] = { 0 };
         bool syncStatus = false; // Green/Yellow/Red logic helper
         bool isScaled = false;   // [Two-Stage] True if current image is IDCT scaled
+        bool isTitan = false;    // [Titan] True if Titan Mode is active
+        int tileCount = 0;       // [Titan] Total tiles managed
+        int tilesReady = 0;      // [Titan] Ready tiles
         
         // Zone A2: Legacy DComp
         bool layerImg = false;
@@ -389,12 +400,8 @@ private:
 
 private:
     // ...
-    // [Titan]
-    QuickView::TileScheduler m_tileScheduler; // Initialized in constructor
-
-public:
-    // [Titan]
-    QuickView::TileScheduler* GetTileScheduler() { return &m_tileScheduler; }
-    void UpdateTileViewport(QuickView::RegionRect viewport, float scale);
+    // [Infinity Engine]
+    std::shared_ptr<QuickView::TileManager> m_tileManager; 
+    
     bool HasEmbeddedThumb() const { return m_hasEmbeddedThumb.load(); }
 };

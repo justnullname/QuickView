@@ -104,6 +104,7 @@ public:
     // ===== UI 状态更新 =====
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White), OSDPosition pos = OSDPosition::Bottom);
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
+    void SetTileGridVisible(bool visible) { m_showTileGrid = visible; MarkDynamicDirty(); }
     
     // [HUD V4] Zero-Cost Telemetry
     void SetTelemetry(const ImageEngine::TelemetrySnapshot& s) { m_telemetry = s; if (m_showDebugHUD) MarkDynamicDirty(); }
@@ -185,6 +186,7 @@ private:
     
     // Debug HUD V4 State
     bool m_showDebugHUD = false;
+    bool m_showTileGrid = false; // [Ctrl+4]
     ImageEngine::TelemetrySnapshot m_telemetry;
     
     RuntimeConfig m_runtime; // Verification Flags

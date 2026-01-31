@@ -7,6 +7,9 @@
 #include <wrl/client.h>
 #include "QuickView.h" // For VisualState
 #include <algorithm>
+#include "TileTypes.h" // Resolve QuickView namespace
+
+namespace QuickView { class TileManager; }
 
 #pragma comment(lib, "dcomp.lib")
 
@@ -18,6 +21,7 @@ using Microsoft::WRL::ComPtr;
 // Visual Tree (Z-Order from back to front):
 //   Root Visual
 //     ├── ImageContainer (Scale/Translate Transforms)
+//     │     ├── TileVisual (Bottom - Titan Tiled Layer)
 //     │     ├── ImageVisual B (Pong - Hidden/Pending)
 //     │     └── ImageVisual A (Ping - Visible/Active)
 //     ├── Gallery Visual  - Gallery Overlay
@@ -42,13 +46,26 @@ public:
     // ===== Visual Ping-Pong Image Layer =====
     // BeginPendingUpdate: Get D2D context for the hidden (pending) layer
     // Call this to draw a new image. Surface is auto-created/resized as needed.
-    ID2D1DeviceContext* BeginPendingUpdate(UINT width, UINT height);
+    ID2D1DeviceContext* BeginPendingUpdate(UINT width, UINT height, bool isTitan = false, UINT fullWidth = 0, UINT fullHeight = 0);
     HRESULT EndPendingUpdate();
     
     // PlayPingPongCrossFade: Animate transition from Active to Pending
     // isTransparent: If true, cross-fade both layers. If false, only fade out old.
     HRESULT PlayPingPongCrossFade(float durationMs, bool isTransparent = false);
     
+    // [Infinity Engine] Cascade Rendering
+    // Draws visible tiles into the context, falling back to lower LODs if needed.
+    HRESULT DrawTiles(ID2D1DeviceContext* pContext, 
+                      const D2D1_RECT_F& viewport, 
+                      float zoom, 
+                      const D2D1_POINT_2F& offset, 
+                      QuickView::TileManager* tileManager,
+                      bool showDebugGrid = false);
+
+    // [Smart Dispatch] Update Virtual Tiles on the ACTIVE layer
+    // No transform args needed - we draw into the image's coordinate space directly!
+    HRESULT UpdateVirtualTiles(QuickView::TileManager* tileManager, bool showDebugGrid);
+
     // AlignActiveLayer: Center the active layer in window
     HRESULT AlignActiveLayer(float windowW, float windowH);
     
@@ -65,6 +82,9 @@ public:
     // ===== UI Layer Drawing =====
     ID2D1DeviceContext* BeginLayerUpdate(UILayer layer, const RECT* dirtyRect = nullptr);
     HRESULT EndLayerUpdate(UILayer layer);
+    
+    // Background management
+    HRESULT UpdateBackground(float width, float height, const D2D1_COLOR_F& bgColor, bool showGrid);
     
     // Legacy compatibility
     ID2D1DeviceContext* BeginUIUpdate(const RECT* dirtyRect = nullptr) {
@@ -110,18 +130,37 @@ private:
         ComPtr<ID2D1Bitmap1> target;
         bool isDrawing = false;
         POINT drawOffset = {};
-    };
-    
-    // Image Layer data (Ping-Pong)
-    struct ImageLayer {
-        ComPtr<IDCompositionVisual2> visual;
-        ComPtr<IDCompositionSurface> surface;
-        ComPtr<ID2D1Bitmap1> d2dTarget;
         UINT width = 0;
         UINT height = 0;
     };
     
-    HRESULT EnsureImageSurface(ImageLayer& layer, UINT width, UINT height);
+    // Image Layer data (Ping-Pong) -> Supports Smart Dispatch (Standard vs Titan)
+    struct ImageLayer {
+        // [Common] The main visual node.
+        // In Standard Mode: Contains content directly (SetContent).
+        // In Titan Mode: Acts as a CONTAINER (AddVisual).
+        ComPtr<IDCompositionVisual2> visual;
+        
+        // [Standard Mode]
+        ComPtr<IDCompositionSurface> surface;
+        
+        // [Titan Mode - Dual Layer Strategy]
+        bool isTitan = false;
+        // Layer 1: Base (Thumbnail stretched)
+        ComPtr<IDCompositionVisual2> baseVisual; 
+        ComPtr<IDCompositionSurface> baseSurface;
+        // Layer 2: Detail (Virtual Tiles)
+        ComPtr<IDCompositionVisual2> detailVisual;
+        ComPtr<IDCompositionVirtualSurface> virtualSurface;
+        
+        // Cache used width/height to avoid resizing if not needed
+        UINT width = 0;
+        UINT height = 0;
+    };
+    
+    // [Helper] Extract D2D context from DComp Surface
+    ID2D1DeviceContext* BeginDrawHelper(IDCompositionSurface* surface);
+    
     LayerData& GetLayer(UILayer layer);
 
     HWND m_hwnd = nullptr;
@@ -137,8 +176,10 @@ private:
     ComPtr<IDCompositionVisual2> m_imageContainer; // Parent for image layers, holds transforms
     
     // Image Layers (Ping-Pong)
+    // Image Layers (Ping-Pong)
     ImageLayer m_imageA;
     ImageLayer m_imageB;
+    // [Refactor] TileLayer removed. Titan mode uses m_imageA/B internal structure.
     int m_activeLayerIndex = 0; // 0 = A is active, 1 = B is active
     
     // Shared D2D context for image rendering
@@ -151,6 +192,7 @@ private:
     ComPtr<IDCompositionTransform> m_transformGroup;
     
     // UI Layers
+    LayerData m_backgroundLayer; // [New] Bottom-most layer for background color/grid
     LayerData m_staticLayer;
     LayerData m_dynamicLayer;
     LayerData m_galleryLayer;

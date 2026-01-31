@@ -131,6 +131,7 @@
     <ClInclude Include="HeavyLanePool.h" />
     <ClInclude Include="TileMemoryManager.h" />
     <ClInclude Include="TileScheduler.h" />
+    <ClInclude Include="TileManager.h" />
     <ClInclude Include="TileTypes.h" />
     <ClInclude Include="SIMDUtils.h" />
     <ClInclude Include="ComputeEngine.h" />
@@ -165,6 +166,7 @@
     <ClCompile Include="UIRenderer.cpp" />
     <ClCompile Include="HeavyLanePool.cpp" />
     <ClCompile Include="TileMemoryManager.cpp" />
+    <ClCompile Include="TileManager.cpp" />
     <ClCompile Include="TileScheduler.cpp" />
     <ClCompile Include="ComputeEngine.cpp" />
   </ItemGroup>

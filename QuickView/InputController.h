@@ -4,31 +4,31 @@
 #include <atomic>
 
 // ============================================================================
-// InputController - 量子流输入状态机
+// InputController - Quantum Flow Input State Machine
 // ============================================================================
-// 核心职责:
-//   1. 检测用户滚动速度，判断 Warp (光速) / Static (静止) 状态
-//   2. 实现迟滞逻辑 (Hysteresis) 防止状态闪烁
-//   3. 在 Warp 模式下抑制 IO，仅更新页码
+// Core Responsibilities:
+//   1. Detect user scroll speed, judge Warp / Static state
+//   2. Implement Hysteresis to prevent state flickering
+//   3. In Warp mode, suppress IO, only update page index
 // ============================================================================
 
 enum class ScrollState {
-    Static, // 静止 - 正常加载图片
-    Warp    // 光速 - 抑制 IO，显示模糊特效
+    Static, // Static - Normal image loading
+    Warp    // Warp - Suppress IO, show blur effect
 };
 
 class InputController {
 public:
-    // 阈值配置
-    static constexpr auto WARP_ENTER_THRESHOLD = std::chrono::milliseconds(45);  // 进入 Warp: < 45ms (约 22Hz，支持键盘长按)
-    static constexpr auto WARP_EXIT_THRESHOLD = std::chrono::milliseconds(100);   // 退出 Warp: > 100ms
-    static constexpr int HYSTERESIS_FRAMES = 3;  // 连续 3 帧慢速才退出
+    // Threshold Configuration
+    static constexpr auto WARP_ENTER_THRESHOLD = std::chrono::milliseconds(45);  // Enter Warp: < 45ms (approx 22Hz, supports key hold)
+    static constexpr auto WARP_EXIT_THRESHOLD = std::chrono::milliseconds(100);   // Exit Warp: > 100ms
+    static constexpr int HYSTERESIS_FRAMES = 3;  // 3 consecutive slow frames to exit
 
     InputController() = default;
 
     /// <summary>
-    /// 用户导航事件 (按键/滚轮)
-    /// 返回: true = 应该发起 IO 请求; false = Warp 模式，仅更新 UI
+    /// User navigation event (Key/Scroll)
+    /// Return: true = should trigger IO; false = Warp mode, UI update only
     /// </summary>
     bool OnUserNavigate(size_t targetIndex) {
         using Clock = std::chrono::steady_clock;
@@ -38,11 +38,11 @@ public:
         m_lastInputTime = now;
         m_currentIndex = targetIndex;
 
-        // === 状态机逻辑 ===
+        // === State Machine Logic ===
 
-        // [Warp 判定]: 间隔小于 16ms
+        // [Warp Check]: Interval < 16ms
         if (delta < WARP_ENTER_THRESHOLD) {
-            m_consecutiveSlowFrames = 0; // 重置迟滞计数
+            m_consecutiveSlowFrames = 0; // Reset hysteresis count
             
             if (m_state != ScrollState::Warp) {
                 m_state = ScrollState::Warp;
@@ -51,34 +51,34 @@ public:
             }
             m_warpFrameCount++;
             
-            // Warp 模式: 不发起 IO
+            // Warp Mode: Do not trigger IO
             return false;
         }
 
-        // [迟滞判定]: 连续慢速帧才退出 Warp
+        // [Hysteresis Check]: Only exit Warp after consecutive slow frames
         if (m_state == ScrollState::Warp) {
             if (delta > WARP_EXIT_THRESHOLD) {
-                // 明确减速，立即退出
+                // Clear deceleration, exit immediately
                 ExitWarp();
             } else {
-                // 边缘速度，增加迟滞计数
+                // Borderline speed, increase hysteresis count
                 m_consecutiveSlowFrames++;
                 if (m_consecutiveSlowFrames >= HYSTERESIS_FRAMES) {
                     ExitWarp();
                 } else {
-                    // 仍在 Warp 边缘
+                    // Still on the edge of Warp
                     return false;
                 }
             }
         }
 
-        // Static 模式: 正常发起 IO
+        // Static Mode: Trigger IO normally
         return true;
     }
 
     /// <summary>
-    /// 时间驱动的状态更新 (防止 Warp 卡死)
-    /// 返回: true = 状态已改变 (例如从 Warp 退出到 Static)，需要重绘
+    /// Time-driven state update (Prevent Warp stuck)
+    /// Return: true = State changed (e.g. from Warp to Static), redraw needed
     /// </summary>
     bool Update() {
         if (m_state == ScrollState::Warp) {
@@ -94,17 +94,17 @@ public:
     }
 
     /// <summary>
-    /// 获取当前状态
+    /// Get Current State
     /// </summary>
     ScrollState GetState() const noexcept { return m_state; }
 
     /// <summary>
-    /// 获取当前目标索引
+    /// Get Current Target Index
     /// </summary>
     size_t GetCurrentIndex() const noexcept { return m_currentIndex; }
 
     /// <summary>
-    /// 获取 Warp 模式持续时间
+    /// Get Warp Mode Duration
     /// </summary>
     std::chrono::milliseconds GetWarpDuration() const {
         if (m_state != ScrollState::Warp) return std::chrono::milliseconds(0);
@@ -114,23 +114,23 @@ public:
     }
 
     /// <summary>
-    /// 获取 Warp 模式帧数 (用于计算模糊强度)
+    /// Get Warp Mode Frame Count (Used for calculating blur intensity)
     /// </summary>
     int GetWarpFrameCount() const noexcept { return m_warpFrameCount; }
 
     /// <summary>
-    /// 计算模糊强度 (0.0 - 1.0)
-    /// 基于 Warp 帧数，逐渐增强
+    /// Calculate Blur Intensity (0.0 - 1.0)
+    /// Based on Warp frames, gradually increase
     /// </summary>
     float CalculateBlurIntensity() const noexcept {
         if (m_state != ScrollState::Warp) return 0.0f;
-        // 前 5 帧线性增加，之后保持最大
+        // Increase linearly for first 5 frames, then max out
         float intensity = std::min(1.0f, m_warpFrameCount / 5.0f);
         return intensity;
     }
 
     /// <summary>
-    /// 计算压暗强度 (0.0 - 0.3)
+    /// Calculate Dim Intensity (0.0 - 0.3)
     /// </summary>
     float CalculateDimIntensity() const noexcept {
         if (m_state != ScrollState::Warp) return 0.0f;
@@ -138,7 +138,7 @@ public:
     }
 
     /// <summary>
-    /// 强制退出 Warp (例如用户松开按键)
+    /// Force Exit Warp (e.g. User releases key)
     /// </summary>
     void ForceExitWarp() {
         if (m_state == ScrollState::Warp) {

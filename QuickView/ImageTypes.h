@@ -76,16 +76,16 @@ struct RawImageFrame {
     // [v8.7] EXIF Orientation (1-8)
     int exifOrientation = 1; /* 1 = Normal */
 
-    // [D2D Native] SVG 专用数据 (仅当 format == SVG_XML 时使用)
-    // 使用 unique_ptr 确保非 SVG 路径零开销
+    // [D2D Native] SVG Specific Data (Used only when format == SVG_XML)
+    // Use unique_ptr to ensure zero overhead for non-SVG paths
     struct SvgData {
-        std::vector<uint8_t> xmlData;  // 净化后的 SVG 源码
-        float viewBoxW = 0;            // SVG 固有宽度
-        float viewBoxH = 0;            // SVG 固有高度
+        std::vector<uint8_t> xmlData;  // Sanitized SVG Source
+        float viewBoxW = 0;            // SVG Intrinsic Width
+        float viewBoxH = 0;            // SVG Intrinsic Height
     };
-    std::unique_ptr<SvgData> svg;  // nullptr = 非 SVG
+    std::unique_ptr<SvgData> svg;  // nullptr = Non-SVG
     
-    // Helper: 仅 SVG 调用
+    // Helper: SVG only call
     bool IsSvg() const { return format == PixelFormat::SVG_XML && svg; }
     
     // === Lifecycle Management ===

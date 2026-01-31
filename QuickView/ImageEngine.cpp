@@ -3,6 +3,8 @@
 #include "FileNavigator.h"
 #include "HeavyLanePool.h"  // [N+1] Include pool implementation
 #include "EditState.h"      // [v9.9] Access g_runtime.ForceRawDecode for dispatch decisions
+#include "TileManager.h"    // [Infinity Engine]
+
 #include <algorithm>
 #include <psapi.h>
 #pragma comment(lib, "psapi.lib")
@@ -17,7 +19,6 @@
 ImageEngine::ImageEngine(CImageLoader* loader)
     : m_loader(loader)
     , m_fastLane(this, loader)
-    , m_tileScheduler(nullptr) 
 {
     // [N+1] Detect hardware and create pool
     SystemInfo sysInfo = SystemInfo::Detect();
@@ -28,8 +29,8 @@ ImageEngine::ImageEngine(CImageLoader* loader)
     
     m_heavyPool = std::make_unique<HeavyLanePool>(this, loader, &m_pool, m_engineConfig);
     
-    // [Titan] Late-bind the pool to the scheduler
-    m_tileScheduler.SetPool(m_heavyPool.get());
+    // [Infinity Engine]
+    m_tileManager = std::make_shared<QuickView::TileManager>();
 
     // Debug output
     wchar_t buf[256];
@@ -131,12 +132,12 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool enableTitan = (sizeTrigger || pixelTrigger) && isSupportedFormat;
     
     if (enableTitan) {
-         m_tileScheduler.Reset(info.width, info.height, path, imageId);
+         m_tileManager->InvalidateAll(); // Reset generation
          wchar_t debugBuf[256];
          swprintf_s(debugBuf, L"[Dispatch] Titan Mode ENABLED (%dx%d, %s)\n", info.width, info.height, fmtUpper.c_str());
          OutputDebugStringW(debugBuf);
     } else {
-         m_tileScheduler.Reset(0, 0, L"", 0); // Disable
+         // m_tileManager->InvalidateAll(); // Optional
     }
 
     // [Prefetch System] Cache Check ...
@@ -456,6 +457,16 @@ std::vector<EngineEvent> ImageEngine::PollState() {
 
     // 2. Harvest Heavy Events
     while (auto e = m_heavyPool->TryPopResult()) {
+         if (e->type == EventType::TileReady && e->tileCoord.has_value() && e->rawFrame) {
+             // [Infinity Engine] Route to TileManager
+             // Map Legacy TileCoord -> TileKey
+             auto key = QuickView::TileKey::From(e->tileCoord->col, e->tileCoord->row, e->tileCoord->lod);
+             m_tileManager->OnTileReady(key, e->rawFrame);
+             
+             // Still pass to batch? 
+             // Yes, Main Thread might want to trigger Repaint.
+             // But UI doesn't need to know details.
+         }
          batch.push_back(std::move(*e));
     }
 
@@ -950,10 +961,7 @@ void ImageEngine::FastLane::QueueWorker() {
                 // [Unified] Populate Metadata instead of ThumbData
                 e.metadata.Width = info.width;
                 e.metadata.Height = info.height;
-                // [Debug] Verify Metadata vs PeekHeader
-                wchar_t buf[128];
-                swprintf_s(buf, L"[FastLane] PeekHeader Width: %d, Height: %d, Path: %s\n", info.width, info.height, cmd.path.c_str());
-                OutputDebugStringW(buf);
+
                 // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
                 // No need to call ReadMetadata separately or access global variables.
                 
@@ -984,7 +992,7 @@ void ImageEngine::FastLane::QueueWorker() {
                 m_parent->QueueEvent(EngineEvent{}); // Dummy event, just for notification
                 
                 if (isClear) OutputDebugStringW(L"[FastLane] Output: FullReady (Final)\n");
-                else OutputDebugStringW(L"[FastLane] Output: PreviewReady (Blurry)\n"); 
+                else { wchar_t buf[128]; swprintf_s(buf, L"[FastLane] Output: PreviewReady (Blurry) - targetW=%d, rawW=%d\n", targetW, rawFrame.width); OutputDebugStringW(buf); } 
                 
                 // [v3.1] If Fast Pass produced clear image, cancel Heavy Lane
                 if (isClear) {
@@ -1514,7 +1522,73 @@ void ImageEngine::InvalidateCache(const std::wstring& path) {
     }
 }
 
-void ImageEngine::UpdateTileViewport(QuickView::RegionRect viewport, float scale) {
-    m_tileScheduler.UpdateViewport(viewport, scale, 0.0f);
+void ImageEngine::UpdateTileViewport(QuickView::RegionRect viewport, float scale, int imageW, int imageH, float basePreviewRatio, float velocityX, float velocityY) {
+    if (!m_heavyPool) return;
+    
+    // [Infinity Engine] Update Manager & Get Missing
+    // Pass image dimensions and preview ratio for clamping and triggering
+    std::vector<QuickView::TileKey> missing = m_tileManager->Update(viewport, scale, velocityX, velocityY, imageW, imageH, basePreviewRatio);
+    
+    if (missing.empty()) return;
+    
+    // Batch Submit
+    std::vector<std::pair<QuickView::TileCoord, QuickView::RegionRequest>> batch;
+    
+    // Need Image Dimensions to clip?
+    // We don't have them easily accessible here (stored in m_loader stats? or we need to store them in ImageEngine)
+    // Quick fix: m_tileManager doesn't know image size, so it might generate out-of-bound keys if we didn't clamp in Update?
+    // TileManager::Update clamped to provided viewport, but not max image size if not set.
+    // Assuming TileManager logic handles clamping if we pass max size?
+    // Actually TileManager::Update logic in previous step relied on "viewport" being valid.
+    
+    // Let's iterate and build requests.
+    // We assume the viewport passed by UI is valid/clamped.
+    
+    for (const auto& key : missing) {
+        // Convert TileKey -> TileCoord (Legacy)
+        QuickView::TileCoord coord;
+        coord.col = key.x;
+        coord.row = key.y;
+        coord.lod = key.level;
+        
+        // Calculate Region (Image Space)
+        int tileSize = QuickView::TILE_SIZE << key.level;
+        QuickView::RegionRect srcRect;
+        srcRect.x = key.x * tileSize;
+        srcRect.y = key.y * tileSize;
+        srcRect.w = tileSize;
+        srcRect.h = tileSize;
+        
+        // Setup Request
+        QuickView::RegionRequest req;
+        req.srcRect = srcRect;
+        // dstWidth/Height for "Scale on Load"
+        // If we want JIT Zoom, we might scale? 
+        // Infinity Engine philosophy: Load NATIVE or LOD.
+        // If we load LOD1 (Half), srcRect covers 1024x1024, we want 512x512 output.
+        // Scale = 1.0 / (1 << level) ?
+        // TileManager::Update calculates LOD.
+        // If LOD=1, it means we are zoomed out.
+        // We want the resulting tile to be TILE_SIZE (512).
+        // So scale = TILE_SIZE / srcRect.w.
+        // srcRect.w = TILE_SIZE << level.
+        // scale = 512 / (512 * 2^level) = 1 / 2^level. Correct.
+        
+        float tileScale = 1.0f / (1 << key.level);
+        
+        req.dstWidth = QuickView::TILE_SIZE;
+        req.dstHeight = QuickView::TILE_SIZE;
+        
+        // TODO: Clip against Image Size (m_currentImageWidth/Height?)
+        // ImageEngine doesn't seem to store W/H persistently in a member accessible here.
+        // m_tileScheduler had Reset(w, h). 
+        // For now, rely on robust loader to handle out-of-bounds (LoadTileFromMemory handles it?)
+        // Actually LoadJpegRegion does clipping.
+        
+        batch.push_back({coord, req});
+    }
+    
+    // Priority: 100 (Standard)
+    m_heavyPool->SubmitTileBatch(m_currentNavPath, m_currentImageId.load(), batch, 100);
 }
 

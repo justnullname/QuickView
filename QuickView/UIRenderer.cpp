@@ -758,6 +758,7 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     DrawToggle(L"Fast [Ctl1]", g_runtime.EnableScout);
     DrawToggle(L"Heavy[Ctl2]", g_runtime.EnableHeavy);
     DrawToggle(L"SlowM[Ctl3]", g_slowMotionMode);
+    DrawToggle(L"Grid [Ctl4]", m_showTileGrid);
     
     // [Direct D2D] Pipeline Indicator - Shows which path was used for last upload
     toggleY += 6.0f;  // Small gap
@@ -839,10 +840,12 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     // 3. Text Data (Vitals)
     swprintf_s(buffer, 
         L"FPS: %.1f\n"
-        L"%s%s", 
+        L"%s%s\n"
+        L"Titan: %d/%d", 
         s.fps,
         s.loaderName[0] == 0 ? L"-" : s.loaderName,
-        s.isScaled ? L"  [Scaled]" : L"");
+        s.isScaled ? L"  [Scaled]" : L"",
+        s.tilesReady, s.tileCount);
     
     dc->DrawText(buffer, (UINT32)wcslen(buffer), m_debugFormat.Get(), 
             D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW - 10, hudY + 75), m_whiteBrush.Get());

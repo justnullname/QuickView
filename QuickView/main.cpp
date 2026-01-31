@@ -7,6 +7,7 @@
 #include "ImageEngine.h"
 #include "CompositionEngine.h"
 #include "UIRenderer.h"
+#include "TileManager.h" // [Infinity Engine]
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include <d2d1_1helper.h>
 #include "LosslessTransform.h"
@@ -237,6 +238,7 @@ static D2D1_SIZE_F g_lastSurfaceSize = {0, 0}; // Track DComp Surface size for U
 // === Debug HUD ===
 DebugMetrics g_debugMetrics; // Global Metrics Instance
 static bool g_showDebugHUD = false;  // Toggle with F12
+static bool g_showTileGrid = false;  // Toggle with Ctrl+4
 static DWORD g_lastFrameTime = 0;
 static float g_fps = 0.0f;
 
@@ -570,7 +572,7 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res, int tier) {
 // For SVG: Uses Direct2D Native path with real-time transform (Lossless Zoom)
 // For Bitmap: Uses existing logic
 static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent, bool isFastUpgrade) {
-    if (!g_compEngine || !g_compEngine->IsInitialized() || !res) return false;
+    if (!g_compEngine || !g_compEngine->IsInitialized()) return false;
     
     RECT rc; GetClientRect(hwnd, &rc);
     UINT winW = rc.right; UINT winH = rc.bottom;
@@ -579,6 +581,17 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
     // But keep winW/winH as ACTUAL sizes for DComp transforms to avoid glitches before resize
     UINT targetWinW = winW;
     UINT targetWinH = winH;
+    
+    // Handle Empty Resource (Clear Surface)
+    if (!res) {
+        // Just use current window size for clear
+        ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(targetWinW, targetWinH);
+        if (!ctx) return false;
+        ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // Transparent
+        g_compEngine->EndPendingUpdate();
+        g_compEngine->PlayPingPongCrossFade(0, true); // Instant
+        return true;
+    }
     
     if (!IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -635,9 +648,20 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         surfH = (UINT)(res.svgH * surfaceScale);
     }
 
+    // [Titan Detection]
+    bool isTitan = false;
+    UINT fullWidth = 0;
+    UINT fullHeight = 0;
+    // Only Bitmap mode supports Titan (SVG uses vector re-rasterization)
+    if (!res.isSvg && (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192)) {
+         isTitan = true;
+         fullWidth = g_currentMetadata.Width;
+         fullHeight = g_currentMetadata.Height;
+    }
+
     // [Fix] REMOVE AlignActiveLayer to prevent double-centering conflict with SetPan
     
-    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH);
+    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight);
     if (!ctx) return false;
     
     ctx->Clear(isTransparent ? D2D1::ColorF(0, 0.0f) : D2D1::ColorF(0.1f, 0.1f, 0.1f));
@@ -736,7 +760,8 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
              
              // Draw bitmap at its original coordinates. The Transform handles placement.
              // Note: Source Rect is implicitly (0, 0, imgW, imgH).
-             ctx->DrawBitmap(res.bitmap.Get(), D2D1::RectF(0, 0, imgW, imgH), 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+             D2D1_RECT_F srcRect = D2D1::RectF(0, 0, imgW, imgH);
+             ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
              
              // Reset Transform
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -746,7 +771,9 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
              float drawH = imgH * scale;
              float x = (surfW - drawW) / 2.0f;
              float y = (surfH - drawH) / 2.0f;
-             ctx->DrawBitmap(res.bitmap.Get(), D2D1::RectF(x, y, x + drawW, y + drawH), 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+             
+             D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
+             ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
         }
         
         // [Optimization] We used the GPU to bake rotation. 
@@ -887,11 +914,11 @@ enum class PaintLayer : uint32_t {
     Static  = 1 << 0,   // Toolbar, Window Controls, Info Panel, Settings
     Dynamic = 1 << 1,   // HUD, OSD, Tooltip, Dialog
     Gallery = 1 << 2,   // Gallery Overlay
-    Image   = 1 << 3,   // Main SwapChain (图片�?
+    Image   = 1 << 3,   // DComp Image Layer
     All     = 0xFF
 };
 
-// 支持位运�?
+// 支持位运?
 inline PaintLayer operator|(PaintLayer a, PaintLayer b) {
     return static_cast<PaintLayer>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
@@ -945,10 +972,16 @@ static bool g_showControls = true;
 // Recovers the VISUAL (Rotated) dimensions from the DComp surface.
 // Bypasses complex/fragile Exif parsing.
 static D2D1_SIZE_F GetVisualImageSize() {
-    // Primary: Reconstruct from Rendered Surface (Exif is already baked in here)
+    // Primary: Reconstruction Logic
     D2D1_SIZE_F result = {0, 0};
     
-    if (g_lastSurfaceSize.width > 0) {
+    // [Infinity Engine] TITAN CHECK: Always return metadata size for huge images to ensure consistent scaling/zooming
+    bool isTitan = (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192);
+
+    if (isTitan) {
+         result = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
+    } 
+    else if (g_lastSurfaceSize.width > 0) {
         result = D2D1::SizeF(
             g_lastSurfaceSize.width, 
             g_lastSurfaceSize.height
@@ -2071,27 +2104,22 @@ bool CheckUnsavedChanges(HWND hwnd) {
 VisualState GetVisualState() {
     VisualState vs = {};
     
-    // A. Physical Size (Priority: Surface > Resource > Metadata)
-    // A. Physical Size (Priority: Titan Scheduler > Metadata > Surface > Resource)
-    bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+    // A. Physical Size (Priority: Titan Metadata > Surface > Resource)
+    // [Infinity Engine] TITAN CHECK: 8K Threshold
+    bool isTitan = (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192);
     
     if (isTitan) {
-         // [Titan Fix] Source of Truth is the Scheduler (initialized by Dispatch with confirmed file dims)
-         // This bypasses any g_currentMetadata corruption (e.g. from Preview overwrite)
-         float tW = g_imageEngine->GetTileScheduler()->GetWidth();
-         float tH = g_imageEngine->GetTileScheduler()->GetHeight();
-         if (tW > 0 && tH > 0) {
-             vs.PhysicalSize = D2D1::SizeF(tW, tH);
-         } else {
-             vs.PhysicalSize = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
-         }
+         vs.PhysicalSize = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
     }
-    else if (g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
-        vs.PhysicalSize = D2D1::SizeF((float)g_lastSurfaceSize.width, (float)g_lastSurfaceSize.height);
-    } else if (g_imageResource) {
-        vs.PhysicalSize = g_imageResource.GetSize();
-    } else {
-        vs.PhysicalSize = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
+    else {
+        // Standard Path
+        if (g_lastSurfaceSize.width > 0 && g_lastSurfaceSize.height > 0) {
+            vs.PhysicalSize = D2D1::SizeF(g_lastSurfaceSize.width, g_lastSurfaceSize.height);
+        } else if (g_imageResource) {
+            vs.PhysicalSize = g_imageResource.GetSize();
+        } else {
+            vs.PhysicalSize = D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
+        }
     }
     
     // B. Calculate Base Logic from EXIF
@@ -2211,10 +2239,7 @@ void AdjustWindowToImage(HWND hwnd) {
     float imgHeight = effSize.height;
 
     // [Titan Fix] For Titan Mode, the "Effective Size" from GetVisualState might be the small preview/thumbnail.
-    // We MUST use the Metadata (Virtual) dimensions to size the window correctly, otherwise the window shrinks.
-    // This local override ensures OSD/Zoom logic (which calls GetVisualState) remains consistent for normal images,
-    // while the initial Window Layout gets the correct "Canvas Size".
-    bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+    bool isTitan = (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192);
     if (isTitan && g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
         // Use Metadata Dimensions for Window Sizing, swapping for rotation if needed
         VisualState vs = GetVisualState(); // Get rotation info
@@ -2351,29 +2376,44 @@ RECT GetVirtualScreenRect() {
 // [Fix] Centralized DComp Synchronization Logic
 // Calculates correct Zoom/Pan/Centering based on Visual Dimensions (Rotated)
 static void SyncDCompState(HWND hwnd, float winW, float winH) {
-    if (!g_compEngine || !g_compEngine->IsInitialized() || !g_imageResource) return;
+    if (!g_compEngine || !g_compEngine->IsInitialized()) return;
+    if (winW <= 0 || winH <= 0) return;
 
-    // [Refactor] Use VisualState for Layout
-    VisualState vs = GetVisualState();
-    if (vs.VisualSize.width <= 0 || vs.VisualSize.height <= 0) return;
-
-    // Calculate Base Fit Scale (Visual -> Window)
-    float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
-
-    // [Phase 3] Small Image Fix: If image is smaller than 200x200, do NOT upscale it to fit window.
-    if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f) {
-        if (baseFit > 1.0f) baseFit = 1.0f;
+    // 1. Update Background (Independent of image state)
+    D2D1_COLOR_F bgColor;
+    switch (g_config.CanvasColor) {
+        case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break; // Black
+        case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break; // White
+        case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break; // Grid
+        case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break;
+        default: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
     }
-    
-    // Calculate Target Zoom (Total Scale)
-    float targetZoom = baseFit * g_viewState.Zoom;
-    
-    // Apply Matrix Chain (using Physical Size & Rotation)
-    // PanX/PanY are explicitly screen-space offsets
-    g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
-    
-    // Commit
-    g_compEngine->Commit();
+    g_compEngine->UpdateBackground(winW, winH, bgColor, g_config.CanvasColor == 2 || g_config.CanvasShowGrid);
+
+    // 2. Update Image Transforms
+    if (g_imageResource) {
+        VisualState vs = GetVisualState();
+        if (vs.VisualSize.width > 0 && vs.VisualSize.height > 0) {
+            float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
+            if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f) {
+                if (baseFit > 1.0f) baseFit = 1.0f;
+            }
+            float targetZoom = baseFit * g_viewState.Zoom;
+            g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
+        }
+
+        // 3. Update Tiles (Titan Mode)
+        // [Fix] Ensure tiles are uploaded to Virtual Surface
+        // 3. Update Tiles (Titan Mode)
+        // [Fix] Ensure tiles are uploaded to Virtual Surface
+        if (g_imageEngine) {
+            auto tileMgr = g_imageEngine->GetTileManager();
+            if (tileMgr) {
+                // [Fix] Only enable Debug Grid if explicitly requested (g_showTileGrid), NOT just because background is Grid (CanvasColor == 2)
+                g_compEngine->UpdateVirtualTiles(tileMgr.get(), g_config.CanvasShowGrid || g_showTileGrid);
+            }
+        }
+    }
 }
 
 // [Fix] Draw Internal Background (Grid/Color) explicitly.
@@ -2424,8 +2464,6 @@ static void DrawLocalBackground(ID2D1DeviceContext* context, float widthPixels, 
     }
 }
 
-// [Deleted] UpdateVisualMatrix - Legacy logic moved to GetVisualState / SyncDCompState
-
 void PerformTransform(HWND hwnd, TransformType type) {
     if (g_imagePath.empty()) return;
     
@@ -2441,7 +2479,6 @@ void PerformTransform(HWND hwnd, TransformType type) {
     else if (type == TransformType::FlipVertical) g_editState.FlippedV = !g_editState.FlippedV;
     
     // 3. Apply Visual Transform
-    // UpdateVisualMatrix(); // REMOVED: Managed by SyncDCompState via AdjustWindowToImage
     
     // Force immediate visual update needed?
     // AdjustWindowToImage will trigger a resize -> UpdateLayout
@@ -2634,11 +2671,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // g_compEngine = std::make_unique<CompositionEngine>();
     g_compEngine = new CompositionEngine();
     if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
-        // No SwapChain binding needed - new architecture uses DComp Surfaces directly
+        // Pure DComp architecture: Surfaces are managed by CompositionEngine
         
         // Initialize UI Renderer (renders to independent DComp Surface)
         g_uiRenderer = std::make_unique<UIRenderer>();
-        g_uiRenderer->Initialize(g_compEngine, g_renderEngine->m_dwriteFactory.Get());
+        g_uiRenderer->Initialize(g_compEngine, g_renderEngine->GetDWriteFactory());
     }
     
     // Init Gallery
@@ -3478,10 +3515,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Let's assume OnPaint happens? 
             // Better: SetTimer logic or just Invalidate if opacity < 1.0f inside Render?
             // GalleryOverlay::Render doesn't invalidate.
-            // Let's rely on standard Paint messages or manual Invalidate from Interaction.
-            // For animation "Fade In", we should probably Invalidate continuously for 0.2s.
-            // We can add logic in OnPaint or just Timer?
-            // Simplest: In Render call, if animating, POST Invalidate?
             // Let's do nothing special here, OnPaint calls Render.
         }
         return 0;
@@ -3988,6 +4021,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
                 case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
                 case '3': g_slowMotionMode = !g_slowMotionMode; handled = true; break;
+                case '4': 
+                    g_showTileGrid = !g_showTileGrid; 
+                    OutputDebugStringW(g_showTileGrid ? L"Tile Grid: ON\n" : L"Tile Grid: OFF\n");
+                    if (g_uiRenderer) g_uiRenderer->SetTileGridVisible(g_showTileGrid);
+                    handled = true; 
+                    break;
             }
             if (handled) {
                 g_imageEngine->UpdateConfig(g_runtime); // Push to engine
@@ -4043,17 +4082,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Not Visible - Handled in switch below
         }
 
-        // 重复键过�?(Bit 30: The previous key state)
-        // 注意: Warp 测试逻辑需要处理长按，所以不在这里过滤重�?
+        // 重复键过?(Bit 30: The previous key state)
+        // 注意: Warp 测试逻辑需要处理长按，所以不在这里过滤重?
         
         bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         
-        // �?F10 穿�?(F10 通常产生 WM_SYSKEYDOWN)
+        // ?F10 穿?(F10 通常产生 WM_SYSKEYDOWN)
         // 其他系统键仍交给 DefWindowProc 处理
         if (message == WM_SYSKEYDOWN && wParam != VK_F10) {
-            break; // 其他系统键交给默认处�?
+            break; // 其他系统键交给默认处?
         }
         
         switch (wParam) {
@@ -4783,8 +4822,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         case IDM_SETTINGS: {
             if (g_settingsOverlay.IsVisible()) {
-                g_settingsOverlay.Toggle(); // Close
-                RestoreOverlayWindowState(hwnd);
+                // If already visible, just switch tab? Or toggle off?
+                // Standard behavior: bring to front / switch tab
+                g_settingsOverlay.OpenTab(5);
             } else {
                 SaveOverlayWindowState(hwnd);
                 g_settingsOverlay.Toggle(); // Open
@@ -4847,24 +4887,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
 
 void OnResize(HWND hwnd, UINT width, UINT height) { 
-    if (g_renderEngine) g_renderEngine->Resize(width, height);
     if (g_compEngine) {
         // [Fix] Atomic Update for Rotated Image Lag
         // 1. ResizeSurfaces: Updates UI layer backing stores (No Commit)
-        // 2. SyncDCompState: Updates Image Transforms (Commits both)
+        // 2. SyncDCompState: Updates Background and Image Transforms (Commits both)
         // This ensures UI resize and Image visual jump happen in the SAME frame.
         g_compEngine->ResizeSurfaces(width, height);
-        
-        // [Fix] Draw Background explicitly NOW
-        // Prevent "Window Lag" where background is potentially empty/stale while Image is Transformed.
-        ID2D1DeviceContext* ctx = g_compEngine->BeginLayerUpdate(UILayer::Static);
-        if (ctx) {
-            DrawLocalBackground(ctx, (float)width, (float)height);
-            g_compEngine->EndLayerUpdate(UILayer::Static);
-        }
-        
-        // Pass explicit new dimensions to ensure perfect sync
         SyncDCompState(hwnd, (float)width, (float)height);
+        g_compEngine->Commit();
     }
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
@@ -5124,7 +5154,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 HandleExifPreRotation(evt);
 
                 // UI Text Logic
-                wchar_t titleBuf[512];
+                wchar_t titleBuf[2048];
                 if (isPreview) {
                     swprintf_s(titleBuf, L"Loading... %s - %s", 
                         evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
@@ -5153,28 +5183,14 @@ void ProcessEngineEvents(HWND hwnd) {
                                        (evt.metadata.Format.find(L"Alpha") != std::wstring::npos) ||
                                        (evt.rawFrame && evt.rawFrame->format == QuickView::PixelFormat::BGRA8888);
 
-                // [Two-Stage] Detect same-image upgrade (scaled �?full)
+                // [Two-Stage] Detect same-image upgrade (scaled ?full)
                 // Fast transition when: was scaled, now full, same image ID
                 bool isSameImageUpgrade = g_isImageScaled && !evt.isScaled && 
                                           (evt.imageId == g_currentImageId.load());
 
 
-                // [Titan] Titan Mode Strategy
-                // For huge images, we render manually in OnPaint (Window Surface) to support tiling.
-                // We MUST skip DComp Image Visual (or clear it) because it sits ON TOP of the Window Surface
-                // and would obscure our tiles.
-                bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
-                
-                if (isTitan) {
-                    // Clear DComp Visual (pBitmap = nullptr) so it is transparent.
-                    // We must do this, otherwise the previous image (or a stale preview) might persist on top.
-                    // We use RenderImageToDComp with a temporary empty resource.
-                    ImageResource emptyRes; 
-                    RenderImageToDComp(hwnd, emptyRes, hasTransparency, isSameImageUpgrade);
-                } else {
-                    // Standard Path: Update DComp Visual
-                    RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
-                }
+                // Update DComp Visual (Base Preview for Titan, or full image for standard)
+                RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
                 
                 // [Optimization] GPU-Assistant Surface Rotation Complete
                 // The Surface is now physically rotated. Neutralize global Exif.
@@ -5226,10 +5242,7 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.Model.empty()) g_currentMetadata.Model = evt.metadata.Model;
                  if (!evt.metadata.Lens.empty()) g_currentMetadata.Lens = evt.metadata.Lens;
                  
-                 // [Debug Camera]
-                 wchar_t camBuf[256];
-                 swprintf_s(camBuf, L"[Main] MetadataReady Camera: Make='%s', Model='%s'\n", 
-                     evt.metadata.Make.c_str(), evt.metadata.Model.c_str());
+
                  
                  if (!evt.metadata.ISO.empty()) g_currentMetadata.ISO = evt.metadata.ISO;
                  if (!evt.metadata.Shutter.empty()) g_currentMetadata.Shutter = evt.metadata.Shutter;
@@ -5299,11 +5312,11 @@ void ProcessEngineEvents(HWND hwnd) {
 
     case EventType::TileReady:
         if (evt.imageId == g_currentImageId.load() && evt.tileCoord.has_value() && evt.rawFrame) {
-            if (g_renderEngine) {
-                g_renderEngine->UploadTile(evt.tileCoord.value(), *evt.rawFrame);
-                if (g_imageEngine && g_imageEngine->GetTileScheduler()) {
-                    g_imageEngine->GetTileScheduler()->OnTileComplete(evt.tileCoord.value());
-                }
+            if (g_imageEngine && g_imageEngine->GetTileManager()) {
+                // [Infinity Engine] Pass to Manager
+                // Legacy conversion: TileCoord -> TileKey
+                auto key = QuickView::TileKey::From(evt.tileCoord->col, evt.tileCoord->row, evt.tileCoord->lod);
+                g_imageEngine->GetTileManager()->OnTileReady(key, evt.rawFrame);
                 needsRepaint = true;
             }
         }
@@ -5484,7 +5497,7 @@ void OnPaint(HWND hwnd) {
     
     if (g_isImageDirty) {
         g_isImageDirty = false; // Reset dirty flag BEFORE drawing (Consume flag)
-        g_renderEngine->BeginDraw();
+    }
     
     // --- Performance Metrics Update ---
     // [Performance] Unguarded metric block removed. 
@@ -5493,9 +5506,7 @@ void OnPaint(HWND hwnd) {
 
     auto context = g_renderEngine->GetDeviceContext();
     if (context) {
-        // === DIMENSION LOGIC REFACTOR ===
-        // Fetch explicit Window Dimensions (Pixels) and convert to DIPs
-        // This avoids dependence on DComp Surface size (GetSize) which might be stale/async.
+        // === DIMENSION CALCULATIONS ===
         RECT rcClient; GetClientRect(hwnd, &rcClient);
         float winPixelsW = (float)(rcClient.right - rcClient.left);
         float winPixelsH = (float)(rcClient.bottom - rcClient.top);
@@ -5507,83 +5518,19 @@ void OnPaint(HWND hwnd) {
         
         float logicW = winPixelsW * 96.0f / dpiX;
         float logicH = winPixelsH * 96.0f / dpiY;
-        
-        // Fallback for logic size if pixels are suspicious (e.g. minimized)
-        if (logicW <= 0 || logicH <= 0) {
-            D2D1_SIZE_F rtSize = context->GetSize();
-            logicW = rtSize.width;
-            logicH = rtSize.height;
-        }
 
-        context->SetTransform(D2D1::Matrix3x2F::Identity());
-        
-        // Canvas Color: 0=Black, 1=White, 2=Grid, 3=Custom
-        D2D1_COLOR_F bgColor;
-        switch (g_config.CanvasColor) {
-            case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break; // Black (dark gray)
-            case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break; // White (light gray)
-            case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break; // Grid (will draw checker)
-            case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break; // Custom
-            default: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
-        }
-        context->Clear(bgColor);
-        
-        // Draw checkerboard grid (Overlay)
-        // If CanvasColor == 2 (Grid), FORCE grid. Or if CanvasShowGrid is enabled.
-        if (g_config.CanvasColor == 2 || g_config.CanvasShowGrid) {
-            // Use explicit logic dimensions
-            
-            // Adaptive Grid Color:
-            // Calculate Background Brightness
-            float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
-            
-            // If background is dark (< 0.5), use White Overlay. Else use Black Overlay.
-            D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f);
+        // Canvas and Image rendering are now handled entirely within the DirectComposition visual tree.
+        // Background clearing and grid drawing are moved to CompositionEngine surfaces.
+        SyncDCompState(hwnd, winPixelsW, winPixelsH);
 
-            ComPtr<ID2D1SolidColorBrush> brushOverlay;
-            context->CreateSolidColorBrush(overlayColor, &brushOverlay);
-            
-            const float gridSize = 16.0f;
-            for (float y = 0; y < logicH; y += gridSize) {
-                for (float x = 0; x < logicW; x += gridSize) {
-                    int cx = (int)(x / gridSize);
-                    int cy = (int)(y / gridSize);
-                    // Draw every other tile
-                    if ((cx + cy) % 2 != 0) {
-                       context->FillRectangle(D2D1::RectF(x, y, x + gridSize, y + gridSize), brushOverlay.Get());
-                    }
-                }
-            }
-        }
-        
-        // === Quantum Stream: Warp Mode Integration ===
-        // 根据 InputController 状态设�?RenderEngine 模糊效果
-        if (g_inputController.GetState() == ScrollState::Warp) {
-            float blurIntensity = g_inputController.CalculateBlurIntensity();
-            float dimIntensity = g_inputController.CalculateDimIntensity();
-            g_renderEngine->SetWarpMode(blurIntensity, dimIntensity);
-        } else {
-            g_renderEngine->SetWarpMode(0.0f, 0.0f);
-        }
-        
-        // [Fix] Sync DComp State (Zoom/Pan) with correct Visual Dimensions
-        // This resolves the "Huge Margins" issue when zooming rotated images.
-        // Logic refactored to centralized function for OnResize access.
-        
-        // Pass explicit client rect dims (Paint runs on current client rect)
-        RECT rcPaint; GetClientRect(hwnd, &rcPaint);
-        SyncDCompState(hwnd, (float)rcPaint.right, (float)rcPaint.bottom);
-
-        // [Titan] Manual Tile Rendering Path
-        bool isTitan = g_imageEngine && g_imageEngine->GetTileScheduler() && g_imageEngine->GetTileScheduler()->IsActive();
+        // [Infinity Engine] Cascade Rendering Path
+        bool isTitan = g_imageEngine && (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192);
         if (isTitan) {
-             auto* scheduler = g_imageEngine->GetTileScheduler();
+             // 1. Calculate Dimensions
+             float imgFullW = (float)g_currentMetadata.Width;
+             float imgFullH = (float)g_currentMetadata.Height;
 
-             // 1. Calculate Dimensions (Sync with Scheduler if Metadata not ready)
-             float imgFullW = (g_currentMetadata.Width > 0) ? (float)g_currentMetadata.Width : (float)scheduler->GetWidth();
-             float imgFullH = (g_currentMetadata.Height > 0) ? (float)g_currentMetadata.Height : (float)scheduler->GetHeight();
-
-             // 2. Calculate Absolute Scale (Consistent with Legacy: relative zoom 1.0 = Fit)
+             // 2. Calculate Absolute Scale
              float fitScale = std::min(logicW / imgFullW, logicH / imgFullH);
              float absoluteZoom = fitScale * g_viewState.Zoom; 
              float invZoom = 1.0f / absoluteZoom;
@@ -5602,241 +5549,32 @@ void OnPaint(HWND hwnd) {
              
              QuickView::RegionRect vp = { (int)viewL, (int)viewT, (int)viewW, (int)viewH };
              
-             // Update Scheduler (Dispatch new tiles if needed)
-             // [Titan] Calculate Base Preview Ratio for Trigger Threshold
-             float basePreviewRatio = 0.0f;
-             if (g_currentMetadata.Width > 0 && g_imageResource.bitmap) {
-                 float previewW = (float)g_imageResource.bitmap->GetPixelSize().width;
-                 basePreviewRatio = previewW / (float)g_currentMetadata.Width;
-                 
-                 // [Debug Titan Trigger]
-                 static int s_logCounter = 0;
-                 if (++s_logCounter % 60 == 0) { // Log every ~1 sec (60fps)
-                     wchar_t buf[256];
-                     swprintf_s(buf, L"[Titan] OnPaint: AbsZoom=%.4f PreviewW=%.0f MetaW=%.0f Ratio=%.4f Trigger=%.4f\n", 
-                         absoluteZoom, previewW, (float)g_currentMetadata.Width, basePreviewRatio, basePreviewRatio * 1.1f);
-                     OutputDebugStringW(buf);
-                 }
+             // Calculate Base Preview Ratio (Preview / Original)
+             float baseRatio = 0.0f;
+             if (g_currentMetadata.Width > 0) {
+                 float previewW = g_imageResource.GetSize().width;
+                 baseRatio = previewW / (float)g_currentMetadata.Width;
              }
-             scheduler->UpdateViewport(vp, absoluteZoom, basePreviewRatio);
-             
-             // 2. Setup Transform for Drawing
-             // Transform: Image Space -> Screen Space
-             D2D1::Matrix3x2F transform = 
-                 D2D1::Matrix3x2F::Translation(-iCW, -iCH) *
-                 D2D1::Matrix3x2F::Scale(absoluteZoom, absoluteZoom) *
-                 D2D1::Matrix3x2F::Translation(sCW + g_viewState.PanX, sCH + g_viewState.PanY);
-                 
-             context->SetTransform(transform);
-             
-             // 3. Draw Preview (Base Layer)
-             // Drawn in Image Space (0..W, 0..H). 
-             if (g_imageResource.bitmap) {
-                  // Preview is usually smaller, so we draw it stretched to Full Image Dimensions.
-                  D2D1_RECT_F destRect = D2D1::RectF(0, 0, (float)g_currentMetadata.Width, (float)g_currentMetadata.Height); 
-                  
-                  // Note: Use Linear for background stretch? Or Cubic? RenderEngine defaults to Cubic.
-                  // Since it's a blurry preview, Cubic is fine.
-                  g_renderEngine->DrawBitmap(g_imageResource.bitmap.Get(), destRect);
+
+             // Update Manager (Scheduling) - Guarded to prevent loop
+             static QuickView::RegionRect lastVP = { -1, -1, -1, -1 };
+             static float lastAbsZoom = 0;
+             if (vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom) {
+                 g_imageEngine->UpdateTileViewport(vp, absoluteZoom, g_currentMetadata.Width, g_currentMetadata.Height, baseRatio, 0.0f, 0.0f);
+                 lastVP = vp;
+                 lastAbsZoom = absoluteZoom;
              }
              
-             // 4. Draw Tiles (Top Layer)
-             // Tiles are drawn at their exact Image Coords (0..W).
-             // Ensure Transform is Active (Paranoia Check)
-             context->SetTransform(transform); 
-             
-             auto visibleTiles = scheduler->GetVisibleTiles();
-             g_renderEngine->DrawTileGrid(visibleTiles, g_showDebugHUD);
-             
-             // Reset Transform
-             context->SetTransform(D2D1::Matrix3x2F::Identity());
+             // [Pure DComp] Render Titan View directly to DComp Surface
+              // Pure DComp rendering for Titan (Tiles)
+             // [Pure DComp] Update Virtual Tiles on the active layer
+             // Smart Dispatch in CompositionEngine handles creating/updating the Virtual Surface.
+             // We just signal "Update Tiles now".
+             g_compEngine->UpdateVirtualTiles(
+                 g_imageEngine->GetTileManager().get(),
+                 g_showTileGrid
+             );
         }
-
-        // [Double-Render Fix] Only draw legacy if DComp is NOT active
-        // Check Legacy/Fallback Path
-#if 0
-        if (((g_compEngine == nullptr) /*|| !g_compEngine->IsInitialized()*/) && g_imageResource) {
-            D2D1_SIZE_F size = g_imageResource.GetSize();
-            // rtSize removed (unused, replaced by logicW/logicH)
-            
-            int orientation = g_viewState.ExifOrientation;
-            
-            // Determine logical dimensions after rotation
-            float logicBitmapW = size.width;
-            float logicBitmapH = size.height;
-            bool isRotated90or270 = (orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8);
-            if (isRotated90or270) {
-                std::swap(logicBitmapW, logicBitmapH);
-            }
-            
-            // Calculate fit scale using LOGIC dimensions
-            // Calculate fit scale using LOGIC dimensions (Corrected)
-            float fitScale = std::min(logicW / logicBitmapW, logicH / logicBitmapH);
-            float finalScale = fitScale * g_viewState.Zoom;
-            
-            // Screen center where image should be placed
-            float screenCenterX = logicW / 2.0f + g_viewState.PanX;
-            float screenCenterY = logicH / 2.0f + g_viewState.PanY;
-            
-            // Bitmap center (in bitmap coordinates)
-            float bmpCenterX = size.width / 2.0f;
-            float bmpCenterY = size.height / 2.0f;
-            
-            // Build transform: 
-            // 1. Translate bitmap center to origin
-            // 2. Apply rotation
-            // 3. Apply scale
-            // 4. Translate to screen center
-            D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Translation(-bmpCenterX, -bmpCenterY);
-            
-            // EXIF Rotation
-            float rotAngle = 0.0f;
-            float scaleX = 1.0f, scaleY = 1.0f;
-            bool mirrorAfterRotate = false; // For 5/7: mirror after rotation
-            switch (orientation) {
-                case 1: break; // Normal
-                case 2: scaleX = -1.0f; break; // Mirror horizontal
-                case 3: rotAngle = 180.0f; break; // Rotate 180
-                case 4: scaleY = -1.0f; break; // Mirror vertical
-                case 5: rotAngle = 270.0f; mirrorAfterRotate = true; scaleY = -1.0f; break; // Transpose: rotate 270, then flip vertical
-                case 6: rotAngle = 90.0f; break; // Rotate 90 CW
-                case 7: rotAngle = 90.0f; mirrorAfterRotate = true; scaleY = -1.0f; break; // Transverse: rotate 90, then flip vertical
-                case 8: rotAngle = 270.0f; break; // Rotate 270 CW
-                default: break;
-            }
-            
-            // Apply rotation first
-            if (rotAngle != 0.0f) {
-                transform = transform * D2D1::Matrix3x2F::Rotation(rotAngle);
-            }
-            
-            // Apply mirror (after rotation for 5/7, before for 2/4)
-            if (!mirrorAfterRotate && (scaleX != 1.0f || scaleY != 1.0f)) {
-                // Normal mirror for 2/4 - shouldn't reach here with current logic
-            }
-            if (mirrorAfterRotate && (scaleX != 1.0f || scaleY != 1.0f)) {
-                transform = transform * D2D1::Matrix3x2F::Scale(scaleX, scaleY);
-            } else if (!mirrorAfterRotate && (scaleX != 1.0f || scaleY != 1.0f)) {
-                // For 2/4: mirror without rotation, need to apply at bitmap level
-                transform = D2D1::Matrix3x2F::Translation(-bmpCenterX, -bmpCenterY)
-                          * D2D1::Matrix3x2F::Scale(scaleX, scaleY);
-                if (rotAngle != 0.0f) {
-                    transform = transform * D2D1::Matrix3x2F::Rotation(rotAngle);
-                }
-            }
-            
-            // Apply final scale
-            transform = transform * D2D1::Matrix3x2F::Scale(finalScale, finalScale);
-            
-            // Translate to screen center
-            transform = transform * D2D1::Matrix3x2F::Translation(screenCenterX, screenCenterY);
-            
-            context->SetTransform(transform);
-            
-            // === Quantum Stream: Warp Mode Rendering ===
-            // 根据 Warp 状态选择绘制方法
-            D2D1_RECT_F destRect = D2D1::RectF(0, 0, size.width, size.height);
-            
-            if (g_isCrossFading) {
-                // === Arrival Priority Block ===
-
-                // Determines what happens when a new image lands.
-                // This overrides Warp/Scroll blur to ensure the user SEES the new image clearly.
-                // ONLY Animate if we have a Ghost AND CrossFade enabled AND we are coming from a Thumbnail.
-                bool canAnimate = (g_ghostBitmap != nullptr) && g_runtime.EnableCrossFade && g_transitionFromThumb;
-                
-                if (!canAnimate) {
-                     // Instant Cut (No Fade)
-                     // Draw CLEAR Target (Static)
-                     context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                     
-                     // End transition immediately (next frame will return to standard/warp logic)
-                     g_isCrossFading = false;
-                     g_ghostBitmap = nullptr;
-                }
-                else {
-                    // Cross-Fade Animation (Ghost -> Truth)
-                    DWORD duration = g_slowMotionMode ? SLOW_MOTION_DURATION : CROSS_FADE_DURATION;
-                    DWORD elapsed = GetTickCount() - g_crossFadeStart;
-                    float alpha = std::min(1.0f, (float)elapsed / (float)duration);
-
-                    if (alpha >= 1.0f) {
-                        g_isCrossFading = false;
-                        g_ghostBitmap = nullptr; // Cleanup
-                        // Draw Full Final
-                        context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                    } else {
-                        // 1. Draw Ghost (Stretched Thumbnail)
-                        context->DrawBitmap(g_ghostBitmap.Get(), destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                        
-                        // [SlowMotion Debug] Add red tint to Ghost so user can distinguish Scout vs Heavy
-                        if (g_slowMotionMode) {
-                            ComPtr<ID2D1SolidColorBrush> redTint;
-                            context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 0.3f * (1.0f - alpha)), &redTint);
-                            if (redTint) {
-                                context->FillRectangle(destRect, redTint.Get());
-                            }
-                        }
-
-                        // 2. Draw Full (Fading In)
-                        context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                        
-                        // Continue Animation
-                        RequestRepaint(PaintLayer::Image);
-                    }
-                }
-            } 
-            else if (g_renderEngine->IsWarpMode()) {
-                // Warp Mode (Blur) - PRIORITY 2
-                g_renderEngine->DrawBitmapWithBlur(g_imageResource.bitmap.Get(), destRect);
-                
-                // [SlowMotion Debug] Red border when showing Scout preview (blurry) in Warp mode too
-                if (g_slowMotionMode && g_isBlurry) {
-                    ComPtr<ID2D1SolidColorBrush> redBorder;
-                    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 1.0f), &redBorder);
-                    if (redBorder) {
-                         // Draw INSIDE: Inset by half stroke width (4px)
-                        float strokeWidth = 8.0f;
-                        float inset = strokeWidth / 2.0f;
-                        D2D1_RECT_F borderRect = D2D1::RectF(
-                            destRect.left + inset, 
-                            destRect.top + inset, 
-                            destRect.right - inset, 
-                            destRect.bottom - inset
-                        );
-                        context->DrawRectangle(borderRect, redBorder.Get(), strokeWidth);
-                    }
-                }
-            }
-            else {
-                // Static 模式：正常绘�?
-                D2D1_INTERPOLATION_MODE interpMode = g_viewState.IsInteracting 
-                    ? D2D1_INTERPOLATION_MODE_LINEAR 
-                    : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC; // Mipmap-based for extreme downscale
-                context->DrawBitmap(g_imageResource.bitmap.Get(), destRect, 1.0f, interpMode);
-                
-                // [SlowMotion Debug] Red border when showing Scout preview (blurry)
-                if (g_slowMotionMode && g_isBlurry) {
-                    ComPtr<ID2D1SolidColorBrush> redBorder;
-                    context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 1.0f), &redBorder);
-                    if (redBorder) {
-                        // Draw INSIDE: Inset by half stroke width (4px)
-                        float strokeWidth = 8.0f;
-                        float inset = strokeWidth / 2.0f;
-                        D2D1_RECT_F borderRect = D2D1::RectF(
-                            destRect.left + inset, 
-                            destRect.top + inset, 
-                            destRect.right - inset, 
-                            destRect.bottom - inset
-                        );
-                        context->DrawRectangle(borderRect, redBorder.Get(), strokeWidth); 
-                    }
-                }
-            }
-        }
-#endif
-        
-        // Reset transform for OSD and UI elements
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         
         // === Input State Decay ===
@@ -5852,11 +5590,7 @@ void OnPaint(HWND hwnd) {
         D2D1_SIZE_F logicSize = D2D1::SizeF(logicW, logicH);
         // CalculateWindowControls removed - hit testing now in UIRenderer
         // DrawWindowControls, OSD, InfoPanel, etc moved to UIRenderer (DComp Surface)
-        // Legacy SwapChain rendering logic removed.
-    }
-    g_renderEngine->EndDraw();
-    g_renderEngine->Present();
-    // g_isImageDirty = false; // MOVED TO TOP to allow re-entrant RequestRepaint
+        // Legacy rendering logic removed. Pure DComp architecture.
     }
     
     // Render UI to independent DComp Surface

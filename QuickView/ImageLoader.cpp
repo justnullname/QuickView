@@ -16,6 +16,7 @@ static std::vector<uint8_t> ReadFileToVector(const std::wstring& path) {
 
 #include "ImageLoader.h"
 #include "EditState.h" // For g_runtime
+#include "TileMemoryManager.h" // [Titan]
 // [Deep Cancel] Use low-level libjpeg API for scanline cancellation
 #include <stdio.h> // jpeglib needs stdio
 #include <setjmp.h> // For error handling
@@ -622,15 +623,15 @@ static int GetJpegQualityFromBuffer(const uint8_t* data, size_t size) {
 // ----------------------------------------------------------------------------
 
 // Forward declaration
-static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, CImageLoader::RegionRect rect, float scale, QuickView::RawImageFrame* out, TileMemoryManager* tileManager, QuantumArena* arena);
+static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::RegionRect rect, float scale, QuickView::RawImageFrame* out, TileMemoryManager* tileManager, QuantumArena* arena);
 
 // [Safety] SEH Helper to isolate C++ Unwinding from __try/__except (Fix C2712)
 // This function must NOT have any local C++ objects with destructors.
 static HRESULT SafeLoadJpegRegion(
     const uint8_t* data, size_t size, 
-    CImageLoader::RegionRect rect, float scale, 
+    QuickView::RegionRect rect, float scale, 
     QuickView::RawImageFrame* out, 
-    TileMemoryManager* tileManager, QuantumArena* arena) 
+    QuickView::TileMemoryManager* tileManager, QuantumArena* arena) 
 {
     __try {
         return LoadJpegRegion_V3(data, size, rect, scale, out, tileManager, arena);
@@ -729,12 +730,98 @@ private:
 std::list<FileMappingCache::Entry> FileMappingCache::m_cache;
 std::mutex FileMappingCache::m_mutex;
 
-HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, RegionRect srcRect, float scale,
+// [Infinity Engine] Zero-Copy Tile Loader Implementation
+HRESULT CImageLoader::LoadTileFromMemory(
+    const uint8_t* sourceData, size_t sourceSize,
+    QuickView::RegionRect region, float scale,
+    QuickView::RawImageFrame* outFrame,
+    QuickView::TileMemoryManager* tileManager) 
+{
+    if (!sourceData || !outFrame) return E_INVALIDARG;
+
+    // 1. Init TurboJPEG
+    tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
+    if (!tj) return E_FAIL;
+    struct TjGuard { tjhandle h; ~TjGuard() { if(h) tj3Destroy(h); } } guard{tj};
+
+    // 2. Read Header (Fast)
+    if (tj3DecompressHeader(tj, sourceData, sourceSize) != 0) return E_FAIL;
+
+    // 3. Setup Scaling
+    int numFactors;
+    tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+    tjscalingfactor chosen = {1, 1};
+    
+    // Find closest scaling factor >= requested scale
+    float bestDiff = 100.0f;
+    for (int i = 0; i < numFactors; i++) {
+        float f = (float)factors[i].num / factors[i].denom;
+        // We prefer slightly larger or equal (downscaling is cheap, upscaling looks bad)
+        // But for Tiles, we match LOD level.
+        float diff = std::abs(f - scale);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            chosen = factors[i];
+        }
+    }
+    tj3SetScalingFactor(tj, chosen);
+
+    // 4. Setup Cropping (Infinity Engine Requirement: Precision)
+    // TurboJPEG coordinates are in SCALED space.
+    // region.{x,y,w,h} are in ORIGINAL space.
+    
+    // Transform Region to Scaled Space
+    int scX = TJSCALED(region.x, chosen);
+    int scY = TJSCALED(region.y, chosen);
+    int scW = TJSCALED(region.w, chosen);
+    int scH = TJSCALED(region.h, chosen);
+
+    // Set Crop
+    tjregion crop = { scX, scY, scW, scH };
+    if (tj3SetCroppingRegion(tj, crop) != 0) return E_FAIL;
+
+    // 5. Allocation (Slab or Heap)
+    outFrame->width = scW;
+    outFrame->height = scH;
+    outFrame->stride = scW * 4; // BGRA
+    outFrame->format = PixelFormat::BGRA8888;
+    outFrame->formatDetails = L"JIT Tile";
+
+    size_t size = (size_t)outFrame->stride * scH;
+    
+    // Try Slab First (Zero-Copy Alloc)
+    if (tileManager) {
+        outFrame->pixels = (uint8_t*)tileManager->Allocate(); 
+        // Note: Slab is fixed size (e.g. 1MB). If 'size' > Slab, we fail or fallback.
+        // Assuming TILE_SIZE=512 -> 1MB slab is enough (512*512*4 = 1MB).
+        if (outFrame->pixels) {
+            outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+        }
+    }
+
+    if (!outFrame->pixels) {
+        // Fallback to Heap
+        outFrame->pixels = (uint8_t*)_aligned_malloc(size, 64);
+        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+    }
+
+    if (!outFrame->pixels) return E_OUTOFMEMORY;
+
+    // 6. Decode (Direct to Slab)
+    // TJPF_BGRX for D2D compatibility
+    if (tj3Decompress8(tj, sourceData, sourceSize, outFrame->pixels, outFrame->stride, TJPF_BGRX) != 0) {
+        return E_FAIL;
+    }
+
+    return S_OK;
+}
+
+HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, QuickView::RegionRect srcRect, float scale,
                           QuickView::RawImageFrame* outFrame,
-                          class TileMemoryManager* tileManager,
+                          QuickView::TileMemoryManager* tileManager,
                           class QuantumArena* arena,
                           std::wstring* pLoaderName,
-                          CancelPredicate checkCancel) 
+                          CImageLoader::CancelPredicate checkCancel) 
 {
     if (!filePath || !outFrame) return E_INVALIDARG;
 
@@ -762,9 +849,9 @@ HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, RegionRect srcRect, fl
     return E_NOTIMPL; 
 }
 
-HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, RegionRect srcRect, float scale, 
+HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, QuickView::RegionRect srcRect, float scale, 
                                                QuickView::RawImageFrame* outFrame, 
-                                               TileMemoryManager* tileManager, 
+                                               QuickView::TileMemoryManager* tileManager, 
                                                QuantumArena* arena, 
                                                CancelPredicate checkCancel) 
 {
@@ -806,7 +893,7 @@ HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, RegionRect s
 
 // Logic: Robust TurboJPEG 3 Region Decoding
 // Logic: Robust TurboJPEG 3 Region Decoding with Software Resize Support
-static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, CImageLoader::RegionRect rect, float scale, QuickView::RawImageFrame* outFrame, TileMemoryManager* tileManager, QuantumArena* arena)
+static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::RegionRect rect, float scale, QuickView::RawImageFrame* outFrame, QuickView::TileMemoryManager* tileManager, QuantumArena* arena)
 {
     // Initialize v3 Decompressor
     tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
@@ -822,6 +909,9 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, CImageLoade
     int numFactors;
     tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
     tjscalingfactor chosen = {1, 1};
+
+    // [Safety] Bounds Check Input
+    if (rect.w <= 0 || rect.h <= 0) return E_INVALIDARG;
     
     // TurboJPEG supports max 1/8.
     // If user wants 0.033 (1/30), TurboJPEG gives 1/8.
@@ -3446,10 +3536,7 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
     std::wstring fmt = DetectFormatFromContent(filePath);
     
     // Debug: Log detected format
-    wchar_t dbg[512];
-    swprintf_s(dbg, L"[LoadImageUnified] File=%s, fmt=%s\n", 
-               wcsrchr(filePath, L'\\') ? wcsrchr(filePath, L'\\') + 1 : filePath, fmt.c_str());
-    OutputDebugStringW(dbg);
+
 
     // 3. Dispatch
     

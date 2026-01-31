@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "CompositionEngine.h"
+#include "TileManager.h"
+#include "TileTypes.h"
 
 // ============================================================================
 // CompositionEngine Implementation - Visual Ping-Pong Architecture
@@ -16,6 +18,270 @@ CompositionEngine::LayerData& CompositionEngine::GetLayer(UILayer layer) {
         case UILayer::Dynamic:
         default:               return m_dynamicLayer;
     }
+}
+
+// ============================================================================
+// [Infinity Engine] Cascade Rendering Implementation
+// ============================================================================
+HRESULT CompositionEngine::DrawTiles(ID2D1DeviceContext* pContext, 
+                                     const D2D1_RECT_F& viewport, 
+                                     float zoom, 
+                                     const D2D1_POINT_2F& offset, 
+                                     QuickView::TileManager* tileManager,
+                                     bool showDebugGrid) 
+{
+    if (!pContext || !tileManager) return E_INVALIDARG;
+    int renderedCount = 0;
+
+    // Create Debug Brush if needed
+    ComPtr<ID2D1SolidColorBrush> debugBrush;
+    if (showDebugGrid) {
+        pContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red, 0.8f), &debugBrush);
+    }
+
+    // 1. Identify Grid Range needed for Viewport
+    int lod = tileManager->CalculateBestLOD(zoom);
+    int tileSize = QuickView::TILE_SIZE << lod; // Image Space Size of one tile
+
+    int startX = (int)floor(viewport.left / tileSize);
+    int endX = (int)ceil(viewport.right / tileSize);
+    int startY = (int)floor(viewport.top / tileSize);
+    int endY = (int)ceil(viewport.bottom / tileSize);
+
+    // [Fix] Clamping to prevent negative index lookup which fails in TileKey
+    if (startX < 0) startX = 0;
+    if (startY < 0) startY = 0;
+
+    // [Safety] Max Iteration Clamp (Prevent infinite loop if zoom is broken)
+    if (endX - startX > 100 || endY - startY > 100) return S_OK;
+
+    // Logging removed to prevent spam in render loop
+
+    // 2. Iterate Tiles
+    for (int y = startY; y < endY; ++y) {
+        for (int x = startX; x < endX; ++x) {
+            
+            QuickView::TileKey key = QuickView::TileKey::From(x, y, lod);
+            
+            // --- Cascade Algorithm ---
+            // 1. Try LOD 0 (Target)
+            // 2. Try LOD 1 (Parent)
+            // 3. Try LOD 2...
+            // 4. Give Up (Background/Clear)
+
+            std::shared_ptr<QuickView::TileState> tile = nullptr;
+            QuickView::TileKey currentKey = key;
+            bool found = false;
+
+            // Search up to Root (LOD 8)
+            for (int i = 0; i < 8; ++i) {
+                if (tileManager->IsReady(currentKey)) {
+                    tile = tileManager->GetTile(currentKey);
+                    if (tile && tile->frame) { // Check frame existence
+                        found = true;
+                        break;
+                    }
+                }
+                // Step up to parent
+                if (currentKey.level >= QuickView::MAX_LOD_LEVELS) break;
+                currentKey = currentKey.GetParent();
+            }
+
+            if (found && tile) {
+                // Render this tile
+                
+                // Destination Rect (Image Space - Transform handles Screen projection)
+                float destX = (x * tileSize) + offset.x;
+                float destY = (y * tileSize) + offset.y;
+                float destW = (float)tileSize;
+                float destH = (float)tileSize;
+                D2D1_RECT_F destRect = D2D1::RectF(destX, destY, destX + destW, destY + destH);
+
+                // Source Rect (Bitmap Space)
+                int levelDiff = currentKey.level - key.level;
+                
+                int subTileSize = QuickView::TILE_SIZE >> levelDiff;
+                int relX = key.x - (currentKey.x << levelDiff);
+                int relY = key.y - (currentKey.y << levelDiff);
+                
+                float srcX = (float)relX * subTileSize;
+                float srcY = (float)relY * subTileSize;
+                D2D1_RECT_F srcRect = D2D1::RectF(srcX, srcY, srcX + (float)subTileSize, srcY + (float)subTileSize);
+
+                // Draw
+                // [Optimization] Use Cached Bitmap if available
+                if (!tile->bitmap && tile->frame && tile->frame->pixels) {
+                     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+                        D2D1_BITMAP_OPTIONS_NONE,
+                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+                     );
+                     pContext->CreateBitmap(
+                         D2D1::SizeU(tile->frame->width, tile->frame->height),
+                         tile->frame->pixels,
+                         tile->frame->stride,
+                         &props,
+                         &tile->bitmap
+                     );
+                }
+
+                if (tile->bitmap) {
+                    // [Diagnostic Fix] If tile grid is enabled, tint the tile area to verify visibility
+                    if (showDebugGrid) {
+                         pContext->FillRectangle(destRect, debugBrush.Get());
+                    }
+
+                    pContext->DrawBitmap(
+                        tile->bitmap.Get(),
+                        &destRect,
+                        1.0f,
+                        D2D1_INTERPOLATION_MODE_LINEAR,
+                        &srcRect
+                    );
+                    renderedCount++;
+
+                    // Debug: Draw Borders for loaded tiles
+                    if (showDebugGrid && debugBrush) {
+                        // Use a different color for border
+                        ComPtr<ID2D1SolidColorBrush> borderBrush;
+                        pContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Yellow, 1.0f), &borderBrush);
+                        pContext->DrawRectangle(destRect, borderBrush.Get(), 2.0f / zoom);
+                    }
+                }
+            }
+        }
+    }
+    
+    // [LOD Log Removed for performance]
+    
+    return S_OK;
+}
+
+// ============================================================================
+// [Pure DComp] Render Titan Tiled View directly to DComp Surface
+// ============================================================================
+// ============================================================================
+// [Smart Dispatch] Update Virtual Tiles on the ACTIVE layer
+// ============================================================================
+HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManager, bool showDebugGrid) {
+    if (!tileManager) return E_INVALIDARG;
+    
+    // Get Active Layer (Titan Mode Only)
+    // Note: User interacts with m_imageA/B. Smart Dispatch sets 'isTitan'.
+    ImageLayer* pLayer = (m_activeLayerIndex == 0) ? &m_imageA : &m_imageB;
+
+
+    if (!pLayer->isTitan || !pLayer->virtualSurface) return S_FALSE; 
+    
+    auto& tiles = tileManager->GetLoadedTiles();
+    HRESULT hr = S_OK;
+    int updateCount = 0;
+    
+    // Create Context if needed (reuse one context for batch)
+    // Note: DComp BeginDraw returns A NEW SURFACE every time!
+    // We can reuse the D2D DeviceContext object, but must reset Target.
+    if (!m_pendingContext) {
+        m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pendingContext);
+    }
+
+    for (auto& pair : tiles) {
+        auto& key = pair.first;
+        auto& tile = pair.second;
+        
+        // Only draw available tiles
+        if (!tile || !tile->frame || !tile->frame->pixels) continue;
+        
+        // Calculate Rect on Virtual Surface (Image Space)
+        int subTileSize = QuickView::TILE_SIZE; // 512
+        int pixelX = key.x * subTileSize;
+        int pixelY = key.y * subTileSize;
+        
+        RECT updateRect = { pixelX, pixelY, pixelX + subTileSize, pixelY + subTileSize };
+        
+        // [Optimization] Check if we actually NEED to draw?
+        // Virtual Surface retains content. 
+        // We really only need to draw if this tile was JUST loaded (and hasn't been drawn yet).
+        // Since we don't have a "dirty" flag on tile, we might redraw.
+        // DComp's Trim() might have discarded it.
+        // For robustness, we try to draw. DComp will tell us if it's needed? 
+        // No, DComp assumes we know.
+        // For now: Draw all visible loaded tiles to ensure correctness.
+        // (This might be heavy if many tiles are visible)
+        // [Refinement needed later: Dirty Tracking]
+
+        ComPtr<IDXGISurface> dxgiSurf;
+        POINT offset;
+        hr = pLayer->virtualSurface->BeginDraw(&updateRect, IID_PPV_ARGS(&dxgiSurf), &offset);
+        if (hr == DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED) continue; 
+        if (FAILED(hr)) {
+             wchar_t err[64]; swprintf_s(err, L"[TileDebug] BeginDraw Failed 0x%X\n", hr); OutputDebugStringW(err);
+             continue; 
+        } 
+        
+        // Setup D2D Target
+        D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        );
+        
+        ComPtr<ID2D1Bitmap1> target;
+        m_pendingContext->CreateBitmapFromDxgiSurface(dxgiSurf.Get(), &props, &target);
+        m_pendingContext->SetTarget(target.Get());
+        m_pendingContext->BeginDraw();
+        
+        // [Coordinate System Fix] 
+        // We are drawing into the DXGI Surface (Backing Store).
+        // 'offset' is where the updateRect in Virtual Space maps to in the Backing Store.
+        // We draw at (pixelX, pixelY) in Virtual Space coordinates (destRect in DrawBitmap).
+        // We need to shift these BACK to the Backing Store origin.
+        // Transform T:  pixelX + Tx = offset.x  =>  Tx = offset.x - pixelX
+        m_pendingContext->SetTransform(D2D1::Matrix3x2F::Translation(
+            (float)offset.x - pixelX, 
+            (float)offset.y - pixelY
+        ));
+        
+        // Upload Pixels
+        // CreateBitmap (v1.0) uses old properties
+        D2D1_BITMAP_PROPERTIES bmpProps = D2D1::BitmapProperties(
+             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        );
+        
+        ComPtr<ID2D1Bitmap> srcBitmap;
+        m_pendingContext->CreateBitmap(D2D1::SizeU(subTileSize, subTileSize), 
+            tile->frame->pixels, tile->frame->stride, &bmpProps, &srcBitmap);
+            
+        // Draw
+        D2D1_RECT_F destRect = D2D1::RectF((float)pixelX, (float)pixelY, (float)(pixelX + subTileSize), (float)(pixelY + subTileSize));
+        m_pendingContext->DrawBitmap(srcBitmap.Get(), destRect);
+        
+        // Debug Log (Requested by User)
+        // Debug Log (Requested by User)
+        /*
+        {
+            wchar_t buf[256];
+            swprintf_s(buf, L"[TileDebug] DrawTile: Virt(%d,%d) -> Phys(%ld,%ld)\n", pixelX, pixelY, offset.x, offset.y);
+            OutputDebugStringW(buf);
+        }
+        */
+
+        if (showDebugGrid) {
+             ComPtr<ID2D1SolidColorBrush> brush;
+             // Tint Green to allow verification of "Titan Layer" vs "Base Layer"
+             m_pendingContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Green, 0.2f), &brush);
+             m_pendingContext->FillRectangle(destRect, brush.Get());
+             
+             // Border
+             ComPtr<ID2D1SolidColorBrush> border;
+             m_pendingContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Lime, 1.0f), &border);
+             m_pendingContext->DrawRectangle(destRect, border.Get(), 4.0f);
+        }
+        
+        m_pendingContext->EndDraw();
+        pLayer->virtualSurface->EndDraw();
+        
+        updateCount++;
+    }
+    
+    return (updateCount > 0) ? S_OK : S_FALSE;
 }
 
 // ============================================================================
@@ -57,6 +323,11 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_device->CreateVisual(&m_imageB.visual);
     if (FAILED(hr)) return hr;
     
+    // [Refactor] TileLayer removed. Titan components created on demand.
+    
+    hr = m_device->CreateVisual(&m_backgroundLayer.visual);
+    if (FAILED(hr)) return hr;
+
     hr = m_device->CreateVisual(&m_galleryLayer.visual);
     if (FAILED(hr)) return hr;
     
@@ -95,21 +366,34 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     //  ├── Static
     //  └── Dynamic (topmost)
     
-    // Add images to container (B first, A on top)
-    m_imageContainer->AddVisual(m_imageB.visual.Get(), FALSE, nullptr);
-    m_imageContainer->AddVisual(m_imageA.visual.Get(), TRUE, m_imageB.visual.Get());
+    // 6. Build Visual Tree (Order: Back -> Front)
+    // Root
+    //  ├── Background (0)
+    //  ├── ImageContainer (1) -> ImageB (Bottom), ImageA (Top)
+    //  ├── TileLayer (2) -> High-res Overlay
+    //  ├── Gallery (3)
+    //  ├── Static (4)
+    //  └── Dynamic (5)
     
-    // Add container to root
-    m_rootVisual->AddVisual(m_imageContainer.Get(), FALSE, nullptr);
+    // Background first
+    m_rootVisual->AddVisual(m_backgroundLayer.visual.Get(), FALSE, nullptr);
     
-    // UI layers on top of image container
+    // Image Container above background
+    m_rootVisual->AddVisual(m_imageContainer.Get(), TRUE, m_backgroundLayer.visual.Get());
+    
+    // UI layers explicitly ABOVE Image Container
     m_rootVisual->AddVisual(m_galleryLayer.visual.Get(), TRUE, m_imageContainer.Get());
     m_rootVisual->AddVisual(m_staticLayer.visual.Get(), TRUE, m_galleryLayer.visual.Get());
     m_rootVisual->AddVisual(m_dynamicLayer.visual.Get(), TRUE, m_staticLayer.visual.Get());
+
+    // Image children
+    m_imageContainer->AddVisual(m_imageB.visual.Get(), FALSE, nullptr);
+    m_imageContainer->AddVisual(m_imageA.visual.Get(), TRUE, m_imageB.visual.Get());
     
     // 7. Set interpolation mode for image layers (HIGH QUALITY)
     m_imageA.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
     m_imageB.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+
     
     // 8. Set Root
     m_target->SetRoot(m_rootVisual.Get());
@@ -125,6 +409,9 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     if (FAILED(hr)) return hr;
     
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_galleryLayer.context);
+    if (FAILED(hr)) return hr;
+
+    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_backgroundLayer.context);
     if (FAILED(hr)) return hr;
     
     // 10. Get window size and create UI surfaces
@@ -147,85 +434,143 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
 // ============================================================================
 // Image Surface Management
 // ============================================================================
-HRESULT CompositionEngine::EnsureImageSurface(ImageLayer& layer, UINT width, UINT height) {
-    if (width == 0 || height == 0) return E_INVALIDARG;
-    
-    // [Fix] Enforce Exact Size Match
-    // Reusing larger surfaces causes issues:
-    // 1. Layout logic uses layer.width (old large size) causing shrinking.
-    // 2. Visual displays full large surface (garbage pixels outside active area).
-    if (layer.surface && layer.width == width && layer.height == height) {
-        return S_OK;
-    }
-    
-    // Create new surface
-    layer.surface.Reset();
-    HRESULT hr = m_device->CreateSurface(
-        width, height,
-        DXGI_FORMAT_B8G8R8A8_UNORM,
-        DXGI_ALPHA_MODE_PREMULTIPLIED,
-        &layer.surface
-    );
-    if (FAILED(hr)) return hr;
-    
-    layer.width = width;
-    layer.height = height;
-    
-    // Bind to visual
-    hr = layer.visual->SetContent(layer.surface.Get());
-    
-    return hr;
-}
-
 // ============================================================================
 // Ping-Pong Image Rendering
 // ============================================================================
-ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height) {
-    
-    // Get pending layer (opposite of active)
+// [Smart Dispatch] Create surfaces based on size (Standard vs Titan)
+ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height, bool isTitan, UINT fullWidth, UINT fullHeight) {
+    if (!m_device || !m_d2dDevice) return nullptr;
+
+    // Determine target layer (the hidden one)
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
-    ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
+    ImageLayer& layer = (pendingIndex == 0) ? m_imageA : m_imageB;
     
-    // [Optimization] Do NOT modify Visual Tree (prevents DWM thrashing)
-    // Instead, just ensure pending layer is invisible (Opacity 0)
-    ComPtr<IDCompositionVisual3> visual3;
-    if (SUCCEEDED(pending.visual.As(&visual3))) {
-        visual3->SetOpacity(0.0f); // Hidden while drawing
+    // Safe reset
+    layer.visual->RemoveAllVisuals(); 
+    layer.surface.Reset();
+    layer.baseVisual.Reset();
+    layer.baseSurface.Reset();
+    layer.detailVisual.Reset();
+    layer.virtualSurface.Reset();
+    layer.isTitan = false;
+    
+    HRESULT hr = S_OK;
+
+    // [Smart Dispatch] Titan Mode: Explicit flag OR Size Threshold (Legacy fallback)
+    bool useTitan = isTitan || (width > 8192 || height > 8192);
+    
+    // Fallback: If legacy implicit detection used, fill full dimensions
+    if (useTitan && (fullWidth == 0 || fullHeight == 0)) {
+        fullWidth = width;
+        fullHeight = height;
     }
+
+    if (useTitan) {
+         // --- Titan Mode (Dual-Layer Container) ---
+         layer.isTitan = true;
+         layer.width = fullWidth;
+         layer.height = fullHeight;
+         
+         m_device->CreateVisual(&layer.baseVisual);
+         m_device->CreateVisual(&layer.detailVisual);
+         
+         // Order: Base -> Detail
+         layer.visual->AddVisual(layer.baseVisual.Get(), FALSE, nullptr);
+         layer.visual->AddVisual(layer.detailVisual.Get(), TRUE, layer.baseVisual.Get());
+
+         // [Center Topology] Offset Layer Visual to center it at (0,0)
+         layer.visual->SetOffsetX(-1.0f * fullWidth / 2.0f);
+         layer.visual->SetOffsetY(-1.0f * fullHeight / 2.0f);
+         
+         // 1. Setup Base Layer (Thumb/Preview)
+         // If 'width' is small (Preview), use it directly. If huge (Legacy), downscale.
+         UINT baseAccurateW = width;
+         UINT baseAccurateH = height;
+         
+         if (width > 4096 || height > 4096) {
+             // Legacy/Implicit Path: Downscale huge input
+             baseAccurateW = std::min(width, 2048u); 
+             float scale = (float)baseAccurateW / width;
+             baseAccurateH = (UINT)(height * scale);
+             if (baseAccurateH < 1) baseAccurateH = 1;
+         }
+         
+         // Standard Surface for Base
+         hr = m_device->CreateSurface(baseAccurateW, baseAccurateH, 
+             DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.baseSurface);
+             
+         layer.baseVisual->SetContent(layer.baseSurface.Get());
+         
+         // Stretch to fill World
+         float stretchX = (float)layer.width / baseAccurateW;
+         float stretchY = (float)layer.height / baseAccurateH;
+         layer.baseVisual->SetTransform(D2D1::Matrix3x2F::Scale(stretchX, stretchY));
+         layer.baseVisual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+         // 2. Setup Detail Layer (Virtual Surface)
+         // Initial Empty
+         hr = m_device->CreateVirtualSurface(layer.width, layer.height, 
+             DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.virtualSurface);
+         layer.detailVisual->SetContent(layer.virtualSurface.Get());
+         
+         // Return Base Context
+         return BeginDrawHelper(layer.baseSurface.Get());
+    } 
+    else {
+         // --- Standard Mode ---
+         layer.isTitan = false;
+         layer.width = width;
+         layer.height = height;
+
+         // Create standard surface
+         hr = m_device->CreateSurface(width, height, 
+             DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.surface);
+             
+         layer.visual->SetContent(layer.surface.Get());
+         layer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+         layer.visual->SetTransform(D2D1::Matrix3x2F::Identity());
+         
+         // [Center Topology] Offset Layer Visual to center it at (0,0)
+         layer.visual->SetOffsetX(-1.0f * width / 2.0f);
+         layer.visual->SetOffsetY(-1.0f * height / 2.0f);
+
+         return BeginDrawHelper(layer.surface.Get());
+    }
+}
+
+// Helper to extract D2D context from Surface
+ID2D1DeviceContext* CompositionEngine::BeginDrawHelper(IDCompositionSurface* surface) {
+    if (!surface) return nullptr;
     
-    // Reset pending visual offset
-    pending.visual->SetOffsetX(0.0f);
-    pending.visual->SetOffsetY(0.0f);
-    
-    // Ensure surface exists and is correct size
-    if (FAILED(EnsureImageSurface(pending, width, height))) return nullptr;
-    
-    // Begin drawing
-    ComPtr<IDXGISurface> dxgiSurface;
     POINT offset;
-    HRESULT hr = pending.surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &offset);
+    ComPtr<IDXGISurface> dxgiSurface;
+    HRESULT hr = surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &offset);
     if (FAILED(hr)) return nullptr;
     
-    // Create D2D bitmap wrapper
+    // Create D2D Context
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
     
-    pending.d2dTarget.Reset();
-    hr = m_pendingContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, &pending.d2dTarget);
+    if (!m_pendingContext) {
+         m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pendingContext);
+    }
+    
+    // Create new target bitmap for new surface
+    ComPtr<ID2D1Bitmap1> target;
+    hr = m_pendingContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, &target);
     if (FAILED(hr)) {
-        pending.surface->EndDraw();
+        surface->EndDraw();
         return nullptr;
     }
     
-    m_pendingContext->SetTarget(pending.d2dTarget.Get());
+    // Bind
+    m_pendingContext->SetTarget(target.Get());
     m_pendingContext->BeginDraw();
     
-    // Apply BeginDraw offset
+    // Offset standard surface
     m_pendingContext->SetTransform(D2D1::Matrix3x2F::Translation((float)offset.x, (float)offset.y));
-    
-    // Clear to transparent
     m_pendingContext->Clear(D2D1::ColorF(0, 0, 0, 0));
     
     return m_pendingContext.Get();
@@ -244,8 +589,11 @@ HRESULT CompositionEngine::EndPendingUpdate() {
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
     ImageLayer& pending = (pendingIndex == 0) ? m_imageA : m_imageB;
     
-    pending.surface->EndDraw();
-    pending.d2dTarget.Reset();
+    if (pending.isTitan) {
+        if (pending.baseSurface) pending.baseSurface->EndDraw();
+    } else {
+        if (pending.surface) pending.surface->EndDraw();
+    }
     
     return S_OK;
 }
@@ -296,6 +644,15 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs, bool isTransp
     // Swap active index
     m_activeLayerIndex = pendingIndex;
     
+    // [Fix] Don't hide Tile Layer here. RenderTitanView / OnPaint should manage its visibility.
+    // Hiding it here causes conflicts in Titan mode when a base layer upgrade triggers a cross-fade.
+    /*
+    ComPtr<IDCompositionVisual3> tileVisual;
+    if (SUCCEEDED(m_tileLayer.visual.As(&tileVisual))) {
+        tileVisual->SetOpacity(0.0f);
+    }
+    */
+    
     m_device->Commit();
     return S_OK;
 }
@@ -315,12 +672,6 @@ HRESULT CompositionEngine::AlignActiveLayer(float windowW, float windowH) {
     return S_OK;
 }
 
-
-
-
-
-
-
 // ============================================================================
 // UI Layer Management
 // ============================================================================
@@ -338,17 +689,25 @@ HRESULT CompositionEngine::CreateLayerSurface(UILayer layer, UINT width, UINT he
     );
     if (FAILED(hr)) return hr;
     
+    data.width = width;
+    data.height = height;
     return data.visual->SetContent(data.surface.Get());
 }
 
 HRESULT CompositionEngine::CreateAllSurfaces(UINT width, UINT height) {
-    HRESULT hr = CreateLayerSurface(UILayer::Static, width, height);
-    if (FAILED(hr)) return hr;
+    CreateLayerSurface(UILayer::Static, width, height);
+    CreateLayerSurface(UILayer::Gallery, width, height);
+    CreateLayerSurface(UILayer::Dynamic, width, height);
     
-    hr = CreateLayerSurface(UILayer::Dynamic, width, height);
-    if (FAILED(hr)) return hr;
-    
-    return CreateLayerSurface(UILayer::Gallery, width, height);
+    // Ensure background surface
+    m_backgroundLayer.surface.Reset();
+    HRESULT hr = m_device->CreateSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
+    if (SUCCEEDED(hr)) {
+        m_backgroundLayer.width = width;
+        m_backgroundLayer.height = height;
+        m_backgroundLayer.visual->SetContent(m_backgroundLayer.surface.Get());
+    }
+    return hr;
 }
 
 ID2D1DeviceContext* CompositionEngine::BeginLayerUpdate(UILayer layer, const RECT* dirtyRect) {
@@ -416,12 +775,14 @@ HRESULT CompositionEngine::Resize(UINT width, UINT height) {
     m_height = height;
     
     // Only recreate UI surfaces, NOT image surfaces
-    return CreateAllSurfaces(width, height);
-}
+    HRESULT hr = CreateAllSurfaces(width, height);
 
-HRESULT CompositionEngine::Commit() {
-    if (!m_device) return E_FAIL;
-    return m_device->Commit();
+    // [Center Topology] Anchor Container to Window Center
+    if (m_imageContainer) {
+        m_imageContainer->SetOffsetX(width / 2.0f);
+        m_imageContainer->SetOffsetY(height / 2.0f);
+    }
+    return hr;
 }
 
 // [Fix] Resize Surfaces ONLY (Atomic Update Support)
@@ -434,7 +795,14 @@ HRESULT CompositionEngine::ResizeSurfaces(UINT width, UINT height) {
     m_height = height;
     
     // Does NOT Commit
-    return CreateAllSurfaces(width, height);
+    HRESULT hr = CreateAllSurfaces(width, height);
+
+    // [Center Topology] Anchor Container to Window Center
+    if (m_imageContainer) {
+        m_imageContainer->SetOffsetX(width / 2.0f);
+        m_imageContainer->SetOffsetY(height / 2.0f);
+    }
+    return hr;
 }
 
 // [Refactor] Virtual Canvas Matrix Chain (VisualState)
@@ -452,31 +820,43 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, flo
     // 2. Build Matrix Chain
     // Order: Translate(To Origin) -> Rotate -> Scale -> Translate(To Viewport Center) -> Translate(Pan)
     
-    // A. Center Origin: Move image center to (0,0)
-    float originX = -vs.PhysicalSize.width / 2.0f;
-    float originY = -vs.PhysicalSize.height / 2.0f;
-    D2D1_MATRIX_3X2_F mOrigin = D2D1::Matrix3x2F::Translation(originX, originY);
+    // [Fix] Multi-layer size detection for Titan mode transition.
+    const ImageLayer* pLayer = (m_activeLayerIndex == 0) ? &m_imageA : &m_imageB;
+    if (pLayer->width == 0 && (m_imageA.width > 0 || m_imageB.width > 0)) {
+        pLayer = (m_activeLayerIndex == 0) ? &m_imageB : &m_imageA;
+    }
+
+    // A. Center Origin: [REMOVED]
+    // The Image Layer is now STATICALLY offset by (-W/2, -H/2).
+    // So its center is ALREADY at (0,0).
     
-    // [Fix] Apply Flip (Mirroring) BEFORE Rotation (relative to unrotated image)
-    // EXIF mirroring operates on the raw pixel grid.
+    // [Fix] Apply Flip (Mirroring) relative to center
     D2D1_MATRIX_3X2_F mFlip = D2D1::Matrix3x2F::Scale(vs.FlipX, vs.FlipY);
     
     // B. Rotate: Around (0,0)
     D2D1_MATRIX_3X2_F mRotate = D2D1::Matrix3x2F::Rotation(vs.TotalRotation);
     
-    // C. Scale: Around (0,0)
-    D2D1_MATRIX_3X2_F mScale = D2D1::Matrix3x2F::Scale(zoom, zoom);
+    float compScaleX = 1.0f;
+    float compScaleY = 1.0f;
+    
+    if (pLayer->width > 0 && pLayer->height > 0) {
+        // [Note] This calc remains valid because it's a ratio.
+        compScaleX = vs.PhysicalSize.width / (float)pLayer->width;
+        compScaleY = vs.PhysicalSize.height / (float)pLayer->height;
+    }
+
+    D2D1_MATRIX_3X2_F mScale = D2D1::Matrix3x2F::Scale(zoom * compScaleX, zoom * compScaleY);
     
     // D. Pan: Screen Space Offset (Applied after rotation/scale)
     D2D1_MATRIX_3X2_F mPan = D2D1::Matrix3x2F::Translation(panX, panY);
     
-    // E. Center Screen: Move (0,0) to Window Center
-    float screenCenterX = winW / 2.0f;
-    float screenCenterY = winH / 2.0f;
-    D2D1_MATRIX_3X2_F mScreen = D2D1::Matrix3x2F::Translation(screenCenterX, screenCenterY);
+    // E. Center Screen: [REMOVED]
+    // The Container is STATICALLY anchored at Window Center.
+    // So (0,0) IS Window Center.
     
-    // Combine: Origin * Flip * Rotate * Scale * Pan * Screen
-    D2D1_MATRIX_3X2_F finalMatrix = mOrigin * mFlip * mRotate * mScale * mPan * mScreen;
+    // Combine: Flip * Rotate * Scale * Pan
+    // (Origin and Screen are now handled by topology)
+    D2D1_MATRIX_3X2_F finalMatrix = mFlip * mRotate * mScale * mPan;
     
     m_modelTransform->SetMatrix(finalMatrix);
     
@@ -485,5 +865,102 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, flo
     m_currentPanX = panX;
     m_currentPanY = panY;
     
+    return S_OK;
+}
+
+HRESULT CompositionEngine::Commit() {
+    if (!m_device) return E_FAIL;
+    return m_device->Commit();
+}
+
+HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D1_COLOR_F& bgColor, bool showGrid) {
+    if (!m_device) return E_FAIL;
+    
+    // Ensure visibility
+    ComPtr<IDCompositionVisual3> v3;
+    if (SUCCEEDED(m_backgroundLayer.visual.As(&v3))) {
+        v3->SetOpacity(1.0f);
+    }
+
+    // 1. Ensure Surface
+    UINT w = (UINT)width;
+    UINT h = (UINT)height;
+    if (w == 0 || h == 0) return S_OK;
+
+    // State Tracking to avoid redundant redraws (flicker cause)
+    static D2D1_COLOR_F lastColor = { -1, -1, -1, -1 };
+    static bool lastGrid = false;
+    static UINT lastW = 0, lastH = 0;
+
+    bool needsRedraw = (bgColor.r != lastColor.r || bgColor.g != lastColor.g || bgColor.b != lastColor.b || bgColor.a != lastColor.a) ||
+                       (showGrid != lastGrid) ||
+                       (w != lastW || h != lastH) ||
+                       (!m_backgroundLayer.surface);
+
+    if (!needsRedraw) return S_OK;
+
+    if (!m_backgroundLayer.surface || m_backgroundLayer.width != w || m_backgroundLayer.height != h) {
+        m_backgroundLayer.surface.Reset();
+        HRESULT hr = m_device->CreateSurface(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
+        if (FAILED(hr)) return hr;
+        m_backgroundLayer.visual->SetContent(m_backgroundLayer.surface.Get());
+        m_backgroundLayer.width = w;
+        m_backgroundLayer.height = h;
+    }
+
+    // 2. Clear and Render
+    ComPtr<IDXGISurface> dxgiSurface;
+    POINT offset;
+    HRESULT hr = m_backgroundLayer.surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &offset);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID2D1Bitmap1> target;
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+    );
+
+    hr = m_backgroundLayer.context->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, &target);
+    if (FAILED(hr)) {
+        m_backgroundLayer.surface->EndDraw();
+        return hr;
+    }
+
+    m_backgroundLayer.context->SetDpi(96.0f, 96.0f); // Draw in pixels
+    m_backgroundLayer.context->SetTarget(target.Get());
+    m_backgroundLayer.context->BeginDraw();
+    m_backgroundLayer.context->SetTransform(D2D1::Matrix3x2F::Translation((float)offset.x, (float)offset.y)); 
+
+    // Handle Transparency
+    m_backgroundLayer.context->Clear(bgColor);
+
+    // 3. Draw Grid
+    if (showGrid) {
+        float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
+        D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f);
+
+        ComPtr<ID2D1SolidColorBrush> brush;
+        m_backgroundLayer.context->CreateSolidColorBrush(overlayColor, &brush);
+        
+        const float gridSize = 16.0f;
+        for (float y = 0; y < (float)h; y += gridSize) {
+            for (float x = 0; x < (float)w; x += gridSize) {
+                if (((int)(x / gridSize) + (int)(y / gridSize)) % 2 != 0) {
+                    m_backgroundLayer.context->FillRectangle(D2D1::RectF(x, y, x + gridSize, y + gridSize), brush.Get());
+                }
+            }
+        }
+    }
+
+    m_backgroundLayer.context->EndDraw();
+    m_backgroundLayer.context->SetTarget(nullptr);
+    m_backgroundLayer.surface->EndDraw();
+    
+    // Update state
+    lastColor = bgColor;
+    lastGrid = showGrid;
+    lastW = w;
+    lastH = h;
+
     return S_OK;
 }

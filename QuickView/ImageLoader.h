@@ -7,6 +7,7 @@
 #include "ImageTypes.h"    // [Direct D2D] RawImageFrame
 #include <memory_resource>
 #include "TileMemoryManager.h" // [Titan]
+#include "TileTypes.h"         // [Titan] RegionRect
 
 /// <summary>
 /// Image Loader
@@ -205,6 +206,16 @@ public:
                             std::stop_token st = {},
                             CancelPredicate checkCancel = nullptr);
 
+    // [Infinity Engine] Zero-Copy Tile Loader
+    // Decodes a region directly from a memory pointer (MMF) into a slab.
+    // REQUIRES: tj3Decompress8 (TurboJPEG 3)
+    static HRESULT LoadTileFromMemory(
+        const uint8_t* sourceData, size_t sourceSize,
+        QuickView::RegionRect region, float scale,
+        QuickView::RawImageFrame* outFrame,
+        QuickView::TileMemoryManager* tileManager
+    );
+
     // ============================================================================
     // [Direct D2D] Zero-Copy Loading API
     // ============================================================================
@@ -232,9 +243,7 @@ public:
     // [Titan Engine] Region Decoding API
     // ============================================================================
     
-    struct RegionRect {
-        int x, y, w, h;
-    };
+    // struct RegionRect { int x, y, w, h; }; // Removed, use QuickView::RegionRect
 
     /// <summary>
     /// Load a specific region of the image.
@@ -244,12 +253,20 @@ public:
     /// <param name="srcRect">Source rectangle in original image coordinates</param>
     /// <param name="scale">Downscale factor (0.5 = half size, 1.0 = full size)</param>
     /// <param name="outFrame">Output frame</param>
-    HRESULT LoadRegionToFrame(LPCWSTR filePath, RegionRect srcRect, float scale,
+    HRESULT LoadRegionToFrame(LPCWSTR filePath, QuickView::RegionRect srcRect, float scale,
                               QuickView::RawImageFrame* outFrame,
-                              QuickView::TileMemoryManager* tileManager = nullptr,
-                              class QuantumArena* arena = nullptr,
-                              std::wstring* pLoaderName = nullptr,
-                              CancelPredicate checkCancel = nullptr);
+                              QuickView::TileMemoryManager* tileManager,
+                              class QuantumArena* arena,
+                              std::wstring* pLoaderName,
+                              CancelPredicate checkCancel);
+
+    HRESULT LoadRegionGeneric_StrategyB(LPCWSTR filePath, QuickView::RegionRect srcRect, float scale, 
+                                       QuickView::RawImageFrame* outFrame, 
+                                       QuickView::TileMemoryManager* tileManager, 
+                                       class QuantumArena* arena, 
+                                       CancelPredicate checkCancel);
+
+    HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
 
 
     /// <summary>
@@ -326,13 +343,6 @@ private:
     static std::mutex s_jxlRunnerMutex;
 
     // Specialized High-Performance Loaders
-    HRESULT LoadRegionGeneric_StrategyB(LPCWSTR filePath, RegionRect srcRect, float scale, 
-                                       QuickView::RawImageFrame* outFrame, 
-                                       QuickView::TileMemoryManager* tileManager, 
-                                       QuantumArena* arena, 
-                                       CancelPredicate checkCancel);
-
-    HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
     HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
     HRESULT LoadThumbJPEGFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for in-memory buffers
     HRESULT LoadThumbWebPFromMemory(const uint8_t* pBuf, size_t size, int targetSize, ThumbData* pData); // Helper for WebP buffers
