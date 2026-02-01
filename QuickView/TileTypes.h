@@ -103,6 +103,7 @@ namespace QuickView {
         // Metadata
         uint64_t lastUsedFrameId = 0; // For LRU
         uint32_t generationId = 0;    // For Cancellation
+        bool uploaded = false;        // [Titan] True if successfully drawn to Virtual Surface
     };
 
     // The Grid

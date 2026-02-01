@@ -1,0 +1,150 @@
+37.257855	[TileManager] OnTileReady: Key=72057595648540680 (LOD=1 X=8 Y=6) Frame=0000017CEB6C3980
+37.257869	[TileManager] -> State Updated to READY
+37.257886	[Main] TileReady: LOD=1 (6,6) ID=5321626040236385068
+37.257901	[Main] TileReady: LOD=1 (7,6) ID=5321626040236385068
+37.257917	[Main] TileReady: LOD=1 (8,6) ID=5321626040236385068
+37.259334	[HeavyPool] Worker 0: DONE Tile in 9 ms (Loader: RAM Cache)
+37.259357	[HeavyPool] QueueResult: events in queue = 1
+37.261622	[HeavyPool] Worker 6: DONE Tile in 11 ms (Loader: RAM Cache)
+37.261643	[HeavyPool] QueueResult: events in queue = 2
+37.263833	[HeavyPool] Worker 4: DONE Tile in 13 ms (Loader: RAM Cache)
+37.263870	[HeavyPool] QueueResult: events in queue = 3
+37.266158	[HeavyPool] Worker 14: DONE Tile in 16 ms (Loader: RAM Cache)
+37.266177	[HeavyPool] QueueResult: events in queue = 4
+37.268440	[HeavyPool] Worker 3: DONE Tile in 18 ms (Loader: RAM Cache)
+37.268462	[HeavyPool] QueueResult: events in queue = 5
+37.270869	[HeavyPool] Worker 1: DONE Tile in 20 ms (Loader: RAM Cache)
+37.270890	[HeavyPool] QueueResult: events in queue = 6
+37.273210	[HeavyPool] Worker 5: DONE Tile in 21 ms (Loader: RAM Cache)
+37.273226	[HeavyPool] QueueResult: events in queue = 7
+37.275400	[TileManager] OnTileReady: Key=72057595648540681 (LOD=1 X=9 Y=6) Frame=0000017D7EBC91D0
+37.275426	[TileManager] -> State Updated to READY
+37.275450	[HeavyPool] Worker 7: DONE Tile in 22 ms (Loader: RAM Cache)
+37.275475	[TileManager] OnTileReady: Key=72057595648540683 (LOD=1 X=11 Y=6) Frame=0000017CEB6560A0
+37.275496	[HeavyPool] QueueResult: events in queue = 6
+37.275515	[TileManager] -> State Updated to READY
+37.275533	[TileManager] OnTileReady: Key=72057595648540684 (LOD=1 X=12 Y=6) Frame=0000017CEB50EBF0
+37.275547	[TileManager] -> State Updated to READY
+37.275563	[TileManager] OnTileReady: Key=72057595648540685 (LOD=1 X=13 Y=6) Frame=0000017CEBA236B0
+37.275576	[TileManager] -> State Updated to READY
+37.275599	[TileManager] OnTileReady: Key=72057595916976134 (LOD=1 X=6 Y=7) Frame=0000017CEB9C4BE0
+37.275614	[TileManager] -> State Updated to READY
+37.275629	[TileManager] OnTileReady: Key=72057595648540682 (LOD=1 X=10 Y=6) Frame=0000017D7EB19260
+37.275643	[TileManager] -> State Updated to READY
+37.275658	[TileManager] OnTileReady: Key=72057595916976135 (LOD=1 X=7 Y=7) Frame=0000017CEB52DA60
+37.275672	[TileManager] -> State Updated to READY
+37.275687	[TileManager] OnTileReady: Key=72057595916976136 (LOD=1 X=8 Y=7) Frame=0000017CEB50F7A0
+37.275701	[TileManager] -> State Updated to READY
+37.275716	[Main] TileReady: LOD=1 (9,6) ID=5321626040236385068
+37.275730	[Main] TileReady: LOD=1 (11,6) ID=5321626040236385068
+37.275744	[Main] TileReady: LOD=1 (12,6) ID=5321626040236385068
+37.275758	[Main] TileReady: LOD=1 (13,6) ID=5321626040236385068
+37.275772	[Main] TileReady: LOD=1 (6,7) ID=5321626040236385068
+37.275786	[Main] TileReady: LOD=1 (10,6) ID=5321626040236385068
+37.275801	[Main] TileReady: LOD=1 (7,7) ID=5321626040236385068
+37.275815	[Main] TileReady: LOD=1 (8,7) ID=5321626040236385068
+37.277705	[HeavyPool] Worker 8: DONE Tile in 24 ms (Loader: RAM Cache)
+37.277738	[HeavyPool] QueueResult: events in queue = 1
+37.280277	[HeavyPool] Worker 9: DONE Tile in 25 ms (Loader: RAM Cache)
+37.280317	[HeavyPool] QueueResult: events in queue = 2
+37.282671	[HeavyPool] Worker 2: DONE Tile in 27 ms (Loader: RAM Cache)
+37.282728	[HeavyPool] QueueResult: events in queue = 3
+37.285093	[HeavyPool] Worker 10: DONE Tile in 29 ms (Loader: RAM Cache)
+37.285127	[HeavyPool] QueueResult: events in queue = 4
+37.287566	[HeavyPool] Worker 13: DONE Tile in 31 ms (Loader: RAM Cache)
+37.287590	[HeavyPool] QueueResult: events in queue = 5
+37.289947	[HeavyPool] Worker 12: DONE Tile in 32 ms (Loader: RAM Cache)
+37.289979	[HeavyPool] QueueResult: events in queue = 6
+37.292320	[HeavyPool] Worker 11: DONE Tile in 34 ms (Loader: RAM Cache)
+37.292354	[HeavyPool] QueueResult: events in queue = 7
+37.294655	[HeavyPool] Worker 0: DONE Tile in 35 ms (Loader: RAM Cache)
+37.294678	[HeavyPool] QueueResult: events in queue = 8
+37.296959	[HeavyPool] Worker 6: DONE Tile in 35 ms (Loader: RAM Cache)
+37.296988	[HeavyPool] QueueResult: events in queue = 9
+37.299420	[HeavyPool] Worker 4: DONE Tile in 35 ms (Loader: RAM Cache)
+37.299448	[HeavyPool] QueueResult: events in queue = 10
+37.301764	[HeavyPool] Worker 14: DONE Tile in 35 ms (Loader: RAM Cache)
+37.301787	[HeavyPool] QueueResult: events in queue = 11
+37.304264	[HeavyPool] Worker 3: DONE Tile in 35 ms (Loader: RAM Cache)
+37.304286	[HeavyPool] QueueResult: events in queue = 12
+37.306597	[HeavyPool] Worker 1: DONE Tile in 35 ms (Loader: RAM Cache)
+37.306624	[HeavyPool] QueueResult: events in queue = 13
+37.308101	[TileManager] OnTileReady: Key=72057595916976137 (LOD=1 X=9 Y=7) Frame=0000017CEB9BDB40
+37.308120	[TileManager] -> State Updated to READY
+37.308143	[TileManager] OnTileReady: Key=72057595916976138 (LOD=1 X=10 Y=7) Frame=0000017CEB5C6BD0
+37.308159	[TileManager] -> State Updated to READY
+37.308175	[TileManager] OnTileReady: Key=72057595916976139 (LOD=1 X=11 Y=7) Frame=0000017CEB9D6110
+37.308189	[TileManager] -> State Updated to READY
+37.308205	[TileManager] OnTileReady: Key=72057595916976140 (LOD=1 X=12 Y=7) Frame=0000017D7E8153D0
+37.308220	[TileManager] -> State Updated to READY
+37.308236	[TileManager] OnTileReady: Key=72057595916976141 (LOD=1 X=13 Y=7) Frame=0000017CEB6C33E0
+37.308251	[TileManager] -> State Updated to READY
+37.308267	[TileManager] OnTileReady: Key=72057596185411590 (LOD=1 X=6 Y=8) Frame=0000017D7E817B20
+37.308282	[TileManager] -> State Updated to READY
+37.308298	[TileManager] OnTileReady: Key=72057596185411591 (LOD=1 X=7 Y=8) Frame=0000017CEB52D7E0
+37.308313	[TileManager] -> State Updated to READY
+37.308341	[TileManager] OnTileReady: Key=72057596185411592 (LOD=1 X=8 Y=8) Frame=0000017D7EBC9130
+37.308356	[TileManager] -> State Updated to READY
+37.308370	[TileManager] OnTileReady: Key=72057596185411593 (LOD=1 X=9 Y=8) Frame=0000017CEB6557E0
+37.308385	[TileManager] -> State Updated to READY
+37.308401	[TileManager] OnTileReady: Key=72057596185411594 (LOD=1 X=10 Y=8) Frame=0000017CEB50E510
+37.308416	[TileManager] -> State Updated to READY
+37.308432	[TileManager] OnTileReady: Key=72057596185411595 (LOD=1 X=11 Y=8) Frame=0000017CEBA23B10
+37.308448	[TileManager] -> State Updated to READY
+37.308464	[TileManager] OnTileReady: Key=72057596185411596 (LOD=1 X=12 Y=8) Frame=0000017D7EBC9270
+37.308478	[TileManager] -> State Updated to READY
+37.308494	[TileManager] OnTileReady: Key=72057596185411597 (LOD=1 X=13 Y=8) Frame=0000017D7EB19800
+37.308509	[TileManager] -> State Updated to READY
+37.308526	[Main] TileReady: LOD=1 (9,7) ID=5321626040236385068
+37.308540	[Main] TileReady: LOD=1 (10,7) ID=5321626040236385068
+37.308555	[Main] TileReady: LOD=1 (11,7) ID=5321626040236385068
+37.308569	[Main] TileReady: LOD=1 (12,7) ID=5321626040236385068
+37.308585	[Main] TileReady: LOD=1 (13,7) ID=5321626040236385068
+37.308599	[Main] TileReady: LOD=1 (6,8) ID=5321626040236385068
+37.308613	[Main] TileReady: LOD=1 (7,8) ID=5321626040236385068
+37.308628	[Main] TileReady: LOD=1 (8,8) ID=5321626040236385068
+37.308643	[Main] TileReady: LOD=1 (9,8) ID=5321626040236385068
+37.308659	[Main] TileReady: LOD=1 (10,8) ID=5321626040236385068
+37.308674	[Main] TileReady: LOD=1 (11,8) ID=5321626040236385068
+37.308688	[Main] TileReady: LOD=1 (12,8) ID=5321626040236385068
+37.308704	[Main] TileReady: LOD=1 (13,8) ID=5321626040236385068
+37.308927	[HeavyPool] Worker 5: DONE Tile in 35 ms (Loader: RAM Cache)
+37.308954	[HeavyPool] QueueResult: events in queue = 1
+37.311151	[HeavyPool] Worker 7: DONE Tile in 35 ms (Loader: RAM Cache)
+37.311182	[HeavyPool] QueueResult: events in queue = 2
+37.313525	[HeavyPool] Worker 8: DONE Tile in 35 ms (Loader: RAM Cache)
+37.313583	[HeavyPool] QueueResult: events in queue = 3
+37.315836	[HeavyPool] Worker 9: DONE Tile in 35 ms (Loader: RAM Cache)
+37.315871	[HeavyPool] QueueResult: events in queue = 4
+37.318175	[HeavyPool] Worker 2: DONE Tile in 35 ms (Loader: RAM Cache)
+37.318205	[HeavyPool] QueueResult: events in queue = 5
+37.321798	[HeavyPool] Worker 10: DONE Tile in 36 ms (Loader: RAM Cache)
+37.321823	[HeavyPool] QueueResult: events in queue = 6
+37.324067	[HeavyPool] Worker 13: DONE Tile in 36 ms (Loader: RAM Cache)
+37.324100	[HeavyPool] QueueResult: events in queue = 7
+37.326532	[HeavyPool] Worker 12: DONE Tile in 36 ms (Loader: RAM Cache)
+37.326595	[HeavyPool] QueueResult: events in queue = 8
+37.329068	[HeavyPool] Worker 11: DONE Tile in 36 ms (Loader: RAM Cache)
+37.329108	[HeavyPool] QueueResult: events in queue = 9
+37.331310	[HeavyPool] Worker 0: DONE Tile in 36 ms (Loader: RAM Cache)
+37.331334	[HeavyPool] QueueResult: events in queue = 10
+37.333641	[HeavyPool] Worker 6: DONE Tile in 36 ms (Loader: RAM Cache)
+37.333664	[HeavyPool] QueueResult: events in queue = 11
+37.335884	[HeavyPool] Worker 4: DONE Tile in 36 ms (Loader: RAM Cache)
+37.335909	[HeavyPool] QueueResult: events in queue = 12
+37.338156	[HeavyPool] Worker 14: DONE Tile in 36 ms (Loader: RAM Cache)
+37.338178	[HeavyPool] QueueResult: events in queue = 13
+37.340411	[HeavyPool] Worker 3: DONE Tile in 36 ms (Loader: RAM Cache)
+37.340450	[HeavyPool] QueueResult: events in queue = 14
+37.342791	[HeavyPool] Worker 1: DONE Tile in 36 ms (Loader: RAM Cache)
+37.342819	[HeavyPool] QueueResult: events in queue = 15
+37.345177	[HeavyPool] Worker 5: DONE Tile in 36 ms (Loader: RAM Cache)
+37.345204	[HeavyPool] QueueResult: events in queue = 16
+37.350081	[TileManager] OnTileReady: Key=72057596453847046 (LOD=1 X=6 Y=9) Frame=0000017D7E815830
+37.350104	[TileManager] -> State Updated to READY
+37.350129	[TileManager] OnTileReady: Key=72057596453847047 (LOD=1 X=7 Y=9) Frame=0000017CEB50F0C0
+37.350142	[TileManager] -> State Updated to READY
+37.350155	[TileManager] OnTileReady: Key=72057596453847048 (LOD=1 X=8 Y=9) Frame=0000017CEB9BD640
+37.350167	[TileManager] -> State Updated to READY
+37.350181	[TileManager] OnTileReady: Key=72057596453847049 (LOD=1 X=9 Y=9) Frame=0000017CEB5C5E10
+37.350193	[TileManager] -> State Updated to READY

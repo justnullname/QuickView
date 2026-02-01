@@ -1,0 +1,114 @@
+62.718627	[TileManager] OnTileReady: Key=5100273687 (LOD=0 X=23 Y=19) Frame=0000017CEBA23C50
+62.718653	[TileManager] -> State Updated to READY
+62.718681	[TileManager] OnTileReady: Key=5100273688 (LOD=0 X=24 Y=19) Frame=0000017CEB52DC40
+62.718715	[TileManager] -> State Updated to READY
+62.718744	[TileManager] OnTileReady: Key=5100273689 (LOD=0 X=25 Y=19) Frame=0000017D7EEDF230
+62.718766	[TileManager] -> State Updated to READY
+62.718780	[Main] TileReady: LOD=0 (25,17) ID=5321626040236385068
+62.718791	[Main] TileReady: LOD=0 (18,18) ID=5321626040236385068
+62.718803	[Main] TileReady: LOD=0 (19,18) ID=5321626040236385068
+62.718815	[Main] TileReady: LOD=0 (20,18) ID=5321626040236385068
+62.718827	[Main] TileReady: LOD=0 (21,18) ID=5321626040236385068
+62.718839	[Main] TileReady: LOD=0 (22,18) ID=5321626040236385068
+62.718855	[Main] TileReady: LOD=0 (23,18) ID=5321626040236385068
+62.718876	[Main] TileReady: LOD=0 (24,18) ID=5321626040236385068
+62.718889	[Main] TileReady: LOD=0 (25,18) ID=5321626040236385068
+62.718909	[Main] TileReady: LOD=0 (18,19) ID=5321626040236385068
+62.718933	[Main] TileReady: LOD=0 (19,19) ID=5321626040236385068
+62.718947	[Main] TileReady: LOD=0 (20,19) ID=5321626040236385068
+62.718984	[Main] TileReady: LOD=0 (21,19) ID=5321626040236385068
+62.719000	[Main] TileReady: LOD=0 (22,19) ID=5321626040236385068
+62.719020	[Main] TileReady: LOD=0 (23,19) ID=5321626040236385068
+62.719032	[Main] TileReady: LOD=0 (24,19) ID=5321626040236385068
+62.719047	[Main] TileReady: LOD=0 (25,19) ID=5321626040236385068
+65.413896	[OSD] VisualW=21057 MetaW=21057 NewScale=1.1000 OSD=1.1000
+69.613864	[OSD] VisualW=21057 MetaW=21057 NewScale=1.2100 OSD=1.2100
+71.238174	[OSD] VisualW=21057 MetaW=21057 NewScale=1.3310 OSD=1.3310
+75.012282	[OSD] VisualW=21057 MetaW=21057 NewScale=1.4641 OSD=1.4641
+75.412075	[OSD] VisualW=21057 MetaW=21057 NewScale=1.6105 OSD=1.6105
+75.763927	[OSD] VisualW=21057 MetaW=21057 NewScale=1.7716 OSD=1.7716
+76.632272	[OSD] VisualW=21057 MetaW=21057 NewScale=1.9487 OSD=1.9487
+77.659446	[OSD] VisualW=21057 MetaW=21057 NewScale=2.1436 OSD=2.1436
+78.013036	[OSD] VisualW=21057 MetaW=21057 NewScale=2.3579 OSD=2.3579
+78.731228	[OSD] VisualW=21057 MetaW=21057 NewScale=2.1436 OSD=2.1436
+78.811569	[OSD] VisualW=21057 MetaW=21057 NewScale=1.9487 OSD=1.9487
+78.939910	[OSD] VisualW=21057 MetaW=21057 NewScale=1.7716 OSD=1.7716
+79.488788	[OSD] VisualW=21057 MetaW=21057 NewScale=1.4763 OSD=1.4763
+79.624263	[OSD] VisualW=21057 MetaW=21057 NewScale=1.3421 OSD=1.3421
+79.772601	[OSD] VisualW=21057 MetaW=21057 NewScale=1.2201 OSD=1.2201
+80.458920	[OSD] VisualW=21057 MetaW=21057 NewScale=1.1092 OSD=1.1092
+80.554468	[OSD] VisualW=21057 MetaW=21057 NewScale=1.0000 OSD=1.0000
+80.940680	[OSD] VisualW=21057 MetaW=21057 NewScale=0.9091 OSD=0.9091
+81.597047	[OSD] VisualW=21057 MetaW=21057 NewScale=0.8264 OSD=0.8264
+98.535537	[OSD] VisualW=21057 MetaW=21057 NewScale=0.9091 OSD=0.9091
+99.218607	[OSD] VisualW=21057 MetaW=21057 NewScale=1.0000 OSD=1.0000
+99.250509	[HeavyPool] Worker 1 started
+99.251594	[HeavyPool] Worker 2 started
+99.251626	[HeavyPool] Worker 0: DONE Tile in 2 ms (Loader: RAM Cache)
+99.251663	[HeavyPool] QueueResult: events in queue = 1
+99.252975	[HeavyPool] Worker 4 started
+99.253915	[HeavyPool] Worker 1: DONE Tile in 3 ms (Loader: RAM Cache)
+99.253935	[HeavyPool] QueueResult: events in queue = 2
+99.254413	[HeavyPool] Worker 3 started
+99.255610	[HeavyPool] Worker 5 started
+99.256646	[HeavyPool] Worker 6 started
+99.256799	[HeavyPool] Worker 2: DONE Tile in 5 ms (Loader: RAM Cache)
+99.256832	[HeavyPool] QueueResult: events in queue = 3
+99.257685	[HeavyPool] Worker 7 started
+99.259162	[HeavyPool] Worker 8 started
+99.259231	[HeavyPool] Worker 0: DONE Tile in 7 ms (Loader: RAM Cache)
+99.259261	[HeavyPool] QueueResult: events in queue = 4
+99.260211	[HeavyPool] Worker 9 started
+99.261330	[HeavyPool] Worker 10 started
+99.261572	[HeavyPool] Worker 4: DONE Tile in 8 ms (Loader: RAM Cache)
+99.261600	[HeavyPool] QueueResult: events in queue = 5
+99.264013	[HeavyPool] Worker 1: DONE Tile in 9 ms (Loader: RAM Cache)
+99.264050	[HeavyPool] QueueResult: events in queue = 6
+99.266354	[HeavyPool] Worker 3: DONE Tile in 11 ms (Loader: RAM Cache)
+99.266395	[HeavyPool] QueueResult: events in queue = 7
+99.268632	[HeavyPool] Worker 5: DONE Tile in 12 ms (Loader: RAM Cache)
+99.268664	[HeavyPool] QueueResult: events in queue = 8
+99.271139	[HeavyPool] Worker 6: DONE Tile in 14 ms (Loader: RAM Cache)
+99.271173	[HeavyPool] QueueResult: events in queue = 9
+99.273444	[HeavyPool] Worker 2: DONE Tile in 16 ms (Loader: RAM Cache)
+99.273477	[HeavyPool] QueueResult: events in queue = 10
+99.280976	[TileManager] OnTileReady: Key=4026531856 (LOD=0 X=16 Y=15) Frame=0000017CEB50E5B0
+99.281005	[TileManager] -> State Updated to READY
+99.281039	[TileManager] OnTileReady: Key=4026531857 (LOD=0 X=17 Y=15) Frame=0000017CEB861E40
+99.281057	[TileManager] -> State Updated to READY
+99.281072	[TileManager] OnTileReady: Key=4294967312 (LOD=0 X=16 Y=16) Frame=0000017CEB5C5550
+99.281084	[TileManager] -> State Updated to READY
+99.281099	[TileManager] OnTileReady: Key=4294967313 (LOD=0 X=17 Y=16) Frame=0000017CEB50E650
+99.281111	[TileManager] -> State Updated to READY
+99.281124	[TileManager] OnTileReady: Key=4563402768 (LOD=0 X=16 Y=17) Frame=0000017CEB6C3700
+99.281130	[TileManager] -> State Updated to READY
+99.281146	[TileManager] OnTileReady: Key=4563402769 (LOD=0 X=17 Y=17) Frame=0000017CEB861A80
+99.281158	[TileManager] -> State Updated to READY
+99.281204	[TileManager] OnTileReady: Key=4831838224 (LOD=0 X=16 Y=18) Frame=0000017CEB6552E0
+99.281227	[TileManager] -> State Updated to READY
+99.281249	[TileManager] OnTileReady: Key=4831838225 (LOD=0 X=17 Y=18) Frame=0000017D7EC1F6C0
+99.281261	[TileManager] -> State Updated to READY
+99.281275	[TileManager] OnTileReady: Key=5100273680 (LOD=0 X=16 Y=19) Frame=0000017D7E85F050
+99.281293	[TileManager] -> State Updated to READY
+99.281307	[TileManager] OnTileReady: Key=5100273681 (LOD=0 X=17 Y=19) Frame=0000017CEB5C5FF0
+99.281321	[TileManager] -> State Updated to READY
+99.281338	[Main] TileReady: LOD=0 (16,15) ID=5321626040236385068
+99.281349	[Main] TileReady: LOD=0 (17,15) ID=5321626040236385068
+99.281363	[Main] TileReady: LOD=0 (16,16) ID=5321626040236385068
+99.281374	[Main] TileReady: LOD=0 (17,16) ID=5321626040236385068
+99.281386	[Main] TileReady: LOD=0 (16,17) ID=5321626040236385068
+99.281401	[Main] TileReady: LOD=0 (17,17) ID=5321626040236385068
+99.281417	[Main] TileReady: LOD=0 (16,18) ID=5321626040236385068
+99.281430	[Main] TileReady: LOD=0 (17,18) ID=5321626040236385068
+99.281442	[Main] TileReady: LOD=0 (16,19) ID=5321626040236385068
+99.281454	[Main] TileReady: LOD=0 (17,19) ID=5321626040236385068
+101.583320	[OSD] VisualW=21057 MetaW=21057 NewScale=0.9091 OSD=0.9091
+102.216583	[OSD] VisualW=21057 MetaW=21057 NewScale=0.8264 OSD=0.8264
+106.225972	[OSD] VisualW=21057 MetaW=21057 NewScale=0.9091 OSD=0.9091
+108.069863	[OSD] VisualW=21057 MetaW=21057 NewScale=1.0000 OSD=1.0000
+108.867788	[OSD] VisualW=21057 MetaW=21057 NewScale=1.1000 OSD=1.1000
+110.814162	[OSD] VisualW=21057 MetaW=21057 NewScale=1.0000 OSD=1.0000
+111.480223	[OSD] VisualW=21057 MetaW=21057 NewScale=0.9091 OSD=0.9091
+111.517614	[OSD] VisualW=21057 MetaW=21057 NewScale=0.8264 OSD=0.8264
+115.120867	[OSD] VisualW=21057 MetaW=21057 NewScale=0.7513 OSD=0.7513
+115.761394	[OSD] VisualW=21057 MetaW=21057 NewScale=0.6830 OSD=0.6830

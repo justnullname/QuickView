@@ -64,7 +64,7 @@ public:
 
     // [Smart Dispatch] Update Virtual Tiles on the ACTIVE layer
     // No transform args needed - we draw into the image's coordinate space directly!
-    HRESULT UpdateVirtualTiles(QuickView::TileManager* tileManager, bool showDebugGrid);
+    HRESULT UpdateVirtualTiles(QuickView::TileManager* tileManager, bool showDebugGrid, const D2D1_RECT_F* visibleRect = nullptr);
 
     // AlignActiveLayer: Center the active layer in window
     HRESULT AlignActiveLayer(float windowW, float windowH);

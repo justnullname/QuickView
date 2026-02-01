@@ -5319,11 +5319,9 @@ void ProcessEngineEvents(HWND hwnd) {
                 evt.tileCoord->lod, evt.tileCoord->col, evt.tileCoord->row, evt.imageId);
             OutputDebugStringW(debugBuf);
 
-            if (g_imageEngine && g_imageEngine->GetTileManager()) {
-                // [Infinity Engine] Pass to Manager
-                // Legacy conversion: TileCoord -> TileKey
-                auto key = QuickView::TileKey::From(evt.tileCoord->col, evt.tileCoord->row, evt.tileCoord->lod);
-                g_imageEngine->GetTileManager()->OnTileReady(key, evt.rawFrame);
+            if (g_imageEngine) {
+                // [Infinity Engine] TileManager already updated by ImageEngine::PollState
+                // Just trigger repaint
                 needsRepaint = true;
             }
         } else {
@@ -5582,9 +5580,14 @@ void OnPaint(HWND hwnd) {
              // [Pure DComp] Update Virtual Tiles on the active layer
              // Smart Dispatch in CompositionEngine handles creating/updating the Virtual Surface.
              // We just signal "Update Tiles now".
+             
+             // [Fix] Pass visible rectangle for Culling (Image Space)
+             D2D1_RECT_F visibleRect = D2D1::RectF(viewL, viewT, viewL + viewW, viewT + viewH);
+             
              g_compEngine->UpdateVirtualTiles(
                  g_imageEngine->GetTileManager().get(),
-                 g_showTileGrid
+                 g_showTileGrid,
+                 &visibleRect
              );
         }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
