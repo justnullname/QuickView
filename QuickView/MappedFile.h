@@ -42,6 +42,33 @@ namespace QuickView {
         const uint8_t* data() const { return m_ptr; }
         size_t size() const { return m_size; }
 
+    public:
+        void Prefetch(size_t offset, size_t length) {
+            if (!m_ptr || m_size == 0) return;
+            if (offset >= m_size) return;
+            
+            size_t validLen = length;
+            if (offset + validLen > m_size) validLen = m_size - offset;
+
+            // Define function pointer type for PrefetchVirtualMemory
+            typedef BOOL (WINAPI *PfnPrefetchVirtualMemory)(HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG);
+            
+            static PfnPrefetchVirtualMemory pPrefetch = []() -> PfnPrefetchVirtualMemory {
+                HMODULE hKernel = GetModuleHandleW(L"kernel32.dll");
+                if (hKernel) {
+                    return (PfnPrefetchVirtualMemory)GetProcAddress(hKernel, "PrefetchVirtualMemory");
+                }
+                return nullptr;
+            }();
+
+            if (pPrefetch) {
+                WIN32_MEMORY_RANGE_ENTRY entry;
+                entry.VirtualAddress = (void*)(m_ptr + offset);
+                entry.NumberOfBytes = validLen;
+                pPrefetch(GetCurrentProcess(), 1, &entry, 0);
+            }
+        }
+        
     private:
         HANDLE m_hFile = INVALID_HANDLE_VALUE;
         HANDLE m_hMap = nullptr;

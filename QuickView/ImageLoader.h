@@ -240,12 +240,14 @@ public:
                         ImageMetadata* pMetadata = nullptr);
 
     /// <summary>
-    /// [Optimization] Load full image from memory pointer (for MMF Preload)
+    /// [Optimization] Load full image from memory pointer (for MMF Preload) with optional IDCT Scaling
     /// </summary>
     HRESULT LoadToFrameFromMemory(const uint8_t* data, size_t size, 
                                  QuickView::RawImageFrame* outFrame,
                                  class QuantumArena* arena = nullptr,
-                                 std::wstring* pLoaderName = nullptr);
+                                 int targetWidth = 0, int targetHeight = 0,
+                                 std::wstring* pLoaderName = nullptr,
+                                 ImageMetadata* pMetadata = nullptr);
 
     // ============================================================================
     // [Titan Engine] Region Decoding API

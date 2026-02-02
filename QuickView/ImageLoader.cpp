@@ -242,7 +242,9 @@ static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
 HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size, 
                                             QuickView::RawImageFrame* outFrame,
                                             class QuantumArena* arena,
-                                            std::wstring* pLoaderName) 
+                                            int targetWidth, int targetHeight,
+                                            std::wstring* pLoaderName,
+                                            ImageMetadata* pMetadata) 
 {
     if (!data || !size || !outFrame) return E_INVALIDARG;
 
@@ -256,21 +258,86 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         tjhandle handle = tj3Init(TJINIT_DECOMPRESS);
         if (!handle) return E_FAIL;
         
+        // Helper to auto-destroy handle
+        struct TjGuard { tjhandle h; ~TjGuard() { if(h) tj3Destroy(h); } } guard{handle};
+
         // [Fix] Use TurboJPEG v3 API correctly (Header -> Get)
         if (tj3DecompressHeader(handle, data, size) != 0) {
-             tj3Destroy(handle);
              return E_FAIL;
         }
 
         int width = tj3Get(handle, TJPARAM_JPEGWIDTH);
         int height = tj3Get(handle, TJPARAM_JPEGHEIGHT);
 
+        // [Metadata] Populate Original Dimensions BEFORE Scaling
+        if (pMetadata) {
+            pMetadata->Width = width;
+            pMetadata->Height = height;
+            pMetadata->FileSize = size;
+            pMetadata->Format = L"JPEG (MMF)";
+            
+            int subsamp = tj3Get(handle, TJPARAM_SUBSAMP);
+            switch(subsamp) {
+                case TJSAMP_444: pMetadata->FormatDetails = L"4:4:4"; break;
+                case TJSAMP_422: pMetadata->FormatDetails = L"4:2:2"; break;
+                case TJSAMP_420: pMetadata->FormatDetails = L"4:2:0"; break;
+                case TJSAMP_GRAY: pMetadata->FormatDetails = L"Gray"; break;
+                case TJSAMP_440: pMetadata->FormatDetails = L"4:4:0"; break;
+                default: pMetadata->FormatDetails = L"Unknown"; break;
+            }
+        }
+        
+        // Calculate Scaling
+        tjscalingfactor chosenFactor = {1, 1};
+        if (targetWidth > 0 || targetHeight > 0) {
+            int numFactors;
+            tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
+            
+            // Default target if one dimension is missing (preserve aspect ratio)
+            // But usually caller passes both (screen size).
+            // Actually, for "Fit", we usually want the image to be <= target dimensions.
+            // Let's emulate LoadThumbJPEGFromMemory logic: find factor that keeps image LARGER than target?
+            // "Fit" strategy usually implies we downscale so that image fits INSIDE target.
+            // But IDCT selection usually looks for "smallest factor >= target" to avoid software upscaling, 
+            // OR "largest factor <= target" if we want purely hardware?
+            // TurboJPEG docs say: "choose the smallest scaling factor that generates an image larger than or equal to the desired size".
+            // That's for thumbnails where you crop/resize later.
+            // For full image view, we want the closest match.
+            // Let's use simple logic: find factor that makes image definitely >= target (for quality) or closest?
+            // Let's pick Closest match to target size (Fit).
+            
+            int neededW = (targetWidth > 0) ? targetWidth : width;
+            int neededH = (targetHeight > 0) ? targetHeight : height;
+            
+            double targetScale = std::min((double)neededW / width, (double)neededH / height);
+            if (targetScale > 1.0) targetScale = 1.0;
+            
+            // Find scaling factor closest to targetScale
+            double bestDiff = 100.0;
+            for (int i = 0; i < numFactors; i++) {
+                double f = (double)factors[i].num / factors[i].denom;
+                double diff = std::abs(f - targetScale);
+                if (diff < bestDiff) {
+                     bestDiff = diff;
+                     chosenFactor = factors[i];
+                }
+            }
+            tj3SetScalingFactor(handle, chosenFactor);
+        }
+
+        // Get Scaled Dimensions
+        int finalW = TJSCALED(width, chosenFactor);
+        int finalH = TJSCALED(height, chosenFactor);
+
         // Allocate Pixel Buffer
-        outFrame->width = width;
-        outFrame->height = height;
-        outFrame->stride = QuickView::CalculateAlignedStride(width, 4);
+        outFrame->width = finalW;
+        outFrame->height = finalH;
+        outFrame->stride = QuickView::CalculateAlignedStride(finalW, 4);
         outFrame->format = PixelFormat::BGRA8888;
         outFrame->formatDetails = L"8-bit JPEG (MMF)";
+        if (chosenFactor.num != chosenFactor.denom) {
+            outFrame->formatDetails += L" Scaled";
+        }
         
         size_t bufSize = outFrame->GetBufferSize();
         
@@ -284,7 +351,6 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         }
         
         if (!outFrame->pixels) {
-            tj3Destroy(handle);
             return E_OUTOFMEMORY;
         }
         
@@ -292,11 +358,9 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         // NOTE: This will trigger PAGE FAULTS for the entire file sequentially!
         // This effectively "Warms Up" the OS Cache for random access later.
         if (tj3Decompress8(handle, data, size, outFrame->pixels, outFrame->stride, TJPF_BGRA) != 0) {
-             tj3Destroy(handle);
              return E_FAIL;
         }
         
-        tj3Destroy(handle);
         return S_OK;
     }
     
@@ -318,14 +382,41 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     ComPtr<IWICBitmapFrameDecode> frame;
     hr = decoder->GetFrame(0, &frame);
     if (FAILED(hr)) return hr;
+
+    // Use WIC Scaler if target size is specified
+    ComPtr<IWICBitmapSource> sourceWithScaler;
     
-    // Convert to BitmapSource
-    ComPtr<IWICBitmapSource> source;
-    WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, frame.Get(), &source);
-    if (!source) source = frame; // Fallback
+    if (targetWidth > 0 || targetHeight > 0) {
+        UINT origW, origH;
+        frame->GetSize(&origW, &origH);
+        
+        // Calculate factor
+        double scale = std::min((double)targetWidth / origW, (double)targetHeight / origH);
+        if (scale < 1.0) {
+            UINT newW = (UINT)(origW * scale);
+            UINT newH = (UINT)(origH * scale);
+            if (newW < 1) newW = 1; 
+            if (newH < 1) newH = 1;
+            
+            ComPtr<IWICBitmapScaler> scaler;
+            if (SUCCEEDED(m_wicFactory->CreateBitmapScaler(&scaler))) {
+                if (SUCCEEDED(scaler->Initialize(frame.Get(), newW, newH, WICBitmapInterpolationModeFant))) {
+                    sourceWithScaler = scaler;
+                }
+            }
+        }
+    }
+    
+    // Fallback if no scaler
+    ComPtr<IWICBitmapSource> finalSource = sourceWithScaler ? sourceWithScaler : frame;
+    
+    // Convert to BitmapSource (Format)
+    ComPtr<IWICBitmapSource> sourceConverted;
+    WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, finalSource.Get(), &sourceConverted);
+    if (!sourceConverted) sourceConverted = finalSource; // Fallback
     
     UINT w, h;
-    source->GetSize(&w, &h);
+    sourceConverted->GetSize(&w, &h);
     outFrame->width = w;
     outFrame->height = h;
     outFrame->stride = QuickView::CalculateAlignedStride(w, 4);
@@ -343,7 +434,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     
     if (!outFrame->pixels) return E_OUTOFMEMORY;
     
-    hr = source->CopyPixels(nullptr, outFrame->stride, (UINT)bufSize, outFrame->pixels);
+    hr = sourceConverted->CopyPixels(nullptr, outFrame->stride, (UINT)bufSize, outFrame->pixels);
     return hr;
 }
 
@@ -857,6 +948,9 @@ HRESULT CImageLoader::LoadTileFromMemory(
     // 2. Read Header (Fast)
     if (tj3DecompressHeader(tj, sourceData, sourceSize) != 0) return E_FAIL;
 
+    int width = tj3Get(tj, TJPARAM_JPEGWIDTH);
+    int height = tj3Get(tj, TJPARAM_JPEGHEIGHT);
+
     // 3. Setup Scaling
     int numFactors;
     tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
@@ -885,6 +979,17 @@ HRESULT CImageLoader::LoadTileFromMemory(
     int scY = TJSCALED(region.y, chosen);
     int scW = TJSCALED(region.w, chosen);
     int scH = TJSCALED(region.h, chosen);
+    
+    // [Fix] Clip against Scaled Image Dimensions
+    // TurboJPEG requires crop region to be fully inside the image.
+    int fullScaledW = TJSCALED(width, chosen);
+    int fullScaledH = TJSCALED(height, chosen);
+    
+    if (scX + scW > fullScaledW) scW = fullScaledW - scX;
+    if (scY + scH > fullScaledH) scH = fullScaledH - scY;
+    
+    // Safety check
+    if (scW <= 0 || scH <= 0 || scX < 0 || scY < 0) return E_FAIL;
 
     // Set Crop
     tjregion crop = { scX, scY, scW, scH };

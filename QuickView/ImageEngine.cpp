@@ -91,8 +91,19 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
         return;
     }
     
+    // [Titan] If MMF is valid, we are in Titan Mode.
+    // The Base Layer is already loaded (Scaled). We do NOT want a Full Decode 
+    // because it causes OOM/Seconds-long stall and logic issue.
+    if (m_mmf && m_mmf->IsValid()) {
+        OutputDebugStringW(L"[Two-Stage] RequestFullDecode skipped - Titan Mode Active (Tiles Handle Detail)\n");
+        return;
+    }
+
     // Submit to Heavy Lane with targetWidth=0 to force full resolution decode
-    m_heavyPool->SubmitFullDecode(path, imageId);
+    // [Note] No MMF passed here because this is a delayed request (MMF might not persist unless Titan)
+    // Actually, if we are in Titan mode, m_mmf is valid. If not, it's null.
+    // It's safe to pass m_mmf (member) here.
+    m_heavyPool->SubmitFullDecode(path, imageId, m_mmf);
     
     wchar_t buf[256];
     swprintf_s(buf, L"[Two-Stage] Full decode requested: ImageID=%zu\n", imageId);
@@ -121,6 +132,11 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     std::wstring fmtUpper = info.format;
     std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
     
+    // [Map First] Create MMF immediately for this image
+    // This allows Zero-Copy decoding for Base Layer AND Zero-Copy for Tiles
+    std::shared_ptr<QuickView::MappedFile> primaryMMF = std::make_shared<QuickView::MappedFile>(path);
+    if (!primaryMMF->IsValid()) primaryMMF.reset(); // Fallback if map fails
+
     // [Titan] Trigger Conditions
     // 1. Format support: JPEG, WebP, PNG
     bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || fmtUpper == L"WEBP" || fmtUpper == L"PNG");
@@ -132,9 +148,8 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool enableTitan = (sizeTrigger || pixelTrigger) && isSupportedFormat;
     
     if (enableTitan) {
-         // [Optimization] Create MMF for Zero-Copy Tile Access
-         // This handle stays open while we view the image.
-         m_mmf = std::make_shared<QuickView::MappedFile>(path);
+         // Keep MMF alive for Tile Manager usage
+         m_mmf = primaryMMF;
          
          m_tileManager->InvalidateAll(); // Reset generation
          wchar_t debugBuf[256];
@@ -143,8 +158,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
              (m_mmf && m_mmf->IsValid()) ? L"OK" : L"FAIL");
          OutputDebugStringW(debugBuf);
     } else {
-         m_mmf.reset(); // Release MMF for non-Titan images
-         // m_tileManager->InvalidateAll(); // Optional
+         m_mmf.reset(); // Release Member MMF (but primaryMMF still exists for this scope/job)
     }
 
     // [Prefetch System] Cache Check ...
@@ -233,7 +247,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         if (m_config.ForceRawDecode) {
             // [Fix] Explicitly request Full Decode
             // This ensures we bypass IDCT scaling and get the full sensor resolution
-            m_heavyPool->SubmitFullDecode(path, imageId);
+            m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF);
             return; 
         }
         else if (info.hasEmbeddedThumb) {
@@ -277,7 +291,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                  // Standard 'useHeavy' path uses Submit() which defaults to 'isFullDecode=false' (Scaled).
                  // We must use SubmitFullDecode() to bypass Stage 1.
                  OutputDebugStringW(L"[Dispatch] -> WebP Large: Heavy Direct Full\n");
-                 m_heavyPool->SubmitFullDecode(path, imageId);
+                 m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF);
                  return; 
              }
         }
@@ -292,7 +306,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         
         if (fmtLower == L"webp") {
              OutputDebugStringW(L"[Dispatch] -> WebP Heavy: Heavy Direct Full\n");
-             m_heavyPool->SubmitFullDecode(path, imageId); // Direct Full
+             m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF); // Direct Full
              return;
         }
         
@@ -325,7 +339,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             // Skip FastLane entirely. HeavyLane handles everything (Deep Cancel Relay).
             // This eliminates the 18ms overhead of checking for DC in FastLane.
             OutputDebugStringW(L"[Dispatch] -> JXL Large: Heavy Direct (Skip FastLane)\n");
-            m_heavyPool->SubmitFullDecode(path, imageId);
+            m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF);
         }
         return; // JXL dispatched
     }
@@ -379,7 +393,8 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             wchar_t dbgBuf[128];
             swprintf_s(dbgBuf, L"[Dispatch] -> %s Large: Heavy Lane\n", info.format.c_str());
             OutputDebugStringW(dbgBuf);
-            m_heavyPool->Submit(path, imageId);
+            OutputDebugStringW(dbgBuf);
+            m_heavyPool->Submit(path, imageId, primaryMMF);
         }
         return;
     }
@@ -387,7 +402,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // 7. Standard Routing
     if (useHeavy) {
         OutputDebugStringW(L"[Dispatch] -> Heavy Lane\n");
-        m_heavyPool->Submit(path, imageId);
+        m_heavyPool->Submit(path, imageId, primaryMMF);
     }
     if (useFastLane) {
         // Avoid parallel duplicate work if Heavy is already taking it?

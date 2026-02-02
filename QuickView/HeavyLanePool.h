@@ -48,10 +48,10 @@ public:
     // === Task Submission ===
     // Thread-safe. Will auto-expand if needed.
     // [ImageID] Uses stable path hash instead of incrementing token
-    void Submit(const std::wstring& path, ImageID imageId);
+    void Submit(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf = nullptr);
     
     // [Two-Stage] Submit for full resolution decode (no scaling)
-    void SubmitFullDecode(const std::wstring& path, ImageID imageId);
+    void SubmitFullDecode(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf = nullptr);
     
     // [Titan Engine] Submit a tile decode task
     void SubmitTile(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, QuickView::TileCoord coord, QuickView::RegionRequest region, int priority = 0);
@@ -218,7 +218,8 @@ private:
     std::map<std::wstring, std::shared_ptr<QuickView::RawImageFrame>> m_fullImageCache; 
     std::atomic<bool> m_isPreloading = false; // Simple flag to avoid duplicate triggers for same image
     std::wstring m_preloadingPath; // Which path is currently being preloaded?
-
+    
+    void TriggerPrefetch(std::shared_ptr<QuickView::MappedFile> mmf);
     void TriggerPreload(const std::wstring& path, std::shared_ptr<QuickView::MappedFile> mmf = nullptr);
     bool GetCachedRegion(const std::wstring& path, QuickView::RegionRequest region, QuickView::RawImageFrame* outFrame);
 

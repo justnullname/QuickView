@@ -76,13 +76,14 @@ HeavyLanePool::~HeavyLanePool() {
 // Task Submission
 // ============================================================================
 
-void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId) {
+void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf) {
     std::lock_guard lock(m_poolMutex);
     
     JobInfo job;
     job.type = JobType::Standard;
     job.path = path;
     job.imageId = imageId;
+    job.mmf = mmf; // [Optimization] Pass MMF
     job.isFullDecode = false; 
     job.priority = 200; // Higher than tiles
     
@@ -95,13 +96,14 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId) {
     m_poolCv.notify_one();
 }
 
-void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId) {
+void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf) {
     std::lock_guard lock(m_poolMutex);
     
     JobInfo job;
     job.type = JobType::Standard;
     job.path = path;
     job.imageId = imageId;
+    job.mmf = mmf; // [Optimization] Pass MMF
     job.isFullDecode = true; 
     job.priority = 150; 
     
@@ -417,8 +419,20 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                   targetH = GetSystemMetrics(SM_CYSCREEN);
               }
               
-              hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, 
-                 cancelPred, &meta);
+              // [Optimization] Use MMF if available (Zero-Copy)
+              if (job.mmf && job.mmf->IsValid()) {
+                   // Corrected Signature: 7 arguments with scaling + Metadata
+                   hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
+                   if (FAILED(hr)) {
+                       // Fallback to file if MMF fails (shouldn't happen if valid)
+                       hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta);
+                   } else {
+                       // MMF Decode Success -> Trigger Touch-Up Prefetch!
+                       TriggerPrefetch(job.mmf);
+                   }
+              } else {
+                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta);
+              }
          }
          else if (job.type == JobType::Tile) {
               // --- Tile Decode ---
@@ -456,8 +470,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                           rect, scale, 
                           &rawFrame, &m_tileMemory
                       );
-                      if (FAILED(hr)) loaderName = L"MMF Decoder Failed";
-                      else loaderName = L"TurboJPEG (MMF)";
+                      if (FAILED(hr)) {
+                          loaderName = L"MMF Failed -> Fallback";
+                          // Fallback to File
+                          hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName, cancelPred);
+                      } else {
+                          loaderName = L"TurboJPEG (MMF)";
+                      }
                   }
                   else {
                       // Fallback: File IO Path (Slow)
@@ -503,6 +522,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                 
             } else {
                 evt.type = EventType::FullReady; 
+                evt.isScaled = !job.isFullDecode;
 
                 // [Standard] Deep Copy to Heap (since Arena is reused/reset)
                 auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
@@ -648,6 +668,22 @@ bool HeavyLanePool::IsIdle() const {
 // [Optimization] Full Image Cache Implementation
 // ============================================================================
 
+void HeavyLanePool::TriggerPrefetch(std::shared_ptr<QuickView::MappedFile> mmf) {
+    if (!mmf || !mmf->IsValid()) return;
+    
+    // [Touch-Up] Async Prefetch
+    // This brings the REST of the file into valid RAM
+    std::thread([mmf]() {
+         // Prefetch entire file? Or just likely next region?
+         // For JPEG, data is sequential. Prefetch all.
+         // Windows manages the specific pages.
+         mmf->Prefetch(0, mmf->size());
+         
+         // Diagnostic
+         // OutputDebugStringW(L"[HeavyPool] Touch-Up Prefetch Triggered\n");
+    }).detach();
+}
+
 // [v9.5] Updated to support Zero-Copy MMF Preload
 void HeavyLanePool::TriggerPreload(const std::wstring& path, std::shared_ptr<QuickView::MappedFile> mmf) {
     bool expected = false;
@@ -695,7 +731,7 @@ void HeavyLanePool::TriggerPreload(const std::wstring& path, std::shared_ptr<Qui
             // [Optimization] Use MMF if available to avoid Disk Contention and Seek Thrashing
             HRESULT hr;
             if (mmf && mmf->IsValid()) {
-                 hr = m_loader->LoadToFrameFromMemory(mmf->data(), mmf->size(), fullFrame, nullptr, &name);
+                 hr = m_loader->LoadToFrameFromMemory(mmf->data(), mmf->size(), fullFrame, nullptr, 0, 0, &name, nullptr);
             } else {
                  hr = m_loader->LoadToFrame(path.c_str(), fullFrame, nullptr, 0, 0, &name, nullptr, nullptr);
             }
