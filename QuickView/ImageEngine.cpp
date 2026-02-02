@@ -147,15 +147,21 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     if (!primaryMMF->IsValid()) primaryMMF.reset(); // Fallback if map fails
 
     // [Titan] Trigger Conditions
+    // [Titan] Trigger Conditions
     // 1. Format support: JPEG, WebP, PNG
     bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || fmtUpper == L"WEBP" || fmtUpper == L"PNG");
 
     // 2. Size triggers: Any side > 8192 OR Total pixels > 50MP
     bool sizeTrigger = (info.width > 8192 || info.height > 8192);
-    bool pixelTrigger = ((uint64_t)info.width * info.height > 50000000);
+    size_t pixelCount = (size_t)info.width * info.height;
+    bool pixelTrigger = (pixelCount > 50000000);
 
     bool enableTitan = (sizeTrigger || pixelTrigger) && isSupportedFormat;
     
+    // [Titan Guard] Thresholds
+    const size_t THRESHOLD_TITAN = 500 * 1000 * 1000;      // 500MP
+    const size_t THRESHOLD_SKIP_BASE = 200 * 1000 * 1000;  // 200MP
+
     if (enableTitan) {
          // Keep MMF alive for Tile Manager usage
          m_mmf = primaryMMF;
@@ -169,11 +175,33 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          
          // [Fix] Activate Titan Mode in Pool (Persistence)
          m_heavyPool->SetTitanMode(true);
+
+         // [Titan Guard] Logic
+         if (pixelCount > THRESHOLD_TITAN) {
+             // [Defense Mode]
+             m_heavyPool->SetConcurrencyLimit(4);
+             m_heavyPool->SetUseThreadLocalHandle(false); // Disable reuse
+             m_enablePadding = false; // Only visible
+             OutputDebugStringW(L"[Titan Guard] Activated: Restricted Concurrency (4), No Padding, No Reuse.\n");
+         } else {
+             // [Speed Mode]
+             int hwThreads = (int)std::thread::hardware_concurrency();
+             int limit = std::min(hwThreads - 2, 8);
+             if (limit < 2) limit = 2;
+             m_heavyPool->SetConcurrencyLimit(limit);
+             m_heavyPool->SetUseThreadLocalHandle(true);
+             m_enablePadding = true;
+         }
+
     } else {
          m_mmf.reset(); // Release Member MMF (but primaryMMF still exists for this scope/job)
          
          // [Fix] Deactivate Titan Mode (Elastic)
          m_heavyPool->SetTitanMode(false);
+         // Reset Guard (Standard Defaults)
+         m_heavyPool->SetConcurrencyLimit(0); // Unlimited (Cap)
+         m_heavyPool->SetUseThreadLocalHandle(true);
+         m_enablePadding = true; 
     }
 
     // [Prefetch System] Cache Check ...
@@ -246,9 +274,78 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool useHeavy = m_config.EnableHeavy;
     
     // [Titan] Compliance: Force Heavy Lane for Base Layer
+    // [Titan] Compliance: Force Heavy Lane for Base Layer
     if (enableTitan) {
         useHeavy = true;
         useFastLane = false; 
+        
+        // [Titan Guard] Skip Base Decode for Huge Images (>200MP)
+        if (pixelCount > THRESHOLD_SKIP_BASE) {
+             OutputDebugStringW(L"[Dispatch] Titan Huge (>200MP): Skipping Base Decode. Triggering Tiles Directly.\n");
+             
+             // [Titan] Active Tile Trigger
+             // Since we skip the base layer, we must manually calculate the "Fit to Screen" viewport 
+             // and trigger the first batch of tiles immediately.
+             float initialScale = 0.1f;
+             if (m_hwnd) {
+                 RECT rc;
+                 if (GetClientRect(m_hwnd, &rc)) {
+                     float sw = (float)(rc.right - rc.left);
+                     float sh = (float)(rc.bottom - rc.top);
+                     if (sw > 0 && sh > 0) {
+                         float sx = sw / info.width;
+                         float sy = sh / info.height;
+                         initialScale = (sx < sy) ? sx : sy;
+                     }
+                 }
+             } else {
+                 // Fallback if no window (e.g. startup)
+                 // Assume 1080p fit
+                 initialScale = 1080.0f / info.height;
+             }
+             
+             // Trigger Tile Load (Full Image Viewport)
+             // basePreviewRatio = 0.0f forces tile generation (we have no base layer)
+             QuickView::RegionRect visibleRect = { 0.0f, 0.0f, (float)info.width, (float)info.height };
+             UpdateTileViewport(visibleRect, initialScale, info.width, info.height, 0.0f);
+             
+             OutputDebugStringW(L"[Dispatch] Titan Active Trigger: Launched Initial Tiles.\n");
+             
+             // Emit Fake FullReady to initialize UI Viewport
+             EngineEvent evt;
+             evt.type = EventType::FullReady;
+             evt.filePath = path;
+             evt.imageId = imageId;
+             // Populate Metadata
+             evt.metadata.Width = info.width;
+             evt.metadata.Height = info.height;
+             evt.metadata.Format = info.format;
+             evt.metadata.FileSize = info.fileSize;
+             evt.metadata.ExifOrientation = 1; // Default
+             
+             // Create Dummy Frame (Lightweight, 1x1 Transparent)
+             auto dummy = std::make_shared<QuickView::RawImageFrame>();
+             dummy->width = 1;
+             dummy->height = 1;
+             dummy->stride = 4;
+             dummy->format = QuickView::PixelFormat::BGRA8888;
+             
+             // Allocate 4 bytes for 1 pixel [B, G, R, A]
+             // We use a custom deleter to free it.
+             dummy->pixels = new uint8_t[4];
+             memset(dummy->pixels, 0, 4); // Transparent black
+             dummy->memoryDeleter = [](uint8_t* p) { delete[] p; };
+
+             // Valid but empty
+             evt.rawFrame = dummy;
+             
+             // Mark as complete immediately
+             QueueEvent(std::move(evt));
+             
+             // Do not submit heavy job
+             return; 
+        }
+
         OutputDebugStringW(L"[Dispatch] Titan Active: Routing Base Layer to Heavy Lane\n");
     }
     
@@ -1611,6 +1708,12 @@ void ImageEngine::UpdateTileViewport(QuickView::RegionRect viewport, float scale
                          srcRect.y < viewport.y + viewport.h && srcRect.y + srcRect.h > viewport.y);
         
         if (!isInside) {
+            // [Titan Guard] Padding Logic
+            // If padding is disabled, SKIP off-screen tiles entirely.
+            if (!m_enablePadding) {
+                continue; 
+            }
+
             // Apply massive penalty (100M) to ensure strictly lower than any visible tile.
             // Visible tiles will be e.g. -0 to -64M (8K image).
             // So -100M puts it safely behind.

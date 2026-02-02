@@ -54,6 +54,10 @@ public:
     void SetTitanMode(bool enabled);
     void Flush(); // Clears queue and increments GenID
     
+    // [Titan] Concurrency Control
+    void SetConcurrencyLimit(int limit);
+    void SetUseThreadLocalHandle(bool use);
+
     // === Task Submission ===
     // Thread-safe. Will auto-expand if needed.
     // [ImageID] Uses stable path hash instead of incrementing token
@@ -152,6 +156,9 @@ private:
 
     // [Titan] Generation ID for Lock-Free Invalidation
     std::atomic<uint32_t> m_generationID{ 0 };
+
+    std::atomic<bool> m_useThreadLocalHandle = true; // [Titan]
+    std::atomic<int> m_concurrencyLimit = 0; // 0 = Unlimited (or bounded by m_cap)
 
     std::atomic<int> m_activeCount = 0;  // STANDBY + BUSY
     std::atomic<int> m_busyCount = 0;    // Only BUSY

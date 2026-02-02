@@ -397,6 +397,9 @@ private:
     
     // [v9.0] Force Refresh Flag
     std::atomic<bool> m_forceRefresh{false};
+    
+    // [Titan] Padding Control
+    std::atomic<bool> m_enablePadding{true};
 
     // [Optimization] Zero-Copy Source
     std::shared_ptr<QuickView::MappedFile> m_mmf;

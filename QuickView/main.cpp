@@ -721,12 +721,33 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         
         // Swap dimensions for portrait orientations (5-8) to ensure Surface matches Window shape
         bool isSwapped = (orientation >= 5 && orientation <= 8);
+        
+        // [Titan Fix] For Titan mode with small/dummy base layer, we must calculate 
+        // the "Fit Scale" based on the FULL image dimensions (Metadata), not the bitmap dimensions.
+        // Otherwise, fitScale will be huge (fitting 1x1 to screen), breaking tile culling.
+        
+        // [Titan Fix] Define effective dimensions (swapped if needed)
         float effectiveW = isSwapped ? imgH : imgW;
         float effectiveH = isSwapped ? imgW : imgH;
-        
-        float scale = std::min((float)surfW / effectiveW, (float)surfH / effectiveH);
 
-        // Store Metrics
+        // [Titan Fix] For Titan mode with small/dummy base layer, we must calculate 
+        // the "Fit Scale" based on the FULL image dimensions (Metadata), not the bitmap dimensions.
+        // Otherwise, fitScale will be huge (fitting 1x1 to screen), breaking tile culling.
+        
+        float scaleCalcW = effectiveW;
+        float scaleCalcH = effectiveH;
+        
+        // Check if we are in Titan mode (detected above) AND if the bitmap is unexpectedly small 
+        // (implying a dummy or preview placeholder).
+        // Titan Threshold: >8192. If bitmap is small (e.g. <4096 or 1x1), we use Metadata.
+        if (isTitan && (imgW < 4096 || imgH < 4096)) {
+             scaleCalcW = isSwapped ? (float)fullHeight : (float)fullWidth;
+             scaleCalcH = isSwapped ? (float)fullWidth : (float)fullHeight;
+        }
+
+        float scale = std::min((float)surfW / scaleCalcW, (float)surfH / scaleCalcH);
+
+        // Store Metrics (Logical Scale)
         g_lastFitScale = scale;
         g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
         
@@ -751,7 +772,13 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
              }
              
              // 3. Scale to Fit Surface
-             m = m * D2D1::Matrix3x2F::Scale(scale, scale);
+             // [Titan Fix] We must calculate a "Visual Scale" to stretch the bitmap (even if 1x1) to fill the surface.
+             // If we used `scale` (logical scale ~0.02), a 1x1 bitmap would vanish.
+             float drawScaleX = (float)surfW / effectiveW;
+             float drawScaleY = (float)surfH / effectiveH;
+             float drawScale = std::min(drawScaleX, drawScaleY);
+             
+             m = m * D2D1::Matrix3x2F::Scale(drawScale, drawScale);
              
              // 4. Move to Center of Surface
              m = m * D2D1::Matrix3x2F::Translation(surfW / 2.0f, surfH / 2.0f);
@@ -767,8 +794,14 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
         } else {
              // Standard Path (Optimization: No Matrix overhead)
-             float drawW = imgW * scale;
-             float drawH = imgH * scale;
+             // [Titan Fix] Recalculate draw dimensions based on Bitmap size, ignoring Logical Scale
+             float drawScaleX = (float)surfW / imgW;
+             float drawScaleY = (float)surfH / imgH;
+             float drawScale = std::min(drawScaleX, drawScaleY);
+             
+             float drawW = imgW * drawScale;
+             float drawH = imgH * drawScale;
+             
              float x = (surfW - drawW) / 2.0f;
              float y = (surfH - drawH) / 2.0f;
              

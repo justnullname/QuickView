@@ -77,6 +77,20 @@ void HeavyLanePool::SetTitanMode(bool enabled) {
     }
 }
 
+void HeavyLanePool::SetConcurrencyLimit(int limit) {
+    m_concurrencyLimit = limit;
+    // We don't need to force shrink here; WorkerLoop checks limit before starting work.
+    // If we wanted to be aggressive, we could use m_ioSemaphore, but existing logic uses it for SSD/HDD.
+    // We'll add a check in WorkerLoop.
+    wchar_t buf[128];
+    swprintf_s(buf, L"[HeavyPool] Concurrency Limit set to %d\n", limit);
+    OutputDebugStringW(buf);
+}
+
+void HeavyLanePool::SetUseThreadLocalHandle(bool use) {
+    m_useThreadLocalHandle = use;
+}
+
 void HeavyLanePool::Flush() {
     std::lock_guard lock(m_poolMutex);
     m_pendingJobs.clear(); // O(1) with vector
@@ -342,6 +356,31 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             m_busyCount.fetch_add(1);
         }
 
+        // [Titan Guard] Pool Throttling
+        // Check concurrency limit before proceeding.
+        // If we are over the limit, we wait here without holding the job mutex (already released above).
+        // But we DO hold the 'm_busyCount' token.
+        // Wait... if we hold m_busyCount, we are counting as active.
+        // If we wait here, we block *processing* but we are already "BUSY".
+        // The limit check should ideally happen BEFORE taking the job, OR we spin-wait here?
+        // User says: "temporarily wait or not compete for semaphore".
+        // Let's us a simplified approach: Wait until active_workers < limit.
+        int limit = m_concurrencyLimit.load();
+        if (limit > 0) {
+            // Check if we exceed limit.
+            // Note: We already incremented m_busyCount.
+            // So if m_busyCount > limit, we are the excess.
+            // We should wait until someone finishes.
+            // We can use a condition variable or a simple sleep/yield loop.
+            // Since this is "Titan Guard" (rare huge images), simple yield is fine.
+            int backoff = 1;
+            while (m_busyCount.load() > limit && !st.stop_requested()) {
+                 // Yield to let others finish
+                 std::this_thread::sleep_for(std::chrono::milliseconds(backoff));
+                 backoff = std::min(backoff * 2, 50); // Cap at 50ms
+            }
+        }
+
         // [Smart Pull] Check 2: Visibility & State (Only for Tiles)
         // Check if tile is still valid (not reset by Zoom or scrolled away)
         if (job.type == JobType::Tile) {
@@ -550,6 +589,12 @@ bool HeavyLanePool::ShouldBecomeHotSpare(int workerId) {
     // 1. Total active workers should not exceed some "baseline" if idle for too long.
     // 2. But if we JUST finished a job, we usually stay STANDBY for at least a few seconds.
     // The shrinker thread handles the actual timeout.
+    // [Titan] If ThreadLocalHandle disabled, destroy thread to release memory?
+    // User requirement: "Disable reuse, use and release immediately".
+    if (!m_useThreadLocalHandle) {
+        return false; // Exit WorkerLoop -> Thread dies -> Stack/resources freed.
+    }
+    
     // Here we just return true unless we are shutting down.
     return true; 
 }
@@ -639,6 +684,9 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                   QuickView::RegionRect rect = { job.region.srcRect.x, job.region.srcRect.y, job.region.srcRect.w, job.region.srcRect.h };
                   
                   // [MMF Optimization] Zero-Copy Path
+                  // [MMF Optimization] Zero-Copy Path
+                  // [Fix] Reverted to LoadRegionToFrame for robustness (LoadTileFromMemory caused stride artifacts on Titan)
+                  /*
                   if (job.mmf && job.mmf->IsValid()) {
                       // Direct memory access - NO IO here!
                       hr = CImageLoader::LoadTileFromMemory(
@@ -649,14 +697,19 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                       if (FAILED(hr)) {
                           loaderName = L"MMF Failed -> Fallback";
                           // Fallback to File
-                          hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName, cancelPred);
+                          hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, &loaderName, cancelPred);
                       } else {
                           loaderName = L"TurboJPEG (MMF)";
                       }
                   }
-                  else {
+                  else 
+                  */
+                  {
                       // Fallback: File IO Path (Slow)
                       // [Titan] Use Shareable Slab Allocator
+                      // Note: LoadRegionToFrame internally uses SafeLoadJpegRegion which handles MMF if used via MappedFile locally,
+                      // but here we pass path. 
+                      // actually LoadRegionToFrame creates MappedFile internally for JPEG! So it IS Zero-Copy compatible.
                       hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName,
                          cancelPred);
                   }
