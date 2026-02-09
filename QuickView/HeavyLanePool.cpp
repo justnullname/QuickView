@@ -109,11 +109,55 @@ void HeavyLanePool::SetUseThreadLocalHandle(bool use) {
 // [Scientific 2.0] Reset scout state for a new Titan image
 void HeavyLanePool::ResetScoutState() {
     m_scoutPhase = ScoutPhase::SCOUTING;
-    m_scoutSampleIndex = 0;
-    for (int i = 0; i < SCOUT_SAMPLE_COUNT; ++i) {
-        m_scoutSamples[i] = 0.0;
+    m_scoutTotalAttempts = 0;
+    {
+        std::lock_guard lock(m_scoutMutex);
+        m_scoutValidSamples.clear();
     }
     OutputDebugStringW(L"[HeavyPool] Scout state RESET. Phase: SCOUTING (2 threads).\n");
+}
+
+// [Scientific 2.0] Record a scout sample with cold-start filtering
+void HeavyLanePool::RecordScoutSample(double pixels, double durationSec, int tileIndex) {
+    // Cold-Start Filter: If first tile takes > 2s, it's likely IO-blocked (page faults, HDD seek)
+    // Discard this sample and wait for subsequent tiles.
+    if (tileIndex == 0 && durationSec > SCOUT_COLD_START_THRESHOLD) {
+        wchar_t buf[128];
+        swprintf_s(buf, L"[HeavyPool] Scout #0 cold-start detected (%.2fs > %.1fs threshold). Ignoring sample.\n",
+            durationSec, SCOUT_COLD_START_THRESHOLD);
+        OutputDebugStringW(buf);
+        return; // Don't use this sample
+    }
+    
+    // Calculate MP/s
+    double scoreMPs = (pixels / 1000000.0) / durationSec;
+    
+    // Store valid sample
+    bool shouldApply = false;
+    double avgScore = 0.0;
+    {
+        std::lock_guard lock(m_scoutMutex);
+        m_scoutValidSamples.push_back(scoreMPs);
+        
+        wchar_t buf[128];
+        swprintf_s(buf, L"[HeavyPool] Scout Sample %d: %.2f MP/s (%.1f MP in %.0f ms)\n",
+            (int)m_scoutValidSamples.size(), scoreMPs, pixels / 1000000.0, durationSec * 1000.0);
+        OutputDebugStringW(buf);
+        
+        // Check if we have enough valid samples
+        if ((int)m_scoutValidSamples.size() >= SCOUT_REQUIRED_SAMPLES) {
+            double sum = 0.0;
+            for (double s : m_scoutValidSamples) {
+                sum += s;
+            }
+            avgScore = sum / m_scoutValidSamples.size();
+            shouldApply = true;
+        }
+    }
+    
+    if (shouldApply) {
+        ApplyScientificConcurrency(avgScore);
+    }
 }
 
 // [Scientific 2.0] Apply dynamic concurrency based on measured throughput
@@ -819,34 +863,24 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
           OutputDebugStringW(resultLog);
           
           // [Scientific 2.0] Scout Measurement for Tile Decodes
+          // [LOD Filter] Only use LOW LOD tiles (0-2) for scoring.
+          // High LOD tiles (4-6) have inflated source regions (1073 MP) but decode fast,
+          // giving false high MP/s scores. LOD 0-2 represents actual decode stress.
           if (job.type == JobType::Tile && SUCCEEDED(hr) && m_scoutPhase == ScoutPhase::SCOUTING) {
-              // Calculate MP/s (pixels decoded per second, normalized)
-              double tilePixels = (double)rawFrame.width * rawFrame.height; // Actual decoded pixels
-              double durationSec = decodeMs / 1000.0;
-              if (durationSec > 0.001) { // Avoid divide-by-zero for instant decodes
-                  double scoreMPs = (tilePixels / 1000000.0) / durationSec;
-                  
-                  // Store sample (atomic increment)
-                  int idx = m_scoutSampleIndex.fetch_add(1);
-                  if (idx < SCOUT_SAMPLE_COUNT) {
-                      m_scoutSamples[idx] = scoreMPs;
-                      
-                      wchar_t scoutBuf[128];
-                      swprintf_s(scoutBuf, L"[HeavyPool] Scout Sample %d: %.2f MP/s (Tile %dx%d in %d ms)\n",
-                          idx + 1, scoreMPs, rawFrame.width, rawFrame.height, decodeMs);
-                      OutputDebugStringW(scoutBuf);
-                      
-                      // Check if we have enough samples
-                      if (idx == SCOUT_SAMPLE_COUNT - 1) {
-                          // We have all samples - calculate average and apply
-                          double sum = 0.0;
-                          for (int i = 0; i < SCOUT_SAMPLE_COUNT; ++i) {
-                              sum += m_scoutSamples[i].load();
-                          }
-                          double avg = sum / SCOUT_SAMPLE_COUNT;
-                          ApplyScientificConcurrency(avg);
-                      }
+              int tileLOD = job.tileCoord.lod;
+              if (tileLOD <= 2) { // Only LOD 0, 1, 2 are meaningful for performance measurement
+                  // [Virtual LOD 0] Use SOURCE pixels, not output pixels!
+                  double sourcePixels = (double)job.region.srcRect.w * job.region.srcRect.h;
+                  double durationSec = decodeMs / 1000.0;
+                  if (durationSec > 0.001) { // Avoid divide-by-zero
+                      int tileIndex = m_scoutTotalAttempts.fetch_add(1);
+                      RecordScoutSample(sourcePixels, durationSec, tileIndex);
                   }
+              } else {
+                  // Log skipped high-LOD tile
+                  wchar_t buf[128];
+                  swprintf_s(buf, L"[HeavyPool] Scout: Skipping LOD %d tile (only LOD 0-2 used for scoring)\n", tileLOD);
+                  OutputDebugStringW(buf);
               }
           }
         

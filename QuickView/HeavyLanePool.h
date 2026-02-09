@@ -167,11 +167,15 @@ private:
         DECIDED     // Concurrency has been set
     };
     std::atomic<ScoutPhase> m_scoutPhase = ScoutPhase::IDLE;
-    static constexpr int SCOUT_SAMPLE_COUNT = 2; // Measure first 2 tiles
-    std::atomic<double> m_scoutSamples[SCOUT_SAMPLE_COUNT] = {}; // MP/s scores
-    std::atomic<int> m_scoutSampleIndex = 0;
+    static constexpr int SCOUT_REQUIRED_SAMPLES = 2; // Need 2 VALID samples to decide
+    static constexpr double SCOUT_COLD_START_THRESHOLD = 2.0; // Seconds - ignore first tile if > 2s
+    
+    std::mutex m_scoutMutex; // Protect scout samples vector
+    std::vector<double> m_scoutValidSamples; // Valid MP/s scores (cold-start filtered)
+    std::atomic<int> m_scoutTotalAttempts = 0; // Total tiles attempted (for cold-start detection)
     
     void ResetScoutState();
+    void RecordScoutSample(double pixels, double durationSec, int tileIndex);
     void ApplyScientificConcurrency(double avgScoreMPs);
 
     std::atomic<int> m_activeCount = 0;  // STANDBY + BUSY
