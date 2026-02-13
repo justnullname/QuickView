@@ -141,6 +141,18 @@ namespace QuickView {
         if (endX > maxCols) endX = maxCols;
         if (endY > maxRows) endY = maxRows;
 
+        // [Diagnostic] Trace Viewport state for Row 0 issue
+        // Only log periodically or if specific row is in question
+        static uint64_t lastLog = 0;
+        uint64_t now = GetTickCount64();
+        if (now - lastLog > 2000) {
+            lastLog = now;
+            wchar_t buf[256];
+            swprintf_s(buf, L"[TileManager] Update: LOD=%d Viewport=[%d, %d, %d, %d] Grid=[%d,%d] to [%d,%d]\n", 
+                lod, viewport.x, viewport.y, viewport.w, viewport.h, startX, startY, endX, endY);
+            OutputDebugStringW(buf);
+        }
+
         std::vector<TileKey> missing;
         uint64_t currentFrame = GetTickCount64();
 
@@ -255,13 +267,20 @@ namespace QuickView {
                 // Don't evict loading tasks
                 TileStateCode s = entry->state.load(std::memory_order_relaxed);
                 if (s == TileStateCode::Loading || s == TileStateCode::Queued) {
-                    // Push back? Or ignore.
                     continue; 
                 }
                 
-                // Release
+                // [Fix] Don't evict tiles uploaded to VirtualSurface!
+                // Their CPU frame is already released (only ~64 bytes metadata remain).
+                // Evicting them resets state to Empty, causing expensive re-decode
+                // even though the pixels are still on the GPU VirtualSurface.
+                if (entry->data && entry->data->uploaded) {
+                    continue;
+                }
+                
+                // Release CPU-only tiles
                 entry->state.store(TileStateCode::Empty);
-                entry->data.reset(); // Destroy TileState (Frame + Texture)
+                entry->data.reset();
             }
         }
     }
@@ -385,17 +404,19 @@ namespace QuickView {
     }
     
     int TileManager::GetReadyCount() const {
-        // Iterate LRU or layers? 
-        // Iterate LRU is faster than full grid
+        // [Fix] Count only tiles that hold CPU memory (frame with pixels).
+        // Uploaded tiles (VirtualSurface-backed, frame released) should not count
+        // against the budget since they only consume ~64 bytes of metadata.
         int count = 0;
         for (const auto& k : m_lru) {
-             // Use const_cast or bypass? 
-             // We need to access layer state.
-             // Since this is const, we can't iterate m_lru safely without lock, but we assume lock held or single thread stats.
-             // Actually GetReadyCount is called from DebugMetrics.
-             // Let's just return likely count.
+            // Const-cast needed since GetTileEntry is non-const (returns mutable ptr)
+            auto* self = const_cast<TileManager*>(this);
+            TileEntry* entry = self->GetTileEntry(k);
+            if (entry && entry->data && entry->data->frame && entry->data->frame->pixels) {
+                count++;
+            }
         }
-        return (int)m_lru.size(); // Rough enough
+        return count;
     }
 
 } // namespace QuickView

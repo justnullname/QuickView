@@ -69,22 +69,40 @@ void HeavyLanePool::UpdateIOLimit(int newLimit) {
     OutputDebugStringW(buf);
 }
 
-void HeavyLanePool::SetTitanMode(bool enabled) {
+void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH) {
     m_isTitanMode = enabled;
     if (enabled) {
-        // [Scientific 2.0] ALWAYS reset scout state when entering Titan mode.
-        // This handles fast image switching correctly.
-        ResetScoutState();
+        // [Baseline Cache] Check if we've seen this image size before
+        if (srcW > 0 && srcH > 0) {
+            uint64_t dimHash = MakeDimHash(srcW, srcH);
+            auto it = m_baselineCache.find(dimHash);
+            if (it != m_baselineCache.end()) {
+                // Cache HIT — skip PENDING phase, apply stored result directly
+                m_benchPhase = BenchPhase::DECIDED;
+                m_baselineMPS = it->second.mps;
+                
+                // Re-apply memory-aware concurrency (RAM may have changed)
+                ApplyBaselineConcurrency(it->second.mps, srcW, srcH);
+                
+                wchar_t buf[256];
+                swprintf_s(buf, L"[HeavyPool] Baseline CACHE HIT: %.2f MP/s → %d threads (%dx%d)\n",
+                    it->second.mps, m_concurrencyLimit.load(), srcW, srcH);
+                OutputDebugStringW(buf);
+                
+                TryExpand();
+                return;
+            }
+        }
         
-        // [Scout] Initial concurrency = 2 for measurement phase.
-        // This gives us 2 data points quickly and provides visual feedback.
+        // Cache MISS — standard PENDING flow
+        ResetBenchState();
+        
+        // Initial concurrency = 2 for the base layer decode phase.
         SetConcurrencyLimit(2);
-        
-        // [Titan] Pre-spawn workers (now limited to 2 by concurrency limit)
         TryExpand(); 
     } else {
         // Leaving Titan mode: reset to standard elastic behavior
-        m_scoutPhase = ScoutPhase::IDLE;
+        m_benchPhase = BenchPhase::IDLE;
         SetConcurrencyLimit(0); // 0 = Unlimited (elastic)
     }
 }
@@ -106,92 +124,220 @@ void HeavyLanePool::SetUseThreadLocalHandle(bool use) {
     m_useThreadLocalHandle = use;
 }
 
-// [Scientific 2.0] Reset scout state for a new Titan image
-void HeavyLanePool::ResetScoutState() {
-    m_scoutPhase = ScoutPhase::SCOUTING;
-    m_scoutTotalAttempts = 0;
+// [Baseline Benchmark] Reset state for a new Titan image
+// [Baseline Benchmark] Reset state for a new Titan image
+void HeavyLanePool::ResetBenchState() {
+    m_benchPhase = BenchPhase::PENDING;
+    m_baselineMPS = 0.0;
+    
+    // [Dynamic Regulation] Reset regulator
     {
-        std::lock_guard lock(m_scoutMutex);
-        m_scoutValidSamples.clear();
+        std::lock_guard lock(m_regulatorMutex);
+        m_regulator = RegulatorState();
+        m_regulator.lastAdjustmentTime = std::chrono::steady_clock::now();
     }
-    OutputDebugStringW(L"[HeavyPool] Scout state RESET. Phase: SCOUTING (2 threads).\n");
+    m_baselineCap = 0;
+
+    // IO type is set during Submit() via UpdateIOLimit
+    OutputDebugStringW(L"[HeavyPool] Baseline state RESET. Phase: PENDING (2 threads).\n");
 }
 
-// [Scientific 2.0] Record a scout sample with cold-start filtering
-void HeavyLanePool::RecordScoutSample(double pixels, double durationSec, int tileIndex) {
-    // Cold-Start Filter: If first tile takes > 2s, it's likely IO-blocked (page faults, HDD seek)
-    // Discard this sample and wait for subsequent tiles.
-    if (tileIndex == 0 && durationSec > SCOUT_COLD_START_THRESHOLD) {
-        wchar_t buf[128];
-        swprintf_s(buf, L"[HeavyPool] Scout #0 cold-start detected (%.2fs > %.1fs threshold). Ignoring sample.\n",
-            durationSec, SCOUT_COLD_START_THRESHOLD);
-        OutputDebugStringW(buf);
-        return; // Don't use this sample
+// [Baseline Benchmark] Record performance from base layer decode
+void HeavyLanePool::RecordBaselineSample(double outPixels, double decodeMs, int srcWidth, int srcHeight) {
+    if (decodeMs < 1.0) decodeMs = 1.0; // Safety floor: avoid divide-by-zero
+    
+    // Calculate single-thread decode throughput (MP/s)
+    double decodeMPS = (outPixels / 1000000.0) / (decodeMs / 1000.0);
+    m_baselineMPS = decodeMPS;
+    
+    wchar_t buf[256];
+    swprintf_s(buf, L"[HeavyPool] Baseline: %.2f MP/s (%.1f MP in %.0f ms, Src=%dx%d)\n",
+        decodeMPS, outPixels / 1000000.0, decodeMs, srcWidth, srcHeight);
+    OutputDebugStringW(buf);
+    
+    ApplyBaselineConcurrency(decodeMPS, srcWidth, srcHeight);
+}
+
+// [Baseline Benchmark] Apply dynamic concurrency using log2-scaled continuous function
+// + Memory-aware clamping to prevent OOM on ultra-large images
+void HeavyLanePool::ApplyBaselineConcurrency(double decodeMPS, int srcWidth, int srcHeight) {
+    // Physical cores (hyperthreading halved)
+    int physicalCores = (int)std::thread::hardware_concurrency() / 2;
+    if (physicalCores < 2) physicalCores = 2;
+    
+    // Log2 continuous scaling:
+    //   log2(1 MP/s)  = 0.0  → minimum threads
+    //   log2(16 MP/s) = 4.0  → maximum threads (realistic single-thread JPEG ceiling)
+    //   Normalized to [0, 1] then mapped to [2, physicalCores - 1]
+    double logPerf = log2(std::max(decodeMPS, 1.0));
+    double normalized = std::clamp(logPerf / 4.0, 0.0, 1.0); // 4.0 = log2(16), realistic top-tier
+    
+    int maxThreads = physicalCores - 1; // Leave 1 core for UI thread
+    int bestThreads = 2 + (int)(normalized * (maxThreads - 2));
+    
+    // IO-aware adjustment
+    bool isSSD = m_baselineIsSSD.load();
+    if (isSSD) {
+        bestThreads = std::min(bestThreads + 1, maxThreads);
+    } else {
+        bestThreads = std::min(bestThreads, 4);
     }
     
-    // Calculate MP/s
-    double scoreMPs = (pixels / 1000000.0) / durationSec;
-    
-    // Store valid sample
-    bool shouldApply = false;
-    double avgScore = 0.0;
-    {
-        std::lock_guard lock(m_scoutMutex);
-        m_scoutValidSamples.push_back(scoreMPs);
-        
-        wchar_t buf[128];
-        swprintf_s(buf, L"[HeavyPool] Scout Sample %d: %.2f MP/s (%.1f MP in %.0f ms)\n",
-            (int)m_scoutValidSamples.size(), scoreMPs, pixels / 1000000.0, durationSec * 1000.0);
-        OutputDebugStringW(buf);
-        
-        // Check if we have enough valid samples
-        if ((int)m_scoutValidSamples.size() >= SCOUT_REQUIRED_SAMPLES) {
-            double sum = 0.0;
-            for (double s : m_scoutValidSamples) {
-                sum += s;
+    // ========================================================================
+    // [Memory-Aware] Clamp by available physical RAM
+    // 
+    // Progressive JPEG: libjpeg-turbo must buffer ALL DCT coefficients
+    // in memory before outputting any scanlines. Per decompressor instance:
+    //   srcPixels / 64 (MCUs) * 3 components * 64 coefficients * 2 bytes
+    //   = srcPixels * 6 bytes
+    //
+    // Example: 1200MP progressive JPEG = 7.2 GB per decompressor.
+    //          6 threads x 7.2 GB = 43.2 GB → OOM on 32GB system!
+    //
+    // Sequential (baseline) JPEG needs ~srcWidth * 48 bytes (much smaller).
+    // We use the progressive estimate as worst-case since we can't determine
+    // the JPEG type at this stage.
+    // ========================================================================
+    int memoryLimitThreads = bestThreads; // Default: no constraint
+    if (srcWidth > 0 && srcHeight > 0) {
+        MEMORYSTATUSEX memInfo = {};
+        memInfo.dwLength = sizeof(memInfo);
+        if (GlobalMemoryStatusEx(&memInfo)) {
+            DWORDLONG availableRAM = memInfo.ullAvailPhys;
+            
+            // Per-thread memory estimate: srcPixels * 6 bytes (progressive JPEG worst-case)
+            // Plus 50MB overhead for TJ internal state, output buffers, etc.
+            int64_t srcPixels = (int64_t)srcWidth * srcHeight;
+            
+            // [Fix] Titan Mode Memory Logic
+            // In Titan Mode, workers process 512x512 tiles, NOT the full image.
+            // Using full image dims results in massive over-estimation (e.g. 7GB per thread)
+            // causing unnecessary throttling to 2 threads.
+            if (m_isTitanMode) {
+                 srcPixels = 512 * 512; 
             }
-            avgScore = sum / m_scoutValidSamples.size();
-            shouldApply = true;
+            
+            size_t perThreadMemory = (size_t)(srcPixels * 6) + 50ULL * 1024 * 1024;
+            
+            // Reserve 2GB for OS + UI + base layer + page cache
+            DWORDLONG reservedRAM = 2ULL * 1024 * 1024 * 1024;
+            DWORDLONG usableRAM = (availableRAM > reservedRAM) ? (availableRAM - reservedRAM) : 0;
+            
+            memoryLimitThreads = (perThreadMemory > 0) ? (int)(usableRAM / perThreadMemory) : 2;
+            memoryLimitThreads = std::max(memoryLimitThreads, 2); // Floor: at least 2
+            
+            wchar_t memBuf[256];
+            swprintf_s(memBuf, L"[HeavyPool] Memory: %.1f GB avail, %.1f GB/thread (%dx%d) → max %d threads\n",
+                (double)availableRAM / (1024.0 * 1024 * 1024),
+                (double)perThreadMemory / (1024.0 * 1024 * 1024),
+                srcWidth, srcHeight, memoryLimitThreads);
+            OutputDebugStringW(memBuf);
         }
     }
     
-    if (shouldApply) {
-        ApplyScientificConcurrency(avgScore);
+    // Apply memory constraint
+    bestThreads = std::min(bestThreads, memoryLimitThreads);
+    
+    // Final clamp
+    bestThreads = std::clamp(bestThreads, 2, m_cap);
+    
+    // [Dynamic Regulation] Set the CAP, but start conservative
+    m_baselineCap = bestThreads;
+    
+    // Start at min(4, cap) to avoid immediate thrashing if IO is busy.
+    // Regulator will climb up if latency is good.
+    int initialLimit = std::min(4, bestThreads);
+    
+    wchar_t buf[256];
+    swprintf_s(buf, L"[HeavyPool] Baseline Result: %.2f MP/s → Cap %d threads. Starting at %d via Regulator.\n",
+        decodeMPS, bestThreads, initialLimit);
+    OutputDebugStringW(buf);
+    
+    m_benchPhase = BenchPhase::DECIDED;
+    SetConcurrencyLimit(initialLimit);
+    
+    // [Baseline Cache] Store result for future re-visits
+    {
+        uint64_t dimHash = MakeDimHash(srcWidth, srcHeight);
+        m_baselineCache[dimHash] = { decodeMPS, bestThreads }; // Cache the CAP
     }
 }
 
-// [Scientific 2.0] Apply dynamic concurrency based on measured throughput
-void HeavyLanePool::ApplyScientificConcurrency(double avgScoreMPs) {
-    // Decision Table (from user spec)
-    int targetConcurrency = 2; // Default: Slow hardware
+void HeavyLanePool::UpdateConcurrency(int decodeMs, std::chrono::steady_clock::time_point startTime) {
+    if (!m_isTitanMode) return;
     
-    if (avgScoreMPs > 15.0) {
-        targetConcurrency = 12; // Top-tier workstation
-    } else if (avgScoreMPs > 8.0) {
-        targetConcurrency = 8;  // High-performance
-    } else if (avgScoreMPs > 3.0) {
-        targetConcurrency = 6;  // Mainstream
+    std::lock_guard lock(m_regulatorMutex);
+    
+    // [Cooldown] Ignore samples that started before the last adjustment
+    if (startTime < m_regulator.lastAdjustmentTime) return;
+
+    // EMA (Exponential Moving Average)
+    // Alpha = 0.2 (Fast reaction)
+    if (m_regulator.sampleCount == 0) {
+        m_regulator.avgLatency = (double)decodeMs;
     } else {
-        targetConcurrency = 2;  // Low-end / constrained
+        m_regulator.avgLatency = m_regulator.avgLatency * 0.8 + (double)decodeMs * 0.2;
     }
+    m_regulator.sampleCount++;
     
-    // Hardware Clamp: Don't exceed physical cores - 1 (leave one for UI)
-    int physicalCores = (int)std::thread::hardware_concurrency() / 2;
-    int finalThreads = std::min(targetConcurrency, physicalCores - 1);
+    // Thresholds
+    // [Balanced] Relaxed thresholds for Titan Mode (Massive files naturally take longer to seek/decode)
+    const double kHighLatencyThreshold = 4500.0; // 4.5s -> Congestion (Reduced from 6.0s to prevent OOM)
+    const double kLowLatencyThreshold = 1200.0;  // 1.2s -> Free (Slightly relaxed)
+    const int kConsecutiveRequired = 3;          // Hysteresis
     
-    // Safety Floor: At least 2 threads
-    finalThreads = std::max(finalThreads, 2);
+    int currentLimit = m_concurrencyLimit.load();
     
-    // Don't exceed pool capacity
-    finalThreads = std::min(finalThreads, m_cap);
-    
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] Scout Result: %.2f MP/s. Target: %d. Physical: %d. Final: %d threads.\n",
-        avgScoreMPs, targetConcurrency, physicalCores, finalThreads);
-    OutputDebugStringW(buf);
-    
-    m_scoutPhase = ScoutPhase::DECIDED;
-    SetConcurrencyLimit(finalThreads);
+    if (m_regulator.avgLatency > kHighLatencyThreshold) {
+        m_regulator.consecutiveHighLatency++;
+        m_regulator.consecutiveLowLatency = 0;
+        
+        if (m_regulator.consecutiveHighLatency >= kConsecutiveRequired) {
+            // DOWN-THROTTLE
+            if (currentLimit > 2) {
+                int newLimit = currentLimit - 1;
+                SetConcurrencyLimit(newLimit);
+                m_regulator.lastAdjustmentTime = std::chrono::steady_clock::now();
+                m_regulator.consecutiveHighLatency = 0;
+                // Reset EMA to avoid double-triggering
+                double oldLatency = m_regulator.avgLatency;
+                m_regulator.avgLatency = 0;
+                m_regulator.sampleCount = 0;
+                
+                wchar_t buf[256];
+                swprintf_s(buf, L"[HeavyPool] Regulator: Latency High (%.0fms). Throttle DOWN to %d\n", 
+                    oldLatency, newLimit);
+                OutputDebugStringW(buf);
+            }
+        }
+    } else if (m_regulator.avgLatency < kLowLatencyThreshold) {
+        m_regulator.consecutiveLowLatency++;
+        m_regulator.consecutiveHighLatency = 0;
+        
+        if (m_regulator.consecutiveLowLatency >= kConsecutiveRequired) {
+            // UP-THROTTLE
+            // Only scales up to BaselineCap
+            if (currentLimit < m_baselineCap) {
+                int newLimit = currentLimit + 1;
+                SetConcurrencyLimit(newLimit);
+                m_regulator.lastAdjustmentTime = std::chrono::steady_clock::now();
+                m_regulator.consecutiveLowLatency = 0;
+                // Reset EMA to avoid double-triggering
+                double oldLatency = m_regulator.avgLatency;
+                m_regulator.avgLatency = 0;
+                m_regulator.sampleCount = 0;
+                
+                wchar_t buf[256];
+                swprintf_s(buf, L"[HeavyPool] Regulator: Latency Low (%.0fms). Throttle UP to %d\n", 
+                    oldLatency, newLimit);
+                OutputDebugStringW(buf);
+            }
+        }
+    } else {
+        // Stable region
+        m_regulator.consecutiveHighLatency = 0;
+        m_regulator.consecutiveLowLatency = 0;
+    }
 }
 
 void HeavyLanePool::Flush() {
@@ -208,6 +354,7 @@ void HeavyLanePool::Flush() {
     }
     
     m_pendingJobs.clear(); // O(1) with vector
+    m_inFlightTiles.clear(); // [Dedup] Reset in-flight tracking
     // Increment generation to invalidate any in-flight jobs that haven't started processing
     m_generationID.fetch_add(1); 
     // We don't need to notify workers; existing workers will wake up, check GenID, and skip.
@@ -225,31 +372,20 @@ HeavyLanePool::~HeavyLanePool() {
     m_poolCv.notify_all();
     if (m_shrinker.joinable()) m_shrinker.join();
     
-    // [Safety] Ensure all tile jobs are finished before we kill workers
-    // This prevents workers from accessing m_tileMemory after it's gone
-    WaitForTileJobs();
-
-    // Stop all workers
-    for (auto& w : m_workers) {
-        if (w.thread.joinable()) {
-            w.stopSource.request_stop();
-            w.thread.request_stop();
-        }
-    }
-    m_poolCv.notify_all();
+    // [Fast Exit] Detach all workers immediately
+    // We do NOT wait for tiles to finish.
+    DetachAll();
     
     // [Safety] Release IO Semaphore to wake up any workers blocked on acquire()
-    // We release enough tokens to cover all potential workers.
-    int releaseCount = m_cap;
-    if (releaseCount > 0) {
-        // Ensure we don't overflow (though max is huge for ptrdiff_t)
-        // Just release m_cap is strictly safe because we acquire 1 per worker max.
-        m_ioSemaphore.release(releaseCount);
-    }
+    m_ioSemaphore.release(m_cap);
+}
 
+void HeavyLanePool::DetachAll() {
     for (auto& w : m_workers) {
         if (w.thread.joinable()) {
-            w.thread.join();
+            w.stopSource.request_stop();      // Signal job stop
+            w.threadStopSource.request_stop(); // Signal thread loop stop
+            w.thread.detach();                // [Fast Exit] Let OS reclaim resources
         }
     }
 }
@@ -262,6 +398,9 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     // [Hardware] Update IO throttling based on target drive
     bool isSSD = SystemInfo::IsSolidStateDrive(path);
     UpdateIOLimit(isSSD ? m_cap : 2);
+    
+    // [Baseline Benchmark] Record IO type for concurrency adjustment
+    m_baselineIsSSD = isSSD;
 
     std::lock_guard lock(m_poolMutex);
     
@@ -304,6 +443,13 @@ void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, 
 
 void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf, TileCoord coord, RegionRequest region, int priority) {
     std::lock_guard lock(m_poolMutex);
+    
+    // [Dedup] Check if tile is already in-flight
+    uint64_t tileHash = MakeTileHash(coord.col, coord.row, coord.lod);
+    if (m_inFlightTiles.count(tileHash)) {
+        return; // Already queued or running
+    }
+
     JobInfo job;
     job.type = JobType::Tile;
     job.path = path;
@@ -316,6 +462,7 @@ void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::s
     job.genID = m_generationID.load(); // [Smart Pull]
     
     m_pendingJobs.push_back(job);
+    m_inFlightTiles.insert(tileHash);
     std::push_heap(m_pendingJobs.begin(), m_pendingJobs.end());
     
     TryExpand();
@@ -333,7 +480,14 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
     std::lock_guard lock(m_poolMutex);
     uint32_t currentGen = m_generationID.load();
     
+    int addedCount = 0;
     for (const auto& item : batch) {
+        // [Dedup] Skip if this tile is already queued or being decoded
+        uint64_t tileHash = MakeTileHash(item.coord.col, item.coord.row, item.coord.lod);
+        if (m_inFlightTiles.count(tileHash)) {
+            continue; // Already in-flight, skip duplicate
+        }
+        
         JobInfo job;
         job.type = JobType::Tile;
         job.path = path;
@@ -345,12 +499,17 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
         job.priority = item.priority;
         job.genID = currentGen;
         m_pendingJobs.push_back(job);
+        m_inFlightTiles.insert(tileHash);
+        addedCount++;
     }
+    
+    if (addedCount == 0) return;
+    
     // Bulk re-heapify (faster than individual push_heap)
     std::make_heap(m_pendingJobs.begin(), m_pendingJobs.end());
     
     TryExpand();
-    m_activeTileJobs.fetch_add((int)batch.size());
+    m_activeTileJobs.fetch_add(addedCount);
     m_poolCv.notify_all();
 }
 
@@ -399,7 +558,11 @@ void HeavyLanePool::CancelOthers(ImageID currentId) {
     int removedTiles = 0;
     while (it != m_pendingJobs.end()) {
         if (it->imageId != currentId) {
-            if (it->type == JobType::Tile) removedTiles++;
+            if (it->type == JobType::Tile) {
+                removedTiles++;
+                // [Dedup] Remove from in-flight set
+                m_inFlightTiles.erase(MakeTileHash(it->tileCoord.col, it->tileCoord.row, it->tileCoord.lod));
+            }
             it = m_pendingJobs.erase(it);
             m_cancelCount++;
         } else {
@@ -427,6 +590,7 @@ void HeavyLanePool::CancelAll() {
     if (discardedTiles > 0) m_activeTileJobs.fetch_sub(discardedTiles);
     
     m_pendingJobs.clear();
+    m_inFlightTiles.clear(); // [Dedup] Reset in-flight tracking
     for (auto& w : m_workers) {
         w.stopSource.request_stop();
     }
@@ -474,16 +638,11 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             // [Smart Pull] Check 1: Generation ID
             // If job is from an old generation (before Flush), assert it's dead.
             if (job.genID != m_generationID.load()) {
-                // [Fix Leak] If we popped it, but reject it, we must decrement the global counter if Flush missed it.
-                // Flush matches GenID? No, Flush increments GenID.
-                // If we hold an old GenID job, it means Flush already ran or is running.
-                // Flush only counts what's IN the vector. We removed this from vector.
-                // So WE are responsible for decrementing the count for this dropped job.
                 if (job.type == JobType::Tile) {
                     m_activeTileJobs.fetch_sub(1);
+                    // [Dedup] Already under m_poolMutex
+                    m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod));
                 }
-                
-                // Drop and loop again
                 continue;
             }
 
@@ -511,6 +670,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
                      if (layer->GetState(job.tileCoord.col, job.tileCoord.row) == QuickView::TileStateCode::Empty) {
                          m_busyCount.fetch_sub(1);
                          m_activeTileJobs.fetch_sub(1);
+                         { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
                          self.state = WorkerState::STANDBY;
                          continue;
                      }
@@ -524,6 +684,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
                      
                      m_busyCount.fetch_sub(1);
                      m_activeTileJobs.fetch_sub(1); 
+                     { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
                      self.state = WorkerState::STANDBY;
                      continue;
                  }
@@ -563,6 +724,7 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
             m_ioSemaphore.release();
             m_busyCount.fetch_sub(1);
             m_activeTileJobs.fetch_sub(1); 
+            { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
             self.state = WorkerState::STANDBY;
             continue;
         }
@@ -615,20 +777,34 @@ void HeavyLanePool::TryExpand() {
              if (i < targetFn) {
                  // Spawn/Preheat if needed
                  if (m_workers[i].state == WorkerState::SLEEPING) {
-                    m_workers[i].thread = std::jthread([this, i](std::stop_token st) {
+                     m_workers[i].threadStopSource = std::stop_source();
+                     m_workers[i].thread = std::thread([this, i](std::stop_token st) {
                         WorkerLoop(i, st);
-                    });
-                    m_workers[i].state = WorkerState::STANDBY;
-                    m_workers[i].lastActiveTime = std::chrono::steady_clock::now();
-                    m_activeCount.fetch_add(1);
+                     }, m_workers[i].threadStopSource.get_token());
+                     m_workers[i].state = WorkerState::STANDBY;
+                     m_workers[i].lastActiveTime = std::chrono::steady_clock::now();
+                     m_activeCount.fetch_add(1);
                  }
              } else {
                  // [Titan Strict] Kill Excess Workers (i >= Target)
                  // If we switched from 14 -> 2, we must kill 12.
                  if (m_workers[i].state != WorkerState::SLEEPING) {
-                     // [Fix] Use thread.request_stop() to terminate the jthread loop.
-                     // stopSource is for Job Cancellation, not Thread Life.
-                     m_workers[i].thread.request_stop();
+                     // [Fast Exit] Signal thread stop
+                     m_workers[i].threadStopSource.request_stop();
+                     m_poolCv.notify_all();
+                     // We detach or join? 
+                     // HeavyLanePool owns them, so we must join if we want to reuse the slot?
+                     // Actually, if we just request_stop, it will exit loop and become SLEEPING.
+                     // But we need to join it to clean up the std::thread object before reusing?
+                     // Yes. But we are in TryExpand (called from Submit). Joining here might block UI.
+                     // Better strategy: Let Shrinker handle cleanup? 
+                     // Or just Detach here if we want instant kill.
+                     // For Titan mode switching, Detach is safest to avoid lag.
+                     if (m_workers[i].thread.joinable()) {
+                         m_workers[i].thread.detach(); 
+                     }
+                     m_workers[i].state = WorkerState::SLEEPING; // Reset slot
+                     m_activeCount.fetch_sub(1);
                  }
              }
         }
@@ -661,9 +837,12 @@ void HeavyLanePool::TryExpand() {
         
         if (m_workers[i].state == WorkerState::SLEEPING) {
             // Found a slot! Spawn.
-            m_workers[i].thread = std::jthread([this, i](std::stop_token st) {
+            // [Fast Exit] Use std::thread with explicit stop_source
+            m_workers[i].threadStopSource = std::stop_source();
+            m_workers[i].thread = std::thread([this, i](std::stop_token st) {
                 WorkerLoop(i, st);
-            });
+            }, m_workers[i].threadStopSource.get_token());
+            
             m_workers[i].state = WorkerState::STANDBY;
             m_workers[i].lastActiveTime = std::chrono::steady_clock::now();
             
@@ -701,15 +880,20 @@ void HeavyLanePool::ShrinkerLoop(std::stop_token st) {
                 }
                 
                 if (now - m_workers[i].lastActiveTime > timeout) {
-                    // Signal stop via jthread stop_token indirectly? 
-                    // No, WorkerLoop breaks if ShouldBecomeHotSpare returns false.
-                    // But if it's already in STANDBY, it's blocked on CV.
-                    // We must WAKE it up and tell it to quit.
+                    // Signal stop via threadStopSource
+                    m_workers[i].threadStopSource.request_stop(); 
                     
-                    // Signal stop for this worker's current wait
-                    m_workers[i].thread.request_stop(); 
                     // Notify to wake up the CV wait in WorkerLoop
                     m_poolCv.notify_all();
+                    
+                    // We detach immediately to reclaim slot? No, let it exit gracefully.
+                    // But we need to join it eventually.
+                    // Simplified: just detach.
+                    if (m_workers[i].thread.joinable()) {
+                        m_workers[i].thread.detach();
+                    }
+                    m_workers[i].state = WorkerState::SLEEPING;
+                    m_activeCount.fetch_sub(1);
                 }
             }
         }
@@ -740,12 +924,19 @@ bool HeavyLanePool::ShouldBecomeHotSpare(int workerId) {
 }
 
 void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_token st, std::wstring* outLoaderName) {
-    // [Safety] RAII Decrement for Tile Jobs
+    // [Safety] RAII Decrement for Tile Jobs + Dedup Cleanup
     struct TileJobGuard {
-        std::atomic<int>* counter;
+        HeavyLanePool* pool;
+        QuickView::TileCoord coord;
         bool isTile;
-        ~TileJobGuard() { if (isTile) counter->fetch_sub(1); }
-    } guard{ &m_activeTileJobs, job.type == JobType::Tile };
+        ~TileJobGuard() {
+            if (isTile) {
+                pool->m_activeTileJobs.fetch_sub(1);
+                std::lock_guard dlock(pool->m_poolMutex);
+                pool->m_inFlightTiles.erase(MakeTileHash(coord.col, coord.row, coord.lod));
+            }
+        }
+    } guard{ this, job.tileCoord, job.type == JobType::Tile };
 
     if (job.path.empty()) return;
     
@@ -795,22 +986,41 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               } else {
                    hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta);
               }
+              // [Baseline Benchmark] Measure performance from Standard (base layer) decode
+              // This runs ONCE per Titan image, immediately after the base decode completes.
+              // The measured throughput (MP/s) determines optimal tile thread count.
+              if (SUCCEEDED(hr) && m_benchPhase == BenchPhase::PENDING) {
+                  auto benchEnd = std::chrono::high_resolution_clock::now();
+                  int benchMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(benchEnd - decodeStart).count();
+                  if (rawFrame.IsValid() && benchMs > 0) {
+                      double outPixels = (double)rawFrame.width * rawFrame.height;
+                      int srcWidth = (meta.Width > 0) ? (int)meta.Width : rawFrame.width * 8;
+                      int srcHeight = (meta.Height > 0) ? (int)meta.Height : rawFrame.height * 8;
+                      RecordBaselineSample(outPixels, (double)benchMs, srcWidth, srcHeight);
+                  }
+              }
          }
-         else if (job.type == JobType::Tile) {
-              // --- Tile Decode ---
-              
-              // --- Tile Decode ---
-              {
-                  // Direct Decode Logic (No Background Preload)
+          else if (job.type == JobType::Tile) {
+               // --- Tile Decode ---
+               // [Diagnostic] Trace missing tile (4,0)
+               if (job.tileCoord.col == 4 && job.tileCoord.row == 0 && job.tileCoord.lod == 3) {
+                   float scale = 1.0f / (float)(1 << job.tileCoord.lod);
+                   wchar_t diag[256];
+                   swprintf_s(diag, L"[HeavyPool] DIAGNOSTIC: Decoding Tile (4,0) LOD=%d. Region: x=%d y=%d w=%d h=%d Scale=%.4f\n", 
+                       job.tileCoord.lod, job.region.srcRect.x, job.region.srcRect.y, job.region.srcRect.w, job.region.srcRect.h, scale);
+                   OutputDebugStringW(diag);
+               }
+               
+               {
 
-
-                  // Direct Decode Logic (No Background Preload)
-
-                  // [Fix] Calculate Scale from LOD (Precise)
-                  // Edge tiles have clipped srcRect, so dst/src ratio is WRONG (causes upscaling).
-                  // LOD implies power-of-2 scale: 0=1.0, 1=0.5, 2=0.25...
-                  int lod = job.tileCoord.lod;
-                  float scale = 1.0f / (float)(1 << lod);
+                   // [Fix] Calculate Scale from LOD (Precise)
+                   // Edge tiles have clipped srcRect, so dst/src ratio is WRONG (causes upscaling).
+                   // LOD implies power-of-2 scale: 0=1.0, 1=0.5, 2=0.25...
+                   int lod = job.tileCoord.lod;
+                   float scale = 1.0f / (float)(1 << lod);
+                   
+                   // [Timing Fix] Start timing ONLY for the actual I/O and Decode
+                   decodeStart = std::chrono::high_resolution_clock::now();
 
                   // Diagnostic: Start Decode / Metrics
                   // auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(start - job.submitTime).count(); // Moved below
@@ -848,11 +1058,16 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                       hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName,
                          cancelPred, 512, 512);
                   }
+             }
               }
-         }
-
+    
           auto decodeEnd = std::chrono::high_resolution_clock::now();
           int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+          
+          // [Dynamic Regulation] Feedback loop
+          if (job.type == JobType::Tile) {
+              UpdateConcurrency((int)decodeMs, decodeStart);
+          }
           auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(decodeStart - job.submitTime).count();
           int activeWorkers = m_busyCount.load();
           
@@ -862,36 +1077,25 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), decodeMs, waitMs, activeWorkers, loaderName.c_str());
           OutputDebugStringW(resultLog);
           
-          // [Scientific 2.0] Scout Measurement for Tile Decodes
-          // [LOD Filter] Only use LOW LOD tiles (0-2) for scoring.
-          // High LOD tiles (4-6) have inflated source regions (1073 MP) but decode fast,
-          // giving false high MP/s scores. LOD 0-2 represents actual decode stress.
-          if (job.type == JobType::Tile && SUCCEEDED(hr) && m_scoutPhase == ScoutPhase::SCOUTING) {
-              int tileLOD = job.tileCoord.lod;
-              if (tileLOD <= 2) { // Only LOD 0, 1, 2 are meaningful for performance measurement
-                  // [Virtual LOD 0] Use SOURCE pixels, not output pixels!
-                  double sourcePixels = (double)job.region.srcRect.w * job.region.srcRect.h;
-                  double durationSec = decodeMs / 1000.0;
-                  if (durationSec > 0.001) { // Avoid divide-by-zero
-                      int tileIndex = m_scoutTotalAttempts.fetch_add(1);
-                      RecordScoutSample(sourcePixels, durationSec, tileIndex);
-                  }
-              } else {
-                  // Log skipped high-LOD tile
-                  wchar_t buf[128];
-                  swprintf_s(buf, L"[HeavyPool] Scout: Skipping LOD %d tile (only LOD 0-2 used for scoring)\n", tileLOD);
-                  OutputDebugStringW(buf);
-              }
-          }
+
         
-        if (cancelPred() || hr == E_ABORT) {
+        // [Fix] Post-decode cancellation logic:
+        // If decode SUCCEEDED with valid data, we MUST deliver the result for Tile jobs.
+        // Discarding a completed tile causes it to stay in "Loading" state forever (the missing tile bug).
+        // Only abort if decode itself was cancelled (E_ABORT) or truly failed.
+        if (hr == E_ABORT) {
             m_cancelCount++;
+            // Reset tile state so it can be retried
+            if (job.type == JobType::Tile) {
+                if (auto tm = m_parent->GetTileManager()) {
+                    auto key = QuickView::TileKey::From(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod);
+                    tm->OnTileCancelled(key);
+                }
+            }
             return;
         }
         
         if (SUCCEEDED(hr) && rawFrame.IsValid()) {
-            if (cancelPred()) return;
-            
             if (outLoaderName) *outLoaderName = loaderName; 
             meta.FormatDetails = rawFrame.formatDetails;
             
@@ -906,11 +1110,17 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                 
                 // [Titan] Zero-Copy Move (Frame owns Slab memory via custom deleter)
                 // We do NOT copy to heap.
-                evt.rawFrame = std::make_shared<QuickView::RawImageFrame>(std::move(rawFrame));
-                
+                evt.rawFrame = std::shared_ptr<QuickView::RawImageFrame>(
+                    new QuickView::RawImageFrame(std::move(rawFrame))
+                ); 
             } else {
-                evt.type = EventType::FullReady; 
-                evt.isScaled = !job.isFullDecode;
+                // Standard job: honor late cancellation (base layer can be re-requested)
+                if (cancelPred()) {
+                    m_cancelCount++;
+                    return;
+                }
+                
+                evt.type = EventType::FullReady;
 
                 // [Standard] Deep Copy to Heap (since Arena is reused/reset)
                 auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
@@ -928,11 +1138,33 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                 safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
                 
                 evt.rawFrame = safeFrame;
+                
+                // [Diagnostic] Trace Standard Job Output
+                wchar_t buf[256];
+                swprintf_s(buf, L"[HeavyPool] Standard Job Done: W=%d H=%d Stride=%d Buffer=%zu Pixels=%p\n", 
+                    safeFrame->width, safeFrame->height, safeFrame->stride, bufferSize, safeFrame->pixels);
+                OutputDebugStringW(buf);
             }
 
             evt.metadata = std::move(meta);
             
             QueueResult(std::move(evt));
+        }
+        else {
+            // [Fix] Handle Failure - Reset Tile State!
+            // If we don't do this, TileManager thinks it's still "Loading" forever.
+            if (job.type == JobType::Tile) {
+                if (auto tm = m_parent->GetTileManager()) {
+                    auto key = QuickView::TileKey::From(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod);
+                    tm->OnTileCancelled(key); // Reset to Empty -> Retry next frame
+                    
+                    // Log failure
+                    wchar_t failLog[128];
+                    swprintf_s(failLog, L"[HeavyPool] Failed/Invalid Tile: (%d,%d) LOD=%d. HR=0x%X\n", 
+                        job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod, hr);
+                    OutputDebugStringW(failLog);
+                }
+            }
         }
         
         // Debug Stats Update
@@ -1010,6 +1242,8 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     
     return stats;
 }
+
+
 
 void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const {
     if (!outBuffer || !outCount) return;

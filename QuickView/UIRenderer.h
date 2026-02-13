@@ -219,6 +219,19 @@ private:
     UINT m_width = 0;
     UINT m_height = 0;
     
+    // [OSD Status Icon]
+    float m_breathingPhase = 0.0f;
+    bool m_wasBusy = false;
+    DWORD m_finishTime = 0;
+    void DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd);
+    bool IsDecodingIconActive() const {
+        // Active if busy OR if showing the "Done" green state (1s duration)
+        bool busy = (m_telemetry.heavyWorkerCount > 0 || (m_telemetry.tileCount > m_telemetry.tilesReady));
+        if (busy) return true;
+        if (GetTickCount() - m_finishTime < 1000) return true;
+        return false;
+    }
+    
     // 缓存的 D2D 资源
     ComPtr<ID2D1SolidColorBrush> m_whiteBrush;
     ComPtr<ID2D1SolidColorBrush> m_blackBrush;

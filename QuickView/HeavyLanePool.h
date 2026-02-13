@@ -8,6 +8,8 @@
 #include <vector>
 #include <deque>
 #include <mutex>
+#include <unordered_set>
+#include <unordered_map>
 #include <thread>
 #include <atomic>
 #include <optional>
@@ -51,7 +53,7 @@ public:
     // [Titan Mode] Persistence Control
     // Enabled: Threads act as persistent pull-workers (no shrinking)
     // Disabled: Threads act as elastic hot-spares (auto-shrink)
-    void SetTitanMode(bool enabled);
+    void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0);
     void Flush(); // Clears queue and increments GenID
     
     // [Titan] Concurrency Control
@@ -119,11 +121,12 @@ public:
 private:
     // === Worker Structure ===
     struct Worker {
-        std::jthread thread;
+        std::thread thread; // [Fast Exit] Use std::thread for detach capability
         WorkerState state = WorkerState::SLEEPING;  // Protected by m_poolMutex
         std::wstring currentPath;
         ImageID currentId = 0;  // [ImageID] Path hash of current task
-        std::stop_source stopSource;
+        std::stop_source stopSource; // Job cancellation
+        std::stop_source threadStopSource; // [Fast Exit] Thread lifecycle control
         std::chrono::steady_clock::time_point lastActiveTime;
         int lastDecodeMs = 0;    // [Dual Timing] Pure decode time
         int lastTotalMs = 0;     // [Dual Timing] Total processing time
@@ -133,7 +136,6 @@ private:
         
         // [Unified Architecture] Shared Arena from TripleArenaPool (ImageEngine owns it)
         // Workers no longer own arenas. They use GetBackHeavyArena() from parent pool.
-        // std::unique_ptr<QuantumArena> arena; // REMOVED
         
         Worker() = default;
         Worker(Worker&&) = default;
@@ -159,24 +161,45 @@ private:
 
     std::atomic<bool> m_useThreadLocalHandle = true; // [Titan]
     std::atomic<int> m_concurrencyLimit = 0; // 0 = Unlimited (or bounded by m_cap)
-
-    // [Scientific 2.0] Scout Phase for Dynamic Concurrency
-    enum class ScoutPhase {
-        IDLE,       // Not in Titan mode or already decided
-        SCOUTING,   // First N tiles are being measured
-        DECIDED     // Concurrency has been set
+    
+    // [Dynamic Regulation] IO-Aware Concurrency Control
+    // PID-like feedback loop to adjust concurrency based on decode latency.
+    struct RegulatorState {
+        double avgLatency = 0.0;     // Exponential Moving Average of decode time
+        int sampleCount = 0;
+        std::chrono::steady_clock::time_point lastAdjustmentTime;
+        int consecutiveHighLatency = 0;
+        int consecutiveLowLatency = 0;
     };
-    std::atomic<ScoutPhase> m_scoutPhase = ScoutPhase::IDLE;
-    static constexpr int SCOUT_REQUIRED_SAMPLES = 2; // Need 2 VALID samples to decide
-    static constexpr double SCOUT_COLD_START_THRESHOLD = 2.0; // Seconds - ignore first tile if > 2s
+    RegulatorState m_regulator;
+    std::mutex m_regulatorMutex;
+    int m_baselineCap = 0; // [Baseline Cap] Upper bound set by baseline benchmark
     
-    std::mutex m_scoutMutex; // Protect scout samples vector
-    std::vector<double> m_scoutValidSamples; // Valid MP/s scores (cold-start filtered)
-    std::atomic<int> m_scoutTotalAttempts = 0; // Total tiles attempted (for cold-start detection)
+    void UpdateConcurrency(int decodeMs, std::chrono::steady_clock::time_point startTime);
+    void DetachAll(); // [Fast Exit] Detach all workers
     
-    void ResetScoutState();
-    void RecordScoutSample(double pixels, double durationSec, int tileIndex);
-    void ApplyScientificConcurrency(double avgScoreMPs);
+    // [Baseline Benchmark] Measure hardware performance during base layer decode
+    // Then apply log2-scaled continuous function to determine optimal tile thread count.
+    enum class BenchPhase {
+        IDLE,       // Not in Titan mode or already decided
+        PENDING,    // Waiting for base layer decode to complete
+        DECIDED     // Concurrency has been set based on baseline measurement
+    };
+    std::atomic<BenchPhase> m_benchPhase = BenchPhase::IDLE;
+    std::atomic<double> m_baselineMPS = 0.0;    // Measured single-thread decode throughput (MP/s)
+    std::atomic<bool> m_baselineIsSSD = true;    // IO type for concurrency adjustment
+
+    // [Baseline Cache] Remember per-dimension results to avoid re-measurement
+    struct BaselineCacheEntry {
+        double mps;       // Measured throughput
+        int threads;      // Decided thread count
+    };
+    std::unordered_map<uint64_t, BaselineCacheEntry> m_baselineCache;
+    static uint64_t MakeDimHash(int w, int h) { return ((uint64_t)w << 32) | (uint64_t)h; }
+    
+    void ResetBenchState();
+    void RecordBaselineSample(double outPixels, double decodeMs, int srcWidth, int srcHeight);
+    void ApplyBaselineConcurrency(double decodeMPS, int srcWidth, int srcHeight);
 
     std::atomic<int> m_activeCount = 0;  // STANDBY + BUSY
     std::atomic<int> m_busyCount = 0;    // Only BUSY
@@ -223,6 +246,13 @@ private:
     };
     // [Titan] Using Vector + Heap for O(1) Clear and Priority
     std::vector<JobInfo> m_pendingJobs;
+
+    // [Dedup] Track tiles currently in-flight (queued + decoding)
+    // Key = (col << 20 | row << 8 | lod) — uniquely identifies a tile request
+    std::unordered_set<uint64_t> m_inFlightTiles;
+    static uint64_t MakeTileHash(int col, int row, int lod) {
+        return ((uint64_t)col << 20) | ((uint64_t)row << 8) | (uint64_t)(lod & 0xFF);
+    }
     
     // Results queue
     mutable std::mutex m_resultMutex;

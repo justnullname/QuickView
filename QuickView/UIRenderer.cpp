@@ -530,6 +530,9 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // OSD
     DrawOSD(dc, hwnd);
     
+    // [OSD Status] Breathing Icon
+    DrawDecodingStatus(dc, hwnd);
+    
     // Debug HUD
     if (m_showDebugHUD) DrawDebugHUD(dc);
     
@@ -620,6 +623,75 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     if (textLayout && textBrush) {
         D2D1_POINT_2F textOrigin = D2D1::Point2F(x + paddingH, y + paddingV);
         dc->DrawTextLayout(textOrigin, textLayout.Get(), textBrush.Get());
+    }
+
+}
+
+void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
+    if (!m_iconFormat) return;
+
+    bool busy = (m_telemetry.heavyWorkerCount > 0 || (m_telemetry.tileCount > m_telemetry.tilesReady));
+    bool showGreen = !busy && (GetTickCount() - m_finishTime < 2000); // 2 seconds green
+
+    if (!busy && !showGreen) {
+        if (m_wasBusy) {
+            m_finishTime = GetTickCount();
+            m_wasBusy = false;
+            InvalidateRect(hwnd, nullptr, FALSE); 
+        }
+        return;
+    }
+
+    if (busy) {
+        m_wasBusy = true;
+        // Pulse animation
+        m_breathingPhase += 0.15f;
+    }
+    
+    float alpha = 1.0f;
+    wchar_t icon = L'\uE895'; // Sync
+    D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White); // Default white
+
+    if (busy) {
+        alpha = 0.4f + 0.6f * fabs(sinf(m_breathingPhase));
+        // Yellow if heavy load? White is fine.
+    } else {
+        // Green Check or Thumb Up
+        icon = L'\uE73E'; // CheckMark
+        color = D2D1::ColorF(D2D1::ColorF::LimeGreen);
+        
+        // Fade out
+        float elapsed = (float)(GetTickCount() - m_finishTime);
+        if (elapsed > 1500.0f) {
+            alpha = 1.0f - (elapsed - 1500.0f) / 500.0f;
+        }
+    }
+    
+    if (alpha <= 0.0f) return;
+
+    // Position: Top Right, below controls
+    // Window Controls end at m_width.
+    // Let's put it at m_width - 50, y = 80.
+    float iconSize = 24.0f;
+    float x = (float)m_width - iconSize - 20.0f;
+    float y = 50.0f; // Below title bar
+    
+    D2D1_RECT_F rect = D2D1::RectF(x, y, x + iconSize, y + iconSize);
+    
+    ComPtr<ID2D1SolidColorBrush> brush;
+    color.a = alpha;
+    dc->CreateSolidColorBrush(color, &brush);
+    
+    if (m_blackBrush) {
+        // Shadow
+        D2D1_RECT_F shadow = D2D1::RectF(rect.left+1, rect.top+1, rect.right+1, rect.bottom+1);
+        dc->DrawText(&icon, 1, m_iconFormat.Get(), shadow, m_blackBrush.Get());
+    }
+    dc->DrawText(&icon, 1, m_iconFormat.Get(), rect, brush.Get());
+    
+    // Force repaint next frame if animating
+    if (busy || (showGreen && alpha > 0.0f)) {
+         InvalidateRect(hwnd, nullptr, FALSE);
     }
 }
 

@@ -77,7 +77,7 @@ HRESULT CompositionEngine::DrawTiles(ID2D1DeviceContext* pContext,
             for (int i = 0; i < 8; ++i) {
                 if (tileManager->IsReady(currentKey)) {
                     tile = tileManager->GetTile(currentKey);
-                    if (tile && tile->frame) { // Check frame existence
+                    if (tile && (tile->frame || tile->bitmap)) { // CPU or GPU resource available
                         found = true;
                         break;
                     }
@@ -122,6 +122,10 @@ HRESULT CompositionEngine::DrawTiles(ID2D1DeviceContext* pContext,
                          &props,
                          &tile->bitmap
                      );
+                     // [Memory] GPU bitmap created, release CPU pixels
+                     if (tile->bitmap) {
+                         tile->frame.reset();
+                     }
                 }
 
                 if (tile->bitmap) {
@@ -222,6 +226,14 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
              // Already culled by ForEachReadyTile roughly, but exact pixel-perfect intersection:
              if (pixelX >= visibleRect->right || pixelX + virtualSize <= visibleRect->left ||
                  pixelY >= visibleRect->bottom || pixelY + virtualSize <= visibleRect->top) {
+                 
+                 // [Diagnostic] Trace (4,0) culling
+                 if (key.x() == 4 && key.y() == 0 && key.level() == 3) {
+                     wchar_t buf[256];
+                     swprintf_s(buf, L"[CompEngine] CULLED (4,0) LOD3: Tile=[%d,%d] Viewport=[%.0f,%.0f,%.0f,%.0f]\n", 
+                         pixelX, pixelY, visibleRect->left, visibleRect->top, visibleRect->right, visibleRect->bottom);
+                     OutputDebugStringW(buf);
+                 }
                  return;
              }
         }
@@ -235,7 +247,26 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         POINT offset;
         HRESULT hrDraw = pLayer->virtualSurface->BeginDraw(&updateRect, IID_PPV_ARGS(&dxgiSurf), &offset);
         if (hrDraw == DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED) return; 
-        if (FAILED(hrDraw)) return; 
+        if (FAILED(hrDraw)) {
+            // [Diagnostic] Trace (4,0) failure
+            if (key.x() == 4 && key.y() == 0 && key.level() == 3) {
+                wchar_t buf[256];
+                swprintf_s(buf, L"[CompEngine] UPDATE FAIL (4,0) LOD3: BeginDraw=0x%X Rect=[%d,%d,%d,%d]\n", 
+                    hrDraw, updateRect.left, updateRect.top, updateRect.right, updateRect.bottom);
+                OutputDebugStringW(buf);
+            }
+            return; 
+        }
+
+        // [Diagnostic] Trace (4,0) success start
+        if (key.x() == 4 && key.y() == 0 && key.level() == 3) {
+            wchar_t buf[256];
+            swprintf_s(buf, L"[CompEngine] DRAW START (4,0) LOD3: Rect=[%d,%d,%d,%d] Visible=[%.0f,%.0f,%.0f,%.0f]\n", 
+                updateRect.left, updateRect.top, updateRect.right, updateRect.bottom,
+                visibleRect ? visibleRect->left : -1, visibleRect ? visibleRect->top : -1,
+                visibleRect ? visibleRect->right : -1, visibleRect ? visibleRect->bottom : -1);
+            OutputDebugStringW(buf);
+        } 
         
         // Setup D2D Target
         D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -274,6 +305,8 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         
         if (surfDesc.Width >= (UINT)reqW && surfDesc.Height >= (UINT)reqH) {
              tile->uploaded = true;
+             // [Memory] VirtualSurface holds content, release CPU pixels
+             tile->frame.reset();
         }
 
         if (showDebugGrid) {

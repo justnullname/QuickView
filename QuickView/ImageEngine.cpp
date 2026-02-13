@@ -154,8 +154,6 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
 
     bool enableTitan = (sizeTrigger || pixelTrigger) && isSupportedFormat;
     
-    // [Titan Guard] Threshold for skipping base layer (very large images)
-    const size_t THRESHOLD_SKIP_BASE = 200 * 1000 * 1000;  // 200MP
 
     if (enableTitan) {
          // Keep MMF alive for Tile Manager usage
@@ -171,7 +169,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          // [Scientific 2.0] Enable Titan Mode - pool handles dynamic concurrency via Scout phase.
          // SetTitanMode(true) resets scout state, sets initial concurrency to 2, 
          // and after measuring 2 tiles, adjusts to optimal thread count based on MP/s.
-         m_heavyPool->SetTitanMode(true);
+         m_heavyPool->SetTitanMode(true, info.width, info.height);
          m_heavyPool->SetUseThreadLocalHandle(true);
          m_enablePadding = true;
 
@@ -258,72 +256,9 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         useHeavy = true;
         useFastLane = false; 
         
-        // [Titan Guard] Skip Base Decode for Huge Images (>200MP)
-        if (pixelCount > THRESHOLD_SKIP_BASE) {
-             OutputDebugStringW(L"[Dispatch] Titan Huge (>200MP): Skipping Base Decode. Triggering Tiles Directly.\n");
-             
-             // [Titan] Active Tile Trigger
-             // Since we skip the base layer, we must manually calculate the "Fit to Screen" viewport 
-             // and trigger the first batch of tiles immediately.
-             float initialScale = 0.1f;
-             if (m_hwnd) {
-                 RECT rc;
-                 if (GetClientRect(m_hwnd, &rc)) {
-                     float sw = (float)(rc.right - rc.left);
-                     float sh = (float)(rc.bottom - rc.top);
-                     if (sw > 0 && sh > 0) {
-                         float sx = sw / info.width;
-                         float sy = sh / info.height;
-                         initialScale = (sx < sy) ? sx : sy;
-                     }
-                 }
-             } else {
-                 // Fallback if no window (e.g. startup)
-                 // Assume 1080p fit
-                 initialScale = 1080.0f / info.height;
-             }
-             
-             // Trigger Tile Load (Full Image Viewport)
-             // basePreviewRatio = 0.0f forces tile generation (we have no base layer)
-             QuickView::RegionRect visibleRect = { 0.0f, 0.0f, (float)info.width, (float)info.height };
-             UpdateTileViewport(visibleRect, initialScale, info.width, info.height, 0.0f);
-             
-             OutputDebugStringW(L"[Dispatch] Titan Active Trigger: Launched Initial Tiles.\n");
-             
-             // Emit Fake FullReady to initialize UI Viewport
-             EngineEvent evt;
-             evt.type = EventType::FullReady;
-             evt.filePath = path;
-             evt.imageId = imageId;
-             // Populate Metadata
-             evt.metadata.Width = info.width;
-             evt.metadata.Height = info.height;
-             evt.metadata.Format = info.format;
-             evt.metadata.FileSize = info.fileSize;
-             evt.metadata.ExifOrientation = 1; // Default
-             
-             // Create Dummy Frame (Lightweight, 1x1 Transparent)
-             auto dummy = std::make_shared<QuickView::RawImageFrame>();
-             dummy->width = 1;
-             dummy->height = 1;
-             dummy->stride = 4;
-             dummy->format = QuickView::PixelFormat::BGRA8888;
-             
-             // Allocate 4 bytes for 1 pixel [B, G, R, A]
-             // We use a custom deleter to free it.
-             dummy->pixels = new uint8_t[4];
-             memset(dummy->pixels, 0, 4); // Transparent black
-             dummy->memoryDeleter = [](uint8_t* p) { delete[] p; };
-
-             // Valid but empty
-             evt.rawFrame = dummy;
-             
-             // Mark as complete immediately
-             QueueEvent(std::move(evt));
-             
-             // Do not submit heavy job
-             return; 
-        }
+        // [Titan] >200MP images use the same base decode path as other Titan images.
+        // IDCT 1/8 scaling produces ~3-8MP preview (sufficient for 4K screens).
+        // Tiles are triggered by main.cpp OnPaint only when zoom > basePreviewRatio.
 
         OutputDebugStringW(L"[Dispatch] Titan Active: Routing Base Layer to Heavy Lane\n");
     }
