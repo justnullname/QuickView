@@ -145,7 +145,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // [Titan] Trigger Conditions
     // [Titan] Trigger Conditions
     // 1. Format support: JPEG, WebP, PNG
-    bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || fmtUpper == L"WEBP" || fmtUpper == L"PNG");
+    bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || fmtUpper == L"WEBP" || fmtUpper == L"PNG" || fmtUpper == L"JXL");
 
     // 2. Size triggers: Any side > 8192 OR Total pixels > 50MP
     bool sizeTrigger = (info.width > 8192 || info.height > 8192);
@@ -169,7 +169,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          // [Scientific 2.0] Enable Titan Mode - pool handles dynamic concurrency via Scout phase.
          // SetTitanMode(true) resets scout state, sets initial concurrency to 2, 
          // and after measuring 2 tiles, adjusts to optimal thread count based on MP/s.
-         m_heavyPool->SetTitanMode(true, info.width, info.height);
+         m_heavyPool->SetTitanMode(true, info.width, info.height, fmtUpper);
          m_heavyPool->SetUseThreadLocalHandle(true);
          m_enablePadding = true;
 

@@ -403,13 +403,21 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     hr = decoder->GetFrame(0, &frame);
     if (FAILED(hr)) return hr;
 
+    UINT origW, origH;
+    frame->GetSize(&origW, &origH);
+
+    // [Metadata] Populate Original Dimensions BEFORE Scaling
+    if (pMetadata) {
+        pMetadata->Width = (uint32_t)origW;
+        pMetadata->Height = (uint32_t)origH;
+        pMetadata->FileSize = (uint64_t)size;
+        pMetadata->Format = fmt + L" (MMF)";
+    }
+
     // Use WIC Scaler if target size is specified
     ComPtr<IWICBitmapSource> sourceWithScaler;
     
     if (targetWidth > 0 || targetHeight > 0) {
-        UINT origW, origH;
-        frame->GetSize(&origW, &origH);
-        
         // Calculate factor
         double scale = std::min((double)targetWidth / origW, (double)targetHeight / origH);
         if (scale < 1.0) {
@@ -1093,6 +1101,149 @@ HRESULT CImageLoader::LoadTileFromMemory(
     }
 }
 
+// ============================================================================
+// [P15] Format-Agnostic Full Decode from Memory
+// ============================================================================
+// Decodes entire image from memory to BGRA pixels (heap-allocated).
+// Used by HeavyLanePool::FullDecodeAndCacheLOD for non-JPEG formats.
+HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
+                                            QuickView::RawImageFrame* outFrame) {
+    if (!data || size < 4 || !outFrame) return E_INVALIDARG;
+
+    std::wstring fmt = DetectFormatFromContent(data, size);
+
+    // ---------------------------------------------------------------
+    // JPEG path: delegate to existing TurboJPEG loader
+    // ---------------------------------------------------------------
+    if (fmt == L"JPEG") {
+        QuickView::RegionRect fullRegion = { 0, 0, 0, 0 };
+        return LoadTileFromMemory(data, size, fullRegion, 1.0f, outFrame, nullptr, 0, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // PNG path: Wuffs (AVX2 accelerated, outputs BGRA directly)
+    // ---------------------------------------------------------------
+    if (fmt == L"PNG") {
+        uint32_t w = 0, h = 0;
+        uint8_t* directBuf = nullptr;
+        
+        // Use AllocatorFunc overload: Wuffs writes directly into our _aligned_malloc buffer.
+        // This eliminates the intermediate std::vector<uint8_t> (4.8GB for 40000x30000).
+        auto allocator = [&](size_t sz) -> uint8_t* {
+            directBuf = (uint8_t*)_aligned_malloc(sz, 32);
+            return directBuf;
+        };
+        
+        if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, nullptr)) {
+            if (directBuf) _aligned_free(directBuf);
+            wchar_t dbg[128];
+            size_t neededMB = ((size_t)w * h * 4) / (1024 * 1024);
+            swprintf_s(dbg, L"[P15] Wuffs PNG decode failed (need ~%zu MB BGRA)\n", neededMB);
+            OutputDebugStringW(dbg);
+            return E_FAIL;
+        }
+
+        if (!directBuf) return E_OUTOFMEMORY;
+        
+        outFrame->pixels = directBuf;
+        outFrame->width = (int)w;
+        outFrame->height = (int)h;
+        outFrame->stride = (int)((size_t)w * 4);
+        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+
+        OutputDebugStringW(L"[P15] PNG decoded via Wuffs OK\n");
+        return S_OK;
+    }
+
+    // ---------------------------------------------------------------
+    // JXL path: libjxl (RGBA output → SIMD BGRA swizzle)
+    // ---------------------------------------------------------------
+    if (fmt == L"JXL") {
+        JxlDecoder* dec = JxlDecoderCreate(NULL);
+        if (!dec) return E_OUTOFMEMORY;
+
+        void* runner = CImageLoader::GetJxlRunner();
+        if (!runner) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
+        JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
+
+        if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec,
+            JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE)) {
+            JxlDecoderDestroy(dec);
+            return E_FAIL;
+        }
+        JxlDecoderSetInput(dec, data, size);
+        JxlDecoderCloseInput(dec);
+
+        JxlBasicInfo info = {};
+        JxlPixelFormat pixFmt = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 };
+        uint8_t* outBuf = nullptr;
+        size_t outBufSize = 0;
+        HRESULT hr = E_FAIL;
+
+        for (;;) {
+            JxlDecoderStatus st = JxlDecoderProcessInput(dec);
+            if (st == JXL_DEC_ERROR) break;
+            if (st == JXL_DEC_SUCCESS) { hr = S_OK; break; }
+
+            if (st == JXL_DEC_BASIC_INFO) {
+                if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) break;
+
+                // Force sRGB output
+                JxlColorEncoding ce = {};
+                ce.color_space = JXL_COLOR_SPACE_RGB;
+                ce.white_point = JXL_WHITE_POINT_D65;
+                ce.primaries = JXL_PRIMARIES_SRGB;
+                ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+                ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+                JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0);
+            }
+            else if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+                if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &pixFmt, &outBufSize)) break;
+
+                outBuf = (uint8_t*)_aligned_malloc(outBufSize, 32);
+                if (!outBuf) { hr = E_OUTOFMEMORY; break; }
+
+                if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &pixFmt, outBuf, outBufSize)) {
+                    _aligned_free(outBuf); outBuf = nullptr;
+                    break;
+                }
+            }
+            else if (st == JXL_DEC_FULL_IMAGE) {
+                hr = S_OK;
+                break;
+            }
+        }
+
+        JxlDecoderDestroy(dec);
+
+        if (FAILED(hr) || !outBuf) {
+            if (outBuf) _aligned_free(outBuf);
+            OutputDebugStringW(L"[P15] JXL decode failed\n");
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+
+        // RGBA → BGRA swizzle (SIMD)
+        SIMDUtils::SwizzleRGBA_to_BGRA_Premul(outBuf, (size_t)info.xsize * info.ysize);
+
+        outFrame->pixels = outBuf;
+        outFrame->width = (int)info.xsize;
+        outFrame->height = (int)info.ysize;
+        outFrame->stride = (int)(info.xsize * 4);
+        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+
+        wchar_t dbg[128];
+        swprintf_s(dbg, L"[P15] JXL decoded via libjxl OK (%ux%u)\n", info.xsize, info.ysize);
+        OutputDebugStringW(dbg);
+        return S_OK;
+    }
+
+    // ---------------------------------------------------------------
+    // Fallback: unsupported format for tile decode
+    // ---------------------------------------------------------------
+    OutputDebugStringW(L"[P15] FullDecodeFromMemory: unsupported format\n");
+    return E_NOTIMPL;
+}
+
 
 
 
@@ -1156,6 +1307,12 @@ HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, QuickView::RegionRect 
         return LoadRegionGeneric_StrategyB(filePath, srcRect, scale, outFrame, tileManager, arena, checkCancel, targetWidth, targetHeight);
     }
     
+    // --- [P15] JXL: No per-tile region decode — must use Single-Decode-Then-Slice ---
+    if (format == L"JXL") {
+        OutputDebugStringW(L"[P15] JXL per-tile region decode not supported, use P14 path\n");
+        return E_ABORT;
+    }
+
     return E_NOTIMPL; 
 }
 

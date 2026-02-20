@@ -2435,17 +2435,9 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
             g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
         }
 
-        // 3. Update Tiles (Titan Mode)
-        // [Fix] Ensure tiles are uploaded to Virtual Surface
-        // 3. Update Tiles (Titan Mode)
-        // [Fix] Ensure tiles are uploaded to Virtual Surface
-        if (g_imageEngine) {
-            auto tileMgr = g_imageEngine->GetTileManager();
-            if (tileMgr) {
-                // [Fix] Only enable Debug Grid if explicitly requested (g_showTileGrid), NOT just because background is Grid (CanvasColor == 2)
-                g_compEngine->UpdateVirtualTiles(tileMgr.get(), g_config.CanvasShowGrid || g_showTileGrid);
-            }
-        }
+        // [Fix12] Tile uploads handled exclusively by OnPaint (line 5621) with correct visibleRect.
+        // SyncDCompState only syncs transforms — no tile I/O here.
+        // Previously called UpdateVirtualTiles without visibleRect, causing full-scan of all tiles.
     }
 }
 
@@ -5381,7 +5373,7 @@ void ProcessEngineEvents(HWND hwnd) {
     }
     
     if (needsRepaint) {
-        RequestRepaint(PaintLayer::All);
+        RequestRepaint(PaintLayer::Image);  // [Fix7] TileReady only needs Image layer, not Gallery/Static/Dynamic
     }
 }
 
@@ -5617,11 +5609,15 @@ void OnPaint(HWND hwnd) {
              // [Fix] Pass visible rectangle for Culling (Image Space)
              D2D1_RECT_F visibleRect = D2D1::RectF(viewL, viewT, viewL + viewW, viewT + viewH);
              
-             g_compEngine->UpdateVirtualTiles(
+             HRESULT hrTile = g_compEngine->UpdateVirtualTiles(
                  g_imageEngine->GetTileManager().get(),
                  g_showTileGrid,
                  &visibleRect
              );
+             // [Throttle] Deferred tiles exist — request next frame to continue uploading
+             if (hrTile == S_FALSE) {
+                 RequestRepaint(PaintLayer::Image);
+             }
         }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         

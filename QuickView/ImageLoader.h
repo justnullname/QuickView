@@ -216,6 +216,15 @@ public:
         int targetWidth = 0, int targetHeight = 0); // [Fix] Explicit Target Size for padding
 
     // ============================================================================
+    // [P15] Format-Agnostic Full Decode from Memory
+    // ============================================================================
+    // Decodes entire image from memory buffer to BGRA pixels.
+    // Dispatches to optimal decoder: TurboJPEG / Wuffs (PNG) / libjxl (JXL) / WIC fallback.
+    // Output: heap-allocated BGRA buffer in outFrame (caller owns via memoryDeleter).
+    static HRESULT FullDecodeFromMemory(const uint8_t* data, size_t size,
+                                         QuickView::RawImageFrame* outFrame);
+
+    // ============================================================================
     // [Direct D2D] Zero-Copy Loading API
     // ============================================================================
     

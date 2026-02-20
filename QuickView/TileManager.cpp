@@ -71,16 +71,34 @@ namespace QuickView {
         }
     }
 
-    int TileManager::CalculateBestLOD(float zoom) {
-        if (zoom >= 1.0f) return 0;
-        if (zoom >= 0.5f) return 1;
-        if (zoom >= 0.25f) return 2;
-        if (zoom >= 0.125f) return 3;
-        if (zoom >= 0.0625f) return 4;
-        if (zoom >= 0.03125f) return 5;
-        if (zoom >= 0.015625f) return 6;
-        if (zoom >= 0.0078125f) return 7;
-        return 8;
+    int TileManager::CalculateBestLOD(float zoom, float basePreviewRatio) {
+        // [Fix4] Compute max LOD that doesn't produce tiles worse than base preview.
+        // LOD=N means scale = 1/(2^N), output_width = imgW / 2^N.
+        // Preview width = imgW * basePreviewRatio.
+        // Tile output should be >= preview: imgW/2^N >= imgW*ratio => 2^N <= 1/ratio
+        // => maxLOD = floor(log2(1/ratio))
+        int maxLOD = MAX_LOD_LEVELS;
+        if (basePreviewRatio > 0.0f) {
+            float invRatio = 1.0f / basePreviewRatio;
+            maxLOD = (int)std::floor(std::log2(invRatio));
+            if (maxLOD < 0) maxLOD = 0;
+            if (maxLOD > MAX_LOD_LEVELS) maxLOD = MAX_LOD_LEVELS;
+        }
+        
+        int lod;
+        if (zoom >= 1.0f) lod = 0;
+        else if (zoom >= 0.5f) lod = 1;
+        else if (zoom >= 0.25f) lod = 2;
+        else if (zoom >= 0.125f) lod = 3;
+        else if (zoom >= 0.0625f) lod = 4;
+        else if (zoom >= 0.03125f) lod = 5;
+        else if (zoom >= 0.015625f) lod = 6;
+        else if (zoom >= 0.0078125f) lod = 7;
+        else lod = 8;
+        
+        // Clamp: never use a LOD that produces lower resolution than the base preview
+        if (lod > maxLOD) lod = maxLOD;
+        return lod;
     }
 
     std::vector<TileKey> TileManager::Update(const RegionRect& viewport, float zoom, float velX, float velY, int imageW, int imageH, float basePreviewRatio) {
@@ -92,11 +110,22 @@ namespace QuickView {
         std::lock_guard lock(m_mutex);
 
         // [Titan] Adaptive Tiling Trigger
-        if (zoom <= basePreviewRatio * 1.0001f) {
+        // [Fix4] Use corrected threshold: only trigger tiles when zoom exceeds the level
+        // where tiles would provide better resolution than the base preview.
+        float triggerThreshold = basePreviewRatio;
+        if (basePreviewRatio > 0.0f) {
+            // Compute the LOD boundary that matches the preview resolution
+            float invRatio = 1.0f / basePreviewRatio;
+            int maxLOD = (int)std::floor(std::log2(invRatio));
+            if (maxLOD < 0) maxLOD = 0;
+            // Trigger when zoom > 1/(2^maxLOD), which is the scale of the best tile LOD
+            triggerThreshold = 1.0f / (float)(1 << maxLOD);
+        }
+        if (zoom <= triggerThreshold * 1.0001f) {
             return {};
         }
 
-        int lod = CalculateBestLOD(zoom);
+        int lod = CalculateBestLOD(zoom, basePreviewRatio);
         
         // [Zoom Optimization] Reset Queue if LOD Changed
         if (lod != m_currentLOD) {
@@ -347,19 +376,18 @@ namespace QuickView {
     }
 
     void TileManager::OnTileCancelled(TileKey key) {
-        // [Fix Gaps] Called by HeavyLanePool when a job is dropped (scrolled away).
-        // We must reset state to Empty so it can be re-queued if the user scrolls back.
-        // If we leave it as QUEUED/LOADING, the scheduler ignores it forever.
+        // [Fix8] Must hold m_mutex to synchronize with ForEachReadyTile/Update/EnforceBudget
+        // Without lock: state set to Empty → EnforceBudget data.reset() → dangling pointer in callback
+        std::lock_guard lock(m_mutex);
         TileEntry* entry = GetTileEntry(key);
         if (entry) {
-             // Only reset if it's not already ready (race condition check)
              auto current = entry->state.load(std::memory_order_relaxed);
+             // [Fix10] Monotonic State Machine: Never downgrade Ready/Uploaded tiles.
+             // Worker race: IsVisible(false) + OnTileCancelled can arrive AFTER
+             // main thread's OnTileReady has already set this tile to Ready.
+             if (current == TileStateCode::Ready) return;
              if (current == TileStateCode::Queued || current == TileStateCode::Loading) {
                  entry->state.store(TileStateCode::Empty, std::memory_order_relaxed);
-                 // We don't need to destroy data immediately, but for consistency:
-                 // kept data might be stale? No, data is just a placeholder until Ready.
-                 // Actually, if we reset to Empty, the Scheduler will re-allocate data if null.
-                 // But we can keep the pointer to avoid alloc churn, just reset state.
              }
         }
     }

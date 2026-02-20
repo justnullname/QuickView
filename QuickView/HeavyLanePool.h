@@ -53,7 +53,7 @@ public:
     // [Titan Mode] Persistence Control
     // Enabled: Threads act as persistent pull-workers (no shrinking)
     // Disabled: Threads act as elastic hot-spares (auto-shrink)
-    void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0);
+    void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0, const std::wstring& format = L"");
     void Flush(); // Clears queue and increments GenID
     
     // [Titan] Concurrency Control
@@ -154,6 +154,7 @@ private:
     // [Titan] Mode Flag & IO Control
     std::atomic<bool> m_isTitanMode = false;
     int m_titanSrcW = 0, m_titanSrcH = 0; // Source image dimensions (set in SetTitanMode)
+    std::wstring m_titanFormat;            // [P15] Image format (JPEG/PNG/JXL/WebP/...)
     std::counting_semaphore<std::numeric_limits<std::ptrdiff_t>::max()> m_ioSemaphore{ 0 }; // Initialized in constructor
     int m_ioLimit = 0; // Dynamic limit based on HDD/SSD
 
@@ -306,7 +307,10 @@ private:
     };
     LODCache m_lodCache;
     std::mutex m_lodCacheMutex;
+    std::condition_variable m_lodCacheCond;       // [Fix16] For efficient worker wakeup
     std::atomic<bool> m_lodCacheBuilding = false; // Prevent concurrent full decodes
+    std::atomic<int> m_lodCacheFailCount{0};       // [B4] Count consecutive FullDecode failures (prevent infinite retry)
+    static constexpr int kMaxLODCacheRetries = 3;  // Give up after 3 consecutive failures per LOD
     bool m_isProgressiveJPEG = false; // Detected during baseline decode
     
     // [P14] Helpers

@@ -70,10 +70,11 @@ void HeavyLanePool::UpdateIOLimit(int newLimit) {
     OutputDebugStringW(buf);
 }
 
-void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH) {
+void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::wstring& format) {
     m_isTitanMode = enabled;
     m_titanSrcW = srcW;
     m_titanSrcH = srcH;
+    m_titanFormat = format;
     if (enabled) {
         // [Baseline Cache] Check if we've seen this image size before
         if (srcW > 0 && srcH > 0) {
@@ -147,6 +148,7 @@ void HeavyLanePool::ResetBenchState() {
         m_lodCache = {};
     }
     m_isProgressiveJPEG = false;
+    m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image
 
     // IO type is set during Submit() via UpdateIOLimit
     OutputDebugStringW(L"[HeavyPool] Baseline state RESET. Phase: PENDING (2 threads).\n");
@@ -1071,16 +1073,57 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        }
                    }
                    
-                   // Cache miss: Try full decode + cache (for progressive JPEG)
-                   if (m_isTitanMode && ShouldUseSingleDecode(job.tileCoord.lod)) {
-                       hr = FullDecodeAndCacheLOD(job, rawFrame, loaderName);
-                       if (SUCCEEDED(hr)) goto tile_decode_done;
-                       // Full decode failed (OOM?) — fall through to per-tile
-                   }
+                    // [B3] Non-JPEG formats: MUST use Single-Decode-Then-Slice.
+                    // Per-tile fallback (LoadTileFromMemory/Strategy-B) is unsuitable:
+                    //   - LoadTileFromMemory is TurboJPEG-only → instant fail for PNG/JXL
+                    //   - Strategy-B full-decodes the entire image PER TILE → 34s/tile for 40Kx30K
+                    bool isNonJpeg = (m_titanFormat != L"JPEG");
+                    
+                    // [B4] Check fail count — give up if too many failures
+                    if (isNonJpeg && m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
+                        hr = E_FAIL;
+                        loaderName = L"LOD Exhausted";
+                        // Don't reset tile to Empty — mark as permanently failed
+                        goto tile_decode_done;
+                    }
+                    
+                    // Cache miss: Try full decode + cache
+                    if (m_isTitanMode && ShouldUseSingleDecode(job.tileCoord.lod)) {
+                        hr = FullDecodeAndCacheLOD(job, rawFrame, loaderName);
+                        if (SUCCEEDED(hr)) goto tile_decode_done;
+                        // CAS failed (another builder): wait briefly for it
+                    }
+                    
+                    // [B3] For non-JPEG: wait for LOD cache builder, then retry slice
+                    if (isNonJpeg) {
+                        // [Fix16] Event-driven wait (max 60s) instead of 100ms polling
+                        std::unique_lock<std::mutex> waitLock(m_lodCacheMutex);
+                        if (m_lodCacheBuilding.load()) {
+                            m_lodCacheCond.wait_for(waitLock, std::chrono::seconds(60), [this] {
+                                return !m_lodCacheBuilding.load();
+                            });
+                        }
+                        if (cancelPred()) { hr = E_ABORT; goto tile_decode_done; }
 
-                   // ============================================================
-                   // Legacy Path: Per-tile TJ Region Decode
-                   // ============================================================
+                        // [Fix1] Reset timer — exclude wait from decode metrics
+                        decodeStart = std::chrono::high_resolution_clock::now();
+
+                        // Re-check cache after waiting (mutex is held by waitLock)
+                        if (m_lodCache.pixels && m_lodCache.lod == job.tileCoord.lod
+                            && m_lodCache.imageId == job.imageId) {
+                            hr = SliceTileFromLODCache(job, rawFrame, loaderName);
+                            goto tile_decode_done;
+                        }
+                    } 
+                    
+                    // Still no cache — fail this tile (will be retried later if fail count allows)
+                    hr = E_FAIL;
+                    loaderName = L"LOD Wait Timeout";
+                    goto tile_decode_done;
+                    
+                    // ============================================================
+                    // Legacy Path: Per-tile TJ Region Decode (JPEG ONLY)
+                    // ============================================================
 
                    // [Fix] Calculate Scale from LOD (Precise)
                    // Edge tiles have clipped srcRect, so dst/src ratio is WRONG (causes upscaling).
@@ -1259,18 +1302,17 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
 // ============================================================================
 
 void HeavyLanePool::QueueResult(EngineEvent&& evt) {
+    bool shouldNotify = false;
     {
         std::lock_guard lock(m_resultMutex);
+        // [Fix11] Coalesce: Only notify main thread when queue transitions empty→non-empty.
+        // PollState's while-loop drains all results, so one PostMessage suffices.
+        shouldNotify = m_results.empty();
         m_results.push_back(std::move(evt));
-        
-        // Debug: Track queued events
-        wchar_t buf[128];
-        swprintf_s(buf, L"[HeavyPool] QueueResult: events in queue = %d\n", (int)m_results.size());
-        OutputDebugStringW(buf);
     }
     
-    // Notify main thread
-    if (m_parent) {
+    // Notify main thread (only on first queued item)
+    if (shouldNotify && m_parent) {
         m_parent->QueueEvent(EngineEvent{});  // Trigger WM_ENGINE_EVENT
     }
 }
@@ -1408,33 +1450,63 @@ bool HeavyLanePool::ShouldUseSingleDecode(int lod) const {
     int outH = (m_titanSrcH + scaleFactor - 1) / scaleFactor;
     size_t outputBytes = (size_t)outW * outH * 4; // BGRA output buffer
     
-    // [Fix] For progressive JPEG, TJ internally allocates a coefficient buffer
-    // of ~srcPixels * 6 bytes. This MUST be included in the memory check!
-    // Without this, LOD=0 on 1200MP: output 4.8GB + coefficients 7.2GB = 12GB peak
-    // → memory pressure → tile corruption (花屏) and ACCESS_VIOLATION crash
-    size_t coeffBytes = m_isProgressiveJPEG 
-        ? ((size_t)m_titanSrcW * m_titanSrcH * 6)  // ~7.2 GB for 1200MP
-        : ((size_t)m_titanSrcW * 96 + 200 * 1024 * 1024); // Baseline: ~200 MB
+    // [P15] Format-aware decoder overhead estimation
+    size_t decoderOverhead = 0;
+    if (m_titanFormat == L"JPEG") {
+        // Progressive JPEG: TJ coefficient buffer ~srcPixels * 6
+        // Baseline JPEG: ~200 MB working memory
+        decoderOverhead = m_isProgressiveJPEG 
+            ? ((size_t)m_titanSrcW * m_titanSrcH * 6)
+            : ((size_t)m_titanSrcW * 96 + 200 * 1024 * 1024);
+    } else if (m_titanFormat == L"PNG") {
+        // Wuffs PNG: streaming decode — scanline filter buffer ~width*64
+        // The BGRA output buffer IS the decode target, no separate full-res copy needed.
+        decoderOverhead = (size_t)m_titanSrcW * 64;
+    } else if (m_titanFormat == L"JXL") {
+        // libjxl: group-based decode — ~2 bytes/pixel scratch (group buffers + color transform)
+        // The output buffer is separate, so peak = output + scratch
+        decoderOverhead = (size_t)m_titanSrcW * m_titanSrcH * 2;
+    } else {
+        // Conservative default: 2 bytes/pixel scratch
+        decoderOverhead = (size_t)m_titanSrcW * m_titanSrcH * 2;
+    }
     
-    size_t peakBytes = outputBytes + coeffBytes;
+    // For non-JPEG formats at LOD>0, we decode at full resolution first
+    // then software-downscale, so peak = full-res BGRA + decoder overhead
+    size_t fullResBytes = (m_titanFormat != L"JPEG" && lod > 0)
+        ? (size_t)m_titanSrcW * m_titanSrcH * 4  // full-res decode buffer
+        : outputBytes;                             // JPEG scales during decode
+    
+    size_t peakBytes = fullResBytes + decoderOverhead;
     
     MEMORYSTATUSEX ms = { sizeof(ms) };
     GlobalMemoryStatusEx(&ms);
     size_t available = ms.ullAvailPhys;
     
     // Peak memory must be < 50% of available RAM
-    // (leave room for slab tiles, GPU textures, OS, UI)
     bool fits = peakBytes < (available / 2);
     
-    wchar_t buf[256];
-    if (!fits) {
-        swprintf_s(buf, L"[HeavyPool] P14: LOD=%d single decode SKIPPED (peak=%zu MB, avail=%zu MB)\n",
-            lod, peakBytes / (1024*1024), (size_t)(available / (1024*1024)));
-    } else {
-        swprintf_s(buf, L"[HeavyPool] P14: LOD=%d single decode OK (output=%zu MB, peak=%zu MB, avail=%zu MB)\n",
-            lod, outputBytes / (1024*1024), peakBytes / (1024*1024), (size_t)(available / (1024*1024)));
+    // [Fix2] Rate-limit log: once per LOD per 2s — shared across all workers
+    static std::atomic<int> lastLoggedLOD{-1};
+    static std::atomic<uint64_t> lastLogTime{0};
+    uint64_t nowMs = GetTickCount64();
+    if (lod != lastLoggedLOD.load(std::memory_order_relaxed) || (nowMs - lastLogTime.load(std::memory_order_relaxed)) > 2000) {
+        // CAS to avoid multiple threads logging simultaneously
+        int expected = lastLoggedLOD.load(std::memory_order_relaxed);
+        if (lod != expected || lastLoggedLOD.compare_exchange_strong(expected, lod)) {
+            lastLogTime.store(nowMs, std::memory_order_relaxed);
+            lastLoggedLOD.store(lod, std::memory_order_relaxed);
+            wchar_t buf[256];
+            if (!fits) {
+                swprintf_s(buf, L"[HeavyPool] P14: LOD=%d fmt=%s SKIPPED (peak=%zu MB, avail=%zu MB)\n",
+                    lod, m_titanFormat.c_str(), peakBytes / (1024*1024), (size_t)(available / (1024*1024)));
+            } else {
+                swprintf_s(buf, L"[HeavyPool] P14: LOD=%d fmt=%s OK (output=%zu MB, peak=%zu MB, avail=%zu MB)\n",
+                    lod, m_titanFormat.c_str(), outputBytes / (1024*1024), peakBytes / (1024*1024), (size_t)(available / (1024*1024)));
+            }
+            OutputDebugStringW(buf);
+        }
     }
-    OutputDebugStringW(buf);
     
     return fits;
 }
@@ -1449,13 +1521,30 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
         return E_FAIL; // Another worker is already building the cache
     }
     // RAII: reset flag when done (success or failure)
-    struct BuildGuard { std::atomic<bool>& flag; ~BuildGuard() { flag.store(false); } } guard{ m_lodCacheBuilding };
+    struct BuildGuard {
+        std::atomic<bool>& flag;
+        std::atomic<int>& failCount;
+        std::condition_variable& cond;
+        bool succeeded = false;
+        ~BuildGuard() {
+            flag.store(false);
+            if (!succeeded) failCount.fetch_add(1);
+            cond.notify_all(); // [Fix16] Wake up all waiters immediately
+        }
+    } guard{ m_lodCacheBuilding, m_lodCacheFailCount, m_lodCacheCond };
     
     int lod = job.tileCoord.lod;
     float scale = 1.0f / (float)(1 << lod);
     
     // Full image region (no cropping)
     QuickView::RegionRect fullRegion = { 0, 0, m_titanSrcW, m_titanSrcH };
+    
+    // [Fix14b] Release old cache BEFORE allocating new decode buffer
+    // Prevents peak = old_cache(e.g. 1.1GB) + new_decode(e.g. 4.8GB) coexisting
+    {
+        std::lock_guard lock(m_lodCacheMutex);
+        m_lodCache = {};
+    }
     
     wchar_t buf[256];
     swprintf_s(buf, L"[HeavyPool] P14: Full decode LOD=%d (scale=%.4f, src=%dx%d)...\n",
@@ -1464,15 +1553,51 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
     
     auto t0 = std::chrono::high_resolution_clock::now();
     
-    // Decode full image at target scale — NO slab manager (use heap allocation)
-    // targetWidth/Height = 0 means "use natural output size"
+    // [P15] Decode full image — format-aware dispatch
     QuickView::RawImageFrame fullFrame;
-    HRESULT hr = CImageLoader::LoadTileFromMemory(
-        job.mmf->data(), job.mmf->size(),
-        fullRegion, scale,
-        &fullFrame, nullptr, // nullptr = heap allocation (not slab)
-        0, 0                 // 0 = natural output dimensions
-    );
+    HRESULT hr;
+    
+    if (m_titanFormat == L"JPEG") {
+        // JPEG: use TurboJPEG with IDCT scaling (scale parameter is used)
+        hr = CImageLoader::LoadTileFromMemory(
+            job.mmf->data(), job.mmf->size(),
+            fullRegion, scale,
+            &fullFrame, nullptr, 0, 0);
+    } else {
+        // PNG/JXL/others: full-resolution decode via FullDecodeFromMemory
+        hr = CImageLoader::FullDecodeFromMemory(
+            job.mmf->data(), job.mmf->size(), &fullFrame);
+        
+        // If LOD > 0, software downscale from full-res to target size
+        if (SUCCEEDED(hr) && fullFrame.IsValid() && lod > 0) {
+            int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+            int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+            
+            size_t dstStride = (size_t)targetW * 4;
+            size_t dstSize = dstStride * targetH;
+            uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+            if (!dstBuf) {
+                hr = E_OUTOFMEMORY;
+            } else {
+                SIMDUtils::ResizeBilinear(fullFrame.pixels, fullFrame.width, fullFrame.height,
+                                          fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
+                
+                // Replace fullFrame with downscaled version
+                if (fullFrame.memoryDeleter) fullFrame.memoryDeleter(fullFrame.pixels);
+                else _aligned_free(fullFrame.pixels);
+                
+                fullFrame.pixels = dstBuf;
+                fullFrame.width = targetW;
+                fullFrame.height = targetH;
+                fullFrame.stride = (int)dstStride;
+                fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                
+                wchar_t dbg[128];
+                swprintf_s(dbg, L"[P15] Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
+                OutputDebugStringW(dbg);
+            }
+        }
+    }
     
     if (FAILED(hr) || !fullFrame.IsValid()) {
         swprintf_s(buf, L"[HeavyPool] P14: Full decode FAILED (hr=0x%X)\n", hr);
@@ -1512,6 +1637,8 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
         hr = SliceTileFromLODCache(job, outTile, loader);
     }
     
+    guard.succeeded = true;
+    m_lodCacheFailCount.store(0); // [B4] Reset fail count on success
     return hr;
 }
 
@@ -1542,9 +1669,9 @@ HRESULT HeavyLanePool::SliceTileFromLODCache(const JobInfo& job, RawImageFrame& 
     
     for (int y = 0; y < copyH; y++) {
         memcpy(
-            tileBuf + y * dstStride,
-            srcBase + (tileY + y) * srcStride + tileX * 4,
-            copyW * 4
+            tileBuf + (size_t)y * dstStride,
+            srcBase + (size_t)(tileY + y) * srcStride + (size_t)tileX * 4,
+            (size_t)copyW * 4
         );
     }
     

@@ -177,6 +177,8 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
     
     HRESULT hr = S_OK;
     int updateCount = 0;
+    static constexpr int kMaxUploadsPerFrame = 8; // [Fix9] Increased from 4 for faster initial tile display
+    bool hasDeferredTiles = false;
     
     // Define Iteration Area
     QuickView::RegionRect scanArea;
@@ -202,6 +204,12 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         
         // Only draw available tiles
         if (!tile || !tile->frame || !tile->frame->pixels) return;
+        
+        // [Throttle] Limit uploads per frame to avoid D3D stutter during pan
+        if (updateCount >= kMaxUploadsPerFrame) {
+            hasDeferredTiles = true;
+            return;
+        }
         
         // Calculate Rect on Virtual Surface (Image Space)
         int bitmapSize = QuickView::TILE_SIZE; // 512 (Physical Bitmap Size)
@@ -275,7 +283,12 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         );
         
         ComPtr<ID2D1Bitmap1> target;
-        m_pendingContext->CreateBitmapFromDxgiSurface(dxgiSurf.Get(), &props, &target);
+        HRESULT hrTarget = m_pendingContext->CreateBitmapFromDxgiSurface(dxgiSurf.Get(), &props, &target);
+        if (FAILED(hrTarget) || !target) {
+            pLayer->virtualSurface->EndDraw();
+            hasDeferredTiles = true;
+            return; // [Fix15b] Device lost / GPU OOM → skip tile, defer to next frame
+        }
         m_pendingContext->SetTarget(target.Get());
         m_pendingContext->BeginDraw();
         
@@ -290,8 +303,16 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         );
         
         ComPtr<ID2D1Bitmap> srcBitmap;
-        m_pendingContext->CreateBitmap(D2D1::SizeU(bitmapSize, bitmapSize), 
+        HRESULT hrBmp = m_pendingContext->CreateBitmap(D2D1::SizeU(bitmapSize, bitmapSize), 
             tile->frame->pixels, tile->frame->stride, &bmpProps, &srcBitmap);
+        
+        // [Fix14a] GPU OOM / Device Lost → srcBitmap is NULL → skip tile, defer to next frame
+        if (FAILED(hrBmp) || !srcBitmap) {
+            m_pendingContext->EndDraw();
+            pLayer->virtualSurface->EndDraw();
+            hasDeferredTiles = true;
+            return;
+        }
             
         // Used for filling
         D2D1_RECT_F destRect = D2D1::RectF((float)pixelX, (float)pixelY, (float)(pixelX + virtualSize), (float)(pixelY + virtualSize));
@@ -319,13 +340,23 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
              m_pendingContext->DrawRectangle(destRect, border.Get(), 4.0f);
         }
         
-        m_pendingContext->EndDraw();
+        HRESULT hrEnd = m_pendingContext->EndDraw();
         pLayer->virtualSurface->EndDraw();
+        
+        // [Fix14c] D2D device lost → stop uploading remaining tiles
+        if (FAILED(hrEnd)) {
+            hasDeferredTiles = true;
+            return;
+        }
         
         updateCount++;
     });
     
-    return (updateCount > 0) ? S_OK : S_FALSE;
+    // [Throttle] If tiles were deferred, signal caller to request repaint
+    if (hasDeferredTiles) {
+        return S_FALSE; // More tiles pending, request another paint frame
+    }
+    return S_OK; // [Fix13] No deferred tiles = no repaint needed
 }
 
 // ============================================================================

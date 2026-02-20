@@ -50,17 +50,18 @@ namespace QuickView {
         // Stats & Logic
         uint32_t GetGenerationID() const { return m_generationId; }
         void InvalidateAll();
-        int CalculateBestLOD(float zoom);
+        int CalculateBestLOD(float zoom, float basePreviewRatio = 0.0f);
         
         // [Refactor] Replacement for GetLoadedTiles
         // Allows CompositionEngine to iterate potentially visible tiles without exposing internal structures
         template<typename Func>
         void ForEachReadyTile(const RegionRect& rect, Func func) {
             std::lock_guard lock(m_mutex);
-            // Iterate all layers
-            for (int l = 0; l < (int)m_layers.size(); ++l) {
-                if (!m_layers[l]) continue;
-                
+            // [Fix3] Only iterate current LOD — VirtualSurface shows one LOD at a time.
+            // Iterating all layers wastes time and extends lock duration during pan/drag.
+            int l = m_currentLOD;
+            if (l < 0 || l >= (int)m_layers.size() || !m_layers[l]) return;
+            {
                 int tileSize = TILE_SIZE << l;
                 int startX = rect.x / tileSize;
                 int startY = rect.y / tileSize;
