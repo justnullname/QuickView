@@ -111,6 +111,7 @@ public:
         int lastTotalMs;          // Total processing time (decode + WIC + metadata)
         wchar_t loaderName[64] = { 0 }; // [Phase 11]
         bool isFullDecode = false;      // [Two-Stage]
+        bool isTileDecode = false;      // [UI Fix] Prioritize tile decoder name
     };
     void GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const;
     
@@ -133,6 +134,7 @@ private:
         ImageID lastImageId = 0; // [Phase 10] For sync (clear on nav)
         std::wstring loaderName; // [Phase 11] Capture actual decoder name
         bool isFullDecode = false; // [Two-Stage] Records if last decode was full res
+        bool isTileDecode = false; // [UI Fix] Records if last decode was a tile
         
         // [Unified Architecture] Shared Arena from TripleArenaPool (ImageEngine owns it)
         // Workers no longer own arenas. They use GetBackHeavyArena() from parent pool.

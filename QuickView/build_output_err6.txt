@@ -1,0 +1,111 @@
+适用于 .NET Framework MSBuild 版本 18.4.0+6e61e96ac
+生成启动时间为 2026/2/21 16:26:47。
+
+节点 1 上的项目“E:\Personal\Coding\QuickView\QuickView\QuickView.sln”(默认目标)。
+ValidateSolutionConfiguration:
+  正在生成解决方案配置“Release|x64”。
+E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj(179,3): warning MSB4011: 无法再次导入“E:\Personal\Coding\QuickView\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets”。可能已在“C:\Users\vivoo\AppData\Local\vcpkg\vcpkg.user.targets (3,3)”处导入过它。这很可能是生成创作错误。将忽略此后续导入。
+项目“E:\Personal\Coding\QuickView\QuickView\QuickView.sln”(1)正在节点 1 上生成“E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj”(2) (默认目标)。
+PrepareForBuild:
+  已启用结构化输出。编译器诊断的格式设置将反映错误层次结构。有关详细信息，请参阅 https://aka.ms/cpp/structured-output。
+InitializeBuildStatus:
+  正在创建“E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.tlog\unsuccessfulbuild”，因为已指定“AlwaysCreate”。
+  正在对“E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.tlog\unsuccessfulbuild”执行 Touch 任务。
+ComputeStdModulesCompileInputs:
+  正在读取为库 'microsoft/STL'提供数据的库清单文件 'D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\modules\modules.json'。
+  正在从库“microsoft/STL”添加模块源“D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\modules\std.ixx”，以使用此项目生成。
+  正在从库“microsoft/STL”添加模块源“D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\modules\std.compat.ixx”，以使用此项目生成。
+VcpkgTripletSelection:
+  Using triplet "x64-windows-static-opt" from "..\third_party\vcpkg\installed\x64-windows-static-opt\"
+  Using normalized configuration "Release"
+VcpkgCheckManifestRoot:
+  The vcpkg manifest was disabled, but we found a manifest file in E:\Personal\Coding\QuickView\QuickView\. You may want to enable vcpkg manifests in your properties page or pass /p:VcpkgEnableManifest=true to the msbuild invocation.
+ClCompile:
+  所有输出均为最新。
+  D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\bin\HostX86\x64\CL.exe /c /I"vcpkg_installed\x64-windows-static-opt\include" /I"..\third_party\vcpkg\installed\x64-windows-static-opt\include" /Zi /nologo /W4 /WX- /diagnostics:column /sdl /O2 /Oi /GL /D NDEBUG /D _WINDOWS /D _UNICODE /D UNICODE /Gm- /EHsc /MT /GS /Gy /arch:AVX2 /fp:fast /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++latest /permissive- /Yu"pch.h" /Fp"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.pch" /Fo"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\\" /Fd"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\vc145.pdb" /external:W4 /Gd /TP /FC /errorReport:queue CompositionEngine.cpp
+  CompositionEngine.cpp
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (编译源文件“/CompositionEngine.cpp”)
+  
+E:\Personal\Coding\QuickView\QuickView\TileManager.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (编译源文件“/CompositionEngine.cpp”)
+  
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(191,13): warning C4189: “hr”: 局部变量已初始化但不引用 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (编译源文件“/CompositionEngine.cpp”)
+  
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(709,73): warning C4100: 'isTransparent': 未引用的参数 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (编译源文件“/CompositionEngine.cpp”)
+  
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(917,84): warning C4100: 'winH': 未引用的参数 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (编译源文件“/CompositionEngine.cpp”)
+  
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(917,72): warning C4100: 'winW': 未引用的参数 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (编译源文件“/CompositionEngine.cpp”)
+  
+  所有输出均为最新。
+ResourceCompile:
+  所有输出均为最新。
+Link:
+  D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\bin\HostX86\x64\link.exe /ERRORREPORT:QUEUE /OUT:"E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.exe" /NOLOGO /LIBPATH:"vcpkg_installed\x64-windows-static-opt\lib" /LIBPATH:"..\third_party\vcpkg\installed\x64-windows-static-opt\lib" /LIBPATH:"..\third_party\vcpkg\installed\x64-windows-static-opt\lib\manual-link" dav1d.lib avif.lib mimalloc.lib brotlicommon.lib brotlidec.lib brotlienc.lib hwy.lib jasper.lib jpeg.lib jxl_cms.lib jxl_threads.lib jxl.lib lcms2.lib libsharpyuv.lib libwebp.lib libwebpdecoder.lib libwebpdemux.lib libwebpmux.lib raw_r.lib turbojpeg.lib yuv.lib zlibstatic.lib dwrite.lib windowscodecs.lib shlwapi.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib "..\third_party\vcpkg\installed\x64-windows-static-opt\lib\*.lib" /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.lib" /MACHINE:X64 E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.res
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\pch.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\AppStrings.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\exif.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\RenderEngine.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\ImageLoader.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\LosslessTransform.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\StbLoader.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\TinyExrLoader.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\WuffsImpl.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\main.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\ContextMenu.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\GalleryOverlay.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\ThumbnailManager.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\Toolbar.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\SettingsOverlay.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\HelpOverlay.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\UpdateManager.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\PreviewExtractor.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\ImageEngine.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\CompositionEngine.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\UIRenderer.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\HeavyLanePool.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\TileMemoryManager.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\TileManager.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\TileScheduler.obj
+  E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\ComputeEngine.obj
+    正在创建库 E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.lib 和对象 E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.exp
+  正在生成代码
+  13 of 32629 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    518 functions had inline decision re-evaluated but remain unchanged
+  已完成代码的生成
+  QuickView.vcxproj -> E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.exe
+AppLocalFromInstalled:
+  pwsh.exe -ExecutionPolicy Bypass -noprofile -File "E:\Personal\Coding\QuickView\third_party\vcpkg\scripts\buildsystems\msbuild\applocal.ps1" "E:\Personal\Coding\QuickView\QuickView\bin\x64\Release\QuickView.exe" "..\third_party\vcpkg\installed\x64-windows-static-opt\bin" "E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.tlog\QuickView.write.1u.tlog" "E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\vcpkg.applocal.log"
+FinalizeBuildStatus:
+  正在删除文件“E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.tlog\unsuccessfulbuild”。
+  正在对“E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.tlog\QuickView.lastbuildstate”执行 Touch 任务。
+已完成生成项目“E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj”(默认目标)的操作。
+已完成生成项目“E:\Personal\Coding\QuickView\QuickView\QuickView.sln”(默认目标)的操作。
+
+已成功生成。
+
+  E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj(179,3): warning MSB4011: 无法再次导入“E:\Personal\Coding\QuickView\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets”。可能已在“C:\Users\vivoo\AppData\Local\vcpkg\vcpkg.user.targets (3,3)”处导入过它。这很可能是生成创作错误。将忽略此后续导入。
+
+
+“E:\Personal\Coding\QuickView\QuickView\QuickView.sln”(默认目标) (1) ->
+“E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj”(默认目标) (2) ->
+(ClCompile 目标) -> 
+  E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  E:\Personal\Coding\QuickView\QuickView\CompositionEngine.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  E:\Personal\Coding\QuickView\QuickView\TileManager.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(191,13): warning C4189: “hr”: 局部变量已初始化但不引用 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(709,73): warning C4100: 'isTransparent': 未引用的参数 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(917,84): warning C4100: 'winH': 未引用的参数 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  E:\Personal\Coding\QuickView\QuickView\CompositionEngine.cpp(917,72): warning C4100: 'winW': 未引用的参数 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+
+    8 个警告
+    0 个错误
+
+已用时间 00:00:09.75

@@ -3551,6 +3551,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
 
+    case WM_APP + 4: // WM_DEFERRED_REPAINT
+        RequestRepaint(PaintLayer::Image);
+        return 0;
+
 
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
@@ -5617,7 +5621,10 @@ void OnPaint(HWND hwnd) {
              );
              // [Throttle] Deferred tiles exist — request next frame to continue uploading
              if (hrTile == S_FALSE) {
-                 RequestRepaint(PaintLayer::Image);
+                 // [Fix] Do not use RequestRepaint (which relies on InvalidateRect).
+                 // InvalidateRect might be cleared by ValidateRect if OnPaint hasn't returned.
+                 // Force a new message into the queue to guarantee the loop continues.
+                 PostMessageW(hwnd, WM_APP + 4, 0, 0); // WM_DEFERRED_REPAINT
              }
         }
         context->SetTransform(D2D1::Matrix3x2F::Identity());

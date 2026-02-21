@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "HeavyLanePool.h"
 #include "ImageEngine.h"
 #include "SIMDUtils.h"
@@ -728,7 +728,6 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         bool acquiredIO = false;
         if (!m_isTitanMode) {
             m_ioSemaphore.acquire();
-            acquiredIO = true;
         }
 
         // [Safety] Post-Acquire Check
@@ -1006,8 +1005,10 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               }
               
               // [Optimization] Use MMF if available (Zero-Copy)
-              if (job.mmf && job.mmf->IsValid()) {
-                   // Corrected Signature: 7 arguments with scaling + Metadata
+              // Only use memory loader for formats that have true Zero-Copy memory decoders (JPEG).
+              // For WIC formats (TIFF, AVIF, etc), loading from MMF via SHCreateMemStream COPIES the file,
+              // leading to massive memory bloat/OOM for 1GB+ large files. Pass directly to file loader instead.
+              if (job.mmf && job.mmf->IsValid() && m_titanFormat == L"JPEG") {
                    hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
                    if (FAILED(hr)) {
                        // Fallback to file if MMF fails (shouldn't happen if valid)
@@ -1094,14 +1095,20 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         // CAS failed (another builder): wait briefly for it
                     }
                     
-                    // [B3] For non-JPEG: wait for LOD cache builder, then retry slice
-                    if (isNonJpeg) {
+                    // [B3] Wait for LOD cache builder if SingleDecode is active, then retry slice.
+                    // This applies to ALL formats using SingleDecode (including progressive JPEG).
+                    bool expectSingleDecode = isNonJpeg || (m_isTitanMode && ShouldUseSingleDecode(job.tileCoord.lod));
+                    
+                    if (expectSingleDecode) {
                         // [Fix16] Event-driven wait (max 60s) instead of 100ms polling
                         std::unique_lock<std::mutex> waitLock(m_lodCacheMutex);
                         if (m_lodCacheBuilding.load()) {
+                            // [UI Fix] Mark as STANDBY while waiting so HUD doesn't show 5 red threads
+                            self.state = WorkerState::STANDBY;
                             m_lodCacheCond.wait_for(waitLock, std::chrono::seconds(60), [this] {
                                 return !m_lodCacheBuilding.load();
                             });
+                            self.state = WorkerState::BUSY;
                         }
                         if (cancelPred()) { hr = E_ABORT; goto tile_decode_done; }
 
@@ -1112,14 +1119,17 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         if (m_lodCache.pixels && m_lodCache.lod == job.tileCoord.lod
                             && m_lodCache.imageId == job.imageId) {
                             hr = SliceTileFromLODCache(job, rawFrame, loaderName);
+                            loaderName = L"LODCache Slice"; // [UI Fix] explicitly show cache slice
                             goto tile_decode_done;
                         }
-                    } 
+                        
+                        // Still no cache — fail this tile (will be retried later if fail count allows)
+                        hr = E_FAIL;
+                        loaderName = L"LOD Wait Timeout";
+                        goto tile_decode_done;
+                    }
                     
-                    // Still no cache — fail this tile (will be retried later if fail count allows)
-                    hr = E_FAIL;
-                    loaderName = L"LOD Wait Timeout";
-                    goto tile_decode_done;
+                    // If we reach here, we are doing per-tile decode (JPEG only).
                     
                     // ============================================================
                     // Legacy Path: Per-tile TJ Region Decode (JPEG ONLY)
@@ -1289,8 +1299,11 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
         if (outLoaderName) *outLoaderName = L"Worker Exception";
     }
     
+    
     self.lastTotalMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
     self.lastImageId = job.imageId; 
+    self.isFullDecode = job.isFullDecode; // [UI Fix] Save decode type
+    self.isTileDecode = (job.type == JobType::Tile); // [UI Fix] Save tile type
     
     // Update global for HUD
     m_lastDecodeTimeMs = (double)self.lastTotalMs;
@@ -1445,11 +1458,6 @@ void HeavyLanePool::WaitForTileJobs() {
 bool HeavyLanePool::ShouldUseSingleDecode(int lod) const {
     if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return false;
     
-    // Formats with Native Region Decoding do NOT use Single Decode Cache!
-    if (m_titanFormat == L"JPEG" || m_titanFormat == L"WEBP" || m_titanFormat == L"JXL") {
-        return false;
-    }
-    
     int scaleFactor = 1 << lod;
     int outW = (m_titanSrcW + scaleFactor - 1) / scaleFactor;
     int outH = (m_titanSrcH + scaleFactor - 1) / scaleFactor;
@@ -1581,34 +1589,44 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
         // PNG/JXL/others: full-resolution decode via FullDecodeFromMemory
         hr = CImageLoader::FullDecodeFromMemory(
             job.mmf->data(), job.mmf->size(), &fullFrame);
-        
-        // If LOD > 0, software downscale from full-res to target size
-        if (SUCCEEDED(hr) && fullFrame.IsValid() && lod > 0) {
+            
+        // [Fallback] If unsupported by memory decoders (e.g. AVIF, TIFF, HEIC), fallback to scaling WIC file loader
+        if (hr == E_NOTIMPL || hr == E_FAIL) {
             int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
             int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
             
-            size_t dstStride = (size_t)targetW * 4;
-            size_t dstSize = dstStride * targetH;
-            uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
-            if (!dstBuf) {
-                hr = E_OUTOFMEMORY;
-            } else {
-                SIMDUtils::ResizeBilinear(fullFrame.pixels, fullFrame.width, fullFrame.height,
-                                          fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
+            // Allow WIC to handle scaling natively
+            hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, nullptr, nullptr);
+        } else {
+            // Memory decode succeeded, do software downscale if necessary
+            // If LOD > 0, software downscale from full-res to target size
+            if (SUCCEEDED(hr) && fullFrame.IsValid() && lod > 0) {
+                int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+                int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
                 
-                // Replace fullFrame with downscaled version
-                if (fullFrame.memoryDeleter) fullFrame.memoryDeleter(fullFrame.pixels);
-                else _aligned_free(fullFrame.pixels);
-                
-                fullFrame.pixels = dstBuf;
-                fullFrame.width = targetW;
-                fullFrame.height = targetH;
-                fullFrame.stride = (int)dstStride;
-                fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
-                
-                wchar_t dbg[128];
-                swprintf_s(dbg, L"[P15] Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
-                OutputDebugStringW(dbg);
+                size_t dstStride = (size_t)targetW * 4;
+                size_t dstSize = dstStride * targetH;
+                uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                if (!dstBuf) {
+                    hr = E_OUTOFMEMORY;
+                } else {
+                    SIMDUtils::ResizeBilinear(fullFrame.pixels, fullFrame.width, fullFrame.height,
+                                              fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
+                    
+                    // Replace fullFrame with downscaled version
+                    if (fullFrame.memoryDeleter) fullFrame.memoryDeleter(fullFrame.pixels);
+                    else _aligned_free(fullFrame.pixels);
+                    
+                    fullFrame.pixels = dstBuf;
+                    fullFrame.width = targetW;
+                    fullFrame.height = targetH;
+                    fullFrame.stride = (int)dstStride;
+                    fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                    
+                    wchar_t dbg[128];
+                    swprintf_s(dbg, L"[P15] Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
+                    OutputDebugStringW(dbg);
+                }
             }
         }
     }

@@ -85,15 +85,21 @@ namespace QuickView {
             if (maxLOD > MAX_LOD_LEVELS) maxLOD = MAX_LOD_LEVELS;
         }
         
+        // [Ultimate Image Quality] Ceiling-based LOD with Hysteresis
+        // Follows computer graphics down-sampling Mipmap rules:
+        // Do NOT upscale (magnify) tiles. Always prefer optical down-sampling.
+        // Hysteresis prevents rapid bouncing back and forth when user zooms precisely on the threshold.
+        const float epsilon = 0.01f; 
         int lod;
-        if (zoom >= 1.0f) lod = 0;
-        else if (zoom >= 0.5f) lod = 1;
-        else if (zoom >= 0.25f) lod = 2;
-        else if (zoom >= 0.125f) lod = 3;
-        else if (zoom >= 0.0625f) lod = 4;
-        else if (zoom >= 0.03125f) lod = 5;
-        else if (zoom >= 0.015625f) lod = 6;
-        else if (zoom >= 0.0078125f) lod = 7;
+        
+        if (zoom > 0.5f + (m_currentLOD == 0 ? -epsilon : epsilon)) lod = 0;
+        else if (zoom > 0.25f + (m_currentLOD == 1 ? -epsilon : epsilon)) lod = 1;
+        else if (zoom > 0.125f + (m_currentLOD == 2 ? -epsilon : epsilon)) lod = 2;
+        else if (zoom > 0.0625f + (m_currentLOD == 3 ? -epsilon : epsilon)) lod = 3;
+        else if (zoom > 0.03125f + (m_currentLOD == 4 ? -epsilon : epsilon)) lod = 4;
+        else if (zoom > 0.015625f + (m_currentLOD == 5 ? -epsilon : epsilon)) lod = 5;
+        else if (zoom > 0.0078125f + (m_currentLOD == 6 ? -epsilon : epsilon)) lod = 6;
+        else if (zoom > 0.00390625f + (m_currentLOD == 7 ? -epsilon : epsilon)) lod = 7;
         else lod = 8;
         
         // Clamp: never use a LOD that produces lower resolution than the base preview

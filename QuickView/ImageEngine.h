@@ -198,6 +198,7 @@ public:
             int lastTotalMs = 0;   // [Dual Timing] Total processing
             wchar_t loaderName[64] = { 0 }; // [Phase 11]
             bool isFullDecode = false;      // [Two-Stage] Match WorkerSnapshot layout
+            bool isTileDecode = false;      // [UI Fix] For Tile overrides
         } heavyWorkers[16]; // Fixed size for snapshot
         int heavyWorkerCount = 0;
         int heavyCancellations = 0; // [HUD V4] Total cancellations

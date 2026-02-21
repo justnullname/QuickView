@@ -4216,9 +4216,15 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
                  // [v8.4] Critical Fix: Respect E_ABORT from FastLane
                  // If JXL loader explicitly aborts (e.g. Large Modular Image in FastLane), 
                  // we MUST NOT fall through to full decode on this thread.
-                 if (hr == E_ABORT) return E_ABORT;
-
-                 if (SUCCEEDED(hr) && tmp.isValid) {
+                 if (hr == E_ABORT) {
+                     // FastLane requests 256x256. HeavyLane Base Layer requests screen size (e.g. 1920x1080).
+                     // If it's FastLane, abort. If it's HeavyLane, fall through to Full Decode.
+                     if (ctx.targetWidth < 1000 && ctx.targetHeight < 1000) {
+                         return E_ABORT;
+                     }
+                     // Else fall through
+                 }
+                 else if (SUCCEEDED(hr) && tmp.isValid) {
                      result.width = tmp.width;
                      result.height = tmp.height;
                      result.stride = tmp.stride;
@@ -4864,7 +4870,8 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
                 return S_OK;
             }
         }
-        // If parsing fails, return with format set but dimensions unknown
+        // [Fix] If parsing fails (e.g. IFD is past 64KB), return S_OK with format set 
+        // to prevent caller from rejecting the entire file. WIC/HeavyLane will figure out dimensions later.
         return S_OK;
     }
     
@@ -7702,6 +7709,44 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             }
         }
         
+        // [Fix] Software Downscale if Unified Codec ignored target dimensions
+        if (targetWidth > 0 && targetHeight > 0 && 
+           ((int)res.width > targetWidth || (int)res.height > targetHeight)) {
+            
+            // Calculate proportional scale to fit within target
+            float scaleW = (float)targetWidth / res.width;
+            float scaleH = (float)targetHeight / res.height;
+            float scale = (std::min)(scaleW, scaleH);
+            
+            int finalW = (int)(res.width * scale + 0.5f);
+            int finalH = (int)(res.height * scale + 0.5f);
+            if (finalW < 1) finalW = 1;
+            if (finalH < 1) finalH = 1;
+            
+            int finalStride = CalculateAlignedStride(finalW, 4);
+            size_t finalSize = (size_t)finalStride * finalH;
+            uint8_t* resizedPixels = AllocateBuffer(finalSize);
+            
+            if (resizedPixels) {
+                // Perform Resize
+                SIMDUtils::ResizeBilinear(res.pixels, res.width, res.height, res.stride, 
+                                          resizedPixels, finalW, finalH, finalStride);
+                                          
+                // Free the original huge buffer
+                if (arena && arena->Owns(res.pixels)) {
+                    // It will be reclaimed when arena resets
+                } else {
+                    _aligned_free(res.pixels);
+                }
+                
+                res.pixels = resizedPixels;
+                res.width = finalW;
+                res.height = finalH;
+                res.stride = finalStride;
+                res.metadata.FormatDetails += L" (SwRescaled)";
+            }
+        }
+        
         outFrame->pixels = res.pixels;
         outFrame->width = res.width;
         outFrame->height = res.height;
@@ -7938,21 +7983,45 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     hr = lock->GetDataPointer(&bufferSize, &wicData);
     if (FAILED(hr) || !wicData) return hr;
     
+    // [Fix] WIC Fallback Software Downscale
+    bool needWicResize = targetWidth > 0 && targetHeight > 0 && 
+                        ((int)wicWidth > targetWidth || (int)wicHeight > targetHeight);
+
+    int finalW = (int)wicWidth;
+    int finalH = (int)wicHeight;
+    
+    if (needWicResize) {
+        float scaleW = (float)targetWidth / wicWidth;
+        float scaleH = (float)targetHeight / wicHeight;
+        float scale = (std::min)(scaleW, scaleH);
+        
+        finalW = (int)(wicWidth * scale + 0.5f);
+        finalH = (int)(wicHeight * scale + 0.5f);
+        if (finalW < 1) finalW = 1;
+        if (finalH < 1) finalH = 1;
+    }
+
     // Allocate output buffer with aligned stride
-    int outStride = CalculateSIMDAlignedStride(wicWidth, 4);
-    size_t outSize = static_cast<size_t>(outStride) * wicHeight;
+    int outStride = CalculateSIMDAlignedStride(finalW, 4);
+    size_t outSize = static_cast<size_t>(outStride) * finalH;
     uint8_t* pixels = AllocateBuffer(outSize);
     if (!pixels) return E_OUTOFMEMORY;
     
-    // Copy row by row (handles stride mismatch)
-    for (UINT y = 0; y < wicHeight; ++y) {
-        memcpy(pixels + y * outStride, wicData + y * wicStride, wicWidth * 4);
+    if (needWicResize) {
+        // Resize directly from WIC memory lock
+        SIMDUtils::ResizeBilinear(wicData, wicWidth, wicHeight, wicStride,
+                                  pixels, finalW, finalH, outStride);
+    } else {
+        // Copy row by row (handles stride mismatch)
+        for (UINT y = 0; y < wicHeight; ++y) {
+            memcpy(pixels + y * outStride, wicData + y * wicStride, wicWidth * 4);
+        }
     }
     
     // Fill output frame
     outFrame->pixels = pixels;
-    outFrame->width = static_cast<int>(wicWidth);
-    outFrame->height = static_cast<int>(wicHeight);
+    outFrame->width = finalW;
+    outFrame->height = finalH;
     outFrame->stride = outStride;
     outFrame->format = PixelFormat::BGRA8888; // WIC always converts to BGRA
     SetupDeleter(pixels);

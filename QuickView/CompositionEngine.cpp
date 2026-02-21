@@ -298,7 +298,7 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         
         // Upload Pixels
         D2D1_BITMAP_PROPERTIES bmpProps = D2D1::BitmapProperties(
-             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)
+             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
         );
         
         ComPtr<ID2D1Bitmap> srcBitmap;
@@ -313,10 +313,26 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
             return;
         }
             
-        // Draw 1:1 matching the physical tile size on this virtual surface
-        D2D1_RECT_F destRect = D2D1::RectF((float)surfPixelX, (float)surfPixelY, (float)(surfPixelX + bitmapSize), (float)(surfPixelY + bitmapSize));
+        // [Fix] DComp Atlas Corruption & Garbage:
+        // 1. MUST use COPY blend so transparent pixels in srcBitmap overwrite DComp's uninitialized VRAM garbage.
+        // 2. MUST restrict drawing precisely to updateRect so we don't overwrite OTHER tiles in the DXGI atlas.
+        m_pendingContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
         
-        m_pendingContext->DrawBitmap(srcBitmap.Get(), destRect);
+        int clippedW = updateRect.right - updateRect.left;
+        int clippedH = updateRect.bottom - updateRect.top;
+        
+        D2D1_RECT_F destRect = D2D1::RectF(
+            (float)surfPixelX, 
+            (float)surfPixelY, 
+            (float)(surfPixelX + clippedW), 
+            (float)(surfPixelY + clippedH)
+        );
+        D2D1_RECT_F srcRect = D2D1::RectF(0.0f, 0.0f, (float)clippedW, (float)clippedH);
+        
+        m_pendingContext->DrawBitmap(srcBitmap.Get(), &destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &srcRect);
+        
+        // Restore default blend state
+        m_pendingContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
         
         DXGI_SURFACE_DESC surfDesc;
         dxgiSurf->GetDesc(&surfDesc);

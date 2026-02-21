@@ -143,9 +143,12 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     if (!primaryMMF->IsValid()) primaryMMF.reset(); // Fallback if map fails
 
     // [Titan] Trigger Conditions
-    // [Titan] Trigger Conditions
-    // 1. Format support: JPEG, WebP, PNG
-    bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || fmtUpper == L"WEBP" || fmtUpper == L"PNG" || fmtUpper == L"JXL");
+    // 1. Format support: JPEG, WebP, PNG, JXL, TIFF, AVIF
+    bool isSupportedFormat = (fmtUpper == L"JPEG" || fmtUpper == L"JPG" || 
+                              fmtUpper == L"WEBP" || fmtUpper == L"PNG" || 
+                              fmtUpper == L"JXL" || fmtUpper == L"TIF" || 
+                              fmtUpper == L"TIFF" || fmtUpper == L"AVIF" || 
+                              fmtUpper == L"HEIC");
 
     // 2. Size triggers: Any side > 8192 OR Total pixels > 50MP
     bool sizeTrigger = (info.width > 8192 || info.height > 8192);
@@ -315,9 +318,9 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
              } else {
                  // [v7.2 Fix] Large WebP -> Force Direct Full Decode (Stage 2 immediately).
                  // Standard 'useHeavy' path uses Submit() which defaults to 'isFullDecode=false' (Scaled).
-                 // We must use SubmitFullDecode() to bypass Stage 1.
-                 OutputDebugStringW(L"[Dispatch] -> WebP Large: Heavy Direct Full\n");
-                 m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF);
+                 // For true Titan scaling, we just Submit to Heavy Lane for a base layer!
+                 OutputDebugStringW(L"[Dispatch] -> WebP Large: Heavy Direct\n");
+                 m_heavyPool->Submit(path, imageId, primaryMMF);
                  return; 
              }
         }
@@ -331,8 +334,8 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         std::transform(fmtLower.begin(), fmtLower.end(), fmtLower.begin(), ::towlower);
         
         if (fmtLower == L"webp") {
-             OutputDebugStringW(L"[Dispatch] -> WebP Heavy: Heavy Direct Full\n");
-             m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF); // Direct Full
+             OutputDebugStringW(L"[Dispatch] -> WebP Heavy: Heavy Direct\n");
+             m_heavyPool->Submit(path, imageId, primaryMMF); // Base Layer Scaled
              return;
         }
         
@@ -363,9 +366,8 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         else {
             // [v8.5] Hard Dispatch: Large JXL (>2MP or >3MB)
             // Skip FastLane entirely. HeavyLane handles everything (Deep Cancel Relay).
-            // This eliminates the 18ms overhead of checking for DC in FastLane.
             OutputDebugStringW(L"[Dispatch] -> JXL Large: Heavy Direct (Skip FastLane)\n");
-            m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF);
+             m_heavyPool->Submit(path, imageId, primaryMMF);
         }
         return; // JXL dispatched
     }
@@ -732,7 +734,10 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
             
             // If we haven't found a full decode yet, take this (likely scaled) result
             if (!hasFullDecode) {
-                wcscpy_s(s.loaderName, s.heavyWorkers[i].loaderName);
+                // [UI Fix] Priority: Tile Decode > Scaled Base Layer
+                if (s.heavyWorkers[i].isTileDecode || s.loaderName[0] == 0) {
+                    wcscpy_s(s.loaderName, s.heavyWorkers[i].loaderName);
+                }
             }
         }
     }

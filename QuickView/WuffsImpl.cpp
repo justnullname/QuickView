@@ -179,7 +179,7 @@ static bool DecodeGIF_Impl(const uint8_t* data, size_t size,
     uint32_t height = wuffs_base__pixel_config__height(&ic.pixcfg);
     if (width == 0 || height == 0) return false;
 
-    wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
+    wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
     try { outPixels.resize(pixelSize); } catch(...) { return false; }
