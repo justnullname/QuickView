@@ -308,12 +308,14 @@ private:
         ImageID imageId = 0;    // Which image (invalidate on switch)
     };
     LODCache m_lodCache;
+    LODCache m_masterLOD0Cache; // [NEW] Keep LOD0 decoded image across requests
     std::mutex m_lodCacheMutex;
     std::condition_variable m_lodCacheCond;       // [Fix16] For efficient worker wakeup
     std::atomic<bool> m_lodCacheBuilding = false; // Prevent concurrent full decodes
     std::atomic<int> m_lodCacheFailCount{0};       // [B4] Count consecutive FullDecode failures (prevent infinite retry)
     static constexpr int kMaxLODCacheRetries = 3;  // Give up after 3 consecutive failures per LOD
     bool m_isProgressiveJPEG = false; // Detected during baseline decode
+    bool m_isProgressiveJXL = false; // [JXL] True if the image has DC/Progressive layers suitable for region decoding
     
     // [P14] Helpers
     HRESULT FullDecodeAndCacheLOD(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);

@@ -101,6 +101,9 @@ namespace QuickView {
             
             // [v5.3] Unified metadata pointer (optional - if set, loaders will populate)
             CImageLoader::ImageMetadata* pMetadata = nullptr;
+            
+            // [v10] Fallback control for Titan Base Layer
+            bool forceRenderFull = false;
         };
 
         struct DecodeResult {
@@ -3719,6 +3722,14 @@ namespace QuickView {
                         // But we DO know width from BasicInfo (full) or FrameHeader?
                         // Let's stick to Packed allocation for JXL.
                         
+                        // [Fix] Prevent massive memory allocation stalls (e.g. 4.8GB for 1.2 GigaPixel JXL)
+                        // This prevents the OS from thrashing the page file for 15 seconds before crashing.
+                        if (bufferSize > 1024ULL * 1024ULL * 1024ULL) { // 1 GB limit
+                            JxlDecoderDestroy(dec); 
+                            OutputDebugStringW(L"[JXL::Load] Image too massive for full unified decode (>1GB). Aborting.\n");
+                            return E_OUTOFMEMORY; 
+                        }
+                        
                         pixels = ctx.allocator(bufferSize);
                         if (!pixels) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
                         
@@ -4183,13 +4194,16 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
     );
     
     if (isBufferCodec) {
-        std::vector<uint8_t> fileBuf;
-        if (!ReadAll(filePath, fileBuf)) return E_FAIL;
+        QuickView::MappedFile mapping(filePath);
+        if (!mapping.IsValid()) return E_FAIL;
+        
+        const uint8_t* mappedData = mapping.data();
+        size_t mappedSize = mapping.size();
         
         // Dispatch
         if (fmt == L"AVIF" || fmt == L"HEIC") {
             CImageLoader::ThumbData tmp;
-            HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(fileBuf.data(), fileBuf.size(), 0, &tmp, false, &result.metadata);
+            HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(mappedData, mappedSize, 0, &tmp, false, &result.metadata);
             if (SUCCEEDED(hr) && tmp.isValid) {
                  // Copy from ThumbData to DecodeResult
                  // Need to account for stride
@@ -4209,9 +4223,9 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
         else if (fmt == L"JXL") {
              // [Two-Stage] Only use DC Preview if scaling is requested (Stage 1)
              // or if explicitly forcing preview.
-             if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
+             if (ctx.targetWidth > 0 || ctx.targetHeight > 0 || ctx.forceRenderFull) {
                  CImageLoader::ThumbData tmp;
-                 HRESULT hr = CImageLoader::LoadThumbJXL_DC(fileBuf.data(), fileBuf.size(), &tmp, &result.metadata);
+                 HRESULT hr = CImageLoader::LoadThumbJXL_DC(mappedData, mappedSize, &tmp, &result.metadata, ctx.forceRenderFull);
                  
                  // [v8.4] Critical Fix: Respect E_ABORT from FastLane
                  // If JXL loader explicitly aborts (e.g. Large Modular Image in FastLane), 
@@ -4232,7 +4246,7 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
                      result.pixels = ctx.allocator(bufSize);
                      if (result.pixels) {
                          memcpy(result.pixels, tmp.pixels.data(), bufSize);
-                         result.metadata.LoaderName = L"libjxl (DC)"; 
+                         result.metadata.LoaderName = tmp.loaderName; 
                          return S_OK;
                      }
                      // If alloc failed, fall through to full decode? No, E_OUTOFMEMORY.
@@ -4243,70 +4257,71 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
         }
         else if (fmt == L"WebP") {
              // WebP Loader already accepts DecodeResult directly
-             HRESULT hr = QuickView::Codec::WebP::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             HRESULT hr = QuickView::Codec::WebP::Load(mappedData, mappedSize, ctx, result);
              if (SUCCEEDED(hr)) {
                  result.metadata.LoaderName = L"WebP (Unified)";
                  return S_OK;
              }
         }
         else if (fmt == L"JPEG") {
-            HRESULT hr = JPEG::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = JPEG::Load(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"TurboJPEG (Unified)"; return S_OK; }
         }
         else if (fmt == L"PNG") {
-            HRESULT hr = Wuffs::LoadPNG(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadPNG(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs PNG (Unified)"; return S_OK; }
         }
         else if (fmt == L"GIF") {
-            HRESULT hr = Wuffs::LoadGIF(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadGIF(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs GIF (Unified)"; return S_OK; }
         }
         else if (fmt == L"BMP") {
-            HRESULT hr = Wuffs::LoadBMP(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadBMP(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs BMP (Unified)"; return S_OK; }
         }
         else if (fmt == L"QOI") {
-            HRESULT hr = Wuffs::LoadQOI(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadQOI(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs QOI (Unified)"; return S_OK; }
         }
         else if (fmt == L"TGA") {
-            HRESULT hr = Wuffs::LoadTGA(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadTGA(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { 
                 result.metadata.LoaderName = L"Wuffs TGA (Unified)"; 
                 return S_OK; 
             }
             // [v6.9.7] Fallback: If Wuffs fails (Strict), try Stb (Robust)
             // This ensures FastLane doesn't fail silently for valid TGA files.
-            hr = Stb::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+            hr = Stb::Load(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) {
                 // Stb sets LoaderName to "StbImage"
                 return S_OK;
             }
         }
         else if (fmt == L"PNM") {
-            HRESULT hr = Wuffs::LoadNetPBM(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadNetPBM(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs NetPBM (Unified)"; return S_OK; }
         }
         else if (fmt == L"WBMP") {
-            HRESULT hr = Wuffs::LoadWBMP(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = Wuffs::LoadWBMP(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"Wuffs WBMP (Unified)"; return S_OK; }
         }
         /* NanoSVG Removed */
         else if (fmt == L"EXR") {
-             HRESULT hr = TinyEXR::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             HRESULT hr = TinyEXR::Load(mappedData, mappedSize, ctx, result);
              if (SUCCEEDED(hr)) { 
                  return S_OK; 
              }
         }
         else if (fmt == L"PSD" || fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX") {
-             HRESULT hr = Stb::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+             HRESULT hr = Stb::Load(mappedData, mappedSize, ctx, result);
              if (SUCCEEDED(hr)) { 
                  // Stb::Load sets LoaderName to StbImage
                  return S_OK; 
              }
         }
         if (fmt == L"JXL") {
-            HRESULT hr = JXL::Load(fileBuf.data(), fileBuf.size(), ctx, result);
+            HRESULT hr = JXL::Load(mappedData, mappedSize, ctx, result);
+            if (hr == E_OUTOFMEMORY || hr == E_ABORT) return hr;
             if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"libjxl (Unified)"; return S_OK; }
         }
     }
@@ -4365,7 +4380,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
         *ctx.pLoaderName = res.metadata.LoaderName;
     }
     
-    if (hr == E_ABORT) return E_ABORT;
+    if (hr == E_ABORT || hr == E_OUTOFMEMORY) return hr;
 
     // If LoadImageUnified succeeded, we're done.
     if (SUCCEEDED(hr) && res.success) {
@@ -6726,55 +6741,7 @@ HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* data, size_t size, 
 
 
 
-// [v7.5] Manual Downsampling Callback (Since API is missing)
-struct JxlSkipContext {
-    uint8_t* pDest;
-    size_t stride;
-    size_t width;
-    size_t height;
-    size_t factor;
-};
-
-static void JxlSkipSampleCallback(void* opaque, size_t x, size_t y, size_t num_pixels, const void* pixels) {
-    JxlSkipContext* ctx = (JxlSkipContext*)opaque;
-    if (y % ctx->factor != 0) return;
-    
-    size_t destY = y / ctx->factor;
-    if (destY >= ctx->height) return;
-
-    const uint8_t* src = (const uint8_t*)pixels;
-    uint8_t* row = ctx->pDest + destY * ctx->stride;
-    
-    // Process pixels
-    // Optimization: Skip to first valid pixel
-    size_t i = 0;
-    
-    // Align global x to factor
-    // gx = x + i
-    // We want (x + i) % factor == 0
-    // i % factor == (factor - (x % factor)) % factor
-    size_t rem = x % ctx->factor;
-    if (rem != 0) {
-        i = ctx->factor - rem;
-    }
-    
-    for (; i < num_pixels; i += ctx->factor) {
-        size_t gx = x + i;
-        size_t destX = gx / ctx->factor;
-        
-        if (destX < ctx->width) {
-             size_t dstIdx = destX * 4;
-             size_t srcIdx = i * 4;
-             // Copy RGBA
-             row[dstIdx + 0] = src[srcIdx + 0];
-             row[dstIdx + 1] = src[srcIdx + 1];
-             row[dstIdx + 2] = src[srcIdx + 2];
-             row[dstIdx + 3] = src[srcIdx + 3];
-        }
-    }
-}
-
-HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData, ImageMetadata* pMetadata) {
+HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData, ImageMetadata* pMetadata, bool forceRenderFull) {
     if (!pFile || fileSize == 0 || !pData) return E_INVALIDARG;
 
     pData->isValid = false;
@@ -6808,13 +6775,19 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
     
     if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) return cleanup(E_FAIL);
 
+    // [v8.4] Critical: In libjxl 0.8+, JXL_DEC_DC_IMAGE was removed. 
+    // We MUST set ProgressiveDetail to kDC to force the decoder to emit 
+    // JXL_DEC_FRAME_PROGRESSION at the 1:8 DC layer stage!
+    JxlDecoderSetProgressiveDetail(dec, JxlProgressiveDetail::kDC);
+
     JxlBasicInfo info = {};
     JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 }; 
-    
+
     // EXIF State
     std::vector<uint8_t> exifBuffer;
     bool readingExif = false;
-    bool foundDC = false; // Flag if we caught the rabbit (1:8)
+    bool foundDC = false; // Flag if we caught the rabbit
+    bool isProgressive = false;
 
     for (;;) {
         JxlDecoderStatus status = JxlDecoderProcessInput(dec);
@@ -6827,9 +6800,6 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
         }
         else if (status == JXL_DEC_BASIC_INFO) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) return cleanup(E_FAIL);
-            
-            // [Fix] Removed SetProgressiveDetail(dec, kDC)
-            // This allows the decoder to emit intermediate events.
             
             JxlColorEncoding color_encoding = {};
             color_encoding.color_space = JXL_COLOR_SPACE_RGB;
@@ -6853,13 +6823,14 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             }
         }
         else if (status == JXL_DEC_FRAME_PROGRESSION) {
+            isProgressive = true;
             // [v8.3] Catch the Rabbit
             size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
             
-            if (ratio == 8) {
+            if (ratio >= 4 && ratio <= 16) {
                 // Caught it!
-                size_t downW = info.xsize / 8;
-                size_t downH = info.ysize / 8;
+                size_t downW = info.xsize / ratio;
+                size_t downH = info.ysize / ratio;
                 if (downW == 0) downW = 1;
                 if (downH == 0) downH = 1;
                 
@@ -6872,7 +6843,7 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                 pData->height = (UINT)downH;
                 pData->stride = (UINT)downW * 4;
                 pData->isValid = true;
-                pData->loaderName = L"libjxl (Prog 1:8)"; // Success marker
+                pData->loaderName = L"libjxl (Prog DC)"; // Success marker
 
                 if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufferSize)) {
                     return cleanup(E_FAIL);
@@ -6928,14 +6899,11 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             // [v8.3] Fallback Logic
             // Reached here means NO 1:8 event occurred (Modular or Small).
             
-            // Strategy: 
-            // - If Small (< 2MP), decode fully (FastLane handles it).
-            // - If Large, Abort (HeavyLane handles it).
-            
             bool isSmallEnough = ((uint64_t)info.xsize * info.ysize) < 2000000; // 2MP
+            bool isReasonableTitan = ((uint64_t)info.xsize * info.ysize) <= 100000000; // 100MP limit for full preview
 
-            if (isSmallEnough) {
-                 // FastLane Full Decode
+            if (isSmallEnough || (forceRenderFull && isReasonableTitan)) {
+                 // FastLane Full Decode (or HeavyLane forced full decode within reasonable limits)
                  size_t stride = info.xsize * 4;
                  size_t bufSize = stride * info.ysize;
                  try { pData->pixels.resize(bufSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
@@ -6945,18 +6913,30 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                  pData->stride = (UINT)stride;
                  pData->isValid = true;
                  pData->isBlurry = false; // Full decode is sharp
-                 pData->loaderName = L"libjxl (Fast Full)";
+                 pData->loaderName = isSmallEnough ? L"libjxl (Fast Full)" : L"libjxl (Heavy Full)";
 
                  JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufSize);
                  // No Flush, just continue loop
             } else {
-                 // Too large for FastLane full decode. Abort.
-                 OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Aborting.\n");
-                 return cleanup(E_ABORT);
+                 // Too large for FastLane full decode or too massive for HeavyLane CPU decoding.
+                 // We fake a 1x1 transparent pixel to satisfy the pipeline and unlock Titan Mode.
+                 OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Faking 1x1 base layer for Region Decoder.\n");
+                 
+                 try {
+                     pData->pixels.assign(4, 0); // 1 pixel, 4 channels (RGBA), all 0 (transparent)
+                 } catch(...) { return cleanup(E_OUTOFMEMORY); }
+                 
+                 pData->width = 1;
+                 pData->height = 1;
+                 pData->stride = 4;
+                 pData->isValid = true;
+                 pData->isBlurry = true;
+                 pData->loaderName = isProgressive ? L"libjxl (Fake Base Prog)" : L"libjxl (Fake Base)";
+                 
+                 return cleanup(S_OK);
             }
         }
         else if (status == JXL_DEC_FULL_IMAGE) {
-            // If we are here, it means we took the Fallback Path (Fast Full)
              if (pData->isValid) {
                  uint8_t* p = pData->pixels.data();
                  size_t pxCount = (size_t)pData->width * pData->height;
@@ -6977,8 +6957,7 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                  }
                  return cleanup(S_OK);
              }
-        }
-        
+        }  
         // Exif Box Handling
         if (readingExif && status != JXL_DEC_BOX && status != JXL_DEC_BOX_NEED_MORE_OUTPUT) {
              size_t remaining = JxlDecoderReleaseBoxBuffer(dec);
@@ -7690,11 +7669,12 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     ctx.targetHeight = targetHeight;
     ctx.pLoaderName = pLoaderName;
     ctx.pMetadata = pMetadata; // [v5.3] Pass metadata pointer to Collect Metadata directly
+    ctx.forceRenderFull = true; // [v10] Ensure HeavyLane base layer decode does not abort for large non-DC JXLs
 
     DecodeResult res;
     HRESULT hrUnified = LoadImageUnified(filePath, ctx, res);
 
-    if (hrUnified == E_ABORT) return E_ABORT;
+    if (hrUnified == E_ABORT || hrUnified == E_OUTOFMEMORY) return hrUnified;
     if (SUCCEEDED(hrUnified)) {
         // [v5.0] Extract loader name from unified result
         if (pLoaderName && !res.metadata.LoaderName.empty()) {

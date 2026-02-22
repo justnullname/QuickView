@@ -146,8 +146,10 @@ void HeavyLanePool::ResetBenchState() {
     {
         std::lock_guard lock(m_lodCacheMutex);
         m_lodCache = {};
+        m_masterLOD0Cache = {}; // [NEW] Clear Master LOD0 cache
     }
     m_isProgressiveJPEG = false;
+    m_isProgressiveJXL = false;
     m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image
 
     // IO type is set during Submit() via UpdateIOLimit
@@ -1043,10 +1045,36 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                            }
                        }
                        
-                       RecordBaselineSample(outPixels, (double)benchMs, srcWidth, srcHeight, isProgressiveJPEG);
+                       
+                       // [v8.4 Fix] If the Base Layer is a Fake 1x1, its real MP/s is 0.
+                       // This would cause the auto-regulator to maliciously throttle the pool to < 3 threads, 
+                       // crippling our N+1 Native Region Decoding. We simulate 100 MP/s to unlock full core usage!
+                       if (loaderName.find(L"Fake Base") != std::wstring::npos) {
+                           OutputDebugStringW(L"[HeavyPool] Base Layer is Fake. Simulating 100.0 MP/s baseline to unlock Titan tiles.\n");
+                           RecordBaselineSample(10000000.0, 100.0, srcWidth, srcHeight, isProgressiveJPEG);
+                       } else {
+                           RecordBaselineSample(outPixels, (double)benchMs, srcWidth, srcHeight, isProgressiveJPEG);
+                       }
                        m_isProgressiveJPEG = isProgressiveJPEG; // [P14] Cache for LOD decode
+                       
+                       // [JXL] Check if it was a progressive DC Base Layer!
+                       if (m_titanFormat == L"JXL") {
+                           if (loaderName.find(L"Prog") != std::wstring::npos) {
+                               m_isProgressiveJXL = true;
+                               OutputDebugStringW(L"[HeavyPool] Detected Progressive JXL. Enabling native Region Decoding!\n");
+                           } else {
+                               m_isProgressiveJXL = false;
+                           }
+                       }
                    }
                }
+                else if (FAILED(hr) && m_benchPhase == BenchPhase::PENDING) {
+                    // [Fix] If Base Layer decode aborted (e.g. Gigapixel JXL too massive for CPU),
+                    // MUST unlock concurrency so Native Region Decoding can blast through tiles!
+                    // We simulate a fast decode (100MP/s) to unlock ~14 threads.
+                    OutputDebugStringW(L"[HeavyPool] Base Layer failed. Simulating 100MP/s baseline to unlock Titan tiles.\n");
+                    RecordBaselineSample(10000000.0, 100.0, 10000, 10000, false);
+                }
          }
           else if (job.type == JobType::Tile) {
                // --- Tile Decode ---
@@ -1076,20 +1104,39 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    
                     // [B3] Non-JPEG formats: MUST use Single-Decode-Then-Slice.
                     // Per-tile fallback (LoadTileFromMemory/Strategy-B) is unsuitable:
-                    //   - LoadTileFromMemory is TurboJPEG-only → instant fail for PNG/JXL
+                    //   - LoadTileFromMemory is TurboJPEG-only → instant fail for PNG
                     //   - Strategy-B full-decodes the entire image PER TILE → 34s/tile for 40Kx30K
-                    bool isNonJpeg = (m_titanFormat != L"JPEG");
+                    // [Optimization] We now support Native Region Decoding for WEBP!
+                    // WEBP can bypass SingleDecode and directly query the MMF concurrently.
+                    // NOTE: JXL Native Region Decoding (while supported) relies on full-file parsing
+                    // if the JXL lacks progressive layers. For Titan-sized images, this means a 15-second
+                    // decode PER TILE. Therefore, JXL MUST use SingleDecode to cache the LOD level.
+                    bool isSingleDecodeMandatory = false;
+                    if (m_titanFormat != L"JPEG" && m_titanFormat != L"WEBP") {
+                        if (m_titanFormat == L"JXL" && m_isProgressiveJXL) {
+                            // [Optimization] Progressive JXL files have DC layers or Tiled structures.
+                            // We can use Native Region Decoding without suffering 15s monolithic penalties!
+                            isSingleDecodeMandatory = false;
+                        } else {
+                            isSingleDecodeMandatory = true; // PNG, TIFF, non-progressive JXL etc. still require SingleDecode
+                        }
+                    }
                     
                     // [B4] Check fail count — give up if too many failures
-                    if (isNonJpeg && m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
+                    if (isSingleDecodeMandatory && m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
                         hr = E_FAIL;
                         loaderName = L"LOD Exhausted";
                         // Don't reset tile to Empty — mark as permanently failed
                         goto tile_decode_done;
                     }
                     
+                    bool hasNativeRegionDecoder = (m_titanFormat == L"WEBP") || (m_titanFormat == L"JXL" && m_isProgressiveJXL);
+
                     // Cache miss: Try full decode + cache
-                    if (m_isTitanMode && ShouldUseSingleDecode(job.tileCoord.lod)) {
+                    // [v8.4] Critical Fix: If the format has a TRUE NATIVE REGION DECODER (WebP, Progressive JXL),
+                    // we MUST NOT let ShouldUseSingleDecode hijack the pipeline and force an 8.6 second 
+                    // single-core full decode stall! We bypass caching and go straight to High-Concurrency Region Decoding.
+                    if (m_isTitanMode && !hasNativeRegionDecoder && ShouldUseSingleDecode(job.tileCoord.lod)) {
                         hr = FullDecodeAndCacheLOD(job, rawFrame, loaderName);
                         if (SUCCEEDED(hr)) goto tile_decode_done;
                         // CAS failed (another builder): wait briefly for it
@@ -1097,7 +1144,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     
                     // [B3] Wait for LOD cache builder if SingleDecode is active, then retry slice.
                     // This applies to ALL formats using SingleDecode (including progressive JPEG).
-                    bool expectSingleDecode = isNonJpeg || (m_isTitanMode && ShouldUseSingleDecode(job.tileCoord.lod));
+                    bool expectSingleDecode = isSingleDecodeMandatory || (m_isTitanMode && !hasNativeRegionDecoder && ShouldUseSingleDecode(job.tileCoord.lod));
                     
                     if (expectSingleDecode) {
                         // [Fix16] Event-driven wait (max 60s) instead of 100ms polling
@@ -1133,6 +1180,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     
                     // ============================================================
                     // Legacy Path: Per-tile TJ Region Decode (JPEG ONLY)
+                    // + [NEW] Native Region Decoding for WEBP & JXL
                     // ============================================================
 
                    // [Fix] Calculate Scale from LOD (Precise)
@@ -1145,40 +1193,43 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    decodeStart = std::chrono::high_resolution_clock::now();
 
                   // Diagnostic: Start Decode / Metrics
-                  // auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(start - job.submitTime).count(); // Moved below
-                  // int activeWorkers = m_busyCount.load(); // Moved below
-    
-                  // For Tile Loading, we use LoadRegionToFrame
                   QuickView::RegionRect rect = { job.region.srcRect.x, job.region.srcRect.y, job.region.srcRect.w, job.region.srcRect.h };
+                  int targetTileSize = 512; // [Fix] HARDCODED TILE_SIZE (matches TileManager.h)
                   
-                  // [MMF Optimization] Zero-Copy Path
+                  // [Native Region Processing Framework]
                   if (job.mmf && job.mmf->IsValid()) {
-                      // Direct memory access - NO IO here!
-                      // [Titan] Robust Zero-Copy Loader with Padding
-                      // [Fix] FORCE target size to be Full Tile (512x512) to prevent stretching.
-                      // Even if the job.region (clipped) says 512x20, we want a 512x512 buffer 
-                      // with the bottom 492 pixels transparent.
-                      // RenderEngine will then draw a 512x512 quad.
-                      hr = CImageLoader::LoadTileFromMemory(
-                          job.mmf->data(), job.mmf->size(), 
-                          rect, scale, 
-                          &rawFrame, &m_tileMemory,
-                          512, 512 // [Fix] HARDCODED TILE_SIZE (matches TileManager.h)
-                      );
-                      
-                      if (FAILED(hr)) {
-                          loaderName = L"MMF Failed -> Fallback";
-                          // Fallback to File (Slow Path)
-                          hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName, cancelPred, 512, 512);
+                      // Zero-Copy Direct Memory Parsing
+                      if (m_titanFormat == L"JPEG") {
+                          hr = CImageLoader::LoadTileFromMemory(
+                              job.mmf->data(), job.mmf->size(), 
+                              rect, scale, &rawFrame, &m_tileMemory, targetTileSize, targetTileSize
+                          );
+                          loaderName = SUCCEEDED(hr) ? L"TurboJPEG (MMF)" : L"MMF Failed -> Fallback";
+                      } else if (m_titanFormat == L"WEBP") {
+                          // [Native ROI] WebP Memory Decode
+                          hr = m_loader->LoadWebPRegionToFrame(
+                              job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, cancelPred, targetTileSize, targetTileSize
+                          );
+                          loaderName = SUCCEEDED(hr) ? L"WebP ROI (MMF)" : L"WebP Failed -> Fallback";
+                      } else if (m_titanFormat == L"JXL") {
+                          // [Native ROI] JXL Memory Decode (using underlying file mapped within loader for now)
+                          hr = m_loader->LoadJxlRegionToFrame(
+                              job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, cancelPred, targetTileSize, targetTileSize
+                          );
+                          loaderName = SUCCEEDED(hr) ? L"JXL ROI" : L"JXL Failed -> Fallback";
                       } else {
-                          loaderName = L"TurboJPEG (MMF)";
+                          hr = E_FAIL; // Unknown format in native path
+                      }
+                      
+                      // Fallback logic
+                      if (FAILED(hr)) {
+                          hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName, cancelPred, targetTileSize, targetTileSize);
                       }
                   } else {
                       // Fallback: File IO Path (Slow)
                       // [Titan] Use Shareable Slab Allocator
-                      // [Fix] Pass 512, 512 to force padding internally
                       hr = m_loader->LoadRegionToFrame(job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr /*arena*/, &loaderName,
-                         cancelPred, 512, 512);
+                         cancelPred, targetTileSize, targetTileSize);
                   }
              }
               }
@@ -1586,46 +1637,131 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
             fullRegion, scale,
             &fullFrame, nullptr, 0, 0);
     } else {
-        // PNG/JXL/others: full-resolution decode via FullDecodeFromMemory
-        hr = CImageLoader::FullDecodeFromMemory(
-            job.mmf->data(), job.mmf->size(), &fullFrame);
-            
-        // [Fallback] If unsupported by memory decoders (e.g. AVIF, TIFF, HEIC), fallback to scaling WIC file loader
-        if (hr == E_NOTIMPL || hr == E_FAIL) {
+        // [New] Check if master cache exists for this image
+        std::shared_ptr<uint8_t[]> masterPixels;
+        int masterW = 0, masterH = 0, masterStride = 0;
+        {
+            std::lock_guard lock(m_lodCacheMutex);
+            if (m_masterLOD0Cache.pixels && m_masterLOD0Cache.imageId == job.imageId) {
+                masterPixels = m_masterLOD0Cache.pixels;
+                masterW = m_masterLOD0Cache.width;
+                masterH = m_masterLOD0Cache.height;
+                masterStride = m_masterLOD0Cache.stride;
+            }
+        }
+        
+        if (masterPixels) {
+            // WE HAVE A MASTER CACHE! Instant downscale!
             int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
             int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
             
-            // Allow WIC to handle scaling natively
-            hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, nullptr, nullptr);
-        } else {
-            // Memory decode succeeded, do software downscale if necessary
-            // If LOD > 0, software downscale from full-res to target size
-            if (SUCCEEDED(hr) && fullFrame.IsValid() && lod > 0) {
-                int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
-                int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
-                
-                size_t dstStride = (size_t)targetW * 4;
+            size_t dstStride = (size_t)targetW * 4;
+            
+            if (lod > 0) {
                 size_t dstSize = dstStride * targetH;
                 uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
                 if (!dstBuf) {
                     hr = E_OUTOFMEMORY;
                 } else {
-                    SIMDUtils::ResizeBilinear(fullFrame.pixels, fullFrame.width, fullFrame.height,
-                                              fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
-                    
-                    // Replace fullFrame with downscaled version
-                    if (fullFrame.memoryDeleter) fullFrame.memoryDeleter(fullFrame.pixels);
-                    else _aligned_free(fullFrame.pixels);
+                    SIMDUtils::ResizeBilinear(masterPixels.get(), masterW, masterH,
+                                              masterStride, dstBuf, targetW, targetH, (int)dstStride);
                     
                     fullFrame.pixels = dstBuf;
                     fullFrame.width = targetW;
                     fullFrame.height = targetH;
                     fullFrame.stride = (int)dstStride;
+                    fullFrame.format = QuickView::PixelFormat::BGRA8888; // Assumed for memory formats
                     fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                    hr = S_OK;
                     
                     wchar_t dbg[128];
-                    swprintf_s(dbg, L"[P15] Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
+                    swprintf_s(dbg, L"[P15] Master built + Instant software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
                     OutputDebugStringW(dbg);
+                }
+            } else {
+                // Zero-copy ownership transfer for LOD 0
+                fullFrame.pixels = masterPixels.get();
+                fullFrame.width = targetW;
+                fullFrame.height = targetH;
+                fullFrame.stride = (int)dstStride;
+                fullFrame.format = QuickView::PixelFormat::BGRA8888;
+                fullFrame.memoryDeleter = [masterPixels](uint8_t* p) mutable { masterPixels.reset(); };
+                hr = S_OK;
+                
+                OutputDebugStringW(L"[P15] Master built + Instant Zero-Copy for LOD 0\n");
+            }
+        } else {
+            // PNG/JXL/others: full-resolution decode via FullDecodeFromMemory
+            hr = CImageLoader::FullDecodeFromMemory(
+                job.mmf->data(), job.mmf->size(), &fullFrame);
+                
+            // [Fallback] If unsupported by memory decoders (e.g. AVIF, TIFF, HEIC), fallback to scaling WIC file loader
+            if (hr == E_NOTIMPL || hr == E_FAIL) {
+                int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+                int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                
+                // Allow WIC to handle scaling natively
+                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, nullptr, nullptr);
+            } else {
+                // Memory decode succeeded! `fullFrame` contains the FULL res image.
+                // WE WANT TO CACHE THIS AS MASTER LOD0 BEFORE DOWNSCALING!
+                if (SUCCEEDED(hr) && fullFrame.IsValid()) {
+                    auto deleter = fullFrame.memoryDeleter;
+                    uint8_t* rawPixels = fullFrame.Detach(); // Take ownership
+                    
+                    std::shared_ptr<uint8_t[]> masterPtr;
+                    if (deleter) {
+                        masterPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
+                    } else {
+                        masterPtr = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
+                    }
+                    
+                    {
+                        std::lock_guard lock(m_lodCacheMutex);
+                        m_masterLOD0Cache.pixels = masterPtr;
+                        m_masterLOD0Cache.width = fullFrame.width;
+                        m_masterLOD0Cache.height = fullFrame.height;
+                        m_masterLOD0Cache.stride = fullFrame.stride;
+                        m_masterLOD0Cache.lod = 0;
+                        m_masterLOD0Cache.imageId = job.imageId;
+                    }
+                    
+                    // Now, do we need to downscale for THIS request?
+                    int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+                    int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                    
+                    size_t dstStride = (size_t)targetW * 4;
+                    
+                    if (lod > 0) {
+                        size_t dstSize = dstStride * targetH;
+                        uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                        if (!dstBuf) {
+                            hr = E_OUTOFMEMORY;
+                        } else {
+                            SIMDUtils::ResizeBilinear(masterPtr.get(), fullFrame.width, fullFrame.height,
+                                                      fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
+                            
+                            // Replace fullFrame with downscaled version for caching later
+                            fullFrame.pixels = dstBuf;
+                            fullFrame.width = targetW;
+                            fullFrame.height = targetH;
+                            fullFrame.stride = (int)dstStride;
+                            fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                            
+                            wchar_t dbg[128];
+                            swprintf_s(dbg, L"[P15] Master built + Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
+                            OutputDebugStringW(dbg);
+                        }
+                    } else {
+                        // Zero-copy ownership transfer for LOD 0
+                        fullFrame.pixels = masterPtr.get();
+                        fullFrame.width = targetW;
+                        fullFrame.height = targetH;
+                        fullFrame.stride = (int)dstStride;
+                        fullFrame.memoryDeleter = [masterPtr](uint8_t* p) mutable { masterPtr.reset(); };
+                        
+                        OutputDebugStringW(L"[P15] Master built + Zero-Copy for LOD 0\n");
+                    }
                 }
             }
         }

@@ -364,7 +364,7 @@ public:
     // [JXL Global Runner] 全局线程池单例，避免每次解码创建开销
     static void* GetJxlRunner();
     // Public Specialized Loaders (needed by helpers)
-    static HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData, ImageMetadata* pMetadata = nullptr);
+    static HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData, ImageMetadata* pMetadata = nullptr, bool forceRenderFull = false);
     static HRESULT LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow = true, ImageMetadata* pMetadata = nullptr);
 
     static void ReleaseJxlRunner();
