@@ -123,6 +123,25 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // 1. Peek Header
     CImageLoader::ImageHeaderInfo info = m_loader->PeekHeader(path.c_str());
 
+    // [Header Guard] Some containers (large AVIF/HEIC/TIFF variants) may return 0x0 in PeekHeader.
+    // Run a second fast probe, then a last-resort WIC size query to stabilize Titan dispatch.
+    if (info.width <= 0 || info.height <= 0 || info.format == L"Unknown") {
+        CImageLoader::ImageInfo fastInfo{};
+        if (SUCCEEDED(m_loader->GetImageInfoFast(path.c_str(), &fastInfo))) {
+            if (info.width <= 0 && fastInfo.width > 0) info.width = (int)fastInfo.width;
+            if (info.height <= 0 && fastInfo.height > 0) info.height = (int)fastInfo.height;
+            if (info.format == L"Unknown" && !fastInfo.format.empty()) info.format = fastInfo.format;
+            if (info.fileSize == 0 && fastInfo.fileSize > 0) info.fileSize = fastInfo.fileSize;
+        }
+        if (info.width <= 0 || info.height <= 0) {
+            UINT w = 0, h = 0;
+            if (SUCCEEDED(m_loader->GetImageSize(path.c_str(), &w, &h))) {
+                info.width = (int)w;
+                info.height = (int)h;
+            }
+        }
+    }
+
     // [v9.0] Explicit Force Refresh (Toolbar Toggle)
     if (m_forceRefresh.exchange(false)) {
         InvalidateCache(path);
@@ -154,8 +173,11 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     bool sizeTrigger = (info.width > 8192 || info.height > 8192);
     size_t pixelCount = (size_t)info.width * info.height;
     bool pixelTrigger = (pixelCount > 50000000);
+    bool unknownDims = (info.width <= 0 || info.height <= 0);
+    uintmax_t observedFileSize = (info.fileSize > 0) ? info.fileSize : fileSize;
+    bool fallbackFileTrigger = unknownDims && observedFileSize >= (32ull * 1024ull * 1024ull);
 
-    bool enableTitan = (sizeTrigger || pixelTrigger) && isSupportedFormat;
+    bool enableTitan = (sizeTrigger || pixelTrigger || fallbackFileTrigger) && isSupportedFormat;
     
 
     if (enableTitan) {

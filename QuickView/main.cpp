@@ -5591,9 +5591,22 @@ void OnPaint(HWND hwnd) {
              
              // Calculate Base Preview Ratio (Preview / Original)
              float baseRatio = 0.0f;
+             float previewW = g_imageResource.GetSize().width;
              if (g_currentMetadata.Width > 0) {
-                 float previewW = g_imageResource.GetSize().width;
                  baseRatio = previewW / (float)g_currentMetadata.Width;
+             }
+
+             // [No-DC JXL Guard] Large JXL often starts with missing/invalid base preview
+             // (0px or fake 1x1), which can trigger immediate full tile decode on first screen.
+             // Clamp to virtual 1:8 so first frame never hard-blocks on monolithic decode.
+             if (g_currentMetadata.Format == L"JXL" &&
+                 g_currentMetadata.Width >= 8000 && g_currentMetadata.Height >= 8000) {
+                 constexpr float kVirtualNoDcRatio = 0.125f; // 1:8
+                 bool weakPreview = (previewW <= 1.0f);
+                 bool fakeBase = (g_currentMetadata.LoaderName.find(L"Fake Base") != std::wstring::npos);
+                 if (weakPreview || fakeBase) {
+                     baseRatio = kVirtualNoDcRatio;
+                 }
              }
 
              // Update Manager (Scheduling) - Guarded to prevent loop

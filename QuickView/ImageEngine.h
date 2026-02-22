@@ -199,6 +199,7 @@ public:
             wchar_t loaderName[64] = { 0 }; // [Phase 11]
             bool isFullDecode = false;      // [Two-Stage] Match WorkerSnapshot layout
             bool isTileDecode = false;      // [UI Fix] For Tile overrides
+            bool isCopyOnly = false;        // [HUD] True when worker mainly did cache/MMF copy
         } heavyWorkers[16]; // Fixed size for snapshot
         int heavyWorkerCount = 0;
         int heavyCancellations = 0; // [HUD V4] Total cancellations

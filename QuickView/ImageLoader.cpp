@@ -1,6 +1,7 @@
 #include "pch.h"
 #include <filesystem>
 #include <fstream> 
+#include <memory>
 
 // Helper
 static std::vector<uint8_t> ReadFileToVector(const std::wstring& path) {
@@ -47,6 +48,10 @@ static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer);
 
 // [v6.3] Forward Declaration for JXL Helper
 static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c);
+
+// [Fast Header] AVIF/HEIC dimension probes (implemented later in this file)
+static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
+static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
 
 
 
@@ -1058,10 +1063,11 @@ static HRESULT SafeLoadJpegRegion(
     const uint8_t* data, size_t size, 
     QuickView::RegionRect rect, float scale, 
     QuickView::RawImageFrame* out, 
-    QuickView::TileMemoryManager* tileManager, QuantumArena* arena) 
+    QuickView::TileMemoryManager* tileManager, QuantumArena* arena,
+    int explicitTargetW = 0, int explicitTargetH = 0) 
 {
     __try {
-        return LoadJpegRegion_V3(data, size, rect, scale, out, tileManager, arena);
+        return LoadJpegRegion_V3(data, size, rect, scale, out, tileManager, arena, explicitTargetW, explicitTargetH);
     }
     __except (GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         OutputDebugStringW(L"[ImageLoader] CRITICAL: ReadFile fault (Network lost?)\n");
@@ -1119,7 +1125,7 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
     // JPEG path: delegate to existing TurboJPEG loader
     // ---------------------------------------------------------------
     if (fmt == L"JPEG") {
-        QuickView::RegionRect fullRegion = { 0, 0, 0, 0 };
+        QuickView::RegionRect fullRegion = { 0, 0, 0x7fffffff, 0x7fffffff };
         return LoadTileFromMemory(data, size, fullRegion, 1.0f, outFrame, nullptr, 0, 0);
     }
 
@@ -1250,34 +1256,51 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
 
 
 
+namespace {
+struct RegionScalePlan {
+    int cropX = 0;
+    int cropY = 0;
+    int cropW = 0;
+    int cropH = 0;
+    int contentW = 0;
+    int contentH = 0;
+    int frameW = 0;
+    int frameH = 0;
+};
 
+static bool BuildRegionScalePlan(QuickView::RegionRect srcRect,
+                                 int imageW, int imageH,
+                                 float scale,
+                                 int explicitTargetW, int explicitTargetH,
+                                 RegionScalePlan* out) {
+    if (!out || imageW <= 0 || imageH <= 0) return false;
 
+    if (!(scale > 0.0f)) scale = 1.0f;
 
-        
+    if (srcRect.x < 0) { srcRect.w += srcRect.x; srcRect.x = 0; }
+    if (srcRect.y < 0) { srcRect.h += srcRect.y; srcRect.y = 0; }
+    if (srcRect.x > imageW) srcRect.x = imageW;
+    if (srcRect.y > imageH) srcRect.y = imageH;
+    if (srcRect.x + srcRect.w > imageW) srcRect.w = imageW - srcRect.x;
+    if (srcRect.y + srcRect.h > imageH) srcRect.h = imageH - srcRect.y;
+    if (srcRect.w <= 0 || srcRect.h <= 0) return false;
 
+    const int contentW = (std::max)(1, (int)(srcRect.w * scale + 0.5f));
+    const int contentH = (std::max)(1, (int)(srcRect.h * scale + 0.5f));
+    const int frameW = (explicitTargetW > 0) ? explicitTargetW : contentW;
+    const int frameH = (explicitTargetH > 0) ? explicitTargetH : contentH;
 
-
-// [Safety] SEH Helper to isolate C++ Unwinding from __try/__except (Fix C2712)
-// This function must NOT have any local C++ objects with destructors.
-static HRESULT SafeLoadJpegRegion(
-    const uint8_t* data, size_t size, 
-    QuickView::RegionRect rect, float scale, 
-    QuickView::RawImageFrame* out, 
-    QuickView::TileMemoryManager* tileManager, QuantumArena* arena,
-    int explicitTargetW = 0, int explicitTargetH = 0) 
-{
-    __try {
-        return LoadJpegRegion_V3(data, size, rect, scale, out, tileManager, arena, explicitTargetW, explicitTargetH);
-    }
-    __except (GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        OutputDebugStringW(L"[ImageLoader] CRITICAL: ReadFile fault (Network lost?)\n");
-        return HRESULT_FROM_WIN32(ERROR_READ_FAULT);
-    }
+    out->cropX = srcRect.x;
+    out->cropY = srcRect.y;
+    out->cropW = srcRect.w;
+    out->cropH = srcRect.h;
+    out->contentW = contentW;
+    out->contentH = contentH;
+    out->frameW = frameW;
+    out->frameH = frameH;
+    return true;
 }
-
-// ... (LoadTileFromMemory_Impl omitted as it is separate) ... 
-// Actually I need to make sure I am editing the right file chunk. SafeLoadJpegRegion is around line 847.
-// I will just supply multiple chunks.
+}
 
 HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, QuickView::RegionRect srcRect, float scale,
                           QuickView::RawImageFrame* outFrame,
@@ -1304,7 +1327,7 @@ HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, QuickView::RegionRect 
     }
 
     // --- Strategy 1b: WebP Native Region Decoding ---
-    if (format == L"WEBP") {
+    if (format == L"WebP") {
         if (pLoaderName) *pLoaderName = L"WebP Native Region";
         return LoadWebPRegionToFrame(filePath, srcRect, scale, outFrame, tileManager, arena, checkCancel, targetWidth, targetHeight);
     }
@@ -1312,7 +1335,7 @@ HRESULT CImageLoader::LoadRegionToFrame(LPCWSTR filePath, QuickView::RegionRect 
     // --- Strategy 2: Strategy B (Load Full & Crop/Resize) ---
     // For formats without native region decoding support (PNG, etc.)
     if (format == L"PNG") {
-        if (pLoaderName) *pLoaderName = (format + L" Strategy-B").c_str();
+        if (pLoaderName) *pLoaderName = format + L" Strategy-B";
         return LoadRegionGeneric_StrategyB(filePath, srcRect, scale, outFrame, tileManager, arena, checkCancel, targetWidth, targetHeight);
     }
     
@@ -1337,16 +1360,15 @@ HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, QuickView::R
     HRESULT hr = LoadToFrame(filePath, &fullFrame, arena, 0, 0, nullptr, checkCancel);
     if (FAILED(hr)) return hr;
 
-    // 2. Extract and Resize the region
-    int contentW = (int)(srcRect.w * scale + 0.5f);
-    int contentH = (int)(srcRect.h * scale + 0.5f);
+    RegionScalePlan plan{};
+    if (!BuildRegionScalePlan(srcRect, fullFrame.width, fullFrame.height, scale,
+                              explicitTargetW, explicitTargetH, &plan)) {
+        return E_INVALIDARG;
+    }
 
-    int frameW = (explicitTargetW > 0) ? explicitTargetW : contentW;
-    int frameH = (explicitTargetH > 0) ? explicitTargetH : contentH;
-
-    outFrame->width = frameW;
-    outFrame->height = frameH;
-    outFrame->stride = CalculateAlignedStride(frameW, 4);
+    outFrame->width = plan.frameW;
+    outFrame->height = plan.frameH;
+    outFrame->stride = CalculateAlignedStride(plan.frameW, 4);
     outFrame->format = fullFrame.format;
     
     size_t totalSize = outFrame->GetBufferSize();
@@ -1365,14 +1387,15 @@ HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, QuickView::R
     if (!outFrame->pixels) return E_OUTOFMEMORY;
 
     // Zero-fill padding if needed
-    if (contentH < frameH || contentW < frameW) {
+    if (plan.contentH < plan.frameH || plan.contentW < plan.frameW) {
         memset(outFrame->pixels, 0, totalSize);
     }
 
     // Resize/Crop from Full Image to Out Frame
-    SIMDUtils::ResizeBilinear(fullFrame.pixels + (size_t)srcRect.y * fullFrame.stride + (size_t)srcRect.x * 4,
-                            (int)srcRect.w, (int)srcRect.h, (int)fullFrame.stride,
-                            outFrame->pixels, contentW, contentH, outFrame->stride);
+    SIMDUtils::ResizeBilinear(
+        fullFrame.pixels + (size_t)plan.cropY * fullFrame.stride + (size_t)plan.cropX * 4,
+        plan.cropW, plan.cropH, (int)fullFrame.stride,
+        outFrame->pixels, plan.contentW, plan.contentH, outFrame->stride);
 
     return S_OK;
 }
@@ -1382,11 +1405,19 @@ HRESULT CImageLoader::LoadWebPRegionToFrame(LPCWSTR filePath, QuickView::RegionR
                                             QuickView::TileMemoryManager* tileManager,
                                             QuantumArena* arena,
                                             CancelPredicate checkCancel,
-                                            int explicitTargetW, int explicitTargetH)
+                                            int explicitTargetW, int explicitTargetH,
+                                            const uint8_t* mappedData, size_t mappedSize)
 {
-    // [WebP Native Region] Use memory mapped file for zero-copy parsing
-    QuickView::MappedFile mapping(filePath);
-    if (!mapping.IsValid()) return E_FAIL;
+    // [WebP Native Region] Reuse caller-provided MMF view when available.
+    const uint8_t* srcData = mappedData;
+    size_t srcSize = mappedSize;
+    std::unique_ptr<QuickView::MappedFile> mappingOwner;
+    if (!srcData || srcSize == 0) {
+        mappingOwner = std::make_unique<QuickView::MappedFile>(filePath);
+        if (!mappingOwner->IsValid()) return E_FAIL;
+        srcData = mappingOwner->data();
+        srcSize = mappingOwner->size();
+    }
 
     if (checkCancel && checkCancel()) return E_ABORT;
 
@@ -1396,57 +1427,31 @@ HRESULT CImageLoader::LoadWebPRegionToFrame(LPCWSTR filePath, QuickView::RegionR
     // RAII for decoder output buffer
     struct ConfigGuard { WebPDecBuffer* b; ~ConfigGuard() { WebPFreeDecBuffer(b); } } cGuard{ &config.output };
 
-    if (WebPGetFeatures(mapping.data(), mapping.size(), &config.input) != VP8_STATUS_OK) return E_FAIL;
+    if (WebPGetFeatures(srcData, srcSize, &config.input) != VP8_STATUS_OK) return E_FAIL;
 
-    int contentW = (int)(srcRect.w * scale + 0.5f);
-    int contentH = (int)(srcRect.h * scale + 0.5f);
-
-    int frameW = (explicitTargetW > 0) ? explicitTargetW : contentW;
-    int frameH = (explicitTargetH > 0) ? explicitTargetH : contentH;
-
-    if (contentW <= 0) contentW = 1;
-    if (contentH <= 0) contentH = 1;
-
-    // Apply strict cropping boundaries to avoid decoder errors
-    int crop_x = srcRect.x;
-    int crop_y = srcRect.y;
-    int crop_w = srcRect.w;
-    int crop_h = srcRect.h;
-
-    // Clamp crop region to image dimensions
-    if (crop_x < 0) { crop_w += crop_x; crop_x = 0; }
-    if (crop_y < 0) { crop_h += crop_y; crop_y = 0; }
-    if (crop_x + crop_w > config.input.width) crop_w = config.input.width - crop_x;
-    if (crop_y + crop_h > config.input.height) crop_h = config.input.height - crop_y;
-
-    if (crop_w <= 0 || crop_h <= 0) return E_FAIL;
+    RegionScalePlan plan{};
+    if (!BuildRegionScalePlan(srcRect, config.input.width, config.input.height, scale,
+                              explicitTargetW, explicitTargetH, &plan)) {
+        return E_FAIL;
+    }
 
     // 1. Cropping
     config.options.use_cropping = 1;
-    config.options.crop_left = crop_x;
-    config.options.crop_top = crop_y;
-    config.options.crop_width = crop_w;
-    config.options.crop_height = crop_h;
+    config.options.crop_left = plan.cropX;
+    config.options.crop_top = plan.cropY;
+    config.options.crop_width = plan.cropW;
+    config.options.crop_height = plan.cropH;
 
     // 2. Scaling
-    if (scale != 1.0f) {
+    if (plan.contentW != plan.cropW || plan.contentH != plan.cropH) {
         config.options.use_scaling = 1;
-        // Adjust scaled size proportionally based on clamped crop dimensions
-        config.options.scaled_width = (int)(crop_w * scale + 0.5f);
-        config.options.scaled_height = (int)(crop_h * scale + 0.5f);
-        if (config.options.scaled_width <= 0) config.options.scaled_width = 1;
-        if (config.options.scaled_height <= 0) config.options.scaled_height = 1;
-        
-        contentW = config.options.scaled_width;
-        contentH = config.options.scaled_height;
-    } else {
-        contentW = crop_w;
-        contentH = crop_h;
+        config.options.scaled_width = plan.contentW;
+        config.options.scaled_height = plan.contentH;
     }
 
-    outFrame->width = frameW;
-    outFrame->height = frameH;
-    outFrame->stride = CalculateAlignedStride(frameW, 4);
+    outFrame->width = plan.frameW;
+    outFrame->height = plan.frameH;
+    outFrame->stride = CalculateAlignedStride(plan.frameW, 4);
     outFrame->format = PixelFormat::BGRA8888;
     outFrame->formatDetails = L"WebP Region";
 
@@ -1472,7 +1477,7 @@ HRESULT CImageLoader::LoadWebPRegionToFrame(LPCWSTR filePath, QuickView::RegionR
     if (!outFrame->pixels) return E_OUTOFMEMORY;
 
     // Padding
-    if (contentH < frameH || contentW < frameW) {
+    if (plan.contentH < plan.frameH || plan.contentW < plan.frameW) {
         memset(outFrame->pixels, 0, totalSize);
     }
 
@@ -1484,13 +1489,13 @@ HRESULT CImageLoader::LoadWebPRegionToFrame(LPCWSTR filePath, QuickView::RegionR
     config.output.u.RGBA.size = totalSize;
     config.options.use_threads = 1; 
 
-    if (WebPDecode(mapping.data(), mapping.size(), &config) != VP8_STATUS_OK) {
+    if (WebPDecode(srcData, srcSize, &config) != VP8_STATUS_OK) {
         return E_FAIL;
     }
 
     // WebP returns un-premultiplied. We use Premultiplied visually.
     if (config.input.has_alpha) {
-        SIMDUtils::PremultiplyAlpha_BGRA(outFrame->pixels, contentW, contentH, outFrame->stride);
+        SIMDUtils::PremultiplyAlpha_BGRA(outFrame->pixels, plan.contentW, plan.contentH, outFrame->stride);
     }
 
     return S_OK;
@@ -1530,10 +1535,19 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
                                            QuickView::TileMemoryManager* tileManager,
                                            QuantumArena* arena,
                                            CancelPredicate checkCancel,
-                                           int explicitTargetW, int explicitTargetH)
+                                           int explicitTargetW, int explicitTargetH,
+                                           const uint8_t* mappedData, size_t mappedSize)
 {
-    QuickView::MappedFile mapping(filePath);
-    if (!mapping.IsValid()) return E_FAIL;
+    // Reuse caller-provided MMF view when available.
+    const uint8_t* srcData = mappedData;
+    size_t srcSize = mappedSize;
+    std::unique_ptr<QuickView::MappedFile> mappingOwner;
+    if (!srcData || srcSize == 0) {
+        mappingOwner = std::make_unique<QuickView::MappedFile>(filePath);
+        if (!mappingOwner->IsValid()) return E_FAIL;
+        srcData = mappingOwner->data();
+        srcSize = mappingOwner->size();
+    }
 
     if (checkCancel && checkCancel()) return E_ABORT;
 
@@ -1552,27 +1566,15 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
         return E_FAIL;
     }
 
-    JxlDecoderSetInput(dec, mapping.data(), mapping.size());
+    JxlDecoderSetInput(dec, srcData, srcSize);
     JxlDecoderCloseInput(dec);
 
     JxlBasicInfo info = {};
     JxlPixelFormat pixFmt = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 };
     
     HRESULT hr = E_FAIL;
-    
-    int contentW = (int)(srcRect.w * scale + 0.5f);
-    int contentH = (int)(srcRect.h * scale + 0.5f);
-    int frameW = (explicitTargetW > 0) ? explicitTargetW : contentW;
-    int frameH = (explicitTargetH > 0) ? explicitTargetH : contentH;
-    
-    if (contentW <= 0) contentW = 1;
-    if (contentH <= 0) contentH = 1;
-
-    // Crop Bounds in 1:1 image space
-    int crop_x = srcRect.x;
-    int crop_y = srcRect.y;
-    int crop_w = srcRect.w;
-    int crop_h = srcRect.h;
+    RegionScalePlan plan{};
+    bool planReady = false;
 
     uint8_t* tempBuf = nullptr;
     int tempStride = 0;
@@ -1592,17 +1594,28 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
         if (st == JXL_DEC_BASIC_INFO) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) break;
 
-            // Clamp crop region
-            if (crop_x < 0) { crop_w += crop_x; crop_x = 0; }
-            if (crop_y < 0) { crop_h += crop_y; crop_y = 0; }
-            if (crop_x + crop_w > (int)info.xsize) crop_w = info.xsize - crop_x;
-            if (crop_y + crop_h > (int)info.ysize) crop_h = info.ysize - crop_y;
+            // Force sRGB output to match full-decode color behavior.
+            JxlColorEncoding ce = {};
+            ce.color_space = JXL_COLOR_SPACE_RGB;
+            ce.white_point = JXL_WHITE_POINT_D65;
+            ce.primaries = JXL_PRIMARIES_SRGB;
+            ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+            ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+            if (JXL_DEC_SUCCESS != JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0)) {
+                hr = E_FAIL;
+                break;
+            }
 
-            if (crop_w <= 0 || crop_h <= 0) { hr = E_FAIL; break; }
+            if (!BuildRegionScalePlan(srcRect, (int)info.xsize, (int)info.ysize, scale,
+                                      explicitTargetW, explicitTargetH, &plan)) {
+                hr = E_FAIL;
+                break;
+            }
+            planReady = true;
 
             // Allocate temp buffer for 1:1 cropped region
-            tempStride = CalculateAlignedStride(crop_w, 4);
-            size_t tempSize = (size_t)tempStride * crop_h;
+            tempStride = CalculateAlignedStride(plan.cropW, 4);
+            size_t tempSize = (size_t)tempStride * plan.cropH;
             
             if (arena) {
                 tempBuf = (uint8_t*)arena->Allocate(tempSize, 64);
@@ -1615,10 +1628,10 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             // Initialize context
             ctx.tempBuf = tempBuf;
             ctx.tempStride = tempStride;
-            ctx.cropX = crop_x;
-            ctx.cropY = crop_y;
-            ctx.cropW = crop_w;
-            ctx.cropH = crop_h;
+            ctx.cropX = plan.cropX;
+            ctx.cropY = plan.cropY;
+            ctx.cropW = plan.cropW;
+            ctx.cropH = plan.cropH;
 
             if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutCallback(dec, &pixFmt, JxlCropCallback, &ctx)) {
                 hr = E_FAIL; break;
@@ -1630,15 +1643,15 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
         }
     }
 
-    if (FAILED(hr) || !tempBuf) {
+    if (FAILED(hr) || !tempBuf || !planReady) {
         if (tempBuf && (!arena || !arena->Owns(tempBuf))) _aligned_free(tempBuf);
         return hr == S_OK ? E_FAIL : hr;
     }
 
     // Allocate Output Frame
-    outFrame->width = frameW;
-    outFrame->height = frameH;
-    outFrame->stride = CalculateAlignedStride(frameW, 4);
+    outFrame->width = plan.frameW;
+    outFrame->height = plan.frameH;
+    outFrame->stride = CalculateAlignedStride(plan.frameW, 4);
     outFrame->format = PixelFormat::BGRA8888;
     outFrame->formatDetails = L"JXL Region Callback";
 
@@ -1667,16 +1680,16 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
     }
 
     // Zero-fill padding
-    if (contentH < frameH || contentW < frameW) {
+    if (plan.contentH < plan.frameH || plan.contentW < plan.frameW) {
         memset(outFrame->pixels, 0, totalSize);
     }
 
     // Resize (or direct copy if scale == 1.0)
     // Remember libjxl outputs RGBA, we need BGRA
-    SIMDUtils::SwizzleRGBA_to_BGRA_Premul(tempBuf, (size_t)crop_w * crop_h);
+    SIMDUtils::SwizzleRGBA_to_BGRA_Premul(tempBuf, (size_t)plan.cropW * plan.cropH);
     
-    SIMDUtils::ResizeBilinear(tempBuf, crop_w, crop_h, tempStride, 
-                              outFrame->pixels, contentW, contentH, outFrame->stride);
+    SIMDUtils::ResizeBilinear(tempBuf, plan.cropW, plan.cropH, tempStride, 
+                              outFrame->pixels, plan.contentW, plan.contentH, outFrame->stride);
 
     // Cleanup
     if (tempBuf && (!arena || !arena->Owns(tempBuf))) {
@@ -4552,6 +4565,22 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         
         if (isAvif || isHeic) {
             pInfo->format = isAvif ? L"AVIF" : L"HEIC";
+
+            // Try robust file-based box parsing first. It handles cases where 64KB head is insufficient.
+            uint32_t boxW = 0, boxH = 0;
+            if (isAvif && GetAVIFDimensions(filePath, &boxW, &boxH)) {
+                pInfo->width = boxW;
+                pInfo->height = boxH;
+                pInfo->bitDepth = 10; // Conservative default; exact value may require full decode.
+                return S_OK;
+            }
+            if (GetISOBMFFDimensions(filePath, &boxW, &boxH)) {
+                pInfo->width = boxW;
+                pInfo->height = boxH;
+                pInfo->bitDepth = 10;
+                return S_OK;
+            }
+
             // [v6.9] Try Parsing AVIF/HEIC Header
             // We give 64KB (caller usually reads 64KB). Often enough for mp4/avif header (moov).
             avifDecoder* decoder = avifDecoderCreate();
@@ -4574,8 +4603,9 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
                 }
                 avifDecoderDestroy(decoder);
             }
-            // If failed to parse (truncated), fallback to Heavy Lane (or Caller's logic)
-            return E_FAIL; 
+            // Keep format info even if dimensions are unresolved. Caller can still route to Titan via
+            // file-size fallback and/or slow GetImageSize probe.
+            return S_OK; 
         }
     }
     
@@ -4965,9 +4995,11 @@ HRESULT CImageLoader::GetImageSize(LPCWSTR filePath, UINT* width, UINT* height) 
     // [Phase 6] Use fast header parsing
     ImageInfo info;
     if (SUCCEEDED(GetImageInfoFast(filePath, &info))) {
-        *width = info.width;
-        *height = info.height;
-        return S_OK;
+        if (info.width > 0 && info.height > 0) {
+            *width = info.width;
+            *height = info.height;
+            return S_OK;
+        }
     }
 
     // Fallback: WIC (legacy)

@@ -291,14 +291,16 @@ public:
                               QuickView::TileMemoryManager* tileManager,
                               class QuantumArena* arena,
                               CancelPredicate checkCancel,
-                              int targetWidth = 0, int targetHeight = 0);
+                              int targetWidth = 0, int targetHeight = 0,
+                              const uint8_t* mappedData = nullptr, size_t mappedSize = 0);
 
     HRESULT LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRect srcRect, float scale,
                               QuickView::RawImageFrame* outFrame,
                               QuickView::TileMemoryManager* tileManager,
                               class QuantumArena* arena,
                               CancelPredicate checkCancel,
-                              int targetWidth = 0, int targetHeight = 0);
+                              int targetWidth = 0, int targetHeight = 0,
+                              const uint8_t* mappedData = nullptr, size_t mappedSize = 0);
 
     HRESULT LoadJPEG(LPCWSTR filePath, IWICBitmap** ppBitmap);  // libjpeg-turbo
 

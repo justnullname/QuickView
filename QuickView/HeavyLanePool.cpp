@@ -10,6 +10,15 @@
 
 using namespace QuickView;
 
+namespace {
+bool IsCopyOnlyLoaderName(const std::wstring& loaderName) {
+    return loaderName.find(L"LODCache Slice") != std::wstring::npos ||
+           loaderName.find(L"Zero-Copy") != std::wstring::npos ||
+           loaderName.find(L"RAM Copy") != std::wstring::npos ||
+           loaderName.find(L"MMF Copy") != std::wstring::npos;
+}
+}
+
 // ============================================================================
 // HeavyLanePool Implementation
 // ============================================================================
@@ -78,7 +87,7 @@ void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::ws
     if (enabled) {
         // [Baseline Cache] Check if we've seen this image size before
         if (srcW > 0 && srcH > 0) {
-            uint64_t dimHash = MakeDimHash(srcW, srcH);
+            uint64_t dimHash = MakeBaselineCacheKey(srcW, srcH, format);
             auto it = m_baselineCache.find(dimHash);
             if (it != m_baselineCache.end()) {
                 // Cache HIT — skip PENDING phase, apply stored result directly
@@ -108,6 +117,8 @@ void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::ws
         // Leaving Titan mode: reset to standard elastic behavior
         m_benchPhase = BenchPhase::IDLE;
         SetConcurrencyLimit(0); // 0 = Unlimited (elastic)
+        StopMasterWarmup();
+        ResetMasterBackingStore();
     }
 }
 
@@ -148,6 +159,8 @@ void HeavyLanePool::ResetBenchState() {
         m_lodCache = {};
         m_masterLOD0Cache = {}; // [NEW] Clear Master LOD0 cache
     }
+    StopMasterWarmup();
+    ResetMasterBackingStore();
     m_isProgressiveJPEG = false;
     m_isProgressiveJXL = false;
     m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image
@@ -286,7 +299,7 @@ void HeavyLanePool::ApplyBaselineConcurrency(double decodeMPS, int srcWidth, int
     
     // [Baseline Cache] Store result for future re-visits
     {
-        uint64_t dimHash = MakeDimHash(srcWidth, srcHeight);
+        uint64_t dimHash = MakeBaselineCacheKey(srcWidth, srcHeight, m_titanFormat);
         m_baselineCache[dimHash] = { decodeMPS, bestThreads, isProgressiveJPEG };
     }
 }
@@ -408,6 +421,8 @@ HeavyLanePool::~HeavyLanePool() {
     
     // [Safety] Release IO Semaphore to wake up any workers blocked on acquire()
     m_ioSemaphore.release(m_cap);
+    StopMasterWarmup();
+    ResetMasterBackingStore();
 }
 
 void HeavyLanePool::DetachAll() {
@@ -431,6 +446,12 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     
     // [Baseline Benchmark] Record IO type for concurrency adjustment
     m_baselineIsSSD = isSSD;
+
+    // [Phase-2] Start background master warmup for giant non-ROI formats.
+    // Triggered on open, independent from on-demand tile decode.
+    if (m_isTitanMode) {
+        EnsureMasterWarmup(path, imageId, mmf);
+    }
 
     std::lock_guard lock(m_poolMutex);
     
@@ -1127,6 +1148,27 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     bool hasNativeRegionDecoder = (m_titanFormat == L"WEBP") || (m_titanFormat == L"JXL" && m_isProgressiveJXL);
                     bool wantsSingleDecode = isSingleDecodeMandatory || (m_isTitanMode && !hasNativeRegionDecoder && ShouldUseSingleDecode(job.tileCoord.lod));
 
+                    // [Metrics] Strategy decision trace (rate-limited).
+                    {
+                        static std::atomic<uint64_t> s_lastStrategyLogMs{ 0 };
+                        uint64_t nowMs = GetTickCount64();
+                        uint64_t prev = s_lastStrategyLogMs.load(std::memory_order_relaxed);
+                        if (nowMs - prev > 500 &&
+                            s_lastStrategyLogMs.compare_exchange_strong(prev, nowMs, std::memory_order_relaxed)) {
+                            wchar_t strat[256];
+                            swprintf_s(
+                                strat,
+                                L"[HeavyPool] Strategy: fmt=%s lod=%d single=%s nativeROI=%s mandatory=%s progressiveJXL=%s\n",
+                                m_titanFormat.c_str(),
+                                job.tileCoord.lod,
+                                wantsSingleDecode ? L"Y" : L"N",
+                                hasNativeRegionDecoder ? L"Y" : L"N",
+                                isSingleDecodeMandatory ? L"Y" : L"N",
+                                m_isProgressiveJXL ? L"Y" : L"N");
+                            OutputDebugStringW(strat);
+                        }
+                    }
+
                     // [B4] Check fail count — give up if too many failures
                     if (wantsSingleDecode && m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
                         hr = E_FAIL;
@@ -1140,7 +1182,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     // we MUST NOT let ShouldUseSingleDecode hijack the pipeline and force an 8.6 second 
                     // single-core full decode stall! We bypass caching and go straight to High-Concurrency Region Decoding.
                     if (wantsSingleDecode) {
-                        hr = FullDecodeAndCacheLOD(job, rawFrame, loaderName);
+                        hr = FullDecodeAndCacheLOD(job, rawFrame, loaderName, cancelPred);
                         if (SUCCEEDED(hr)) goto tile_decode_done;
                         // CAS failed (another builder) or decode failed: wait and retry slice.
                     }
@@ -1150,14 +1192,19 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     bool expectSingleDecode = wantsSingleDecode;
                     
                     if (expectSingleDecode) {
-                        // [Fix16] Event-driven wait (max 60s) instead of 100ms polling
+                        // [Fix16] Event-driven wait with cancellation checks.
                         std::unique_lock<std::mutex> waitLock(m_lodCacheMutex);
                         if (m_lodCacheBuilding.load()) {
                             // [UI Fix] Mark as STANDBY while waiting so HUD doesn't show 5 red threads
                             self.state = WorkerState::STANDBY;
-                            m_lodCacheCond.wait_for(waitLock, std::chrono::seconds(60), [this] {
-                                return !m_lodCacheBuilding.load();
-                            });
+                            while (m_lodCacheBuilding.load()) {
+                                if (cancelPred()) {
+                                    self.state = WorkerState::BUSY;
+                                    hr = E_ABORT;
+                                    goto tile_decode_done;
+                                }
+                                m_lodCacheCond.wait_for(waitLock, std::chrono::milliseconds(100));
+                            }
                             self.state = WorkerState::BUSY;
                         }
                         if (cancelPred()) { hr = E_ABORT; goto tile_decode_done; }
@@ -1175,7 +1222,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         
                         // Still no cache — fail this tile (will be retried later if fail count allows)
                         hr = E_FAIL;
-                        loaderName = L"LOD Wait Timeout";
+                        loaderName = L"LOD Cache Miss";
                         goto tile_decode_done;
                     }
                     
@@ -1211,13 +1258,15 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                       } else if (m_titanFormat == L"WEBP") {
                           // [Native ROI] WebP Memory Decode
                           hr = m_loader->LoadWebPRegionToFrame(
-                              job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, cancelPred, targetTileSize, targetTileSize
+                              job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, cancelPred, targetTileSize, targetTileSize,
+                              job.mmf->data(), job.mmf->size()
                           );
                           loaderName = SUCCEEDED(hr) ? L"WebP ROI (MMF)" : L"WebP Failed -> Fallback";
                       } else if (m_titanFormat == L"JXL") {
                           // [Native ROI] JXL Memory Decode (using underlying file mapped within loader for now)
                           hr = m_loader->LoadJxlRegionToFrame(
-                              job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, cancelPred, targetTileSize, targetTileSize
+                              job.path.c_str(), rect, scale, &rawFrame, &m_tileMemory, nullptr, cancelPred, targetTileSize, targetTileSize,
+                              job.mmf->data(), job.mmf->size()
                           );
                           loaderName = SUCCEEDED(hr) ? L"JXL ROI" : L"JXL Failed -> Fallback";
                       } else {
@@ -1247,10 +1296,19 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
           auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(decodeStart - job.submitTime).count();
           int activeWorkers = m_busyCount.load();
           
+          bool isCopyOnly = false;
+          if (job.type == JobType::Tile) {
+              isCopyOnly = IsCopyOnlyLoaderName(loaderName) && decodeMs <= 2;
+          }
+          self.isCopyOnly = isCopyOnly;
+
           // Diagnostic: Result
           wchar_t resultLog[256];
-          swprintf_s(resultLog, L"[HeavyPool] Worker %d: %s %s in %d ms (Wait: %lld ms, Concurrency: %d, Loader: %s)\n", 
-              workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), decodeMs, waitMs, activeWorkers, loaderName.c_str());
+          const wchar_t* opMode = (job.type == JobType::Tile)
+              ? (isCopyOnly ? L"COPY" : L"DECODE")
+              : L"DECODE";
+          swprintf_s(resultLog, L"[HeavyPool] Worker %d: %s %s in %d ms (Wait: %lld ms, Concurrency: %d, Mode: %s, Loader: %s)\n", 
+              workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), decodeMs, waitMs, activeWorkers, opMode, loaderName.c_str());
           OutputDebugStringW(resultLog);
           
 
@@ -1358,6 +1416,7 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
     self.lastImageId = job.imageId; 
     self.isFullDecode = job.isFullDecode; // [UI Fix] Save decode type
     self.isTileDecode = (job.type == JobType::Tile); // [UI Fix] Save tile type
+    if (job.type != JobType::Tile) self.isCopyOnly = false;
     
     // Update global for HUD
     m_lastDecodeTimeMs = (double)self.lastTotalMs;
@@ -1447,11 +1506,15 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
              // [Phase 11] Copy Loader Name
              wcsncpy_s(ws.loaderName, w.loaderName.c_str(), 63);
              ws.isFullDecode = w.isFullDecode; // [Two-Stage]
+             ws.isTileDecode = w.isTileDecode;
+             ws.isCopyOnly = w.isCopyOnly;
         } else {
              ws.lastDecodeMs = 0; // Clear old times
              ws.lastTotalMs = 0;
              ws.loaderName[0] = 0; // Clear old name
              ws.isFullDecode = false;
+             ws.isTileDecode = false;
+             ws.isCopyOnly = false;
         }
         
         count++;
@@ -1502,6 +1565,202 @@ void HeavyLanePool::WaitForTileJobs() {
             break;
         }
     }
+}
+
+bool HeavyLanePool::ShouldWarmupMasterBacking() const {
+    if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return false;
+    if (m_titanSrcW < 8000 && m_titanSrcH < 8000) return false;
+
+    return (m_titanFormat == L"PNG" ||
+            m_titanFormat == L"TIFF" ||
+            m_titanFormat == L"TIF" ||
+            m_titanFormat == L"AVIF" ||
+            m_titanFormat == L"HEIC");
+}
+
+void HeavyLanePool::StopMasterWarmup() {
+    if (m_masterWarmupThread.joinable()) {
+        m_masterWarmupThread.request_stop();
+        m_masterWarmupThread.join();
+    }
+    m_masterWarmupImageId.store(0, std::memory_order_release);
+}
+
+void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf) {
+    if (!ShouldWarmupMasterBacking()) return;
+    if (!mmf || !mmf->IsValid()) return;
+
+    // Already warming up this image.
+    if (m_masterWarmupThread.joinable() &&
+        m_masterWarmupImageId.load(std::memory_order_acquire) == imageId) {
+        return;
+    }
+
+    StopMasterWarmup();
+    m_masterWarmupImageId.store(imageId, std::memory_order_release);
+    const uint32_t warmupGen = m_generationID.load(std::memory_order_acquire);
+
+    m_masterWarmupThread = std::jthread([this, path, imageId, mmf, warmupGen](std::stop_token st) {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
+        if (st.stop_requested()) return;
+        if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
+
+        // Skip when backing store already exists for this image.
+        const uint8_t* existingView = nullptr;
+        int bw = 0, bh = 0, bs = 0;
+        if (AcquireMasterBackingView(imageId, &existingView, &bw, &bh, &bs)) {
+            return;
+        }
+
+        QuickView::RawImageFrame fullFrame;
+        HRESULT hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame);
+        if ((FAILED(hr) || !fullFrame.IsValid()) && !st.stop_requested()) {
+            auto cancelPred = [&]() {
+                return st.stop_requested() ||
+                       m_generationID.load(std::memory_order_acquire) != warmupGen;
+            };
+            hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, cancelPred, nullptr);
+        }
+
+        if (st.stop_requested()) return;
+        if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
+        if (FAILED(hr) || !fullFrame.IsValid()) {
+            wchar_t fail[192];
+            swprintf_s(fail, L"[HeavyPool] Master warmup failed: hr=0x%X (%s)\n", hr, m_titanFormat.c_str());
+            OutputDebugStringW(fail);
+            return;
+        }
+
+        hr = BuildMasterBackingStore(fullFrame.pixels, fullFrame.width, fullFrame.height, fullFrame.stride, imageId);
+        if (SUCCEEDED(hr)) {
+            // MMF-backed path should not retain an extra full RAM master copy.
+            std::lock_guard lock(m_lodCacheMutex);
+            m_masterLOD0Cache = {};
+
+            wchar_t ok[192];
+            swprintf_s(ok, L"[HeavyPool] Master warmup ready: %dx%d (%s)\n", fullFrame.width, fullFrame.height, m_titanFormat.c_str());
+            OutputDebugStringW(ok);
+        } else {
+            wchar_t fail[192];
+            swprintf_s(fail, L"[HeavyPool] Master warmup MMF build failed: hr=0x%X (%s)\n", hr, m_titanFormat.c_str());
+            OutputDebugStringW(fail);
+        }
+    });
+}
+
+void HeavyLanePool::ResetMasterBackingStore() {
+    std::lock_guard lock(m_masterBackingMutex);
+
+    if (m_masterBacking.view) {
+        UnmapViewOfFile(m_masterBacking.view);
+        m_masterBacking.view = nullptr;
+    }
+    if (m_masterBacking.hMap) {
+        CloseHandle(m_masterBacking.hMap);
+        m_masterBacking.hMap = nullptr;
+    }
+    if (m_masterBacking.hFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(m_masterBacking.hFile);
+        m_masterBacking.hFile = INVALID_HANDLE_VALUE;
+    }
+    if (!m_masterBacking.tempPath.empty()) {
+        DeleteFileW(m_masterBacking.tempPath.c_str());
+        m_masterBacking.tempPath.clear();
+    }
+
+    m_masterBacking.sizeBytes = 0;
+    m_masterBacking.width = 0;
+    m_masterBacking.height = 0;
+    m_masterBacking.stride = 0;
+    m_masterBacking.imageId = 0;
+}
+
+HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId) {
+    if (!pixels || width <= 0 || height <= 0 || stride <= 0) return E_INVALIDARG;
+
+    size_t totalBytes = (size_t)stride * (size_t)height;
+    if (totalBytes == 0) return E_FAIL;
+
+    ResetMasterBackingStore();
+
+    wchar_t tempDir[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, tempDir) == 0) return HRESULT_FROM_WIN32(GetLastError());
+
+    wchar_t tempPath[MAX_PATH] = {};
+    swprintf_s(tempPath, L"%sQuickView_master_%lu_%llu.bgra",
+        tempDir, GetCurrentProcessId(), GetTickCount64());
+
+    HANDLE hFile = CreateFileW(
+        tempPath,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
+
+    LARGE_INTEGER liSize;
+    liSize.QuadPart = static_cast<LONGLONG>(totalBytes);
+    if (!SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) || !SetEndOfFile(hFile)) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        CloseHandle(hFile);
+        DeleteFileW(tempPath);
+        return hr;
+    }
+
+    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+    if (!hMap) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        CloseHandle(hFile);
+        DeleteFileW(tempPath);
+        return hr;
+    }
+
+    uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, totalBytes));
+    if (!view) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        CloseHandle(hMap);
+        CloseHandle(hFile);
+        DeleteFileW(tempPath);
+        return hr;
+    }
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t* srcRow = pixels + (size_t)y * (size_t)stride;
+        uint8_t* dstRow = view + (size_t)y * (size_t)stride;
+        memcpy(dstRow, srcRow, (size_t)stride);
+    }
+    FlushViewOfFile(view, totalBytes);
+
+    {
+        std::lock_guard lock(m_masterBackingMutex);
+        m_masterBacking.hFile = hFile;
+        m_masterBacking.hMap = hMap;
+        m_masterBacking.view = view;
+        m_masterBacking.sizeBytes = totalBytes;
+        m_masterBacking.width = width;
+        m_masterBacking.height = height;
+        m_masterBacking.stride = stride;
+        m_masterBacking.imageId = imageId;
+        m_masterBacking.tempPath = tempPath;
+    }
+
+    return S_OK;
+}
+
+bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride) {
+    if (!outPixels || !outW || !outH || !outStride) return false;
+
+    std::lock_guard lock(m_masterBackingMutex);
+    if (!m_masterBacking.view || m_masterBacking.imageId != imageId) return false;
+
+    *outPixels = m_masterBacking.view;
+    *outW = m_masterBacking.width;
+    *outH = m_masterBacking.height;
+    *outStride = m_masterBacking.stride;
+    return true;
 }
 
 
@@ -1587,9 +1846,10 @@ bool HeavyLanePool::ShouldUseSingleDecode(int lod) const {
     return fits;
 }
 
-HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& outTile, std::wstring& loader) {
+HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel) {
     if (!job.mmf || !job.mmf->IsValid()) return E_FAIL;
     if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return E_FAIL;
+    if (checkCancel && checkCancel()) return E_ABORT;
     
     // [CAS Guard] Only ONE worker does the full decode; others fall through to per-tile
     bool expected = false;
@@ -1602,9 +1862,10 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
         std::atomic<int>& failCount;
         std::condition_variable& cond;
         bool succeeded = false;
+        bool countFailure = true;
         ~BuildGuard() {
             flag.store(false);
-            if (!succeeded) failCount.fetch_add(1);
+            if (!succeeded && countFailure) failCount.fetch_add(1);
             cond.notify_all(); // [Fix16] Wake up all waiters immediately
         }
     } guard{ m_lodCacheBuilding, m_lodCacheFailCount, m_lodCacheCond };
@@ -1642,7 +1903,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
     } else {
         // [New] Check if master cache exists for this image
         std::shared_ptr<uint8_t[]> masterPixels;
+        const uint8_t* masterPixelsView = nullptr;
         int masterW = 0, masterH = 0, masterStride = 0;
+        bool masterFromRam = false;
         {
             std::lock_guard lock(m_lodCacheMutex);
             if (m_masterLOD0Cache.pixels && m_masterLOD0Cache.imageId == job.imageId) {
@@ -1650,10 +1913,15 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                 masterW = m_masterLOD0Cache.width;
                 masterH = m_masterLOD0Cache.height;
                 masterStride = m_masterLOD0Cache.stride;
+                masterPixelsView = masterPixels.get();
+                masterFromRam = true;
             }
         }
+        if (!masterPixelsView) {
+            AcquireMasterBackingView(job.imageId, &masterPixelsView, &masterW, &masterH, &masterStride);
+        }
         
-        if (masterPixels) {
+        if (masterPixelsView) {
             // WE HAVE A MASTER CACHE! Instant downscale!
             int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
             int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
@@ -1666,7 +1934,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                 if (!dstBuf) {
                     hr = E_OUTOFMEMORY;
                 } else {
-                    SIMDUtils::ResizeBilinear(masterPixels.get(), masterW, masterH,
+                    SIMDUtils::ResizeBilinear(masterPixelsView, masterW, masterH,
                                               masterStride, dstBuf, targetW, targetH, (int)dstStride);
                     
                     fullFrame.pixels = dstBuf;
@@ -1682,16 +1950,38 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                     OutputDebugStringW(dbg);
                 }
             } else {
-                // Zero-copy ownership transfer for LOD 0
-                fullFrame.pixels = masterPixels.get();
-                fullFrame.width = targetW;
-                fullFrame.height = targetH;
-                fullFrame.stride = (int)dstStride;
-                fullFrame.format = QuickView::PixelFormat::BGRA8888;
-                fullFrame.memoryDeleter = [masterPixels](uint8_t* p) mutable { masterPixels.reset(); };
-                hr = S_OK;
-                
-                OutputDebugStringW(L"[P15] Master built + Instant Zero-Copy for LOD 0\n");
+                if (masterFromRam) {
+                    // Zero-copy ownership transfer for LOD 0 (RAM cache path)
+                    fullFrame.pixels = masterPixels.get();
+                    fullFrame.width = targetW;
+                    fullFrame.height = targetH;
+                    fullFrame.stride = (int)dstStride;
+                    fullFrame.format = QuickView::PixelFormat::BGRA8888;
+                    fullFrame.memoryDeleter = [masterPixels](uint8_t* p) mutable { masterPixels.reset(); };
+                    hr = S_OK;
+                    OutputDebugStringW(L"[P15] Master built + Instant Zero-Copy for LOD 0\n");
+                } else {
+                    // MMF-backed cache: keep stable ownership by copying out for this one request.
+                    size_t dstSize = dstStride * targetH;
+                    uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                    if (!dstBuf) {
+                        hr = E_OUTOFMEMORY;
+                    } else {
+                        for (int y = 0; y < targetH; ++y) {
+                            memcpy(dstBuf + (size_t)y * dstStride,
+                                   masterPixelsView + (size_t)y * (size_t)masterStride,
+                                   dstStride);
+                        }
+                        fullFrame.pixels = dstBuf;
+                        fullFrame.width = targetW;
+                        fullFrame.height = targetH;
+                        fullFrame.stride = (int)dstStride;
+                        fullFrame.format = QuickView::PixelFormat::BGRA8888;
+                        fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                        hr = S_OK;
+                        OutputDebugStringW(L"[P15] Master MMF + Copy-out for LOD 0\n");
+                    }
+                }
             }
         } else {
             // PNG/JXL/others: full-resolution decode via FullDecodeFromMemory
@@ -1704,7 +1994,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                 int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
                 
                 // Allow WIC to handle scaling natively
-                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, nullptr, nullptr);
+                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr);
             } else {
                 // Memory decode succeeded! `fullFrame` contains the FULL res image.
                 // WE WANT TO CACHE THIS AS MASTER LOD0 BEFORE DOWNSCALING!
@@ -1718,8 +2008,20 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                     } else {
                         masterPtr = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
                     }
+
+                    bool shouldBuildBacking =
+                        (m_titanFormat == L"PNG" || m_titanFormat == L"TIFF" ||
+                         m_titanFormat == L"AVIF" || m_titanFormat == L"HEIC") &&
+                        ((size_t)fullFrame.width >= 8000 || (size_t)fullFrame.height >= 8000);
+                    bool backedByMmf = false;
+                    if (shouldBuildBacking) {
+                        if (SUCCEEDED(BuildMasterBackingStore(masterPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId))) {
+                            backedByMmf = true;
+                            OutputDebugStringW(L"[P15] Master cache persisted to MMF backing store\n");
+                        }
+                    }
                     
-                    {
+                    if (!backedByMmf) {
                         std::lock_guard lock(m_lodCacheMutex);
                         m_masterLOD0Cache.pixels = masterPtr;
                         m_masterLOD0Cache.width = fullFrame.width;
@@ -1727,6 +2029,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                         m_masterLOD0Cache.stride = fullFrame.stride;
                         m_masterLOD0Cache.lod = 0;
                         m_masterLOD0Cache.imageId = job.imageId;
+                    } else {
+                        std::lock_guard lock(m_lodCacheMutex);
+                        m_masterLOD0Cache = {};
                     }
                     
                     // Now, do we need to downscale for THIS request?
@@ -1768,6 +2073,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
                 }
             }
         }
+    }
+
+    if (checkCancel && checkCancel()) {
+        guard.countFailure = false;
+        return E_ABORT;
     }
     
     if (FAILED(hr) || !fullFrame.IsValid()) {

@@ -18,6 +18,7 @@
 #include <semaphore>
 #include <algorithm>
 #include <limits>
+#include <functional>
 
 #include "TileTypes.h" // [Titan]
 
@@ -112,6 +113,7 @@ public:
         wchar_t loaderName[64] = { 0 }; // [Phase 11]
         bool isFullDecode = false;      // [Two-Stage]
         bool isTileDecode = false;      // [UI Fix] Prioritize tile decoder name
+        bool isCopyOnly = false;        // [HUD] True when worker mainly did cache/MMF copy
     };
     void GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const;
     
@@ -135,6 +137,7 @@ private:
         std::wstring loaderName; // [Phase 11] Capture actual decoder name
         bool isFullDecode = false; // [Two-Stage] Records if last decode was full res
         bool isTileDecode = false; // [UI Fix] Records if last decode was a tile
+        bool isCopyOnly = false;   // [HUD] Distinguish copy path vs real decode
         
         // [Unified Architecture] Shared Arena from TripleArenaPool (ImageEngine owns it)
         // Workers no longer own arenas. They use GetBackHeavyArena() from parent pool.
@@ -200,7 +203,11 @@ private:
         bool isProgressive = false; // JPEG type for memory estimate
     };
     std::unordered_map<uint64_t, BaselineCacheEntry> m_baselineCache;
-    static uint64_t MakeDimHash(int w, int h) { return ((uint64_t)w << 32) | (uint64_t)h; }
+    static uint64_t MakeBaselineCacheKey(int w, int h, const std::wstring& format) {
+        uint64_t dim = ((uint64_t)(uint32_t)w << 32) | (uint64_t)(uint32_t)h;
+        uint64_t fmt = (uint64_t)std::hash<std::wstring>{}(format);
+        return dim ^ (fmt + 0x9e3779b97f4a7c15ULL + (dim << 6) + (dim >> 2));
+    }
     
     void ResetBenchState();
     void RecordBaselineSample(double outPixels, double decodeMs, int srcWidth, int srcHeight, bool isProgressiveJPEG);
@@ -318,9 +325,37 @@ private:
     bool m_isProgressiveJXL = false; // [JXL] True if the image has DC/Progressive layers suitable for region decoding
     
     // [P14] Helpers
-    HRESULT FullDecodeAndCacheLOD(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
+    HRESULT FullDecodeAndCacheLOD(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel = nullptr);
     HRESULT SliceTileFromLODCache(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
     bool ShouldUseSingleDecode(int lod) const;
+
+    // ============================================================================
+    // [Phase-1] Persistent Backing Store for Heavy Non-ROI Formats
+    // ============================================================================
+    struct MasterBackingStore {
+        HANDLE hFile = INVALID_HANDLE_VALUE;
+        HANDLE hMap = nullptr;
+        uint8_t* view = nullptr;
+        size_t sizeBytes = 0;
+        int width = 0;
+        int height = 0;
+        int stride = 0;
+        ImageID imageId = 0;
+        std::wstring tempPath;
+    };
+    MasterBackingStore m_masterBacking;
+    std::mutex m_masterBackingMutex;
+    void ResetMasterBackingStore();
+    HRESULT BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId);
+    bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride);
+
+    // [Phase-2] Background warmup for heavy non-ROI formats (PNG/TIFF/AVIF/HEIC).
+    // Builds master MMF backing store right after image open to avoid first tile hard stall.
+    std::jthread m_masterWarmupThread;
+    std::atomic<ImageID> m_masterWarmupImageId{ 0 };
+    bool ShouldWarmupMasterBacking() const;
+    void EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf);
+    void StopMasterWarmup();
     
     // ============================================================================
     // [Optimization] Full Image Cache (RAM Preload)

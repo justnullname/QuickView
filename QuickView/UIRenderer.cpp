@@ -966,16 +966,27 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
         );
         
         auto& w = s.heavyWorkers[i];
+        bool isCopyPath = w.isCopyOnly ||
+            (w.lastDecodeMs == 0 && w.lastTotalMs > 0 &&
+             (wcsstr(w.loaderName, L"LODCache Slice") != nullptr ||
+              wcsstr(w.loaderName, L"Zero-Copy") != nullptr ||
+              wcsstr(w.loaderName, L"MMF Copy") != nullptr ||
+              wcsstr(w.loaderName, L"RAM Copy") != nullptr));
+
         if (w.busy) {
             dc->FillRectangle(box, redBrush.Get());
             if (w.lastDecodeMs > 0 || w.lastTotalMs > 0) {
-                 wchar_t tBuf[24]; swprintf_s(tBuf, L"D:%d\nT:%d", w.lastDecodeMs, w.lastTotalMs); // [Dual Timing]
+                 wchar_t tBuf[24];
+                 if (isCopyPath) swprintf_s(tBuf, L"C:0\nT:%d", w.lastTotalMs);
+                 else swprintf_s(tBuf, L"D:%d\nT:%d", w.lastDecodeMs, w.lastTotalMs); // [Dual Timing]
                  dc->DrawText(tBuf, wcslen(tBuf), m_debugFormat.Get(), box, whiteBrush.Get());
             }
         } else if (w.alive) {
             dc->FillRectangle(box, yellowBrush.Get()); 
             if (w.lastDecodeMs > 0 || w.lastTotalMs > 0) {
-                 wchar_t tBuf[24]; swprintf_s(tBuf, L"D:%d\nT:%d", w.lastDecodeMs, w.lastTotalMs); // [Dual Timing]
+                 wchar_t tBuf[24];
+                 if (isCopyPath) swprintf_s(tBuf, L"C:0\nT:%d", w.lastTotalMs);
+                 else swprintf_s(tBuf, L"D:%d\nT:%d", w.lastDecodeMs, w.lastTotalMs); // [Dual Timing]
                  dc->DrawText(tBuf, wcslen(tBuf), m_debugFormat.Get(), box, blackTransBrush.Get()); 
             }
         } else {
