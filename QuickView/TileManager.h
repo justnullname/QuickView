@@ -14,6 +14,11 @@ namespace QuickView {
     class TileManager {
     public:
         static constexpr size_t DENSE_THRESHOLD = 4 * 1024 * 1024; // [Hybrid Pyramid]
+        struct ViewportProgress {
+            int totalTiles = 0;
+            int readyTiles = 0;
+            int lod = 0;
+        };
 
         TileManager();
         ~TileManager();
@@ -88,6 +93,7 @@ namespace QuickView {
         // Helper to get total count
         int GetTotalCount() const;
         int GetReadyCount() const;
+        ViewportProgress GetViewportProgress() const;
 
         // [Fix17d] Trim Queue
         std::vector<TileKey> PopEvictedTiles();
@@ -108,6 +114,7 @@ namespace QuickView {
         uint32_t m_generationId = 1;
         RegionRect m_lastViewport = {};
         int m_currentLOD = 0;
+        bool m_viewportTilesActive = false;
         
         bool m_initialized = false;
         int m_imageW = 0, m_imageH = 0;

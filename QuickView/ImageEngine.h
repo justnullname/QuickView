@@ -175,8 +175,12 @@ public:
         bool syncStatus = false; // Green/Yellow/Red logic helper
         bool isScaled = false;   // [Two-Stage] True if current image is IDCT scaled
         bool isTitan = false;    // [Titan] True if Titan Mode is active
-        int tileCount = 0;       // [Titan] Total tiles managed
-        int tilesReady = 0;      // [Titan] Ready tiles
+        int tileCount = 0;       // [Titan] Viewport target-LOD total tiles
+        int tilesReady = 0;      // [Titan] Viewport target-LOD ready tiles
+        int heavyBusyWorkers = 0;
+        int heavyPendingJobs = 0;
+        int activeTileJobs = 0;
+        bool baseLayerReady = false; // First non-tile frame for current image has been delivered
         
         // Zone A2: Legacy DComp
         bool layerImg = false;
@@ -342,6 +346,7 @@ private:
     
     // [ImageID Architecture] Stable content-based ID for current image
     std::atomic<ImageID> m_currentImageId{0};
+    std::atomic<bool> m_baseLayerReady{false};
     
     // [JXL Sequential] Pending Heavy task - waits for FastLane completion
     std::wstring m_pendingJxlHeavyPath;

@@ -51,6 +51,9 @@ namespace QuickView {
         m_imageH = imageHeight;
         m_layers.clear();
         m_lru.clear();
+        m_lastViewport = {};
+        m_currentLOD = 0;
+        m_viewportTilesActive = false;
         m_initialized = true;
 
         // Build Pyramid Layers (0 to MAX_LOD_LEVELS)
@@ -128,8 +131,22 @@ namespace QuickView {
             triggerThreshold = 1.0f / (float)(1 << maxLOD);
         }
         if (zoom <= triggerThreshold * 1.0001f) {
+            static uint64_t lastSkipLog = 0;
+            uint64_t nowSkip = GetTickCount64();
+            if (nowSkip - lastSkipLog > 500) {
+                lastSkipLog = nowSkip;
+                wchar_t skipBuf[256];
+                swprintf_s(skipBuf,
+                    L"[TileManager] Skip trigger: zoom=%.4f threshold=%.4f base=%.4f img=%dx%d\n",
+                    zoom, triggerThreshold, basePreviewRatio, imageW, imageH);
+                OutputDebugStringW(skipBuf);
+            }
+            // Not in tile mode: clear viewport progress source so UI doesn't show stale progress.
+            m_viewportTilesActive = false;
+            m_lastViewport = {};
             return {};
         }
+        m_viewportTilesActive = true;
 
         int lod = CalculateBestLOD(zoom, basePreviewRatio);
         
@@ -436,6 +453,9 @@ namespace QuickView {
             if (l) l->Clear();
         }
         m_lru.clear();
+        m_lastViewport = {};
+        m_currentLOD = 0;
+        m_viewportTilesActive = false;
     }
     
     int TileManager::GetTotalCount() const {
@@ -456,6 +476,46 @@ namespace QuickView {
             }
         }
         return count;
+    }
+
+    TileManager::ViewportProgress TileManager::GetViewportProgress() const {
+        ViewportProgress progress = {};
+
+        auto* self = const_cast<TileManager*>(this);
+        std::lock_guard lock(self->m_mutex);
+        if (!self->m_viewportTilesActive) return progress;
+        if (!self->m_initialized) return progress;
+        if (self->m_lastViewport.w <= 0 || self->m_lastViewport.h <= 0) return progress;
+        if (self->m_currentLOD < 0 || self->m_currentLOD >= (int)self->m_layers.size()) return progress;
+
+        ITileStateLayer* layer = self->m_layers[self->m_currentLOD].get();
+        if (!layer) return progress;
+
+        int tileSize = TILE_SIZE << self->m_currentLOD;
+        int startX = self->m_lastViewport.x / tileSize;
+        int startY = self->m_lastViewport.y / tileSize;
+        int endX = (self->m_lastViewport.x + self->m_lastViewport.w + tileSize - 1) / tileSize;
+        int endY = (self->m_lastViewport.y + self->m_lastViewport.h + tileSize - 1) / tileSize;
+
+        if (startX < 0) startX = 0;
+        if (startY < 0) startY = 0;
+        int maxCols = layer->GetWidth();
+        int maxRows = layer->GetHeight();
+        if (endX > maxCols) endX = maxCols;
+        if (endY > maxRows) endY = maxRows;
+
+        progress.lod = self->m_currentLOD;
+        for (int y = startY; y < endY; ++y) {
+            for (int x = startX; x < endX; ++x) {
+                ++progress.totalTiles;
+                TileEntry* entry = layer->GetEntry(x, y);
+                if (entry && entry->state.load(std::memory_order_relaxed) == TileStateCode::Ready) {
+                    ++progress.readyTiles;
+                }
+            }
+        }
+
+        return progress;
     }
 
 } // namespace QuickView

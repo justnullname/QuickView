@@ -210,6 +210,38 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     // If the image is already in memory (from prefetch), use it immediately!
     {
         auto cachedFrame = GetCachedImage(path);
+
+        // Guard: do not reuse JXL placeholder/scaled cache as a final hit.
+        // Large JXL revisit must re-enter decode pipeline to ensure proper tile activation.
+        if (cachedFrame && fmtUpper == L"JXL") {
+            const bool frameUsable =
+                cachedFrame->IsValid() &&
+                !cachedFrame->IsSvg();
+            const bool tinyFakeBase =
+                frameUsable &&
+                (cachedFrame->width <= 1 || cachedFrame->height <= 1);
+            const bool hasMetaDims = (info.width > 0 && info.height > 0);
+            const bool scaledPreviewCache =
+                frameUsable && hasMetaDims &&
+                (cachedFrame->width < (int)(info.width * 0.85f) ||
+                 cachedFrame->height < (int)(info.height * 0.85f));
+            const bool cacheUnknownDims = !hasMetaDims;
+            const bool bypassJxlCache = tinyFakeBase || scaledPreviewCache || cacheUnknownDims;
+
+            if (bypassJxlCache) {
+                const int cacheW = frameUsable ? cachedFrame->width : 0;
+                const int cacheH = frameUsable ? cachedFrame->height : 0;
+                InvalidateCache(path);
+                cachedFrame.reset();
+                wchar_t dbg[256];
+                swprintf_s(dbg,
+                    L"[Dispatch] JXL cache bypass: frame=%dx%d meta=%dx%d titan=%d\n",
+                    cacheW, cacheH,
+                    info.width, info.height, enableTitan ? 1 : 0);
+                OutputDebugStringW(dbg);
+            }
+        }
+
         if (cachedFrame) {
             bool isHit = true;
             
@@ -364,9 +396,6 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         // Other heavy formats use standard scaling -> Stage 2 logic
     }
     
-    // 4. Cancel Stale Tasks
-    m_heavyPool->CancelOthers(imageId);
-    
     // 5. JXL Special Logic (User "Ultimate Strategy")
     if (info.format == L"JXL") {
         m_pendingJxlHeavyPath.clear();
@@ -472,6 +501,8 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     // [ImageID Architecture] Compute stable hash
     ImageID imageId = ComputePathHash(path);
     m_currentImageId.store(imageId);
+    // Cancel stale heavy/tile work immediately for all dispatch paths.
+    m_heavyPool->CancelOthers(imageId);
     
     m_currentNavPath = path;
     m_lastInputTime = std::chrono::steady_clock::now();
@@ -479,6 +510,7 @@ void ImageEngine::NavigateTo(const std::wstring& path, uintmax_t fileSize, uint6
     // [Two-Stage] Reset State
     m_isViewingScaledImage = false;
     m_stage2Requested = false;
+    m_baseLayerReady.store(false);
 
     // Use Central Dispatcher
     DispatchImageLoad(path, imageId, fileSize);
@@ -545,6 +577,11 @@ std::vector<EngineEvent> ImageEngine::PollState() {
     // 3. [Two-Stage] Track state and Trigger Stage 2
     for (const auto& e : batch) {
         if (e.imageId == m_currentImageId.load()) {
+            if ((e.type == EventType::PreviewReady || e.type == EventType::FullReady) &&
+                e.rawFrame && e.rawFrame->IsValid()) {
+                m_baseLayerReady.store(true);
+            }
+
             if (e.type == EventType::PreviewReady || (e.type == EventType::FullReady && e.isScaled)) {
                 m_isViewingScaledImage = true;
                 m_stage1Time = std::chrono::steady_clock::now();
@@ -586,16 +623,40 @@ std::vector<EngineEvent> ImageEngine::PollState() {
         // Previously, only non-current (prefetch) images were cached.
         // This caused the bug where viewed images weren't cached for return navigation.
         if (e.type == EventType::FullReady && e.rawFrame && e.rawFrame->IsValid()) {
-            if (m_navigator) {
-                int idx = m_navigator->FindIndex(e.filePath);
-                if (idx != -1) {
-                     AddToCache(idx, e.filePath, e.rawFrame);
-                     
-                     // [v8.15] Remove from pending set
-                     {
-                         std::lock_guard lock(m_pendingMutex);
-                         m_pendingPaths.erase(e.filePath);
-                     }
+            std::wstring fmtUpper = e.metadata.Format;
+            std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
+            const bool isJxl = (fmtUpper == L"JXL");
+
+            // For large JXL, do not cache placeholders or strongly downscaled base frames.
+            const bool hasMetaDims = (e.metadata.Width > 0 && e.metadata.Height > 0);
+            const bool isLargeJxl =
+                isJxl && hasMetaDims &&
+                (e.metadata.Width >= 8000 || e.metadata.Height >= 8000 ||
+                 ((uint64_t)e.metadata.Width * (uint64_t)e.metadata.Height > 50000000ULL));
+            const bool tinyFakeBase =
+                isJxl && !e.rawFrame->IsSvg() &&
+                (e.rawFrame->width <= 1 || e.rawFrame->height <= 1);
+            const bool downscaledJxlBase =
+                isLargeJxl && !e.rawFrame->IsSvg() &&
+                (e.rawFrame->width < (int)(e.metadata.Width * 0.85f) ||
+                 e.rawFrame->height < (int)(e.metadata.Height * 0.85f));
+            const bool skipJxlCache = tinyFakeBase || downscaledJxlBase;
+
+            if (skipJxlCache) {
+                std::lock_guard lock(m_pendingMutex);
+                m_pendingPaths.erase(e.filePath);
+            } else {
+                if (m_navigator) {
+                    int idx = m_navigator->FindIndex(e.filePath);
+                    if (idx != -1) {
+                         AddToCache(idx, e.filePath, e.rawFrame);
+                         
+                         // [v8.15] Remove from pending set
+                         {
+                             std::lock_guard lock(m_pendingMutex);
+                             m_pendingPaths.erase(e.filePath);
+                         }
+                    }
                 }
             }
         }
@@ -712,6 +773,7 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     
     // 1. Vitals (Zone A & A2)
     s.targetHash = m_currentImageId.load();
+    s.baseLayerReady = m_baseLayerReady.load();
     // RenderHash is filled by UI (main.cpp)
     // FPS is filled by UI
     // Loader Name
@@ -739,6 +801,20 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     // [HUD V4] Get global pool stats for Cancellation Count
     HeavyLanePool::PoolStats poolStats = m_heavyPool->GetStats();
     s.heavyCancellations = poolStats.cancelCount;
+    s.heavyPendingJobs = poolStats.pendingJobs;
+    s.activeTileJobs = poolStats.activeTileJobs;
+
+    s.heavyBusyWorkers = 0;
+    for (int i = 0; i < s.heavyWorkerCount; ++i) {
+        if (s.heavyWorkers[i].busy) s.heavyBusyWorkers++;
+    }
+
+    if (m_tileManager) {
+        auto vp = m_tileManager->GetViewportProgress();
+        s.tileCount = vp.totalTiles;
+        s.tilesReady = vp.readyTiles;
+    }
+    s.isTitan = (s.activeTileJobs > 0 || s.tileCount > 0);
 
     // [Phase 11] Bubble up Heavy Lane Loader Name
     bool hasFullDecode = false;

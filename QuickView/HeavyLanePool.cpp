@@ -1125,28 +1125,38 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        }
                    }
                    
-                    // [B3] Non-JPEG formats: MUST use Single-Decode-Then-Slice.
-                    // Per-tile fallback (LoadTileFromMemory/Strategy-B) is unsuitable:
-                    //   - LoadTileFromMemory is TurboJPEG-only → instant fail for PNG
-                    //   - Strategy-B full-decodes the entire image PER TILE → 34s/tile for 40Kx30K
-                    // [Optimization] We now support Native Region Decoding for WEBP!
-                    // WEBP can bypass SingleDecode and directly query the MMF concurrently.
-                    // NOTE: JXL Native Region Decoding (while supported) relies on full-file parsing
-                    // if the JXL lacks progressive layers. For Titan-sized images, this means a 15-second
-                    // decode PER TILE. Therefore, JXL MUST use SingleDecode to cache the LOD level.
+                    // Format-aware strategy matrix:
+                    // - JPEG baseline: native ROI is best.
+                    // - JPEG progressive: prefer decode-once (ROI often reparses full coefficients).
+                    // - WebP: LOD0 may prefer decode-once (memory-guarded); higher LOD keeps ROI.
+                    // - JXL non-progressive: decode-once mandatory.
+                    // - PNG/TIFF/AVIF/HEIC/etc: decode-once mandatory (no practical native ROI).
+                    const bool isJpeg = (m_titanFormat == L"JPEG");
+                    const bool isWebp = (m_titanFormat == L"WEBP");
+                    const bool isJxl = (m_titanFormat == L"JXL");
+                    const bool isProgressiveJpeg = isJpeg && m_isProgressiveJPEG;
+                    const bool hasNativeRegionDecoder =
+                        (isJpeg && !isProgressiveJpeg) ||
+                        isWebp ||
+                        (isJxl && m_isProgressiveJXL);
+                    const bool canFallbackToROI =
+                        isJpeg || isWebp || (isJxl && m_isProgressiveJXL);
+
                     bool isSingleDecodeMandatory = false;
-                    if (m_titanFormat != L"JPEG" && m_titanFormat != L"WEBP") {
-                        if (m_titanFormat == L"JXL" && m_isProgressiveJXL) {
-                            // [Optimization] Progressive JXL files have DC layers or Tiled structures.
-                            // We can use Native Region Decoding without suffering 15s monolithic penalties!
-                            isSingleDecodeMandatory = false;
-                        } else {
-                            isSingleDecodeMandatory = true; // PNG, TIFF, non-progressive JXL etc. still require SingleDecode
-                        }
+                    if (isJxl && !m_isProgressiveJXL) {
+                        isSingleDecodeMandatory = true;
+                    } else if (!isJpeg && !isWebp && !isJxl) {
+                        isSingleDecodeMandatory = true;
                     }
-                    
-                    bool hasNativeRegionDecoder = (m_titanFormat == L"WEBP") || (m_titanFormat == L"JXL" && m_isProgressiveJXL);
-                    bool wantsSingleDecode = isSingleDecodeMandatory || (m_isTitanMode && !hasNativeRegionDecoder && ShouldUseSingleDecode(job.tileCoord.lod));
+
+                    const bool webpSingleDecode = ShouldUseSingleDecodeForWebP(job.tileCoord.lod);
+                    const bool jpegProgressiveSingleDecode =
+                        isProgressiveJpeg && ShouldUseSingleDecode(job.tileCoord.lod);
+                    bool wantsSingleDecode =
+                        isSingleDecodeMandatory ||
+                        webpSingleDecode ||
+                        jpegProgressiveSingleDecode ||
+                        (m_isTitanMode && !hasNativeRegionDecoder && ShouldUseSingleDecode(job.tileCoord.lod));
 
                     // [Metrics] Strategy decision trace (rate-limited).
                     {
@@ -1158,38 +1168,57 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                             wchar_t strat[256];
                             swprintf_s(
                                 strat,
-                                L"[HeavyPool] Strategy: fmt=%s lod=%d single=%s nativeROI=%s mandatory=%s progressiveJXL=%s\n",
+                                L"[HeavyPool] Strategy: fmt=%s lod=%d single=%s nativeROI=%s mandatory=%s webpOnce=%s jpgProgOnce=%s progressiveJXL=%s\n",
                                 m_titanFormat.c_str(),
                                 job.tileCoord.lod,
                                 wantsSingleDecode ? L"Y" : L"N",
                                 hasNativeRegionDecoder ? L"Y" : L"N",
                                 isSingleDecodeMandatory ? L"Y" : L"N",
+                                webpSingleDecode ? L"Y" : L"N",
+                                jpegProgressiveSingleDecode ? L"Y" : L"N",
                                 m_isProgressiveJXL ? L"Y" : L"N");
                             OutputDebugStringW(strat);
                         }
                     }
 
+                    // Mutable flag allows graceful fallback to ROI when decode-once is advisory (not mandatory).
+                    bool preferSingleDecode = wantsSingleDecode;
+
                     // [B4] Check fail count — give up if too many failures
-                    if (wantsSingleDecode && m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
-                        hr = E_FAIL;
-                        loaderName = L"LOD Exhausted";
-                        // Don't reset tile to Empty — mark as permanently failed
-                        goto tile_decode_done;
+                    if (preferSingleDecode && m_lodCacheFailCount.load() >= kMaxLODCacheRetries) {
+                        if (!isSingleDecodeMandatory && canFallbackToROI) {
+                            // Fallback path for advisory decode-once formats (e.g. WebP LOD0, progressive JPEG).
+                            preferSingleDecode = false;
+                        } else {
+                            hr = E_FAIL;
+                            loaderName = L"LOD Exhausted";
+                            // Don't reset tile to Empty — mark as permanently failed
+                            goto tile_decode_done;
+                        }
                     }
 
                     // Cache miss: Try full decode + cache
                     // [v8.4] Critical Fix: If the format has a TRUE NATIVE REGION DECODER (WebP, Progressive JXL),
                     // we MUST NOT let ShouldUseSingleDecode hijack the pipeline and force an 8.6 second 
                     // single-core full decode stall! We bypass caching and go straight to High-Concurrency Region Decoding.
-                    if (wantsSingleDecode) {
+                    if (preferSingleDecode) {
                         hr = FullDecodeAndCacheLOD(job, rawFrame, loaderName, cancelPred);
                         if (SUCCEEDED(hr)) goto tile_decode_done;
-                        // CAS failed (another builder) or decode failed: wait and retry slice.
+
+                        const HRESULT kBusy = HRESULT_FROM_WIN32(ERROR_BUSY);
+                        if (!isSingleDecodeMandatory && canFallbackToROI &&
+                            hr != kBusy && hr != E_ABORT) {
+                            // Advisory decode-once failed hard (not "another builder is active").
+                            // Disable further decode-once retries for this image and fall back to ROI.
+                            m_lodCacheFailCount.store(kMaxLODCacheRetries);
+                            preferSingleDecode = false;
+                        }
+                        // CAS busy: another builder is active, keep waiting for cache.
                     }
                     
                     // [B3] Wait for LOD cache builder if SingleDecode is active, then retry slice.
                     // This applies to ALL formats using SingleDecode (including progressive JPEG).
-                    bool expectSingleDecode = wantsSingleDecode;
+                    bool expectSingleDecode = preferSingleDecode;
                     
                     if (expectSingleDecode) {
                         // [Fix16] Event-driven wait with cancellation checks.
@@ -1220,10 +1249,15 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                             goto tile_decode_done;
                         }
                         
-                        // Still no cache — fail this tile (will be retried later if fail count allows)
-                        hr = E_FAIL;
-                        loaderName = L"LOD Cache Miss";
-                        goto tile_decode_done;
+                        if (!isSingleDecodeMandatory && canFallbackToROI) {
+                            // Decode-once failed; degrade to native ROI so image can still sharpen.
+                            expectSingleDecode = false;
+                        } else {
+                            // Still no cache — fail this tile (will be retried later if fail count allows)
+                            hr = E_FAIL;
+                            loaderName = L"LOD Cache Miss";
+                            goto tile_decode_done;
+                        }
                     }
                     
                     // If we reach here, we are doing per-tile decode (JPEG only).
@@ -1332,6 +1366,18 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
         if (SUCCEEDED(hr) && rawFrame.IsValid()) {
             if (outLoaderName) *outLoaderName = loaderName; 
             meta.FormatDetails = rawFrame.formatDetails;
+            // [Robust Metadata] Ensure key fields are present for UI/Titan trigger logic.
+            if (meta.Width == 0 || meta.Height == 0) {
+                meta.Width = (UINT)rawFrame.width;
+                meta.Height = (UINT)rawFrame.height;
+            }
+            if (meta.Format.empty() && !m_titanFormat.empty()) {
+                meta.Format = m_titanFormat;
+            }
+            // Use actual decode-path loader tag (e.g. "libjxl (Fake Base)").
+            if (!loaderName.empty()) {
+                meta.LoaderName = loaderName;
+            }
             
             // Generate Event
             EngineEvent evt;
@@ -1462,6 +1508,7 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     stats.cancelCount = m_cancelCount.load();
     stats.lastDecodeTimeMs = m_lastDecodeTimeMs.load();
     stats.lastDecodeId = m_lastDecodeId.load();
+    stats.activeTileJobs = m_activeTileJobs.load();
     
     for (const auto& w : m_workers) {
         auto state = w.state;
@@ -1494,8 +1541,8 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
         
         WorkerSnapshot& ws = outBuffer[count];
         ws.alive = (w.state != WorkerState::SLEEPING);
-        // State interpretation
-        ws.busy = (w.state == WorkerState::BUSY);
+        // Only expose BUSY for current image to avoid cross-image UI flicker.
+        ws.busy = (w.state == WorkerState::BUSY && w.currentId == currentId);
         
         // Time logic: [Phase 9] User wants static "last duration" only
         // [Phase 10] Clear if from previous image
@@ -1846,6 +1893,37 @@ bool HeavyLanePool::ShouldUseSingleDecode(int lod) const {
     return fits;
 }
 
+bool HeavyLanePool::ShouldUseSingleDecodeForWebP(int lod) const {
+    // Keep ROI for higher LODs (already fast); optimize the expensive LOD0 path.
+    if (m_titanFormat != L"WEBP") return false;
+    if (lod != 0) return false;
+    if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return false;
+
+    double requiredRamMB = ((double)m_titanSrcW * (double)m_titanSrcH * 4.0) / (1024.0 * 1024.0);
+
+    MEMORYSTATUSEX ms = { sizeof(ms) };
+    if (!GlobalMemoryStatusEx(&ms)) return false;
+    double availableRamMB = (double)ms.ullAvailPhys / (1024.0 * 1024.0);
+
+    // User policy: single decode only if full RGBA buffer is below 40% of currently available RAM.
+    bool canSingleDecode = (requiredRamMB < availableRamMB * 0.40);
+
+    // Rate-limited diagnostics.
+    static std::atomic<uint64_t> s_lastLogMs{ 0 };
+    uint64_t nowMs = GetTickCount64();
+    uint64_t prev = s_lastLogMs.load(std::memory_order_relaxed);
+    if (nowMs - prev > 1000 &&
+        s_lastLogMs.compare_exchange_strong(prev, nowMs, std::memory_order_relaxed)) {
+        wchar_t buf[256];
+        swprintf_s(buf,
+            L"[HeavyPool] WebP SingleDecode Guard: LOD=%d req=%.1fMB avail=%.1fMB limit=%.1fMB -> %s\n",
+            lod, requiredRamMB, availableRamMB, availableRamMB * 0.40, canSingleDecode ? L"Y" : L"N");
+        OutputDebugStringW(buf);
+    }
+
+    return canSingleDecode;
+}
+
 HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel) {
     if (!job.mmf || !job.mmf->IsValid()) return E_FAIL;
     if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return E_FAIL;
@@ -1854,7 +1932,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(const JobInfo& job, RawImageFrame& 
     // [CAS Guard] Only ONE worker does the full decode; others fall through to per-tile
     bool expected = false;
     if (!m_lodCacheBuilding.compare_exchange_strong(expected, true)) {
-        return E_FAIL; // Another worker is already building the cache
+        return HRESULT_FROM_WIN32(ERROR_BUSY); // Another worker is already building the cache
     }
     // RAII: reset flag when done (success or failure)
     struct BuildGuard {

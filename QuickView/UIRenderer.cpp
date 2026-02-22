@@ -530,7 +530,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // OSD
     DrawOSD(dc, hwnd);
     
-    // [OSD Status] Breathing Icon
+    // [Edge Focus] Tile decode status line
     DrawDecodingStatus(dc, hwnd);
     
     // Debug HUD
@@ -628,70 +628,210 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
 }
 
 void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
-    if (!m_iconFormat) return;
+    const int totalTiles = (m_telemetry.tileCount > 0) ? m_telemetry.tileCount : 0;
+    int readyTiles = m_telemetry.tilesReady;
+    if (readyTiles < 0) readyTiles = 0;
+    if (readyTiles > totalTiles) readyTiles = totalTiles;
 
-    bool busy = (m_telemetry.heavyWorkerCount > 0 || (m_telemetry.tileCount > m_telemetry.tilesReady));
-    bool showGreen = !busy && (GetTickCount() - m_finishTime < 2000); // 2 seconds green
+    const bool hasViewportTiles = totalTiles > 0;
+    const bool hasTileProgressGap = hasViewportTiles && (readyTiles < totalTiles);
+    const bool tilePipelineActive = hasViewportTiles || (m_telemetry.activeTileJobs > 0);
+    const bool baseLoading =
+        !tilePipelineActive &&
+        !m_telemetry.baseLayerReady &&
+        (m_telemetry.heavyBusyWorkers > 0);
+    const bool decodingActive = hasTileProgressGap || baseLoading;
 
-    if (!busy && !showGreen) {
-        if (m_wasBusy) {
-            m_finishTime = GetTickCount();
-            m_wasBusy = false;
-            InvalidateRect(hwnd, nullptr, FALSE); 
+    const DWORD now = GetTickCount();
+    if (m_decodeWasActive && !decodingActive) {
+        m_decodeFinishTime = now;
+        m_decodeDisplayedProgress = 1.0f;
+    }
+    m_decodeWasActive = decodingActive;
+
+    bool shouldAnimate = false;
+    float alpha = 0.0f;
+    float progress = 0.0f;
+    bool scanningMode = false;
+    bool finishingMode = false;
+
+    if (decodingActive) {
+        shouldAnimate = true;
+        alpha = 0.90f;
+
+        if (hasTileProgressGap && readyTiles > 0) {
+            progress = (float)readyTiles / (float)totalTiles;
+            if (progress < 0.0f) progress = 0.0f;
+            if (progress > 1.0f) progress = 1.0f;
+            if (m_decodeDisplayedProgress <= 0.0f || progress >= m_decodeDisplayedProgress) {
+                m_decodeDisplayedProgress += (progress - m_decodeDisplayedProgress) * 0.35f;
+            } else {
+                m_decodeDisplayedProgress = progress;
+            }
+            if (m_decodeDisplayedProgress < 0.0f) m_decodeDisplayedProgress = 0.0f;
+            if (m_decodeDisplayedProgress > 1.0f) m_decodeDisplayedProgress = 1.0f;
+            progress = m_decodeDisplayedProgress;
+        } else {
+            scanningMode = true;
+            m_decodeDisplayedProgress = 0.0f;
         }
-        return;
-    }
-
-    if (busy) {
-        m_wasBusy = true;
-        // Pulse animation
-        m_breathingPhase += 0.15f;
-    }
-    
-    float alpha = 1.0f;
-    wchar_t icon = L'\uE895'; // Sync
-    D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White); // Default white
-
-    if (busy) {
-        alpha = 0.4f + 0.6f * fabs(sinf(m_breathingPhase));
-        // Yellow if heavy load? White is fine.
+    } else if (m_decodeFinishTime != 0) {
+        const DWORD elapsed = now - m_decodeFinishTime;
+        if (elapsed >= 500) {
+            m_decodeFinishTime = 0;
+            m_decodeDisplayedProgress = 0.0f;
+            return;
+        }
+        finishingMode = true;
+        shouldAnimate = true;
+        alpha = 1.0f - ((float)elapsed / 500.0f);
+        progress = 1.0f;
     } else {
-        // Green Check or Thumb Up
-        icon = L'\uE73E'; // CheckMark
-        color = D2D1::ColorF(D2D1::ColorF::LimeGreen);
-        
-        // Fade out
-        float elapsed = (float)(GetTickCount() - m_finishTime);
-        if (elapsed > 1500.0f) {
-            alpha = 1.0f - (elapsed - 1500.0f) / 500.0f;
+        m_decodeDisplayedProgress = 0.0f;
+        // Continue: one-shot forced test bar may still need to draw.
+    }
+
+    D2D1_SIZE_F rtSize = dc->GetSize();
+    float drawW = (m_width > 0) ? (float)m_width : rtSize.width;
+    float drawH = (m_height > 0) ? (float)m_height : rtSize.height;
+    float dpiX = 96.0f, dpiY = 96.0f;
+    dc->GetDpi(&dpiX, &dpiY);
+
+    float topInset = 0.0f;
+    if (IsZoomed(hwnd) && !m_isFullscreen) {
+        int frameY = GetSystemMetrics(SM_CYSIZEFRAME);
+        int paddedBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
+        topInset = (float)(frameY + paddedBorder);
+    }
+
+    // Adaptive thickness for high-DPI / high-resolution displays.
+    // Keep enough visual presence while preserving "edge focus" subtlety.
+    float dpiScale = dpiY / 96.0f;
+    if (dpiScale < 1.0f) dpiScale = 1.0f;
+    float resBoost = 1.0f;
+    if (drawW >= 3000.0f || drawH >= 1700.0f) resBoost = 1.18f;
+    if (drawW >= 3800.0f || drawH >= 2100.0f) resBoost = 1.30f;
+    float barThickness = 3.0f * dpiScale * resBoost;
+    if (barThickness < 3.0f) barThickness = 3.0f;
+    if (barThickness > 6.0f) barThickness = 6.0f;
+    const float glowPad = barThickness * 0.45f;
+    const float barY = topInset + 1.0f;
+    D2D1_RECT_F fullBar = D2D1::RectF(0.0f, barY, drawW, barY + barThickness);
+    D2D1_RECT_F fullBarShadow = D2D1::RectF(0.0f, barY + 1.0f, drawW, barY + barThickness + 2.0f);
+
+    ComPtr<ID2D1SolidColorBrush> trackBrush;
+    D2D1_COLOR_F trackColor = D2D1::ColorF(0.66f, 0.86f, 1.0f, 0.20f * alpha);
+    if (alpha > 0.0f) {
+        ComPtr<ID2D1SolidColorBrush> trackShadowBrush;
+        D2D1_COLOR_F trackShadow = D2D1::ColorF(0.12f, 0.22f, 0.34f, 0.90f * alpha);
+        dc->CreateSolidColorBrush(trackShadow, &trackShadowBrush);
+        dc->FillRectangle(fullBarShadow, trackShadowBrush.Get());
+
+        dc->CreateSolidColorBrush(trackColor, &trackBrush);
+        dc->FillRectangle(fullBar, trackBrush.Get());
+
+        ComPtr<ID2D1SolidColorBrush> trackStrokeBrush;
+        D2D1_COLOR_F trackStroke = D2D1::ColorF(0.92f, 0.98f, 1.0f, 0.50f * alpha);
+        dc->CreateSolidColorBrush(trackStroke, &trackStrokeBrush);
+        dc->FillRectangle(D2D1::RectF(0.0f, barY, drawW, barY + 1.0f), trackStrokeBrush.Get());
+    }
+
+    if (alpha > 0.0f && scanningMode) {
+        // Electric-arc flow: one-directional packet with trailing streaks.
+        m_decodeScanPhase += 0.012f; // slower than previous pulse
+        if (m_decodeScanPhase >= 1.0f) m_decodeScanPhase -= 1.0f;
+
+        float packetW = drawW * 0.18f;
+        if (packetW < 64.0f) packetW = 64.0f;
+        if (packetW > 220.0f) packetW = 220.0f;
+
+        float xHead = m_decodeScanPhase * (drawW + packetW) - packetW;
+
+        auto DrawArcSegment = [&](float left, float right, float bodyAlpha, float glowAlpha) {
+            if (right <= 0.0f || left >= drawW) return;
+            if (left < 0.0f) left = 0.0f;
+            if (right > drawW) right = drawW;
+
+            D2D1_RECT_F seg = D2D1::RectF(left, barY, right, barY + barThickness);
+            D2D1_RECT_F segGlow = D2D1::RectF(left, barY - glowPad, right, barY + barThickness + glowPad);
+            D2D1_RECT_F segShadow = D2D1::RectF(left, barY + 1.0f, right, barY + barThickness + 2.0f);
+
+            ComPtr<ID2D1SolidColorBrush> segShadowBrush;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.22f, 0.34f, 0.90f * alpha), &segShadowBrush);
+            dc->FillRectangle(segShadow, segShadowBrush.Get());
+
+            ComPtr<ID2D1SolidColorBrush> segGlowBrush;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0.66f, 0.90f, 1.0f, (glowAlpha + 0.06f) * alpha), &segGlowBrush);
+            dc->FillRectangle(segGlow, segGlowBrush.Get());
+
+            ComPtr<ID2D1SolidColorBrush> segBrush;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0.84f, 0.97f, 1.0f, (bodyAlpha + 0.04f) * alpha), &segBrush);
+            dc->FillRectangle(seg, segBrush.Get());
+        };
+
+        // Head and trailing arc fragments
+        DrawArcSegment(xHead - packetW * 0.55f, xHead, 0.36f, 0.14f);
+        DrawArcSegment(xHead - packetW * 0.22f, xHead + packetW * 0.15f, 0.66f, 0.22f);
+        DrawArcSegment(xHead + packetW * 0.02f, xHead + packetW * 0.44f, 0.96f, 0.30f);
+
+        // Spark fragment near head for "arc" feel.
+        float sparkOffset = sinf((float)now * 0.006f) * packetW * 0.08f;
+        DrawArcSegment(xHead + packetW * 0.46f + sparkOffset, xHead + packetW * 0.56f + sparkOffset, 0.98f, 0.34f);
+    } else if (alpha > 0.0f) {
+        float fillW = progress * drawW;
+        if (fillW < 0.0f) fillW = 0.0f;
+        if (fillW > drawW) fillW = drawW;
+
+        D2D1_RECT_F fillRect = D2D1::RectF(0.0f, barY, fillW, barY + barThickness);
+        D2D1_RECT_F fillGlow = D2D1::RectF(0.0f, barY - glowPad, fillW, barY + barThickness + glowPad);
+        D2D1_RECT_F fillShadow = D2D1::RectF(0.0f, barY + 1.0f, fillW, barY + barThickness + 2.0f);
+        ComPtr<ID2D1SolidColorBrush> fillBrush;
+
+        float flashBoost = 0.0f;
+        if (finishingMode) {
+            DWORD elapsed = now - m_decodeFinishTime;
+            if (elapsed < 120) {
+                float t = (float)elapsed / 120.0f;
+                flashBoost = (1.0f - t) * 0.30f;
+            }
+        }
+
+        D2D1_COLOR_F fillColor = D2D1::ColorF(0.82f, 0.96f, 1.0f, alpha + flashBoost);
+        if (fillColor.a > 1.0f) fillColor.a = 1.0f;
+        ComPtr<ID2D1SolidColorBrush> fillGlowBrush;
+        D2D1_COLOR_F glowColor = D2D1::ColorF(0.64f, 0.90f, 1.0f, 0.30f * alpha + flashBoost * 0.40f);
+        if (glowColor.a > 1.0f) glowColor.a = 1.0f;
+        dc->CreateSolidColorBrush(glowColor, &fillGlowBrush);
+        ComPtr<ID2D1SolidColorBrush> fillShadowBrush;
+        D2D1_COLOR_F fillShadowColor = D2D1::ColorF(0.12f, 0.22f, 0.34f, 0.90f * alpha);
+        dc->CreateSolidColorBrush(fillShadowColor, &fillShadowBrush);
+        dc->FillRectangle(fillShadow, fillShadowBrush.Get());
+        dc->FillRectangle(fillGlow, fillGlowBrush.Get());
+        dc->CreateSolidColorBrush(fillColor, &fillBrush);
+        dc->FillRectangle(fillRect, fillBrush.Get());
+
+        ComPtr<ID2D1SolidColorBrush> fillStrokeBrush;
+        D2D1_COLOR_F fillStroke = D2D1::ColorF(0.97f, 1.0f, 1.0f, 0.56f * alpha + flashBoost * 0.50f);
+        if (fillStroke.a > 1.0f) fillStroke.a = 1.0f;
+        dc->CreateSolidColorBrush(fillStroke, &fillStrokeBrush);
+        dc->FillRectangle(D2D1::RectF(0.0f, barY, fillW, barY + 1.0f), fillStrokeBrush.Get());
+
+        // Progress head highlight: improves readability on bright/complex images.
+        if (fillW > 1.0f && fillW < drawW) {
+            float headW = barThickness * 1.4f;
+            if (headW < 2.0f) headW = 2.0f;
+            if (headW > 6.0f) headW = 6.0f;
+            D2D1_RECT_F headRect = D2D1::RectF(fillW - headW, barY - glowPad * 0.35f, fillW, barY + barThickness + glowPad * 0.35f);
+            ComPtr<ID2D1SolidColorBrush> headBrush;
+            D2D1_COLOR_F headColor = D2D1::ColorF(0.96f, 1.0f, 1.0f, 0.56f * alpha + flashBoost * 0.35f);
+            if (headColor.a > 1.0f) headColor.a = 1.0f;
+            dc->CreateSolidColorBrush(headColor, &headBrush);
+            dc->FillRectangle(headRect, headBrush.Get());
         }
     }
-    
-    if (alpha <= 0.0f) return;
 
-    // Position: Top Right, below controls
-    // Window Controls end at m_width.
-    // Let's put it at m_width - 50, y = 80.
-    float iconSize = 24.0f;
-    float x = (float)m_width - iconSize - 20.0f;
-    float y = 50.0f; // Below title bar
-    
-    D2D1_RECT_F rect = D2D1::RectF(x, y, x + iconSize, y + iconSize);
-    
-    ComPtr<ID2D1SolidColorBrush> brush;
-    color.a = alpha;
-    dc->CreateSolidColorBrush(color, &brush);
-    
-    if (m_blackBrush) {
-        // Shadow
-        D2D1_RECT_F shadow = D2D1::RectF(rect.left+1, rect.top+1, rect.right+1, rect.bottom+1);
-        dc->DrawText(&icon, 1, m_iconFormat.Get(), shadow, m_blackBrush.Get());
-    }
-    dc->DrawText(&icon, 1, m_iconFormat.Get(), rect, brush.Get());
-    
-    // Force repaint next frame if animating
-    if (busy || (showGreen && alpha > 0.0f)) {
-         InvalidateRect(hwnd, nullptr, FALSE);
+    if (shouldAnimate) {
+        InvalidateRect(hwnd, nullptr, FALSE);
     }
 }
 

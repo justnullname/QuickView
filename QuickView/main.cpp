@@ -5596,15 +5596,27 @@ void OnPaint(HWND hwnd) {
                  baseRatio = previewW / (float)g_currentMetadata.Width;
              }
 
-             // [No-DC JXL Guard] Large JXL often starts with missing/invalid base preview
-             // (0px or fake 1x1), which can trigger immediate full tile decode on first screen.
-             // Clamp to virtual 1:8 so first frame never hard-blocks on monolithic decode.
-             if (g_currentMetadata.Format == L"JXL" &&
-                 g_currentMetadata.Width >= 8000 && g_currentMetadata.Height >= 8000) {
+             // [No-DC JXL Guard] For fake/tiny placeholder bases, force tile scheduling immediately.
+             std::wstring fmtUpper = g_currentMetadata.Format;
+             std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
+             bool isJxlLike = (fmtUpper.find(L"JXL") != std::wstring::npos || fmtUpper.find(L"JPEG XL") != std::wstring::npos);
+             if (!isJxlLike && !g_imagePath.empty()) {
+                 std::wstring pathLower = g_imagePath;
+                 std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+                 if (pathLower.ends_with(L".jxl")) isJxlLike = true;
+             }
+
+             if (isJxlLike && g_currentMetadata.Width >= 8000 && g_currentMetadata.Height >= 8000) {
                  constexpr float kVirtualNoDcRatio = 0.125f; // 1:8
-                 bool weakPreview = (previewW <= 1.0f);
+                 float previewH = g_imageResource.GetSize().height;
                  bool fakeBase = (g_currentMetadata.LoaderName.find(L"Fake Base") != std::wstring::npos);
-                 if (weakPreview || fakeBase) {
+                 bool tinyPreview = (previewW <= 2.0f || previewH <= 2.0f);
+                 bool weakPreview = (previewW <= 1.0f || previewH <= 1.0f);
+
+                 if (fakeBase || tinyPreview) {
+                     // Placeholder base (or missing base): force tiles on first frame.
+                     baseRatio = 0.0f;
+                 } else if (weakPreview) {
                      baseRatio = kVirtualNoDcRatio;
                  }
              }
@@ -5612,7 +5624,29 @@ void OnPaint(HWND hwnd) {
              // Update Manager (Scheduling) - Guarded to prevent loop
              static QuickView::RegionRect lastVP = { -1, -1, -1, -1 };
              static float lastAbsZoom = 0;
-             if (vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom) {
+             static ImageID lastTileImageId = 0;
+             ImageID curTileImageId = g_currentImageId.load();
+             bool imageChanged = (curTileImageId != lastTileImageId);
+             if (imageChanged) {
+                 lastVP = { -1, -1, -1, -1 };
+                 lastAbsZoom = -1.0f;
+                 lastTileImageId = curTileImageId;
+             }
+             if (imageChanged || vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom) {
+                 if (imageChanged) {
+                     wchar_t tileDbg[320];
+                     swprintf_s(tileDbg,
+                         L"[Main] Titan schedule seed: id=%llu fmt=%s loader=%s meta=%dx%d previewW=%.1f baseRatio=%.4f zoom=%.4f\n",
+                         curTileImageId,
+                         g_currentMetadata.Format.c_str(),
+                         g_currentMetadata.LoaderName.c_str(),
+                         g_currentMetadata.Width,
+                         g_currentMetadata.Height,
+                         previewW,
+                         baseRatio,
+                         absoluteZoom);
+                     OutputDebugStringW(tileDbg);
+                 }
                  g_imageEngine->UpdateTileViewport(vp, absoluteZoom, g_currentMetadata.Width, g_currentMetadata.Height, baseRatio, 0.0f, 0.0f);
                  lastVP = vp;
                  lastAbsZoom = absoluteZoom;
@@ -5702,35 +5736,27 @@ void OnPaint(HWND hwnd) {
         // === Sync all state from main.cpp ===
         // Only show/update HUD if Master Switch is ON
         g_uiRenderer->SetDebugHUDVisible(allowHud && g_showDebugHUD);
-        
-        if (shouldCompute) {
-            // [Phase 6] Dynamic Gating
-            // Tell ImageEngine if we are Warping (High Priority Mode)
-            bool isWarping = (g_inputController.GetState() == ScrollState::Warp);
-            if (g_imageEngine) {
+
+        if (g_imageEngine) {
+            if (shouldCompute) {
+                // [Phase 6] Dynamic Gating
+                // Tell ImageEngine if we are Warping (High Priority Mode)
+                bool isWarping = (g_inputController.GetState() == ScrollState::Warp);
                 g_imageEngine->SetHighPriorityMode(isWarping);
             }
 
-            // [HUD V4] Telemetry Gathering
-            if (g_imageEngine) {
-                auto s = g_imageEngine->GetTelemetry();
-                
-                // Fill UI-side Metrics
-                s.fps = g_fps;
-                s.renderHash = ComputePathHash(g_imagePath);
+            // Telemetry is always needed for the decode status UI.
+            auto s = g_imageEngine->GetTelemetry();
+            s.fps = shouldCompute ? g_fps : 0.0f;
+            s.renderHash = ComputePathHash(g_imagePath);
+            s.syncStatus = (s.targetHash == s.renderHash);
+            s.isScaled = g_isImageScaled; // [Two-Stage] Pass scaled state to HUD
+
+            if (shouldCompute) {
                 g_debugMetrics.heavyCancellations = s.heavyCancellations; // [HUD V4] Sync
-                
-                // Sync Logic: Green if ID matches.
-                // UIRenderer handles Yellow/Red based on this.
-                s.syncStatus = (s.targetHash == s.renderHash);
-
-                // Inject Image Specs
-                if (g_imageResource) {
-                }
-
-                s.isScaled = g_isImageScaled; // [Two-Stage] Pass scaled state to HUD
-                g_uiRenderer->SetTelemetry(s);
             }
+
+            g_uiRenderer->SetTelemetry(s);
         }
         
         // Sync window control hover state (already tracked in g_winCtrlHoverState)

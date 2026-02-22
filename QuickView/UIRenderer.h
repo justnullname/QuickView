@@ -107,7 +107,7 @@ public:
     void SetTileGridVisible(bool visible) { m_showTileGrid = visible; MarkDynamicDirty(); }
     
     // [HUD V4] Zero-Cost Telemetry
-    void SetTelemetry(const ImageEngine::TelemetrySnapshot& s) { m_telemetry = s; if (m_showDebugHUD) MarkDynamicDirty(); }
+    void SetTelemetry(const ImageEngine::TelemetrySnapshot& s) { m_telemetry = s; MarkDynamicDirty(); }
     
     void SetRuntimeConfig(const RuntimeConfig& cfg) { m_runtime = cfg; MarkStaticDirty(); }
     void SetWindowControlHover(int hoverIndex) { m_winCtrlHover = hoverIndex; MarkStaticDirty(); }
@@ -219,18 +219,12 @@ private:
     UINT m_width = 0;
     UINT m_height = 0;
     
-    // [OSD Status Icon]
-    float m_breathingPhase = 0.0f;
-    bool m_wasBusy = false;
-    DWORD m_finishTime = 0;
+    // [Edge Focus] Tile Decode Status Bar
+    float m_decodeScanPhase = 0.0f;
+    float m_decodeDisplayedProgress = 0.0f;
+    bool m_decodeWasActive = false;
+    DWORD m_decodeFinishTime = 0;
     void DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd);
-    bool IsDecodingIconActive() const {
-        // Active if busy OR if showing the "Done" green state (1s duration)
-        bool busy = (m_telemetry.heavyWorkerCount > 0 || (m_telemetry.tileCount > m_telemetry.tilesReady));
-        if (busy) return true;
-        if (GetTickCount() - m_finishTime < 1000) return true;
-        return false;
-    }
     
     // 缓存的 D2D 资源
     ComPtr<ID2D1SolidColorBrush> m_whiteBrush;

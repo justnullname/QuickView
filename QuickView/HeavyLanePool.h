@@ -99,6 +99,7 @@ public:
         int busyWorkers;       // Currently decoding
         int standbyWorkers;    // Hot-spare waiting
         int pendingJobs;       // Jobs in queue
+        int activeTileJobs;    // Tile jobs queued + running
         int cancelCount;       // Total cancellations
         double lastDecodeTimeMs; // Last successful decode duration
         ImageID lastDecodeId;    // Match against current to avoid stale data
@@ -328,6 +329,7 @@ private:
     HRESULT FullDecodeAndCacheLOD(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel = nullptr);
     HRESULT SliceTileFromLODCache(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
     bool ShouldUseSingleDecode(int lod) const;
+    bool ShouldUseSingleDecodeForWebP(int lod) const;
 
     // ============================================================================
     // [Phase-1] Persistent Backing Store for Heavy Non-ROI Formats
