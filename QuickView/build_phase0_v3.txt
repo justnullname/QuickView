@@ -1,0 +1,81 @@
+
+E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj(181,3): warning MSB4011: ???????????:\Personal\Coding\QuickView\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets????????????:\Users\vivoo\AppData\Local\vcpkg\vcpkg.user.targets (3,3)???????????????????????????????????????????
+  The vcpkg manifest was disabled, but we found a manifest file in E:\Personal\Coding\QuickView\QuickView\. You may want to enable vcpkg manifests in your properties page or pass /p:VcpkgEnableManifest=true to the msbuild invocation.
+  main.cpp
+E:\Personal\Coding\QuickView\QuickView\CompositionEngine.h(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\ImageLoader.h(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\MemoryArena.h(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\FileNavigator.h(130,64): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\UIRenderer.h(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\TileManager.h(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\ProcessRouter.h(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(572,11): warning C4189: 'oldSurfH': local variable is initialized but not referenced [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(571,11): warning C4189: 'oldSurfW': local variable is initialized but not referenced [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(723,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(752,36): warning C4244: 'argument': conversion from 'UINT' to 'float', possible loss of data [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(752,30): warning C4244: 'argument': conversion from 'UINT' to 'float', possible loss of data [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(1994,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(2442,50): warning C4100: 'hdc': unreferenced parameter [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(2442,40): warning C4100: 'hMon': unreferenced parameter [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(2458,33): warning C4100: 'hwnd': unreferenced parameter [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(2562,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(2990,15): error C2065: 'argv': undeclared identifier [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(3399,63): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(3399,50): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(3559,19): warning C4456: declaration of 'rc' hides previous local declaration [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+      E:\Personal\Coding\QuickView\QuickView\main.cpp(3445,16):
+      see declaration of 'rc'
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(3898,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(4337,37): warning C4244: 'argument': conversion from 'WPARAM' to 'UINT', possible loss of data [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(5576,70): warning C4018: '>=': signed/unsigned mismatch [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  
+E:\Personal\Coding\QuickView\QuickView\main.cpp(6352,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+  (??????????main.cpp??
+  

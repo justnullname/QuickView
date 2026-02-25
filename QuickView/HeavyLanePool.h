@@ -140,6 +140,9 @@ private:
         bool isTileDecode = false; // [UI Fix] Records if last decode was a tile
         bool isCopyOnly = false;   // [HUD] Distinguish copy path vs real decode
         
+        // [Phase 4.1] Active decode subprocess managed by this worker
+        HANDLE activeWorkerProcess = nullptr;
+        
         // [Unified Architecture] Shared Arena from TripleArenaPool (ImageEngine owns it)
         // Workers no longer own arenas. They use GetBackHeavyArena() from parent pool.
         
@@ -320,14 +323,24 @@ private:
     std::mutex m_lodCacheMutex;
     std::condition_variable m_lodCacheCond;       // [Fix16] For efficient worker wakeup
     std::atomic<bool> m_lodCacheBuilding = false; // Prevent concurrent full decodes
+    
+    // [Phase 4.1] Deferred queue for preventing Cache Miss storms
+    std::vector<JobInfo> m_deferredTileJobs;
+    std::mutex m_deferredMutex;
+    void ResumeDeferredJobs(ImageID imageId, int lod);
+    
     std::atomic<int> m_lodCacheFailCount{0};       // [B4] Count consecutive FullDecode failures (prevent infinite retry)
     static constexpr int kMaxLODCacheRetries = 3;  // Give up after 3 consecutive failures per LOD
     bool m_isProgressiveJPEG = false; // Detected during baseline decode
     bool m_isProgressiveJXL = false; // [JXL] True if the image has DC/Progressive layers suitable for region decoding
     
-    // [P14] Helpers
-    HRESULT FullDecodeAndCacheLOD(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel = nullptr);
+    // [Phase 4] Job Object: auto-kill all worker subprocesses on main process exit
+    HANDLE m_workerJobObject = nullptr;
+    
+    // [Phase 4.1] Pass Worker reference for local activeWorkerProcess tracking to prevent zombie races
+    HRESULT FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel = nullptr);
     HRESULT SliceTileFromLODCache(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
+    HRESULT LaunchDecodeWorker(Worker& worker, const JobInfo& job, int targetW, int targetH, QuickView::RawImageFrame& outFrame, CImageLoader::ImageMetadata& outMeta, CImageLoader::CancelPredicate checkCancel);
     bool ShouldUseSingleDecode(int lod) const;
     bool ShouldUseSingleDecodeForWebP(int lod) const;
 
@@ -344,6 +357,44 @@ private:
         int stride = 0;
         ImageID imageId = 0;
         std::wstring tempPath;
+        
+        // [Phase 5] Rule of 5: explicit move semantics to prevent double-free of HANDLEs
+        MasterBackingStore() = default;
+        MasterBackingStore(const MasterBackingStore&) = delete;
+        MasterBackingStore& operator=(const MasterBackingStore&) = delete;
+        MasterBackingStore(MasterBackingStore&& o) noexcept
+            : hFile(o.hFile), hMap(o.hMap), view(o.view)
+            , sizeBytes(o.sizeBytes), width(o.width), height(o.height), stride(o.stride)
+            , imageId(o.imageId), tempPath(std::move(o.tempPath))
+        {
+            o.hFile = INVALID_HANDLE_VALUE;
+            o.hMap = nullptr;
+            o.view = nullptr;
+            o.sizeBytes = 0; o.width = 0; o.height = 0; o.stride = 0; o.imageId = 0;
+        }
+        MasterBackingStore& operator=(MasterBackingStore&& o) noexcept {
+            if (this != &o) {
+                // Release our own resources first
+                if (view) UnmapViewOfFile(view);
+                if (hMap) CloseHandle(hMap);
+                if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+                if (!tempPath.empty()) DeleteFileW(tempPath.c_str());
+                // Steal from other
+                hFile = o.hFile; hMap = o.hMap; view = o.view;
+                sizeBytes = o.sizeBytes; width = o.width; height = o.height; stride = o.stride;
+                imageId = o.imageId; tempPath = std::move(o.tempPath);
+                // Nullify other
+                o.hFile = INVALID_HANDLE_VALUE; o.hMap = nullptr; o.view = nullptr;
+                o.sizeBytes = 0; o.width = 0; o.height = 0; o.stride = 0; o.imageId = 0;
+            }
+            return *this;
+        }
+        ~MasterBackingStore() {
+            if (view) UnmapViewOfFile(view);
+            if (hMap) CloseHandle(hMap);
+            if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+            if (!tempPath.empty()) DeleteFileW(tempPath.c_str());
+        }
     };
     MasterBackingStore m_masterBacking;
     std::mutex m_masterBackingMutex;
@@ -372,6 +423,25 @@ private:
     // [Optimization] Full Image Cache REMOVED to prevent OOM/Double Decoding
     // void TriggerPreload(...);
     // bool GetCachedRegion(...);
+
+public:
+    // ============================================================================
+    // [Phase 5] Async Garbage Collector
+    // ============================================================================
+    struct TrashBag {
+        MasterBackingStore backing;                   // MMF temp file
+        LODCache lodCache;                            // shared_ptr pixels
+        LODCache masterCache;                         // shared_ptr Master LOD0
+        std::shared_ptr<QuickView::MappedFile> mmf;   // Source file mapping
+    };
+    void EnqueueTrash(TrashBag&& bag);
+
+private:
+    std::mutex m_gcMutex;
+    std::condition_variable m_gcCv;
+    std::vector<TrashBag> m_gcQueue;
+    std::jthread m_gcThread;
+    void GCThreadFunc(std::stop_token st);
 
 public:
     void WaitForTileJobs(); // Spin-wait for active tile jobs to finish

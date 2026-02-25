@@ -1,0 +1,170 @@
+閫傜敤浜?.NET Framework MSBuild 鐗堟湰 18.4.0+6e61e96ac
+鐢熸垚鍚姩鏃堕棿涓?2026/2/24 17:06:57銆?
+
+     1>椤圭洰鈥淓:\Personal\Coding\QuickView\QuickView\QuickView.sln鈥濆湪鑺傜偣 1 涓?Build 涓洰鏍?銆?
+     1>ValidateSolutionConfiguration:
+         姝ｅ湪鐢熸垚瑙ｅ喅鏂规閰嶇疆鈥淩elease|x64鈥濄€?
+     0>E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj(181,3): warning MSB4011: 鏃犳硶鍐嶆瀵煎叆鈥淓:\Personal\Coding\QuickView\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets鈥濄€傚彲鑳藉凡鍦ㄢ€淐:\Users\vivoo\AppData\Local\vcpkg\vcpkg.user.targets (3,3)鈥濆瀵煎叆杩囧畠銆傝繖寰堝彲鑳芥槸鐢熸垚鍒涗綔閿欒銆傚皢蹇界暐姝ゅ悗缁鍏ャ€?
+     1>椤圭洰鈥淓:\Personal\Coding\QuickView\QuickView\QuickView.sln鈥?1)姝ｅ湪鑺傜偣 1 涓婄敓鎴愨€淓:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj鈥?2) (榛樿鐩爣)銆?
+     2>PrepareForBuild:
+         宸插惎鐢ㄧ粨鏋勫寲杈撳嚭銆傜紪璇戝櫒璇婃柇鐨勬牸寮忚缃皢鍙嶆槧閿欒灞傛缁撴瀯銆傛湁鍏宠缁嗕俊鎭紝璇峰弬闃?https://aka.ms/cpp/structured-output銆?
+       InitializeBuildStatus:
+         姝ｅ湪瀵光€淓:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.tlog\unsuccessfulbuild鈥濇墽琛?Touch 浠诲姟銆?
+       ComputeStdModulesCompileInputs:
+         姝ｅ湪璇诲彇涓哄簱 'microsoft/STL'鎻愪緵鏁版嵁鐨勫簱娓呭崟鏂囦欢 'D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\modules\modules.json'銆?
+         姝ｅ湪浠庡簱鈥渕icrosoft/STL鈥濇坊鍔犳ā鍧楁簮鈥淒:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\modules\std.ixx鈥濓紝浠ヤ娇鐢ㄦ椤圭洰鐢熸垚銆?
+         姝ｅ湪浠庡簱鈥渕icrosoft/STL鈥濇坊鍔犳ā鍧楁簮鈥淒:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\modules\std.compat.ixx鈥濓紝浠ヤ娇鐢ㄦ椤圭洰鐢熸垚銆?
+       VcpkgTripletSelection:
+         Using triplet "x64-windows-static-opt" from "..\third_party\vcpkg\installed\x64-windows-static-opt\"
+         Using normalized configuration "Release"
+       VcpkgCheckManifestRoot:
+         The vcpkg manifest was disabled, but we found a manifest file in E:\Personal\Coding\QuickView\QuickView\. You may want to enable vcpkg manifests in your properties page or pass /p:VcpkgEnableManifest=true to the msbuild invocation.
+       ClCompile:
+         鎵€鏈夎緭鍑哄潎涓烘渶鏂般€?
+         D:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\bin\HostX86\x64\CL.exe /c /I"vcpkg_installed\x64-windows-static-opt\include" /I"..\third_party\vcpkg\installed\x64-windows-static-opt\include" /Zi /nologo /W4 /WX- /diagnostics:column /sdl /O2 /Oi /GL /D NDEBUG /D _WINDOWS /D _UNICODE /D UNICODE /Gm- /EHsc /MT /GS /Gy /arch:AVX2 /fp:fast /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++latest /permissive- /Yu"pch.h" /Fp"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\QuickView.pch" /Fo"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\\" /Fd"E:\Personal\Coding\QuickView\QuickView\obj\x64\Release\vc145.pdb" /external:W4 /Gd /TP /FC /errorReport:queue main.cpp
+         main.cpp
+     2>E:\Personal\Coding\QuickView\QuickView\CompositionEngine.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\ImageLoader.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\MemoryArena.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\FileNavigator.h(130,64): warning C4267: 鈥?鈥? 浠庘€渟ize_t鈥濊浆鎹㈠埌鈥渋nt鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\UIRenderer.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\TileManager.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\ProcessRouter.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(572,11): warning C4189: 鈥渙ldSurfH鈥? 灞€閮ㄥ彉閲忓凡鍒濆鍖栦絾涓嶅紩鐢?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(571,11): warning C4189: 鈥渙ldSurfW鈥? 灞€閮ㄥ彉閲忓凡鍒濆鍖栦絾涓嶅紩鐢?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(723,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(752,36): warning C4244: 鈥滃弬鏁扳€? 浠庘€淯INT鈥濊浆鎹㈠埌鈥渇loat鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(752,30): warning C4244: 鈥滃弬鏁扳€? 浠庘€淯INT鈥濊浆鎹㈠埌鈥渇loat鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(1994,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2442,50): warning C4100: 'hdc': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2442,40): warning C4100: 'hMon': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2458,33): warning C4100: 'hwnd': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2562,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2985,76): warning C4100: 'info': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2785,60): warning C4100: 'lpCmdLine': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(2836,13): warning C4189: 鈥渉r鈥? 灞€閮ㄥ彉閲忓凡鍒濆鍖栦絾涓嶅紩鐢?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3087,39): error C2039: "SetMasterWindowClosed": 涓嶆槸 "QuickView::ProcessRouter" 鐨勬垚鍛?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+             E:\Personal\Coding\QuickView\QuickView\ProcessRouter.h(24,11):
+             鍙傝鈥淨uickView::ProcessRouter鈥濈殑澹版槑
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3087,39): error C3861: 鈥淪etMasterWindowClosed鈥? 鎵句笉鍒版爣璇嗙 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3379,63): warning C4244: 鈥滃弬鏁扳€? 浠庘€渇loat鈥濊浆鎹㈠埌鈥渋nt鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3379,50): warning C4244: 鈥滃弬鏁扳€? 浠庘€渇loat鈥濊浆鎹㈠埌鈥渋nt鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3539,19): warning C4456: 鈥渞c鈥濈殑澹版槑闅愯棌浜嗕笂涓€涓湰鍦板０鏄?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+             E:\Personal\Coding\QuickView\QuickView\main.cpp(3425,16):
+             鍙傝鈥渞c鈥濈殑澹版槑
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3896,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(4317,37): warning C4244: 鈥滃弬鏁扳€? 浠庘€淲PARAM鈥濊浆鎹㈠埌鈥淯INT鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(3362,10): error C2196: case 鍊尖€?6鈥濆凡浣跨敤 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(5556,70): warning C4018: 鈥?=鈥? 鏈夌鍙?鏃犵鍙蜂笉鍖归厤 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>E:\Personal\Coding\QuickView\QuickView\main.cpp(6347,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         (缂栬瘧婧愭枃浠垛€?main.cpp鈥?
+         
+     2>宸插畬鎴愮敓鎴愰」鐩€淓:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj鈥?榛樿鐩爣)鐨勬搷浣?- 澶辫触銆?
+     1>宸插畬鎴愮敓鎴愰」鐩€淓:\Personal\Coding\QuickView\QuickView\QuickView.sln鈥?Build 涓洰鏍?鐨勬搷浣?- 澶辫触銆?
+
+鐢熸垚澶辫触銆?
+
+         E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj(181,3): warning MSB4011: 鏃犳硶鍐嶆瀵煎叆鈥淓:\Personal\Coding\QuickView\third_party\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets鈥濄€傚彲鑳藉凡鍦ㄢ€淐:\Users\vivoo\AppData\Local\vcpkg\vcpkg.user.targets (3,3)鈥濆瀵煎叆杩囧畠銆傝繖寰堝彲鑳芥槸鐢熸垚鍒涗綔閿欒銆傚皢蹇界暐姝ゅ悗缁鍏ャ€?
+
+
+       鈥淓:\Personal\Coding\QuickView\QuickView\QuickView.sln鈥?Build 鐩爣) (1) ->
+       鈥淓:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj鈥?榛樿鐩爣) (2) ->
+       (ClCompile 鐩爣) -> 
+         E:\Personal\Coding\QuickView\QuickView\CompositionEngine.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\ImageLoader.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\MemoryArena.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\FileNavigator.h(130,64): warning C4267: 鈥?鈥? 浠庘€渟ize_t鈥濊浆鎹㈠埌鈥渋nt鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\UIRenderer.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\TileManager.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\ProcessRouter.h(1,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(572,11): warning C4189: 鈥渙ldSurfH鈥? 灞€閮ㄥ彉閲忓凡鍒濆鍖栦絾涓嶅紩鐢?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(571,11): warning C4189: 鈥渙ldSurfW鈥? 灞€閮ㄥ彉閲忓凡鍒濆鍖栦絾涓嶅紩鐢?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(723,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(752,36): warning C4244: 鈥滃弬鏁扳€? 浠庘€淯INT鈥濊浆鎹㈠埌鈥渇loat鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(752,30): warning C4244: 鈥滃弬鏁扳€? 浠庘€淯INT鈥濊浆鎹㈠埌鈥渇loat鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(1994,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2442,50): warning C4100: 'hdc': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2442,40): warning C4100: 'hMon': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2458,33): warning C4100: 'hwnd': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2562,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2985,76): warning C4100: 'info': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2785,60): warning C4100: 'lpCmdLine': 鏈紩鐢ㄧ殑鍙傛暟 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(2836,13): warning C4189: 鈥渉r鈥? 灞€閮ㄥ彉閲忓凡鍒濆鍖栦絾涓嶅紩鐢?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3379,63): warning C4244: 鈥滃弬鏁扳€? 浠庘€渇loat鈥濊浆鎹㈠埌鈥渋nt鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3379,50): warning C4244: 鈥滃弬鏁扳€? 浠庘€渇loat鈥濊浆鎹㈠埌鈥渋nt鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3539,19): warning C4456: 鈥渞c鈥濈殑澹版槑闅愯棌浜嗕笂涓€涓湰鍦板０鏄?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3896,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(4317,37): warning C4244: 鈥滃弬鏁扳€? 浠庘€淲PARAM鈥濊浆鎹㈠埌鈥淯INT鈥濓紝鍙兘涓㈠け鏁版嵁 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(5556,70): warning C4018: 鈥?=鈥? 鏈夌鍙?鏃犵鍙蜂笉鍖归厤 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(6347,1): warning C4819: 璇ユ枃浠跺寘鍚笉鑳藉湪褰撳墠浠ｇ爜椤?936)涓〃绀虹殑瀛楃銆傝灏嗚鏂囦欢淇濆瓨涓?Unicode 鏍煎紡浠ラ槻姝㈡暟鎹涪澶?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+
+
+       鈥淓:\Personal\Coding\QuickView\QuickView\QuickView.sln鈥?Build 鐩爣) (1) ->
+       鈥淓:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj鈥?榛樿鐩爣) (2) ->
+       (ClCompile 鐩爣) -> 
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3087,39): error C2039: "SetMasterWindowClosed": 涓嶆槸 "QuickView::ProcessRouter" 鐨勬垚鍛?[E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3087,39): error C3861: 鈥淪etMasterWindowClosed鈥? 鎵句笉鍒版爣璇嗙 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+         E:\Personal\Coding\QuickView\QuickView\main.cpp(3362,10): error C2196: case 鍊尖€?6鈥濆凡浣跨敤 [E:\Personal\Coding\QuickView\QuickView\QuickView.vcxproj]
+
+    28 涓鍛?
+    3 涓敊璇?
+
+宸茬敤鏃堕棿 00:00:02.01

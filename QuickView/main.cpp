@@ -5,9 +5,13 @@
 #include "RenderEngine.h"
 #include "ImageLoader.h"
 #include "ImageEngine.h"
+#include "MappedFile.h"
 #include "CompositionEngine.h"
 #include "UIRenderer.h"
+#include "SIMDUtils.h"
 #include "TileManager.h" // [Infinity Engine]
+#include "ToolProcessProtocol.h"
+#include "ProcessRouter.h"
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include <d2d1_1helper.h>
 #include "LosslessTransform.h"
@@ -40,9 +44,13 @@ using namespace Microsoft::WRL;
 #include <algorithm> 
 #include <shellapi.h> 
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <ShObjIdl_core.h>  // For IDesktopWallpaper
 #include <commdlg.h> 
 #include <vector>
+#include <cstdlib>
+#include <limits>
+#include <cmath>
 #include <dwmapi.h>
 #include <ShellScalingApi.h>
 #include <winspool.h>
@@ -51,6 +59,16 @@ using namespace Microsoft::WRL;
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "winspool.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "shell32.lib")
+
+// Some Windows SDK revisions expose SIIGBF_MEMORYONLY/INCACHEONLY
+// but not the legacy FASTEXTRACT/INCACHEFONLY aliases.
+#ifndef SIIGBF_FASTEXTRACT
+#define SIIGBF_FASTEXTRACT SIIGBF_MEMORYONLY
+#endif
+#ifndef SIIGBF_INCACHEFONLY
+#define SIIGBF_INCACHEFONLY SIIGBF_INCACHEONLY
+#endif
 
 #pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -137,8 +155,9 @@ static std::string GetAppVersionUTF8() {
 
 // --- Globals ---
 
-#define WM_UPDATE_FOUND (WM_APP + 2)
-#define WM_ENGINE_EVENT (WM_APP + 3)
+#define WM_UPDATE_FOUND  (WM_APP + 2)
+#define WM_ENGINE_EVENT  (WM_APP + 3)
+#define WM_ROUTED_OPEN   (WM_APP + 10)  // [Phase 0] Reserved for pipe-routed file open
 
 
 
@@ -224,6 +243,34 @@ static bool g_isImageScaled = false;         // [Two-Stage] True if current imag
 static DWORD g_scaledDecodeTime = 0;         // [Two-Stage] Tick when scaled image was shown
 static constexpr UINT_PTR IDT_FULL_DECODE = 42;  // Timer ID for 300ms full decode trigger
 static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for lazy high-res re-render
+
+// Phase 2: Queue Drop Debounce (single-slot sliding window)
+struct Phase2PendingNavTask {
+    HWND hwnd = nullptr;
+    std::wstring path;
+    uintmax_t fileSize = 0;
+    int navigatorIndex = -1;
+    uint64_t navToken = 0;
+    ImageID imageId = 0;
+    QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE;
+    ULONGLONG enqueueTick = 0;
+    uint64_t serial = 0;
+};
+static std::mutex g_phase2NavMutex;
+static Phase2PendingNavTask g_phase2PendingNavTask{};
+static bool g_phase2HasPendingNavTask = false;
+static std::atomic<uint64_t> g_phase2NavSerial{0};
+static std::atomic<bool> g_phase2NavLoopRunning{false};
+static std::atomic<uint64_t> g_phase2DroppedNavTasks{0};
+// Titan scheduling reseed flag:
+// Phase2 may advance imageId before QueueDispatch actually swaps content.
+// For same-size/same-zoom switches, vp/zoom deltas can be zero and suppress
+// first tile scheduling. This flag forces one scheduling pass on next paint.
+static std::atomic<bool> g_forceTitanTileReseed{false};
+// Increments when NavigateTo/UpdateView are actually dispatched to ImageEngine.
+// This allows OnPaint Titan scheduler to detect real content switch points even
+// when global imageId was updated earlier by Phase2 staging.
+static std::atomic<uint64_t> g_titanDispatchSerial{0};
 
 D2D1_POINT_2F g_lastFitOffset = {}; // Center offset of image on screen
 float g_lastFitScale = 1.0f;        // Scale factor to fit image to screen
@@ -2287,6 +2334,10 @@ void AdjustWindowToImage(HWND hwnd) {
     
     if (imgWidth <= 0 || imgHeight <= 0) return;
     
+    // [Fix] Do not auto-resize the window to absurdly small dimensions (e.g., 4x4 skeleton)
+    // if we haven't even finished loading the real image.
+    if (g_isLoading && imgWidth <= 16 && imgHeight <= 16) return;
+    
     VisualState vs = GetVisualState(); // Refresh VS (Rotation state)
     
     // [First Principles] Map 1 Image Pixel into 1 Window Logical Unit directly.
@@ -2563,7 +2614,192 @@ void PerformTransform(HWND hwnd, TransformType type) {
     g_osd.Show(hwnd, msg, false, false, color);
 }
 
+static bool TryReadArgValue(int argc, LPWSTR* argv, const wchar_t* name, std::wstring* out) {
+    if (!out) return false;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], name) == 0) {
+            *out = argv[i + 1] ? argv[i + 1] : L"";
+            return !out->empty();
+        }
+    }
+    return false;
+}
+
+static bool TryReadPositiveIntArg(int argc, LPWSTR* argv, const wchar_t* name, int* outValue) {
+    if (!outValue) return false;
+    std::wstring value;
+    if (!TryReadArgValue(argc, argv, name, &value)) return false;
+
+    wchar_t* end = nullptr;
+    long parsed = wcstol(value.c_str(), &end, 10);
+    if (!end || *end != L'\0' || parsed <= 0 || parsed > std::numeric_limits<int>::max()) return false;
+
+    *outValue = static_cast<int>(parsed);
+    return true;
+}
+
+
+
+// [Phase 3] Generic decode worker subprocess entry point.
+// Launched by HeavyLanePool::LaunchDecodeWorker for Titan Base Layer decode.
+// Args: --decode-worker --input <path> --out-map <name> --target-w N --target-h N
+static int RunDecodeWorker(int argc, LPWSTR* argv) {
+    using namespace QuickView::ToolProcess;
+    
+    // [Phase 4.1] COM initialization is required for WIC operations (JXL fallback/Color)
+    HRESULT coInitHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    std::wstring inputPath;
+    std::wstring mapName;
+    int targetW = 0;
+    int targetH = 0;
+
+    if (!TryReadArgValue(argc, argv, L"--input", &inputPath) ||
+        !TryReadArgValue(argc, argv, L"--out-map", &mapName) ||
+        !TryReadPositiveIntArg(argc, argv, L"--target-w", &targetW) ||
+        !TryReadPositiveIntArg(argc, argv, L"--target-h", &targetH)) {
+        return 2;
+    }
+
+    HANDLE hMap = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, mapName.c_str());
+    if (!hMap) return 2;
+
+    uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0));
+    if (!view) {
+        CloseHandle(hMap);
+        return 2;
+    }
+
+    auto* header = reinterpret_cast<DecodeResultHeader*>(view);
+    *header = {};
+    header->magic   = kDecodeWorkerMagic;
+    header->version = kDecodeWorkerVersion;
+    header->hr      = static_cast<int32_t>(E_FAIL);
+
+    HRESULT hr = E_FAIL;
+    do {
+        // Minimal loader instance (no D2D/DComp needed)
+        CImageLoader loader;
+
+        // Decode (supports all formats: JPEG/PNG/WebP/JXL/AVIF/TIFF/HEIC/...)
+        QuickView::RawImageFrame rawFrame;
+        QuantumArena arena;
+        arena.Allocate(static_cast<size_t>(targetW) * targetH * 4 + (16ull << 20)); // target pixels + 16MB headroom
+        std::wstring loaderName;
+        CImageLoader::ImageMetadata meta;
+
+        hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, nullptr, &meta);
+        if (FAILED(hr) || !rawFrame.IsValid()) {
+            if (SUCCEEDED(hr)) hr = E_FAIL;
+            break;
+        }
+
+        const uint64_t payloadBytes = static_cast<uint64_t>(rawFrame.stride) * static_cast<uint64_t>(rawFrame.height);
+        const uint64_t payloadCap   = static_cast<uint64_t>(targetW) * static_cast<uint64_t>(targetH) * 4ull;
+        if (payloadBytes == 0 || payloadBytes > payloadCap) {
+            hr = E_FAIL;
+            break;
+        }
+
+        memcpy(view + sizeof(DecodeResultHeader), rawFrame.pixels, static_cast<size_t>(payloadBytes));
+
+        header->width            = static_cast<uint32_t>(rawFrame.width);
+        header->height           = static_cast<uint32_t>(rawFrame.height);
+        header->stride           = static_cast<uint32_t>(rawFrame.stride);
+        header->exifOrientation  = static_cast<uint32_t>(meta.ExifOrientation);
+        header->payloadBytes     = payloadBytes;
+        hr = S_OK;
+    } while (false);
+
+    header->hr = static_cast<int32_t>(hr);
+    UnmapViewOfFile(view);
+    CloseHandle(hMap);
+    
+    if (SUCCEEDED(coInitHr)) {
+        CoUninitialize();
+    }
+    
+    return SUCCEEDED(hr) ? 0 : 2;
+}
+
+static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
+    if (!outExitCode) return false;
+
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return false;
+
+    enum class ToolMode { None, DecodeWorker };
+    ToolMode mode = ToolMode::None;
+
+    for (int i = 1; i < argc; ++i) {
+        if (!argv[i]) continue;
+        if (_wcsicmp(argv[i], L"--decode-worker") == 0) { mode = ToolMode::DecodeWorker; break; }
+    }
+
+    if (mode == ToolMode::None) {
+        LocalFree(argv);
+        return false;
+    }
+
+    switch (mode) {
+        case ToolMode::DecodeWorker: *outExitCode = RunDecodeWorker(argc, argv); break;
+        default:                     *outExitCode = 2; break;
+    }
+    LocalFree(argv);
+    return true;
+}
+
+// [Phase 0] Lightweight INI read — only the SingleInstance flag.
+// Called BEFORE COM/D2D/Config initialization.
+static bool ReadSingleInstanceFlag() {
+    // Attempt portable path first (same dir as exe), then AppData.
+    wchar_t exeDir[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
+    wchar_t* sep = wcsrchr(exeDir, L'\\');
+    if (sep) *(sep + 1) = L'\0';
+
+    wchar_t portablePath[MAX_PATH]{};
+    wcscpy_s(portablePath, exeDir);
+    wcscat_s(portablePath, L"QuickView.ini");
+
+    const wchar_t* iniPath = portablePath;
+    if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
+        // Fallback to AppData
+        wchar_t appData[MAX_PATH]{};
+        SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appData);
+        static wchar_t appDataPath[MAX_PATH]{};
+        swprintf_s(appDataPath, L"%s\\QuickView\\QuickView.ini", appData);
+        iniPath = appDataPath;
+    }
+    return GetPrivateProfileIntW(L"General", L"SingleInstance", 1, iniPath) != 0;
+}
+
+// [Phase 0] Master flag — true if this process runs the pipe server.
+static bool g_isMasterProcess = false;
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
+    // === Priority 0: Tool subprocess dispatch (must be first) ===
+    int toolExitCode = 0;
+    if (TryRunToolProcessFromCommandLine(&toolExitCode)) {
+        return toolExitCode;
+    }
+
+    // === Priority 1: Viewer-child bypass (spawned by Master, skip routing) ===
+    const bool isViewerChild = QuickView::ProcessRouter::IsViewerChild();
+
+    // === Priority 2: Chrome-level process routing ===
+    // Happens BEFORE any COM / D2D / Config initialization.
+    // ALWAYS route through Master, regardless of SingleInstance setting.
+    // SingleInstance only affects whether Master replaces current image or spawns a child.
+    if (!isViewerChild) {
+        auto routeResult = QuickView::ProcessRouter::TryRoute(true);
+        if (routeResult == QuickView::ProcessRouter::RouteResult::RoutedToMaster) {
+            return 0; // Router exits in < 5ms
+        }
+        g_isMasterProcess = (routeResult == QuickView::ProcessRouter::RouteResult::BecameMaster);
+    }
+
     // [v3.2.3] AVX2 Check - Critical: App compiled with /arch:AVX2, will crash without it
     if (!IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE)) {
         MessageBoxW(nullptr, 
@@ -2583,11 +2819,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // This enables WM_DPICHANGED messages when window is dragged across monitors
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     
-    // Single Instance Check (Early, before any initialization)
-    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"QuickView_SingleInstance_Mutex");
-    bool alreadyRunning = (GetLastError() == ERROR_ALREADY_EXISTS);
-    
-    // Load config early to check SingleInstance setting
+    // Load config (full load for all settings)
     LoadConfig();
     AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
 
@@ -2596,28 +2828,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // Skip in Portable Mode to avoid registry writes
     if (!g_config.PortableMode && SettingsOverlay::IsRegistrationNeeded()) {
         SettingsOverlay::RegisterAssociations();
-    }
-    
-    if (g_config.SingleInstance && alreadyRunning) {
-        // Find existing window and send file path
-        HWND hExisting = FindWindowW(L"QuickViewClass", nullptr);
-        if (hExisting) {
-            // Parse command line for file path
-            int argc = 0;
-            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-            if (argc > 1 && argv[1]) {
-                // Send file path via WM_COPYDATA
-                COPYDATASTRUCT cds = {};
-                cds.dwData = 0x5156; // "QV" magic
-                cds.cbData = (DWORD)((wcslen(argv[1]) + 1) * sizeof(wchar_t));
-                cds.lpData = argv[1];
-                SendMessageW(hExisting, WM_COPYDATA, 0, (LPARAM)&cds);
-            }
-            LocalFree(argv);
-            SetForegroundWindow(hExisting);
-        }
-        if (hMutex) CloseHandle(hMutex);
-        return 0;
     }
     
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -2642,6 +2852,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     HWND hwnd = CreateWindowExW(0, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, xPos, yPos, winW, winH, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
+
+    // [Phase 0] Start Named Pipe server on Master process.
+    // SingleInstance ON  → replace current image in Master's window
+    // SingleInstance OFF → spawn child viewer process (Chrome multi-window)
+    if (g_isMasterProcess) {
+        QuickView::ProcessRouter::StartMasterServer([hwnd](std::wstring path) {
+            // Callback runs on pipe server thread.
+            if (path.empty()) return;
+            if (g_config.SingleInstance) {
+                // Replace current image: marshal to UI thread via PostMessage.
+                auto* heapPath = new std::wstring(std::move(path));
+                PostMessageW(hwnd, WM_ROUTED_OPEN, 0, reinterpret_cast<LPARAM>(heapPath));
+            } else {
+                // Multi-window: spawn independent child viewer process.
+                QuickView::ProcessRouter::SpawnViewer(path);
+            }
+        });
+    }
     
     // Apply Window Corner Preference
     ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners);
@@ -2730,10 +2958,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         RequestRepaint(PaintLayer::All);
     }
     
-    int argc = 0; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argc > 1) {
-        g_navigator.Initialize(argv[1]);
-        LoadImageAsync(hwnd, argv[1]);
+    // [Phase 0] Use ProcessRouter::ParseImagePath for correct --viewer-child handling.
+    std::wstring initialImagePath = QuickView::ProcessRouter::ParseImagePath();
+    if (!initialImagePath.empty()) {
+        g_navigator.Initialize(initialImagePath);
+        LoadImageAsync(hwnd, initialImagePath);
         // [Fix Race] Force-check event queue for super-fast loads on startup
         PostMessageW(hwnd, WM_ENGINE_EVENT, 0, 0);
     } else {
@@ -2754,8 +2983,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         }
     }
     
-    LocalFree(argv);
-    
     // --- Auto Update Integration ---
     UpdateManager::Get().Init(GetAppVersionUTF8());
     UpdateManager::Get().SetCallback([hwnd](bool found, const VersionInfo& info) {
@@ -2768,6 +2995,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+    
+    // [Phase 0] Wait for all child viewer processes before tearing down.
+    if (g_isMasterProcess) {
+        QuickView::ProcessRouter::WaitForAllChildren();
+        QuickView::ProcessRouter::ShutdownMaster();
+    }
     
     UpdateManager::Get().HandleExit();
     
@@ -2850,19 +3083,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         handle.resume();
         return 0;
     }
-    case WM_COPYDATA: {
-        // Receive file path from second instance (Single Instance mode)
-        COPYDATASTRUCT* pCDS = (COPYDATASTRUCT*)lParam;
-        if (pCDS && pCDS->dwData == 0x5156 && pCDS->lpData) {
-            std::wstring filePath = (wchar_t*)pCDS->lpData;
-            if (!filePath.empty()) {
-                g_navigator.Initialize(filePath);
-                LoadImageAsync(hwnd, filePath.c_str());
-            }
-        }
-        return TRUE;
-    }
 
+    // [Phase 0] SingleInstance ON: Master receives routed path, replace current image.
+    case WM_ROUTED_OPEN: {
+        auto* pathStr = reinterpret_cast<std::wstring*>(lParam);
+        if (pathStr && !pathStr->empty()) {
+            g_navigator.Initialize(*pathStr);
+            LoadImageAsync(hwnd, *pathStr);
+            if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+            SetForegroundWindow(hwnd);
+        }
+        delete pathStr;
+        return 0;
+    }
 
     case WM_UPDATE_FOUND: {
         bool found = (wParam != 0);
@@ -3131,7 +3364,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     
-    case WM_CLOSE: if (!CheckUnsavedChanges(hwnd)) return 0; DestroyWindow(hwnd); return 0;
+    case WM_CLOSE: {
+        if (!CheckUnsavedChanges(hwnd)) return 0;
+        // [Phase 0] Master lifecycle: if child viewers are alive, hide our window
+        // but keep the process running so the pipe server stays active.
+        if (g_isMasterProcess && QuickView::ProcessRouter::HasActiveChildren()) {
+            QuickView::ProcessRouter::SetMasterWindowClosed(GetCurrentThreadId());
+        }
+        DestroyWindow(hwnd);
+        return 0;
+    }
     case WM_DESTROY: g_thumbMgr.Shutdown(); PostQuitMessage(0); return 0;
     
      // Mouse Interaction
@@ -5154,6 +5396,13 @@ void ProcessEngineEvents(HWND hwnd) {
 
                 // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
                 g_currentMetadata = finalMetadata;
+
+                // Force one Titan scheduling pass after content swap.
+                // This prevents "same size, same zoom" switches from skipping
+                // initial tile dispatch under Phase2 queue-drop flow.
+                if (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192) {
+                    g_forceTitanTileReseed.store(true, std::memory_order_release);
+                }
                 
                 // [v9.9] Extension Mismatch Detection for Toolbar Button
                 // Uses Format field (e.g., "JPEG", "PNG") to detect if file extension is incorrect
@@ -5381,6 +5630,474 @@ void ProcessEngineEvents(HWND hwnd) {
     }
 }
 
+namespace {
+
+constexpr DWORD kPhase1WicBudgetMs = 50;
+constexpr int kPhase1ShellRequestEdge = 1024;
+constexpr DWORD kPhase2DebounceWindowMs = 75;
+constexpr DWORD kPhase2WaitSliceMs = 8;
+
+static bool TryReadPhase1DimensionsFromHeader(const std::wstring& path, UINT* width, UINT* height) {
+    if (!width || !height || !g_imageLoader) return false;
+    CImageLoader::ImageInfo info{};
+    if (FAILED(g_imageLoader->GetImageInfoFast(path.c_str(), &info))) return false;
+    if (info.width <= 0 || info.height <= 0) return false;
+    *width = static_cast<UINT>(info.width);
+    *height = static_cast<UINT>(info.height);
+    return true;
+}
+
+static std::shared_ptr<QuickView::RawImageFrame> MakePhase1SkeletonFrame() {
+    auto frame = std::make_shared<QuickView::RawImageFrame>();
+    // 4x4 transparent skeleton (must be > 4 to pass dimension fallback check in ApplyPhase1PlaceholderFrame)
+    constexpr int kSkeletonEdge = 4;
+    constexpr int kSkeletonStride = kSkeletonEdge * 4;
+    constexpr int kSkeletonBytes = kSkeletonStride * kSkeletonEdge;
+    uint8_t* pixels = static_cast<uint8_t*>(std::calloc(1, kSkeletonBytes));
+    if (!pixels) return nullptr;
+
+    frame->pixels = pixels;
+    frame->width = kSkeletonEdge;
+    frame->height = kSkeletonEdge;
+    frame->stride = kSkeletonStride;
+    frame->format = QuickView::PixelFormat::BGRA8888;
+    frame->quality = QuickView::DecodeQuality::Preview;
+    frame->memoryDeleter = [](uint8_t* p) { std::free(p); };
+    return frame;
+}
+
+static bool CopyWicSourceToRawFrame(IWICBitmapSource* source, std::shared_ptr<QuickView::RawImageFrame>* outFrame) {
+    if (!source || !outFrame || !g_renderEngine) return false;
+    IWICImagingFactory* factory = g_renderEngine->GetWICFactory();
+    if (!factory) return false;
+
+    ComPtr<IWICBitmapSource> sourceToCopy = source;
+    WICPixelFormatGUID srcFormat = {};
+    if (SUCCEEDED(source->GetPixelFormat(&srcFormat)) &&
+        !IsEqualGUID(srcFormat, GUID_WICPixelFormat32bppPBGRA)) {
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(factory->CreateFormatConverter(&converter)) || !converter) return false;
+        HRESULT hr = converter->Initialize(
+            source,
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0f,
+            WICBitmapPaletteTypeCustom);
+        if (FAILED(hr)) return false;
+        sourceToCopy = converter;
+    }
+
+    UINT w = 0;
+    UINT h = 0;
+    if (FAILED(sourceToCopy->GetSize(&w, &h)) || w == 0 || h == 0) return false;
+    if (w > static_cast<UINT>(std::numeric_limits<int>::max()) ||
+        h > static_cast<UINT>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+
+    const UINT stride = w * 4;
+    const size_t byteCount = static_cast<size_t>(stride) * static_cast<size_t>(h);
+    if (byteCount == 0 || byteCount > static_cast<size_t>(std::numeric_limits<UINT>::max())) return false;
+
+    uint8_t* pixels = static_cast<uint8_t*>(std::malloc(byteCount));
+    if (!pixels) return false;
+
+    HRESULT hrCopy = sourceToCopy->CopyPixels(nullptr, stride, static_cast<UINT>(byteCount), pixels);
+    if (FAILED(hrCopy)) {
+        std::free(pixels);
+        return false;
+    }
+
+    auto frame = std::make_shared<QuickView::RawImageFrame>();
+    frame->pixels = pixels;
+    frame->width = static_cast<int>(w);
+    frame->height = static_cast<int>(h);
+    frame->stride = static_cast<int>(stride);
+    frame->format = QuickView::PixelFormat::BGRA8888;
+    frame->quality = QuickView::DecodeQuality::Preview;
+    frame->memoryDeleter = [](uint8_t* p) { std::free(p); };
+    *outFrame = std::move(frame);
+    return true;
+}
+
+// Multi-level Shell thumbnail extraction helper.
+// Tries GetImage with the given flags; on success converts HBITMAP -> RawImageFrame.
+static bool TryShellGetImage(IShellItemImageFactory* factory, SIZE size, SIIGBF flags,
+                             std::shared_ptr<QuickView::RawImageFrame>* outFrame) {
+    HBITMAP hBitmap = nullptr;
+    HRESULT hr = factory->GetImage(size, flags, &hBitmap);
+    if (FAILED(hr) || !hBitmap) return false;
+
+    IWICImagingFactory* wicFactory = g_renderEngine->GetWICFactory();
+    if (!wicFactory) { DeleteObject(hBitmap); return false; }
+
+    ComPtr<IWICBitmap> wicBitmap;
+    hr = wicFactory->CreateBitmapFromHBITMAP(hBitmap, nullptr, WICBitmapUsePremultipliedAlpha, &wicBitmap);
+    DeleteObject(hBitmap);
+    if (FAILED(hr) || !wicBitmap) return false;
+
+    return CopyWicSourceToRawFrame(wicBitmap.Get(), outFrame);
+}
+
+static bool TryBuildPhase1ShellCachedFrame(const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame>* outFrame) {
+    if (!outFrame || !g_renderEngine) return false;
+    ComPtr<IShellItemImageFactory> imageFactory;
+    HRESULT hr = SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&imageFactory));
+    if (FAILED(hr) || !imageFactory) return false;
+
+    // Level 1: 1024px cache-only thumbnail (no icon fallback)
+    SIZE large = { kPhase1ShellRequestEdge, kPhase1ShellRequestEdge };
+    if (TryShellGetImage(imageFactory.Get(), large,
+            static_cast<SIIGBF>(SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY), outFrame))
+        return true;
+
+    // Level 2: 256px cache-only thumbnail (Explorer default cache size)
+    SIZE fallbackSize = { 256, 256 };
+    if (TryShellGetImage(imageFactory.Get(), fallbackSize,
+            static_cast<SIIGBF>(SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY), outFrame))
+        return true;
+
+    return false;
+}
+
+static bool TryBuildPhase1WicEmbeddedFrame(const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame>* outFrame) {
+    if (!outFrame || !g_renderEngine) return false;
+    IWICImagingFactory* factory = g_renderEngine->GetWICFactory();
+    if (!factory) return false;
+
+    ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = factory->CreateDecoderFromFilename(
+        path.c_str(),
+        nullptr,
+        GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,
+        &decoder);
+    if (FAILED(hr) || !decoder) return false;
+
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr) || !frame) return false;
+
+    ComPtr<IWICBitmapSource> thumb;
+    hr = frame->GetThumbnail(&thumb);
+    if (FAILED(hr) || !thumb) return false;
+
+    return CopyWicSourceToRawFrame(thumb.Get(), outFrame);
+}
+
+// With SIIGBF_THUMBNAILONLY the Shell API never returns icons.
+// This is a defensive-only check for typical Windows icon dimensions.
+static bool IsLikelyShellIconFallback(
+    const std::shared_ptr<QuickView::RawImageFrame>& frame,
+    UINT /*sourceW*/,
+    UINT /*sourceH*/) {
+    if (!frame || !frame->IsValid()) return false;
+    int w = frame->width;
+    int h = frame->height;
+    // Reject standard icon sizes (16/32/48/64/128)
+    if (w == h && (w == 16 || w == 32 || w == 48 || w == 64 || w == 128)) return true;
+    return false;
+}
+
+static bool ApplyPhase1PlaceholderFrame(
+    HWND hwnd,
+    const std::wstring& path,
+    ImageID imageId,
+    const std::shared_ptr<QuickView::RawImageFrame>& frame,
+    UINT sourceW,
+    UINT sourceH,
+    const wchar_t* loaderName) {
+    if (!frame || !frame->IsValid() || !g_renderEngine) return false;
+    if (imageId != g_currentImageId.load() || !g_isLoading) return false;
+
+    ComPtr<ID2D1Bitmap> bitmap;
+    if (FAILED(g_renderEngine->UploadRawFrameToGPU(*frame, &bitmap)) || !bitmap) return false;
+
+    g_imageResource.Reset();
+    g_imageResource.bitmap = bitmap;
+    g_isBlurry = true;
+    g_isImageScaled = true;
+    g_imageQualityLevel = std::max(g_imageQualityLevel, 1);
+
+    if (sourceW > 0 && sourceH > 0) {
+        g_currentMetadata.Width = sourceW;
+        g_currentMetadata.Height = sourceH;
+    } else if (frame->width > 4 && frame->height > 4) {
+        // Only fallback to frame dimensions if it's a real thumbnail (not a 1x1 transparent skeleton).
+        // This prevents the window from rapidly shrinking to 1x1 before the real decode finishes.
+        if (g_currentMetadata.Width == 0 || g_currentMetadata.Height == 0) {
+            g_currentMetadata.Width = static_cast<UINT>(frame->width);
+            g_currentMetadata.Height = static_cast<UINT>(frame->height);
+        }
+    }
+
+    if (loaderName && *loaderName) {
+        g_currentMetadata.LoaderName = loaderName;
+    }
+
+    wchar_t titleBuf[2048];
+    const size_t namePos = path.find_last_of(L"\\/");
+    const wchar_t* name = (namePos == std::wstring::npos) ? path.c_str() : path.c_str() + namePos + 1;
+    swprintf_s(titleBuf, L"Loading... %s - %s", name, g_szWindowTitle);
+    SetWindowTextW(hwnd, titleBuf);
+
+    RenderImageToDComp(hwnd, g_imageResource, true, false);
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        RECT rc; GetClientRect(hwnd, &rc);
+        SyncDCompState(hwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom));
+        g_compEngine->Commit();
+    }
+    RequestRepaint(PaintLayer::Image);
+    return true;
+}
+
+static FireAndForget LoadPhase1WicFallbackAsync(
+    HWND hwnd,
+    std::wstring path,
+    ImageID imageId,
+    UINT sourceW,
+    UINT sourceH,
+    DWORD startTick) {
+    co_await ResumeBackground{};
+
+    if (GetTickCount() - startTick > kPhase1WicBudgetMs) co_return;
+
+    std::shared_ptr<QuickView::RawImageFrame> wicFrame;
+    if (!TryBuildPhase1WicEmbeddedFrame(path, &wicFrame)) co_return;
+
+    if (GetTickCount() - startTick > kPhase1WicBudgetMs) co_return;
+
+    co_await ResumeMainThread(hwnd);
+    if (imageId != g_currentImageId.load() || !g_isLoading) co_return;
+
+    ApplyPhase1PlaceholderFrame(hwnd, path, imageId, wicFrame, sourceW, sourceH, L"WIC Embedded Thumbnail");
+}
+
+static void PrimePhase1Placeholder(HWND hwnd, const std::wstring& path, ImageID imageId) {
+    UINT sourceW = 0;
+    UINT sourceH = 0;
+    TryReadPhase1DimensionsFromHeader(path, &sourceW, &sourceH);
+
+    // Shell thumbnail: multi-level cache-only extraction (no disk decode, safe for UI thread)
+    std::shared_ptr<QuickView::RawImageFrame> shellFrame;
+    if (TryBuildPhase1ShellCachedFrame(path, &shellFrame)) {
+        if (IsLikelyShellIconFallback(shellFrame, sourceW, sourceH)) {
+            OutputDebugStringW(L"[Phase1] Shell cache returned icon-like bitmap. Treat as cache miss.\n");
+        } else {
+            if (ApplyPhase1PlaceholderFrame(hwnd, path, imageId, shellFrame, sourceW, sourceH, L"Shell Cache Thumbnail")) {
+                return;
+            }
+        }
+    }
+
+    // Skeleton fallback (4x4 transparent)
+    auto skeleton = MakePhase1SkeletonFrame();
+    if (skeleton) {
+        ApplyPhase1PlaceholderFrame(hwnd, path, imageId, skeleton, sourceW, sourceH, L"Skeleton");
+    }
+
+    // WIC async fallback: startTick AFTER Shell path to give WIC its own full 50ms budget
+    const DWORD wicStartTick = GetTickCount();
+    LoadPhase1WicFallbackAsync(hwnd, path, imageId, sourceW, sourceH, wicStartTick);
+}
+
+static bool ShouldUsePhase2TitanDebounce(const std::wstring& path, uintmax_t fileSize) {
+    if (path.empty() || !g_imageLoader) return false;
+
+    CImageLoader::ImageHeaderInfo info = g_imageLoader->PeekHeader(path.c_str());
+
+    // Keep this fallback chain aligned with ImageEngine::DispatchImageLoad.
+    if (info.width <= 0 || info.height <= 0 || info.format == L"Unknown") {
+        CImageLoader::ImageInfo fastInfo{};
+        if (SUCCEEDED(g_imageLoader->GetImageInfoFast(path.c_str(), &fastInfo))) {
+            if (info.width <= 0 && fastInfo.width > 0) info.width = (int)fastInfo.width;
+            if (info.height <= 0 && fastInfo.height > 0) info.height = (int)fastInfo.height;
+            if (info.format == L"Unknown" && !fastInfo.format.empty()) info.format = fastInfo.format;
+            if (info.fileSize == 0 && fastInfo.fileSize > 0) info.fileSize = fastInfo.fileSize;
+        }
+        if (info.width <= 0 || info.height <= 0) {
+            UINT w = 0, h = 0;
+            if (SUCCEEDED(g_imageLoader->GetImageSize(path.c_str(), &w, &h))) {
+                info.width = (int)w;
+                info.height = (int)h;
+            }
+        }
+    }
+
+    std::wstring fmtUpper = info.format;
+    std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
+
+    const bool isSupportedFormat =
+        (fmtUpper == L"JPEG" || fmtUpper == L"JPG" ||
+         fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
+         fmtUpper == L"JXL" || fmtUpper == L"TIF" ||
+         fmtUpper == L"TIFF" || fmtUpper == L"AVIF" ||
+         fmtUpper == L"HEIC");
+
+    const bool sizeTrigger = (info.width > 8192 || info.height > 8192);
+    const size_t pixelCount = (size_t)info.width * (size_t)info.height;
+    const bool pixelTrigger = (pixelCount > 50000000);
+    const bool unknownDims = (info.width <= 0 || info.height <= 0);
+    const uintmax_t observedFileSize = (info.fileSize > 0) ? info.fileSize : fileSize;
+    const bool fallbackFileTrigger = unknownDims && observedFileSize >= (32ull * 1024ull * 1024ull);
+
+    return (sizeTrigger || pixelTrigger || fallbackFileTrigger) && isSupportedFormat;
+}
+
+static void DispatchNavigationToEngine(
+    const std::wstring& path,
+    uintmax_t fileSize,
+    uint64_t navToken,
+    int navigatorIndex,
+    QuickView::BrowseDirection dir) {
+    if (!g_imageEngine || path.empty()) return;
+
+    g_imageEngine->NavigateTo(path, fileSize, navToken);
+    if (navigatorIndex != -1) {
+        g_imageEngine->UpdateView(navigatorIndex, dir);
+    }
+
+    g_titanDispatchSerial.fetch_add(1, std::memory_order_acq_rel);
+    g_forceTitanTileReseed.store(true, std::memory_order_release);
+}
+
+static FireAndForget RunPhase2DispatchLoop() {
+    co_await ResumeBackground{};
+
+    for (;;) {
+        Phase2PendingNavTask task;
+        {
+            std::lock_guard<std::mutex> lock(g_phase2NavMutex);
+            if (!g_phase2HasPendingNavTask) {
+                g_phase2NavLoopRunning.store(false);
+                co_return;
+            }
+            task = g_phase2PendingNavTask;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        const ULONGLONG ageMs = (now >= task.enqueueTick) ? (now - task.enqueueTick) : 0;
+        if (ageMs < kPhase2DebounceWindowMs) {
+            DWORD waitMs = static_cast<DWORD>(kPhase2DebounceWindowMs - ageMs);
+            waitMs = (std::min)(waitMs, kPhase2WaitSliceMs);
+            Sleep(waitMs);
+            continue;
+        }
+
+        bool claimed = false;
+        {
+            std::lock_guard<std::mutex> lock(g_phase2NavMutex);
+            if (g_phase2HasPendingNavTask && g_phase2PendingNavTask.serial == task.serial) {
+                g_phase2HasPendingNavTask = false;
+                claimed = true;
+            }
+        }
+        if (!claimed) {
+            continue;
+        }
+
+        if (!IsWindow(task.hwnd)) {
+            co_await ResumeBackground{};
+            continue;
+        }
+
+        co_await ResumeMainThread(task.hwnd);
+
+        if (!g_imageEngine || task.path.empty()) {
+            co_await ResumeBackground{};
+            continue;
+        }
+
+        if (task.imageId != g_currentImageId.load() ||
+            task.navToken != g_currentNavToken.load() ||
+            g_imagePath != task.path) {
+            OutputDebugStringW(L"[Phase2] QueueDispatch skipped stale task.\n");
+            co_await ResumeBackground{};
+            continue;
+        }
+
+        wchar_t dbg[256];
+        swprintf_s(dbg,
+            L"[Phase2] QueueDispatch: id=%llu age=%llums idx=%d\n",
+            static_cast<unsigned long long>(task.imageId),
+            static_cast<unsigned long long>(GetTickCount64() - task.enqueueTick),
+            task.navigatorIndex);
+        OutputDebugStringW(dbg);
+
+        DispatchNavigationToEngine(
+            task.path,
+            task.fileSize,
+            task.navToken,
+            task.navigatorIndex,
+            task.dir);
+
+        co_await ResumeBackground{};
+    }
+}
+
+static void EnqueuePhase2NavigationTask(
+    HWND hwnd,
+    const std::wstring& path,
+    uintmax_t fileSize,
+    int navigatorIndex,
+    uint64_t navToken,
+    ImageID imageId,
+    QuickView::BrowseDirection dir) {
+    if (path.empty()) return;
+
+    Phase2PendingNavTask task{};
+    task.hwnd = hwnd;
+    task.path = path;
+    task.fileSize = fileSize;
+    task.navigatorIndex = navigatorIndex;
+    task.navToken = navToken;
+    task.imageId = imageId;
+    task.dir = dir;
+    task.enqueueTick = GetTickCount64();
+    task.serial = ++g_phase2NavSerial;
+
+    bool dropped = false;
+    uint64_t droppedSerial = 0;
+    ImageID droppedId = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_phase2NavMutex);
+        if (g_phase2HasPendingNavTask) {
+            dropped = true;
+            droppedSerial = g_phase2PendingNavTask.serial;
+            droppedId = g_phase2PendingNavTask.imageId;
+        }
+        g_phase2PendingNavTask = std::move(task);
+        g_phase2HasPendingNavTask = true;
+    }
+
+    if (dropped) {
+        g_phase2DroppedNavTasks.fetch_add(1);
+        wchar_t dropBuf[256];
+        swprintf_s(dropBuf,
+            L"[Phase2] QueueDrop: oldId=%llu oldSerial=%llu totalDropped=%llu\n",
+            static_cast<unsigned long long>(droppedId),
+            static_cast<unsigned long long>(droppedSerial),
+            static_cast<unsigned long long>(g_phase2DroppedNavTasks.load()));
+        OutputDebugStringW(dropBuf);
+    }
+
+    wchar_t pushBuf[256];
+    swprintf_s(pushBuf,
+        L"[Phase2] QueuePush: id=%llu serial=%llu debounce=%lums idx=%d\n",
+        static_cast<unsigned long long>(imageId),
+        static_cast<unsigned long long>(g_phase2NavSerial.load()),
+        static_cast<unsigned long>(kPhase2DebounceWindowMs),
+        navigatorIndex);
+    OutputDebugStringW(pushBuf);
+
+    if (!g_phase2NavLoopRunning.exchange(true)) {
+        RunPhase2DispatchLoop();
+    }
+}
+
+} // namespace
+
 // [v8.16] Added BrowseDirection to prevent resetting direction to IDLE
 // [v8.16] Added BrowseDirection to prevent resetting direction to IDLE
 void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::BrowseDirection dir) {
@@ -5425,6 +6142,21 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
     // Crucial for the Race Fix in FullReady to work correctly!
     g_currentMetadata = {}; 
     g_currentMetadata.IsFullMetadataLoaded = false;
+
+    // Phase 1: zero-latency placeholder chain
+    // Cancel stale heavy work BEFORE Phase 1 to free CPU for placeholder rendering.
+    g_imageEngine->CancelHeavy();
+    
+    // [Fix] Invalidate TileManager immediately so stale tiles aren't drawn into new Titan surfaces!
+    // If we only wait for Phase 2 DispatchImageLoad, 75ms of frames will draw old tiles on the new placeholder.
+    if (g_imageEngine && g_imageEngine->GetTileManager()) {
+        g_imageEngine->GetTileManager()->InvalidateAll();
+    }
+
+    // 1) Shell cache only (THUMBNAILONLY|INCACHEONLY)
+    // 2) Immediate transparent 4x4 skeleton (never block UI)
+    // 3) Async WIC embedded thumbnail upgrade (<= budget)
+    PrimePhase1Placeholder(hwnd, path, myImageId);
     
     // Update Toolbar State for RAW
     // [Fix] Ensure RAW button visibility is updated immediately on navigation
@@ -5435,21 +6167,19 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
     // if (showOSD) { ... }
     PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
     
-// Kick the Engine
-    // Phase 3.1: Pass file size for Treshold Lane Decision
+// Phase 2 Kick: queue-drop debounce (Titan only)
+    // Phase 3.1: Pass file size for Threshold Lane Decision
     uintmax_t fileSize = 0;
     // Fast lookup if path matches current navigator state (most likely)
     int idx = g_navigator.FindIndex(path);
     if (idx != -1) {
         fileSize = g_navigator.GetFileSize(idx);
     }
-    
-    g_imageEngine->NavigateTo(path, fileSize, myToken); // [Phase 3] Pass token
-    
-    // [Fix] Trigger UpdateView immediately on initial load to seed prefetch
-    // [v8.16] Use passed direction instead of IDLE to preserve navigation state
-    if (idx != -1) {
-        g_imageEngine->UpdateView(idx, dir); 
+
+    if (ShouldUsePhase2TitanDebounce(path, fileSize)) {
+        EnqueuePhase2NavigationTask(hwnd, path, fileSize, idx, myToken, myImageId, dir);
+    } else {
+        DispatchNavigationToEngine(path, fileSize, myToken, idx, dir);
     }
 }
 
@@ -5622,21 +6352,28 @@ void OnPaint(HWND hwnd) {
              }
 
              // Update Manager (Scheduling) - Guarded to prevent loop
-             static QuickView::RegionRect lastVP = { -1, -1, -1, -1 };
-             static float lastAbsZoom = 0;
-             static ImageID lastTileImageId = 0;
-             ImageID curTileImageId = g_currentImageId.load();
-             bool imageChanged = (curTileImageId != lastTileImageId);
-             if (imageChanged) {
-                 lastVP = { -1, -1, -1, -1 };
-                 lastAbsZoom = -1.0f;
-                 lastTileImageId = curTileImageId;
-             }
-             if (imageChanged || vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom) {
-                 if (imageChanged) {
-                     wchar_t tileDbg[320];
-                     swprintf_s(tileDbg,
-                         L"[Main] Titan schedule seed: id=%llu fmt=%s loader=%s meta=%dx%d previewW=%.1f baseRatio=%.4f zoom=%.4f\n",
+              static QuickView::RegionRect lastVP = { -1, -1, -1, -1 };
+              static float lastAbsZoom = 0;
+              static ImageID lastTileImageId = 0;
+              static uint64_t lastDispatchSerial = 0;
+              ImageID curTileImageId = g_currentImageId.load();
+              bool imageChanged = (curTileImageId != lastTileImageId);
+              uint64_t curDispatchSerial = g_titanDispatchSerial.load(std::memory_order_acquire);
+              bool dispatchChanged = (curDispatchSerial != lastDispatchSerial);
+              bool forceReseed = g_forceTitanTileReseed.exchange(false, std::memory_order_acq_rel);
+              if (imageChanged) {
+                  lastVP = { -1, -1, -1, -1 };
+                  lastAbsZoom = -1.0f;
+                  lastTileImageId = curTileImageId;
+              }
+              if (dispatchChanged) {
+                  lastDispatchSerial = curDispatchSerial;
+              }
+              if (imageChanged || dispatchChanged || forceReseed || vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom) {
+                  if (imageChanged || dispatchChanged || forceReseed) {
+                      wchar_t tileDbg[320];
+                      swprintf_s(tileDbg,
+                          L"[Main] Titan schedule seed: id=%llu fmt=%s loader=%s meta=%dx%d previewW=%.1f baseRatio=%.4f zoom=%.4f\n",
                          curTileImageId,
                          g_currentMetadata.Format.c_str(),
                          g_currentMetadata.LoaderName.c_str(),
@@ -5823,6 +6560,11 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     float imgH = effSize.height;
     
     if (imgW <= 0 || imgH <= 0) return;
+    
+    // [Fix] Do not trigger auto-lock resize if we're just looking at the skeleton
+    if (g_isLoading && imgW <= 16 && imgH <= 16) {
+        canResizeConfig = false;
+    }
 
     int finalWinW = 0;
     int finalWinH = 0;

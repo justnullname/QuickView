@@ -181,7 +181,12 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     
 
     if (enableTitan) {
-         // Keep MMF alive for Tile Manager usage
+         // [Phase 5] Keep MMF alive for Tile Manager usage. If old MMF exists, send to GC.
+         if (m_mmf) {
+             HeavyLanePool::TrashBag bag;
+             bag.mmf = std::move(m_mmf);
+             m_heavyPool->EnqueueTrash(std::move(bag));
+         }
          m_mmf = primaryMMF;
          
          m_tileManager->InvalidateAll(); // Reset generation
@@ -199,7 +204,12 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          m_enablePadding = true;
 
     } else {
-         m_mmf.reset(); // Release Member MMF (but primaryMMF still exists for this scope/job)
+         // [Phase 5] old MMF is destructed via GC thread
+         if (m_mmf) {
+             HeavyLanePool::TrashBag bag;
+             bag.mmf = std::move(m_mmf);
+             m_heavyPool->EnqueueTrash(std::move(bag));
+         }
          
          // [Fix] Deactivate Titan Mode (Elastic)
          m_heavyPool->SetTitanMode(false);

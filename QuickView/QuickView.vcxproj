@@ -135,6 +135,7 @@
     <ClInclude Include="TileTypes.h" />
     <ClInclude Include="SIMDUtils.h" />
     <ClInclude Include="ComputeEngine.h" />
+    <ClInclude Include="ProcessRouter.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -169,6 +170,7 @@
     <ClCompile Include="TileManager.cpp" />
     <ClCompile Include="TileScheduler.cpp" />
     <ClCompile Include="ComputeEngine.cpp" />
+    <ClCompile Include="ProcessRouter.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />
