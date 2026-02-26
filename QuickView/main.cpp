@@ -2334,9 +2334,9 @@ void AdjustWindowToImage(HWND hwnd) {
     
     if (imgWidth <= 0 || imgHeight <= 0) return;
     
-    // [Fix] Do not auto-resize the window to absurdly small dimensions (e.g., 4x4 skeleton)
-    // if we haven't even finished loading the real image.
-    if (g_isLoading && imgWidth <= 16 && imgHeight <= 16) return;
+    // [Fix] Do not auto-resize the window to absurdly small dimensions (e.g., 1x1 fake base or 4x4 skeleton)
+    // if we haven't even finished loading the real image or if we're looking at a Titan Fake Base.
+    if (imgWidth <= 16 && imgHeight <= 16) return;
     
     VisualState vs = GetVisualState(); // Refresh VS (Rotation state)
     
@@ -2640,6 +2640,20 @@ static bool TryReadPositiveIntArg(int argc, LPWSTR* argv, const wchar_t* name, i
 
 
 
+// [Fix JXL Titan] SEH-safe wrapper for FullDecodeFromMemory.
+// Must be in a separate function with NO C++ objects that have destructors (C2712 constraint).
+// Catches ACCESS_VIOLATION from huge JXL decodes (e.g. 4.8GB alloc for 40000x30000)
+// so the subprocess returns E_OUTOFMEMORY instead of crashing with 0xc0000005.
+static HRESULT SafeFullDecodeFromMemory(const uint8_t* data, size_t size, QuickView::RawImageFrame* outFrame) {
+    __try {
+        return CImageLoader::FullDecodeFromMemory(data, size, outFrame);
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+               ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        OutputDebugStringW(L"[Phase4] SEH: ACCESS_VIOLATION in FullDecodeFromMemory (caught)\n");
+        return E_OUTOFMEMORY;
+    }
+}
+
 // [Phase 3] Generic decode worker subprocess entry point.
 // Launched by HeavyLanePool::LaunchDecodeWorker for Titan Base Layer decode.
 // Args: --decode-worker --input <path> --out-map <name> --target-w N --target-h N
@@ -2653,6 +2667,17 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
     std::wstring mapName;
     int targetW = 0;
     int targetH = 0;
+    
+    // [Fix JXL Titan] Parse --full-decode flag for FullDecodeAndCacheLOD path
+    bool fullDecode = false;
+    bool noFakeBase = false;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] && _wcsicmp(argv[i], L"--full-decode") == 0) {
+            fullDecode = true;
+        } else if (argv[i] && _wcsicmp(argv[i], L"--no-fake-base") == 0) {
+            noFakeBase = true;
+        }
+    }
 
     if (!TryReadArgValue(argc, argv, L"--input", &inputPath) ||
         !TryReadArgValue(argc, argv, L"--out-map", &mapName) ||
@@ -2681,14 +2706,28 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
         // Minimal loader instance (no D2D/DComp needed)
         CImageLoader loader;
 
-        // Decode (supports all formats: JPEG/PNG/WebP/JXL/AVIF/TIFF/HEIC/...)
         QuickView::RawImageFrame rawFrame;
-        QuantumArena arena;
-        arena.Allocate(static_cast<size_t>(targetW) * targetH * 4 + (16ull << 20)); // target pixels + 16MB headroom
         std::wstring loaderName;
         CImageLoader::ImageMetadata meta;
 
-        hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, nullptr, &meta);
+        // [Fix JXL Titan] Full-decode mode: use static FullDecodeFromMemory (libjxl/Wuffs/TJ direct).
+        // This guarantees full-resolution output for Master Cache construction.
+        // FullDecodeFromMemory is a static function — no CImageLoader::Initialize() needed.
+        if (fullDecode) {
+            QuickView::MappedFile mmf(inputPath.c_str());
+            if (mmf.IsValid()) {
+                hr = SafeFullDecodeFromMemory(mmf.data(), mmf.size(), &rawFrame);
+            }
+            // Fallback: LoadToFrame with 0,0 (full-res, no scaling)
+            if (FAILED(hr)) {
+                hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, 0, 0, &loaderName, nullptr, &meta);
+            }
+        } else {
+            // [Fix] Base layer: Use LoadToFrame (returns 1:8 DC preview or 1x1 Fake Base instantly for massive JXL)
+            // If --no-fake-base is specified (e.g. for LOD requests), it guarantees real decoding is not bypassed.
+            // DO NOT pass a restricted QuantumArena here, as format fallbacks may need full-resolution heap memory before scaling.
+            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, nullptr, &meta, !noFakeBase);
+        }
         if (FAILED(hr) || !rawFrame.IsValid()) {
             if (SUCCEEDED(hr)) hr = E_FAIL;
             break;
@@ -2706,6 +2745,8 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
         header->width            = static_cast<uint32_t>(rawFrame.width);
         header->height           = static_cast<uint32_t>(rawFrame.height);
         header->stride           = static_cast<uint32_t>(rawFrame.stride);
+        header->originalWidth    = static_cast<uint32_t>(meta.Width);
+        header->originalHeight   = static_cast<uint32_t>(meta.Height);
         header->exifOrientation  = static_cast<uint32_t>(meta.ExifOrientation);
         header->payloadBytes     = payloadBytes;
         hr = S_OK;
@@ -5324,7 +5365,8 @@ void ProcessEngineEvents(HWND hwnd) {
                 
                 // 1. Dimensions: Decoder knows best. Async might fail (WIC).
                 // [v10.0] Shrink Protection: Never overwrite full dimensions with smaller preview dimensions.
-                if (finalMetadata.Width >= g_currentMetadata.Width) {
+                // [Phase 6 Fix] Fake Base Protection: Do not let 1x1 or 4x4 fake Titan bases overwrite global metadata.
+                if (finalMetadata.Width >= g_currentMetadata.Width && finalMetadata.Width > 16) {
                     g_currentMetadata.Width = finalMetadata.Width;
                     g_currentMetadata.Height = finalMetadata.Height;
                 }
@@ -6336,19 +6378,19 @@ void OnPaint(HWND hwnd) {
                  if (pathLower.ends_with(L".jxl")) isJxlLike = true;
              }
 
-             if (isJxlLike && g_currentMetadata.Width >= 8000 && g_currentMetadata.Height >= 8000) {
-                 constexpr float kVirtualNoDcRatio = 0.125f; // 1:8
-                 float previewH = g_imageResource.GetSize().height;
-                 bool fakeBase = (g_currentMetadata.LoaderName.find(L"Fake Base") != std::wstring::npos);
-                 bool tinyPreview = (previewW <= 2.0f || previewH <= 2.0f);
-                 bool weakPreview = (previewW <= 1.0f || previewH <= 1.0f);
+             constexpr float kVirtualNoDcRatio = 0.125f; // 1:8
+             float previewH = g_imageResource.GetSize().height;
+             bool fakeBase = (g_currentMetadata.LoaderName.find(L"Fake Base") != std::wstring::npos);
+             bool tinyPreview = (previewW <= 2.0f || previewH <= 2.0f);
+             bool weakPreview = (previewW <= 16.0f || previewH <= 16.0f); // Expanded threshold for 4x4 or 8x8
 
-                 if (fakeBase || tinyPreview) {
-                     // Placeholder base (or missing base): force tiles on first frame.
-                     baseRatio = 0.0f;
-                 } else if (weakPreview) {
-                     baseRatio = kVirtualNoDcRatio;
-                 }
+             if (fakeBase || tinyPreview) {
+                 // Placeholder base (or missing base): force tiles on first frame.
+                 baseRatio = 0.0f;
+             } else if (weakPreview || baseRatio < 0.001f) {
+                 // Expanded safety net: if ratio is mathematically destroyed (< 0.1%),
+                 // treat it as a weak shell/fallback and force reasonable tile layering limit (LOD3/4)
+                 baseRatio = kVirtualNoDcRatio;
              }
 
              // Update Manager (Scheduling) - Guarded to prevent loop

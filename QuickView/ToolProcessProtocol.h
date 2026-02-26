@@ -30,6 +30,8 @@ struct DecodeResultHeader {
     uint32_t width   = 0;
     uint32_t height  = 0;
     uint32_t stride  = 0;
+    uint32_t originalWidth  = 0;         // Source image width (before scaling)
+    uint32_t originalHeight = 0;         // Source image height (before scaling)
     uint32_t exifOrientation = 0;        // EXIF orientation tag (1-8)
     uint64_t payloadBytes    = 0;        // pixel data size in bytes
     // Pixel data (BGRA8888) follows immediately after this header

@@ -224,6 +224,16 @@ public:
     static HRESULT FullDecodeFromMemory(const uint8_t* data, size_t size,
                                          QuickView::RawImageFrame* outFrame);
 
+    // [Direct-to-MMF] Decode directly into caller-provided buffer (MMF view).
+    // Zero heap allocation for pixel data — libjxl/Wuffs write directly into MMF.
+    // Supported natively: JXL, PNG. Others fall back to FullDecodeFromMemory + memcpy.
+    // dcReadyCallback: Optional. Called when progressive DC (1:8) is flushed to MMF.
+    //   This allows early tile serving from the blurry DC preview while full decode continues.
+    static HRESULT FullDecodeToMMF(const uint8_t* data, size_t size,
+                                    uint8_t* mmfBuf, size_t mmfBufSize,
+                                    int* outW, int* outH, int* outStride,
+                                    std::function<void()> dcReadyCallback = nullptr);
+
     // ============================================================================
     // [Direct D2D] Zero-Copy Loading API
     // ============================================================================
@@ -245,7 +255,8 @@ public:
                         int targetWidth = 0, int targetHeight = 0,
                         std::wstring* pLoaderName = nullptr,
                         CancelPredicate checkCancel = nullptr,
-                        ImageMetadata* pMetadata = nullptr);
+                        ImageMetadata* pMetadata = nullptr,
+                        bool allowFakeBase = true);
 
     /// <summary>
     /// [Optimization] Load full image from memory pointer (for MMF Preload) with optional IDCT Scaling
@@ -366,7 +377,7 @@ public:
     // [JXL Global Runner] 全局线程池单例，避免每次解码创建开销
     static void* GetJxlRunner();
     // Public Specialized Loaders (needed by helpers)
-    static HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData, ImageMetadata* pMetadata = nullptr, bool forceRenderFull = false);
+    static HRESULT LoadThumbJXL_DC(const uint8_t* data, size_t size, ThumbData* pData, ImageMetadata* pMetadata = nullptr, bool forceRenderFull = false, bool allowFakeBase = true);
     static HRESULT LoadThumbAVIF_Proxy(const uint8_t* data, size_t size, int targetSize, ThumbData* pData, bool allowSlow = true, ImageMetadata* pMetadata = nullptr);
 
     static void ReleaseJxlRunner();

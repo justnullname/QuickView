@@ -109,6 +109,9 @@ namespace QuickView {
             
             // [v10] Fallback control for Titan Base Layer
             bool forceRenderFull = false;
+            
+            // [v10.1] Override to prevent 1x1 Fake Base generation (e.g. for specific LODs)
+            bool allowFakeBase = true;
         };
 
         struct DecodeResult {
@@ -1209,6 +1212,23 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
             else if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
                 if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &pixFmt, &outBufSize)) break;
 
+                // [Fix JXL Titan] Memory safety: check available RAM before attempting massive allocation.
+                // Without this, _aligned_malloc(4.8GB) for a 40000x30000 image causes ACCESS_VIOLATION
+                // in the subprocess, which then cascades into infinite retry loops.
+                {
+                    MEMORYSTATUSEX ms = { sizeof(ms) };
+                    if (GlobalMemoryStatusEx(&ms)) {
+                        if (outBufSize > (ms.ullAvailPhys * 6 / 10)) { // > 60% of available RAM
+                            wchar_t dbg[192];
+                            swprintf_s(dbg, L"[P15] JXL decode aborted: need %zu MB but only %llu MB available\n",
+                                       outBufSize / (1024*1024), ms.ullAvailPhys / (1024*1024));
+                            OutputDebugStringW(dbg);
+                            JxlDecoderDestroy(dec);
+                            return E_OUTOFMEMORY;
+                        }
+                    }
+                }
+
                 outBuf = (uint8_t*)_aligned_malloc(outBufSize, 32);
                 if (!outBuf) { hr = E_OUTOFMEMORY; break; }
 
@@ -1251,6 +1271,207 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
     // ---------------------------------------------------------------
     OutputDebugStringW(L"[P15] FullDecodeFromMemory: unsupported format\n");
     return E_NOTIMPL;
+}
+
+// ============================================================================
+// [Direct-to-MMF] Zero-Heap Full Decode into External Buffer
+// ============================================================================
+// Decodes entire image from memory, writing output pixels DIRECTLY into
+// the caller-provided buffer (typically a MMF view). This eliminates all
+// heap allocations for the pixel data — the OS VMM handles page faults
+// and disk-backed paging, so even 4.8GB outputs work on 8GB RAM machines.
+//
+// Supported formats: JXL, PNG. Others fall back to FullDecodeFromMemory + memcpy.
+// Returns: S_OK on success, dimensions written to outW/outH/outStride.
+HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
+                                       uint8_t* mmfBuf, size_t mmfBufSize,
+                                       int* outW, int* outH, int* outStride,
+                                       std::function<void()> dcReadyCallback) {
+    if (!data || size < 4 || !mmfBuf || !outW || !outH || !outStride) return E_INVALIDARG;
+
+    std::wstring fmt = DetectFormatFromContent(data, size);
+
+    // ---------------------------------------------------------------
+    // JXL: libjxl natively supports external output buffer via
+    // JxlDecoderSetImageOutBuffer — zero-copy into MMF view.
+    // [Progressive DC] When libjxl reaches the DC (1:8) stage, we flush
+    // the upsampled DC data into the MMF and call dcReadyCallback so
+    // tiles can start immediately from the blurry preview.
+    // ---------------------------------------------------------------
+    if (fmt == L"JXL") {
+        JxlDecoder* dec = JxlDecoderCreate(NULL);
+        if (!dec) return E_OUTOFMEMORY;
+
+        void* runner = CImageLoader::GetJxlRunner();
+        if (!runner) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
+        JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
+
+        // Subscribe to FRAME_PROGRESSION to catch the DC (1:8) stage
+        int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME_PROGRESSION;
+        if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) {
+            JxlDecoderDestroy(dec);
+            return E_FAIL;
+        }
+        // Request DC-level progressive detail
+        JxlDecoderSetProgressiveDetail(dec, JxlProgressiveDetail::kDC);
+
+        JxlDecoderSetInput(dec, data, size);
+        JxlDecoderCloseInput(dec);
+
+        JxlBasicInfo info = {};
+        JxlPixelFormat pixFmt = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 };
+        bool bufferSet = false;
+        bool dcSignaled = false;
+        HRESULT hr = E_FAIL;
+
+        for (;;) {
+            JxlDecoderStatus st = JxlDecoderProcessInput(dec);
+            if (st == JXL_DEC_ERROR) break;
+            if (st == JXL_DEC_SUCCESS) { hr = S_OK; break; }
+
+            if (st == JXL_DEC_BASIC_INFO) {
+                if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) break;
+
+                // Force sRGB output
+                JxlColorEncoding ce = {};
+                ce.color_space = JXL_COLOR_SPACE_RGB;
+                ce.white_point = JXL_WHITE_POINT_D65;
+                ce.primaries = JXL_PRIMARIES_SRGB;
+                ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+                ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+                JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0);
+            }
+            else if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+                size_t needed = 0;
+                if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &pixFmt, &needed)) break;
+
+                if (needed > mmfBufSize) {
+                    wchar_t dbg[192];
+                    swprintf_s(dbg, L"[MMF] JXL needs %zu MB but MMF is %zu MB\n",
+                               needed / (1024*1024), mmfBufSize / (1024*1024));
+                    OutputDebugStringW(dbg);
+                    JxlDecoderDestroy(dec);
+                    return E_OUTOFMEMORY;
+                }
+
+                // Direct-to-MMF: libjxl writes directly into the MMF view!
+                if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &pixFmt, mmfBuf, needed)) {
+                    JxlDecoderDestroy(dec);
+                    return E_FAIL;
+                }
+                bufferSet = true;
+            }
+            else if (st == JXL_DEC_FRAME_PROGRESSION) {
+                // [Progressive DC] libjxl has decoded the DC (1:8) layer!
+                // The MMF now contains upsampled DC data at full resolution.
+                // Flush it, swizzle RGBA→BGRA, and signal early readiness.
+                size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
+
+                wchar_t dbg[192];
+                swprintf_s(dbg, L"[MMF] JXL FRAME_PROGRESSION: ratio=%zu, image=%ux%u\n",
+                           ratio, info.xsize, info.ysize);
+                OutputDebugStringW(dbg);
+
+                if (JXL_DEC_SUCCESS == JxlDecoderFlushImage(dec)) {
+                    // Swizzle the flushed DC data (full resolution, but blurry)
+                    SIMDUtils::SwizzleRGBA_to_BGRA_Premul(mmfBuf, (size_t)info.xsize * info.ysize);
+
+                    // Set output dimensions NOW so tiles can be served
+                    *outW = (int)info.xsize;
+                    *outH = (int)info.ysize;
+                    *outStride = (int)(info.xsize * 4);
+
+                    // Signal early readiness — tiles can start from blurry DC!
+                    if (dcReadyCallback && !dcSignaled) {
+                        dcReadyCallback();
+                        dcSignaled = true;
+                        OutputDebugStringW(L"[MMF] DC early ready signaled — tiles can start!\n");
+                    }
+                }
+                // Continue decode loop for full quality
+            }
+            else if (st == JXL_DEC_FULL_IMAGE) {
+                hr = S_OK;
+                break;
+            }
+        }
+
+        JxlDecoderDestroy(dec);
+
+        if (FAILED(hr) || !bufferSet) {
+            OutputDebugStringW(L"[MMF] JXL decode to MMF failed\n");
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+
+        // Final RGBA → BGRA swizzle for the full-quality image
+        // (DC was already swizzled above, but full decode overwrites with RGBA again)
+        SIMDUtils::SwizzleRGBA_to_BGRA_Premul(mmfBuf, (size_t)info.xsize * info.ysize);
+
+        *outW = (int)info.xsize;
+        *outH = (int)info.ysize;
+        *outStride = (int)(info.xsize * 4);
+
+        wchar_t dbg[128];
+        swprintf_s(dbg, L"[MMF] JXL decoded direct-to-MMF OK (%ux%u)\n", info.xsize, info.ysize);
+        OutputDebugStringW(dbg);
+        return S_OK;
+    }
+
+    // ---------------------------------------------------------------
+    // PNG: Wuffs AllocatorFunc redirect to MMF view
+    // ---------------------------------------------------------------
+    if (fmt == L"PNG") {
+        uint32_t w = 0, h = 0;
+        bool allocOK = true;
+
+        auto allocator = [&](size_t sz) -> uint8_t* {
+            if (sz > mmfBufSize) { allocOK = false; return nullptr; }
+            return mmfBuf; // Direct-to-MMF: Wuffs writes directly into MMF view
+        };
+
+        if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, nullptr) || !allocOK) {
+            OutputDebugStringW(L"[MMF] Wuffs PNG decode to MMF failed\n");
+            return E_FAIL;
+        }
+
+        *outW = (int)w;
+        *outH = (int)h;
+        *outStride = (int)((size_t)w * 4);
+
+        wchar_t dbg[128];
+        swprintf_s(dbg, L"[MMF] PNG decoded direct-to-MMF OK (%ux%u)\n", w, h);
+        OutputDebugStringW(dbg);
+        return S_OK;
+    }
+
+    // ---------------------------------------------------------------
+    // Fallback: Decode to heap, memcpy into MMF view
+    // Works for AVIF, HEIC, TIFF, and any other format.
+    // ---------------------------------------------------------------
+    QuickView::RawImageFrame heapFrame;
+    HRESULT hr = FullDecodeFromMemory(data, size, &heapFrame);
+    if (FAILED(hr) || !heapFrame.IsValid()) return FAILED(hr) ? hr : E_FAIL;
+
+    size_t needed = (size_t)heapFrame.stride * (size_t)heapFrame.height;
+    if (needed > mmfBufSize) {
+        wchar_t dbg[192];
+        swprintf_s(dbg, L"[MMF] Fallback: need %zu MB but MMF is %zu MB\n",
+                   needed / (1024*1024), mmfBufSize / (1024*1024));
+        OutputDebugStringW(dbg);
+        return E_OUTOFMEMORY;
+    }
+
+    memcpy(mmfBuf, heapFrame.pixels, needed);
+
+    *outW = heapFrame.width;
+    *outH = heapFrame.height;
+    *outStride = heapFrame.stride;
+
+    wchar_t dbg[128];
+    swprintf_s(dbg, L"[MMF] %ls decoded via fallback+copy OK (%dx%d)\n",
+               fmt.c_str(), heapFrame.width, heapFrame.height);
+    OutputDebugStringW(dbg);
+    return S_OK;
 }
 
 
@@ -1588,11 +1809,17 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
         }
 
         JxlDecoderStatus st = JxlDecoderProcessInput(dec);
-        if (st == JXL_DEC_ERROR) break;
+        if (st == JXL_DEC_ERROR) {
+             OutputDebugStringW(L"[JXL_ROI] Decoder Error during ProcessInput\n");
+             break;
+        }
         if (st == JXL_DEC_SUCCESS) { hr = S_OK; break; }
 
         if (st == JXL_DEC_BASIC_INFO) {
-            if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) break;
+            if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
+                 OutputDebugStringW(L"[JXL_ROI] Failed to get Basic Info\n");
+                 break;
+            }
 
             // Force sRGB output to match full-decode color behavior.
             JxlColorEncoding ce = {};
@@ -1601,13 +1828,13 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             ce.primaries = JXL_PRIMARIES_SRGB;
             ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
             ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
-            if (JXL_DEC_SUCCESS != JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0)) {
-                hr = E_FAIL;
-                break;
-            }
+            // [Fix] Non-fatal: match full-decode path (line ~6865) which ignores this return value.
+            // libjxl may reject sRGB override for some images but still decode correctly with native profile.
+            JxlDecoderSetOutputColorProfile(dec, &ce, NULL, 0);
 
             if (!BuildRegionScalePlan(srcRect, (int)info.xsize, (int)info.ysize, scale,
                                       explicitTargetW, explicitTargetH, &plan)) {
+                OutputDebugStringW(L"[JXL_ROI] Failed to Build Region Scale Plan\n");
                 hr = E_FAIL;
                 break;
             }
@@ -1634,6 +1861,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             ctx.cropH = plan.cropH;
 
             if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutCallback(dec, &pixFmt, JxlCropCallback, &ctx)) {
+                OutputDebugStringW(L"[JXL_ROI] Failed to Set Image Out Callback\n");
                 hr = E_FAIL; break;
             }
         }
@@ -1641,9 +1869,16 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             hr = S_OK;
             break;
         }
+        else if (st == JXL_DEC_NEED_MORE_INPUT) {
+            OutputDebugStringW(L"[JXL_ROI] Need more input but input is closed!\n");
+            break;
+        }
     }
 
     if (FAILED(hr) || !tempBuf || !planReady) {
+        wchar_t errObj[256];
+        swprintf_s(errObj, L"[JXL_ROI] Failure Exit: hr=0x%08X, tempBuf=%p, planReady=%d\n", hr, tempBuf, planReady);
+        OutputDebugStringW(errObj);
         if (tempBuf && (!arena || !arena->Owns(tempBuf))) _aligned_free(tempBuf);
         return hr == S_OK ? E_FAIL : hr;
     }
@@ -2459,13 +2694,19 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                 // Configure Scaling
                 if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
                      config.options.use_scaling = 1;
-                     config.options.scaled_width = ctx.targetWidth;
-                     config.options.scaled_height = ctx.targetHeight;
                      
-                     // If one is 0, logic might fail? Caller usually handles aspect.
-                     // But for robust implementation:
-                     if (ctx.targetWidth == 0) config.options.scaled_width = (config.input.width * ctx.targetHeight) / config.input.height;
-                     if (ctx.targetHeight == 0) config.options.scaled_height = (config.input.height * ctx.targetWidth) / config.input.width;
+                     // 修复 Bug 1: 必须保持长宽比缩放
+                     int tw = ctx.targetWidth > 0 ? ctx.targetWidth : config.input.width;
+                     int th = ctx.targetHeight > 0 ? ctx.targetHeight : config.input.height;
+                     
+                     float scaleX = (float)tw / config.input.width;
+                     float scaleY = (float)th / config.input.height;
+                     float scale = (std::min)(scaleX, scaleY);
+                     
+                     if (scale > 1.0f) scale = 1.0f; // Only downscale
+                     
+                     config.options.scaled_width = (std::max)(1, (int)(config.input.width * scale));
+                     config.options.scaled_height = (std::max)(1, (int)(config.input.height * scale));
                      
                      finalW = config.options.scaled_width;
                      finalH = config.options.scaled_height;
@@ -3622,7 +3863,13 @@ namespace QuickView {
                         return E_FAIL;
                     }
                     else if (status == JXL_DEC_NEED_MORE_INPUT) {
-                        if (offset >= size) break; // Should close input?
+                        if (offset >= size) {
+                             JxlDecoderCloseInput(dec);
+                             continue;
+                        }
+                        size_t remain = JxlDecoderReleaseInput(dec);
+                        offset -= remain; // Backtrack to include unconsumed bytes
+
                         size_t remaining = size - offset;
                         size_t nextChunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
                         
@@ -3703,6 +3950,45 @@ namespace QuickView {
                              }
                         }
                     }
+                    else if (status == JXL_DEC_FRAME_PROGRESSION) {
+                        // [v8.3] Catch the Rabbit: 1:8 Progressive DC Preview
+                        size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
+                        if (ratio >= 4 && ratio <= 16) {
+                            size_t downW = info.xsize / ratio;
+                            size_t downH = info.ysize / ratio;
+                            if (downW == 0) downW = 1;
+                            if (downH == 0) downH = 1;
+                            
+                            size_t bufferSize = downW * downH * 4;
+                            pixels = ctx.allocator(bufferSize);
+                            if (!pixels) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
+                            
+                            if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &format, pixels, bufferSize)) {
+                                JxlDecoderDestroy(dec); if (ctx.freeFunc && pixels) ctx.freeFunc(pixels); return E_FAIL;
+                            }
+                            
+                            if (JXL_DEC_SUCCESS != JxlDecoderFlushImage(dec)) {
+                                JxlDecoderDestroy(dec); if (ctx.freeFunc && pixels) ctx.freeFunc(pixels); return E_FAIL;
+                            }
+                            
+                            JxlDecoderDestroy(dec);
+                            SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pixels, downW * downH);
+                            
+                            result.pixels = pixels;
+                            result.width = (int)downW;
+                            result.height = (int)downH;
+                            result.stride = (int)downW * 4;
+                            result.format = PixelFormat::BGRA8888;
+                            result.success = true;
+                            
+                            // Fill metadata
+                            result.metadata.FormatDetails = L"JXL";
+                            if (info.have_animation) result.metadata.FormatDetails += L" [Anim]";
+                            result.metadata.LoaderName = L"libjxl (Prog DC)"; // Success marker
+                            
+                            return S_OK;
+                        }
+                    }
                     else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
                         size_t bufferSize = 0;
                         if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &format, &bufferSize)) {
@@ -3737,10 +4023,28 @@ namespace QuickView {
                         
                         // [Fix] Prevent massive memory allocation stalls (e.g. 4.8GB for 1.2 GigaPixel JXL)
                         // This prevents the OS from thrashing the page file for 15 seconds before crashing.
-                        if (bufferSize > 1024ULL * 1024ULL * 1024ULL) { // 1 GB limit
-                            JxlDecoderDestroy(dec); 
-                            OutputDebugStringW(L"[JXL::Load] Image too massive for full unified decode (>1GB). Aborting.\n");
-                            return E_OUTOFMEMORY; 
+                        if (ctx.allowFakeBase && bufferSize > 1024ULL * 1024ULL * 1024ULL) { // 1 GB limit
+                            OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Faking 1x1 base layer for Region Decoder.\n");
+                            // We fake a 1x1 transparent pixel to satisfy the pipeline and unlock Titan Mode.
+                            pixels = ctx.allocator(4); // 1 pixel
+                            if (!pixels) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
+                            
+                            memset(pixels, 0, 4); // Transparent pixel
+                            
+                            JxlDecoderDestroy(dec);
+                            
+                            result.pixels = pixels;
+                            result.width = 1;
+                            result.height = 1;
+                            result.stride = 4;
+                            result.format = PixelFormat::BGRA8888;
+                            result.success = true;
+                            
+                            result.metadata.FormatDetails = L"JXL";
+                            if (info.have_animation) result.metadata.FormatDetails += L" [Anim]";
+                            result.metadata.LoaderName = L"libjxl (Fake Base)"; 
+                            
+                            return S_OK;
                         }
                         
                         pixels = ctx.allocator(bufferSize);
@@ -4238,7 +4542,7 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
              // or if explicitly forcing preview.
              if (ctx.targetWidth > 0 || ctx.targetHeight > 0 || ctx.forceRenderFull) {
                  CImageLoader::ThumbData tmp;
-                 HRESULT hr = CImageLoader::LoadThumbJXL_DC(mappedData, mappedSize, &tmp, &result.metadata, ctx.forceRenderFull);
+                 HRESULT hr = CImageLoader::LoadThumbJXL_DC(mappedData, mappedSize, &tmp, &result.metadata, ctx.forceRenderFull, ctx.allowFakeBase);
                  
                  // [v8.4] Critical Fix: Respect E_ABORT from FastLane
                  // If JXL loader explicitly aborts (e.g. Large Modular Image in FastLane), 
@@ -6773,7 +7077,7 @@ HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* data, size_t size, 
 
 
 
-HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData, ImageMetadata* pMetadata, bool forceRenderFull) {
+HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, ThumbData* pData, ImageMetadata* pMetadata, bool forceRenderFull, bool allowFakeBase) {
     if (!pFile || fileSize == 0 || !pData) return E_INVALIDARG;
 
     pData->isValid = false;
@@ -6853,6 +7157,17 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                 swprintf_s(fmtBuf, L"%d-bit %s", info.bits_per_sample, mode);
                 pMetadata->FormatDetails = fmtBuf;
                 if (info.have_animation) pMetadata->FormatDetails += L" Anim";
+            }
+
+            // [Diagnostic] Log encoding mode to help debug DC detection failures
+            {
+                wchar_t diagBuf[256];
+                swprintf_s(diagBuf, L"[JXL_DC] BasicInfo: %ux%u, %d-bit, uses_original_profile=%d (Modular=%s), have_preview=%d\n",
+                    info.xsize, info.ysize, info.bits_per_sample,
+                    info.uses_original_profile,
+                    info.uses_original_profile ? L"YES→No DC Layer" : L"NO→VarDCT→DC possible",
+                    info.have_preview);
+                OutputDebugStringW(diagBuf);
             }
         }
         else if (status == JXL_DEC_FRAME_PROGRESSION) {
@@ -6969,44 +7284,63 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             }
 
             // [v8.3] Fallback Logic
-            // Reached here means NO 1:8 event occurred (Modular or Small).
+            // Reached here means NO 1:8 FRAME_PROGRESSION event occurred.
+            // Common reasons:
+            //   1. Lossless (uses_original_profile=1) → Modular codec → NO DC layer exists
+            //   2. Non-progressive lossy encoding → No progressive passes at all
+            //   3. Progressive but ratio not in [4,16] range
+            {
+                wchar_t diagBuf[256];
+                swprintf_s(diagBuf, L"[JXL_DC] No 1:8 DC. isProgressive=%d, uses_original_profile=%d, have_preview=%d, image=%ux%u\n",
+                    isProgressive ? 1 : 0, info.uses_original_profile, info.have_preview,
+                    info.xsize, info.ysize);
+                OutputDebugStringW(diagBuf);
+            }
             
             bool isSmallEnough = ((uint64_t)info.xsize * info.ysize) < 2000000; // 2MP
-            bool isReasonableTitan = ((uint64_t)info.xsize * info.ysize) <= 100000000; // 100MP limit for full preview
 
-            if (isSmallEnough || (forceRenderFull && isReasonableTitan)) {
-                 // FastLane Full Decode (or HeavyLane forced full decode within reasonable limits)
-                 size_t stride = info.xsize * 4;
-                 size_t bufSize = stride * info.ysize;
-                 try { pData->pixels.resize(bufSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
-                 
-                 pData->width = (UINT)info.xsize;
-                 pData->height = (UINT)info.ysize;
-                 pData->stride = (UINT)stride;
-                 pData->isValid = true;
-                 pData->isBlurry = false; // Full decode is sharp
-                 pData->loaderName = isSmallEnough ? L"libjxl (Fast Full)" : L"libjxl (Heavy Full)";
+             // [Fix] Removed `|| forceRenderFull` from this condition. 
+             // We MUST NOT decode massive JXLs into `std::vector` inside LoadThumbJXL_DC as it causes EXCEPTION_ACCESS_VIOLATION 
+             // due to allocating double the RAM (e.g., 9.6GB for a 1.2Gpx image).
+             // If a massive image needs a full decode, it will fall through to `LoadImageUnified` and use `ctx.allocator` directly safely.
+             if (isSmallEnough) {
+                  // FastLane Full Decode (or HeavyLane forced full decode within reasonable limits)
+                  size_t stride = info.xsize * 4;
+                  size_t bufSize = stride * info.ysize;
+                  try { pData->pixels.resize(bufSize); } catch(...) { return cleanup(E_OUTOFMEMORY); }
+                  
+                  pData->width = (UINT)info.xsize;
+                  pData->height = (UINT)info.ysize;
+                  pData->stride = (UINT)stride;
+                  pData->isValid = true;
+                  pData->isBlurry = false; // Full decode is sharp
+                  pData->loaderName = isSmallEnough ? L"libjxl (Fast Full)" : L"libjxl (Heavy Full)";
 
-                 JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufSize);
-                 // No Flush, just continue loop
-            } else {
-                 // Too large for FastLane full decode or too massive for HeavyLane CPU decoding.
-                 // We fake a 1x1 transparent pixel to satisfy the pipeline and unlock Titan Mode.
-                 OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Faking 1x1 base layer for Region Decoder.\n");
-                 
-                 try {
-                     pData->pixels.assign(4, 0); // 1 pixel, 4 channels (RGBA), all 0 (transparent)
-                 } catch(...) { return cleanup(E_OUTOFMEMORY); }
-                 
-                 pData->width = 1;
-                 pData->height = 1;
-                 pData->stride = 4;
-                 pData->isValid = true;
-                 pData->isBlurry = true;
-                 pData->loaderName = isProgressive ? L"libjxl (Fake Base Prog)" : L"libjxl (Fake Base)";
-                 
-                 return cleanup(S_OK);
-            }
+                  JxlDecoderSetImageOutBuffer(dec, &format, pData->pixels.data(), bufSize);
+                  // No Flush, just continue loop
+             } else if (allowFakeBase) {
+                  // Too large for FastLane full decode or too massive for HeavyLane CPU decoding.
+                  // We fake a 1x1 transparent pixel to satisfy the pipeline and unlock Titan Mode.
+                  OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Faking 1x1 base layer for Region Decoder.\n");
+                  
+                  try {
+                      pData->pixels.assign(4, 0); // 1 pixel, 4 channels (RGBA), all 0 (transparent)
+                  } catch(...) { return cleanup(E_OUTOFMEMORY); }
+                  
+                  pData->width = 1;
+                  pData->height = 1;
+                  pData->stride = 4;
+                  pData->isValid = true;
+                  pData->isBlurry = true;
+                  pData->loaderName = isProgressive ? L"libjxl (Fake Base Prog)" : L"libjxl (Fake Base)";
+                  
+                  return cleanup(S_OK);
+             } else {
+                  // Image is massive, AND we are not allowed to fake a 1x1 base (e.g. LOD extraction).
+                  // We MUST NOT decode it into a std::vector.
+                  // Abort the DC fast-pass and let the outer `LoadImageUnified` handle the massive Full Decode!
+                  return cleanup(E_FAIL);
+             }
         }
         else if (status == JXL_DEC_FULL_IMAGE) {
              if (pData->isValid) {
@@ -7723,7 +8057,8 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                                    int targetWidth, int targetHeight,
                                    std::wstring* pLoaderName,
                                    CancelPredicate checkCancel,
-                                   ImageMetadata* pMetadata) {
+                                   ImageMetadata* pMetadata,
+                                   bool allowFakeBase) {
     using namespace QuickView;
     
     if (!filePath || !outFrame) return E_INVALIDARG;
@@ -7766,6 +8101,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     ctx.pLoaderName = pLoaderName;
     ctx.pMetadata = pMetadata; // [v5.3] Pass metadata pointer to Collect Metadata directly
     ctx.forceRenderFull = true; // [v10] Ensure HeavyLane base layer decode does not abort for large non-DC JXLs
+    ctx.allowFakeBase = allowFakeBase; // [v10.1] Pass the fallback behavior override
 
     DecodeResult res;
     HRESULT hrUnified = LoadImageUnified(filePath, ctx, res);

@@ -1752,11 +1752,16 @@ bool HeavyLanePool::ShouldWarmupMasterBacking() const {
     if (m_titanSrcW <= 0 || m_titanSrcH <= 0) return false;
     if (m_titanSrcW < 8000 && m_titanSrcH < 8000) return false;
 
+    // [Fix JXL Titan] JXL has NO native scaling/region decode for non-progressive files.
+    // Without Master Cache, the subprocess attempts full-res decode (e.g. 4.8GB for 40000x30000)
+    // and crashes with ACCESS_VIOLATION. Including JXL here ensures a single full decode
+    // is cached to MMF, then all LODs are served via fast SIMD downscale from cache.
     return (m_titanFormat == L"PNG" ||
             m_titanFormat == L"TIFF" ||
             m_titanFormat == L"TIF" ||
             m_titanFormat == L"AVIF" ||
-            m_titanFormat == L"HEIC");
+            m_titanFormat == L"HEIC" ||
+            m_titanFormat == L"JXL");
 }
 
 void HeavyLanePool::StopMasterWarmup() {
@@ -1765,6 +1770,8 @@ void HeavyLanePool::StopMasterWarmup() {
         m_masterWarmupThread.join();
     }
     m_masterWarmupImageId.store(0, std::memory_order_release);
+    m_masterWarmupReady.store(false, std::memory_order_release);
+    m_lodCacheCond.notify_all(); // Wake any waiters so they can re-check
 }
 
 void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf) {
@@ -1779,6 +1786,7 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
 
     StopMasterWarmup();
     m_masterWarmupImageId.store(imageId, std::memory_order_release);
+    m_masterWarmupReady.store(false, std::memory_order_release);
     const uint32_t warmupGen = m_generationID.load(std::memory_order_acquire);
 
     m_masterWarmupThread = std::jthread([this, path, imageId, mmf, warmupGen](std::stop_token st) {
@@ -1791,41 +1799,137 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
         const uint8_t* existingView = nullptr;
         int bw = 0, bh = 0, bs = 0;
         if (AcquireMasterBackingView(imageId, &existingView, &bw, &bh, &bs)) {
+            m_masterWarmupReady.store(true, std::memory_order_release);
+            m_lodCacheCond.notify_all();
             return;
         }
 
-        QuickView::RawImageFrame fullFrame;
-        HRESULT hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame);
-        if ((FAILED(hr) || !fullFrame.IsValid()) && !st.stop_requested()) {
-            auto cancelPred = [&]() {
-                return st.stop_requested() ||
-                       m_generationID.load(std::memory_order_acquire) != warmupGen;
+        // [Direct-to-MMF] Step 1: Peek image dimensions from compressed data
+        // We need width/height BEFORE allocating the MMF. Use fast header-only parse.
+        int imgW = m_titanSrcW;
+        int imgH = m_titanSrcH;
+        int imgStride = imgW * 4; // BGRA packed
+
+        if (imgW <= 0 || imgH <= 0) {
+            OutputDebugStringW(L"[MMF] Warmup aborted: unknown image dimensions\n");
+            return;
+        }
+
+        // [Direct-to-MMF] Step 2: Pre-create empty MMF file
+        HRESULT hr = BuildMasterBackingStoreEmpty(imgW, imgH, imgStride, imageId);
+        if (FAILED(hr)) {
+            wchar_t fail[192];
+            swprintf_s(fail, L"[MMF] Warmup: BuildMasterBackingStoreEmpty failed: hr=0x%X\n", hr);
+            OutputDebugStringW(fail);
+            // Fallback to old heap-based path
+            goto fallback_heap;
+        }
+
+        if (st.stop_requested() || m_generationID.load(std::memory_order_acquire) != warmupGen) return;
+
+        // [Direct-to-MMF] Step 3: Decode directly into MMF view — ZERO heap allocation
+        {
+            uint8_t* mmfView = nullptr;
+            size_t mmfSize = 0;
+            {
+                std::lock_guard lock(m_masterBackingMutex);
+                mmfView = m_masterBacking.view;
+                mmfSize = m_masterBacking.sizeBytes;
+            }
+
+            if (!mmfView || mmfSize == 0) goto fallback_heap;
+
+            int decW = 0, decH = 0, decStride = 0;
+
+            // [Progressive DC] Provide a callback that signals early readiness
+            // when the DC (1:8) layer is flushed into the MMF.
+            // This allows tiles to start from a blurry preview immediately.
+            auto dcReadyCallback = [&]() {
+                std::lock_guard lock(m_masterBackingMutex);
+                m_masterBacking.imageId = imageId;  // NOW it's safe to read
+                m_masterBacking.width = decW;       // Full res dimensions from outW/outH
+                m_masterBacking.height = decH;
+                m_masterBacking.stride = decStride;
+
+                OutputDebugStringW(L"[MMF] DC early: Master Cache committed (blurry preview)\n");
+
+                // Signal early warmup ready — tiles can start from DC!
+                m_masterWarmupReady.store(true, std::memory_order_release);
+                m_lodCacheCond.notify_all();
             };
-            hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, cancelPred, nullptr);
+
+            hr = CImageLoader::FullDecodeToMMF(mmf->data(), mmf->size(), mmfView, mmfSize,
+                                               &decW, &decH, &decStride,
+                                               std::function<void()>(dcReadyCallback));
+
+            if (st.stop_requested() || m_generationID.load(std::memory_order_acquire) != warmupGen) return;
+
+            if (SUCCEEDED(hr) && decW > 0 && decH > 0) {
+                // Full decode complete — commit/update the real imageId
+                // (may already be set by DC callback, but this ensures final state)
+                {
+                    std::lock_guard lock(m_masterBackingMutex);
+                    m_masterBacking.imageId = imageId;
+                    m_masterBacking.width = decW;
+                    m_masterBacking.height = decH;
+                    m_masterBacking.stride = decStride;
+                }
+
+                // No memcpy, no FlushViewOfFile needed — VMM handles it
+                std::lock_guard lock(m_lodCacheMutex);
+                m_masterLOD0Cache = {};
+
+                wchar_t ok[192];
+                swprintf_s(ok, L"[MMF] Master warmup direct-to-MMF ready: %dx%d (%s)\n", decW, decH, m_titanFormat.c_str());
+                OutputDebugStringW(ok);
+
+                m_masterWarmupReady.store(true, std::memory_order_release);
+                m_lodCacheCond.notify_all();
+                return;
+            }
         }
 
-        if (st.stop_requested()) return;
-        if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
-        if (FAILED(hr) || !fullFrame.IsValid()) {
-            wchar_t fail[192];
-            swprintf_s(fail, L"[HeavyPool] Master warmup failed: hr=0x%X (%s)\n", hr, m_titanFormat.c_str());
-            OutputDebugStringW(fail);
-            return;
-        }
+    fallback_heap:
+        // Fallback: old heap-based FullDecodeFromMemory + BuildMasterBackingStore (memcpy)
+        {
+            OutputDebugStringW(L"[MMF] Direct-to-MMF failed, fallback to heap decode\n");
+            ResetMasterBackingStore(); // Clean up any partial empty MMF
 
-        hr = BuildMasterBackingStore(fullFrame.pixels, fullFrame.width, fullFrame.height, fullFrame.stride, imageId);
-        if (SUCCEEDED(hr)) {
-            // MMF-backed path should not retain an extra full RAM master copy.
-            std::lock_guard lock(m_lodCacheMutex);
-            m_masterLOD0Cache = {};
+            QuickView::RawImageFrame fullFrame;
+            hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame);
+            if ((FAILED(hr) || !fullFrame.IsValid()) && !st.stop_requested()) {
+                auto cancelPred = [&]() {
+                    return st.stop_requested() ||
+                           m_generationID.load(std::memory_order_acquire) != warmupGen;
+                };
+                hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, cancelPred, nullptr);
+            }
 
-            wchar_t ok[192];
-            swprintf_s(ok, L"[HeavyPool] Master warmup ready: %dx%d (%s)\n", fullFrame.width, fullFrame.height, m_titanFormat.c_str());
-            OutputDebugStringW(ok);
-        } else {
-            wchar_t fail[192];
-            swprintf_s(fail, L"[HeavyPool] Master warmup MMF build failed: hr=0x%X (%s)\n", hr, m_titanFormat.c_str());
-            OutputDebugStringW(fail);
+            if (st.stop_requested()) return;
+            if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
+            if (FAILED(hr) || !fullFrame.IsValid()) {
+                wchar_t fail[192];
+                swprintf_s(fail, L"[HeavyPool] Master warmup failed: hr=0x%X (%s)\n", hr, m_titanFormat.c_str());
+                OutputDebugStringW(fail);
+                return;
+            }
+
+            hr = BuildMasterBackingStore(fullFrame.pixels, fullFrame.width, fullFrame.height, fullFrame.stride, imageId);
+            if (SUCCEEDED(hr)) {
+                std::lock_guard lock(m_lodCacheMutex);
+                m_masterLOD0Cache = {};
+
+                wchar_t ok[192];
+                swprintf_s(ok, L"[HeavyPool] Master warmup ready (heap fallback): %dx%d (%s)\n", fullFrame.width, fullFrame.height, m_titanFormat.c_str());
+                OutputDebugStringW(ok);
+
+                m_masterWarmupReady.store(true, std::memory_order_release);
+                m_lodCacheCond.notify_all();
+            } else {
+                wchar_t fail[192];
+                swprintf_s(fail, L"[HeavyPool] Master warmup MMF build failed: hr=0x%X (%s)\n", hr, m_titanFormat.c_str());
+                OutputDebugStringW(fail);
+            }
         }
     });
 }
@@ -1980,6 +2084,91 @@ bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** ou
     return true;
 }
 
+// [Direct-to-MMF] Create an empty MMF backing store of the right size.
+// After this call, m_masterBacking.view is a writable pointer that decoders
+// (libjxl, Wuffs) can write into directly. No pixel data is copied.
+// Windows VMM handles page faults → disk-backed paging automatically.
+HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int stride, ImageID imageId) {
+    if (width <= 0 || height <= 0 || stride <= 0) return E_INVALIDARG;
+
+    size_t totalBytes = (size_t)stride * (size_t)height;
+    if (totalBytes == 0) return E_FAIL;
+
+    ResetMasterBackingStore();
+
+    wchar_t tempDir[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, tempDir) == 0) return HRESULT_FROM_WIN32(GetLastError());
+
+    wchar_t tempPath[MAX_PATH] = {};
+    GUID guid;
+    CoCreateGuid(&guid);
+    swprintf_s(tempPath, L"%sQuickView_master_%lu_%08lX%04X%04X.bgra",
+        tempDir, GetCurrentProcessId(),
+        guid.Data1, guid.Data2, guid.Data3);
+
+    // FILE_ATTRIBUTE_TEMPORARY: hint to VMM to keep pages in RAM when possible
+    // FILE_FLAG_RANDOM_ACCESS: we will SIMD-downsample from random positions later
+    HANDLE hFile = CreateFileW(
+        tempPath,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_RANDOM_ACCESS,
+        nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
+
+    LARGE_INTEGER liSize;
+    liSize.QuadPart = static_cast<LONGLONG>(totalBytes);
+    if (!SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) || !SetEndOfFile(hFile)) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        CloseHandle(hFile);
+        DeleteFileW(tempPath);
+        return hr;
+    }
+
+    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+    if (!hMap) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        CloseHandle(hFile);
+        DeleteFileW(tempPath);
+        return hr;
+    }
+
+    uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, totalBytes));
+    if (!view) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        CloseHandle(hMap);
+        CloseHandle(hFile);
+        DeleteFileW(tempPath);
+        return hr;
+    }
+
+    // Store WITHOUT filling pixels — caller will write directly via FullDecodeToMMF.
+    // CRITICAL: imageId is set to 0 (sentinel) — NOT the real imageId.
+    // This prevents AcquireMasterBackingView from returning an EMPTY MMF
+    // as a valid Master Cache before FullDecodeToMMF has completed.
+    // The real imageId is set by EnsureMasterWarmup after decode finishes.
+    {
+        std::lock_guard lock(m_masterBackingMutex);
+        m_masterBacking.hFile = hFile;
+        m_masterBacking.hMap = hMap;
+        m_masterBacking.view = view;
+        m_masterBacking.sizeBytes = totalBytes;
+        m_masterBacking.width = width;
+        m_masterBacking.height = height;
+        m_masterBacking.stride = stride;
+        m_masterBacking.imageId = 0;  // Sentinel: NOT ready for reading
+        m_masterBacking.tempPath = tempPath;
+    }
+
+    wchar_t dbg[192];
+    swprintf_s(dbg, L"[MMF] Empty backing store created: %dx%d (%zu MB) → %s\n",
+               width, height, totalBytes / (1024*1024), tempPath);
+    OutputDebugStringW(dbg);
+    return S_OK;
+}
+
 
 // ============================================================================
 // [P14] Single-Decode-Then-Slice: Helper Functions
@@ -2096,9 +2285,6 @@ bool HeavyLanePool::ShouldUseSingleDecodeForWebP(int lod) const {
 
 
 
-// [Phase 3] Generic decode worker subprocess launcher.
-// Spawns a child process that decodes the image via LoadToFrame,
-// writing the result to shared memory. Can be terminated instantly on cancel.
 HRESULT HeavyLanePool::LaunchDecodeWorker(
     Worker& worker,
     const JobInfo& job,
@@ -2106,7 +2292,9 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     int targetH,
     RawImageFrame& outFrame,
     CImageLoader::ImageMetadata& outMeta,
-    CImageLoader::CancelPredicate checkCancel) {
+    CImageLoader::CancelPredicate checkCancel,
+    bool fullDecode,
+    bool noFakeBase) {
 
     using QuickView::ToolProcess::DecodeResultHeader;
     constexpr uint64_t kHeaderBytes = sizeof(DecodeResultHeader);
@@ -2167,6 +2355,12 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     cmdLine += std::to_wstring(targetW);
     cmdLine += L" --target-h ";
     cmdLine += std::to_wstring(targetH);
+    if (fullDecode) {
+        cmdLine += L" --full-decode";
+    }
+    if (noFakeBase) {
+        cmdLine += L" --no-fake-base";
+    }
 
     std::vector<wchar_t> cmdBuffer(cmdLine.begin(), cmdLine.end());
     cmdBuffer.push_back(L'\0');
@@ -2303,6 +2497,8 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
 
     // Propagate EXIF orientation from child
     outMeta.ExifOrientation = static_cast<int>(header->exifOrientation);
+    outMeta.Width  = static_cast<int>(header->originalWidth);
+    outMeta.Height = static_cast<int>(header->originalHeight);
 
     {
         wchar_t dbg[256];
@@ -2456,17 +2652,98 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 }
             }
         } else {
-            // [Phase 4] No Master Cache → full-resolution decode via killable subprocess
-            // Pass full source dimensions so subprocess returns full-res pixels for Master Cache.
-            CImageLoader::ImageMetadata lodMeta;
-            hr = LaunchDecodeWorker(worker, job, m_titanSrcW, m_titanSrcH, fullFrame, lodMeta, checkCancel);
-            if (hr == E_ABORT) {
-                guard.countFailure = false;
-                return E_ABORT;
+            // [Direct-to-MMF] No Master Cache yet — check if Warmup is building it.
+            // If warmup is in progress, WAIT for it instead of launching a duplicate subprocess.
+            // This eliminates double decode (was: warmup + subprocess both decode full-res).
+            
+            bool expectsMasterCache = ShouldWarmupMasterBacking();
+            bool warmupResolved = false;  // Set true when warmup-wait path produces final result
+            
+            if (expectsMasterCache && m_masterWarmupImageId.load(std::memory_order_acquire) == job.imageId) {
+                // Warmup is building the Master Cache — wait for it
+                OutputDebugStringW(L"[Phase4] Waiting for Master Warmup (Direct-to-MMF) instead of launching subprocess...\n");
+                
+                std::unique_lock<std::mutex> waitLock(m_lodCacheMutex);
+                while (!m_masterWarmupReady.load(std::memory_order_acquire)) {
+                    if (checkCancel && checkCancel()) {
+                        guard.countFailure = false;
+                        return E_ABORT;
+                    }
+                    m_lodCacheCond.wait_for(waitLock, std::chrono::milliseconds(100));
+                    
+                    // Check if image changed while waiting
+                    if (m_masterWarmupImageId.load(std::memory_order_acquire) != job.imageId) {
+                        OutputDebugStringW(L"[Phase4] Warmup image changed while waiting, aborting\n");
+                        guard.countFailure = false;
+                        return E_ABORT;
+                    }
+                }
+                waitLock.unlock();
+                
+                // Warmup done — try to acquire Master Cache
+                const uint8_t* masterView = nullptr;
+                int mW = 0, mH = 0, mS = 0;
+                if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS)) {
+                    const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+                    const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                    size_t dstStride = (size_t)targetW * 4;
+                    size_t dstSize = dstStride * targetH;
+                    uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                    
+                    if (dstBuf) {
+                        if (lod > 0) {
+                            SIMDUtils::ResizeBilinear(masterView, mW, mH, mS,
+                                                      dstBuf, targetW, targetH, (int)dstStride);
+                        } else {
+                            for (int y = 0; y < targetH; ++y) {
+                                memcpy(dstBuf + (size_t)y * dstStride,
+                                       masterView + (size_t)y * (size_t)mS, dstStride);
+                            }
+                        }
+                        fullFrame.pixels = dstBuf;
+                        fullFrame.width = targetW;
+                        fullFrame.height = targetH;
+                        fullFrame.stride = (int)dstStride;
+                        fullFrame.format = QuickView::PixelFormat::BGRA8888;
+                        fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                        hr = S_OK;
+                        
+                        wchar_t dbg[128];
+                        swprintf_s(dbg, L"[P15] Master built + Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
+                        OutputDebugStringW(dbg);
+                    } else {
+                        hr = E_OUTOFMEMORY;
+                    }
+                } else {
+                    OutputDebugStringW(L"[Phase4] Warmup completed but no Master Cache available — fallback to subprocess\n");
+                    hr = E_FAIL; // Will fall through to subprocess below
+                }
+                if (SUCCEEDED(hr)) warmupResolved = true;
             }
             
-            // [Fallback] If subprocess fails, try inline WIC file loader
-            if (FAILED(hr)) {
+            // Fallback: subprocess decode (only if warmup-wait didn't resolve it)
+            if (!warmupResolved && FAILED(hr)) {
+                int reqW = m_titanSrcW;
+                int reqH = m_titanSrcH;
+                const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+                const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                
+                if (!expectsMasterCache) {
+                    reqW = targetW;
+                    reqH = targetH;
+                    OutputDebugStringW(L"[Phase4] Skipping Master cache construction. Requesting LOD size directly from DecodeWorker.\n");
+                }
+
+                CImageLoader::ImageMetadata lodMeta;
+                hr = LaunchDecodeWorker(worker, job, reqW, reqH, fullFrame, lodMeta, checkCancel, expectsMasterCache, true);
+                if (hr == E_ABORT) {
+                    guard.countFailure = false;
+                    return E_ABORT;
+                }
+            }
+            
+            // [Fallback] If subprocess also fails, try inline WIC file loader
+            if (!warmupResolved && FAILED(hr)) {
                 const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                 const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
                 hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr);
@@ -2476,79 +2753,91 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 }
             }
             
-            if (SUCCEEDED(hr) && fullFrame.IsValid()) {
+            // Post-process subprocess/WIC result (NOT for warmup-wait path)
+            if (!warmupResolved && SUCCEEDED(hr) && fullFrame.IsValid()) {
                 loader = L"DecodeWorker(LOD)";
                 
-                // Build Master LOD0 Cache from the full-res frame
                 auto deleter = fullFrame.memoryDeleter;
                 uint8_t* rawPixels = fullFrame.Detach(); // Take ownership
                 
-                std::shared_ptr<uint8_t[]> masterPtr;
+                std::shared_ptr<uint8_t[]> frameSharedPtr;
                 if (deleter) {
-                    masterPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
+                    frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [deleter](uint8_t* p) { deleter(p); });
                 } else {
-                    masterPtr = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
+                    frameSharedPtr = std::shared_ptr<uint8_t[]>(rawPixels, [](uint8_t* p) { _aligned_free(p); });
                 }
 
-                bool shouldBuildBacking =
-                    (m_titanFormat == L"PNG" || m_titanFormat == L"TIFF" ||
-                     m_titanFormat == L"AVIF" || m_titanFormat == L"HEIC" ||
-                     m_titanFormat == L"JXL") &&
-                    ((size_t)fullFrame.width >= 8000 || (size_t)fullFrame.height >= 8000);
-                bool backedByMmf = false;
-                if (shouldBuildBacking) {
-                    if (SUCCEEDED(BuildMasterBackingStore(masterPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId))) {
-                        backedByMmf = true;
-                        OutputDebugStringW(L"[Phase4] Master cache persisted to MMF backing store\n");
+                if (expectsMasterCache) {
+                    bool shouldBuildBacking =
+                        (m_titanFormat == L"PNG" || m_titanFormat == L"TIFF" ||
+                         m_titanFormat == L"AVIF" || m_titanFormat == L"HEIC" ||
+                         m_titanFormat == L"JXL") &&
+                        ((size_t)fullFrame.width >= 8000 || (size_t)fullFrame.height >= 8000);
+                    bool backedByMmf = false;
+                    if (shouldBuildBacking) {
+                        if (SUCCEEDED(BuildMasterBackingStore(frameSharedPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId))) {
+                            backedByMmf = true;
+                            OutputDebugStringW(L"[Phase4] Master cache persisted to MMF backing store\n");
+                        }
                     }
-                }
-                
-                if (!backedByMmf) {
-                    std::lock_guard lock(m_lodCacheMutex);
-                    m_masterLOD0Cache.pixels = masterPtr;
-                    m_masterLOD0Cache.width = fullFrame.width;
-                    m_masterLOD0Cache.height = fullFrame.height;
-                    m_masterLOD0Cache.stride = fullFrame.stride;
-                    m_masterLOD0Cache.lod = 0;
-                    m_masterLOD0Cache.imageId = job.imageId;
-                } else {
-                    std::lock_guard lock(m_lodCacheMutex);
-                    m_masterLOD0Cache = {};
-                }
-                
-                // Downscale for THIS LOD request
-                const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
-                const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
-                size_t dstStride = (size_t)targetW * 4;
-                
-                if (lod > 0) {
-                    size_t dstSize = dstStride * targetH;
-                    uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
-                    if (!dstBuf) {
-                        hr = E_OUTOFMEMORY;
+                    
+                    if (!backedByMmf) {
+                        std::lock_guard lock(m_lodCacheMutex);
+                        m_masterLOD0Cache.pixels = frameSharedPtr;
+                        m_masterLOD0Cache.width = fullFrame.width;
+                        m_masterLOD0Cache.height = fullFrame.height;
+                        m_masterLOD0Cache.stride = fullFrame.stride;
+                        m_masterLOD0Cache.lod = 0;
+                        m_masterLOD0Cache.imageId = job.imageId;
                     } else {
-                        SIMDUtils::ResizeBilinear(masterPtr.get(), fullFrame.width, fullFrame.height,
-                                                  fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
-                        
-                        fullFrame.pixels = dstBuf;
+                        std::lock_guard lock(m_lodCacheMutex);
+                        m_masterLOD0Cache = {};
+                    }
+                    
+                    // Downscale for THIS LOD request
+                    const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
+                    const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                    size_t dstStride = (size_t)targetW * 4;
+                    
+                    if (lod > 0) {
+                        size_t dstSize = dstStride * targetH;
+                        uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
+                        if (!dstBuf) {
+                            hr = E_OUTOFMEMORY;
+                        } else {
+                            SIMDUtils::ResizeBilinear(frameSharedPtr.get(), fullFrame.width, fullFrame.height,
+                                                      fullFrame.stride, dstBuf, targetW, targetH, (int)dstStride);
+                            
+                            fullFrame.pixels = dstBuf;
+                            fullFrame.width = targetW;
+                            fullFrame.height = targetH;
+                            fullFrame.stride = (int)dstStride;
+                            fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                            
+                            wchar_t dbg[128];
+                            swprintf_s(dbg, L"[P15] Master built + Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
+                            OutputDebugStringW(dbg);
+                        }
+                    } else {
+                        fullFrame.pixels = frameSharedPtr.get();
                         fullFrame.width = targetW;
                         fullFrame.height = targetH;
                         fullFrame.stride = (int)dstStride;
-                        fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                        fullFrame.memoryDeleter = [frameSharedPtr](uint8_t* p) mutable { frameSharedPtr.reset(); };
                         
-                        wchar_t dbg[128];
-                        swprintf_s(dbg, L"[Phase4] Master built + Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
-                        OutputDebugStringW(dbg);
+                        OutputDebugStringW(L"[P15] Master built + Zero-Copy for LOD 0\n");
                     }
                 } else {
-                    // Zero-copy ownership transfer for LOD 0
-                    fullFrame.pixels = masterPtr.get();
-                    fullFrame.width = targetW;
-                    fullFrame.height = targetH;
-                    fullFrame.stride = (int)dstStride;
-                    fullFrame.memoryDeleter = [masterPtr](uint8_t* p) mutable { masterPtr.reset(); };
+                    // [Direct LOD] Bypassed Master Cache. Subprocess already returned exact LOD target size.
+                    fullFrame.pixels = frameSharedPtr.get();
+                    fullFrame.width = fullFrame.width;
+                    fullFrame.height = fullFrame.height;
+                    fullFrame.stride = fullFrame.stride;
+                    fullFrame.memoryDeleter = [frameSharedPtr](uint8_t* p) mutable { frameSharedPtr.reset(); };
                     
-                    OutputDebugStringW(L"[Phase4] Master built + Zero-Copy for LOD 0\n");
+                    wchar_t dbg[128];
+                    swprintf_s(dbg, L"[Phase4] Subprocess rendered directly to LOD size: %dx%d. Applied instantly.\n", fullFrame.width, fullFrame.height);
+                    OutputDebugStringW(dbg);
                 }
             }
         }

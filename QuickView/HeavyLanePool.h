@@ -340,7 +340,7 @@ private:
     // [Phase 4.1] Pass Worker reference for local activeWorkerProcess tracking to prevent zombie races
     HRESULT FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel = nullptr);
     HRESULT SliceTileFromLODCache(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
-    HRESULT LaunchDecodeWorker(Worker& worker, const JobInfo& job, int targetW, int targetH, QuickView::RawImageFrame& outFrame, CImageLoader::ImageMetadata& outMeta, CImageLoader::CancelPredicate checkCancel);
+    HRESULT LaunchDecodeWorker(Worker& worker, const JobInfo& job, int targetW, int targetH, QuickView::RawImageFrame& outFrame, CImageLoader::ImageMetadata& outMeta, CImageLoader::CancelPredicate checkCancel, bool fullDecode = false, bool noFakeBase = false);
     bool ShouldUseSingleDecode(int lod) const;
     bool ShouldUseSingleDecodeForWebP(int lod) const;
 
@@ -400,12 +400,15 @@ private:
     std::mutex m_masterBackingMutex;
     void ResetMasterBackingStore();
     HRESULT BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId);
+    // [Direct-to-MMF] Pre-create empty MMF file of given size; returns view pointer for direct decode.
+    HRESULT BuildMasterBackingStoreEmpty(int width, int height, int stride, ImageID imageId);
     bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride);
 
     // [Phase-2] Background warmup for heavy non-ROI formats (PNG/TIFF/AVIF/HEIC).
     // Builds master MMF backing store right after image open to avoid first tile hard stall.
     std::jthread m_masterWarmupThread;
     std::atomic<ImageID> m_masterWarmupImageId{ 0 };
+    std::atomic<bool> m_masterWarmupReady{ false };  // [Direct-to-MMF] Set true when warmup decode is complete
     bool ShouldWarmupMasterBacking() const;
     void EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf);
     void StopMasterWarmup();
