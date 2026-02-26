@@ -1321,7 +1321,6 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         JxlBasicInfo info = {};
         JxlPixelFormat pixFmt = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 };
         bool bufferSet = false;
-        bool dcSignaled = false;
         HRESULT hr = E_FAIL;
 
         for (;;) {
@@ -1362,32 +1361,18 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
                 bufferSet = true;
             }
             else if (st == JXL_DEC_FRAME_PROGRESSION) {
-                // [Progressive DC] libjxl has decoded the DC (1:8) layer!
-                // The MMF now contains upsampled DC data at full resolution.
-                // Flush it, swizzle RGBA→BGRA, and signal early readiness.
+                // [Progressive DC] libjxl has decoded the DC (1:8) layer.
+                // NOTE: We intentionally do NOT call FlushImage or SwizzleRGBA_to_BGRA here.
+                // Reason: After FlushImage, libjxl continues writing RGBA AC data into the
+                // same MMF buffer, overwriting the BGRA-swizzled DC data. This causes LOD=3/2
+                // to read a mix of BGRA (unoverwritten DC) and RGBA (new AC) = color corruption.
+                // The safe path: let the full decode complete, swizzle once at the end.
                 size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
 
                 wchar_t dbg[192];
-                swprintf_s(dbg, L"[MMF] JXL FRAME_PROGRESSION: ratio=%zu, image=%ux%u\n",
+                swprintf_s(dbg, L"[MMF] JXL FRAME_PROGRESSION: ratio=%zu, image=%ux%u (logged only, no flush)\n",
                            ratio, info.xsize, info.ysize);
                 OutputDebugStringW(dbg);
-
-                if (JXL_DEC_SUCCESS == JxlDecoderFlushImage(dec)) {
-                    // Swizzle the flushed DC data (full resolution, but blurry)
-                    SIMDUtils::SwizzleRGBA_to_BGRA_Premul(mmfBuf, (size_t)info.xsize * info.ysize);
-
-                    // Set output dimensions NOW so tiles can be served
-                    *outW = (int)info.xsize;
-                    *outH = (int)info.ysize;
-                    *outStride = (int)(info.xsize * 4);
-
-                    // Signal early readiness — tiles can start from blurry DC!
-                    if (dcReadyCallback && !dcSignaled) {
-                        dcReadyCallback();
-                        dcSignaled = true;
-                        OutputDebugStringW(L"[MMF] DC early ready signaled — tiles can start!\n");
-                    }
-                }
                 // Continue decode loop for full quality
             }
             else if (st == JXL_DEC_FULL_IMAGE) {

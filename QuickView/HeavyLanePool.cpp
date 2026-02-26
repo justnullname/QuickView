@@ -1841,26 +1841,11 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
 
             int decW = 0, decH = 0, decStride = 0;
 
-            // [Progressive DC] Provide a callback that signals early readiness
-            // when the DC (1:8) layer is flushed into the MMF.
-            // This allows tiles to start from a blurry preview immediately.
-            auto dcReadyCallback = [&]() {
-                std::lock_guard lock(m_masterBackingMutex);
-                m_masterBacking.imageId = imageId;  // NOW it's safe to read
-                m_masterBacking.width = decW;       // Full res dimensions from outW/outH
-                m_masterBacking.height = decH;
-                m_masterBacking.stride = decStride;
-
-                OutputDebugStringW(L"[MMF] DC early: Master Cache committed (blurry preview)\n");
-
-                // Signal early warmup ready — tiles can start from DC!
-                m_masterWarmupReady.store(true, std::memory_order_release);
-                m_lodCacheCond.notify_all();
-            };
-
+            // Note: FullDecodeToMMF subscribes to FRAME_PROGRESSION for diagnostic logging,
+            // but does NOT flush or swizzle at DC stage (causes data race with libjxl's
+            // continued AC writes). Full decode completes, then swizzle once.
             hr = CImageLoader::FullDecodeToMMF(mmf->data(), mmf->size(), mmfView, mmfSize,
-                                               &decW, &decH, &decStride,
-                                               std::function<void()>(dcReadyCallback));
+                                               &decW, &decH, &decStride);
 
             if (st.stop_requested() || m_generationID.load(std::memory_order_acquire) != warmupGen) return;
 
