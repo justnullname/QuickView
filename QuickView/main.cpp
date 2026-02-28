@@ -652,7 +652,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
             
             float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
             float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
-            
+
             // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
             // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
             if (!res.isSvg && g_config.AutoRotate) {
@@ -2318,9 +2318,8 @@ void AdjustWindowToImage(HWND hwnd) {
     float imgWidth = effSize.width;
     float imgHeight = effSize.height;
 
-    // [Titan Fix] For Titan Mode, the "Effective Size" from GetVisualState might be the small preview/thumbnail.
-    bool isTitan = (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192);
-    if (isTitan && g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+    // [Phase 1 Fix] Always use metadata dimensions if available to prevent small-to-large jump.
+    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
         // Use Metadata Dimensions for Window Sizing, swapping for rotation if needed
         VisualState vs = GetVisualState(); // Get rotation info
         if (vs.IsRotated90) {
@@ -5890,6 +5889,11 @@ static bool ApplyPhase1PlaceholderFrame(
         SyncDCompState(hwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom));
         g_compEngine->Commit();
     }
+    
+    // [Fix] Immediately adjust window size to target dimensions during Phase 1
+    // to prevent small-to-large jump when the base layer finishes decoding.
+    AdjustWindowToImage(hwnd);
+
     RequestRepaint(PaintLayer::Image);
     return true;
 }
