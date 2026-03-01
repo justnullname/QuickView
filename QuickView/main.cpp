@@ -2318,17 +2318,34 @@ void AdjustWindowToImage(HWND hwnd) {
     float imgWidth = effSize.width;
     float imgHeight = effSize.height;
 
-    // [Phase 1 Fix] Always use metadata dimensions if available to prevent small-to-large jump.
+    // [Phase 1 Fix] Prefer metadata dimensions to prevent small-to-large jump.
+    // Guard against EXIF pre-rotation path where metadata orientation can lag one step behind
+    // the already-rendered visual surface orientation.
     if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
-        // Use Metadata Dimensions for Window Sizing, swapping for rotation if needed
-        VisualState vs = GetVisualState(); // Get rotation info
-        if (vs.IsRotated90) {
-             imgWidth = (float)g_currentMetadata.Height;
-             imgHeight = (float)g_currentMetadata.Width;
-        } else {
-             imgWidth = (float)g_currentMetadata.Width;
-             imgHeight = (float)g_currentMetadata.Height;
+        float metaW = (float)g_currentMetadata.Width;
+        float metaH = (float)g_currentMetadata.Height;
+
+        // First apply current logical rotation state (legacy behavior).
+        VisualState vsMeta = GetVisualState();
+        if (vsMeta.IsRotated90) {
+            std::swap(metaW, metaH);
         }
+
+        // Then reconcile with current visual aspect ratio from surface metrics.
+        // If swapped metadata matches visual AR better, use swapped orientation.
+        if (imgWidth > 0.0f && imgHeight > 0.0f && metaW > 0.0f && metaH > 0.0f) {
+            float visualAR = imgWidth / imgHeight;
+            float metaAR = metaW / metaH;
+            float swappedMetaAR = metaH / metaW;
+            float directErr = std::fabs(metaAR - visualAR);
+            float swappedErr = std::fabs(swappedMetaAR - visualAR);
+            if (swappedErr + 0.001f < directErr) {
+                std::swap(metaW, metaH);
+            }
+        }
+
+        imgWidth = metaW;
+        imgHeight = metaH;
     }
     
     if (imgWidth <= 0 || imgHeight <= 0) return;
