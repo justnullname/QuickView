@@ -152,6 +152,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_ConfirmDel;
     extern const wchar_t* Settings_Label_Portable;
     extern const wchar_t* Settings_Label_SpanDisplays;
+    extern const wchar_t* Settings_Label_UIScale;
     
     // Settings Status Messages
     extern const wchar_t* Settings_Status_RestartRequired;
@@ -210,6 +211,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_Exit;
     extern const wchar_t* Settings_Option_Arrow;
     extern const wchar_t* Settings_Option_Cursor;
+    extern const wchar_t* Settings_Option_Manual;
 
     // Image
     extern const wchar_t* Settings_Header_Render;

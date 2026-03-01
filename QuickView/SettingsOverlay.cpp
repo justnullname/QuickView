@@ -808,6 +808,23 @@ void SettingsOverlay::BuildMenu() {
     };
     tabGeneral.items.push_back(itemLang);
 
+    SettingsItem itemUiScale = {
+        AppStrings::Settings_Label_UIScale,
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.UIScaleMode,
+        nullptr,
+        0,
+        0,
+        { AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_Manual }
+    };
+    itemUiScale.onChange = []() {
+        if (g_config.UIScaleMode < 0 || g_config.UIScaleMode > 1) g_config.UIScaleMode = 0;
+        SaveConfig();
+    };
+    tabGeneral.items.push_back(itemUiScale);
+
     tabGeneral.items.push_back({ AppStrings::Settings_Group_Startup, OptionType::Header });
     
     // Single Instance with restart notification
@@ -1269,9 +1286,9 @@ void SettingsOverlay::BuildMenu() {
     itemPower.label = AppStrings::Settings_Header_PoweredBy; // Header text
     // Comprehensive List
     itemPower.options = { 
-        L" [ libjpeg-turbo ] ", L" [ libwebp ] ", L" [ libavif ] ", L" [ dav1d ] ",
-        L" [ libjxl ] ", L" [ libraw ] ", L" [ Wuffs ] ", L" [ mimalloc ] ",
-        L" [ TinyEXR ] ", L" [ Direct2D ] "
+        L"libjpeg-turbo", L"libwebp", L"libavif", L"dav1d",
+        L"libjxl", L"libraw", L"Wuffs", L"mimalloc",
+        L"TinyEXR", L"Direct2D"
     }; 
     tabAbout.items.push_back(itemPower);
     
@@ -1662,40 +1679,65 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                 continue;
             }
             else if (item.type == OptionType::AboutTechBadges) {
-                // Shift down 20px as requested
-                contentY += 20.0f;
-                
-                // Header "Powered by Open Source"
-                pRT->DrawTextW(item.label.c_str(), item.label.length(), m_textFormatItem.Get(), 
-                               D2D1::RectF(contentX, contentY, contentX+contentW, contentY+25), m_brushTextDim.Get());
-                
-                float badgeX = contentX - 5.0f; 
-                float badgeY = contentY + 30.0f;
-                
-                // Wrap logic for long list
-                for (const auto& opt : item.options) {
-                    float width = opt.length() * 9.0f; 
-                    if (badgeX + width > contentX + contentW) {
-                        badgeX = contentX - 5.0f;
-                        badgeY += 35.0f;
-                    }
-                    
-                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + width, badgeY + 28);
-                    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(badgeRect, 6.0f, 6.0f);
-                    
-                    // Hollow Style (No Fill)
-                    // pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); 
-                    pRT->DrawRoundedRectangle(rr, m_brushTextDim.Get(), 1.0f); // Slightly thicker border? Or keep 0.5f? User said "Hollow". 1.0f is better visibility.
-                    
-                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    pRT->DrawText(opt.c_str(), (UINT32)opt.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
-                    
-                    badgeX += width + 10.0f;
-                }
+                const float topGap = 14.0f * s;
+                const float headerH = 24.0f * s;
+                const float badgeH = 28.0f * s;
+                const float badgePadX = 12.0f * s;
+                const float badgeGapX = 8.0f * s;
+                const float badgeGapY = 10.0f * s;
+                const float badgeRadius = 6.0f * s;
+
+                contentY += topGap;
+                D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + headerH);
                 m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                
-                contentY += (badgeY - (contentY + 30.0f)) + 30.0f + 40.0f; // Dynamic height
+                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                pRT->DrawTextW(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), headerRect, m_brushTextDim.Get());
+
+                float badgeX = contentX;
+                float badgeY = contentY + headerH + 8.0f * s;
+                float maxLineRight = contentX + contentW;
+
+                for (const auto& opt : item.options) {
+                    float textW = 0.0f;
+                    if (m_dwriteFactory && m_textFormatItem) {
+                        ComPtr<IDWriteTextLayout> layout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                            opt.c_str(),
+                            (UINT32)opt.length(),
+                            m_textFormatItem.Get(),
+                            2000.0f,
+                            badgeH,
+                            &layout))) {
+                            DWRITE_TEXT_METRICS metrics = {};
+                            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                            }
+                        }
+                    }
+                    if (textW <= 0.0f) textW = (float)opt.length() * 8.0f * s;
+
+                    float badgeW = textW + badgePadX * 2.0f;
+                    if (badgeW > contentW) badgeW = contentW;
+
+                    if (badgeX + badgeW > maxLineRight + 0.5f) {
+                        badgeX = contentX;
+                        badgeY += badgeH + badgeGapY;
+                    }
+
+                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
+                    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(badgeRect, badgeRadius, badgeRadius);
+                    pRT->DrawRoundedRectangle(rr, m_brushTextDim.Get(), 1.0f * s);
+
+                    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    pRT->DrawTextW(opt.c_str(), (UINT32)opt.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
+
+                    badgeX += badgeW + badgeGapX;
+                }
+
+                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                contentY = badgeY + badgeH + 26.0f * s;
                 continue;
             }
              else if (item.type == OptionType::AboutSystemInfo) {

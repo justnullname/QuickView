@@ -358,6 +358,13 @@ static void ApplyUIScale(float scale) {
     g_helpOverlay.SetUIScale(g_uiScale);
 }
 
+static float ResolveUIScale(UINT dpi) {
+    if (g_config.UIScaleMode == 1) {
+        return 1.0f;
+    }
+    return (float)dpi / 96.0f;
+}
+
 static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     UINT dpi = dpiHint;
     if (dpi == 0 && hwnd) {
@@ -365,7 +372,7 @@ static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     }
     if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
     g_windowDpi = dpi;
-    ApplyUIScale((float)dpi / 96.0f);
+    ApplyUIScale(ResolveUIScale(dpi));
 }
 
 // [DComp] Render bitmap to DComp Pending Surface and trigger cross-fade
@@ -2033,6 +2040,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"General", L"LoopNavigation", g_config.LoopNavigation ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"ConfirmDelete", g_config.ConfirmDelete ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"PortableMode", g_config.PortableMode ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"UIScaleMode", std::to_wstring(g_config.UIScaleMode).c_str(), iniPath.c_str());
 
     // View
     WritePrivateProfileStringW(L"View", L"CanvasColor", std::to_wstring(g_config.CanvasColor).c_str(), iniPath.c_str());
@@ -2106,6 +2114,8 @@ void LoadConfig() {
     g_config.LoopNavigation = GetPrivateProfileIntW(L"General", L"LoopNavigation", 1, iniPath.c_str()) != 0;
     g_config.ConfirmDelete = GetPrivateProfileIntW(L"General", L"ConfirmDelete", 1, iniPath.c_str()) != 0;
     g_config.PortableMode = GetPrivateProfileIntW(L"General", L"PortableMode", 0, iniPath.c_str()) != 0;
+    g_config.UIScaleMode = GetPrivateProfileIntW(L"General", L"UIScaleMode", 0, iniPath.c_str());
+    if (g_config.UIScaleMode < 0 || g_config.UIScaleMode > 1) g_config.UIScaleMode = 0;
 
     // View
     g_config.CanvasColor = GetPrivateProfileIntW(L"View", L"CanvasColor", 0, iniPath.c_str());
@@ -3992,8 +4002,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
 
         if (action != SettingsAction::None) {
-             if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
-             else RequestRepaint(PaintLayer::Static);
+             if (action == SettingsAction::RepaintAll) {
+                 RefreshWindowDpi(hwnd);
+                 RequestRepaint(PaintLayer::All);
+             } else {
+                 RequestRepaint(PaintLayer::Static);
+             }
              return 0; 
         }
         

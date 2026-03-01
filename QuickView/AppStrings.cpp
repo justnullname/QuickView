@@ -51,6 +51,7 @@ namespace AppStrings {
     const wchar_t* Settings_Label_ConfirmDel = nullptr;
     const wchar_t* Settings_Label_Portable = nullptr;
     const wchar_t* Settings_Label_SpanDisplays = nullptr;
+    const wchar_t* Settings_Label_UIScale = nullptr;
     
     const wchar_t* Settings_Status_RestartRequired = nullptr;
     const wchar_t* Settings_Status_NoWritePerm = nullptr;
@@ -223,6 +224,7 @@ namespace AppStrings {
     const wchar_t* Settings_Option_Exit = nullptr;
     const wchar_t* Settings_Option_Arrow = nullptr;
     const wchar_t* Settings_Option_Cursor = nullptr;
+    const wchar_t* Settings_Option_Manual = nullptr;
     const wchar_t* Settings_Option_Auto = nullptr;
     const wchar_t* Settings_Option_Eco = nullptr;
     const wchar_t* Settings_Option_Balanced = nullptr;
@@ -309,6 +311,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"Confirm Delete";
         static constexpr const wchar_t* Settings_Label_Portable = L"Portable Mode";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"Span Displays";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"UI Scale";
         
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"Restart required";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"No Write Permission!";
@@ -482,6 +485,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"Exit";
         static constexpr const wchar_t* Settings_Option_Arrow = L"Arrow";
         static constexpr const wchar_t* Settings_Option_Cursor = L"Cursor";
+        static constexpr const wchar_t* Settings_Option_Manual = L"Manual";
         static constexpr const wchar_t* Settings_Option_Auto = L"Auto";
         static constexpr const wchar_t* Settings_Option_Eco = L"Eco";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Balanced";
@@ -568,6 +572,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"删除确认";
         static constexpr const wchar_t* Settings_Label_Portable = L"便携模式";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"跨屏模式 (电视墙)";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"界面缩放";
         
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"需要重启";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"无写入权限!";
@@ -652,6 +657,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"退出";
         static constexpr const wchar_t* Settings_Option_Arrow = L"箭头";
         static constexpr const wchar_t* Settings_Option_Cursor = L"光标";
+        static constexpr const wchar_t* Settings_Option_Manual = L"手动";
         static constexpr const wchar_t* Settings_Option_Auto = L"自动";
         static constexpr const wchar_t* Settings_Option_Eco = L"节能";
         static constexpr const wchar_t* Settings_Option_Balanced = L"平衡";
@@ -822,6 +828,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"刪除確認";
         static constexpr const wchar_t* Settings_Label_Portable = L"可攜式模式";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"跨屏模式 (電視牆)";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"介面縮放";
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"需要重新啟動";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"無寫入權限!";
         static constexpr const wchar_t* Settings_Status_Enabled = L"已啟用";
@@ -979,6 +986,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"結束";
         static constexpr const wchar_t* Settings_Option_Arrow = L"箭頭";
         static constexpr const wchar_t* Settings_Option_Cursor = L"游標";
+        static constexpr const wchar_t* Settings_Option_Manual = L"手動";
         static constexpr const wchar_t* Settings_Option_Auto = L"自動";
         static constexpr const wchar_t* Settings_Option_Eco = L"節能";
         static constexpr const wchar_t* Settings_Option_Balanced = L"平衡";
@@ -1058,6 +1066,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"削除確認";
         static constexpr const wchar_t* Settings_Label_Portable = L"ポータブルモード";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"Span Displays (Video Wall)";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"UI スケール";
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"再起動が必要";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"書き込み権限なし!";
         static constexpr const wchar_t* Settings_Status_Enabled = L"有効";
@@ -1215,6 +1224,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"終了";
         static constexpr const wchar_t* Settings_Option_Arrow = L"矢印";
         static constexpr const wchar_t* Settings_Option_Cursor = L"カーソル";
+        static constexpr const wchar_t* Settings_Option_Manual = L"手動";
         static constexpr const wchar_t* Settings_Option_Auto = L"自動";
         static constexpr const wchar_t* Settings_Option_Eco = L"エコ";
         static constexpr const wchar_t* Settings_Option_Balanced = L"バランス";
@@ -1294,6 +1304,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"Подтверждение удаления";
         static constexpr const wchar_t* Settings_Label_Portable = L"Портативный режим";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"Span Displays (Video Wall)";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"Масштаб интерфейса";
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"Требуется перезапуск";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"Нет прав на запись!";
         static constexpr const wchar_t* Settings_Status_Enabled = L"Включено";
@@ -1451,6 +1462,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"Выход";
         static constexpr const wchar_t* Settings_Option_Arrow = L"Стрелка";
         static constexpr const wchar_t* Settings_Option_Cursor = L"Курсор";
+        static constexpr const wchar_t* Settings_Option_Manual = L"Вручную";
         static constexpr const wchar_t* Settings_Option_Auto = L"Авто";
         static constexpr const wchar_t* Settings_Option_Eco = L"Эко";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Баланс";
@@ -1530,6 +1542,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"Löschen bestätigen";
         static constexpr const wchar_t* Settings_Label_Portable = L"Portabler Modus";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"Span Displays (Video Wall)";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"UI-Skalierung";
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"Neustart erforderlich";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"Keine Schreibrechte!";
         static constexpr const wchar_t* Settings_Status_Enabled = L"Aktiviert";
@@ -1687,6 +1700,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"Beenden";
         static constexpr const wchar_t* Settings_Option_Arrow = L"Pfeil";
         static constexpr const wchar_t* Settings_Option_Cursor = L"Cursor";
+        static constexpr const wchar_t* Settings_Option_Manual = L"Manuell";
         static constexpr const wchar_t* Settings_Option_Auto = L"Auto";
         static constexpr const wchar_t* Settings_Option_Eco = L"Öko";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Ausgewogen";
@@ -1766,6 +1780,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ConfirmDel = L"Confirmar eliminación";
         static constexpr const wchar_t* Settings_Label_Portable = L"Modo portátil";
         static constexpr const wchar_t* Settings_Label_SpanDisplays = L"Span Displays (Video Wall)";
+        static constexpr const wchar_t* Settings_Label_UIScale = L"Escala de interfaz";
         static constexpr const wchar_t* Settings_Status_RestartRequired = L"Reinicio requerido";
         static constexpr const wchar_t* Settings_Status_NoWritePerm = L"¡Sin permisos de escritura!";
         static constexpr const wchar_t* Settings_Status_Enabled = L"Habilitado";
@@ -1923,6 +1938,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Exit = L"Salir";
         static constexpr const wchar_t* Settings_Option_Arrow = L"Flecha";
         static constexpr const wchar_t* Settings_Option_Cursor = L"Cursor";
+        static constexpr const wchar_t* Settings_Option_Manual = L"Manual";
         static constexpr const wchar_t* Settings_Option_Auto = L"Automático";
         static constexpr const wchar_t* Settings_Option_Eco = L"Eco";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Equilibrado";
@@ -2010,6 +2026,7 @@ namespace AppStrings {
         Settings_Label_ConfirmDel = T::Settings_Label_ConfirmDel;
         Settings_Label_Portable = T::Settings_Label_Portable;
         Settings_Label_SpanDisplays = T::Settings_Label_SpanDisplays;
+        Settings_Label_UIScale = T::Settings_Label_UIScale;
         
         Settings_Status_RestartRequired = T::Settings_Status_RestartRequired;
         Settings_Status_NoWritePerm = T::Settings_Status_NoWritePerm;
@@ -2172,6 +2189,7 @@ namespace AppStrings {
         Settings_Option_Exit = T::Settings_Option_Exit;
         Settings_Option_Arrow = T::Settings_Option_Arrow;
         Settings_Option_Cursor = T::Settings_Option_Cursor;
+        Settings_Option_Manual = T::Settings_Option_Manual;
         Settings_Option_Auto = T::Settings_Option_Auto;
         Settings_Option_Eco = T::Settings_Option_Eco;
         Settings_Option_Balanced = T::Settings_Option_Balanced;
