@@ -7,8 +7,10 @@
 
 namespace SIMDUtils {
     
-    // Check hardware support once
-    static const bool g_hasAVX512F = SystemInfo::Detect().hasAVX512F;
+    // One-time hardware detection (shared across all translation units)
+    inline bool HasAVX512F() {
+        return SystemInfo::Cached().hasAVX512F;
+    }
 
     // Fast Premultiply Alpha
     inline void PremultiplyAlpha_BGRA(uint8_t* pData, int width, int height, int stride = 0) {
@@ -25,7 +27,7 @@ namespace SIMDUtils {
             int x = 0;
 
             // AVX-512 Loop
-            if (g_hasAVX512F) {
+            if (HasAVX512F()) {
                 const __m512i shuffleMask512 = _mm512_setr_epi8(
                     3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
                     3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
@@ -97,7 +99,7 @@ namespace SIMDUtils {
         size_t i = 0;
         
         // AVX-512 Swizzle
-        if (g_hasAVX512F) {
+        if (HasAVX512F()) {
             const __m512i swizzleMask512 = _mm512_setr_epi8(
                 2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15,
                 2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15,

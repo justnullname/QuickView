@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdint>
 #include <algorithm>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -27,6 +30,15 @@ struct SystemInfo {
         wchar_t volumePath[MAX_PATH];
         if (!GetVolumePathNameW(path.c_str(), volumePath, MAX_PATH)) {
             return false; // Safest default to HDD-like behavior if failed
+        }
+
+        const std::wstring cacheKey(volumePath);
+        static std::mutex s_cacheMutex;
+        static std::unordered_map<std::wstring, bool> s_cache;
+        {
+            std::scoped_lock guard(s_cacheMutex);
+            const auto it = s_cache.find(cacheKey);
+            if (it != s_cache.end()) return it->second;
         }
 
         // Create handle to the volume
@@ -75,6 +87,11 @@ struct SystemInfo {
         }
 
         CloseHandle(hDevice);
+
+        {
+            std::scoped_lock guard(s_cacheMutex);
+            s_cache.emplace(cacheKey, isSSD);
+        }
         return isSSD;
 #else
         return true; // Assume fast storage on non-Windows for now
@@ -135,6 +152,11 @@ struct SystemInfo {
 #endif
         
         return info;
+    }
+
+    static const SystemInfo& Cached() {
+        static const SystemInfo s_cached = Detect();
+        return s_cached;
     }
 };
 

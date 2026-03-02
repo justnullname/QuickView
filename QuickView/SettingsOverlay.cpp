@@ -1142,7 +1142,7 @@ void SettingsOverlay::BuildMenu() {
              switch (g_config.PrefetchGear) {
                  case 0: policy.enablePrefetch = false; break;
                  case 1: { // Auto
-                     EngineConfig autoCfg = EngineConfig::FromHardware(SystemInfo::Detect());
+                     EngineConfig autoCfg = EngineConfig::FromHardware(SystemInfo::Cached());
                      policy.enablePrefetch = true;
                      policy.maxCacheMemory = autoCfg.maxCacheMemory;
                      policy.lookAheadCount = autoCfg.prefetchLookAhead;

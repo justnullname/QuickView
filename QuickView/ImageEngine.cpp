@@ -21,7 +21,7 @@ ImageEngine::ImageEngine(CImageLoader* loader)
     , m_fastLane(this, loader)
 {
     // [N+1] Detect hardware and create pool
-    SystemInfo sysInfo = SystemInfo::Detect();
+    const SystemInfo& sysInfo = SystemInfo::Cached();
     m_engineConfig = EngineConfig::FromHardware(sysInfo);
     
     // [N+1] Uncapped Pool (User Request)

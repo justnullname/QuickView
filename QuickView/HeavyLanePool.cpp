@@ -36,6 +36,10 @@ HeavyLanePool::HeavyLanePool(ImageEngine* parent, CImageLoader* loader,
 {
     // Pre-allocate worker slots
     m_workers.resize(m_cap);
+    const size_t queueReserve = static_cast<size_t>(std::max(512, m_cap * 128));
+    m_pendingJobs.reserve(queueReserve);
+    m_deferredTileJobs.reserve(queueReserve / 2);
+    m_inFlightTiles.reserve(queueReserve);
     
     // [Phase 4] Create Job Object for zombie prevention.
     // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: when this handle is closed
@@ -66,28 +70,14 @@ void HeavyLanePool::UpdateIOLimit(int newLimit) {
     if (delta > 0) {
         m_ioSemaphore.release(delta);
     } else {
-        // We need to reduce tokens. This is tricky with std::counting_semaphore.
-        // We can acquire them on the main thread, but that might block if workers are holding them.
-        // TRADEOFF: For safety, we only GROW the limit quickly. 
-        // If shrinking, we might just accept over-subscription briefly until next flush?
-        // OR: We force acquire.
-        // Given the use case (User moves from HDD folder to SSD folder), rarely flips rapidly.
-        // Let's attempt to acquire, but don't block forever? 
-        // std::counting_semaphore doesn't have try_acquire_for.
-        // For now, we will just update the internal limit logic if we were using a custom counter,
-        // but with a real semaphore, we can't easily "shrink" capacity.
-        //
-        // WORKAROUND: Just accept the higher concurrency if downgrading, OR:
-        // Re-create the semaphore? No.
-        //
-        // Let's just implement Growth for now. 
-        // If user goes SSD(8) -> HDD(2), we might ideally want to throttle.
-        // But preventing system freeze is key.
-        // We'll leave it as is for now implies "Max Seen Limit".
-        // Better approach: Since `NavigateTo` clears the queue usually, 
-        // we can assume the pool is draining.
-        // We will try to acquire.
-        for (int i=0; i < -delta; ++i) m_ioSemaphore.acquire();
+        // Non-blocking shrink avoids stalling submit path when workers still hold permits.
+        // We shrink as much as currently available and converge on subsequent updates.
+        int reduced = 0;
+        for (int i = 0; i < -delta; ++i) {
+            if (!m_ioSemaphore.try_acquire()) break;
+            reduced++;
+        }
+        newLimit = m_ioLimit - reduced;
     }
     m_ioLimit = newLimit;
     
@@ -588,6 +578,8 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
     uint32_t currentGen = m_generationID.load();
     
     int addedCount = 0;
+    m_pendingJobs.reserve(m_pendingJobs.size() + batch.size());
+    m_inFlightTiles.reserve(m_inFlightTiles.size() + batch.size());
     for (const auto& item : batch) {
         // [Dedup] Skip if this tile is already queued or being decoded
         uint64_t tileHash = MakeTileHash(item.coord.col, item.coord.row, item.coord.lod);
@@ -633,6 +625,7 @@ void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, s
     int addedCount = 0;
 
     m_pendingJobs.reserve(m_pendingJobs.size() + batch.size());
+    m_inFlightTiles.reserve(m_inFlightTiles.size() + batch.size());
 
     for (const auto& item : batch) {
         uint64_t tileHash = MakeTileHash(item.first.col, item.first.row, item.first.lod);
