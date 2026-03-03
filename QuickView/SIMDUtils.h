@@ -1,8 +1,26 @@
 #pragma once
 #include <cstdint>
+#include <array>
+#include <algorithm>
 #include <immintrin.h>
 #include <vector>
 #include <string>
+#if defined(__has_include)
+#if __has_include(<simd>)
+#include <simd>
+#define QVIEW_SIMDUTILS_HAS_STD_SIMD 1
+#else
+#define QVIEW_SIMDUTILS_HAS_STD_SIMD 0
+#endif
+#else
+#define QVIEW_SIMDUTILS_HAS_STD_SIMD 0
+#endif
+
+#if QVIEW_SIMDUTILS_HAS_STD_SIMD && defined(__cpp_lib_simd) && (__cpp_lib_simd >= 202207L)
+#define QVIEW_SIMDUTILS_USE_STD_SIMD_RESIZE 1
+#else
+#define QVIEW_SIMDUTILS_USE_STD_SIMD_RESIZE 0
+#endif
 #include "SystemInfo.h"
 
 namespace SIMDUtils {
@@ -185,53 +203,107 @@ namespace SIMDUtils {
         }
     }
 
-    // AVX-optimized Bilinear Resize
+    // Bilinear Resize with precomputed coefficients + optional std::simd channel path
     inline void ResizeBilinear(const uint8_t* src, int w, int h, int srcStride, uint8_t* dst, int newW, int newH, int dstStride = 0) {
         if (!src || !dst || w <= 0 || h <= 0 || newW <= 0 || newH <= 0) return;
         if (srcStride == 0) srcStride = w * 4;
         if (dstStride == 0) dstStride = newW * 4;
 
-        // Precompute weights (Fixed-point 11 bits)
-        std::vector<int> x_ofs(newW);
-        std::vector<int> alpha(newW);
-        for (int i = 0; i < newW; i++) {
-            float gx = (float)i * (w - 1) / newW;
-            int gxi = (int)gx;
-            x_ofs[i] = gxi;
-            alpha[i] = (int)((gx - gxi) * 2048);
-        }
+        constexpr int kWeightBits = 11;
+        constexpr int kWeightScale = 1 << kWeightBits;      // 2048
+        constexpr int kWeightShift = kWeightBits * 2;       // 22
+        constexpr int kWeightRound = 1 << (kWeightShift - 1);
+
+        struct AxisCoeff {
+            int idx0;
+            int idx1;
+            int w0;
+            int w1;
+        };
+
+        auto buildAxisCoeff = [kWeightScale](int srcSize, int dstSize, std::vector<AxisCoeff>& out) {
+            out.resize(dstSize);
+            if (srcSize <= 1 || dstSize <= 1) {
+                for (int i = 0; i < dstSize; ++i) {
+                    out[i].idx0 = 0;
+                    out[i].idx1 = 0;
+                    out[i].w0 = kWeightScale;
+                    out[i].w1 = 0;
+                }
+                return;
+            }
+
+            const double scale = static_cast<double>(srcSize - 1) / static_cast<double>(dstSize - 1);
+            for (int i = 0; i < dstSize; ++i) {
+                const double srcPos = static_cast<double>(i) * scale;
+                int idx0 = static_cast<int>(srcPos);
+                idx0 = std::clamp(idx0, 0, srcSize - 1);
+                const int idx1 = std::min(idx0 + 1, srcSize - 1);
+
+                const double frac = srcPos - static_cast<double>(idx0);
+                int w1 = static_cast<int>(frac * static_cast<double>(kWeightScale) + 0.5);
+                w1 = std::clamp(w1, 0, kWeightScale);
+                const int w0 = kWeightScale - w1;
+
+                out[i].idx0 = idx0;
+                out[i].idx1 = idx1;
+                out[i].w0 = w0;
+                out[i].w1 = w1;
+            }
+        };
+
+        std::vector<AxisCoeff> xCoeff;
+        std::vector<AxisCoeff> yCoeff;
+        buildAxisCoeff(w, newW, xCoeff);
+        buildAxisCoeff(h, newH, yCoeff);
 
         // Process rows
-        for (int y = 0; y < newH; y++) {
-            float gy = (float)y * (h - 1) / newH;
-            int y0 = (int)gy;
-            int y1 = y0 + 1;
-            int b = (int)((gy - y0) * 2048);
-            int inv_b = 2048 - b;
+        for (int y = 0; y < newH; ++y) {
+            const AxisCoeff yc = yCoeff[y];
+            const uint8_t* row0 = src + static_cast<size_t>(yc.idx0) * static_cast<size_t>(srcStride);
+            const uint8_t* row1 = src + static_cast<size_t>(yc.idx1) * static_cast<size_t>(srcStride);
+            uint8_t* pd = dst + static_cast<size_t>(y) * static_cast<size_t>(dstStride);
 
-            const uint8_t* p0 = src + (size_t)y0 * srcStride;
-            const uint8_t* p1 = src + (size_t)y1 * srcStride;
-            uint8_t* pd = dst + (size_t)y * dstStride;
+            for (int x = 0; x < newW; ++x) {
+                const AxisCoeff xc = xCoeff[x];
+                const uint8_t* s00 = row0 + static_cast<size_t>(xc.idx0) * 4;
+                const uint8_t* s01 = row0 + static_cast<size_t>(xc.idx1) * 4;
+                const uint8_t* s10 = row1 + static_cast<size_t>(xc.idx0) * 4;
+                const uint8_t* s11 = row1 + static_cast<size_t>(xc.idx1) * 4;
 
-            int x = 0;
-            // Optimizable Loop (BGRA 4-channel)
-            for (; x < newW; x++) {
-                int x0 = x_ofs[x];
-                int x1 = x0 + 1;
-                int a = alpha[x];
-                int inv_a = 2048 - a;
+                const int w00 = xc.w0 * yc.w0;
+                const int w01 = xc.w1 * yc.w0;
+                const int w10 = xc.w0 * yc.w1;
+                const int w11 = xc.w1 * yc.w1;
 
-                const uint8_t* s00 = p0 + x0 * 4;
-                const uint8_t* s01 = p0 + x1 * 4;
-                const uint8_t* s10 = p1 + x0 * 4;
-                const uint8_t* s11 = p1 + x1 * 4;
+#if QVIEW_SIMDUTILS_USE_STD_SIMD_RESIZE
+                using i32x4 = std::simd<int32_t, std::simd_abi::fixed_size<4>>;
+                std::array<int32_t, 4> s00Lane = { static_cast<int32_t>(s00[0]), static_cast<int32_t>(s00[1]), static_cast<int32_t>(s00[2]), static_cast<int32_t>(s00[3]) };
+                std::array<int32_t, 4> s01Lane = { static_cast<int32_t>(s01[0]), static_cast<int32_t>(s01[1]), static_cast<int32_t>(s01[2]), static_cast<int32_t>(s01[3]) };
+                std::array<int32_t, 4> s10Lane = { static_cast<int32_t>(s10[0]), static_cast<int32_t>(s10[1]), static_cast<int32_t>(s10[2]), static_cast<int32_t>(s10[3]) };
+                std::array<int32_t, 4> s11Lane = { static_cast<int32_t>(s11[0]), static_cast<int32_t>(s11[1]), static_cast<int32_t>(s11[2]), static_cast<int32_t>(s11[3]) };
 
-                // Manual unroll for RGBA channels
-                for (int c = 0; c < 4; c++) {
-                    int val = (s00[c] * inv_a * inv_b) + (s01[c] * a * inv_b) +
-                              (s10[c] * inv_a * b) + (s11[c] * a * b);
-                    pd[x*4+c] = (uint8_t)((val + 2097152) >> 22);
-                }
+                i32x4 v00; v00.copy_from(s00Lane.data(), std::element_aligned);
+                i32x4 v01; v01.copy_from(s01Lane.data(), std::element_aligned);
+                i32x4 v10; v10.copy_from(s10Lane.data(), std::element_aligned);
+                i32x4 v11; v11.copy_from(s11Lane.data(), std::element_aligned);
+
+                i32x4 mixed = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
+                mixed = (mixed + i32x4(kWeightRound)) >> kWeightShift;
+
+                std::array<int32_t, 4> outLane;
+                mixed.copy_to(outLane.data(), std::element_aligned);
+                pd[static_cast<size_t>(x) * 4 + 0] = static_cast<uint8_t>(outLane[0]);
+                pd[static_cast<size_t>(x) * 4 + 1] = static_cast<uint8_t>(outLane[1]);
+                pd[static_cast<size_t>(x) * 4 + 2] = static_cast<uint8_t>(outLane[2]);
+                pd[static_cast<size_t>(x) * 4 + 3] = static_cast<uint8_t>(outLane[3]);
+#else
+                const size_t dstBase = static_cast<size_t>(x) * 4;
+                pd[dstBase + 0] = static_cast<uint8_t>((s00[0] * w00 + s01[0] * w01 + s10[0] * w10 + s11[0] * w11 + kWeightRound) >> kWeightShift);
+                pd[dstBase + 1] = static_cast<uint8_t>((s00[1] * w00 + s01[1] * w01 + s10[1] * w10 + s11[1] * w11 + kWeightRound) >> kWeightShift);
+                pd[dstBase + 2] = static_cast<uint8_t>((s00[2] * w00 + s01[2] * w01 + s10[2] * w10 + s11[2] * w11 + kWeightRound) >> kWeightShift);
+                pd[dstBase + 3] = static_cast<uint8_t>((s00[3] * w00 + s01[3] * w01 + s10[3] * w10 + s11[3] * w11 + kWeightRound) >> kWeightShift);
+#endif
             }
         }
     }

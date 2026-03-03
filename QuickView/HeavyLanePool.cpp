@@ -552,7 +552,8 @@ void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::s
     
     // [Dedup] Check if tile is already in-flight
     uint64_t tileHash = MakeTileHash(coord.col, coord.row, coord.lod);
-    if (m_inFlightTiles.count(tileHash)) {
+    const auto [_, inserted] = m_inFlightTiles.insert(tileHash);
+    if (!inserted) {
         return; // Already queued or running
     }
 
@@ -568,7 +569,6 @@ void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::s
     job.genID = m_generationID.load(); // [Smart Pull]
     
     m_pendingJobs.push_back(job);
-    m_inFlightTiles.insert(tileHash);
     std::push_heap(m_pendingJobs.begin(), m_pendingJobs.end());
     
     TryExpand();
@@ -592,7 +592,7 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
     for (const auto& item : batch) {
         // [Dedup] Skip if this tile is already queued or being decoded
         uint64_t tileHash = MakeTileHash(item.coord.col, item.coord.row, item.coord.lod);
-        if (m_inFlightTiles.count(tileHash)) {
+        if (!m_inFlightTiles.insert(tileHash).second) {
             continue; // Already in-flight, skip duplicate
         }
         
@@ -607,7 +607,6 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
         job.priority = item.priority;
         job.genID = currentGen;
         m_pendingJobs.push_back(job);
-        m_inFlightTiles.insert(tileHash);
         addedCount++;
     }
     
@@ -638,7 +637,7 @@ void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, s
 
     for (const auto& item : batch) {
         uint64_t tileHash = MakeTileHash(item.first.col, item.first.row, item.first.lod);
-        if (m_inFlightTiles.count(tileHash)) {
+        if (!m_inFlightTiles.insert(tileHash).second) {
             continue;
         }
 
@@ -655,7 +654,6 @@ void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, s
         
         job.genID = currentGen;
         m_pendingJobs.push_back(job);
-        m_inFlightTiles.insert(tileHash);
         addedCount++;
     }
 

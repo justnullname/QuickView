@@ -42,6 +42,22 @@ using namespace QuickView;
 #include <thread>
 #include "PreviewExtractor.h"
 #include "MappedFile.h" // [Opt]
+#if defined(__has_include)
+#if __has_include(<simd>)
+#include <simd>
+#define QUICKVIEW_HAS_STD_SIMD 1
+#else
+#define QUICKVIEW_HAS_STD_SIMD 0
+#endif
+#else
+#define QUICKVIEW_HAS_STD_SIMD 0
+#endif
+
+#if QUICKVIEW_HAS_STD_SIMD && defined(__cpp_lib_simd) && (__cpp_lib_simd >= 202207L)
+#define QUICKVIEW_USE_STD_SIMD_HIST 1
+#else
+#define QUICKVIEW_USE_STD_SIMD_HIST 0
+#endif
 
 // Forward declaration
 static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer);
@@ -7085,76 +7101,70 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
         const uint8_t* row = ptr + (UINT64)y * stride;
         UINT x = 0;
     
-        // [AVX2] SIMD Optimization for Luminance Calculation
-        // Process 8 pixels at a time
-        const UINT width8 = frame.width & ~7; // Align to 8
-    
-        // Constants for Luminance: (R*299 + G*587 + B*114) / 1000
-        // We use integer arithmetic. 8-bit * 16-bit coeff fits in 32-bit sum.
-        // 0000 012B 024B 0072 (A R G B in Little Endian registers)
-        // R=299(0x12B), G=587(0x24B), B=114(0x72)
-        const __m256i vCoeffs = _mm256_set1_epi64x(0x0000012B024B0072);
-        
-        // For integer division by 1000:
-        // x / 1000 ~= (x * 67109) >> 26
-        const __m256i vMul = _mm256_set1_epi32(67109);
-        
+        // Process 8 pixels per iteration.
+        const UINT width8 = frame.width & ~7u;
+
+#if QUICKVIEW_USE_STD_SIMD_HIST
+        using u32x8 = std::simd<uint32_t, std::simd_abi::fixed_size<8>>;
+        alignas(32) uint32_t bLane[8];
+        alignas(32) uint32_t gLane[8];
+        alignas(32) uint32_t rLane[8];
+        alignas(32) uint32_t lLane[8];
+
         for (; x < width8; x += 8) {
-            // Load 8 pixels (32 bytes)
-            // 0: B G R A | 1: B G R A ...
+            const uint8_t* p = row + x * 4;
+            for (int i = 0; i < 8; ++i) {
+                const uint8_t* px = p + i * 4;
+                const uint32_t b = px[0];
+                const uint32_t g = px[1];
+                const uint32_t r = px[2];
+                bLane[i] = b;
+                gLane[i] = g;
+                rLane[i] = r;
+                pMetadata->HistB[b]++;
+                pMetadata->HistG[g]++;
+                pMetadata->HistR[r]++;
+            }
+
+            u32x8 vb;
+            u32x8 vg;
+            u32x8 vr;
+            vb.copy_from(bLane, std::element_aligned);
+            vg.copy_from(gLane, std::element_aligned);
+            vr.copy_from(rLane, std::element_aligned);
+
+            const u32x8 vl = (vr * 299u + vg * 587u + vb * 114u + 500u) / 1000u;
+            vl.copy_to(lLane, std::element_aligned);
+
+            for (int i = 0; i < 8; ++i) {
+                pMetadata->HistL[lLane[i]]++;
+            }
+        }
+#else
+        // [AVX2] SIMD Optimization for Luminance Calculation
+        const __m256i vCoeffs = _mm256_set1_epi64x(0x0000012B024B0072);
+        const __m256i vMul = _mm256_set1_epi32(67109);
+
+        for (; x < width8; x += 8) {
             __m256i vPixels = _mm256_loadu_si256((const __m256i*)(row + x * 4));
-            
-            // Expand to 16-bit (0..3 and 4..7) to allow Multiply-Add
             __m256i vPix03 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(vPixels));
             __m256i vPix47 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(vPixels, 1));
-            
-            // Multiply and Horizontal Add pairs
-            __m256i vSum03 = _mm256_madd_epi16(vPix03, vCoeffs); // 32-bit integers
+            __m256i vSum03 = _mm256_madd_epi16(vPix03, vCoeffs);
             __m256i vSum47 = _mm256_madd_epi16(vPix47, vCoeffs);
-            
-            // Horizontal Add adjacent dwords to sum BG + RA
-            // For P0: vSum03[0] = B*Cb + G*Cg. vSum03[1] = R*Cr + A*0. Sum = L_scaled.
-            // _mm256_hadd_epi32 adds adjacent dwords.
-            // Note: hadd acts on 128-bit lanes. 
-            // Lane 0: [S0 S1 S2 S3] -> [S0+S1, S2+S3, S0+S1, S2+S3] ?? No.
-            // hadd: dest[0]=src[0]+src[1], dest[1]=src[2]+src[3].
-            // P0=S0+S1. P1=S2+S3. P2=S4+S5...
-            __m256i vLuma03 = _mm256_hadd_epi32(vSum03, vSum03); 
-            // Result: [P0 P1 P0 P1 | P2 P3 P2 P3] (duplicated due to hadd(x,x))
-            
-            // vLuma03 contains P0, P1 in low 64, P2, P3 in high 64 of low lane.
-            
+            __m256i vLuma03 = _mm256_hadd_epi32(vSum03, vSum03);
             __m256i vLuma47 = _mm256_hadd_epi32(vSum47, vSum47);
-            
-            // Division by 1000 approx
             __m256i vDiv03 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma03, vMul), 26);
             __m256i vDiv47 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma47, vMul), 26);
-            
-            // Extract Luma values (scalar is acceptable since binning is scalar)
-            // Layout of vDiv03: [L0 L1 L0 L1 | L2 L3 L2 L3]
+
             uint32_t l0 = _mm256_cvtsi256_si32(vDiv03);
             uint32_t l1 = _mm256_extract_epi32(vDiv03, 1);
-            uint32_t l2 = _mm256_extract_epi32(vDiv03, 4); // Jump to second lane? No.
-            // Lane 0 (low 128): [L0 L1 L0 L1] (idx 0,1,2,3)
-            // Lane 1 (high 128): [L2 L3 L2 L3] (idx 4,5,6,7)
-            // Wait, hadd on 256 uses src1 low, src2 low -> dest low. src1 high, src2 high -> dest high.
-            // vSum03 = [P0 P1 P2 P3] (conceptually 4 pixels, 8 ints).
-            // A: [P0 P1] [P2 P3]
-            // B: [P0 P1] [P2 P3]
-            // hadd(A, B) -> Low: A_Low_Hadd, B_Low_Hadd.
-            // A_Low_Hadd: P0, P1. B_Low_Hadd: P0, P1.
-            // Result Low: [P0 P1 P0 P1]. High: [P2 P3 P2 P3].
-            // Indices: 0,1,2,3, 4,5,6,7.
-            // 0=P0, 1=P1. 4=P2, 5=P3.
-            
+            uint32_t l2 = _mm256_extract_epi32(vDiv03, 4);
             uint32_t l3 = _mm256_extract_epi32(vDiv03, 5);
-            
             uint32_t l4 = _mm256_cvtsi256_si32(vDiv47);
             uint32_t l5 = _mm256_extract_epi32(vDiv47, 1);
             uint32_t l6 = _mm256_extract_epi32(vDiv47, 4);
             uint32_t l7 = _mm256_extract_epi32(vDiv47, 5);
-            
-            // Binning
+
             const uint8_t* p = row + x * 4;
             pMetadata->HistB[p[0]]++; pMetadata->HistG[p[1]]++; pMetadata->HistR[p[2]]++; pMetadata->HistL[l0]++;
             pMetadata->HistB[p[4]]++; pMetadata->HistG[p[5]]++; pMetadata->HistR[p[6]]++; pMetadata->HistL[l1]++;
@@ -7165,6 +7175,7 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
             pMetadata->HistB[p[24]]++; pMetadata->HistG[p[25]]++; pMetadata->HistR[p[26]]++; pMetadata->HistL[l6]++;
             pMetadata->HistB[p[28]]++; pMetadata->HistG[p[29]]++; pMetadata->HistR[p[30]]++; pMetadata->HistL[l7]++;
         }
+#endif
 
     for (; x < frame.width; x++) {
         // Unrolling or SIMD could be added here, but scalar is fast enough with skip sampling.
