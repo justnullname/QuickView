@@ -436,6 +436,11 @@ public:
         LODCache lodCache;                            // shared_ptr pixels
         LODCache masterCache;                         // shared_ptr Master LOD0
         std::shared_ptr<QuickView::MappedFile> mmf;   // Source file mapping
+        // [Fix] Warmup thread must be joined BEFORE backing is destroyed.
+        // libjxl's runner threads may still be writing to backing.view.
+        // Declared LAST so it's destroyed FIRST (C++ reverse declaration order).
+        // std::jthread destructor calls request_stop() + join() automatically.
+        std::jthread warmupThread;
     };
     void EnqueueTrash(TrashBag&& bag);
 

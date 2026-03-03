@@ -177,11 +177,20 @@ void HeavyLanePool::ResetBenchState() {
         bag.backing = std::move(m_masterBacking);
         // m_masterBacking is now empty shells thanks to Rule-of-5
     }
+    // [Fix] Move warmup thread INTO the TrashBag so GC joins it BEFORE
+    // destroying the MMF backing. libjxl's runner threads may still be
+    // writing to backing.view — must wait for them to finish.
+    // std::jthread destructor auto-calls request_stop() + join().
+    if (m_masterWarmupThread.joinable()) {
+        m_masterWarmupThread.request_stop();   // Signal decode to abort (checked between stages)
+        bag.warmupThread = std::move(m_masterWarmupThread);
+    }
+    m_masterWarmupImageId.store(0, std::memory_order_release);
+    m_masterWarmupReady.store(false, std::memory_order_release);
+    m_lodCacheCond.notify_all();
     
-    // Async cleanup: GC thread will handle the heavy destruction
+    // Async cleanup: GC thread will join warmup, then destroy MMF + caches
     EnqueueTrash(std::move(bag));
-    
-    StopMasterWarmup();
     m_isProgressiveJPEG = false;
     m_isProgressiveJXL = false;
     m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image

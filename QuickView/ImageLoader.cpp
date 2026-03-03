@@ -1303,7 +1303,14 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         JxlDecoder* dec = JxlDecoderCreate(NULL);
         if (!dec) return E_OUTOFMEMORY;
 
-        void* runner = CImageLoader::GetJxlRunner();
+        // [Fix] Create a DEDICATED runner for this decode session.
+        // The global GetJxlRunner() is shared with metadata reads (LoadMetadata),
+        // LoadJXL, and other consumers across threads. JxlThreadParallelRunner
+        // is NOT thread-safe for concurrent use — corrupts internal state and
+        // causes JXL_DEC_ERROR on subsequent decodes.
+        size_t runnerThreads = std::thread::hardware_concurrency();
+        if (runnerThreads == 0) runnerThreads = 4;
+        void* runner = JxlThreadParallelRunnerCreate(NULL, runnerThreads);
         if (!runner) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
         JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
 
@@ -1311,6 +1318,7 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         int events = JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME_PROGRESSION;
         if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, events)) {
             JxlDecoderDestroy(dec);
+            JxlThreadParallelRunnerDestroy(runner);
             return E_FAIL;
         }
         // Request DC-level progressive detail
@@ -1351,12 +1359,14 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
                                needed / (1024*1024), mmfBufSize / (1024*1024));
                     OutputDebugStringW(dbg);
                     JxlDecoderDestroy(dec);
+                    JxlThreadParallelRunnerDestroy(runner);
                     return E_OUTOFMEMORY;
                 }
 
                 // Direct-to-MMF: libjxl writes directly into the MMF view!
                 if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutBuffer(dec, &pixFmt, mmfBuf, needed)) {
                     JxlDecoderDestroy(dec);
+                    JxlThreadParallelRunnerDestroy(runner);
                     return E_FAIL;
                 }
                 bufferSet = true;
@@ -1383,6 +1393,7 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         }
 
         JxlDecoderDestroy(dec);
+        JxlThreadParallelRunnerDestroy(runner);
 
         if (FAILED(hr) || !bufferSet) {
             OutputDebugStringW(L"[MMF] JXL decode to MMF failed\n");
