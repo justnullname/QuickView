@@ -216,6 +216,11 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
         WriteFile(hPipe, path.c_str(), bytesToWrite, &written, nullptr);
         FlushFileBuffers(hPipe);
         CloseHandle(hPipe);
+
+        // 核心修复：路由进程目前还持有 Explorer 给予的前台焦点权限
+        // 在退出前，将其赋予所有即将请求前台权力的进程（如主进程或新产生的子进程）
+        AllowSetForegroundWindow(ASFW_ANY);
+
         return RouteResult::RoutedToMaster;
     }
 

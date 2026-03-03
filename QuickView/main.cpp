@@ -2915,6 +2915,29 @@ static bool ReadSingleInstanceFlag() {
 // [Phase 0] Master flag — true if this process runs the pipe server.
 static bool g_isMasterProcess = false;
 
+// 强制将窗口置顶并获取焦点的辅助函数
+static void ForceForegroundWindow(HWND hwnd) {
+    if (!hwnd) return;
+    
+    HWND hForeground = GetForegroundWindow();
+    DWORD idThreadForeground = GetWindowThreadProcessId(hForeground, NULL);
+    DWORD idThreadCurrent = GetCurrentThreadId();
+    
+    if (idThreadCurrent != idThreadForeground) {
+        // 附加当前线程的输入处理到前台线程
+        AttachThreadInput(idThreadCurrent, idThreadForeground, TRUE);
+        
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+        
+        // 解除附加
+        AttachThreadInput(idThreadCurrent, idThreadForeground, FALSE);
+    } else {
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
     // === Priority 0: Tool subprocess dispatch (must be first) ===
     int toolExitCode = 0;
@@ -3089,6 +3112,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     g_toolbar.SetPinned(g_config.LockBottomToolbar); // Lock toolbar from config
     
     ShowWindow(hwnd, nCmdShow); UpdateWindow(hwnd);
+    ForceForegroundWindow(hwnd); // 强制获取焦点，避免被系统拦截在后台
     
     // Initialize Toolbar layout with window size (fixes initial rendering issue)
     {
@@ -3231,7 +3255,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_navigator.Initialize(*pathStr);
             LoadImageAsync(hwnd, *pathStr);
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
-            SetForegroundWindow(hwnd);
+            ForceForegroundWindow(hwnd); // 替代原本可能失效的 SetForegroundWindow
         }
         delete pathStr;
         return 0;
