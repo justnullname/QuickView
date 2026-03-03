@@ -152,6 +152,14 @@ using namespace QuickView::Codec;
 
 // [v5.0] Forward declaration for LoadToThumbnail
 static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result);
+namespace QuickView {
+    namespace Codec {
+        namespace PsdComposite {
+            static bool IsPSB(const uint8_t* data, size_t size);
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result);
+        }
+    }
+}
 
 // Helper to detect format from buffer
 static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
@@ -3209,6 +3217,75 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
     else if (detectedFmt == L"PSD") {
         HRESULT hr = LoadStbImage(filePath, ppBitmap);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (PSD)"; return S_OK; }
+
+        // PSB path: try native composite decoder (Raw/RLE).
+        std::vector<uint8_t> psdBuf;
+        if (ReadFileToVector(filePath, psdBuf)) {
+            DecodeContext decodeCtx;
+            decodeCtx.allocator = [](size_t s) -> uint8_t* { return new (std::nothrow) uint8_t[s]; };
+            decodeCtx.freeFunc = [](uint8_t* p) { delete[] p; };
+            decodeCtx.checkCancel = checkCancel;
+
+            DecodeResult decodeRes;
+            hr = QuickView::Codec::PsdComposite::Load(psdBuf.data(), psdBuf.size(), decodeCtx, decodeRes);
+            if (SUCCEEDED(hr) && decodeRes.success && decodeRes.pixels) {
+                const UINT cb = static_cast<UINT>(decodeRes.stride * decodeRes.height);
+                hr = CreateWICBitmapFromMemory(
+                    decodeRes.width,
+                    decodeRes.height,
+                    GUID_WICPixelFormat32bppBGRA,
+                    decodeRes.stride,
+                    cb,
+                    decodeRes.pixels,
+                    ppBitmap);
+                decodeCtx.freeFunc(decodeRes.pixels);
+                if (SUCCEEDED(hr)) {
+                    if (pLoaderName) *pLoaderName = decodeRes.metadata.LoaderName.empty() ? L"PSB Composite" : decodeRes.metadata.LoaderName;
+                    return S_OK;
+                }
+            } else if (decodeRes.pixels) {
+                decodeCtx.freeFunc(decodeRes.pixels);
+            }
+
+            // Fallback to embedded JPEG preview if full composite decode fails.
+            PreviewExtractor::ExtractedData exData;
+            if (PreviewExtractor::ExtractFromPSD(psdBuf.data(), psdBuf.size(), exData) &&
+                exData.IsValid() &&
+                exData.size <= static_cast<size_t>(MAXDWORD)) {
+                ComPtr<IWICStream> stream;
+                hr = m_wicFactory->CreateStream(&stream);
+                if (SUCCEEDED(hr)) {
+                    hr = stream->InitializeFromMemory(const_cast<BYTE*>(exData.pData), static_cast<DWORD>(exData.size));
+                }
+
+                ComPtr<IWICBitmapDecoder> decoder;
+                if (SUCCEEDED(hr)) {
+                    hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
+                }
+
+                ComPtr<IWICBitmapFrameDecode> frame;
+                if (SUCCEEDED(hr)) hr = decoder->GetFrame(0, &frame);
+
+                ComPtr<IWICFormatConverter> converter;
+                if (SUCCEEDED(hr)) hr = m_wicFactory->CreateFormatConverter(&converter);
+                if (SUCCEEDED(hr)) {
+                    hr = converter->Initialize(
+                        frame.Get(),
+                        GUID_WICPixelFormat32bppPBGRA,
+                        WICBitmapDitherTypeNone,
+                        nullptr,
+                        0.f,
+                        WICBitmapPaletteTypeMedianCut);
+                }
+                if (SUCCEEDED(hr)) {
+                    hr = m_wicFactory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, ppBitmap);
+                }
+                if (SUCCEEDED(hr)) {
+                    if (pLoaderName) *pLoaderName = L"PSD Preview (Embedded JPEG)";
+                    return S_OK;
+                }
+            }
+        }
     }
     else if (detectedFmt == L"HDR") {
         HRESULT hr = LoadStbImage(filePath, ppBitmap, true); // float
@@ -3283,7 +3360,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
              HRESULT hr = LoadTinyExrImage(filePath, ppBitmap);
              if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"TinyEXR"; return S_OK; }
          }
-         else if (path.ends_with(L".psd")) {
+         else if (path.ends_with(L".psd") || path.ends_with(L".psb")) {
              HRESULT hr = LoadStbImage(filePath, ppBitmap);
              if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Stb Image (PSD)"; return S_OK; }
          }
@@ -4420,6 +4497,300 @@ namespace QuickView {
             }
         }
 
+        namespace PsdComposite {
+            struct HeaderInfo {
+                uint16_t version = 0;   // 1=PSD, 2=PSB
+                uint16_t channels = 0;
+                uint32_t width = 0;
+                uint32_t height = 0;
+                uint16_t depth = 0;     // 8/16 supported
+                uint16_t colorMode = 0; // 1=Gray, 3=RGB supported
+                uint16_t compression = 0; // 0=Raw, 1=RLE
+                size_t imageDataOffset = 0;
+            };
+
+            static inline uint16_t ReadBE16(const uint8_t* p) {
+                return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | p[1]);
+            }
+
+            static inline uint32_t ReadBE32(const uint8_t* p) {
+                return (static_cast<uint32_t>(p[0]) << 24) |
+                       (static_cast<uint32_t>(p[1]) << 16) |
+                       (static_cast<uint32_t>(p[2]) << 8) |
+                       static_cast<uint32_t>(p[3]);
+            }
+
+            static inline uint64_t ReadBE64(const uint8_t* p) {
+                return (static_cast<uint64_t>(p[0]) << 56) |
+                       (static_cast<uint64_t>(p[1]) << 48) |
+                       (static_cast<uint64_t>(p[2]) << 40) |
+                       (static_cast<uint64_t>(p[3]) << 32) |
+                       (static_cast<uint64_t>(p[4]) << 24) |
+                       (static_cast<uint64_t>(p[5]) << 16) |
+                       (static_cast<uint64_t>(p[6]) << 8) |
+                       static_cast<uint64_t>(p[7]);
+            }
+
+            static inline bool FitsRange(size_t offset, size_t need, size_t size) {
+                return offset <= size && need <= (size - offset);
+            }
+
+            static bool ParseHeader(const uint8_t* data, size_t size, HeaderInfo& out) {
+                if (!data || size < 26) return false;
+                if (std::memcmp(data, "8BPS", 4) != 0) return false;
+
+                out.version = ReadBE16(data + 4);
+                if (out.version != 1 && out.version != 2) return false;
+
+                out.channels = ReadBE16(data + 12);
+                out.height = ReadBE32(data + 14);
+                out.width = ReadBE32(data + 18);
+                out.depth = ReadBE16(data + 22);
+                out.colorMode = ReadBE16(data + 24);
+
+                if (out.channels == 0 || out.width == 0 || out.height == 0) return false;
+
+                size_t off = 26;
+
+                if (!FitsRange(off, 4, size)) return false;
+                const uint32_t colorModeLen = ReadBE32(data + off);
+                off += 4;
+                if (!FitsRange(off, colorModeLen, size)) return false;
+                off += static_cast<size_t>(colorModeLen);
+
+                if (!FitsRange(off, 4, size)) return false;
+                const uint32_t imageResLen = ReadBE32(data + off);
+                off += 4;
+                if (!FitsRange(off, imageResLen, size)) return false;
+                off += static_cast<size_t>(imageResLen);
+
+                uint64_t layerMaskLen = 0;
+                if (out.version == 1) {
+                    if (!FitsRange(off, 4, size)) return false;
+                    layerMaskLen = ReadBE32(data + off);
+                    off += 4;
+                } else {
+                    if (!FitsRange(off, 8, size)) return false;
+                    layerMaskLen = ReadBE64(data + off);
+                    off += 8;
+                }
+
+                if (layerMaskLen > static_cast<uint64_t>(size - off)) return false;
+                off += static_cast<size_t>(layerMaskLen);
+
+                if (!FitsRange(off, 2, size)) return false;
+                out.compression = ReadBE16(data + off);
+                out.imageDataOffset = off;
+                return true;
+            }
+
+            static bool IsPSB(const uint8_t* data, size_t size) {
+                HeaderInfo header;
+                return ParseHeader(data, size, header) && header.version == 2;
+            }
+
+            static bool DecodePackBitsRow(const uint8_t* src, size_t srcSize, uint8_t* dst, size_t dstSize) {
+                size_t si = 0;
+                size_t di = 0;
+
+                while (si < srcSize && di < dstSize) {
+                    const int8_t n = static_cast<int8_t>(src[si++]);
+                    if (n >= 0) {
+                        const size_t count = static_cast<size_t>(n) + 1;
+                        if (count > srcSize - si || count > dstSize - di) return false;
+                        std::memcpy(dst + di, src + si, count);
+                        si += count;
+                        di += count;
+                    } else if (n >= -127) {
+                        if (si >= srcSize) return false;
+                        const uint8_t value = src[si++];
+                        const size_t count = static_cast<size_t>(1 - n);
+                        if (count > dstSize - di) return false;
+                        std::memset(dst + di, value, count);
+                        di += count;
+                    } else {
+                        // n == -128: no-op
+                    }
+                }
+
+                return di == dstSize;
+            }
+
+            static inline uint8_t SampleTo8Bit(const uint8_t* row, uint32_t srcX, uint16_t depth) {
+                if (depth == 16) {
+                    return row[static_cast<size_t>(srcX) * 2]; // use high byte
+                }
+                return row[srcX];
+            }
+
+            static void WriteChannelToBgraRow(
+                uint8_t* dstRow,
+                const std::vector<uint32_t>& srcXForOut,
+                const uint8_t* srcRow,
+                uint16_t depth,
+                uint16_t colorMode,
+                uint16_t channelIndex)
+            {
+                const size_t outW = srcXForOut.size();
+                if (colorMode == 3) {
+                    for (size_t ox = 0; ox < outW; ++ox) {
+                        const uint8_t v = SampleTo8Bit(srcRow, srcXForOut[ox], depth);
+                        uint8_t* px = dstRow + ox * 4;
+                        if (channelIndex == 0) px[2] = v;      // R
+                        else if (channelIndex == 1) px[1] = v; // G
+                        else if (channelIndex == 2) px[0] = v; // B
+                        else if (channelIndex == 3) px[3] = v; // A
+                    }
+                } else if (colorMode == 1) {
+                    for (size_t ox = 0; ox < outW; ++ox) {
+                        const uint8_t v = SampleTo8Bit(srcRow, srcXForOut[ox], depth);
+                        uint8_t* px = dstRow + ox * 4;
+                        if (channelIndex == 0) {
+                            px[0] = v;
+                            px[1] = v;
+                            px[2] = v;
+                        } else if (channelIndex == 1) {
+                            px[3] = v; // gray alpha if present
+                        }
+                    }
+                }
+            }
+
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                HeaderInfo header;
+                if (!ParseHeader(data, size, header)) return E_FAIL;
+
+                const bool supportedColorMode = (header.colorMode == 3 || header.colorMode == 1);
+                const bool supportedDepth = (header.depth == 8 || header.depth == 16);
+                const bool supportedCompression = (header.compression == 0 || header.compression == 1);
+                if (!supportedColorMode || !supportedDepth || !supportedCompression) return E_NOTIMPL;
+
+                if (header.colorMode == 3 && header.channels < 3) return E_FAIL;
+                if (header.colorMode == 1 && header.channels < 1) return E_FAIL;
+
+                uint32_t outW = header.width;
+                uint32_t outH = header.height;
+                if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
+                    const double tw = (ctx.targetWidth > 0) ? static_cast<double>(ctx.targetWidth) : static_cast<double>(header.width);
+                    const double th = (ctx.targetHeight > 0) ? static_cast<double>(ctx.targetHeight) : static_cast<double>(header.height);
+                    double scale = (std::min)(tw / static_cast<double>(header.width), th / static_cast<double>(header.height));
+                    if (scale > 1.0) scale = 1.0;
+                    if (scale > 0.0 && scale < 1.0) {
+                        outW = (std::max)(1u, static_cast<uint32_t>(header.width * scale + 0.5));
+                        outH = (std::max)(1u, static_cast<uint32_t>(header.height * scale + 0.5));
+                    }
+                }
+
+                const int stride = CalculateSIMDAlignedStride(static_cast<int>(outW), 4);
+                if (stride <= 0) return E_FAIL;
+
+                const size_t totalSize = static_cast<size_t>(stride) * static_cast<size_t>(outH);
+                uint8_t* pixels = ctx.allocator(totalSize);
+                if (!pixels) return E_OUTOFMEMORY;
+
+                std::memset(pixels, 0, totalSize);
+                for (uint32_t y = 0; y < outH; ++y) {
+                    uint8_t* row = pixels + static_cast<size_t>(y) * stride;
+                    for (uint32_t x = 0; x < outW; ++x) {
+                        row[static_cast<size_t>(x) * 4 + 3] = 255;
+                    }
+                }
+
+                std::vector<uint32_t> srcXForOut(outW);
+                for (uint32_t ox = 0; ox < outW; ++ox) {
+                    uint32_t sx = static_cast<uint32_t>((static_cast<uint64_t>(ox) * header.width) / outW);
+                    if (sx >= header.width) sx = header.width - 1;
+                    srcXForOut[ox] = sx;
+                }
+
+                std::vector<int32_t> srcYToOut(header.height, -1);
+                for (uint32_t oy = 0; oy < outH; ++oy) {
+                    uint32_t sy = static_cast<uint32_t>((static_cast<uint64_t>(oy) * header.height) / outH);
+                    if (sy >= header.height) sy = header.height - 1;
+                    srcYToOut[sy] = static_cast<int32_t>(oy);
+                }
+
+                const size_t rowBytes = static_cast<size_t>(header.width) * ((header.depth == 16) ? 2u : 1u);
+                const size_t compressionOffset = header.imageDataOffset + 2;
+
+                const auto isRelevantChannel = [&](uint16_t c) -> bool {
+                    if (header.colorMode == 3) return c < 4; // RGB + optional alpha
+                    if (header.colorMode == 1) return c < 2; // Gray + optional alpha
+                    return false;
+                };
+
+                if (header.compression == 0) {
+                    if (!FitsRange(compressionOffset, 0, size)) return E_FAIL;
+                    const uint8_t* ptr = data + compressionOffset;
+                    const uint8_t* end = data + size;
+
+                    for (uint16_t c = 0; c < header.channels; ++c) {
+                        for (uint32_t sy = 0; sy < header.height; ++sy) {
+                            if (ctx.checkCancel && (sy % 128 == 0) && ctx.checkCancel()) return E_ABORT;
+                            if (ptr > end || rowBytes > static_cast<size_t>(end - ptr)) return E_FAIL;
+
+                            const int32_t oy = srcYToOut[sy];
+                            if (oy >= 0 && isRelevantChannel(c)) {
+                                uint8_t* dstRow = pixels + static_cast<size_t>(oy) * stride;
+                                WriteChannelToBgraRow(dstRow, srcXForOut, ptr, header.depth, header.colorMode, c);
+                            }
+                            ptr += rowBytes;
+                        }
+                    }
+                } else {
+                    const uint64_t numRows = static_cast<uint64_t>(header.channels) * static_cast<uint64_t>(header.height);
+                    const size_t rleLenField = (header.version == 2) ? 4u : 2u;
+                    if (numRows > (std::numeric_limits<size_t>::max() / rleLenField)) return E_FAIL;
+                    const size_t rleTableBytes = static_cast<size_t>(numRows) * rleLenField;
+                    if (!FitsRange(compressionOffset, rleTableBytes, size)) return E_FAIL;
+
+                    const uint8_t* rleLenTable = data + compressionOffset;
+                    const uint8_t* compPtr = rleLenTable + rleTableBytes;
+                    const uint8_t* end = data + size;
+                    std::vector<uint8_t> decodedRow(rowBytes);
+
+                    for (uint16_t c = 0; c < header.channels; ++c) {
+                        for (uint32_t sy = 0; sy < header.height; ++sy) {
+                            if (ctx.checkCancel && (sy % 128 == 0) && ctx.checkCancel()) return E_ABORT;
+
+                            const uint64_t idx = static_cast<uint64_t>(c) * header.height + sy;
+                            const uint8_t* lenPtr = rleLenTable + static_cast<size_t>(idx) * rleLenField;
+                            const uint32_t packedLen = (rleLenField == 2) ? ReadBE16(lenPtr) : ReadBE32(lenPtr);
+
+                            if (compPtr > end || packedLen > static_cast<uint32_t>(end - compPtr)) return E_FAIL;
+
+                            const int32_t oy = srcYToOut[sy];
+                            if (oy >= 0 && isRelevantChannel(c)) {
+                                if (!DecodePackBitsRow(compPtr, packedLen, decodedRow.data(), rowBytes)) return E_FAIL;
+                                uint8_t* dstRow = pixels + static_cast<size_t>(oy) * stride;
+                                WriteChannelToBgraRow(dstRow, srcXForOut, decodedRow.data(), header.depth, header.colorMode, c);
+                            }
+
+                            compPtr += packedLen;
+                        }
+                    }
+                }
+
+                result.pixels = pixels;
+                result.width = static_cast<int>(outW);
+                result.height = static_cast<int>(outH);
+                result.stride = stride;
+                result.format = PixelFormat::BGRA8888;
+                result.success = true;
+                result.metadata.Format = (header.version == 2) ? L"PSB" : L"PSD";
+                result.metadata.LoaderName = (header.version == 2) ? L"PSB Composite" : L"PSD Composite";
+                result.metadata.Width = header.width;
+                result.metadata.Height = header.height;
+
+                std::wstring details = (header.version == 2) ? L"PSB v2 Composite" : L"PSD Composite";
+                details += (header.compression == 0) ? L" Raw" : L" RLE";
+                if (header.depth == 16) details += L" 16bpc";
+                if (outW != header.width || outH != header.height) details += L" [Scaled]";
+                result.metadata.FormatDetails = details;
+                return S_OK;
+            }
+        }
+
 
 
         namespace Stb {
@@ -4632,7 +5003,38 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
                  return S_OK; 
              }
         }
-        else if (fmt == L"PSD" || fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX") {
+        else if (fmt == L"PSD") {
+             // Prefer native composite decode for PSB (version 2).
+             const bool isPsb = PsdComposite::IsPSB(mappedData, mappedSize);
+             if (isPsb) {
+                 HRESULT hr = PsdComposite::Load(mappedData, mappedSize, ctx, result);
+                 if (hr == E_ABORT || hr == E_OUTOFMEMORY) return hr;
+                 if (SUCCEEDED(hr)) return S_OK;
+             } else {
+                 HRESULT hr = Stb::Load(mappedData, mappedSize, ctx, result);
+                 if (SUCCEEDED(hr)) {
+                     // Stb::Load sets LoaderName to StbImage
+                     return S_OK;
+                 }
+             }
+
+             // Fallback to embedded JPEG preview when full decode is unavailable.
+             PreviewExtractor::ExtractedData exData;
+             if (PreviewExtractor::ExtractFromPSD(mappedData, mappedSize, exData) && exData.IsValid()) {
+                 HRESULT previewHr = JPEG::Load(exData.pData, exData.size, ctx, result);
+                 if (SUCCEEDED(previewHr)) {
+                     result.metadata.Format = L"PSD";
+                     result.metadata.LoaderName = L"PSD Preview (Embedded JPEG)";
+                     if (result.metadata.FormatDetails.empty()) {
+                         result.metadata.FormatDetails = L"PSD Preview";
+                     } else {
+                         result.metadata.FormatDetails += L" / PSD Preview";
+                     }
+                     return S_OK;
+                 }
+             }
+        }
+        else if (fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX") {
              HRESULT hr = Stb::Load(mappedData, mappedSize, ctx, result);
              if (SUCCEEDED(hr)) { 
                  // Stb::Load sets LoaderName to StbImage
@@ -5108,16 +5510,22 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         return S_OK;
     }
 
-    // --- [v9.9] PSD (Photoshop) ---
-    // Magic: "8BPS", Version at 4-5 (BE), H at 14-17 (BE), W at 18-21 (BE)
-    if (size >= 22 && data[0] == '8' && data[1] == 'B' && data[2] == 'P' && data[3] == 'S') {
-        pInfo->format = L"PSD";
-        pInfo->height = ((uint32_t)data[14] << 24) | ((uint32_t)data[15] << 16) | 
-                        ((uint32_t)data[16] << 8) | data[17];
-        pInfo->width = ((uint32_t)data[18] << 24) | ((uint32_t)data[19] << 16) | 
-                       ((uint32_t)data[20] << 8) | data[21];
-        pInfo->bitDepth = (data[22] << 8) | data[23]; // Depth at 22-23
-        return S_OK;
+    // --- [v9.9] PSD/PSB (Photoshop) ---
+    // Signature: "8BPS", Version: 1=PSD, 2=PSB
+    if (size >= 26 && data[0] == '8' && data[1] == 'B' && data[2] == 'P' && data[3] == 'S') {
+        const uint16_t version = (static_cast<uint16_t>(data[4]) << 8) | data[5];
+        if (version == 1 || version == 2) {
+            // Keep format as PSD for existing dispatch thresholds.
+            pInfo->format = L"PSD";
+            pInfo->channels = (static_cast<uint16_t>(data[12]) << 8) | data[13];
+            pInfo->height = ((uint32_t)data[14] << 24) | ((uint32_t)data[15] << 16) |
+                            ((uint32_t)data[16] << 8) | data[17];
+            pInfo->width = ((uint32_t)data[18] << 24) | ((uint32_t)data[19] << 16) |
+                           ((uint32_t)data[20] << 8) | data[21];
+            pInfo->bitDepth = (static_cast<uint16_t>(data[22]) << 8) | data[23];
+            pInfo->hasAlpha = (pInfo->channels >= 4);
+            return S_OK;
+        }
     }
 
     // --- [v9.9] HDR (Radiance RGBE) ---

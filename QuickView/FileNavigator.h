@@ -39,7 +39,7 @@ public:
             // Web / Modern
             L".webp", L".avif", L".heic", L".heif", L".svg", L".svgz", L".jxl",
             // Professional / HDR / Legacy
-            L".exr", L".hdr", L".pic", L".psd", L".tga", L".pcx", L".qoi", 
+            L".exr", L".hdr", L".pic", L".psd", L".psb", L".tga", L".pcx", L".qoi", 
             L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
             // RAW Formats (LibRaw supported)
             L".arw", L".cr2", L".cr3", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",

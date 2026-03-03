@@ -14,7 +14,7 @@ namespace QuickView {
         // Tile Size = 512x512 * 4 bytes = 1MB.
         // So 1GB = 1024 Tiles.
         
-        SystemInfo sys = SystemInfo::Cached();
+        const SystemInfo& sys = SystemInfo::Cached();
         size_t totalRam = sys.totalRAM;
         
         // Target: 40%
