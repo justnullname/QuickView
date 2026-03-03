@@ -23,6 +23,7 @@ extern ImageEngine* g_pImageEngine; // [v3.1] Accessor (renamed from g_imageEngi
 extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 
 extern RuntimeConfig g_runtime;
+extern bool g_isLoading; // [Fix] Loading indicator for progress bar
 extern ViewState g_viewState;  // [v3.2] For Nav Indicators
 extern CImageLoader::ImageMetadata g_currentMetadata;  // [v3.2] For Info Panel
 extern std::wstring g_imagePath;  // [v3.2] For Info Panel
@@ -660,7 +661,10 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         !tilePipelineActive &&
         !m_telemetry.baseLayerReady &&
         (m_telemetry.heavyBusyWorkers > 0);
-    const bool decodingActive = hasTileProgressGap || baseLoading;
+    // [Fix] g_isLoading is the authoritative "load in progress" flag from main thread.
+    // It bypasses telemetry conditions which can be stale (e.g. Phase 1 skeleton sets
+    // baseLayerReady=true before Phase 2 resets it, leaving no OnPaint trigger between).
+    const bool decodingActive = hasTileProgressGap || baseLoading || (g_isLoading && !tilePipelineActive);
 
     const DWORD now = GetTickCount();
     if (m_decodeWasActive && !decodingActive) {

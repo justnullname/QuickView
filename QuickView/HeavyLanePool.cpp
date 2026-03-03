@@ -1187,7 +1187,8 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
 
                         const uint8_t* masterView = nullptr;
                         int mW = 0, mH = 0, mS = 0;
-                        if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS)) {
+                        std::unique_lock<std::mutex> masterLock;
+                        if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock)) {
                             size_t dstStride = (size_t)targetW * 4;
                             size_t dstSize = dstStride * targetH;
                             uint8_t* dstBuf = (uint8_t*)_aligned_malloc(dstSize, 32);
@@ -1881,7 +1882,8 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
         // Skip when backing store already exists for this image.
         const uint8_t* existingView = nullptr;
         int bw = 0, bh = 0, bs = 0;
-        if (AcquireMasterBackingView(imageId, &existingView, &bw, &bh, &bs)) {
+        std::unique_lock<std::mutex> masterLock;
+        if (AcquireMasterBackingView(imageId, &existingView, &bw, &bh, &bs, masterLock)) {
             m_masterWarmupReady.store(true, std::memory_order_release);
             m_lodCacheCond.notify_all();
             return;
@@ -2139,16 +2141,18 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
     return S_OK;
 }
 
-bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride) {
+bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride,
+                                               std::unique_lock<std::mutex>& outLock) {
     if (!outPixels || !outW || !outH || !outStride) return false;
 
-    std::lock_guard lock(m_masterBackingMutex);
+    std::unique_lock lock(m_masterBackingMutex);
     if (!m_masterBacking.view || m_masterBacking.imageId != imageId) return false;
 
     *outPixels = m_masterBacking.view;
     *outW = m_masterBacking.width;
     *outH = m_masterBacking.height;
     *outStride = m_masterBacking.stride;
+    outLock = std::move(lock); // Transfer lock ownership to caller
     return true;
 }
 
@@ -2654,8 +2658,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 masterFromRam = true;
             }
         }
+        std::unique_lock<std::mutex> masterLock;
         if (!masterPixelsView) {
-            AcquireMasterBackingView(job.imageId, &masterPixelsView, &masterW, &masterH, &masterStride);
+            AcquireMasterBackingView(job.imageId, &masterPixelsView, &masterW, &masterH, &masterStride, masterLock);
         }
         
         if (masterPixelsView) {
@@ -2754,7 +2759,8 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 // Warmup done — try to acquire Master Cache
                 const uint8_t* masterView = nullptr;
                 int mW = 0, mH = 0, mS = 0;
-                if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS)) {
+                std::unique_lock<std::mutex> masterLock;
+                if (AcquireMasterBackingView(job.imageId, &masterView, &mW, &mH, &mS, masterLock)) {
                     const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                     const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
                     size_t dstStride = (size_t)targetW * 4;

@@ -402,7 +402,10 @@ private:
     HRESULT BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId);
     // [Direct-to-MMF] Pre-create empty MMF file of given size; returns view pointer for direct decode.
     HRESULT BuildMasterBackingStoreEmpty(int width, int height, int stride, ImageID imageId);
-    bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride);
+    // [Fix] Returns a unique_lock that MUST be held for the entire duration of master view usage.
+    // This prevents ResetBenchState from releasing the MMF while tile workers are reading it.
+    bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride,
+                                   std::unique_lock<std::mutex>& outLock);
 
     // [Phase-2] Background warmup for heavy non-ROI formats (PNG/TIFF/AVIF/HEIC).
     // Builds master MMF backing store right after image open to avoid first tile hard stall.

@@ -112,6 +112,7 @@ public:
     
     // Debug accessors
     int GetActiveLayerIndex() const { return m_activeLayerIndex; }
+    bool IsActiveLayerTitan() const { return (m_activeLayerIndex == 0) ? m_imageA.isTitan : m_imageB.isTitan; }
     void GetLayerSpecs(int index, UINT* w, UINT* h) const {
         const auto& layer = (index == 0) ? m_imageA : m_imageB;
         if (w) *w = layer.width;

@@ -259,7 +259,7 @@ static D2D1_RECT_F g_gpsCoordRect = {};  // GPS Coordinates click area
 static D2D1_RECT_F g_filenameRect = {};  // Filename click area
 static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
 static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
-static bool g_isLoading = false;           // Show Wait Cursor
+bool g_isLoading = false;           // Show Wait Cursor
 static std::atomic<uint64_t> g_currentNavToken = 0; // [Phase 3] Navigation Token (deprecated)
 static std::atomic<ImageID> g_currentImageId{0}; // [ImageID] Stable path hash for event filtering
 static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2: Truth/Heavy
@@ -933,6 +933,13 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
     g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
     
     float duration = isFastUpgrade ? 50.0f : (g_slowMotionMode ? (float)SLOW_MOTION_DURATION : (float)CROSS_FADE_DURATION);
+    // [Fix] Instant swap when navigating away from Titan mode.
+    // Old active layer's VirtualSurface tiles linger during fade-out animation,
+    // causing stale tile artifacts visible for the fade duration (~150ms).
+    // Phase 1 skeleton navigation passes isFastUpgrade=false, so we check Titan unconditionally.
+    if (g_compEngine->IsActiveLayerTitan()) {
+        duration = 0;
+    }
     g_compEngine->PlayPingPongCrossFade(duration, isTransparent);
     return true;
 }
