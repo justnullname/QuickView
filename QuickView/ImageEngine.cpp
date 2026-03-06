@@ -278,9 +278,11 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 e.imageId = imageId;
                 e.rawFrame = cachedFrame; // Zero-copy shared_ptr
                 
-                // Re-populate metadata from cache if possible, or PeekHeader info
-                e.metadata.Width = info.width;
-                e.metadata.Height = info.height;
+                // [Fix - Bug 7] Re-populate metadata from cache
+                // Never trust info.width directly, this causes dimension downgrade 
+                // on cache hit for RAW/TIFFs with tiny IFD thumbs!
+                e.metadata.Width = cachedFrame->width;
+                e.metadata.Height = cachedFrame->height;
                 e.metadata.Format = info.format;
                 e.metadata.FileSize = info.fileSize;
                 
