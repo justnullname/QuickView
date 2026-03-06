@@ -2,6 +2,8 @@
 #include <filesystem>
 #include <fstream> 
 #include <memory>
+#include <regex>
+#include <map>
 
 // Helper
 static std::vector<uint8_t> ReadFileToVector(const std::wstring& path) {

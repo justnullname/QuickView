@@ -1,12 +1,11 @@
 #include "pch.h"
-#include "CompositionEngine.h" // Moved to top
-#include "framework.h"
+#include "CoroutineTypes.h"
+#include "CompositionEngine.h"
 #include "QuickView.h"
 #include "RenderEngine.h"
 #include "ImageLoader.h"
 #include "ImageEngine.h"
 #include "MappedFile.h"
-#include "CompositionEngine.h"
 #include "UIRenderer.h"
 #include "SIMDUtils.h"
 #include "TileManager.h" // [Infinity Engine]
@@ -32,11 +31,6 @@
 #include <psapi.h>  // For GetProcessMemoryInfo
 #pragma comment(lib, "psapi.lib")
 
-#pragma comment(lib, "d2d1.lib")
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
-#pragma comment(lib, "windowscodecs.lib")
-#pragma comment(lib, "dwrite.lib")
 #include <d2d1helper.h>
 
 using namespace Microsoft::WRL;
@@ -55,7 +49,7 @@ using namespace Microsoft::WRL;
 #include <ShellScalingApi.h>
 #include <winspool.h>
 #include <intrin.h>
-#include <shellapi.h>
+
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "winspool.lib")

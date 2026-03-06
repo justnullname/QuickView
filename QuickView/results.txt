@@ -1,4 +1,0 @@
-277:static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent, bool isFastUpgrade = false); // fwd decl
-574:static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent, bool isFastUpgrade) {
-5158:                RenderImageToDComp(hwnd, g_imageResource, hasTransparency, isSameImageUpgrade);
-5168:                // [Fix] Update Window Size AFTER RenderImageToDComp

@@ -22,8 +22,6 @@ using Microsoft::WRL::ComPtr;
 #include <string>
 #include <vector>
 #include <stdexcept>
-#include <regex>
-#include <map>
 
 // Pragmas for linking
 #pragma comment(lib, "d2d1.lib")
