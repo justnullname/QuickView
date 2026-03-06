@@ -4909,7 +4909,8 @@ static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, Deco
         // Dispatch
         if (fmt == L"AVIF" || fmt == L"HEIC") {
             CImageLoader::ThumbData tmp;
-            HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(mappedData, mappedSize, 0, &tmp, false, &result.metadata);
+            int targetDim = (std::max)(ctx.targetWidth, ctx.targetHeight);
+            HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(mappedData, mappedSize, targetDim, &tmp, false, &result.metadata);
             if (SUCCEEDED(hr) && tmp.isValid) {
                  // Copy from ThumbData to DecodeResult
                  // Need to account for stride
