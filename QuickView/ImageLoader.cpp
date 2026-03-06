@@ -166,8 +166,9 @@ namespace QuickView {
 
 using namespace QuickView::Codec;
 
-// [v5.0] Forward declaration for LoadToThumbnail
-static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result);
+// [v5.0] Forward// Forward declarations
+struct IStream;
+struct IWICBitmap;
 namespace QuickView {
     namespace Codec {
         namespace PsdComposite {
@@ -3220,7 +3221,7 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forc
     return hr;
 }
 
-HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName, bool forceFullDecode, CancelPredicate checkCancel) {
+HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName, bool forceFullDecode, CancelPredicate checkCancel, int targetWidth, int targetHeight) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
     
     // Clear previous state to avoid residue when switching formats
@@ -4950,7 +4951,7 @@ using namespace QuickView::Codec;
 // ============================================================================
 // [v4.2] Unified Image Dispatcher
 // ============================================================================
-static HRESULT LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result) {
+HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result) {
     if (!filePath) return E_INVALIDARG;
 
     // [v9.2] Use path-based detection directly (handles RAW extensions properly)

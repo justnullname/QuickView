@@ -9,6 +9,13 @@
 #include "TileMemoryManager.h" // [Titan]
 #include "TileTypes.h"         // [Titan] RegionRect
 
+namespace QuickView {
+    namespace Codec {
+        struct DecodeContext;
+        struct DecodeResult;
+    }
+}
+
 /// <summary>
 /// Image Loader
 /// Uses WIC to load image files
@@ -238,6 +245,8 @@ public:
     // [Direct D2D] Zero-Copy Loading API
     // ============================================================================
     
+    HRESULT LoadImageUnified(LPCWSTR filePath, const QuickView::Codec::DecodeContext& ctx, QuickView::Codec::DecodeResult& result);
+
     /// <summary>
     /// Load image directly to RawImageFrame (Zero-Copy path for Direct D2D).
     /// This is the primary loading API for the new rendering pipeline.
