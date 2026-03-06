@@ -1676,6 +1676,10 @@ void ImageEngine::InvalidateCache(const std::wstring& path) {
     }
 }
 
+bool ImageEngine::IsTitanModeEnabled() const {
+    return m_heavyPool && m_heavyPool->IsTitanMode();
+}
+
 void ImageEngine::UpdateTileViewport(QuickView::RegionRect viewport, float scale, int imageW, int imageH, float basePreviewRatio, float velocityX, float velocityY) {
     if (!m_heavyPool) return;
     

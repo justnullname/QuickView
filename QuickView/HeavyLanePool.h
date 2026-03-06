@@ -55,6 +55,7 @@ public:
     // Enabled: Threads act as persistent pull-workers (no shrinking)
     // Disabled: Threads act as elastic hot-spares (auto-shrink)
     void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0, const std::wstring& format = L"");
+    bool IsTitanMode() const { return m_isTitanMode.load(); }
     void Flush(); // Clears queue and increments GenID
     
     // [Titan] Concurrency Control

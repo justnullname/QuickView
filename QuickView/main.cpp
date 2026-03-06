@@ -6536,7 +6536,7 @@ void OnPaint(HWND hwnd) {
         const auto titanMeta = g_currentMetadata; // Value copy — safe from concurrent reset
 
         // [Infinity Engine] Cascade Rendering Path
-        bool isTitan = g_imageEngine && (titanMeta.Width > 8192 || titanMeta.Height > 8192);
+        bool isTitan = g_imageEngine && g_imageEngine->IsTitanModeEnabled();
         if (isTitan) {
              // 1. Calculate Dimensions
              float imgFullW = (float)titanMeta.Width;
