@@ -518,8 +518,8 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
     
     // Comprehensive LibRaw Extension List (40+ formats) + SVG
     static const wchar_t* rawExts[] = {
-        L".3fr", L".ari", L".arw", L".bay", L".braw", L".cr2", L".cr3", L".cap", L".data", L".dcs", L".dcr", 
-        L".dng", L".drf", L".eip", L".erf", L".fff", L".gpr", L".iiq", L".k25", L".kdc", L".mdc", L".mef", 
+        L".3fr", L".ari", L".arw", L".bay", L".braw", L".cr2", L".cr3", L".crw", L".cap", L".data", L".dcs", L".dcr", 
+        L".dng", L".drf", L".eip", L".erf", L".fff", L".gpr", L".iiq", L".k25", L".kdc", L".lfp", L".lfr", L".mdc", L".mef", 
         L".mos", L".mrw", L".nef", L".nrw", L".obm", L".orf", L".pef", L".ptx", L".pxn", L".r3d", L".raf", 
         L".raw", L".rwl", L".rw2", L".rwz", L".sr2", L".srf", L".srw", L".sti", L".x3f",
         L".svg" // [v9.5] SVG detection
@@ -4278,28 +4278,23 @@ namespace QuickView {
                 // Debug: Entry point
                 OutputDebugStringW(L"[RawCodec] Entering RawCodec::Load\n");
 
-                // [v9.3] Use wide-char path directly on Windows (fixes -100009 error)
-                // LibRaw on Windows supports open_file(const wchar_t*) overload
-#ifdef _WIN32
-                int openResult = RawProcessor.open_file(filePath);
-#else
-                // Fallback to UTF-8 for non-Windows
-                std::string pathUtf8;
-                int len = WideCharToMultiByte(CP_UTF8, 0, filePath, -1, NULL, 0, NULL, NULL);
-                if (len > 0) {
-                    pathUtf8.resize(len);
-                    WideCharToMultiByte(CP_UTF8, 0, filePath, -1, &pathUtf8[0], len, NULL, NULL);
-                    pathUtf8.pop_back(); 
+                // [Fix] Use ReadFileToVector + open_buffer instead of open_file
+                // LibRaw's open_file has issues with non-ASCII paths on Windows, even with wchar_t overload.
+                // -2 is LIBRAW_IO_ERROR, which typically means the file path couldn't be resolved or opened.
+                std::vector<uint8_t> rawBuf;
+                if (!ReadFileToVector(filePath, rawBuf)) {
+                    OutputDebugStringW(L"[RawCodec] ReadFileToVector FAILED\n");
+                    return E_FAIL;
                 }
-                int openResult = RawProcessor.open_file(pathUtf8.c_str());
-#endif
+
+                int openResult = RawProcessor.open_buffer(rawBuf.data(), rawBuf.size());
                 if (openResult != LIBRAW_SUCCESS) {
                     wchar_t dbg[128];
-                    swprintf_s(dbg, L"[RawCodec] open_file FAILED: %d\n", openResult);
+                    swprintf_s(dbg, L"[RawCodec] open_buffer FAILED: %d\n", openResult);
                     OutputDebugStringW(dbg);
                     return E_FAIL;
                 }
-                OutputDebugStringW(L"[RawCodec] open_file OK\n");
+                OutputDebugStringW(L"[RawCodec] open_buffer OK\n");
 
                 // 2. Strategy Check
                 // Force Raw Logic: If enabled, we skip embedded preview and force full process. // [USER REQUEST]
