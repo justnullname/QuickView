@@ -6087,28 +6087,22 @@ static void PrimePhase1Placeholder(HWND hwnd, const std::wstring& path, ImageID 
     UINT sourceH = 0;
     TryReadPhase1DimensionsFromHeader(path, &sourceW, &sourceH);
 
-    // [Fix] For non-Titan JXL files, skip Shell/WIC thumbnail extraction entirely.
-    // User requirement: normal mode should NOT show intermediate thumbnails.
-    // Only use skeleton placeholder so the full decode result appears directly.
+    // [Fix] For non-Titan images, skip Shell/WIC thumbnail extraction entirely.
+    // Non-Titan decoding is fast enough (<100ms typical) that showing a ~256px
+    // Shell cached thumbnail as placeholder causes visible flicker instead of
+    // helping perception. Only use skeleton placeholder so the full decode
+    // result appears directly. Titan images (>8192px or >50MP) still benefit
+    // from the placeholder chain because their decode can take 1-5 seconds.
     {
-        bool isJxl = false;
-        if (path.length() >= 4) {
-            std::wstring ext = path.substr(path.length() - 4);
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-            isJxl = (ext == L".jxl");
-        }
-        if (isJxl) {
-            // Titan threshold: >8192 on either axis or >50MP
-            bool isTitan = (sourceW > 8192 || sourceH > 8192 ||
-                           ((uint64_t)sourceW * (uint64_t)sourceH > 50000000ULL));
-            if (!isTitan) {
-                OutputDebugStringW(L"[Phase1] JXL non-Titan: Skip Shell/WIC thumbnail. Skeleton only.\n");
-                auto skeleton = MakePhase1SkeletonFrame();
-                if (skeleton) {
-                    ApplyPhase1PlaceholderFrame(hwnd, path, imageId, skeleton, sourceW, sourceH, L"Skeleton (JXL Direct)");
-                }
-                return; // No Shell/WIC extraction for normal JXL
+        bool isTitan = (sourceW > 8192 || sourceH > 8192 ||
+                       ((uint64_t)sourceW * (uint64_t)sourceH > 50000000ULL));
+        if (!isTitan) {
+            OutputDebugStringW(L"[Phase1] Non-Titan: Skip Shell/WIC thumbnail. Skeleton only.\n");
+            auto skeleton = MakePhase1SkeletonFrame();
+            if (skeleton) {
+                ApplyPhase1PlaceholderFrame(hwnd, path, imageId, skeleton, sourceW, sourceH, L"Skeleton (Direct)");
             }
+            return; // No Shell/WIC extraction for non-Titan images
         }
     }
 

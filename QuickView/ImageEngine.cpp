@@ -500,7 +500,6 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             wchar_t dbgBuf[128];
             swprintf_s(dbgBuf, L"[Dispatch] -> %s Large: Heavy Lane\n", info.format.c_str());
             OutputDebugStringW(dbgBuf);
-            OutputDebugStringW(dbgBuf);
             m_heavyPool->Submit(path, imageId, primaryMMF);
         }
         return;
