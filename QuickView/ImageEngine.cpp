@@ -289,6 +289,11 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 // [Fix] Propagate EXIF Orientation from Cache (Critical for Rotation persistence)
                 e.metadata.ExifOrientation = cachedFrame->exifOrientation;
                 
+                // [Fix] Compute histogram from cached frame to prevent blank histogram on cache hit
+                if (cachedFrame->IsValid() && !cachedFrame->IsSvg()) {
+                    m_loader->ComputeHistogramFromFrame(*cachedFrame, &e.metadata);
+                }
+                
                 QueueEvent(std::move(e)); 
                 
                 return; 
@@ -1090,8 +1095,30 @@ void ImageEngine::FastLane::QueueWorker() {
                 // Determine blurriness
                 // If we did a full decode (target=0 or result close to original), it's Clear.
                 // Otherwise it's a Thumbnail (Blurry/Preview).
-                bool isClear = (targetW == 0) || 
-                               (rawFrame.width >= info.width / 2 && rawFrame.height >= info.height / 2);
+                bool isClear = false;
+                if (targetW == 0) {
+                    // target=0 means "full decode requested".
+                    // For RAW/TIFF files, PeekHeader might return the thumbnail dimensions 
+                    // as info.width/height if it parses a thumbnail IFD (e.g., DNG).
+                    // If the decoded frame matches the embedded preview size, it is a preview!
+                    if (info.hasEmbeddedThumb && 
+                        info.embeddedPreviewWidth > 0 && info.embeddedPreviewHeight > 0 &&
+                        rawFrame.width <= info.embeddedPreviewWidth &&
+                        rawFrame.height <= info.embeddedPreviewHeight) {
+                        
+                        isClear = false;
+                    } 
+                    else if (info.width > 0 && info.height > 0) {
+                        isClear = (rawFrame.width >= info.width / 2 &&
+                                   rawFrame.height >= info.height / 2);
+                    } 
+                    else {
+                        isClear = true;
+                    }
+                } else {
+                    isClear = (rawFrame.width >= info.width / 2 &&
+                               rawFrame.height >= info.height / 2);
+                }
                 
                 // Save Scout Loader Name for HUD
                 {
@@ -1137,6 +1164,12 @@ void ImageEngine::FastLane::QueueWorker() {
                 // [Unified] Populate Metadata instead of ThumbData
                 e.metadata.Width = info.width;
                 e.metadata.Height = info.height;
+                // [Fix] If PeekHeader couldn't determine dimensions (e.g. RAW),
+                // use decoded frame dimensions as fallback
+                if (e.metadata.Width == 0 && rawFrame.width > 0)
+                    e.metadata.Width = rawFrame.width;
+                if (e.metadata.Height == 0 && rawFrame.height > 0)
+                    e.metadata.Height = rawFrame.height;
 
                 // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
                 // No need to call ReadMetadata separately or access global variables.

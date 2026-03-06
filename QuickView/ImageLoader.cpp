@@ -8583,7 +8583,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                 res.width = finalW;
                 res.height = finalH;
                 res.stride = finalStride;
-                res.metadata.FormatDetails += L" (SwRescaled)";
+                // res.metadata.FormatDetails += L" (SwRescaled)";
             }
         }
         

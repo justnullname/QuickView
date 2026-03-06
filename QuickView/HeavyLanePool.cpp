@@ -1649,6 +1649,11 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 OutputDebugStringW(buf);
             }
 
+            // [Fix] Compute histogram for HeavyLane results
+            if (evt.rawFrame && evt.rawFrame->IsValid() && !evt.rawFrame->IsSvg() && job.type == JobType::Standard) {
+                m_loader->ComputeHistogramFromFrame(*evt.rawFrame, &meta);
+            }
+
             evt.metadata = std::move(meta);
             
             QueueResult(std::move(evt));
