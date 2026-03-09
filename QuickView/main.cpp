@@ -1641,6 +1641,8 @@ static D2D1_SIZE_F GetVisualImageSize() {
 
 
 
+static RECT s_restoredWindowRect = { 0 };
+
 // Inlined Logic to avoid dependency on local lambdas
 static void PerformZoom100(HWND hwnd) {
     if (g_imageResource) {
@@ -1682,8 +1684,11 @@ static void PerformZoom100(HWND hwnd) {
                  int maxW = (mi.rcWork.right - mi.rcWork.left);
                  int maxH = (mi.rcWork.bottom - mi.rcWork.top);
                  
+                 // [Bug #19] Smart 3-State Toggle: If target exceeds screen, clip to screen bounds
+                 // This ensures the window still expands on the axis that HAS room, rather than doing nothing.
                  if (targetW > maxW) targetW = maxW;
                  if (targetH > maxH) targetH = maxH;
+                 
                  if (targetW < 400) targetW = 400; 
                  if (targetH < 300) targetH = 300;
                  
@@ -1691,7 +1696,16 @@ static void PerformZoom100(HWND hwnd) {
                  int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
                  int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
                  
-                 SetWindowPos(hwnd, nullptr, cX - targetW/2, cY - targetH/2, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
+                 // Re-center but clamp to screen edges if necessary
+                 int x = cX - targetW/2;
+                 int y = cY - targetH/2;
+                 
+                 if (x < mi.rcWork.left) x = mi.rcWork.left;
+                 if (y < mi.rcWork.top) y = mi.rcWork.top;
+                 if (x + targetW > mi.rcWork.right) x = mi.rcWork.right - targetW;
+                 if (y + targetH > mi.rcWork.bottom) y = mi.rcWork.bottom - targetH;
+                 
+                 SetWindowPos(hwnd, nullptr, x, y, targetW, targetH, SWP_NOZORDER | SWP_NOACTIVATE);
                  
                  RECT rcNew; GetClientRect(hwnd, &rcNew);
                  float newFitScale = std::min((float)rcNew.right / imgW, (float)rcNew.bottom / imgH);
@@ -1804,13 +1818,16 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
     return newTotalScale;
 }
 
-static void PerformZoomFit(HWND hwnd) {
+static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f) {
     if (g_imageResource) {
         // [Existing Logic 0]
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
-        int screenW = mi.rcWork.right - mi.rcWork.left;
-        int screenH = mi.rcWork.bottom - mi.rcWork.top;
+        int fullScreenW = mi.rcWork.right - mi.rcWork.left;
+        int fullScreenH = mi.rcWork.bottom - mi.rcWork.top;
+        
+        int screenW = (int)(fullScreenW * maxScreenPct);
+        int screenH = (int)(fullScreenH * maxScreenPct);
         
         RECT rcWin, rcClient;
         GetWindowRect(hwnd, &rcWin);
@@ -1838,8 +1855,8 @@ static void PerformZoomFit(HWND hwnd) {
              int targetWinW = targetClientW + borderW;
              int targetWinH = targetClientH + borderH;
              
-             int x = mi.rcWork.left + (screenW - targetWinW) / 2;
-             int y = mi.rcWork.top + (screenH - targetWinH) / 2;
+             int x = mi.rcWork.left + (fullScreenW - targetWinW) / 2;
+             int y = mi.rcWork.top + (fullScreenH - targetWinH) / 2;
              
              SetWindowPos(hwnd, nullptr, x, y, targetWinW, targetWinH, SWP_NOZORDER | SWP_NOACTIVATE);
         }
@@ -4394,28 +4411,76 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
 
         if (g_imageResource) {
-            // [Logic 2.0] Smart Toggle: If at 100% view, go Fit. Otherwise go 100%.
+            // [Bug #19] Smart 3-Way Toggle for Large Images
             D2D1_SIZE_F effSize = GetVisualImageSize();
             float imgW = effSize.width;
             float imgH = effSize.height;
             
-            RECT rc; GetClientRect(hwnd, &rc);
-            float winW = (float)(rc.right - rc.left);
-            float winH = (float)(rc.bottom - rc.top);
+            float originalW = imgW;
+            float originalH = imgH;
+            if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+                originalW = (float)g_currentMetadata.Width;
+                originalH = (float)g_currentMetadata.Height;
+                bool manualSwap = (g_editState.TotalRotation % 180 != 0);
+                if (manualSwap) std::swap(originalW, originalH);
+            }
+
+            RECT rcClient; GetClientRect(hwnd, &rcClient);
+            float winW = (float)(rcClient.right - rcClient.left);
+            float winH = (float)(rcClient.bottom - rcClient.top);
             
-            // Fit Scale (without Zoom)
             float fitScale = std::min(winW / imgW, winH / imgH);
-            
-            // Total Scale = FitScale * Zoom
             float totalScale = fitScale * g_viewState.Zoom;
+            float currentRealScale = totalScale * (imgW / originalW); // Real pixel scale
             
-            // 2. Check if effectively at 100% (Scale ~ 1.0)
-            if (abs(totalScale - 1.0f) < 0.05f) {
-                 // Is 100% -> Go Fit
-                 PerformZoomFit(hwnd);
+            bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.05f);
+
+            HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+            int maxW = mi.rcWork.right - mi.rcWork.left;
+            int maxH = mi.rcWork.bottom - mi.rcWork.top;
+            
+            RECT rcWin; GetWindowRect(hwnd, &rcWin);
+            int winWidth = rcWin.right - rcWin.left;
+            int winHeight = rcWin.bottom - rcWin.top;
+
+            // Is the window essentially filling the screen? (Tolerance border + 20px)
+            // Fix Bug #19: For images with aspect ratios different from the monitor,
+            // fitting to screen means hitting maxW OR maxH, not necessarily both!
+            bool isWindowMaximizedOrFull = (winWidth >= maxW - 40 || winHeight >= maxH - 40);
+            
+            // Is it a large image? (Original size is close to or larger than screen)
+            bool isLargeImage = (originalW >= maxW - 100 || originalH >= maxH - 100);
+
+            if (isLargeImage) {
+                if (is100Percent) {
+                    // State 3 -> State 1: At 100%. Shrink back to Initial Size.
+                    if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                        int rW = s_restoredWindowRect.right - s_restoredWindowRect.left;
+                        int rH = s_restoredWindowRect.bottom - s_restoredWindowRect.top;
+                        SetWindowPos(hwnd, nullptr, s_restoredWindowRect.left, s_restoredWindowRect.top, rW, rH, SWP_NOZORDER | SWP_NOACTIVATE);
+                        g_viewState.Zoom = 1.0f; // Let D2D fit it inside
+                        g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
+                        RequestRepaint(PaintLayer::All);
+                    } else {
+                        // Fallback: 85% tight wrap (perfectly hugs the image without empty margins)
+                        PerformZoomFit(hwnd, 0.85f);
+                    }
+                } else if (isWindowMaximizedOrFull) {
+                    // State 2 -> State 3: Fit Screen but not 100% -> Go 100%
+                    PerformZoom100(hwnd);
+                } else {
+                    // State 1 -> State 2: Initial Size -> Fit Screen
+                    GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoomFit(hwnd, 1.0f); 
+                }
             } else {
-                 // Is Not 100% (either Fit or Zoomed) -> Go 100%
-                 PerformZoom100(hwnd);
+                // Small image: simple 2-state toggle (100% <-> Fit)
+                if (is100Percent) {
+                    PerformZoomFit(hwnd, 1.0f);
+                } else {
+                    PerformZoom100(hwnd);
+                }
             }
         }
         return 0;
