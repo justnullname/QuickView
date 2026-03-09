@@ -7594,10 +7594,18 @@ void OnPaint(HWND hwnd) {
                  QuickView::RegionRect vp = { (int)viewL, (int)viewT, (int)viewW, (int)viewH };
                  
                  // Calculate Base Preview Ratio (Preview / Original)
+                 // [Fix5] Use the MINIMUM ratio of both dimensions to ensure the worst-case
+                 // dimension triggers tiles. For tall/narrow images (e.g. 1080x9123 decoded to
+                 // 3840x2160), width ratio can exceed 1.0 while height ratio is tiny (0.24).
+                 // Also clamp to 1.0: a preview can never have more detail than the original.
                  float baseRatio = 0.0f;
                  float previewW = g_imageResource.GetSize().width;
-                 if (titanMeta.Width > 0) {
-                     baseRatio = previewW / (float)titanMeta.Width;
+                 float previewH = g_imageResource.GetSize().height;
+                 if (titanMeta.Width > 0 && titanMeta.Height > 0) {
+                     float ratioW = previewW / (float)titanMeta.Width;
+                     float ratioH = previewH / (float)titanMeta.Height;
+                     baseRatio = std::min(ratioW, ratioH);
+                     if (baseRatio > 1.0f) baseRatio = 1.0f;
                  }
 
                  // [No-DC JXL Guard] For fake/tiny placeholder bases, force tile scheduling immediately.
@@ -7611,7 +7619,6 @@ void OnPaint(HWND hwnd) {
                  }
 
                  constexpr float kVirtualNoDcRatio = 0.125f; // 1:8
-                 float previewH = g_imageResource.GetSize().height;
                  bool fakeBase = (titanMeta.LoaderName.find(L"Fake Base") != std::wstring::npos);
                  bool tinyPreview = (previewW <= 2.0f || previewH <= 2.0f);
                  bool weakPreview = (previewW <= 16.0f || previewH <= 16.0f); // Expanded threshold for 4x4 or 8x8

@@ -119,26 +119,20 @@ namespace QuickView {
         std::lock_guard lock(m_mutex);
 
         // [Titan] Adaptive Tiling Trigger
-        // [Fix4] Use corrected threshold: only trigger tiles when zoom exceeds the level
-        // where tiles would provide better resolution than the base preview.
-        float triggerThreshold = basePreviewRatio;
-        if (basePreviewRatio > 0.0f) {
-            // Compute the LOD boundary that matches the preview resolution
-            float invRatio = 1.0f / basePreviewRatio;
-            int maxLOD = (int)std::floor(std::log2(invRatio));
-            if (maxLOD < 0) maxLOD = 0;
-            // Trigger when zoom > 1/(2^maxLOD), which is the scale of the best tile LOD
-            triggerThreshold = 1.0f / (float)(1 << maxLOD);
-        }
-        if (zoom <= triggerThreshold * 1.0001f) {
+        // [Fix5] Direct threshold: trigger tiles as soon as zoom exceeds the base preview's
+        // native resolution. At zoom == basePreviewRatio the preview renders at 1:1 (sharp).
+        // Any zoom above this upscales the preview -> blurry -> tiles must take over.
+        // Previous LOD-quantized threshold (floor(log2(1/ratio))) caused systematic late
+        // triggering for non-power-of-2 ratios (e.g. ratio=0.4 -> threshold=0.5 -> 25% delay).
+        if (zoom <= basePreviewRatio * 1.0001f) {
             static uint64_t lastSkipLog = 0;
             uint64_t nowSkip = GetTickCount64();
             if (nowSkip - lastSkipLog > 500) {
                 lastSkipLog = nowSkip;
                 wchar_t skipBuf[256];
                 swprintf_s(skipBuf,
-                    L"[TileManager] Skip trigger: zoom=%.4f threshold=%.4f base=%.4f img=%dx%d\n",
-                    zoom, triggerThreshold, basePreviewRatio, imageW, imageH);
+                    L"[TileManager] Skip trigger: zoom=%.4f base=%.4f img=%dx%d\n",
+                    zoom, basePreviewRatio, imageW, imageH);
                 OutputDebugStringW(skipBuf);
             }
             // Not in tile mode: clear viewport progress source so UI doesn't show stale progress.
