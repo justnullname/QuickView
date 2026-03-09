@@ -28,7 +28,7 @@ public:
         uint64_t fileSize;
         bool isValid;
     };
-    ImageInfo GetImageInfo(int index);
+    ImageInfo GetImageInfo(size_t imageId);
 
     void Initialize(HWND hwnd, CImageLoader* pLoader);
     void Shutdown();
@@ -37,7 +37,7 @@ public:
     // Returns the bitmap if ready (L2 Cache).
     // If not ready, queues a request and returns nullptr.
     // If L1 Cache hit (Raw Data), immediately creates Bitmap (L2) and returns it.
-    ComPtr<ID2D1Bitmap> GetThumbnail(int fileIndex, LPCWSTR filePath, ID2D1RenderTarget* pRT);
+    ComPtr<ID2D1Bitmap> GetThumbnail(size_t imageId, LPCWSTR filePath, ID2D1RenderTarget* pRT);
 
     // Call this when file list changes completely
     void ClearCache();
@@ -47,7 +47,7 @@ public:
     void UpdateOptimizedPriority(int startIdx, int endIdx, int priorityCenter);
 
     // Dynamic queue management
-    void QueueRequest(int index, LPCWSTR path, int priority);
+    void QueueRequest(size_t imageId, LPCWSTR path, int priority);
     void ClearQueue();
 
 private:
@@ -74,12 +74,12 @@ private:
     // Let's use a single mutex for the cache structure.
     
     std::mutex m_cacheMutex;
-    std::unordered_map<int, CImageLoader::ThumbData> m_l1Cache; // Worker writes, UI reads
-    std::unordered_map<int, ComPtr<ID2D1Bitmap>> m_l2Cache;     // UI only (but we track size here)
+    std::unordered_map<size_t, CImageLoader::ThumbData> m_l1Cache; // Worker writes, UI reads
+    std::unordered_map<size_t, ComPtr<ID2D1Bitmap>> m_l2Cache;     // UI only (but we track size here)
     
     // LRU Tracking
-    std::list<int> m_lruList; 
-    std::unordered_map<int, std::list<int>::iterator> m_lruMap;
+    std::list<size_t> m_lruList; 
+    std::unordered_map<size_t, std::list<size_t>::iterator> m_lruMap;
     size_t m_currentCacheSize = 0;
     
     // Constants
@@ -89,7 +89,7 @@ private:
     // --- Worker Thread ---
     // --- Worker Threads ---
     struct Task {
-        int index;
+        size_t imageId;
         std::wstring path;
         int priorityDistance; // 0 = highest (center)
         bool isFastLane;      // Tag to verify lane if needed
@@ -109,13 +109,13 @@ private:
     std::priority_queue<Task, std::vector<Task>, std::greater<Task>> m_fastQueue;
     std::priority_queue<Task, std::vector<Task>, std::greater<Task>> m_slowQueue;
     
-    std::unordered_map<int, bool> m_pendingTasks; 
+    std::unordered_map<size_t, bool> m_pendingTasks; 
     std::atomic<bool> m_running = false;
 
     void WorkerLoopFast();
     void WorkerLoopSlow();
     
     void EvictLRU();
-    void AddToLRU(int index, size_t size);
-    void TouchLRU(int index);
+    void AddToLRU(size_t imageId, size_t size);
+    void TouchLRU(size_t imageId);
 };

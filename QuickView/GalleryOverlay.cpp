@@ -195,8 +195,9 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         
         // Get Thumbnail
         if (i >= 0 && i < (int)m_pNav->Count()) {
+            ImageID imgId = m_pNav->GetImageID(i);
             const std::wstring& path = m_pNav->GetFile(i);
-            auto bmp = m_pThumbMgr->GetThumbnail(i, path.c_str(), pDC);
+            auto bmp = m_pThumbMgr->GetThumbnail(imgId, path.c_str(), pDC);
             
             if (bmp) {
                 D2D1_SIZE_F bmpSize = bmp->GetSize();
@@ -211,7 +212,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
                 
                 // Queue! (Priority based on distance to center)
                 int prio = std::abs(i - centerIdx);
-                m_pThumbMgr->QueueRequest(i, path.c_str(), prio);
+                m_pThumbMgr->QueueRequest(imgId, path.c_str(), prio);
             }
         }
     }
@@ -223,7 +224,8 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         float x = PADDING + c * (m_cellWidth + GAP);
         float y = PADDING + r * (m_cellHeight + GAP);
         
-        ThumbnailManager::ImageInfo info = m_pThumbMgr->GetImageInfo(m_hoverIndex);
+        ImageID imgId = m_pNav->GetImageID(m_hoverIndex);
+        ThumbnailManager::ImageInfo info = m_pThumbMgr->GetImageInfo(imgId);
         std::wstring path = m_pNav->GetFile(m_hoverIndex);
         size_t lastSlash = path.find_last_of(L"\\/");
         std::wstring filename = (lastSlash != std::wstring::npos) ? path.substr(lastSlash + 1) : path;

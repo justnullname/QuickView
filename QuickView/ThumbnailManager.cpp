@@ -41,18 +41,18 @@ void ThumbnailManager::ClearCache() {
     m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
 }
 
-ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(int fileIndex, LPCWSTR filePath, ID2D1RenderTarget* pRT) {
+ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(size_t imageId, LPCWSTR filePath, ID2D1RenderTarget* pRT) {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
 
     // 1. Check L2 Cache (GPU Bitmap)
-    auto itL2 = m_l2Cache.find(fileIndex);
+    auto itL2 = m_l2Cache.find(imageId);
     if (itL2 != m_l2Cache.end()) {
-        TouchLRU(fileIndex);
+        TouchLRU(imageId);
         return itL2->second;
     }
 
     // 2. Check L1 Cache (Raw Data) - Promote to L2
-    auto itL1 = m_l1Cache.find(fileIndex);
+    auto itL1 = m_l1Cache.find(imageId);
     if (itL1 != m_l1Cache.end()) {
         // Upload to GPU
         ComPtr<ID2D1Bitmap> bmp;
@@ -69,7 +69,7 @@ ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(int fileIndex, LPCWSTR filePa
                 size_t sizeBytes = itL1->second.pixels.size(); 
                 
                 // Store in L2
-                m_l2Cache[fileIndex] = bmp;
+                m_l2Cache[imageId] = bmp;
                 
                 // Remove from L1 (Save RAM, assuming we don't need to rebuild often without reloading)
                 // Actually user said: "Keep L1 Cache... allows rebuilding texture quickly".
@@ -89,7 +89,7 @@ ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(int fileIndex, LPCWSTR filePa
                 // Let's count L1 size towards limit.
             }
         }
-        TouchLRU(fileIndex);
+        TouchLRU(imageId);
         return bmp;
     }
 
@@ -158,7 +158,7 @@ void ThumbnailManager::EvictLRU() {
     while (m_currentCacheSize > MAX_CACHE_SIZE || m_l1Cache.size() > MAX_CACHE_COUNT) {
         if (m_lruList.empty()) break;
 
-        int idxToRemove = m_lruList.back();
+        size_t idxToRemove = m_lruList.back();
         
         // Remove from maps
         auto itL1 = m_l1Cache.find(idxToRemove);
@@ -174,25 +174,25 @@ void ThumbnailManager::EvictLRU() {
     }
 }
 
-void ThumbnailManager::AddToLRU(int index, size_t size) {
+void ThumbnailManager::AddToLRU(size_t imageId, size_t size) {
     // Remove if exists (re-add to front)
-    if (m_lruMap.count(index)) {
-        m_lruList.erase(m_lruMap[index]);
+    if (m_lruMap.count(imageId)) {
+        m_lruList.erase(m_lruMap[imageId]);
         m_currentCacheSize -= size; // Size might satisfy if unchanged? Simpler to re-add.
         // Actually size is stored in entry.
     }
     
-    m_lruList.push_front(index);
-    m_lruMap[index] = m_lruList.begin();
+    m_lruList.push_front(imageId);
+    m_lruMap[imageId] = m_lruList.begin();
     m_currentCacheSize += size;
     
     EvictLRU();
 }
 
-void ThumbnailManager::TouchLRU(int index) {
-    if (m_lruMap.count(index)) {
-        m_lruList.splice(m_lruList.begin(), m_lruList, m_lruMap[index]);
-        m_lruMap[index] = m_lruList.begin();
+void ThumbnailManager::TouchLRU(size_t imageId) {
+    if (m_lruMap.count(imageId)) {
+        m_lruList.splice(m_lruList.begin(), m_lruList, m_lruMap[imageId]);
+        m_lruMap[imageId] = m_lruList.begin();
     }
 }
 
@@ -214,7 +214,7 @@ void ThumbnailManager::WorkerLoopFast() {
             task = m_fastQueue.top();
             m_fastQueue.pop();
             
-            auto it = m_pendingTasks.find(task.index);
+            auto it = m_pendingTasks.find(task.imageId);
             if (it != m_pendingTasks.end()) m_pendingTasks.erase(it);
         }
         
@@ -224,10 +224,10 @@ void ThumbnailManager::WorkerLoopFast() {
             {
                 std::lock_guard<std::mutex> lock(m_cacheMutex);
                 size_t size = data.pixels.size();
-                m_l1Cache[task.index] = std::move(data);
-                AddToLRU(task.index, size);
+                m_l1Cache[task.imageId] = std::move(data);
+                AddToLRU(task.imageId, size);
             }
-            PostMessage(m_hwnd, WM_THUMB_KEY_READY, (WPARAM)task.index, 0);
+            PostMessage(m_hwnd, WM_THUMB_KEY_READY, (WPARAM)task.imageId, 0);
         }
     }
     
@@ -253,7 +253,7 @@ void ThumbnailManager::WorkerLoopSlow() {
             task = m_slowQueue.top();
             m_slowQueue.pop();
             
-            auto it = m_pendingTasks.find(task.index);
+            auto it = m_pendingTasks.find(task.imageId);
             if (it != m_pendingTasks.end()) m_pendingTasks.erase(it);
         }
         
@@ -263,10 +263,10 @@ void ThumbnailManager::WorkerLoopSlow() {
             {
                 std::lock_guard<std::mutex> lock(m_cacheMutex);
                 size_t size = data.pixels.size();
-                m_l1Cache[task.index] = std::move(data);
-                AddToLRU(task.index, size);
+                m_l1Cache[task.imageId] = std::move(data);
+                AddToLRU(task.imageId, size);
             }
-            PostMessage(m_hwnd, WM_THUMB_KEY_READY, (WPARAM)task.index, 0);
+            PostMessage(m_hwnd, WM_THUMB_KEY_READY, (WPARAM)task.imageId, 0);
         }
     }
     
@@ -276,10 +276,10 @@ void ThumbnailManager::WorkerLoopSlow() {
 }
 
 // Added to match planned API changes
-void ThumbnailManager::QueueRequest(int index, LPCWSTR path, int priority) {
+void ThumbnailManager::QueueRequest(size_t imageId, LPCWSTR path, int priority) {
     std::lock_guard<std::mutex> lock(m_queueMutex);
     
-    if (m_pendingTasks.count(index)) return; // Already queued
+    if (m_pendingTasks.count(imageId)) return; // Already queued
     
     // Check if in Cache? (Avoid queuing if already cached)
     // Accessing m_cacheMutex here might deadlock if called from UI thread which holds cacheMutex?
@@ -289,7 +289,7 @@ void ThumbnailManager::QueueRequest(int index, LPCWSTR path, int priority) {
     // Assuming UI checked GetThumbnail first.
     
     Task t;
-    t.index = index;
+    t.imageId = imageId;
     t.path = path;
     t.priorityDistance = priority;
 
@@ -319,7 +319,7 @@ void ThumbnailManager::QueueRequest(int index, LPCWSTR path, int priority) {
         m_cvSlow.notify_one();
     }
     
-    m_pendingTasks[index] = true;
+    m_pendingTasks[imageId] = true;
 }
 
 void ThumbnailManager::ClearQueue() {
@@ -331,9 +331,9 @@ void ThumbnailManager::ClearQueue() {
 
 
 
-ThumbnailManager::ImageInfo ThumbnailManager::GetImageInfo(int index) {
+ThumbnailManager::ImageInfo ThumbnailManager::GetImageInfo(size_t imageId) {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
-    auto it = m_l1Cache.find(index);
+    auto it = m_l1Cache.find(imageId);
     if (it != m_l1Cache.end()) {
         ImageInfo info;
         info.origWidth = it->second.origWidth;
