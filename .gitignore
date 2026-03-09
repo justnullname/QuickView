@@ -97,11 +97,8 @@ jpegview-static-post2024-vs2019-x64/
 .git.backup/
 
 # Helper scripts (not needed in repo)
-GITHUB_UPLOAD.md
-cleanup.bat
-fix_git.bat
-check_braces.ps1
-complete_reset.bat
+* .ps1
+*.bat
 
 .agent/
 
