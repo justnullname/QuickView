@@ -191,7 +191,7 @@ bool SettingsOverlay::RegisterAssociations() {
         L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
         // RAW Formats (LibRaw supported)
         L".arw", L".cr2", L".cr3", L".crw", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
-        L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw"
+        L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw"
     };
 
     for (const auto& ext : exts) {
@@ -289,7 +289,7 @@ void SettingsOverlay::UnregisterAssociations() {
         L".exr", L".hdr", L".pic", L".psd", L".psb", L".tga", L".pcx", L".qoi", 
         L".wbmp", L".pam", L".pbm", L".pgm", L".ppm", L".wdp", L".hdp",
         L".arw", L".cr2", L".cr3", L".crw", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
-        L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw"
+        L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw"
     };
     
     for (const auto& ext : exts) {
