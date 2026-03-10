@@ -400,7 +400,7 @@ static std::wstring CleanMarkdown(const std::wstring& md) {
 
 static ToastLayout GetToastLayout(float winW, float winH) {
     float w = 540.0f; // Wider
-    float h = 420.0f; // Much taller for Love Message
+    float h = 480.0f; // Much taller for Love Message + Changelog
     float cx = (winW - w) / 2.0f;
     float cy = (winH - h) / 2.0f;
     if (cx < 0) cx = 0;
@@ -416,8 +416,8 @@ static ToastLayout GetToastLayout(float winW, float winH) {
     // Layout: [Star on GitHub] ... [Later] [Update Now]
     float bx = l.bg.right - margin;
     
-    // Widen Star Button to 160.0f to prevent wrapping of "Star on GitHub" or localized variants
-    l.btnStar = D2D1::RectF(l.bg.left + margin, btnY, l.bg.left + margin + 160.0f, btnY + btnH);
+    // Widen Star Button to 200.0f to prevent wrapping of "Star on GitHub" or localized variants
+    l.btnStar = D2D1::RectF(l.bg.left + margin, btnY, l.bg.left + margin + 200.0f, btnY + btnH);
     
     // Right side: [Later] [Update]
     l.btnRestart = D2D1::RectF(bx - 110.0f, btnY, bx, btnY + btnH);
@@ -463,16 +463,15 @@ void SettingsOverlay::RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, floa
     pRT->DrawLine(D2D1::Point2F(l.bg.left + 20, l.bg.top + 70), D2D1::Point2F(l.bg.right - 20, l.bg.top + 70), m_brushBorder.Get(), 1.0f);
 
     // 5. Built with Love Message
-    // Reduce top margin
     float loveY = l.bg.top + 75.0f; 
     D2D1_RECT_F loveTitleR = D2D1::RectF(l.bg.left + 20, loveY, l.bg.right - 20, loveY + 25.0f);
     pRT->DrawText(AppStrings::Dialog_Update_LoveTitle, (UINT32)wcslen(AppStrings::Dialog_Update_LoveTitle), m_textFormatItem.Get(), loveTitleR, m_brushAccent.Get());
     
-    // Reduce Height Allocated for Message (Compress it)
-    D2D1_RECT_F loveMsgR = D2D1::RectF(l.bg.left + 20, loveY + 25.0f, l.bg.right - 20, loveY + 125.0f);
+    // Give the message more breathing room (increase height allocation)
+    D2D1_RECT_F loveMsgR = D2D1::RectF(l.bg.left + 20, loveY + 30.0f, l.bg.right - 20, loveY + 125.0f);
     pRT->DrawText(AppStrings::Dialog_Update_LoveMessage, (UINT32)wcslen(AppStrings::Dialog_Update_LoveMessage), m_textFormatItem.Get(), loveMsgR, m_brushTextDim.Get());
 
-    // Separator line - Reduce Gap
+    // Separator line
     pRT->DrawLine(D2D1::Point2F(l.bg.left + 20, loveMsgR.bottom + 5), D2D1::Point2F(l.bg.right - 20, loveMsgR.bottom + 5), m_brushBorder.Get(), 1.0f);
 
     // 6. Changelog Header
@@ -482,17 +481,26 @@ void SettingsOverlay::RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, floa
 
     // 7. Changelog Body
     // Increase Log Height by starting higher (logY adjusted) and ending near buttons
-    D2D1_RECT_F logR = D2D1::RectF(l.bg.left + 20, logY + 25.0f, l.bg.right - 20, l.btnRestart.top - 15.0f);
+    D2D1_RECT_F logR = D2D1::RectF(l.bg.left + 20, logY + 25.0f, l.bg.right - 20, std::max(logY + 45.0f, l.btnRestart.top - 15.0f));
     pRT->FillRectangle(logR, m_brushBg.Get()); 
     
     std::wstring cleanLog = CleanMarkdown(m_updateLog);
+    
+    // Explicitly Reset Text Format Alignment BEFORE creating layout
+    // (Prevents text being drawn at Y=5000px if paragraph alignment was CENTER/FAR inside a 10000px layout box)
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
     ComPtr<IDWriteTextLayout> pLayout;
-    m_dwriteFactory->CreateTextLayout(cleanLog.c_str(), (UINT32)cleanLog.length(), m_textFormatItem.Get(), logR.right - logR.left - 25.0f, 10000.0f, &pLayout); 
+    HRESULT hr = m_dwriteFactory->CreateTextLayout(cleanLog.c_str(), (UINT32)cleanLog.length(), m_textFormatItem.Get(), logR.right - logR.left - 25.0f, 10000.0f, &pLayout); 
     
-    DWRITE_TEXT_METRICS metrics;
-    pLayout->GetMetrics(&metrics);
-    m_toastTotalHeight = metrics.height;
-    
+    if (SUCCEEDED(hr) && pLayout) {
+        DWRITE_TEXT_METRICS metrics;
+        pLayout->GetMetrics(&metrics);
+        m_toastTotalHeight = metrics.height;
+    } else {
+        m_toastTotalHeight = 100.0f; // Safe fallback
+    }    
     // Clamp Scroll
     float visibleH = logR.bottom - logR.top;
     float maxScroll = std::max(0.0f, m_toastTotalHeight - visibleH + 10.0f);
@@ -500,7 +508,9 @@ void SettingsOverlay::RenderUpdateToast(ID2D1RenderTarget* pRT, float hudX, floa
     if (m_toastScrollY > maxScroll) m_toastScrollY = maxScroll;
     
     pRT->PushAxisAlignedClip(logR, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    pRT->DrawTextLayout(D2D1::Point2F(logR.left + 5, logR.top + 5 - m_toastScrollY), pLayout.Get(), m_brushTextDim.Get());
+    if (pLayout) {
+        pRT->DrawTextLayout(D2D1::Point2F(logR.left + 5, logR.top + 5 - m_toastScrollY), pLayout.Get(), m_brushTextDim.Get());
+    }
     pRT->PopAxisAlignedClip();
     
     // Scrollbar
@@ -1292,6 +1302,18 @@ void SettingsOverlay::BuildMenu() {
 
     itemUpdate.onChange = [this]() {
          if (UpdateManager::Get().GetStatus() == UpdateStatus::NewVersionFound) {
+             std::string v = UpdateManager::Get().GetRemoteVersion().version;
+             std::string log = UpdateManager::Get().GetRemoteVersion().changelog;
+             auto to_wide = [](const std::string& s) -> std::wstring {
+                 if (s.empty()) return L"";
+                 int sz = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+                 std::wstring w(sz, 0);
+                 MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], sz);
+                 return w;
+             };
+             m_updateVersion = to_wide(v);
+             m_updateLog = to_wide(log);
+             m_toastScrollY = 0.0f;
              m_showUpdateToast = true;
              SetVisible(false); // Close Settings to focus on Update (Fixes visibility/focus issues)
          } else {
