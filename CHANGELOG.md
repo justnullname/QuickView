@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.0.2] - Performance & Precision Refinement
+**Release Date**: 2026-03-10
+
+### ✨ Features & UX
+- **Smart Zoom Toggle**: Implemented a 3-state toggle (Initial -> Fit Screen -> 100%) for intuitive scaling control.
+- **Window Management**: Fixed "creeping" window bug on systems with top taskbars (#26).
+- **HUD Gallery**: Resolved thumbnail desync issues after image deletion (#21).
+- **Settings**: Support for dragging the Settings Window and fixed combobox resizing metrics.
+
+### ⚡ Performance & Titan
+- **Titan Optimization**: Improved tile triggering logic by removing threshold quantization.
+- **Wait Cursor**: Eliminated unnecessary OS wait cursor during prefetch operations.
+- **UI Performance**: Fixed progress bar rendering overhead and eliminated exit stutter when using `Esc`.
+
+### 🐛 Bug Fixes
+- **SVG Engine**: Fixed random disappearance of SVG nodes during dynamic scaling.
+- **Format Support**: Removed unsupported `.raw` format to prevent navigation lag and decoding failures.
+- **Layout**: Refined font sizes and spacing for improved system consistency.
+
 ## [4.0.0] - The Titan Engine Update
 **Release Date**: 2026-03-06
 

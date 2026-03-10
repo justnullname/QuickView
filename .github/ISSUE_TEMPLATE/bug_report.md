@@ -1,8 +1,8 @@
 ---
-name: Bug report
-about: Create a report to help us improve
-title: ''
-labels: ''
+name: 🐛 Bug Report
+about: Create a report to help us improve the project
+title: '[BUG] '
+labels: bug
 assignees: ''
 
 ---
@@ -12,10 +12,9 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+1. Open image '...'
+2. Perform action '....'
+3. See error
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
@@ -23,16 +22,19 @@ A clear and concise description of what you expected to happen.
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+**Environment Information (CRITICAL)**
+ - **QuickView Version**: [e.g. v4.0.2]
+ - **OS Version**: [e.g. Windows 11 23H2 Build 22631]
+ - **CPU**: [e.g. AMD Ryzen 9 7950X - Used for SIMD/AVX check]
+ - **GPU**: [e.g. NVIDIA RTX 4090 - Used for Direct2D/DirectCompute]
+ - **RAM**: [e.g. 32GB]
+ - **Display**: [e.g. 4K 150% Scale - Used for High-DPI layout check]
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**Image Information**
+ - **Format**: [e.g. JXL, AVIF, RAW, Giga-pixel JPG]
+ - **Resolution**: [e.g. 30,000 x 20,000 - Did it trigger Titan engine?]
+ - **File Size**: [e.g. 500MB]
 
 **Additional context**
-Add any other context about the problem here.
+Add any other context about the problem here (e.g. customized QuickView.ini settings).
+```

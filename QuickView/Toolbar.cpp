@@ -45,17 +45,17 @@ Toolbar::Toolbar() {
         { ToolbarButtonID::FixExtension, ICON_WARNING[0], {}, false, false, true }, // Hidden if no mismatch
         
         { ToolbarButtonID::Pin,         ICON_PIN[0], {}, true, false },
-        { ToolbarButtonID::CompareToggle, ICON_COMPARE[0], {}, true, false },
+        // { ToolbarButtonID::CompareToggle, ICON_COMPARE[0], {}, true, false },
 
         // Compare mode buttons (hidden in normal mode)
-        { ToolbarButtonID::CompareSwap, ICON_SWAP[0], {}, true, false },
-        { ToolbarButtonID::CompareLayout, ICON_LAYOUT[0], {}, true, false },
-        { ToolbarButtonID::CompareInfo, ICON_INFO[0], {}, true, false },
-        { ToolbarButtonID::CompareDeleteLeft, ICON_DELETE[0], {}, true, false },
-        { ToolbarButtonID::CompareDeleteRight, ICON_DELETE[0], {}, true, false },
-        { ToolbarButtonID::CompareSyncZoom, ICON_LINK[0], {}, true, true },
-        { ToolbarButtonID::CompareSyncPan, ICON_PAN[0], {}, true, true },
-        { ToolbarButtonID::CompareExit, ICON_EXIT[0], {}, true, false }
+        // { ToolbarButtonID::CompareSwap, ICON_SWAP[0], {}, true, false },
+        // { ToolbarButtonID::CompareLayout, ICON_LAYOUT[0], {}, true, false },
+        // { ToolbarButtonID::CompareInfo, ICON_INFO[0], {}, true, false },
+        // { ToolbarButtonID::CompareDeleteLeft, ICON_DELETE[0], {}, true, false },
+        // { ToolbarButtonID::CompareDeleteRight, ICON_DELETE[0], {}, true, false },
+        // { ToolbarButtonID::CompareSyncZoom, ICON_LINK[0], {}, true, true },
+        // { ToolbarButtonID::CompareSyncPan, ICON_PAN[0], {}, true, true },
+        // { ToolbarButtonID::CompareExit, ICON_EXIT[0], {}, true, false }
     };
 }
 
