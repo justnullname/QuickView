@@ -5629,7 +5629,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (IsZoomed(hwnd)) {
                 ShowWindow(hwnd, SW_RESTORE);
             } else {
-                if (CheckUnsavedChanges(hwnd)) PostQuitMessage(0);
+                if (CheckUnsavedChanges(hwnd)) PostMessage(hwnd, WM_CLOSE, 0, 0);
             }
             break;
         }
