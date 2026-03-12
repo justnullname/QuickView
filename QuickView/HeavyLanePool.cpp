@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "HeavyLanePool.h"
 #include "ImageEngine.h"
 #include "SIMDUtils.h"
@@ -516,8 +516,7 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     job.imageId = imageId;
     job.submitTime = std::chrono::steady_clock::now(); 
     job.mmf = mmf;
-    job.isFullDecode = false; 
-    job.priority = 200; 
+    job.isFullDecode = true; // [TEMPORARY FORCE FULL]    job.priority = 200; 
     job.genID = m_generationID.load(); // [Smart Pull] Stamp Generation
     
     m_pendingJobs.push_back(job);

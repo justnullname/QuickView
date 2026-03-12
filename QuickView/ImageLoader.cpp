@@ -349,7 +349,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         
         // Calculate Scaling
         tjscalingfactor chosenFactor = {1, 1};
-        if (targetWidth > 0 || targetHeight > 0) {
+        if (false /* targetWidth > 0 || targetHeight > 0 */) {
             int numFactors;
             tjscalingfactor* factors = tj3GetScalingFactors(&numFactors);
             
@@ -3701,7 +3701,7 @@ namespace QuickView {
                 cinfo.scale_num = 1;
                 cinfo.scale_denom = 1;
 
-                if (ctx.targetWidth > 0 && ctx.targetHeight > 0) {
+                if (false /* ctx.targetWidth > 0 && ctx.targetHeight > 0 */) {
                     while (cinfo.scale_denom < 8) {
                         int nextDenom = cinfo.scale_denom * 2;
                         int scaledW = (cinfo.image_width + nextDenom - 1) / nextDenom;
@@ -8678,7 +8678,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             }
         }
         
-        // [Fix] Software Downscale if Unified Codec ignored target dimensions
+        /* [TEMPORARY DISABLE] Force No Software Resizing
         if (targetWidth > 0 && targetHeight > 0 && 
            ((int)res.width > targetWidth || (int)res.height > targetHeight)) {
             
@@ -8715,6 +8715,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                 // res.metadata.FormatDetails += L" (SwRescaled)";
             }
         }
+        */
         
         outFrame->pixels = res.pixels;
         outFrame->width = res.width;

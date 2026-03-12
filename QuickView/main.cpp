@@ -237,6 +237,7 @@ static EditState g_editState;
 AppConfig g_config;
 RuntimeConfig g_runtime;
 ViewState g_viewState;  // Non-static for extern access from UIRenderer
+static int g_renderExifOrientation = 1; // Exif orientation baked into the bitmap surface
 static FileNavigator g_navigator; // New Navigator
 static ThumbnailManager g_thumbMgr;
 GalleryOverlay g_gallery;  // Non-static for extern access from UIRenderer
@@ -263,6 +264,7 @@ static bool g_isImageScaled = false;         // [Two-Stage] True if current imag
 static DWORD g_scaledDecodeTime = 0;         // [Two-Stage] Tick when scaled image was shown
 static constexpr UINT_PTR IDT_FULL_DECODE = 42;  // Timer ID for 300ms full decode trigger
 static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for lazy high-res re-render
+static constexpr UINT_PTR IDT_INTERACTION = 1001; // Interaction debounce for HQ redraw/surface upgrade
 
 // Phase 2: Queue Drop Debounce (single-slot sliding window)
 struct Phase2PendingNavTask {
@@ -296,6 +298,7 @@ D2D1_POINT_2F g_lastFitOffset = {}; // Center offset of image on screen
 float g_lastFitScale = 1.0f;        // Scale factor to fit image to screen
 
 static constexpr UINT g_maxSvgSurfaceSize = 8192;  // Max dimension for SVG re-render
+static constexpr UINT g_maxBitmapSurfaceSize = 8192; // Max dimension for bitmap surface upgrades
 
 // === DComp Ping-Pong State ===
 static D2D1_SIZE_F g_lastSurfaceSize = {0, 0}; // Track DComp Surface size for UpdateLayout
@@ -1187,6 +1190,96 @@ static void RefreshSvgSurfaceAfterZoom(HWND hwnd) {
     }
 }
 
+static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const ImageResource& res) {
+    if (!res.bitmap || res.isSvg) return D2D1::SizeU(0, 0);
+    if (winW == 0 || winH == 0) return D2D1::SizeU(0, 0);
+    if (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192) return D2D1::SizeU(0, 0);
+
+    float originalW = 0.0f;
+    float originalH = 0.0f;
+    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+        originalW = (float)g_currentMetadata.Width;
+        originalH = (float)g_currentMetadata.Height;
+    } else {
+        D2D1_SIZE_F bmpSize = res.bitmap->GetSize();
+        originalW = bmpSize.width;
+        originalH = bmpSize.height;
+    }
+    if (originalW <= 0.0f || originalH <= 0.0f) return D2D1::SizeU(0, 0);
+
+    int baseRot = 0;
+    switch (g_renderExifOrientation) {
+        case 3: baseRot = 180; break;
+        case 5: baseRot = 270; break;
+        case 6: baseRot = 90;  break;
+        case 7: baseRot = 90;  break;
+        case 8: baseRot = 270; break;
+        default: baseRot = 0;  break;
+    }
+    int totalAngle = (baseRot + (int)g_editState.TotalRotation) % 360;
+    if (totalAngle < 0) totalAngle += 360;
+    if (totalAngle == 90 || totalAngle == 270) {
+        std::swap(originalW, originalH);
+    }
+
+    float fitScale = std::min((float)winW / originalW, (float)winH / originalH);
+    if (originalW < 200.0f && originalH < 200.0f) {
+        if (fitScale > 1.0f) fitScale = 1.0f;
+    }
+
+    float desiredScale = fitScale * g_viewState.Zoom;
+    if (desiredScale > 1.0f) desiredScale = 1.0f;
+    if (!(desiredScale > 0.0f)) return D2D1::SizeU(0, 0);
+
+    float desiredW = originalW * desiredScale;
+    float desiredH = originalH * desiredScale;
+
+    if (desiredW < (float)winW) desiredW = (float)winW;
+    if (desiredH < (float)winH) desiredH = (float)winH;
+
+    if (desiredW > (float)g_maxBitmapSurfaceSize || desiredH > (float)g_maxBitmapSurfaceSize) {
+        float ratio = std::min((float)g_maxBitmapSurfaceSize / desiredW,
+                               (float)g_maxBitmapSurfaceSize / desiredH);
+        desiredW *= ratio;
+        desiredH *= ratio;
+    }
+
+    UINT outW = (UINT)std::max(1.0f, std::round(desiredW));
+    UINT outH = (UINT)std::max(1.0f, std::round(desiredH));
+    return D2D1::SizeU(outW, outH);
+}
+
+static bool ShouldUpgradeBitmapSurface(const D2D1_SIZE_U& desired) {
+    if (desired.width == 0 || desired.height == 0) return false;
+    if (g_lastSurfaceSize.width <= 0.0f || g_lastSurfaceSize.height <= 0.0f) return true;
+    const float curW = g_lastSurfaceSize.width;
+    const float curH = g_lastSurfaceSize.height;
+    return (desired.width > curW + 4.0f || desired.height > curH + 4.0f);
+}
+
+static bool IsTransparentImage() {
+    if (g_imageResource.isSvg) return true;
+    const std::wstring& fmt = g_currentMetadata.Format;
+    if (fmt == L"PNG" || fmt == L"WEBP" || fmt == L"GIF" || fmt == L"SVG") return true;
+    if (fmt.find(L"Alpha") != std::wstring::npos) return true;
+    return false;
+}
+
+static void TryUpgradeBitmapSurface(HWND hwnd) {
+    if (!g_imageResource || g_imageResource.isSvg) return;
+    if (IsCompareModeActive()) return;
+    if (g_isLoading) return;
+    if (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192) return;
+
+    RECT rc; GetClientRect(hwnd, &rc);
+    if (rc.right <= 0 || rc.bottom <= 0) return;
+
+    D2D1_SIZE_U desired = ComputeDesiredBitmapSurfaceSize((UINT)rc.right, (UINT)rc.bottom, g_imageResource);
+    if (!ShouldUpgradeBitmapSurface(desired)) return;
+
+    RenderImageToDComp(hwnd, g_imageResource, IsTransparentImage(), true);
+}
+
 // [DComp] Render content (Bitmap or SVG) to DComp Pending Surface
 // For SVG: Uses Direct2D Native path with real-time transform (Lossless Zoom)
 // For Bitmap: Uses existing logic
@@ -1213,7 +1306,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         return true;
     }
     
-    if (!IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+    if (!isFastUpgrade && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(mi) };
         if (GetMonitorInfoW(hMon, &mi)) {
@@ -1229,7 +1322,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
             // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
             // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
             if (!res.isSvg && g_config.AutoRotate) {
-                 int orient = g_viewState.ExifOrientation;
+                 int orient = g_renderExifOrientation;
                  if (orient >= 5 && orient <= 8) {
                      std::swap(contentW, contentH);
                  }
@@ -1270,6 +1363,14 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
          isTitan = true;
          fullWidth = g_currentMetadata.Width;
          fullHeight = g_currentMetadata.Height;
+    }
+
+    if (!res.isSvg && !isTitan) {
+        D2D1_SIZE_U desired = ComputeDesiredBitmapSurfaceSize(targetWinW, targetWinH, res);
+        if (desired.width > 0 && desired.height > 0) {
+            surfW = desired.width;
+            surfH = desired.height;
+        }
     }
 
     // [Fix] REMOVE AlignActiveLayer to prevent double-centering conflict with SetPan
@@ -1317,7 +1418,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         D2D1_SIZE_F bmpSize = res.bitmap->GetSize();
         
         // Handle EXIF Orientation (GPU Pre-Rotation)
-        int orientation = g_viewState.ExifOrientation;
+        int orientation = g_renderExifOrientation;
         // If AutoRotate is disabled, force 1 (unless we want to support manual rotation later)
         if (!g_config.AutoRotate) orientation = 1;
 
@@ -1466,6 +1567,7 @@ bool IsRawFile(const std::wstring& path) {
 
 void ReleaseImageResources() {
     g_imageResource.Reset();
+    g_renderExifOrientation = 1;
     Sleep(50);
 }
 
@@ -1725,6 +1827,8 @@ static void PerformZoom100(HWND hwnd) {
             g_osd.Show(hwnd, AppStrings::OSD_Zoom100, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f));
     }
     RequestRepaint(PaintLayer::All);
+    g_viewState.IsInteracting = true;
+    SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
 }
 
 // Forward Declaration
@@ -1868,6 +1972,8 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f) {
         g_viewState.Zoom = 1.0f; 
         g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
         RequestRepaint(PaintLayer::All);
+        g_viewState.IsInteracting = true;
+        SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
     }
 }
 
@@ -3836,7 +3942,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_TIMER: {
-        static const UINT_PTR INTERACTION_TIMER_ID = 1001;
         static const UINT_PTR OSD_TIMER_ID = 999;
         
 
@@ -3863,9 +3968,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
 
         // Interaction Timer (1001)
-        if (wParam == INTERACTION_TIMER_ID) {
-            KillTimer(hwnd, INTERACTION_TIMER_ID);
+        if (wParam == IDT_INTERACTION) {
+            KillTimer(hwnd, IDT_INTERACTION);
             g_viewState.IsInteracting = false;  // End interaction mode
+            TryUpgradeBitmapSurface(hwnd);
             RequestRepaint(PaintLayer::Image);  // [v4.1] Trigger HQ interpolation redraw
         }
 
@@ -5283,8 +5389,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Enable interaction mode during zoom (use LINEAR interpolation)
         g_viewState.IsInteracting = true;
         // Set timer to reset interaction mode after 150ms of inactivity
-        static const UINT_PTR INTERACTION_TIMER_ID = 1001;
-        SetTimer(hwnd, INTERACTION_TIMER_ID, 150, nullptr);
+        SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
         
         // [Shared Logic]
         float newTotalScale = CalculateTargetZoom(hwnd, delta, false);
@@ -5600,6 +5705,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // [Refactor] Use Centralized Smart Zoom
             PerformSmartZoom(hwnd, newTotalScale, nullptr, false);
 
+            g_viewState.IsInteracting = true;
+            SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
 
 
             
@@ -6660,6 +6767,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 
                 // [Detect Pre-Rotation]
                 HandleExifPreRotation(evt);
+                g_renderExifOrientation = g_viewState.ExifOrientation;
 
                 // UI Text Logic
                 wchar_t titleBuf[2048];
