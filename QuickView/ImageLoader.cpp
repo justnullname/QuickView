@@ -5788,27 +5788,10 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                      return cleanup(E_FAIL);
                 }
                 
-                // Manual Premultiply & Swizzle (RGBA -> BGRA)
+                // Optimized Premultiply & Swizzle (RGBA -> BGRA) using SIMD
                 uint8_t* p = pData->pixels.data();
                 size_t pxCount = bufferSize / 4;
-                 // Optimized Swizzle
-                 for(size_t i=0; i<pxCount; ++i) {
-                     uint8_t r = p[i*4+0];
-                     uint8_t g = p[i*4+1];
-                     uint8_t b = p[i*4+2];
-                     uint8_t a = p[i*4+3];
-                     // Pre-multiply
-                     if (a < 255 && a > 0) {
-                         r = (uint8_t)((r * a) / 255);
-                         g = (uint8_t)((g * a) / 255);
-                         b = (uint8_t)((b * a) / 255);
-                     } else if (a == 0) r = g = b = 0;
-                     
-                     p[i*4+0] = b;
-                     p[i*4+1] = g;
-                     p[i*4+2] = r;
-                     p[i*4+3] = a;
-                 }
+                SIMDUtils::SwizzleRGBA_to_BGRA_Premul(p, pxCount);
                  
                 foundDC = true;
                 return cleanup(S_OK); // Success!
