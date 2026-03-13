@@ -334,9 +334,6 @@ public:
 
 
 
-    // [v5.3 DEPRECATED] Use DecodeResult.metadata instead
-    // std::wstring GetLastFormatDetails() const;
-    // int GetLastExifOrientation() const;
 
     // --- NEW: Fast Image Info (Header-Only Parsing) ---
     struct ImageInfo {
