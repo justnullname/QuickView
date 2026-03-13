@@ -77,14 +77,12 @@ namespace SIMDUtils {
                     __m256i mulLo = _mm256_mullo_epi16(pLo, aLo);
                     __m256i mulHi = _mm256_mullo_epi16(pHi, aHi);
                     
-                    // Add 255 for ceiling division/rounding?
-                    // No, just keep >> 8 for now to match original behavior logic,
-                    // BUT previous logic might be exactly generating artifacts due to darkening?
-                    // Let's use simple >> 8 but maybe 255 special case? 
-                    // Alpha is typically preserved anyway (blended back).
-                    
-                    mulLo = _mm256_srli_epi16(mulLo, 8);
-                    mulHi = _mm256_srli_epi16(mulHi, 8);
+                    // (x + 128 + ((x + 128) >> 8)) >> 8 for fast round(x/255)
+                    const __m256i v128 = _mm256_set1_epi16(128);
+                    mulLo = _mm256_add_epi16(mulLo, v128);
+                    mulHi = _mm256_add_epi16(mulHi, v128);
+                    mulLo = _mm256_srli_epi16(_mm256_add_epi16(mulLo, _mm256_srli_epi16(mulLo, 8)), 8);
+                    mulHi = _mm256_srli_epi16(_mm256_add_epi16(mulHi, _mm256_srli_epi16(mulHi, 8)), 8);
                     
                     // Restore original Alpha
                     mulLo = _mm256_blend_epi16(mulLo, pLo, blendMask);
@@ -101,13 +99,13 @@ namespace SIMDUtils {
             for (; x < width; ++x) {
                 uint8_t* px = row + x * 4;
                 uint8_t alpha = px[3];
-                // if (alpha == 255) continue; // Optimization
+                if (alpha == 255) continue;
                 if (alpha == 0) {
                     px[0] = px[1] = px[2] = 0;
                 } else {
-                    px[0] = (px[0] * alpha) >> 8;
-                    px[1] = (px[1] * alpha) >> 8;
-                    px[2] = (px[2] * alpha) >> 8;
+                    px[0] = (uint8_t)((px[0] * alpha + 127) / 255);
+                    px[1] = (uint8_t)((px[1] * alpha + 127) / 255);
+                    px[2] = (uint8_t)((px[2] * alpha + 127) / 255);
                 }
             }
         }
@@ -158,8 +156,13 @@ namespace SIMDUtils {
             // Step 4: Multiply and shift (premultiply)
             __m256i mulLo = _mm256_mullo_epi16(pLo, aLo);
             __m256i mulHi = _mm256_mullo_epi16(pHi, aHi);
-            mulLo = _mm256_srli_epi16(mulLo, 8);
-            mulHi = _mm256_srli_epi16(mulHi, 8);
+
+            // (x + 128 + ((x + 128) >> 8)) >> 8 for fast round(x/255)
+            const __m256i v128 = _mm256_set1_epi16(128);
+            mulLo = _mm256_add_epi16(mulLo, v128);
+            mulHi = _mm256_add_epi16(mulHi, v128);
+            mulLo = _mm256_srli_epi16(_mm256_add_epi16(mulLo, _mm256_srli_epi16(mulLo, 8)), 8);
+            mulHi = _mm256_srli_epi16(_mm256_add_epi16(mulHi, _mm256_srli_epi16(mulHi, 8)), 8);
             
             // Step 5: Restore original alpha (blend at positions 3,7,11,15 in 16-bit words)
             // Word indices per 128-bit half: 3 and 7 are alphas (0x88 mask)
