@@ -194,11 +194,10 @@ private:
     bool m_showFullLog = false; // Toggle inside About Tab?
     
     // Cached Layout for Input
-    float m_lastHudX = 0.0f;
-    float m_lastHudY = 0.0f;
+    float m_hudX = 0.0f;
+    float m_hudY = 0.0f;
     float m_windowWidth = 0.0f;
     float m_windowHeight = 0.0f;
-    D2D1_RECT_F m_finalHudRect = {}; // Cache for hit-testing
     float m_settingsContentHeight = 0.0f;
     float m_uiScale = 1.0f;
     

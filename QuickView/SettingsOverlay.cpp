@@ -331,11 +331,8 @@ bool SettingsOverlay::IsRegistrationNeeded() {
 SettingsOverlay::SettingsOverlay() {
     m_toastHoverBtn = -1;
     m_showUpdateToast = false;
-    m_lastHudX = 0;
-    m_lastHudX = 0;
-    m_lastHudY = 0;
-    m_lastHudX = 0;
-    m_lastHudY = 0;
+    m_hudX = 0;
+    m_hudY = 0;
     m_pendingRebuild = false;
     m_pendingResetFeedback = false;
 }
@@ -1423,13 +1420,12 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     if (hudX < 0) hudX = 0;
     if (hudY < 0) hudY = 0;
     
-    m_lastHudX = hudX;
-    m_lastHudY = hudY;
+    m_hudX = hudX;
+    m_hudY = hudY;
 
     // Helper: Draw Main HUD only if visible
     if (m_visible) {
         D2D1_RECT_F hudRect = D2D1::RectF(hudX, hudY, hudX + hudW, hudY + hudH);
-        m_finalHudRect = hudRect;
 
         // 3. Draw HUD Panel Background (Opaque Dark)
         ComPtr<ID2D1SolidColorBrush> brushPanelBg;
@@ -2234,7 +2230,6 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // NOTE: We need window size. For now, use cached/known values or assume calling code passes them.
     // A better approach is to store m_lastWinW/m_lastWinH. For now, apply simple logic.
     // This function is called with screen coords - we need to transform.
-    // HACK: Store hudX/hudY as member vars. For now, re-calculate based on known item.rect positions.
 
     // 0. Active Combo Logic (Priority)
     if (m_pActiveCombo) {
@@ -2357,15 +2352,12 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     if (!m_visible) return SettingsAction::None;
 
     // NOTE: We need to check if click is inside HUD bounds.
-    // item.rect stores screen coords, so we can infer HUD bounds from them.
-    // For robustness, we'll use first item rect's X to estimate hudX.
-    // Alternative: Add member vars m_hudX, m_hudY and set in Render. TODO.
-
-    // Use cached HUD rect from Render
-    float hudX = m_finalHudRect.left;
-    float hudY = m_finalHudRect.top;
-    float hudRight = m_finalHudRect.right;
-    float hudBottom = m_finalHudRect.bottom;
+    // Use cached HUD coordinates from Render
+    float s = m_uiScale;
+    float hudX = m_hudX;
+    float hudY = m_hudY;
+    float hudRight = hudX + HUD_WIDTH * s;
+    float hudBottom = hudY + HUD_HEIGHT * s;
 
     // Check if click is OUTSIDE HUD -> Close settings
     if (x < hudX || x > hudRight || y < hudY || y > hudBottom) {
