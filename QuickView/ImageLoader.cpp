@@ -4416,8 +4416,8 @@ namespace QuickView {
                             if (thumb->type == LIBRAW_IMAGE_JPEG) {
                                 // Delegate to Codec::JPEG
                                 HRESULT hr = JPEG::Load((uint8_t*)thumb->data, thumb->data_size, ctx, result);
-                                RawProcessor.dcraw_clear_mem(thumb);
                                 if (SUCCEEDED(hr)) {
+                                    RawProcessor.dcraw_clear_mem(thumb);
                                     // Override Metadata
                                     result.metadata.LoaderName = L"LibRaw (Preview)";
                                     OutputDebugStringW(L"[RawCodec] Preview JPEG decoded OK\n");
