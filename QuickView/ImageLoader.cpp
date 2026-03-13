@@ -4466,6 +4466,12 @@ namespace QuickView {
                                         result.metadata.Width = w;
                                         result.metadata.Height = h;
                                         
+                                        int flip = RawProcessor.imgdata.sizes.flip;
+                                        if (flip == 3) result.metadata.ExifOrientation = 3;
+                                        else if (flip == 5) result.metadata.ExifOrientation = 8;
+                                        else if (flip == 6) result.metadata.ExifOrientation = 6;
+                                        else result.metadata.ExifOrientation = 1;
+
                                         RawProcessor.dcraw_clear_mem(thumb);
                                         return S_OK;
                                     }
@@ -4548,6 +4554,12 @@ namespace QuickView {
                      result.metadata.Width = w;
                      result.metadata.Height = h;
                      
+                     int flip = RawProcessor.imgdata.sizes.flip;
+                     if (flip == 3) result.metadata.ExifOrientation = 3;
+                     else if (flip == 5) result.metadata.ExifOrientation = 8;
+                     else if (flip == 6) result.metadata.ExifOrientation = 6;
+                     else result.metadata.ExifOrientation = 1;
+
                      hr = S_OK;
                 }
                 
