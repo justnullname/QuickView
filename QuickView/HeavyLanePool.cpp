@@ -1202,6 +1202,8 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                                 rawFrame.stride = (int)dstStride;
                                 rawFrame.format = QuickView::PixelFormat::BGRA8888;
                                 rawFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                                rawFrame.srcWidth = mW;   // [v10.1] Preserve original resolution
+                                rawFrame.srcHeight = mH;  // for cache-hit metadata recovery
                                 
                                 meta.Width = mW;
                                 meta.Height = mH;
@@ -1639,6 +1641,8 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                     safeFrame->stride = rawFrame.stride;
                     safeFrame->format = rawFrame.format;
                     safeFrame->formatDetails = rawFrame.formatDetails;
+                    safeFrame->srcWidth = rawFrame.srcWidth;   // [v10.1] Preserve original resolution
+                    safeFrame->srcHeight = rawFrame.srcHeight;
                     safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
                 }
                 

@@ -397,6 +397,8 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         outFrame->formatDetails = L"8-bit JPEG (MMF)";
         if (chosenFactor.num != chosenFactor.denom) {
             outFrame->formatDetails += L" Scaled";
+            outFrame->srcWidth = width;   // [v10.1] Preserve original resolution
+            outFrame->srcHeight = height;
         }
         
         size_t bufSize = outFrame->GetBufferSize();
@@ -490,6 +492,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     outFrame->stride = QuickView::CalculateAlignedStride(w, 4);
     outFrame->format = PixelFormat::BGRA8888;
     outFrame->formatDetails = L"WIC Cache";
+    if (sourceWithScaler) {
+        outFrame->srcWidth = (int)origW;   // [v10.1] Preserve original resolution
+        outFrame->srcHeight = (int)origH;
+    }
     
     size_t bufSize = outFrame->GetBufferSize();
     if (arena) {
@@ -8724,6 +8730,13 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         // [v5.4] Metadata
         outFrame->formatDetails = res.metadata.FormatDetails;
         outFrame->exifOrientation = res.metadata.ExifOrientation; // [v8.7] Propagate Orientation
+        
+        // [v10.1] Preserve original resolution if frame is scaled
+        if (res.metadata.Width > 0 && res.metadata.Height > 0 &&
+            (res.metadata.Width != (UINT)outFrame->width || res.metadata.Height != (UINT)outFrame->height)) {
+            outFrame->srcWidth = (int)res.metadata.Width;
+            outFrame->srcHeight = (int)res.metadata.Height;
+        }
         
         SetupDeleter(res.pixels);
         return S_OK;

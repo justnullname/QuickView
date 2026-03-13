@@ -76,6 +76,13 @@ struct RawImageFrame {
     // [v8.7] EXIF Orientation (1-8)
     int exifOrientation = 1; /* 1 = Normal */
 
+    // [v10.1] Original source dimensions (for Titan scaled base layers)
+    // When width/height hold the scaled preview size (e.g. 3840x2160),
+    // srcWidth/srcHeight preserve the true source resolution (e.g. 1080x9123).
+    // Zero means width/height ARE the original dimensions (no scaling).
+    int srcWidth = 0;
+    int srcHeight = 0;
+
     // [D2D Native] SVG Specific Data (Used only when format == SVG_XML)
     // Use unique_ptr to ensure zero overhead for non-SVG paths
     struct SvgData {
@@ -182,6 +189,8 @@ private:
         // [v5.6 Fix] Move formatDetails!
         formatDetails = std::move(other.formatDetails);
         exifOrientation = other.exifOrientation;
+        srcWidth = other.srcWidth;
+        srcHeight = other.srcHeight;
         memoryDeleter = std::move(other.memoryDeleter);
         
         // [D2D Native] Move SVG Data
@@ -192,6 +201,8 @@ private:
         other.width = 0;
         other.height = 0;
         other.stride = 0;
+        other.srcWidth = 0;
+        other.srcHeight = 0;
         // other.formatDetails is moved (empty)
         other.exifOrientation = 1;
         // memoryDeleter is moved, but setting to nullptr for clarity

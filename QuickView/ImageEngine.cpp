@@ -279,8 +279,9 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 // [Fix - Bug 7] Re-populate metadata from cache
                 // Never trust info.width directly, this causes dimension downgrade 
                 // on cache hit for RAW/TIFFs with tiny IFD thumbs!
-                e.metadata.Width = cachedFrame->width;
-                e.metadata.Height = cachedFrame->height;
+                // [v10.1] Titan Fix: Prefer srcWidth/srcHeight (original resolution) over width/height (scaled preview)
+                e.metadata.Width = (cachedFrame->srcWidth > 0) ? cachedFrame->srcWidth : cachedFrame->width;
+                e.metadata.Height = (cachedFrame->srcHeight > 0) ? cachedFrame->srcHeight : cachedFrame->height;
                 e.metadata.Format = info.format;
                 e.metadata.FileSize = info.fileSize;
                 
@@ -1449,6 +1450,8 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
             cachedFrame->svg->xmlData = frame->svg->xmlData; // Vector copy
             cachedFrame->svg->viewBoxW = frame->svg->viewBoxW;
             cachedFrame->svg->viewBoxH = frame->svg->viewBoxH;
+            cachedFrame->srcWidth = frame->srcWidth;
+            cachedFrame->srcHeight = frame->srcHeight;
         } else {
             // Raster: Deep copy pixels to heap
             size_t bufferSize = frame->GetBufferSize();
@@ -1463,6 +1466,8 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
             cachedFrame->quality = frame->quality; // [v9.0] Copy Quality
             cachedFrame->formatDetails = frame->formatDetails;
             cachedFrame->exifOrientation = frame->exifOrientation;
+            cachedFrame->srcWidth = frame->srcWidth;
+            cachedFrame->srcHeight = frame->srcHeight;
             cachedFrame->memoryDeleter = [](uint8_t* p) { delete[] p; }; // Heap cleanup
         }
         
