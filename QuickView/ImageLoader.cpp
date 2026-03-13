@@ -2,8 +2,45 @@
 #include <filesystem>
 #include <fstream> 
 #include <memory>
+#include <vector>
+#include <algorithm>
 
 // Helper
+static std::string MultiReplace(const std::string& content, const std::map<std::string, std::string>& replacements) {
+    if (replacements.empty()) return content;
+
+    struct Match {
+        size_t pos;
+        size_t len;
+        const std::string* newVal;
+        bool operator<(const Match& other) const { return pos < other.pos; }
+    };
+
+    std::vector<Match> matches;
+    for (auto const& [oldVal, newVal] : replacements) {
+        size_t pos = 0;
+        while ((pos = content.find(oldVal, pos)) != std::string::npos) {
+            matches.push_back({ pos, oldVal.length(), &newVal });
+            pos += oldVal.length();
+        }
+    }
+
+    if (matches.empty()) return content;
+    std::sort(matches.begin(), matches.end());
+
+    std::string result;
+    result.reserve(content.size());
+    size_t lastPos = 0;
+    for (const auto& m : matches) {
+        if (m.pos < lastPos) continue;
+        result.append(content, lastPos, m.pos - lastPos);
+        result.append(*m.newVal);
+        lastPos = m.pos + m.len;
+    }
+    result.append(content, lastPos, std::string::npos);
+    return result;
+}
+
 static std::vector<uint8_t> ReadFileToVector(const std::wstring& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return {};
@@ -8665,13 +8702,8 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     
                     // Apply ID Replacements
                     if (!replacements.empty()) {
-                        for (auto const& [oldVal, newVal] : replacements) {
-                            size_t pos = 0;
-                            while ((pos = svgContent.find(oldVal, pos)) != std::string::npos) {
-                                 svgContent.replace(pos, oldVal.length(), newVal);
-                                 pos += newVal.length();
-                            }
-                        }
+                        svgContent = MultiReplace(svgContent, replacements);
+
                         wchar_t msg[128];
                         swprintf_s(msg, L"[SVG] Sanitized %d Unsafe IDs.\n", (int)replacements.size());
                         OutputDebugStringW(msg);
@@ -8691,8 +8723,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     auto style_begin = std::sregex_iterator(svgContent.begin(), svgContent.end(), reStyle);
                     auto style_end = std::sregex_iterator();
                     
-                    int inlinedCount = 0;
-
+                    std::map<std::string, std::string> styleReplacements;
                     for (std::sregex_iterator i = style_begin; i != style_end; ++i) {
                         std::smatch match = *i;
                         std::string className = match.str(1); // e.g. "st0"
@@ -8703,20 +8734,14 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                         // Replace: fill="url(#qv_fix_0)" class="st0"
                         // Note: This relies on 'class=' being the hook.
                         
-                        std::string searchPattern = "class=\"" + className + "\"";
-                        std::string replacePattern = "fill=\"" + fillVal + "\" class=\"" + className + "\"";
-                        
-                        size_t pos = 0;
-                        while ((pos = svgContent.find(searchPattern, pos)) != std::string::npos) {
-                            svgContent.replace(pos, searchPattern.length(), replacePattern);
-                            pos += replacePattern.length();
-                            inlinedCount++;
-                        }
+                        styleReplacements["class=\"" + className + "\""] = "fill=\"" + fillVal + "\" class=\"" + className + "\"";
                     }
                     
-                    if (inlinedCount > 0) {
+                    if (!styleReplacements.empty()) {
+                        svgContent = MultiReplace(svgContent, styleReplacements);
+
                          wchar_t msg[128];
-                         swprintf_s(msg, L"[SVG] Inlined %d Styles (Fixed Black Silhouette).\n", inlinedCount);
+                        swprintf_s(msg, L"[SVG] Inlined %d Styles (Fixed Black Silhouette).\n", (int)styleReplacements.size());
                          OutputDebugStringW(msg);
                     }
                 } catch (...) {
