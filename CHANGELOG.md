@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.0.5] - Precision & RAW Stability Fix
+**Release Date**: 2026-03-13
+
+### 🐛 Bug Fixes
+- **Titan Aspect Ratio**: Fixed a critical bug where images Viewed in Titan mode would report incorrect aspect ratios when re-viewed from cache (srcWidth/srcHeight persistence).
+- **RAW Orientation**: Resolved an issue where RAW files would lose their EXIF orientation when hitting the image cache or during pre-decoding (Propagated `exifOrientation` through heavy lane).
+- **RAW Stability**: Fixed a double-free crash that occurred when the embedded JPEG preview extraction failed for certain RAW files.
+
+### ✨ UX Improvements
+- **Temporary RAW Toggle**: The "RAW" button in the toolbar now only affects the current viewing session. It no longer modifies the global system default, ensuring settings revert to user preference on restart or navigation.
+- **Rendering**: Refined bitmap surface upgrades and texture promotion logic to eliminate micro-flicker during high-quality LOD transitions.
+- **Feedback**: Added "(Temporary)" tag to RAW toggle OSD messages for clearer state communication.
+
+
 ## [4.0.2] - Performance & Precision Refinement
 **Release Date**: 2026-03-10
 
