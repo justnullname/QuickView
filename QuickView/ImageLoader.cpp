@@ -5312,14 +5312,6 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     return E_FAIL;
 }
 
-// [v5.3 DEPRECATED] Use DecodeResult.metadata instead
-// std::wstring CImageLoader::GetLastFormatDetails() const {
-//     return g_lastFormatDetails;
-// }
-// 
-// int CImageLoader::GetLastExifOrientation() const {
-//     return g_lastExifOrientation;
-// }
 
 // ============================================================================
 // NEW: Fast Header-Only Parsing (< 5ms for most formats)
