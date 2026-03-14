@@ -107,8 +107,10 @@ struct DialogState {
     HWND hEdit = nullptr;
     HWND hInputHost = nullptr; // Host container for visibility
     WNDPROC oldEditProc = nullptr;
-    
+
     DialogResult FinalResult = DialogResult::None;
+    bool UseCustomCenter = false;
+    D2D1_POINT_2F CustomCenter = D2D1::Point2F(0.0f, 0.0f);
 };
 
 
@@ -357,7 +359,6 @@ struct CompareState {
     ComparePane activePane = ComparePane::Right;
     ComparePane contextPane = ComparePane::Right;
     ComparePane selectedPane = ComparePane::Right;
-    bool lockSelection = false;
     bool dirty = false;
     bool autoExpandedWindow = false;
 };
@@ -1037,8 +1038,13 @@ static bool RenderCompareComposite(HWND hwnd) {
         }
     };
     auto DrawActivePaneIndicator = [&](ComparePane pane, float splitX, float winW, float winH) {
-        const float inset = 2.0f;
-        const float thickness = 2.0f;
+        float inset = 3.0f;
+        if (IsZoomed(hwnd) && !g_isFullScreen) {
+            const int frame = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+            inset += (float)frame + 2.0f;
+        }
+        const float thickness = 3.0f;
+        const float cornerLen = 14.0f;
         if (winW < 20.0f || winH < 20.0f) return;
 
         ComPtr<ID2D1SolidColorBrush> brush;
@@ -1051,6 +1057,16 @@ static bool RenderCompareComposite(HWND hwnd) {
                           D2D1::Point2F(splitX - inset, winH - inset), brush.Get(), thickness);
             ctx->DrawLine(D2D1::Point2F(inset, inset),
                           D2D1::Point2F(inset, winH - inset), brush.Get(), thickness);
+
+            // Corner accents
+            ctx->DrawLine(D2D1::Point2F(inset, inset),
+                          D2D1::Point2F(inset + cornerLen, inset), brush.Get(), thickness);
+            ctx->DrawLine(D2D1::Point2F(inset, inset),
+                          D2D1::Point2F(inset, inset + cornerLen), brush.Get(), thickness);
+            ctx->DrawLine(D2D1::Point2F(inset, winH - inset),
+                          D2D1::Point2F(inset + cornerLen, winH - inset), brush.Get(), thickness);
+            ctx->DrawLine(D2D1::Point2F(inset, winH - inset),
+                          D2D1::Point2F(inset, winH - inset - cornerLen), brush.Get(), thickness);
         } else {
             ctx->DrawLine(D2D1::Point2F(splitX + inset, inset),
                           D2D1::Point2F(winW - inset, inset), brush.Get(), thickness);
@@ -1058,6 +1074,16 @@ static bool RenderCompareComposite(HWND hwnd) {
                           D2D1::Point2F(winW - inset, winH - inset), brush.Get(), thickness);
             ctx->DrawLine(D2D1::Point2F(winW - inset, inset),
                           D2D1::Point2F(winW - inset, winH - inset), brush.Get(), thickness);
+
+            // Corner accents
+            ctx->DrawLine(D2D1::Point2F(winW - inset, inset),
+                          D2D1::Point2F(winW - inset - cornerLen, inset), brush.Get(), thickness);
+            ctx->DrawLine(D2D1::Point2F(winW - inset, inset),
+                          D2D1::Point2F(winW - inset, inset + cornerLen), brush.Get(), thickness);
+            ctx->DrawLine(D2D1::Point2F(winW - inset, winH - inset),
+                          D2D1::Point2F(winW - inset - cornerLen, winH - inset), brush.Get(), thickness);
+            ctx->DrawLine(D2D1::Point2F(winW - inset, winH - inset),
+                          D2D1::Point2F(winW - inset, winH - inset - cornerLen), brush.Get(), thickness);
         }
     };
 
@@ -1141,12 +1167,10 @@ static void EnterCompareMode(HWND hwnd) {
     g_compare.activePane = ComparePane::Right;
     g_compare.contextPane = ComparePane::Right;
     g_compare.selectedPane = ComparePane::Right;
-    g_compare.lockSelection = false;
     MarkCompareDirty();
 
     g_toolbar.SetCompareMode(true);
     g_toolbar.SetCompareSyncStates(g_compare.syncZoom, g_compare.syncPan);
-    g_toolbar.SetCompareLockState(g_compare.lockSelection);
     RECT rc{};
     GetClientRect(hwnd, &rc);
     g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
@@ -1187,7 +1211,6 @@ static void ExitCompareMode(HWND hwnd) {
     g_compare.contextPane = ComparePane::Right;
     g_compare.activePane = ComparePane::Right;
     g_compare.selectedPane = ComparePane::Right;
-    g_compare.lockSelection = false;
     g_compare.dirty = false;
 
     g_toolbar.SetCompareMode(false);
@@ -1811,8 +1834,24 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     if (dlgH < 200.0f) dlgH = 200.0f;  // Increased minimum height
     if (dlgH > 400.0f) dlgH = 400.0f;  // Increased maximum height
     
+    auto clamp = [](float v, float minV, float maxV) {
+        if (v < minV) return minV;
+        if (v > maxV) return maxV;
+        return v;
+    };
     float left = (size.width - dlgW) / 2.0f;
     float top = (size.height - dlgH) / 2.0f;
+    if (g_dialog.UseCustomCenter) {
+        left = g_dialog.CustomCenter.x - dlgW * 0.5f;
+        top = g_dialog.CustomCenter.y - dlgH * 0.5f;
+        const float margin = 8.0f;
+        float maxLeft = size.width - dlgW - margin;
+        float maxTop = size.height - dlgH - margin;
+        if (maxLeft < margin) maxLeft = margin;
+        if (maxTop < margin) maxTop = margin;
+        left = clamp(left, margin, maxLeft);
+        top = clamp(top, margin, maxTop);
+    }
     layout.Box = D2D1::RectF(left, top, left + dlgW, top + dlgH);
     
     // Input Field (Placed below Message)
@@ -2437,6 +2476,15 @@ void DestroyDialogInput() {
         DestroyWindow(g_dialog.hInputHost);
         g_dialog.hInputHost = nullptr;
     }
+}
+
+static void SetDialogCenter(float x, float y) {
+    g_dialog.UseCustomCenter = true;
+    g_dialog.CustomCenter = D2D1::Point2F(x, y);
+}
+
+static void ClearDialogCenter() {
+    g_dialog.UseCustomCenter = false;
 }
 
 DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std::wstring& messageContent, 
@@ -5150,9 +5198,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         if (IsCompareModeActive()) {
             g_compare.activePane = HitTestComparePane(hwnd, pt);
-            if (!g_compare.lockSelection) {
-                g_compare.selectedPane = g_compare.activePane;
-            }
+            g_compare.selectedPane = g_compare.activePane;
+            MarkCompareDirty();
+            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
             if (IsNearCompareDivider(hwnd, pt)) {
                 g_compare.draggingDivider = true;
                 SetCapture(hwnd);
@@ -5370,13 +5418,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         RequestRepaint(PaintLayer::Image | PaintLayer::Static);
                     }
                     break;
-                case ToolbarButtonID::CompareLock:
-                    if (IsCompareModeActive()) {
-                        g_compare.lockSelection = !g_compare.lockSelection;
-                        g_toolbar.SetCompareLockState(g_compare.lockSelection);
-                        RequestRepaint(PaintLayer::Static);
-                    }
-                    break;
                 case ToolbarButtonID::CompareInfo:
                     if (IsCompareModeActive() && g_compare.left.valid && g_imageResource) {
                         const auto& l = g_compare.left.metadata;
@@ -5389,15 +5430,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         ShowQuickViewDialog(hwnd, L"Compare Info", msg.c_str(), D2D1::ColorF(D2D1::ColorF::CornflowerBlue), buttons, false, L"", L"");
                     }
                     break;
-                case ToolbarButtonID::CompareDeleteLeft:
+                case ToolbarButtonID::CompareDelete:
                     if (IsCompareModeActive()) {
-                        g_compare.contextPane = ComparePane::Left;
-                        SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
-                    }
-                    break;
-                case ToolbarButtonID::CompareDeleteRight:
-                    if (IsCompareModeActive()) {
-                        g_compare.contextPane = ComparePane::Right;
+                        g_compare.contextPane = g_compare.selectedPane;
                         SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
                     }
                     break;
@@ -5966,9 +6001,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (IsCompareModeActive()) {
             g_compare.contextPane = HitTestComparePane(hwnd, ptClient);
             g_compare.activePane = g_compare.contextPane;
-            if (!g_compare.lockSelection) {
-                g_compare.selectedPane = g_compare.contextPane;
-            }
+            g_compare.selectedPane = g_compare.contextPane;
+            MarkCompareDirty();
+            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
         }
         
         bool hasImage = g_imageResource;
@@ -6022,22 +6057,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             ofn.nMaxFile = MAX_PATH;
             ofn.lpstrFilter = L"All Images\0*.jpg;*.jpeg;*.jpe;*.jfif;*.png;*.bmp;*.dib;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.svg;*.svgz;*.jxl;*.exr;*.hdr;*.pic;*.psd;*.psb;*.tga;*.pcx;*.qoi;*.wbmp;*.pam;*.pbm;*.pgm;*.ppm;*.wdp;*.hdp;*.arw;*.cr2;*.cr3;*.crw;*.dng;*.nef;*.orf;*.raf;*.rw2;*.srw;*.x3f;*.mrw;*.mos;*.kdc;*.dcr;*.sr2;*.pef;*.erf;*.3fr;*.mef;*.nrw;*.raw\0All Files\0*.*\0";
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-            if (GetOpenFileNameW(&ofn)) {
-                if (IsCompareModeActive() && g_compare.contextPane == ComparePane::Left) {
-                    if (LoadImageIntoCompareLeftSlot(szFile)) {
-                        g_compare.activePane = ComparePane::Left;
-                        MarkCompareDirty();
-                        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                    }
-                } else {
-                    if (IsCompareModeActive()) {
-                        CaptureCurrentImageAsCompareLeft();
-                        g_compare.activePane = ComparePane::Right;
-                    }
-                    g_editState.Reset();
-                    g_viewState.Reset();
-                    g_navigator.Initialize(szFile);
-                    g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
+                if (GetOpenFileNameW(&ofn)) {
+                    if (IsCompareModeActive() && g_compare.contextPane == ComparePane::Left) {
+                        if (LoadImageIntoCompareLeftSlot(szFile)) {
+                            g_compare.activePane = ComparePane::Left;
+                            MarkCompareDirty();
+                            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                        }
+                    } else {
+                        if (IsCompareModeActive()) {
+                            g_compare.activePane = ComparePane::Right;
+                            g_compare.selectedPane = ComparePane::Right;
+                        }
+                        g_editState.Reset();
+                        g_viewState.Reset();
+                        g_navigator.Initialize(szFile);
+                        g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
                     LoadImageAsync(hwnd, szFile);
                 }
             }
@@ -6285,8 +6320,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     std::vector<DialogButton> dlgButtons;
                     dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
                     dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                    if (IsCompareModeActive()) {
+                        const D2D1_RECT_F vp = GetCompareViewport(hwnd, g_compare.contextPane);
+                        SetDialogCenter((vp.left + vp.right) * 0.5f, (vp.top + vp.bottom) * 0.5f);
+                    }
                     DialogResult dlgResult = ShowQuickViewDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
-                                                                 D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
+                                                                  D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
+                    ClearDialogCenter();
                     confirmed = (dlgResult == DialogResult::Yes);
                 }
 
@@ -7856,9 +7896,7 @@ void Navigate(HWND hwnd, int direction) {
         if (!path.empty()) {
             g_compare.activePane = ComparePane::Right;
             g_compare.contextPane = ComparePane::Right;
-            if (!g_compare.lockSelection) {
-                g_compare.selectedPane = ComparePane::Right;
-            }
+            g_compare.selectedPane = ComparePane::Right;
             g_editState.Reset();
             g_viewState.Reset();
             QuickView::BrowseDirection browseDir = (direction > 0)

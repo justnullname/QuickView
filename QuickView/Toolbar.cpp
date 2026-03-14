@@ -19,12 +19,12 @@ extern AppConfig g_config;
 #define ICON_WARNING L"\uE7BA"
 #define ICON_PIN L"\uE718"
 #define ICON_UNPIN L"\uE77A"
-#define ICON_COMPARE L"\uE7B8"
+#define ICON_COMPARE L"\uE8A1"
 #define ICON_SWAP L"\uE8AB"
 #define ICON_LAYOUT L"\uECA5"
 #define ICON_DELETE L"\uE74D"
 #define ICON_LINK L"\uE71B"
-#define ICON_PAN L"\uE7A5"
+#define ICON_PAN L"\uE7C2"
 #define ICON_EXIT L"\uE8BB"
 
 Toolbar::Toolbar() {
@@ -44,19 +44,17 @@ Toolbar::Toolbar() {
         { ToolbarButtonID::RawToggle,   ICON_RAW[0], {}, false, false }, // Hidden/Disabled if not RAW
         { ToolbarButtonID::FixExtension, ICON_WARNING[0], {}, false, false, true }, // Hidden if no mismatch
         
-        { ToolbarButtonID::Pin,         ICON_PIN[0], {}, true, false },
         { ToolbarButtonID::CompareToggle, ICON_COMPARE[0], {}, true, false },
 
         // Compare mode buttons (hidden in normal mode)
         { ToolbarButtonID::CompareSwap, ICON_SWAP[0], {}, true, false },
         { ToolbarButtonID::CompareLayout, ICON_LAYOUT[0], {}, true, false },
-        { ToolbarButtonID::CompareLock, ICON_UNLOCK[0], {}, true, false },
         { ToolbarButtonID::CompareInfo, ICON_INFO[0], {}, true, false },
-        { ToolbarButtonID::CompareDeleteLeft, ICON_DELETE[0], {}, true, false },
-        { ToolbarButtonID::CompareDeleteRight, ICON_DELETE[0], {}, true, false },
+        { ToolbarButtonID::CompareDelete, ICON_DELETE[0], {}, true, false },
         { ToolbarButtonID::CompareSyncZoom, ICON_LINK[0], {}, true, true },
         { ToolbarButtonID::CompareSyncPan, ICON_PAN[0], {}, true, true },
-        { ToolbarButtonID::CompareExit, ICON_EXIT[0], {}, true, false }
+        { ToolbarButtonID::CompareExit, ICON_EXIT[0], {}, true, false },
+        { ToolbarButtonID::Pin,         ICON_PIN[0], {}, true, false }
     };
 }
 
@@ -144,10 +142,8 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         switch (id) {
             case ToolbarButtonID::CompareSwap:
             case ToolbarButtonID::CompareLayout:
-            case ToolbarButtonID::CompareLock:
             case ToolbarButtonID::CompareInfo:
-            case ToolbarButtonID::CompareDeleteLeft:
-            case ToolbarButtonID::CompareDeleteRight:
+            case ToolbarButtonID::CompareDelete:
             case ToolbarButtonID::CompareSyncZoom:
             case ToolbarButtonID::CompareSyncPan:
             case ToolbarButtonID::CompareExit:
@@ -156,10 +152,13 @@ void Toolbar::UpdateLayout(float winW, float winH) {
                 return false;
         }
     };
+    auto isAlwaysVisible = [](ToolbarButtonID id) {
+        return id == ToolbarButtonID::Pin;
+    };
 
     auto isVisibleButton = [&](const ToolbarButton& btn) {
         if (m_compareMode) {
-            return isCompareButton(btn.id);
+            return isCompareButton(btn.id) || isAlwaysVisible(btn.id);
         }
 
         if (isCompareButton(btn.id)) return false;
@@ -223,13 +222,11 @@ const wchar_t* GetTooltipText(const ToolbarButton& btn) {
         case ToolbarButtonID::RawToggle: return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull : AppStrings::Toolbar_Tooltip_RawPreview;
         case ToolbarButtonID::FixExtension: return AppStrings::Toolbar_Tooltip_FixExtension;
         case ToolbarButtonID::Pin: return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unpin : AppStrings::Toolbar_Tooltip_Pin;
-        case ToolbarButtonID::CompareToggle: return L"Compare";
+        case ToolbarButtonID::CompareToggle: return L"Compare Mode";
         case ToolbarButtonID::CompareSwap: return L"Swap Left/Right";
         case ToolbarButtonID::CompareLayout: return L"Toggle Layout";
-        case ToolbarButtonID::CompareLock: return btn.isToggled ? L"Selection Locked" : L"Selection Unlocked";
         case ToolbarButtonID::CompareInfo: return L"Compare Info";
-        case ToolbarButtonID::CompareDeleteLeft: return L"Delete Left";
-        case ToolbarButtonID::CompareDeleteRight: return L"Delete Right";
+        case ToolbarButtonID::CompareDelete: return L"Delete Selected";
         case ToolbarButtonID::CompareSyncZoom: return btn.isToggled ? L"Zoom Sync: ON" : L"Zoom Sync: OFF";
         case ToolbarButtonID::CompareSyncPan: return btn.isToggled ? L"Pan Sync: ON" : L"Pan Sync: OFF";
         case ToolbarButtonID::CompareExit: return L"Exit Compare";
@@ -481,11 +478,3 @@ void Toolbar::SetCompareSyncStates(bool syncZoom, bool syncPan) {
     }
 }
 
-void Toolbar::SetCompareLockState(bool locked) {
-    for (auto& btn : m_buttons) {
-        if (btn.id == ToolbarButtonID::CompareLock) {
-            btn.isToggled = locked;
-            btn.iconChar = locked ? ICON_LOCK[0] : ICON_UNLOCK[0];
-        }
-    }
-}

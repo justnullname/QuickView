@@ -14,10 +14,8 @@ enum class ToolbarButtonID {
     CompareToggle,
     CompareSwap,
     CompareLayout,
-    CompareLock,
     CompareInfo,
-    CompareDeleteLeft,
-    CompareDeleteRight,
+    CompareDelete,
     CompareSyncZoom,
     CompareSyncPan,
     CompareExit
@@ -66,7 +64,6 @@ public:
     void SetCompareMode(bool enabled);
     bool IsCompareMode() const { return m_compareMode; }
     void SetCompareSyncStates(bool syncZoom, bool syncPan);
-    void SetCompareLockState(bool locked);
     
     // [Phase 3] Get minimum required width for toolbar
     float GetMinWidth() const { return m_minRequiredWidth > 0.0f ? m_minRequiredWidth : (PADDING_X * 2 + 8 * BUTTON_SIZE + 7 * GAP) * m_uiScale; }
