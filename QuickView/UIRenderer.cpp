@@ -1657,53 +1657,84 @@ void UIRenderer::DrawGridTooltip(ID2D1DeviceContext* dc) {
 void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
     // Only draw for Arrow mode (0)
     if (g_config.NavIndicator != 0) return;
-    if (!g_viewState.EdgeHoverState) return;
-    
-    float zoneWidth = m_width * 0.15f;
-    float arrowCenterY = m_height * 0.5f;
-    float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (m_width - zoneWidth / 2.0f);
-    
     const float s = m_uiScale;
     float circleRadius = 20.0f * s;
     float arrowSize = 10.0f * s;
     float strokeWidth = 3.0f * s;
-    
+
     ComPtr<ID2D1SolidColorBrush> brushCircle, brushArrow;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &brushCircle);
     dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f), &brushArrow);
-    
-    D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(arrowCenterX, arrowCenterY), circleRadius, circleRadius);
-    dc->FillEllipse(ellipse, brushCircle.Get());
-    
-    // Get factory for path geometry
+
     ComPtr<ID2D1Factory> factory;
     dc->GetFactory(&factory);
     if (!factory) return;
-    
-    ComPtr<ID2D1PathGeometry> path;
-    factory->CreatePathGeometry(&path);
-    ComPtr<ID2D1GeometrySink> sink;
-    path->Open(&sink);
-    
-    if (g_viewState.EdgeHoverState == -1) {
-        sink->BeginFigure(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY));
-        sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
-    } else {
-        sink->BeginFigure(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY));
-        sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
+
+    auto drawArrow = [&](float arrowCenterX, float arrowCenterY, bool isLeft) {
+        D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(arrowCenterX, arrowCenterY), circleRadius, circleRadius);
+        dc->FillEllipse(ellipse, brushCircle.Get());
+
+        ComPtr<ID2D1PathGeometry> path;
+        factory->CreatePathGeometry(&path);
+        ComPtr<ID2D1GeometrySink> sink;
+        path->Open(&sink);
+
+        if (isLeft) {
+            sink->BeginFigure(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY));
+            sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
+        } else {
+            sink->BeginFigure(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY - arrowSize * 0.7f), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(arrowCenterX + arrowSize * 0.3f, arrowCenterY));
+            sink->AddLine(D2D1::Point2F(arrowCenterX - arrowSize * 0.3f, arrowCenterY + arrowSize * 0.7f));
+        }
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
+
+        D2D1_STROKE_STYLE_PROPERTIES strokeProps = {};
+        strokeProps.startCap = D2D1_CAP_STYLE_ROUND;
+        strokeProps.endCap = D2D1_CAP_STYLE_ROUND;
+        strokeProps.lineJoin = D2D1_LINE_JOIN_ROUND;
+
+        ComPtr<ID2D1StrokeStyle> strokeStyle;
+        factory->CreateStrokeStyle(strokeProps, nullptr, 0, &strokeStyle);
+
+        dc->DrawGeometry(path.Get(), brushArrow.Get(), strokeWidth, strokeStyle.Get());
+    };
+
+    if (g_viewState.CompareActive) {
+        float splitRatio = g_viewState.CompareSplitRatio;
+        if (splitRatio <= 0.05f || splitRatio >= 0.95f) splitRatio = 0.5f;
+        float splitX = m_width * splitRatio;
+        float leftW = splitX;
+        float rightW = m_width - splitX;
+        float arrowCenterY = m_height * 0.5f;
+        bool drawn = false;
+
+        if (g_viewState.EdgeHoverLeft != 0 && leftW > 1.0f) {
+            float zoneWidth = leftW * 0.15f;
+            float arrowCenterX = (g_viewState.EdgeHoverLeft == -1)
+                ? (zoneWidth / 2.0f)
+                : (splitX - zoneWidth / 2.0f);
+            drawArrow(arrowCenterX, arrowCenterY, g_viewState.EdgeHoverLeft == -1);
+            drawn = true;
+        }
+        if (g_viewState.EdgeHoverRight != 0 && rightW > 1.0f) {
+            float zoneWidth = rightW * 0.15f;
+            float arrowCenterX = (g_viewState.EdgeHoverRight == -1)
+                ? (splitX + zoneWidth / 2.0f)
+                : (m_width - zoneWidth / 2.0f);
+            drawArrow(arrowCenterX, arrowCenterY, g_viewState.EdgeHoverRight == -1);
+            drawn = true;
+        }
+        if (!drawn) return;
+        return;
     }
-    sink->EndFigure(D2D1_FIGURE_END_OPEN);
-    sink->Close();
-    
-    D2D1_STROKE_STYLE_PROPERTIES strokeProps = {};
-    strokeProps.startCap = D2D1_CAP_STYLE_ROUND;
-    strokeProps.endCap = D2D1_CAP_STYLE_ROUND;
-    strokeProps.lineJoin = D2D1_LINE_JOIN_ROUND;
-    
-    ComPtr<ID2D1StrokeStyle> strokeStyle;
-    factory->CreateStrokeStyle(strokeProps, nullptr, 0, &strokeStyle);
-    
-    dc->DrawGeometry(path.Get(), brushArrow.Get(), strokeWidth, strokeStyle.Get());
+
+    if (!g_viewState.EdgeHoverState) return;
+
+    float zoneWidth = m_width * 0.15f;
+    float arrowCenterY = m_height * 0.5f;
+    float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (m_width - zoneWidth / 2.0f);
+    drawArrow(arrowCenterX, arrowCenterY, g_viewState.EdgeHoverState == -1);
 }

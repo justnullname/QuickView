@@ -373,6 +373,7 @@ static void ExitCompareMode(HWND hwnd);
 static void CaptureCurrentImageAsCompareLeft();
 static bool LoadImageIntoCompareLeftSlot(const std::wstring& path);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
+static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval);
 
 static D2D1_SIZE_F GetLogicalImageSize();
 static bool g_isAutoLocked = false;
@@ -629,6 +630,7 @@ void ReleaseImageResources();
 void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, bool forceWindowLock);
 void DiscardChanges();
 std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName);
+static void RestoreCurrentExifOrientation();
 
 static bool IsCompareModeActive() {
     return g_compare.mode != ViewMode::Single;
@@ -688,6 +690,12 @@ static float ComputeZoomStep(float wheelDelta) {
     return powf(unit, count);
 }
 
+static float ComputeZoomMultiplier(float delta, bool fineInterval) {
+    float step = fineInterval ? 0.01f : 0.1f;
+    if (delta > 0.0f) return 1.0f + step * delta;
+    return 1.0f / (1.0f + step * fabsf(delta));
+}
+
 static void ZoomCompareViewAtPoint(CompareView& view,
                                    const ImageResource& res,
                                    const D2D1_RECT_F& fitViewport,
@@ -716,6 +724,40 @@ static void ZoomCompareViewAtPoint(CompareView& view,
     const float centerY = (centerViewport.top + centerViewport.bottom) * 0.5f;
     const float dx = (float)mousePt.x - centerX;
     const float dy = (float)mousePt.y - centerY;
+
+    view.PanX = view.PanX * ratio + dx * (1.0f - ratio);
+    view.PanY = view.PanY * ratio + dy * (1.0f - ratio);
+    view.Zoom = newZoom;
+}
+
+static void ZoomCompareViewWithMultiplier(CompareView& view,
+                                          const ImageResource& res,
+                                          const D2D1_RECT_F& fitViewport,
+                                          const D2D1_RECT_F& centerViewport,
+                                          float multiplier,
+                                          const POINT& anchorPt) {
+    const D2D1_SIZE_F oriented = GetOrientedSize(res, view.ExifOrientation);
+    if (oriented.width <= 0.0f || oriented.height <= 0.0f) return;
+
+    const float vpW = fitViewport.right - fitViewport.left;
+    const float vpH = fitViewport.bottom - fitViewport.top;
+    if (vpW <= 1.0f || vpH <= 1.0f) return;
+
+    float fit = std::min(vpW / oriented.width, vpH / oriented.height);
+    if (oriented.width < 200.0f && oriented.height < 200.0f && fit > 1.0f) {
+        fit = 1.0f;
+    }
+
+    const float oldZoom = (std::max)(0.02f, view.Zoom);
+    float newZoom = oldZoom * multiplier;
+    if (newZoom < 0.02f) newZoom = 0.02f;
+    if (newZoom > 80.0f) newZoom = 80.0f;
+
+    const float ratio = newZoom / oldZoom;
+    const float centerX = (centerViewport.left + centerViewport.right) * 0.5f;
+    const float centerY = (centerViewport.top + centerViewport.bottom) * 0.5f;
+    const float dx = (float)anchorPt.x - centerX;
+    const float dy = (float)anchorPt.y - centerY;
 
     view.PanX = view.PanX * ratio + dx * (1.0f - ratio);
     view.PanY = view.PanY * ratio + dy * (1.0f - ratio);
@@ -772,6 +814,27 @@ static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient) {
     const float w = (float)(rc.right - rc.left);
     const float splitX = GetCompareSplitRatio() * w;
     return ((float)ptClient.x < splitX) ? ComparePane::Left : ComparePane::Right;
+}
+
+static int ComputeEdgeHoverForPane(const POINT& pt, const D2D1_RECT_F& paneRect) {
+    const float w = paneRect.right - paneRect.left;
+    const float h = paneRect.bottom - paneRect.top;
+    if (w <= 50.0f || h <= 100.0f) return 0;
+    if (pt.x < paneRect.left || pt.x > paneRect.right || pt.y < paneRect.top || pt.y > paneRect.bottom) return 0;
+
+    const bool inHRange = (pt.x < paneRect.left + w * 0.15f) ||
+                          (pt.x > paneRect.right - w * 0.15f);
+    bool inVRange = false;
+    if (g_config.NavIndicator == 0) {
+        inVRange = (pt.y > paneRect.top + h * 0.20f) && (pt.y < paneRect.bottom - h * 0.20f);
+    } else {
+        inVRange = (pt.y > paneRect.top + h * 0.30f) && (pt.y < paneRect.bottom - h * 0.30f);
+    }
+
+    if (inHRange && inVRange) {
+        return (pt.x < paneRect.left + w * 0.15f) ? -1 : 1;
+    }
+    return 0;
 }
 
 static bool IsNearCompareDivider(HWND hwnd, const POINT& ptClient, float threshold = 6.0f) {
@@ -1009,81 +1072,80 @@ static bool RenderCompareComposite(HWND hwnd) {
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
     const CompareView rightView = GetRightCompareView();
     auto DrawDividerHandle = [&](float splitX, float winH, float opacity) {
-        const float handleHalfW = 7.0f;
-        const float handleHalfH = 26.0f;
+        const float s = g_uiScale;
+        const float radius = 11.0f * s;
         const float centerY = winH * 0.5f;
-        if (winH < handleHalfH * 2.0f + 4.0f) return;
+        if (winH < radius * 2.0f + 4.0f) return;
 
-        ComPtr<ID2D1SolidColorBrush> outerBrush;
-        ComPtr<ID2D1SolidColorBrush> innerBrush;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.45f * opacity), &outerBrush))) return;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity), &innerBrush))) return;
+        ComPtr<ID2D1SolidColorBrush> bgBrush;
+        ComPtr<ID2D1SolidColorBrush> borderBrush;
+        ComPtr<ID2D1SolidColorBrush> arrowBrush;
+        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.50f * opacity), &bgBrush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity), &borderBrush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * opacity), &arrowBrush))) return;
 
-        D2D1_ROUNDED_RECT outerRect = D2D1::RoundedRect(
-            D2D1::RectF(splitX - handleHalfW, centerY - handleHalfH, splitX + handleHalfW, centerY + handleHalfH),
-            4.0f, 4.0f);
-        D2D1_ROUNDED_RECT innerRect = D2D1::RoundedRect(
-            D2D1::RectF(splitX - handleHalfW + 2.0f, centerY - handleHalfH + 8.0f,
-                        splitX + handleHalfW - 2.0f, centerY + handleHalfH - 8.0f),
-            3.0f, 3.0f);
+        D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(splitX, centerY), radius, radius);
+        ctx->FillEllipse(ellipse, bgBrush.Get());
+        ctx->DrawEllipse(ellipse, borderBrush.Get(), 1.0f * s);
 
-        ctx->FillRoundedRectangle(outerRect, outerBrush.Get());
-        ctx->FillRoundedRectangle(innerRect, innerBrush.Get());
+        const float chevron = 4.5f * s;
+        const float gap = 2.0f * s;
 
-        ComPtr<ID2D1SolidColorBrush> gripBrush;
-        if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.2f, 0.2f, 0.6f * opacity), &gripBrush))) {
-            ctx->DrawLine(D2D1::Point2F(splitX - 3.0f, centerY - 6.0f), D2D1::Point2F(splitX + 3.0f, centerY - 6.0f), gripBrush.Get(), 1.0f);
-            ctx->DrawLine(D2D1::Point2F(splitX - 3.0f, centerY), D2D1::Point2F(splitX + 3.0f, centerY), gripBrush.Get(), 1.0f);
-            ctx->DrawLine(D2D1::Point2F(splitX - 3.0f, centerY + 6.0f), D2D1::Point2F(splitX + 3.0f, centerY + 6.0f), gripBrush.Get(), 1.0f);
-        }
+        ComPtr<ID2D1Factory> factory;
+        ctx->GetFactory(&factory);
+        if (!factory) return;
+
+        D2D1_STROKE_STYLE_PROPERTIES strokeProps = {};
+        strokeProps.startCap = D2D1_CAP_STYLE_ROUND;
+        strokeProps.endCap = D2D1_CAP_STYLE_ROUND;
+        strokeProps.lineJoin = D2D1_LINE_JOIN_ROUND;
+        ComPtr<ID2D1StrokeStyle> strokeStyle;
+        factory->CreateStrokeStyle(strokeProps, nullptr, 0, &strokeStyle);
+
+        float strokeWidth = 1.6f * s;
+        ctx->DrawLine(D2D1::Point2F(splitX - gap, centerY - chevron),
+                      D2D1::Point2F(splitX - gap - chevron, centerY),
+                      arrowBrush.Get(), strokeWidth, strokeStyle.Get());
+        ctx->DrawLine(D2D1::Point2F(splitX - gap - chevron, centerY),
+                      D2D1::Point2F(splitX - gap, centerY + chevron),
+                      arrowBrush.Get(), strokeWidth, strokeStyle.Get());
+        ctx->DrawLine(D2D1::Point2F(splitX + gap, centerY - chevron),
+                      D2D1::Point2F(splitX + gap + chevron, centerY),
+                      arrowBrush.Get(), strokeWidth, strokeStyle.Get());
+        ctx->DrawLine(D2D1::Point2F(splitX + gap + chevron, centerY),
+                      D2D1::Point2F(splitX + gap, centerY + chevron),
+                      arrowBrush.Get(), strokeWidth, strokeStyle.Get());
     };
     auto DrawActivePaneIndicator = [&](ComparePane pane, float splitX, float winW, float winH) {
-        float inset = 3.0f;
-        if (IsZoomed(hwnd) && !g_isFullScreen) {
-            const int frame = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
-            inset += (float)frame + 2.0f;
-        }
-        const float thickness = 3.0f;
-        const float cornerLen = 14.0f;
+        const float s = g_uiScale;
+        const float inset = 2.0f * s;
+        const float thickness = 2.4f * s;
         if (winW < 20.0f || winH < 20.0f) return;
 
         ComPtr<ID2D1SolidColorBrush> brush;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.65f, 1.0f, 0.75f), &brush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.65f, 1.0f, 0.80f), &brush))) return;
 
+        D2D1_RECT_F rect{};
         if (pane == ComparePane::Left) {
-            ctx->DrawLine(D2D1::Point2F(inset, inset),
-                          D2D1::Point2F(splitX - inset, inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(inset, winH - inset),
-                          D2D1::Point2F(splitX - inset, winH - inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(inset, inset),
-                          D2D1::Point2F(inset, winH - inset), brush.Get(), thickness);
-
-            // Corner accents
-            ctx->DrawLine(D2D1::Point2F(inset, inset),
-                          D2D1::Point2F(inset + cornerLen, inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(inset, inset),
-                          D2D1::Point2F(inset, inset + cornerLen), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(inset, winH - inset),
-                          D2D1::Point2F(inset + cornerLen, winH - inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(inset, winH - inset),
-                          D2D1::Point2F(inset, winH - inset - cornerLen), brush.Get(), thickness);
+            rect = D2D1::RectF(inset, inset, splitX - inset, winH - inset);
         } else {
-            ctx->DrawLine(D2D1::Point2F(splitX + inset, inset),
-                          D2D1::Point2F(winW - inset, inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(splitX + inset, winH - inset),
-                          D2D1::Point2F(winW - inset, winH - inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(winW - inset, inset),
-                          D2D1::Point2F(winW - inset, winH - inset), brush.Get(), thickness);
+            rect = D2D1::RectF(splitX + inset, inset, winW - inset, winH - inset);
+        }
 
-            // Corner accents
-            ctx->DrawLine(D2D1::Point2F(winW - inset, inset),
-                          D2D1::Point2F(winW - inset - cornerLen, inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(winW - inset, inset),
-                          D2D1::Point2F(winW - inset, inset + cornerLen), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(winW - inset, winH - inset),
-                          D2D1::Point2F(winW - inset - cornerLen, winH - inset), brush.Get(), thickness);
-            ctx->DrawLine(D2D1::Point2F(winW - inset, winH - inset),
-                          D2D1::Point2F(winW - inset, winH - inset - cornerLen), brush.Get(), thickness);
+        if (rect.right > rect.left + 1.0f && rect.bottom > rect.top + 1.0f) {
+            const D2D1_POINT_2F topLeft = D2D1::Point2F(rect.left, rect.top);
+            const D2D1_POINT_2F topRight = D2D1::Point2F(rect.right, rect.top);
+            const D2D1_POINT_2F bottomLeft = D2D1::Point2F(rect.left, rect.bottom);
+            const D2D1_POINT_2F bottomRight = D2D1::Point2F(rect.right, rect.bottom);
+
+            ctx->DrawLine(topLeft, topRight, brush.Get(), thickness);
+            ctx->DrawLine(bottomLeft, bottomRight, brush.Get(), thickness);
+
+            if (pane == ComparePane::Left) {
+                ctx->DrawLine(topLeft, bottomLeft, brush.Get(), thickness);
+            } else {
+                ctx->DrawLine(topRight, bottomRight, brush.Get(), thickness);
+            }
         }
     };
 
@@ -1169,6 +1231,11 @@ static void EnterCompareMode(HWND hwnd) {
     g_compare.selectedPane = ComparePane::Right;
     MarkCompareDirty();
 
+    g_viewState.CompareActive = true;
+    g_viewState.CompareSplitRatio = GetCompareSplitRatio();
+    g_viewState.EdgeHoverLeft = 0;
+    g_viewState.EdgeHoverRight = 0;
+
     g_toolbar.SetCompareMode(true);
     g_toolbar.SetCompareSyncStates(g_compare.syncZoom, g_compare.syncPan);
     RECT rc{};
@@ -1212,6 +1279,12 @@ static void ExitCompareMode(HWND hwnd) {
     g_compare.activePane = ComparePane::Right;
     g_compare.selectedPane = ComparePane::Right;
     g_compare.dirty = false;
+
+    g_viewState.CompareActive = false;
+    g_viewState.CompareSplitRatio = 0.5f;
+    g_viewState.EdgeHoverLeft = 0;
+    g_viewState.EdgeHoverRight = 0;
+    g_viewState.EdgeHoverState = 0;
 
     g_toolbar.SetCompareMode(false);
     RECT rc{};
@@ -1950,6 +2023,45 @@ void RequestRepaint(PaintLayer layer) {
     if (g_mainHwnd) {
         ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
     }
+}
+
+static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval) {
+    if (!IsCompareModeActive()) return;
+    const ComparePane pane = g_compare.selectedPane;
+    const ComparePane other = (pane == ComparePane::Left) ? ComparePane::Right : ComparePane::Left;
+
+    auto applyToPane = [&](ComparePane p) {
+        D2D1_RECT_F fitVp = GetCompareViewport(hwnd, p);
+        D2D1_RECT_F centerVp = GetCompareInteractionViewport(hwnd, p);
+        POINT centerPt = {
+            (LONG)((centerVp.left + centerVp.right) * 0.5f),
+            (LONG)((centerVp.top + centerVp.bottom) * 0.5f)
+        };
+        float multiplier = ComputeZoomMultiplier(delta, fineInterval);
+
+        if (p == ComparePane::Left) {
+            if (!g_compare.left.valid) return;
+            ZoomCompareViewWithMultiplier(g_compare.left.view, g_compare.left.resource, fitVp, centerVp, multiplier, centerPt);
+        } else {
+            if (!g_imageResource) return;
+            CompareView right = GetRightCompareView();
+            ZoomCompareViewWithMultiplier(right, g_imageResource, fitVp, centerVp, multiplier, centerPt);
+            SetRightCompareView(right);
+        }
+    };
+
+    applyToPane(pane);
+    if (g_compare.syncZoom) {
+        applyToPane(other);
+    }
+
+    MarkCompareDirty();
+    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+
+    const CompareView activeView = (pane == ComparePane::Left) ? g_compare.left.view : GetRightCompareView();
+    wchar_t zoomBuf[32];
+    swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(activeView.Zoom * 100.0f));
+    g_osd.Show(hwnd, zoomBuf, false, false, D2D1::ColorF(D2D1::ColorF::White));
 }
 
 // 便捷�?(保持向后兼容)
@@ -4110,7 +4222,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Edge Nav Cursor: Only for Cursor mode (NavIndicator == 1)
         if (g_config.EdgeNavClick && g_config.NavIndicator == 1) {
             if (!g_gallery.IsVisible() && !g_settingsOverlay.IsVisible()) {
-                if (g_viewState.EdgeHoverState != 0) {
+                bool hoverEdge = false;
+                if (IsCompareModeActive()) {
+                    hoverEdge = (g_viewState.EdgeHoverLeft != 0) || (g_viewState.EdgeHoverRight != 0);
+                } else {
+                    hoverEdge = (g_viewState.EdgeHoverState != 0);
+                }
+                if (hoverEdge) {
                     SetCursor(LoadCursor(nullptr, IDC_HAND));
                     return TRUE;
                 }
@@ -4397,11 +4515,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
 
             // Restore Trigger: If we *were* maximized and now are *not*, RESET zoom to fit.
-            if (!isMaximized && s_wasMaximized) {
-                 // Reset to default view state (centered, fit)
-                 g_viewState.Reset();
-                 RequestRepaint(PaintLayer::All);
-            }
+               if (!isMaximized && s_wasMaximized) {
+                    // Reset to default view state (centered, fit)
+                    g_viewState.Reset();
+                    RestoreCurrentExifOrientation();
+                    RequestRepaint(PaintLayer::All);
+               }
             s_wasMaximized = isMaximized;
             
             g_programmaticResize = false;
@@ -4475,43 +4594,68 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
               }
           }
           
-          // Edge Navigation Hover Detection
-          if (g_config.EdgeNavClick && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible()) {
-              RECT rcv; GetClientRect(hwnd, &rcv);
-              int w = rcv.right - rcv.left;
-              int h = rcv.bottom - rcv.top;
-              int oldState = g_viewState.EdgeHoverState; // Record old state
-              
-              if (w > 50 && h > 100) {
-                  bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
-                  bool inVRange;
-                  
-                  // Arrow mode (0): Full vertical range 30%-70%
-                  // Cursor/None mode (1,2): Smaller central range 40%-60%
-                  // Arrow mode (0): Expanded vertical range 20%-80%
-                  // Cursor/None mode (1,2): Expanded central range 30%-70%
-                  if (g_config.NavIndicator == 0) {
-                      inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
-                  } else {
-                      inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
-                  }
-                  
-                  if (inHRange && inVRange) {
-                      g_viewState.EdgeHoverState = (pt.x < w * 0.15) ? -1 : 1;
-                  } else {
-                      g_viewState.EdgeHoverState = 0;
-                  }
-              }
-              
-              if (g_viewState.EdgeHoverState != oldState) {
-                   RequestRepaint(PaintLayer::Static);
-              }
-          } else {
-              if (g_viewState.EdgeHoverState != 0) {
-                   g_viewState.EdgeHoverState = 0;
-                   RequestRepaint(PaintLayer::Static);
-              }
-          }
+            // Edge Navigation Hover Detection
+            if (g_config.EdgeNavClick && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible()) {
+                RECT rcv; GetClientRect(hwnd, &rcv);
+                int w = rcv.right - rcv.left;
+                int h = rcv.bottom - rcv.top;
+
+                if (IsCompareModeActive()) {
+                    int oldLeft = g_viewState.EdgeHoverLeft;
+                    int oldRight = g_viewState.EdgeHoverRight;
+                    g_viewState.EdgeHoverState = 0;
+                    g_viewState.CompareActive = true;
+
+                    float splitX = (g_compare.mode == ViewMode::CompareWipe)
+                        ? ClampCompareRatio(g_compare.splitRatio) * (float)w
+                        : 0.5f * (float)w;
+                    g_viewState.CompareSplitRatio = (w > 1) ? (splitX / (float)w) : 0.5f;
+
+                    const D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)h);
+                    const D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
+
+                    g_viewState.EdgeHoverLeft = ComputeEdgeHoverForPane(pt, leftRect);
+                    g_viewState.EdgeHoverRight = ComputeEdgeHoverForPane(pt, rightRect);
+
+                    if (g_viewState.EdgeHoverLeft != oldLeft || g_viewState.EdgeHoverRight != oldRight) {
+                        RequestRepaint(PaintLayer::Static);
+                    }
+                } else {
+                    g_viewState.CompareActive = false;
+                    g_viewState.EdgeHoverLeft = 0;
+                    g_viewState.EdgeHoverRight = 0;
+
+                    int oldState = g_viewState.EdgeHoverState; // Record old state
+                    if (w > 50 && h > 100) {
+                        bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+                        bool inVRange;
+
+                        if (g_config.NavIndicator == 0) {
+                            inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
+                        } else {
+                            inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                        }
+
+                        if (inHRange && inVRange) {
+                            g_viewState.EdgeHoverState = (pt.x < w * 0.15) ? -1 : 1;
+                        } else {
+                            g_viewState.EdgeHoverState = 0;
+                        }
+                    }
+
+                    if (g_viewState.EdgeHoverState != oldState) {
+                        RequestRepaint(PaintLayer::Static);
+                    }
+                }
+            } else {
+                if (g_viewState.EdgeHoverState != 0 || g_viewState.EdgeHoverLeft != 0 || g_viewState.EdgeHoverRight != 0) {
+                    g_viewState.EdgeHoverState = 0;
+                    g_viewState.EdgeHoverLeft = 0;
+                    g_viewState.EdgeHoverRight = 0;
+                    g_viewState.CompareActive = false;
+                    RequestRepaint(PaintLayer::Static);
+                }
+            }
 
           // Skip UI interactions (Toolbar, Window Controls, etc.) when Gallery covers screen
           if (!g_gallery.IsVisible()) {
@@ -4622,17 +4766,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              return 0;
          }
 
-         if (IsCompareModeActive() && g_compare.draggingDivider) {
-             RECT rcSplit{};
-             GetClientRect(hwnd, &rcSplit);
-             const float w = (float)(rcSplit.right - rcSplit.left);
-             if (w > 1.0f) {
-                 g_compare.splitRatio = ClampCompareRatio((float)pt.x / w);
-                 MarkCompareDirty();
-                 RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-             }
-             return 0;
-         }
+        if (IsCompareModeActive() && g_compare.draggingDivider) {
+            RECT rcSplit{};
+            GetClientRect(hwnd, &rcSplit);
+            const float w = (float)(rcSplit.right - rcSplit.left);
+            if (w > 1.0f) {
+                g_compare.splitRatio = ClampCompareRatio((float)pt.x / w);
+                g_viewState.CompareSplitRatio = g_compare.splitRatio;
+                MarkCompareDirty();
+                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+            }
+            return 0;
+        }
          
          if (g_viewState.IsDragging) {
              const float dx = (float)(pt.x - g_viewState.LastMousePos.x);
@@ -4710,6 +4855,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         if (g_viewState.EdgeHoverState != 0) {
             g_viewState.EdgeHoverState = 0;
+            MarkStaticLayerDirty();
+        }
+        if (g_viewState.EdgeHoverLeft != 0 || g_viewState.EdgeHoverRight != 0) {
+            g_viewState.EdgeHoverLeft = 0;
+            g_viewState.EdgeHoverRight = 0;
             MarkStaticLayerDirty();
         }
 
@@ -5059,7 +5209,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             bool wasZoomed = IsZoomed(hwnd);
                             ShowWindow(hwnd, wasZoomed ? SW_RESTORE : SW_MAXIMIZE);
                             // Reset view state if restoring
-                            if (wasZoomed) g_viewState.Reset();
+                            if (wasZoomed) {
+                                g_viewState.Reset();
+                                RestoreCurrentExifOrientation();
+                            }
                         }
                     }
                     return 0;
@@ -5214,17 +5367,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         int w = rcCheck.right - rcCheck.left;
         int h = rcCheck.bottom - rcCheck.top;
         bool inEdgeZone = false;
-        if (g_config.EdgeNavClick && !g_gallery.IsVisible() && w > 50 && h > 100) {
-            bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
-            bool inVRange;
-            // Arrow mode (0): Full vertical range 30%-70%
-            // Cursor/None mode (1,2): Smaller central range 40%-60%
-            if (g_config.NavIndicator == 0) {
-                inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
-            } else {
-                inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+        if (g_config.EdgeNavClick && !g_gallery.IsVisible()) {
+            if (IsCompareModeActive()) {
+                float splitX = (g_compare.mode == ViewMode::CompareWipe)
+                    ? ClampCompareRatio(g_compare.splitRatio) * (float)w
+                    : 0.5f * (float)w;
+                D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)h);
+                D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
+                ComparePane pane = HitTestComparePane(hwnd, pt);
+                const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
+                inEdgeZone = (ComputeEdgeHoverForPane(pt, paneRect) != 0);
+            } else if (w > 50 && h > 100) {
+                bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+                bool inVRange;
+                if (g_config.NavIndicator == 0) {
+                    inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
+                } else {
+                    inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                }
+                inEdgeZone = inHRange && inVRange;
             }
-            inEdgeZone = inHRange && inVRange;
         }
         
         // Record Drag Start for click detection
@@ -5379,6 +5541,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     }
                     RequestRepaint(PaintLayer::All);
                     break;
+                case ToolbarButtonID::CompareOpen:
+                    if (IsCompareModeActive()) {
+                        g_compare.contextPane = g_compare.selectedPane;
+                        SendMessage(hwnd, WM_COMMAND, IDM_OPEN, 0);
+                    }
+                    break;
                 case ToolbarButtonID::CompareExit:
                     ExitCompareMode(hwnd);
                     RequestRepaint(PaintLayer::All);
@@ -5414,6 +5582,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             : ViewMode::CompareSideBySide;
                         g_compare.draggingDivider = false;
                         ReleaseCapture();
+                        g_viewState.CompareActive = true;
+                        g_viewState.CompareSplitRatio = GetCompareSplitRatio();
                         MarkCompareDirty();
                         RequestRepaint(PaintLayer::Image | PaintLayer::Static);
                     }
@@ -5434,6 +5604,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     if (IsCompareModeActive()) {
                         g_compare.contextPane = g_compare.selectedPane;
                         SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
+                    }
+                    break;
+                case ToolbarButtonID::CompareZoomIn:
+                case ToolbarButtonID::CompareZoomOut:
+                    if (IsCompareModeActive()) {
+                        const bool zoomIn = (tbId == ToolbarButtonID::CompareZoomIn);
+                        float stepDelta = zoomIn ? 0.5f : -0.5f;
+                        ApplyCompareZoomStep(hwnd, stepDelta, false);
                     }
                     break;
                 case ToolbarButtonID::CompareSyncZoom:
@@ -5482,35 +5660,52 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RECT rc; GetClientRect(hwnd, &rc);
             int width = rc.right - rc.left;
             int height = rc.bottom - rc.top;
-            
+
             // [Phase 3] Disable edge nav if window is too narrow
             if (!g_toolbar.IsWindowTooNarrow() && width > 50 && height > 100) {
-                bool clickValid = false;
-                int direction = 0;
-                
-                // Arrow mode (0): Click on edge zones (same as other modes)
-                if (g_config.NavIndicator == 0) {
-                    // Use zone check: Left/Right 15%, vertical 20%-80%
-                    bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
-                    bool inVRange = (pt.y > height * 0.20) && (pt.y < height * 0.80);
-                    if (inHRange && inVRange) {
-                        clickValid = true;
-                        direction = (pt.x < width * 0.15) ? -1 : 1;
+                if (IsCompareModeActive()) {
+                    float splitX = (g_compare.mode == ViewMode::CompareWipe)
+                        ? ClampCompareRatio(g_compare.splitRatio) * (float)width
+                        : 0.5f * (float)width;
+                    D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)height);
+                    D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)width, (float)height);
+                    ComparePane pane = HitTestComparePane(hwnd, pt);
+                    const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
+                    int direction = ComputeEdgeHoverForPane(pt, paneRect);
+                    if (direction != 0) {
+                        ReleaseCapture();
+                        g_compare.selectedPane = pane;
+                        g_compare.contextPane = pane;
+                        MarkCompareDirty();
+                        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                        Navigate(hwnd, direction);
+                        return 0;
                     }
                 } else {
-                    // Cursor/None mode (1,2): Smaller central range 30%-70%
-                    bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
-                    bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
-                    if (inHRange && inVRange) {
-                        clickValid = true;
-                        direction = (pt.x < width * 0.15) ? -1 : 1;
+                    bool clickValid = false;
+                    int direction = 0;
+
+                    if (g_config.NavIndicator == 0) {
+                        bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
+                        bool inVRange = (pt.y > height * 0.20) && (pt.y < height * 0.80);
+                        if (inHRange && inVRange) {
+                            clickValid = true;
+                            direction = (pt.x < width * 0.15) ? -1 : 1;
+                        }
+                    } else {
+                        bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
+                        bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
+                        if (inHRange && inVRange) {
+                            clickValid = true;
+                            direction = (pt.x < width * 0.15) ? -1 : 1;
+                        }
                     }
-                }
-                
-                if (clickValid && direction != 0) {
-                    ReleaseCapture();
-                    Navigate(hwnd, direction);
-                    return 0;
+
+                    if (clickValid && direction != 0) {
+                        ReleaseCapture();
+                        Navigate(hwnd, direction);
+                        return 0;
+                    }
                 }
             }
         }
@@ -5677,7 +5872,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     }
                 } else {
                     g_compare.activePane = ComparePane::Right;
-                    CaptureCurrentImageAsCompareLeft();
+                    g_compare.selectedPane = ComparePane::Right;
                     g_editState.Reset();
                     g_viewState.Reset();
                     g_navigator.Initialize(path);
@@ -5935,12 +6130,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             bool isZoomIn = (wParam == VK_ADD || wParam == VK_OEM_PLUS);
             bool isCtrl = (GetKeyState(VK_CONTROL) & 0x8000);
+
+            if (IsCompareModeActive()) {
+                float delta = isZoomIn ? 1.0f : -1.0f;
+                ApplyCompareZoomStep(hwnd, delta, isCtrl);
+                break;
+            }
             
             float delta = isZoomIn ? 1.0f : -1.0f;
             float newTotalScale = CalculateTargetZoom(hwnd, delta, isCtrl);
             
             // [Refactor] Use Centralized Smart Zoom
-            PerformSmartZoom(hwnd, newTotalScale, nullptr, false);
+            PerformSmartZoom(hwnd, newTotalScale, nullptr, true);
 
             g_viewState.IsInteracting = true;
             SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -6172,20 +6373,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // [Fix] True Fullscreen Implementation
             DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
             
-            if (g_isFullScreen) {
-                // Restore to Windowed
-                // [Fix] Set flag BEFORE SetWindowPos so WM_SIZE sees correct state
-                g_isFullScreen = false;
-                ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners); // Restore user preference
+                if (g_isFullScreen) {
+                    // Restore to Windowed
+                    // [Fix] Set flag BEFORE SetWindowPos so WM_SIZE sees correct state
+                    g_isFullScreen = false;
+                    ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners); // Restore user preference
                 
                 SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
                 SetWindowPlacement(hwnd, &g_savedWindowPlacement);
                 SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, 
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
                 
-                // [Fix] Reset zoom/pan to ensure image fits restored window
-                g_viewState.Reset();
-            } else {
+                    // [Fix] Reset zoom/pan to ensure image fits restored window
+                    g_viewState.Reset();
+                    RestoreCurrentExifOrientation();
+                } else {
                 // Enter Fullscreen
                 RECT targetRect = { 0 };
                 
@@ -6372,9 +6574,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     std::vector<DialogButton> dlgButtons;
                     dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
                     dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
-                    
+                    if (IsCompareModeActive() && g_compare.contextPane == ComparePane::Right) {
+                        const D2D1_RECT_F vp = GetCompareViewport(hwnd, ComparePane::Right);
+                        SetDialogCenter((vp.left + vp.right) * 0.5f, (vp.top + vp.bottom) * 0.5f);
+                    }
+
                     DialogResult dlgResult = ShowQuickViewDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
                                                                  D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, false, L"", L"");
+                    ClearDialogCenter();
                     confirmed = (dlgResult == DialogResult::Yes);
                 }
 
@@ -6770,6 +6977,17 @@ static void HandleExifPreRotation(const EngineEvent& evt) {
         // Update Globals directly (evt.metadata is const)
         g_currentMetadata.ExifOrientation = 1;
         g_viewState.ExifOrientation = 1;
+    }
+}
+
+static void RestoreCurrentExifOrientation() {
+    if (!g_config.AutoRotate) {
+        g_viewState.ExifOrientation = 1;
+        return;
+    }
+    int exif = g_currentMetadata.ExifOrientation;
+    if (exif >= 1 && exif <= 8) {
+        g_viewState.ExifOrientation = exif;
     }
 }
 

@@ -175,9 +175,26 @@ struct ViewState {
     POINT WindowDragStart = { 0, 0 }; // Window position at drag start
     POINT CursorDragStart = { 0, 0 }; // Cursor screen position at drag start
     int EdgeHoverState = 0; // -1=Left, 0=None, 1=Right
+    int EdgeHoverLeft = 0;  // Compare: -1=Left, 0=None, 1=Right
+    int EdgeHoverRight = 0; // Compare: -1=Left, 0=None, 1=Right
+    float CompareSplitRatio = 0.5f;
+    bool CompareActive = false;
     int ExifOrientation = 1; // EXIF Orientation (1-8, 1=Normal)
 
-    void Reset() { Zoom = 1.0f; PanX = 0.0f; PanY = 0.0f; IsDragging = false; IsInteracting = false; IsMiddleDragWindow = false; EdgeHoverState = 0; ExifOrientation = 1; }
+    void Reset() {
+        Zoom = 1.0f;
+        PanX = 0.0f;
+        PanY = 0.0f;
+        IsDragging = false;
+        IsInteracting = false;
+        IsMiddleDragWindow = false;
+        EdgeHoverState = 0;
+        EdgeHoverLeft = 0;
+        EdgeHoverRight = 0;
+        CompareSplitRatio = 0.5f;
+        CompareActive = false;
+        ExifOrientation = 1;
+    }
 };
 
 // Runtime State (Reset on Restart)

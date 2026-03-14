@@ -12,10 +12,13 @@ enum class ToolbarButtonID {
     Exif, RawToggle, FixExtension,
     Pin,
     CompareToggle,
+    CompareOpen,
     CompareSwap,
     CompareLayout,
     CompareInfo,
     CompareDelete,
+    CompareZoomIn,
+    CompareZoomOut,
     CompareSyncZoom,
     CompareSyncPan,
     CompareExit
@@ -81,6 +84,7 @@ private:
     float m_opacity = 0.0f;
     float m_uiScale = 1.0f;
     float m_iconFontScale = 0.0f;
+    float m_iconFontScaleSmall = 0.0f;
 
     bool m_targetVisible = false;
     bool m_isPinned = false;
@@ -100,6 +104,7 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushHover;
     
     ComPtr<IDWriteTextFormat> m_textFormatIcon;
+    ComPtr<IDWriteTextFormat> m_textFormatIconSmall;
     ComPtr<IDWriteFactory> m_dwriteFactory; // Need factory to create format
     
     void CreateResources(ID2D1RenderTarget* pRT);
