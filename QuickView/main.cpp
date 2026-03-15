@@ -362,6 +362,8 @@ struct CompareState {
     bool dirty = false;
     bool autoExpandedWindow = false;
     bool pendingSnap = false;
+    float dividerOpacity = 0.0f;
+    bool showDividerHandle = false;
 };
 static CompareState g_compare;
 
@@ -1179,7 +1181,7 @@ static bool RenderCompareComposite(HWND hwnd) {
         if (dividerBrush) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 2.0f);
         }
-        DrawDividerHandle(splitX, (float)winH, g_compare.draggingDivider ? 1.0f : 0.85f);
+        DrawDividerHandle(splitX, (float)winH, g_compare.dividerOpacity);
     } else {
         const float splitX = 0.5f * (float)winW;
         const D2D1_RECT_F leftVp = D2D1::RectF(0.0f, 0.0f, splitX, (float)winH);
@@ -1297,6 +1299,8 @@ static void EnterCompareMode(HWND hwnd) {
     g_compare.activePane = ComparePane::Right;
     g_compare.contextPane = ComparePane::Right;
     g_compare.selectedPane = ComparePane::Right;
+    g_compare.dividerOpacity = 0.0f;
+    g_compare.showDividerHandle = false;
     MarkCompareDirty();
 
     g_viewState.CompareActive = true;
@@ -4438,12 +4442,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_TIMER: {
-        static const UINT_PTR OSD_TIMER_ID = 999;
+        static const UINT_PTR OSD_TIMER_ID = 994;
         // [SVG Adaptive] Re-rasterize SVG at current zoom's needed resolution
         if (wParam == IDT_SVG_RERENDER) {
-            KillTimer(hwnd, IDT_SVG_RERENDER);
-            if (g_imageResource.isSvg) {
-                UpgradeSvgSurface(hwnd, g_imageResource);
+             KillTimer(hwnd, IDT_SVG_RERENDER);
+             if (g_imageResource.isSvg) {
+                 UpgradeSvgSurface(hwnd, g_imageResource);
+             }
+             return 0;
+        }
+
+        // Divider Handle Fade Timer (999)
+        if (wParam == 999) {
+            bool changed = false;
+            const float step = 0.15f;
+            if (g_compare.showDividerHandle) {
+                if (g_compare.dividerOpacity < 1.0f) {
+                    g_compare.dividerOpacity = std::min(1.0f, g_compare.dividerOpacity + step);
+                    changed = true;
+                }
+            } else {
+                if (g_compare.dividerOpacity > 0.4f) {
+                    g_compare.dividerOpacity = std::max(0.4f, g_compare.dividerOpacity - step);
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                MarkCompareDirty();
+                RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+            } else {
+                KillTimer(hwnd, 999);
             }
             return 0;
         }
@@ -4709,6 +4738,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           }
           if (IsNearCompareDivider(hwnd, pt)) {
               SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+              if (!g_compare.showDividerHandle) {
+                  g_compare.showDividerHandle = true;
+                  SetTimer(hwnd, 999, 16, nullptr); // Fade in timer
+              }
+          } else if (!g_compare.draggingDivider) {
+              if (g_compare.showDividerHandle) {
+                  g_compare.showDividerHandle = false;
+                  SetTimer(hwnd, 999, 16, nullptr); // Fade out timer
+              }
           }
           
           SettingsAction action = g_settingsOverlay.OnMouseMove((float)pt.x, (float)pt.y);
@@ -4728,24 +4766,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 int h = rcv.bottom - rcv.top;
 
                 if (IsCompareModeActive()) {
-                    int oldLeft = g_viewState.EdgeHoverLeft;
-                    int oldRight = g_viewState.EdgeHoverRight;
-                    g_viewState.EdgeHoverState = 0;
-                    g_viewState.CompareActive = true;
+                    if (g_compare.draggingDivider || g_viewState.IsDragging) {
+                        if (g_viewState.EdgeHoverLeft != 0 || g_viewState.EdgeHoverRight != 0) {
+                            g_viewState.EdgeHoverLeft = 0;
+                            g_viewState.EdgeHoverRight = 0;
+                            RequestRepaint(PaintLayer::Static);
+                        }
+                    } else {
+                        int oldLeft = g_viewState.EdgeHoverLeft;
+                        int oldRight = g_viewState.EdgeHoverRight;
+                        g_viewState.EdgeHoverState = 0;
+                        g_viewState.CompareActive = true;
 
-                    float splitX = (g_compare.mode == ViewMode::CompareWipe)
-                        ? ClampCompareRatio(g_compare.splitRatio) * (float)w
-                        : 0.5f * (float)w;
-                    g_viewState.CompareSplitRatio = (w > 1) ? (splitX / (float)w) : 0.5f;
+                        float splitX = (g_compare.mode == ViewMode::CompareWipe)
+                            ? ClampCompareRatio(g_compare.splitRatio) * (float)w
+                            : 0.5f * (float)w;
+                        g_viewState.CompareSplitRatio = (w > 1) ? (splitX / (float)w) : 0.5f;
 
-                    const D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)h);
-                    const D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
+                        const D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)h);
+                        const D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
 
-                    g_viewState.EdgeHoverLeft = ComputeEdgeHoverForPane(pt, leftRect);
-                    g_viewState.EdgeHoverRight = ComputeEdgeHoverForPane(pt, rightRect);
+                        g_viewState.EdgeHoverLeft = ComputeEdgeHoverForPane(pt, leftRect);
+                        g_viewState.EdgeHoverRight = ComputeEdgeHoverForPane(pt, rightRect);
 
-                    if (g_viewState.EdgeHoverLeft != oldLeft || g_viewState.EdgeHoverRight != oldRight) {
-                        RequestRepaint(PaintLayer::Static);
+                        if (g_viewState.EdgeHoverLeft != oldLeft || g_viewState.EdgeHoverRight != oldRight) {
+                            RequestRepaint(PaintLayer::Static);
+                        }
                     }
                 } else {
                     g_viewState.CompareActive = false;
@@ -4988,6 +5034,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_viewState.EdgeHoverLeft = 0;
             g_viewState.EdgeHoverRight = 0;
             MarkStaticLayerDirty();
+        }
+        if (g_compare.showDividerHandle) {
+            g_compare.showDividerHandle = false;
+            SetTimer(hwnd, 999, 16, nullptr);
         }
 
         isTracking = false;
@@ -5826,7 +5876,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         g_viewState.IsInteracting = false;  // End interaction mode
 
         // Edge Navigation Click
-        if (g_config.EdgeNavClick && !g_gallery.IsVisible()) {
+        if (g_config.EdgeNavClick && !g_gallery.IsVisible() && !g_compare.draggingDivider && !g_viewState.IsDragging) {
             RECT rc; GetClientRect(hwnd, &rc);
             int width = rc.right - rc.left;
             int height = rc.bottom - rc.top;
