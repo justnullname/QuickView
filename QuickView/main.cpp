@@ -1701,7 +1701,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
     ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight);
     if (!ctx) return false;
     
-    ctx->Clear(isTransparent ? D2D1::ColorF(0, 0.0f) : D2D1::ColorF(0.1f, 0.1f, 0.1f));
+    ctx->Clear(D2D1::ColorF(0, 0.0f)); // Transparent to avoid baking background color
 
     if (res.isSvg && res.svgDoc) {
         // === SVG Direct2D Native Path ===
