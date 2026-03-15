@@ -1237,12 +1237,8 @@ static void SnapWindowToCompareImages(HWND hwnd) {
     int maxW = mi.rcWork.right - mi.rcWork.left;
     int maxH = mi.rcWork.bottom - mi.rcWork.top;
 
-    // Convert client to window size
-    RECT rc = { 0, 0, (int)targetImgW, (int)targetImgH };
-    AdjustWindowRectEx(&rc, GetWindowLong(hwnd, GWL_STYLE), FALSE, GetWindowLong(hwnd, GWL_EXSTYLE));
-    
-    int winW = rc.right - rc.left;
-    int winH = rc.bottom - rc.top;
+    int winW = (int)targetImgW;
+    int winH = (int)targetImgH;
 
     // Cap to screen work area
     if (winW > maxW || winH > maxH) {
