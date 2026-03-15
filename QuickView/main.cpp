@@ -1629,37 +1629,39 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isTransparent
         return true;
     }
     
-    if (!isFastUpgrade && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
-        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi = { sizeof(mi) };
-        if (GetMonitorInfoW(hMon, &mi)) {
-            float screenW = (float)(mi.rcWork.right - mi.rcWork.left);
-            float screenH = (float)(mi.rcWork.bottom - mi.rcWork.top);
-            
-            float maxW = screenW * 0.9f;
-            float maxH = screenH * 0.9f;
-            
-            float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
-            float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
+    if (!isFastUpgrade) {
+        float maxW = (float)winW;
+        float maxH = (float)winH;
 
-            // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
-            // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
-            if (!res.isSvg && g_config.AutoRotate) {
-                 int orient = g_renderExifOrientation;
-                 if (orient >= 5 && orient <= 8) {
-                     std::swap(contentW, contentH);
-                 }
+        if (!IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+            HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = { sizeof(mi) };
+            if (GetMonitorInfoW(hMon, &mi)) {
+                maxW = (float)(mi.rcWork.right - mi.rcWork.left) * 0.9f;
+                maxH = (float)(mi.rcWork.bottom - mi.rcWork.top) * 0.9f;
             }
-            
-            if (contentW > 0 && contentH > 0) {
-                 float scale = std::min(maxW / contentW, maxH / contentH);
-                 // [SVG Lossless] Don't cap scale for vector formats - they render at any resolution
-                 // Bitmaps: cap at 1.0 to prevent blurry upscaling
-                 if (scale > 1.0f && !res.isSvg) scale = 1.0f;
-                 
-                 targetWinW = (UINT)(contentW * scale);
-                 targetWinH = (UINT)(contentH * scale);
-            }
+        }
+
+        float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
+        float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
+
+        // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
+        // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
+        if (!res.isSvg && g_config.AutoRotate) {
+             int orient = g_renderExifOrientation;
+             if (orient >= 5 && orient <= 8) {
+                 std::swap(contentW, contentH);
+             }
+        }
+
+        if (contentW > 0 && contentH > 0) {
+             float scale = std::min(maxW / contentW, maxH / contentH);
+             // [SVG Lossless] Don't cap scale for vector formats - they render at any resolution
+             // Bitmaps: cap at 1.0 to prevent blurry upscaling
+             if (scale > 1.0f && !res.isSvg) scale = 1.0f;
+
+             targetWinW = (UINT)(contentW * scale);
+             targetWinH = (UINT)(contentH * scale);
         }
     }
 
