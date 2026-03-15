@@ -211,15 +211,25 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 
   // Count visible buttons
   int visibleCount = 0;
+  bool hasCompareZoom = false;
   for (const auto &btn : m_buttons) {
     if (isVisibleButton(btn))
       visibleCount++;
+    if (m_compareMode &&
+        (btn.id == ToolbarButtonID::CompareZoomIn ||
+         btn.id == ToolbarButtonID::CompareZoomOut) &&
+        isVisibleButton(btn)) {
+      hasCompareZoom = true;
+    }
   }
 
   // Calculate total width: padding + buttons + gaps between buttons
   float totalW = padX * 2 + (visibleCount * buttonSize);
   if (visibleCount > 1)
     totalW += (visibleCount - 1) * gap;
+  if (m_compareMode && hasCompareZoom) {
+    totalW += (72.0f * m_uiScale) + gap;
+  }
   m_minRequiredWidth = totalW + (PADDING_X * 2 * m_uiScale);
   m_windowTooNarrow = (winW < m_minRequiredWidth);
 
@@ -235,6 +245,12 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   // Layout Buttons
   float cx = startX + padX;
   float cy = startY + padY;
+  const float stepW = 72.0f * m_uiScale;
+  const float stepH = buttonSize;
+  m_compareStepRect = D2D1::RectF(0, 0, 0, 0);
+  m_compareStepUpRect = D2D1::RectF(0, 0, 0, 0);
+  m_compareStepDownRect = D2D1::RectF(0, 0, 0, 0);
+  bool stepInserted = false;
 
   for (auto &btn : m_buttons) {
     bool visible = isVisibleButton(btn);
@@ -248,6 +264,23 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     if (visible) {
       btn.rect = D2D1::RectF(cx, cy, cx + buttonSize, cy + buttonSize);
       cx += buttonSize + gap;
+
+      if (m_compareMode && btn.id == ToolbarButtonID::CompareZoomIn &&
+          !stepInserted) {
+        m_compareStepRect = D2D1::RectF(cx, cy, cx + stepW, cy + stepH);
+        const float stepBtnW = 14.0f * m_uiScale;
+        m_compareStepUpRect = D2D1::RectF(m_compareStepRect.right - stepBtnW,
+                                          m_compareStepRect.top,
+                                          m_compareStepRect.right,
+                                          m_compareStepRect.top +
+                                              (stepH * 0.5f));
+        m_compareStepDownRect = D2D1::RectF(
+            m_compareStepRect.right - stepBtnW,
+            m_compareStepRect.top + (stepH * 0.5f),
+            m_compareStepRect.right, m_compareStepRect.bottom);
+        cx += stepW + gap;
+        stepInserted = true;
+      }
     } else {
       btn.rect = D2D1::RectF(0, 0, 0, 0); // Hide
     }
@@ -389,6 +422,75 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       pRT->DrawText(&icon, 1, iconFormat, btn.rect, pBrush);
     }
 
+    // Compare Zoom Step Control
+    if (m_compareMode && m_compareStepRect.right > m_compareStepRect.left) {
+      D2D1_ROUNDED_RECT stepRect = D2D1::RoundedRect(
+          m_compareStepRect, 6.0f * m_uiScale, 6.0f * m_uiScale);
+      pRT->FillRoundedRectangle(stepRect, m_brushHover.Get());
+
+      // Right-side up/down buttons hover
+      if (m_compareStepUpHover) {
+        D2D1_ROUNDED_RECT upRect = D2D1::RoundedRect(
+            m_compareStepUpRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
+        pRT->FillRoundedRectangle(upRect, m_brushIconActive.Get());
+      } else if (m_compareStepDownHover) {
+        D2D1_ROUNDED_RECT downRect = D2D1::RoundedRect(
+            m_compareStepDownRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
+        pRT->FillRoundedRectangle(downRect, m_brushIconActive.Get());
+      }
+
+      // Divider line
+      const float stepBtnW = 14.0f * m_uiScale;
+      D2D1_RECT_F divider = D2D1::RectF(
+          m_compareStepRect.right - stepBtnW, m_compareStepRect.top,
+          m_compareStepRect.right - stepBtnW + 1.0f, m_compareStepRect.bottom);
+      pRT->FillRectangle(divider, m_brushIconDisabled.Get());
+
+      // Value text
+      wchar_t buf[16]{};
+      swprintf_s(buf, L"%.1f%%", m_compareZoomStepPercent);
+      D2D1_RECT_F textRect = D2D1::RectF(
+          m_compareStepRect.left + 4.0f * m_uiScale, m_compareStepRect.top,
+          m_compareStepRect.right - stepBtnW, m_compareStepRect.bottom);
+      IDWriteTextFormat *stepFormat =
+          m_textFormatIconSmall ? m_textFormatIconSmall.Get()
+                                : m_textFormatIcon.Get();
+      pRT->DrawTextW(buf, (UINT32)wcslen(buf), stepFormat, textRect,
+                     m_brushIcon.Get());
+
+      // Up/Down chevrons
+      ComPtr<ID2D1Factory> factory;
+      pRT->GetFactory(&factory);
+      if (factory) {
+        auto drawChevron = [&](const D2D1_RECT_F &rect, bool up) {
+          const float cx = (rect.left + rect.right) * 0.5f;
+          const float cy = (rect.top + rect.bottom) * 0.5f;
+          const float size = 3.5f * m_uiScale;
+          ComPtr<ID2D1PathGeometry> path;
+          factory->CreatePathGeometry(&path);
+          ComPtr<ID2D1GeometrySink> sink;
+          path->Open(&sink);
+          if (up) {
+            sink->BeginFigure(D2D1::Point2F(cx - size, cy + size),
+                              D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(cx, cy - size));
+            sink->AddLine(D2D1::Point2F(cx + size, cy + size));
+          } else {
+            sink->BeginFigure(D2D1::Point2F(cx - size, cy - size),
+                              D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(cx, cy + size));
+            sink->AddLine(D2D1::Point2F(cx + size, cy - size));
+          }
+          sink->EndFigure(D2D1_FIGURE_END_OPEN);
+          sink->Close();
+          pRT->DrawGeometry(path.Get(), m_brushIcon.Get(),
+                            1.5f * m_uiScale);
+        };
+        drawChevron(m_compareStepUpRect, true);
+        drawChevron(m_compareStepDownRect, false);
+      }
+    }
+
     pRT->PopLayer();
   }
 
@@ -466,6 +568,9 @@ bool Toolbar::OnMouseMove(float x, float y) {
   // But button hover needs x/y.
 
   bool changed = false;
+  bool stepHover = false;
+  bool stepUpHover = false;
+  bool stepDownHover = false;
   for (auto &btn : m_buttons) {
     bool wasHovered = btn.isHovered;
     btn.isHovered = false;
@@ -478,6 +583,34 @@ bool Toolbar::OnMouseMove(float x, float y) {
     if (btn.isHovered != wasHovered)
       changed = true;
   }
+
+  if (m_compareMode && m_compareStepRect.right > m_compareStepRect.left) {
+    if (x >= m_compareStepRect.left && x < m_compareStepRect.right &&
+        y >= m_compareStepRect.top && y < m_compareStepRect.bottom) {
+      stepHover = true;
+      if (x >= m_compareStepUpRect.left && x < m_compareStepUpRect.right &&
+          y >= m_compareStepUpRect.top && y < m_compareStepUpRect.bottom) {
+        stepUpHover = true;
+      } else if (x >= m_compareStepDownRect.left &&
+                 x < m_compareStepDownRect.right &&
+                 y >= m_compareStepDownRect.top &&
+                 y < m_compareStepDownRect.bottom) {
+        stepDownHover = true;
+      }
+    }
+  }
+  if (!m_compareMode) {
+    stepHover = false;
+    stepUpHover = false;
+    stepDownHover = false;
+  }
+  if (stepHover != m_compareStepHover || stepUpHover != m_compareStepUpHover ||
+      stepDownHover != m_compareStepDownHover) {
+    changed = true;
+    m_compareStepHover = stepHover;
+    m_compareStepUpHover = stepUpHover;
+    m_compareStepDownHover = stepDownHover;
+  }
   return changed;
 }
 
@@ -489,6 +622,24 @@ bool Toolbar::OnClick(float x, float y, ToolbarButtonID &outId) {
 
   // Check background hit
   if (HitTest(x, y)) {
+    if (m_compareMode && m_compareStepRect.right > m_compareStepRect.left) {
+      if (x >= m_compareStepUpRect.left && x < m_compareStepUpRect.right &&
+          y >= m_compareStepUpRect.top && y < m_compareStepUpRect.bottom) {
+        m_compareZoomStepPercent =
+            (std::min)(5.0f, m_compareZoomStepPercent + 0.1f);
+        outId = ToolbarButtonID::None;
+        return true;
+      }
+      if (x >= m_compareStepDownRect.left &&
+          x < m_compareStepDownRect.right &&
+          y >= m_compareStepDownRect.top &&
+          y < m_compareStepDownRect.bottom) {
+        m_compareZoomStepPercent =
+            (std::max)(0.1f, m_compareZoomStepPercent - 0.1f);
+        outId = ToolbarButtonID::None;
+        return true;
+      }
+    }
 
     // Check buttons
     for (auto &btn : m_buttons) {

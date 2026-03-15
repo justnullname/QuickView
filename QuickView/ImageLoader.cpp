@@ -7150,6 +7150,21 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
 
 HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* pMetadata) {
     if (!source || !pMetadata) return E_INVALIDARG;
+
+    auto computeEntropy = [](const std::vector<uint32_t>& hist, double& outEntropy, bool& outHas) {
+        uint64_t total = 0;
+        for (uint32_t v : hist) total += v;
+        if (total == 0) { outEntropy = 0.0; outHas = false; return; }
+        double entropy = 0.0;
+        const double invTotal = 1.0 / (double)total;
+        for (uint32_t v : hist) {
+            if (v == 0) continue;
+            const double p = (double)v * invTotal;
+            entropy -= p * std::log2(p);
+        }
+        outEntropy = entropy;
+        outHas = true;
+    };
     
     // Reset
     pMetadata->HistR.assign(256, 0);
@@ -7218,6 +7233,53 @@ HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* 
         }
     }
     
+    // Laplacian Sharpness (sampled)
+    double lapSumSq = 0.0;
+    uint64_t lapCount = 0;
+    const UINT lapStep = step;
+    if (width > lapStep * 2 && height > lapStep * 2) {
+        std::vector<BYTE> prevRow(stride);
+        std::vector<BYTE> currRow(stride);
+        std::vector<BYTE> nextRow(stride);
+
+        auto getLumaAt = [&](const BYTE* row, UINT x) -> int {
+            const BYTE b = row[x * 4 + (isBGRA ? 0 : 2)];
+            const BYTE g = row[x * 4 + 1];
+            const BYTE r = row[x * 4 + (isBGRA ? 2 : 0)];
+            return (int)((54 * r + 183 * g + 19 * b) >> 8);
+        };
+
+        for (UINT y = lapStep; y + lapStep < height; y += lapStep) {
+            WICRect rectPrev = { 0, (INT)(y - lapStep), (INT)width, 1 };
+            WICRect rectCurr = { 0, (INT)y, (INT)width, 1 };
+            WICRect rectNext = { 0, (INT)(y + lapStep), (INT)width, 1 };
+            if (FAILED(source->CopyPixels(&rectPrev, stride, stride, prevRow.data()))) continue;
+            if (FAILED(source->CopyPixels(&rectCurr, stride, stride, currRow.data()))) continue;
+            if (FAILED(source->CopyPixels(&rectNext, stride, stride, nextRow.data()))) continue;
+
+            for (UINT x = lapStep; x + lapStep < width; x += lapStep) {
+                const int center = getLumaAt(currRow.data(), x);
+                const int left = getLumaAt(currRow.data(), x - lapStep);
+                const int right = getLumaAt(currRow.data(), x + lapStep);
+                const int up = getLumaAt(prevRow.data(), x);
+                const int down = getLumaAt(nextRow.data(), x);
+                const int lap = (up + down + left + right) - 4 * center;
+                lapSumSq += (double)lap * (double)lap;
+                lapCount++;
+            }
+        }
+    }
+
+    if (lapCount > 0) {
+        pMetadata->Sharpness = lapSumSq / (double)lapCount;
+        pMetadata->HasSharpness = true;
+    } else {
+        pMetadata->Sharpness = 0.0;
+        pMetadata->HasSharpness = false;
+    }
+
+    computeEntropy(pMetadata->HistL, pMetadata->Entropy, pMetadata->HasEntropy);
+    
     return S_OK;
 }
 
@@ -7243,6 +7305,9 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
 
     const uint8_t* ptr = frame.pixels;
     int stride = frame.stride;
+    const UINT lapStep = stepY;
+    double lapSumSq = 0.0;
+    uint64_t lapCount = 0;
     
     // Assume BGRA8888 (standard for RawImageFrame)
     // Assume BGRA8888 (standard for RawImageFrame)
@@ -7340,6 +7405,60 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
             // Luminance (approx)
             uint8_t l = (uint8_t)((r * 299 + g * 587 + b * 114) / 1000);
             pMetadata->HistL[l]++;
+        }
+    }
+
+    // Laplacian Sharpness (sampled)
+    if (frame.width > lapStep * 2 && frame.height > lapStep * 2) {
+        auto getLumaAt = [&](const uint8_t* rowPtr, UINT x) -> int {
+            const uint8_t b = rowPtr[x * 4 + 0];
+            const uint8_t g = rowPtr[x * 4 + 1];
+            const uint8_t r = rowPtr[x * 4 + 2];
+            return (int)((54 * r + 183 * g + 19 * b) >> 8);
+        };
+
+        for (UINT y = lapStep; y + lapStep < frame.height; y += lapStep) {
+            const uint8_t* rowPrev = ptr + (UINT64)(y - lapStep) * stride;
+            const uint8_t* rowCurr = ptr + (UINT64)y * stride;
+            const uint8_t* rowNext = ptr + (UINT64)(y + lapStep) * stride;
+
+            for (UINT x = lapStep; x + lapStep < frame.width; x += lapStep) {
+                const int center = getLumaAt(rowCurr, x);
+                const int left = getLumaAt(rowCurr, x - lapStep);
+                const int right = getLumaAt(rowCurr, x + lapStep);
+                const int up = getLumaAt(rowPrev, x);
+                const int down = getLumaAt(rowNext, x);
+                const int lap = (up + down + left + right) - 4 * center;
+                lapSumSq += (double)lap * (double)lap;
+                lapCount++;
+            }
+        }
+    }
+
+    if (lapCount > 0) {
+        pMetadata->Sharpness = lapSumSq / (double)lapCount;
+        pMetadata->HasSharpness = true;
+    } else {
+        pMetadata->Sharpness = 0.0;
+        pMetadata->HasSharpness = false;
+    }
+
+    {
+        uint64_t total = 0;
+        for (uint32_t v : pMetadata->HistL) total += v;
+        if (total > 0) {
+            double entropy = 0.0;
+            const double invTotal = 1.0 / (double)total;
+            for (uint32_t v : pMetadata->HistL) {
+                if (v == 0) continue;
+                const double p = (double)v * invTotal;
+                entropy -= p * std::log2(p);
+            }
+            pMetadata->Entropy = entropy;
+            pMetadata->HasEntropy = true;
+        } else {
+            pMetadata->Entropy = 0.0;
+            pMetadata->HasEntropy = false;
         }
     }
 }

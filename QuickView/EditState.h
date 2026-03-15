@@ -202,6 +202,7 @@ struct RuntimeConfig {
     bool LockWindowSize = false;
     bool ShowInfoPanel = false;
     bool InfoPanelExpanded = false;  // false=Lite, true=Full
+    bool ShowCompareInfo = false;
     bool ForceRawDecode = false;
     bool RenderRAW = false;
 

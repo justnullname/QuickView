@@ -137,6 +137,8 @@ private:
     void DrawCompactInfo(ID2D1DeviceContext* dc);
     void DrawHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect);
     void DrawNavIndicators(ID2D1DeviceContext* dc);
+    void DrawComparePaneIndicator(ID2D1DeviceContext* dc);
+    void DrawCompareInfoHUD(ID2D1DeviceContext* dc);
     
     // 绘制函数
     void DrawOSD(ID2D1DeviceContext* dc, HWND hwnd);

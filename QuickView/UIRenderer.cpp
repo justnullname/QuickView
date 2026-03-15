@@ -31,6 +31,8 @@ extern std::wstring g_imagePath;  // [v3.2] For Info Panel
 extern bool g_slowMotionMode; // [Debug] Slow-motion crossfade mode
 extern AppConfig g_config;  // [v3.2] For InfoPanelAlpha
 extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
+extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
+extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);
 
 // ============================================================================
 // UIRenderer Implementation - 3-Layer Architecture
@@ -506,6 +508,9 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     
     // Window Controls
     DrawWindowControls(dc, hwnd);
+
+    // Compare Selected Pane Indicator
+    DrawComparePaneIndicator(dc);
     
     // Toolbar
     g_toolbar.Render(dc);
@@ -553,6 +558,9 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     
     // [Edge Focus] Tile decode status line
     DrawDecodingStatus(dc, hwnd);
+
+    // Compare Info HUD
+    DrawCompareInfoHUD(dc);
     
     // Debug HUD
     if (m_showDebugHUD) DrawDebugHUD(dc);
@@ -1737,4 +1745,256 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
     float arrowCenterY = m_height * 0.5f;
     float arrowCenterX = (g_viewState.EdgeHoverState == -1) ? (zoneWidth / 2.0f) : (m_width - zoneWidth / 2.0f);
     drawArrow(arrowCenterX, arrowCenterY, g_viewState.EdgeHoverState == -1);
+}
+
+void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc) {
+    int pane = 0;
+    float splitRatio = 0.5f;
+    bool isWipe = false;
+    if (!GetCompareIndicatorState(pane, splitRatio, isWipe)) return;
+
+    if (splitRatio <= 0.05f || splitRatio >= 0.95f) splitRatio = 0.5f;
+    const float s = m_uiScale;
+    const float inset = 2.0f * s;
+    const float thickness = 2.4f * s;
+    if (m_width < 20.0f || m_height < 20.0f) return;
+
+    const float splitX = isWipe ? (m_width * splitRatio) : (m_width * 0.5f);
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.65f, 1.0f, 0.80f), &brush);
+    if (!brush) return;
+
+    D2D1_RECT_F rect{};
+    if (pane == 0) {
+        rect = D2D1::RectF(inset, inset, splitX - inset, m_height - inset);
+    } else {
+        rect = D2D1::RectF(splitX + inset, inset, m_width - inset, m_height - inset);
+    }
+
+    if (rect.right <= rect.left + 1.0f || rect.bottom <= rect.top + 1.0f) return;
+
+    const D2D1_POINT_2F topLeft = D2D1::Point2F(rect.left, rect.top);
+    const D2D1_POINT_2F topRight = D2D1::Point2F(rect.right, rect.top);
+    const D2D1_POINT_2F bottomLeft = D2D1::Point2F(rect.left, rect.bottom);
+    const D2D1_POINT_2F bottomRight = D2D1::Point2F(rect.right, rect.bottom);
+
+    dc->DrawLine(topLeft, topRight, brush.Get(), thickness);
+    dc->DrawLine(bottomLeft, bottomRight, brush.Get(), thickness);
+
+    if (pane == 0) {
+        dc->DrawLine(topLeft, bottomLeft, brush.Get(), thickness);
+    } else {
+        dc->DrawLine(topRight, bottomRight, brush.Get(), thickness);
+    }
+}
+
+namespace {
+    static std::wstring FormatBytesShortLocal(UINT64 bytes) {
+        const double kb = 1024.0;
+        const double mb = kb * 1024.0;
+        const double gb = mb * 1024.0;
+        wchar_t buf[64]{};
+        if (bytes >= (UINT64)gb) {
+            swprintf_s(buf, L"%.2f GB", bytes / gb);
+        } else if (bytes >= (UINT64)mb) {
+            swprintf_s(buf, L"%.2f MB", bytes / mb);
+        } else if (bytes >= (UINT64)kb) {
+            swprintf_s(buf, L"%.2f KB", bytes / kb);
+        } else {
+            swprintf_s(buf, L"%llu B", (unsigned long long)bytes);
+        }
+        return buf;
+    }
+
+    static std::wstring FormatDouble(double value, int decimals = 2) {
+        wchar_t buf[64]{};
+        swprintf_s(buf, L"%.*f", decimals, value);
+        return buf;
+    }
+
+    static std::wstring ExtractBitDepth(const std::wstring& details) {
+        size_t pos = details.find(L"-bit");
+        if (pos == std::wstring::npos) return L"-";
+        size_t start = pos;
+        while (start > 0 && iswdigit(details[start - 1])) start--;
+        if (start == pos) return L"-";
+        return details.substr(start, pos - start) + L"-bit";
+    }
+
+    static std::wstring ExtractChroma(const std::wstring& details, int& rank) {
+        const std::wstring tokens[] = { L"4:4:4", L"4:2:2", L"4:2:0", L"4:0:0" };
+        const int ranks[] = { 3, 2, 1, 0 };
+        for (size_t i = 0; i < 4; ++i) {
+            if (details.find(tokens[i]) != std::wstring::npos) {
+                rank = ranks[i];
+                return tokens[i];
+            }
+        }
+        rank = -1;
+        return L"-";
+    }
+}
+
+void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
+    if (!g_runtime.ShowCompareInfo) return;
+
+    CImageLoader::ImageMetadata left, right;
+    if (!GetCompareInfoSnapshot(left, right)) return;
+
+    EnsureTextFormats();
+    if (!m_panelFormat) return;
+
+    const float s = m_uiScale;
+    const float panelW = std::min(620.0f * s, m_width - 40.0f * s);
+    const float panelX = (m_width - panelW) * 0.5f;
+    float panelY = 70.0f * s;
+    if (panelY < 12.0f * s) panelY = 12.0f * s;
+
+    const float labelW = 180.0f * s;
+    const float colW = (panelW - labelW) * 0.5f;
+    const float rowH = 22.0f * s;
+    const float headerH = 26.0f * s;
+    const float sectionGap = 8.0f * s;
+    const float padding = 12.0f * s;
+
+    const int rowCount = 3 + 3 + 3 + 1; // baseline + quality + encoding + hint
+    const float panelH = padding * 2 + headerH + rowCount * rowH + sectionGap * 2;
+
+    D2D1_RECT_F panelRect = D2D1::RectF(panelX, panelY, panelX + panelW, panelY + panelH);
+
+    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushDim, brushGood;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.90f), &brushBg);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.35f, 0.9f), &brushBorder);
+    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.70f, 0.72f, 0.78f, 0.9f), &brushDim);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.85f, 0.55f, 0.95f), &brushGood);
+
+    if (brushBg) {
+        dc->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f * s, 8.0f * s), brushBg.Get());
+    }
+    if (brushBorder) {
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f * s, 8.0f * s), brushBorder.Get(), 1.0f * s);
+    }
+
+    float xLeft = panelX + padding;
+    float xLabel = panelX + colW + padding;
+    float xRight = xLabel + labelW;
+    float y = panelY + padding;
+
+    const std::wstring title = L"Compare Info";
+    D2D1_RECT_F titleRect = D2D1::RectF(panelX + padding, y, panelX + panelW - padding, y + headerH);
+    dc->DrawTextW(title.c_str(), (UINT32)title.length(), m_panelFormat.Get(), titleRect, brushText.Get());
+    y += headerH + sectionGap;
+
+    auto betterHigher = [](double l, double r) -> int {
+        if (l > r) return -1;
+        if (l < r) return 1;
+        return 0;
+    };
+    auto betterLower = [](double l, double r) -> int {
+        if (l < r) return -1;
+        if (l > r) return 1;
+        return 0;
+    };
+
+    auto drawRow = [&](const std::wstring& label, const std::wstring& lval, const std::wstring& rval, int betterSide) {
+        D2D1_RECT_F leftRect = D2D1::RectF(xLeft, y, xLeft + colW - 6.0f * s, y + rowH);
+        D2D1_RECT_F labelRect = D2D1::RectF(xLabel, y, xLabel + labelW, y + rowH);
+        D2D1_RECT_F rightRect = D2D1::RectF(xRight + 6.0f * s, y, xRight + colW, y + rowH);
+
+        ID2D1SolidColorBrush* lBrush = (betterSide == -1) ? brushGood.Get() : brushText.Get();
+        ID2D1SolidColorBrush* rBrush = (betterSide == 1) ? brushGood.Get() : brushText.Get();
+
+        dc->DrawTextW(lval.c_str(), (UINT32)lval.length(), m_panelFormat.Get(), leftRect, lBrush);
+        dc->DrawTextW(label.c_str(), (UINT32)label.length(), m_panelFormat.Get(), labelRect, brushDim.Get());
+        dc->DrawTextW(rval.c_str(), (UINT32)rval.length(), m_panelFormat.Get(), rightRect, rBrush);
+        y += rowH;
+    };
+
+    auto drawSection = [&](const std::wstring& name) {
+        D2D1_RECT_F rect = D2D1::RectF(panelX + padding, y, panelX + panelW - padding, y + rowH);
+        dc->DrawTextW(name.c_str(), (UINT32)name.length(), m_panelFormat.Get(), rect, brushDim.Get());
+        y += rowH;
+    };
+
+    // Baseline
+    drawSection(L"Baseline");
+    const uint64_t lPixels = (uint64_t)left.Width * (uint64_t)left.Height;
+    const uint64_t rPixels = (uint64_t)right.Width * (uint64_t)right.Height;
+    const std::wstring lDim = (left.Width > 0 && left.Height > 0) ? (std::to_wstring(left.Width) + L" x " + std::to_wstring(left.Height)) : L"-";
+    const std::wstring rDim = (right.Width > 0 && right.Height > 0) ? (std::to_wstring(right.Width) + L" x " + std::to_wstring(right.Height)) : L"-";
+    drawRow(L"Dimensions", lDim, rDim, (left.Width > 0 && right.Width > 0) ? betterHigher((double)lPixels, (double)rPixels) : 0);
+
+    std::wstring sizeLabel = L"File Size";
+    if (left.FileSize > 0 && right.FileSize > 0) {
+        const double diff = ((double)right.FileSize - (double)left.FileSize) / (double)left.FileSize * 100.0;
+        wchar_t diffBuf[32]{};
+        swprintf_s(diffBuf, L" (Δ %+0.1f%%)", diff);
+        sizeLabel += diffBuf;
+    }
+    const std::wstring lSize = (left.FileSize > 0) ? FormatBytesShortLocal(left.FileSize) : L"-";
+    const std::wstring rSize = (right.FileSize > 0) ? FormatBytesShortLocal(right.FileSize) : L"-";
+    drawRow(sizeLabel, lSize, rSize, (left.FileSize > 0 && right.FileSize > 0) ? betterLower((double)left.FileSize, (double)right.FileSize) : 0);
+
+    auto computeBpp = [](const CImageLoader::ImageMetadata& m, double& outBpp) -> bool {
+        if (m.FileSize == 0 || m.Width == 0 || m.Height == 0) return false;
+        const double pixels = (double)m.Width * (double)m.Height;
+        outBpp = ((double)m.FileSize * 8.0) / pixels;
+        return true;
+    };
+    double lBpp = 0.0, rBpp = 0.0;
+    const bool hasLBpp = computeBpp(left, lBpp);
+    const bool hasRBpp = computeBpp(right, rBpp);
+    drawRow(L"BPP", hasLBpp ? (FormatDouble(lBpp, 2) + L" bpp") : L"-",
+            hasRBpp ? (FormatDouble(rBpp, 2) + L" bpp") : L"-",
+            (hasLBpp && hasRBpp) ? betterLower(lBpp, rBpp) : 0);
+
+    y += sectionGap;
+
+    // Quality
+    drawSection(L"Quality");
+    const std::wstring lSharp = left.HasSharpness ? FormatDouble(left.Sharpness, 0) : L"-";
+    const std::wstring rSharp = right.HasSharpness ? FormatDouble(right.Sharpness, 0) : L"-";
+    drawRow(L"Sharpness (Laplacian)", lSharp, rSharp,
+            (left.HasSharpness && right.HasSharpness) ? betterHigher(left.Sharpness, right.Sharpness) : 0);
+
+    const std::wstring lEnt = left.HasEntropy ? FormatDouble(left.Entropy, 2) : L"-";
+    const std::wstring rEnt = right.HasEntropy ? FormatDouble(right.Entropy, 2) : L"-";
+    drawRow(L"Entropy", lEnt, rEnt,
+            (left.HasEntropy && right.HasEntropy) ? betterHigher(left.Entropy, right.Entropy) : 0);
+
+    int sharpCmp = (left.HasSharpness && right.HasSharpness) ? betterHigher(left.Sharpness, right.Sharpness) : 0;
+    int entCmp = (left.HasEntropy && right.HasEntropy) ? betterHigher(left.Entropy, right.Entropy) : 0;
+    int winner = 0;
+    if (sharpCmp == -1 && entCmp == -1) winner = -1;
+    else if (sharpCmp == 1 && entCmp == 1) winner = 1;
+
+    drawRow(L"Quality Hint",
+            (winner == -1) ? L"Left" : L"-",
+            (winner == 1) ? L"Right" : L"-",
+            winner);
+
+    y += sectionGap;
+
+    // Encoding & Color
+    drawSection(L"Encoding & Color");
+    drawRow(L"Color Profile",
+            left.ColorSpace.empty() ? L"-" : left.ColorSpace,
+            right.ColorSpace.empty() ? L"-" : right.ColorSpace,
+            0);
+
+    const std::wstring lBit = ExtractBitDepth(left.FormatDetails);
+    const std::wstring rBit = ExtractBitDepth(right.FormatDetails);
+    int lBitVal = _wtoi(lBit.c_str());
+    int rBitVal = _wtoi(rBit.c_str());
+    drawRow(L"Bit Depth", lBit, rBit,
+            (lBitVal > 0 && rBitVal > 0) ? betterHigher((double)lBitVal, (double)rBitVal) : 0);
+
+    int lChromaRank = -1;
+    int rChromaRank = -1;
+    const std::wstring lChroma = ExtractChroma(left.FormatDetails, lChromaRank);
+    const std::wstring rChroma = ExtractChroma(right.FormatDetails, rChromaRank);
+    drawRow(L"Chroma Subsampling", lChroma, rChroma,
+            (lChromaRank >= 0 && rChromaRank >= 0) ? betterHigher((double)lChromaRank, (double)rChromaRank) : 0);
 }

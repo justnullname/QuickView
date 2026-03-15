@@ -90,6 +90,12 @@ public:
         std::vector<uint32_t> HistB;
         std::vector<uint32_t> HistL; // Luminance
         
+        // Compare Metrics
+        double Sharpness = 0.0; // Laplacian variance
+        double Entropy = 0.0;   // Shannon entropy
+        bool HasSharpness = false;
+        bool HasEntropy = false;
+        
         bool IsEmpty() const { return Make.empty() && Model.empty() && ISO.empty() && Date.empty(); }
 
         std::wstring GetCompactString() const {

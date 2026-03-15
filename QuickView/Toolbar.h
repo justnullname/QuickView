@@ -67,6 +67,7 @@ public:
     void SetCompareMode(bool enabled);
     bool IsCompareMode() const { return m_compareMode; }
     void SetCompareSyncStates(bool syncZoom, bool syncPan);
+    float GetCompareZoomStepPercent() const { return m_compareZoomStepPercent; }
     
     // [Phase 3] Get minimum required width for toolbar
     float GetMinWidth() const { return m_minRequiredWidth > 0.0f ? m_minRequiredWidth : (PADDING_X * 2 + 8 * BUTTON_SIZE + 7 * GAP) * m_uiScale; }
@@ -91,9 +92,16 @@ private:
     bool m_windowTooNarrow = false; // [Phase 3] Hide toolbar if window is too narrow
     bool m_compareMode = false;
     float m_minRequiredWidth = 0.0f;
+    float m_compareZoomStepPercent = 0.5f;
     
     D2D1_ROUNDED_RECT m_bgRect = {};
     std::vector<ToolbarButton> m_buttons;
+    D2D1_RECT_F m_compareStepRect = {};
+    D2D1_RECT_F m_compareStepUpRect = {};
+    D2D1_RECT_F m_compareStepDownRect = {};
+    bool m_compareStepHover = false;
+    bool m_compareStepUpHover = false;
+    bool m_compareStepDownHover = false;
     
     // Resources
     ComPtr<ID2D1SolidColorBrush> m_brushBg;

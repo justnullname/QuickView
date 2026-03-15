@@ -374,6 +374,7 @@ static void CaptureCurrentImageAsCompareLeft();
 static bool LoadImageIntoCompareLeftSlot(const std::wstring& path);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
 static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval);
+static float GetCompareSplitRatio();
 
 static D2D1_SIZE_F GetLogicalImageSize();
 static bool g_isAutoLocked = false;
@@ -622,6 +623,7 @@ void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
+FireAndForget UpdateCompareLeftHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction); 
 void RebuildInfoGrid(); // Fwd decl
@@ -634,6 +636,21 @@ static void RestoreCurrentExifOrientation();
 
 static bool IsCompareModeActive() {
     return g_compare.mode != ViewMode::Single;
+}
+
+bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe) {
+    if (!IsCompareModeActive()) return false;
+    outPane = (g_compare.selectedPane == ComparePane::Left) ? 0 : 1;
+    outSplitRatio = GetCompareSplitRatio();
+    outIsWipe = (g_compare.mode == ViewMode::CompareWipe);
+    return true;
+}
+
+bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right) {
+    if (!IsCompareModeActive() || !g_compare.left.valid || !g_imageResource) return false;
+    left = g_compare.left.metadata;
+    right = g_currentMetadata;
+    return true;
 }
 
 static bool IsCompareContextLeft() {
@@ -834,6 +851,31 @@ static int ComputeEdgeHoverForPane(const POINT& pt, const D2D1_RECT_F& paneRect)
     if (inHRange && inVRange) {
         return (pt.x < paneRect.left + w * 0.15f) ? -1 : 1;
     }
+    return 0;
+}
+
+static int HitTestNavButtonInPane(const POINT& pt, const D2D1_RECT_F& paneRect) {
+    if (g_config.NavIndicator != 0) return 0;
+    const float w = paneRect.right - paneRect.left;
+    const float h = paneRect.bottom - paneRect.top;
+    if (w <= 50.0f || h <= 100.0f) return 0;
+    if (pt.x < paneRect.left || pt.x > paneRect.right || pt.y < paneRect.top || pt.y > paneRect.bottom) return 0;
+
+    const float zoneWidth = w * 0.15f;
+    const float centerY = paneRect.top + h * 0.5f;
+    const float radius = 20.0f * g_uiScale;
+    const float radiusSq = radius * radius;
+
+    auto hitCircle = [&](float cx) -> bool {
+        const float dx = (float)pt.x - cx;
+        const float dy = (float)pt.y - centerY;
+        return (dx * dx + dy * dy) <= radiusSq;
+    };
+
+    const float leftX = paneRect.left + zoneWidth * 0.5f;
+    if (hitCircle(leftX)) return -1;
+    const float rightX = paneRect.right - zoneWidth * 0.5f;
+    if (hitCircle(rightX)) return 1;
     return 0;
 }
 
@@ -1116,38 +1158,6 @@ static bool RenderCompareComposite(HWND hwnd) {
                       D2D1::Point2F(splitX + gap, centerY + chevron),
                       arrowBrush.Get(), strokeWidth, strokeStyle.Get());
     };
-    auto DrawActivePaneIndicator = [&](ComparePane pane, float splitX, float winW, float winH) {
-        const float s = g_uiScale;
-        const float inset = 2.0f * s;
-        const float thickness = 2.4f * s;
-        if (winW < 20.0f || winH < 20.0f) return;
-
-        ComPtr<ID2D1SolidColorBrush> brush;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.65f, 1.0f, 0.80f), &brush))) return;
-
-        D2D1_RECT_F rect{};
-        if (pane == ComparePane::Left) {
-            rect = D2D1::RectF(inset, inset, splitX - inset, winH - inset);
-        } else {
-            rect = D2D1::RectF(splitX + inset, inset, winW - inset, winH - inset);
-        }
-
-        if (rect.right > rect.left + 1.0f && rect.bottom > rect.top + 1.0f) {
-            const D2D1_POINT_2F topLeft = D2D1::Point2F(rect.left, rect.top);
-            const D2D1_POINT_2F topRight = D2D1::Point2F(rect.right, rect.top);
-            const D2D1_POINT_2F bottomLeft = D2D1::Point2F(rect.left, rect.bottom);
-            const D2D1_POINT_2F bottomRight = D2D1::Point2F(rect.right, rect.bottom);
-
-            ctx->DrawLine(topLeft, topRight, brush.Get(), thickness);
-            ctx->DrawLine(bottomLeft, bottomRight, brush.Get(), thickness);
-
-            if (pane == ComparePane::Left) {
-                ctx->DrawLine(topLeft, bottomLeft, brush.Get(), thickness);
-            } else {
-                ctx->DrawLine(topRight, bottomRight, brush.Get(), thickness);
-            }
-        }
-    };
 
     if (g_compare.mode == ViewMode::CompareWipe) {
         const D2D1_RECT_F full = D2D1::RectF(0.0f, 0.0f, (float)winW, (float)winH);
@@ -1169,7 +1179,6 @@ static bool RenderCompareComposite(HWND hwnd) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 2.0f);
         }
         DrawDividerHandle(splitX, (float)winH, g_compare.draggingDivider ? 1.0f : 0.85f);
-        DrawActivePaneIndicator(g_compare.selectedPane, splitX, (float)winW, (float)winH);
     } else {
         const float splitX = 0.5f * (float)winW;
         const D2D1_RECT_F leftVp = D2D1::RectF(0.0f, 0.0f, splitX, (float)winH);
@@ -1183,7 +1192,6 @@ static bool RenderCompareComposite(HWND hwnd) {
         if (dividerBrush) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 1.0f);
         }
-        DrawActivePaneIndicator(g_compare.selectedPane, splitX, (float)winW, (float)winH);
     }
 
     g_compEngine->EndPendingUpdate();
@@ -1279,6 +1287,7 @@ static void ExitCompareMode(HWND hwnd) {
     g_compare.activePane = ComparePane::Right;
     g_compare.selectedPane = ComparePane::Right;
     g_compare.dirty = false;
+    g_runtime.ShowCompareInfo = false;
 
     g_viewState.CompareActive = false;
     g_viewState.CompareSplitRatio = 0.5f;
@@ -5376,16 +5385,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
                 ComparePane pane = HitTestComparePane(hwnd, pt);
                 const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
-                inEdgeZone = (ComputeEdgeHoverForPane(pt, paneRect) != 0);
-            } else if (w > 50 && h > 100) {
-                bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
-                bool inVRange;
                 if (g_config.NavIndicator == 0) {
-                    inVRange = (pt.y > h * 0.20) && (pt.y < h * 0.80);
+                    inEdgeZone = (HitTestNavButtonInPane(pt, paneRect) != 0);
                 } else {
-                    inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                    inEdgeZone = (ComputeEdgeHoverForPane(pt, paneRect) != 0);
                 }
-                inEdgeZone = inHRange && inVRange;
+            } else if (w > 50 && h > 100) {
+                if (g_config.NavIndicator == 0) {
+                    D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, (float)w, (float)h);
+                    inEdgeZone = (HitTestNavButtonInPane(pt, fullRect) != 0);
+                } else {
+                    bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+                    bool inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
+                    inEdgeZone = inHRange && inVRange;
+                }
             }
         }
         
@@ -5590,14 +5603,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     break;
                 case ToolbarButtonID::CompareInfo:
                     if (IsCompareModeActive() && g_compare.left.valid && g_imageResource) {
-                        const auto& l = g_compare.left.metadata;
-                        const auto& r = g_currentMetadata;
-                        std::wstring msg = BuildCompareInfoMessage(l, r);
-                        if (msg.empty()) {
-                            msg = L"No compare data available.";
+                        g_runtime.ShowCompareInfo = !g_runtime.ShowCompareInfo;
+                        if (g_runtime.ShowCompareInfo) {
+                            if (g_currentMetadata.HistL.empty()) {
+                                UpdateHistogramAsync(hwnd, g_imagePath);
+                            }
+                            if (g_compare.left.metadata.HistL.empty()) {
+                                UpdateCompareLeftHistogramAsync(hwnd, g_compare.left.path);
+                            }
                         }
-                        std::vector<DialogButton> buttons = { { DialogResult::Yes, L"OK", true } };
-                        ShowQuickViewDialog(hwnd, L"Compare Info", msg.c_str(), D2D1::ColorF(D2D1::ColorF::CornflowerBlue), buttons, false, L"", L"");
+                        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
                     }
                     break;
                 case ToolbarButtonID::CompareDelete:
@@ -5610,7 +5625,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ToolbarButtonID::CompareZoomOut:
                     if (IsCompareModeActive()) {
                         const bool zoomIn = (tbId == ToolbarButtonID::CompareZoomIn);
-                        float stepDelta = zoomIn ? 0.5f : -0.5f;
+                        float stepPercent = g_toolbar.GetCompareZoomStepPercent();
+                        float stepDelta = (stepPercent / 10.0f) * (zoomIn ? 1.0f : -1.0f);
                         ApplyCompareZoomStep(hwnd, stepDelta, false);
                     }
                     break;
@@ -5629,6 +5645,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     }
                     break;
                 case ToolbarButtonID::None:
+                    RequestRepaint(PaintLayer::Static);
+                    break;
                 default:
                     break;
             }
@@ -5671,7 +5689,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)width, (float)height);
                     ComparePane pane = HitTestComparePane(hwnd, pt);
                     const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
-                    int direction = ComputeEdgeHoverForPane(pt, paneRect);
+                    int direction = (g_config.NavIndicator == 0)
+                        ? HitTestNavButtonInPane(pt, paneRect)
+                        : ComputeEdgeHoverForPane(pt, paneRect);
                     if (direction != 0) {
                         ReleaseCapture();
                         g_compare.selectedPane = pane;
@@ -5684,14 +5704,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 } else {
                     bool clickValid = false;
                     int direction = 0;
-
                     if (g_config.NavIndicator == 0) {
-                        bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
-                        bool inVRange = (pt.y > height * 0.20) && (pt.y < height * 0.80);
-                        if (inHRange && inVRange) {
-                            clickValid = true;
-                            direction = (pt.x < width * 0.15) ? -1 : 1;
-                        }
+                        D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, (float)width, (float)height);
+                        direction = HitTestNavButtonInPane(pt, fullRect);
+                        clickValid = (direction != 0);
                     } else {
                         bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
                         bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
@@ -8054,13 +8070,45 @@ FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path) {
          
          co_await ResumeMainThread(hwnd);
          
-         if (path == g_imagePath) {
-             g_currentMetadata.HistR = histMeta.HistR;
-             g_currentMetadata.HistG = histMeta.HistG;
-             g_currentMetadata.HistB = histMeta.HistB;
-             g_currentMetadata.HistL = histMeta.HistL;
-             RequestRepaint(PaintLayer::All);
-         }
+        if (path == g_imagePath) {
+            g_currentMetadata.HistR = histMeta.HistR;
+            g_currentMetadata.HistG = histMeta.HistG;
+            g_currentMetadata.HistB = histMeta.HistB;
+            g_currentMetadata.HistL = histMeta.HistL;
+            g_currentMetadata.Sharpness = histMeta.Sharpness;
+            g_currentMetadata.Entropy = histMeta.Entropy;
+            g_currentMetadata.HasSharpness = histMeta.HasSharpness;
+            g_currentMetadata.HasEntropy = histMeta.HasEntropy;
+            RequestRepaint(PaintLayer::All);
+        }
+    }
+}
+
+FireAndForget UpdateCompareLeftHistogramAsync(HWND hwnd, std::wstring path) {
+    if (path.empty() || !IsCompareModeActive()) co_return;
+    if (path != g_compare.left.path) co_return;
+    
+    co_await ResumeBackground{};
+    
+    ComPtr<IWICBitmap> tempBitmap;
+    std::wstring loaderName; // dummy
+    if (SUCCEEDED(g_imageLoader->LoadToMemory(path.c_str(), &tempBitmap, &loaderName))) {
+        CImageLoader::ImageMetadata histMeta;
+        g_imageLoader->ComputeHistogram(tempBitmap.Get(), &histMeta);
+        
+        co_await ResumeMainThread(hwnd);
+        
+        if (IsCompareModeActive() && path == g_compare.left.path) {
+            g_compare.left.metadata.HistR = histMeta.HistR;
+            g_compare.left.metadata.HistG = histMeta.HistG;
+            g_compare.left.metadata.HistB = histMeta.HistB;
+            g_compare.left.metadata.HistL = histMeta.HistL;
+            g_compare.left.metadata.Sharpness = histMeta.Sharpness;
+            g_compare.left.metadata.Entropy = histMeta.Entropy;
+            g_compare.left.metadata.HasSharpness = histMeta.HasSharpness;
+            g_compare.left.metadata.HasEntropy = histMeta.HasEntropy;
+            RequestRepaint(PaintLayer::All);
+        }
     }
 }
 
