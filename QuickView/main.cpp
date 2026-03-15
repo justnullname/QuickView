@@ -671,8 +671,8 @@ static bool HasCompareContextImage() {
 }
 
 static float ClampCompareRatio(float value) {
-    if (value < 0.1f) return 0.1f;
-    if (value > 0.9f) return 0.9f;
+    if (value < 0.001f) return 0.0f;
+    if (value > 0.999f) return 1.0f;
     return value;
 }
 
@@ -1244,9 +1244,9 @@ static void SnapWindowToCompareImages(HWND hwnd) {
     int winW = rc.right - rc.left;
     int winH = rc.bottom - rc.top;
 
-    // Cap to screen work area with some margin
-    if (winW > (maxW - 40) || winH > (maxH - 40)) {
-        float scale = std::min((float)(maxW - 40) / winW, (float)(maxH - 40) / winH);
+    // Cap to screen work area
+    if (winW > maxW || winH > maxH) {
+        float scale = std::min((float)maxW / winW, (float)maxH / winH);
         winW = (int)(winW * scale);
         winH = (int)(winH * scale);
     }
@@ -2177,6 +2177,67 @@ static D2D1_SIZE_F GetVisualImageSize() {
 static RECT s_restoredWindowRect = { 0 };
 
 // Inlined Logic to avoid dependency on local lambdas
+static void PerformCompareZoom100(HWND hwnd) {
+    if (!IsCompareModeActive()) return;
+
+    auto zoomPane = [&](ComparePane p) {
+        if (p == ComparePane::Left) {
+            if (!g_compare.left.valid) return;
+            D2D1_SIZE_F sz = GetOrientedSize(g_compare.left.resource, g_compare.left.view.ExifOrientation);
+            D2D1_RECT_F vp = GetCompareViewport(hwnd, ComparePane::Left);
+            float vpW = vp.right - vp.left;
+            float vpH = vp.bottom - vp.top;
+            if (sz.width > 0 && sz.height > 0 && vpW > 0 && vpH > 0) {
+                float fit = std::min(vpW / sz.width, vpH / sz.height);
+                g_compare.left.view.Zoom = (fit > 0.0001f) ? (1.0f / fit) : 1.0f;
+                g_compare.left.view.PanX = 0; g_compare.left.view.PanY = 0;
+            }
+        } else {
+            if (!g_imageResource) return;
+            CompareView right = GetRightCompareView();
+            D2D1_SIZE_F sz = GetOrientedSize(g_imageResource, right.ExifOrientation);
+            D2D1_RECT_F vp = GetCompareViewport(hwnd, ComparePane::Right);
+            float vpW = vp.right - vp.left;
+            float vpH = vp.bottom - vp.top;
+            if (sz.width > 0 && sz.height > 0 && vpW > 0 && vpH > 0) {
+                float fit = std::min(vpW / sz.width, vpH / sz.height);
+                right.Zoom = (fit > 0.0001f) ? (1.0f / fit) : 1.0f;
+                right.PanX = 0; right.PanY = 0;
+                SetRightCompareView(right);
+            }
+        }
+    };
+
+    if (g_compare.syncZoom) {
+        zoomPane(ComparePane::Left);
+        zoomPane(ComparePane::Right);
+    } else {
+        zoomPane(g_compare.selectedPane);
+    }
+    MarkCompareDirty();
+    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+}
+
+static void PerformCompareZoomFit(HWND hwnd) {
+    if (!IsCompareModeActive()) return;
+    if (g_compare.syncZoom) {
+        g_compare.left.view.Zoom = 1.0f;
+        g_compare.left.view.PanX = 0; g_compare.left.view.PanY = 0;
+        g_viewState.Zoom = 1.0f;
+        g_viewState.PanX = 0; g_viewState.PanY = 0;
+    } else {
+        if (g_compare.selectedPane == ComparePane::Left) {
+            g_compare.left.view.Zoom = 1.0f;
+            g_compare.left.view.PanX = 0; g_compare.left.view.PanY = 0;
+        } else {
+            g_viewState.Zoom = 1.0f;
+            g_viewState.PanX = 0; g_viewState.PanY = 0;
+        }
+    }
+    MarkCompareDirty();
+    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+}
+
 static void PerformZoom100(HWND hwnd) {
     if (g_imageResource) {
         // [Fix] Use Robust Visual Size (This refers to current Surface Size, potentially downscaled)
@@ -4952,43 +5013,68 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         if (IsCompareModeActive()) {
             ComparePane pane = HitTestComparePane(hwnd, pt);
-            D2D1_RECT_F vp = GetCompareViewport(hwnd, pane);
-            float vpW = vp.right - vp.left;
-            float vpH = vp.bottom - vp.top;
-
-            if (pane == ComparePane::Left && g_compare.left.valid) {
-                D2D1_SIZE_F sz = GetOrientedSize(g_compare.left.resource, g_compare.left.view.ExifOrientation);
-                if (sz.width > 0 && sz.height > 0) {
-                    float fit = std::min(vpW / sz.width, vpH / sz.height);
-                    float total = fit * g_compare.left.view.Zoom;
-                    if (fabsf(total - 1.0f) < 0.05f) g_compare.left.view.Zoom = 1.0f;
-                    else g_compare.left.view.Zoom = (fit > 0.0001f) ? (1.0f / fit) : 1.0f;
-                    g_compare.left.view.PanX = 0.0f;
-                    g_compare.left.view.PanY = 0.0f;
+            auto cyclePane = [&](ComparePane p) {
+                if (p == ComparePane::Left) {
+                    if (!g_compare.left.valid) return;
+                    D2D1_SIZE_F sz = GetOrientedSize(g_compare.left.resource, g_compare.left.view.ExifOrientation);
+                    D2D1_RECT_F vp = GetCompareViewport(hwnd, ComparePane::Left);
+                    float vpW = vp.right - vp.left;
+                    float vpH = vp.bottom - vp.top;
+                    if (sz.width > 0 && sz.height > 0 && vpW > 0 && vpH > 0) {
+                        float fit = std::min(vpW / sz.width, vpH / sz.height);
+                        float fill = std::max(vpW / sz.width, vpH / sz.height);
+                        float curZoom = g_compare.left.view.Zoom;
+                        float pixelScale = curZoom * fit;
+                        if (fabsf(curZoom - 1.0f) < 0.05f) { // Fit -> 100%
+                            g_compare.left.view.Zoom = 1.0f / fit;
+                        } else if (fabsf(pixelScale - 1.0f) < 0.05f) { // 100% -> Fill
+                            g_compare.left.view.Zoom = fill / fit;
+                        } else { // Fill/Other -> Fit
+                            g_compare.left.view.Zoom = 1.0f;
+                        }
+                        g_compare.left.view.PanX = 0.0f; g_compare.left.view.PanY = 0.0f;
+                    }
+                } else {
+                    if (!g_imageResource) return;
+                    CompareView right = GetRightCompareView();
+                    D2D1_SIZE_F sz = GetOrientedSize(g_imageResource, right.ExifOrientation);
+                    D2D1_RECT_F vp = GetCompareViewport(hwnd, ComparePane::Right);
+                    float vpW = vp.right - vp.left;
+                    float vpH = vp.bottom - vp.top;
+                    if (sz.width > 0 && sz.height > 0 && vpW > 0 && vpH > 0) {
+                        float fit = std::min(vpW / sz.width, vpH / sz.height);
+                        float fill = std::max(vpW / sz.width, vpH / sz.height);
+                        float curZoom = right.Zoom;
+                        float pixelScale = curZoom * fit;
+                        if (fabsf(curZoom - 1.0f) < 0.05f) { // Fit -> 100%
+                            right.Zoom = 1.0f / fit;
+                        } else if (fabsf(pixelScale - 1.0f) < 0.05f) { // 100% -> Fill
+                            right.Zoom = fill / fit;
+                        } else { // Fill/Other -> Fit
+                            right.Zoom = 1.0f;
+                        }
+                        right.PanX = 0.0f; right.PanY = 0.0f;
+                        SetRightCompareView(right);
+                    }
                 }
-            } else if (pane == ComparePane::Right && g_imageResource) {
-                CompareView right = GetRightCompareView();
-                D2D1_SIZE_F sz = GetOrientedSize(g_imageResource, right.ExifOrientation);
-                if (sz.width > 0 && sz.height > 0) {
-                    float fit = std::min(vpW / sz.width, vpH / sz.height);
-                    float total = fit * right.Zoom;
-                    if (fabsf(total - 1.0f) < 0.05f) right.Zoom = 1.0f;
-                    else right.Zoom = (fit > 0.0001f) ? (1.0f / fit) : 1.0f;
-                    right.PanX = 0.0f;
-                    right.PanY = 0.0f;
-                    SetRightCompareView(right);
-                }
-            }
+            };
 
-            if (g_compare.syncZoom && g_compare.left.valid && g_imageResource) {
+            if (g_compare.syncZoom) {
+                cyclePane(pane);
+                ComparePane other = (pane == ComparePane::Left) ? ComparePane::Right : ComparePane::Left;
                 if (pane == ComparePane::Left) {
                     CompareView right = GetRightCompareView();
                     right.Zoom = g_compare.left.view.Zoom;
+                    right.PanX = 0; right.PanY = 0;
                     SetRightCompareView(right);
                 } else {
-                    g_compare.left.view.Zoom = g_viewState.Zoom;
+                    g_compare.left.view.Zoom = GetRightCompareView().Zoom;
+                    g_compare.left.view.PanX = 0; g_compare.left.view.PanY = 0;
                 }
+            } else {
+                cyclePane(pane);
             }
+
             if (g_compare.syncPan) {
                 if (pane == ComparePane::Left) {
                     g_viewState.PanX = g_compare.left.view.PanX;
@@ -4998,7 +5084,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     g_compare.left.view.PanY = g_viewState.PanY;
                 }
             }
-
             MarkCompareDirty();
             RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
             return 0;
@@ -5038,10 +5123,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             int winWidth = rcWin.right - rcWin.left;
             int winHeight = rcWin.bottom - rcWin.top;
 
-            // Is the window essentially filling the screen? (Tolerance border + 20px)
-            // Fix Bug #19: For images with aspect ratios different from the monitor,
-            // fitting to screen means hitting maxW OR maxH, not necessarily both!
-            bool isWindowMaximizedOrFull = (winWidth >= maxW - 40 || winHeight >= maxH - 40);
+            bool isWindowMaximizedOrFull = (winWidth >= maxW - 2 || winHeight >= maxH - 2);
             
             // Is it a large image? (Original size is close to or larger than screen)
             bool isLargeImage = (originalW >= maxW - 100 || originalH >= maxH - 100);
@@ -5844,6 +5926,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
 
             POINT mousePt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            ScreenToClient(hwnd, &mousePt);
             ComparePane pane = HitTestComparePane(hwnd, mousePt);
             g_compare.activePane = pane;
             ComparePane other = (pane == ComparePane::Left) ? ComparePane::Right : ComparePane::Left;
@@ -6207,11 +6290,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Zoom
         // Zoom
         case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
-            PerformZoom100(hwnd);
+            if (IsCompareModeActive()) PerformCompareZoom100(hwnd);
+            else PerformZoom100(hwnd);
             break;
             
         case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
-            PerformZoomFit(hwnd);
+            if (IsCompareModeActive()) PerformCompareZoomFit(hwnd);
+            else PerformZoomFit(hwnd);
             break;
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
