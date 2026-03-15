@@ -1600,14 +1600,18 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
     }
 
     float desiredScale = fitScale * g_viewState.Zoom;
-    if (desiredScale > 1.0f) desiredScale = 1.0f;
+    // [Quality Optimization] For bitmaps, cap at original size (1.0) for large images 
+    // but allow upscaling to fit (fitScale) for small images for smooth display.
+    float qualityCap = std::max(1.0f, fitScale);
+    if (desiredScale > qualityCap) desiredScale = qualityCap;
+
     if (!(desiredScale > 0.0f)) return D2D1::SizeU(0, 0);
 
     float desiredW = originalW * desiredScale;
     float desiredH = originalH * desiredScale;
 
-    if (desiredW < (float)winW) desiredW = (float)winW;
-    if (desiredH < (float)winH) desiredH = (float)winH;
+    // [Fix] REMOVED padding to winW/H to avoid "baking" background borders in maximized/fullscreen mode.
+    // The surface dimensions now strictly follow the image's aspect ratio.
 
     if (desiredW > (float)g_maxBitmapSurfaceSize || desiredH > (float)g_maxBitmapSurfaceSize) {
         float ratio = std::min((float)g_maxBitmapSurfaceSize / desiredW,
