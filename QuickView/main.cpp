@@ -1314,6 +1314,11 @@ static void ExitCompareMode(HWND hwnd) {
 
 // Helper: Check if panning makes sense (image exceeds window OR window exceeds screen)
 bool CanPan(HWND hwnd) {
+    if (IsCompareModeActive()) {
+        // In compare mode, panning is always allowed if images are loaded,
+        // even if they fit the window, to allow precise alignment comparison.
+        return (g_imageResource || g_compare.left.valid);
+    }
     if (!g_imageResource) return false;
     
     RECT rc; GetClientRect(hwnd, &rc);
@@ -4583,7 +4588,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              isTracking = true;
           }
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
-          if (IsCompareModeActive()) {
+          if (IsCompareModeActive() && !g_viewState.IsDragging && !g_viewState.IsMiddleDragWindow) {
               g_compare.activePane = HitTestComparePane(hwnd, pt);
           }
           if (IsNearCompareDivider(hwnd, pt)) {
@@ -5017,10 +5022,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_MBUTTONDOWN: {
+        POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         // Record start position/time for click vs drag detection
-        g_viewState.LastMousePos = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        g_viewState.LastMousePos = pt;
         g_viewState.DragStartPos = g_viewState.LastMousePos;
         g_viewState.DragStartTime = GetTickCount();
+
+        if (IsCompareModeActive()) {
+            g_compare.activePane = HitTestComparePane(hwnd, pt);
+        }
         
         // Check MiddleDragAction config
         // Check MiddleDragAction config
