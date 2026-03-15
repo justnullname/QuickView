@@ -4455,8 +4455,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     changed = true;
                 }
             } else {
-                if (g_compare.dividerOpacity > 0.4f) {
-                    g_compare.dividerOpacity = std::max(0.4f, g_compare.dividerOpacity - step);
+                if (g_compare.dividerOpacity > 0.0f) {
+                    g_compare.dividerOpacity = std::max(0.0f, g_compare.dividerOpacity - step);
                     changed = true;
                 }
             }
