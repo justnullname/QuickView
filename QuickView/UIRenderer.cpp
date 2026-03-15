@@ -510,7 +510,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     DrawWindowControls(dc, hwnd);
 
     // Compare Selected Pane Indicator
-    DrawComparePaneIndicator(dc);
+    DrawComparePaneIndicator(dc, hwnd);
     
     // Toolbar
     g_toolbar.Render(dc);
@@ -1747,7 +1747,7 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
     drawArrow(arrowCenterX, arrowCenterY, g_viewState.EdgeHoverState == -1);
 }
 
-void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc) {
+void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd) {
     int pane = 0;
     float splitRatio = 0.5f;
     bool isWipe = false;
@@ -1759,7 +1759,18 @@ void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc) {
     const float thickness = 2.4f * s;
     if (m_width < 20.0f || m_height < 20.0f) return;
 
-    const float splitX = isWipe ? (m_width * splitRatio) : (m_width * 0.5f);
+    float xOffset = 0.0f;
+    float yOffset = 0.0f;
+    if (IsZoomed(hwnd) && !m_isFullscreen) {
+        int frameX = GetSystemMetrics(SM_CXSIZEFRAME);
+        int frameY = GetSystemMetrics(SM_CYSIZEFRAME);
+        int paddedBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
+        xOffset = (float)(frameX + paddedBorder);
+        yOffset = (float)(frameY + paddedBorder);
+    }
+
+    const float drawWidth = m_width - xOffset * 2.0f;
+    const float splitX = isWipe ? (xOffset + drawWidth * splitRatio) : (xOffset + drawWidth * 0.5f);
 
     ComPtr<ID2D1SolidColorBrush> brush;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.65f, 1.0f, 0.80f), &brush);
@@ -1767,9 +1778,9 @@ void UIRenderer::DrawComparePaneIndicator(ID2D1DeviceContext* dc) {
 
     D2D1_RECT_F rect{};
     if (pane == 0) {
-        rect = D2D1::RectF(inset, inset, splitX - inset, m_height - inset);
+        rect = D2D1::RectF(xOffset + inset, yOffset + inset, splitX - inset, m_height - yOffset - inset);
     } else {
-        rect = D2D1::RectF(splitX + inset, inset, m_width - inset, m_height - inset);
+        rect = D2D1::RectF(splitX + inset, yOffset + inset, m_width - xOffset - inset, m_height - yOffset - inset);
     }
 
     if (rect.right <= rect.left + 1.0f || rect.bottom <= rect.top + 1.0f) return;
