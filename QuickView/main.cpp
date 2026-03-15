@@ -2096,12 +2096,8 @@ static D2D1_SIZE_F GetLogicalImageSize() {
         return g_imageResource.GetSize();
     }
 
-    if (g_currentMetadata.Width > 8192 || g_currentMetadata.Height > 8192) {
+    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
         return D2D1::SizeF((float)g_currentMetadata.Width, (float)g_currentMetadata.Height);
-    }
-
-    if (g_lastSurfaceSize.width > 0.0f && g_lastSurfaceSize.height > 0.0f) {
-        return g_lastSurfaceSize;
     }
 
     return g_imageResource ? g_imageResource.GetSize() : D2D1::SizeF(0, 0);
