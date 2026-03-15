@@ -606,9 +606,6 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 // Implementation is in WuffsImpl.cpp with selective module loading
 #include "WuffsLoader.h"
 
-// [v5.3] Global storage - kept for internal decoder use, exposed via DecodeResult.metadata
-std::wstring g_lastFormatDetails;
-int g_lastExifOrientation = 1;
 
 // Read EXIF Orientation from JPEG file (Tag 0x0112)
 // Read EXIF Orientation from JPEG file (Tag 0x0112)
@@ -2931,15 +2928,6 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 
     *ppBitmap = pWicBitmap.Detach();
 
-    // Extract format details (bit depth)
-    if (SUCCEEDED(hr)) {
-        int depth = decoder->image->depth;
-        wchar_t buf[32];
-        swprintf_s(buf, L"%d-bit", depth);
-        g_lastFormatDetails = buf;
-        if (decoder->image->alphaPlane != nullptr) g_lastFormatDetails += L" +Alpha";
-    }
-
     avifDecoderDestroy(decoder);
     return hr;
 }
@@ -3172,10 +3160,6 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forc
 
 HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std::wstring* pLoaderName, bool forceFullDecode, CancelPredicate checkCancel) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
-    
-    // Clear previous state to avoid residue when switching formats
-    g_lastFormatDetails.clear();
-    g_lastExifOrientation = 1; // Reset to default (Normal)
     
     std::wstring path = filePath;
     std::transform(path.begin(), path.end(), path.begin(), ::towlower);
@@ -5183,15 +5167,6 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     }
     return E_FAIL;
 }
-
-// [v5.3 DEPRECATED] Use DecodeResult.metadata instead
-// std::wstring CImageLoader::GetLastFormatDetails() const {
-//     return g_lastFormatDetails;
-// }
-// 
-// int CImageLoader::GetLastExifOrientation() const {
-//     return g_lastExifOrientation;
-// }
 
 // ============================================================================
 // NEW: Fast Header-Only Parsing (< 5ms for most formats)
