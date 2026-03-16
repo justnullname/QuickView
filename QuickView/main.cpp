@@ -637,7 +637,7 @@ void DiscardChanges();
 std::wstring ShowRenameDialog(HWND hParent, const std::wstring& oldName);
 static void RestoreCurrentExifOrientation();
 
-static bool IsCompareModeActive() {
+bool IsCompareModeActive() {
     return g_compare.mode != ViewMode::Single;
 }
 
@@ -4767,6 +4767,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 RECT rcv; GetClientRect(hwnd, &rcv);
                 int w = rcv.right - rcv.left;
                 int h = rcv.bottom - rcv.top;
+                
+                // Block edge nav if hovering over Info UI
+                if (g_uiRenderer) {
+                    auto hit = g_uiRenderer->HitTest((float)pt.x, (float)pt.y);
+                    if (hit.type != UIHitResult::None) {
+                        g_viewState.EdgeHoverLeft = 0;
+                        g_viewState.EdgeHoverRight = 0;
+                        g_viewState.EdgeHoverState = 0;
+                        RequestRepaint(PaintLayer::Static);
+                        goto SKIP_EDGE_NAV;
+                    }
+                }
 
                 if (IsCompareModeActive()) {
                     if (g_compare.draggingDivider || g_viewState.IsDragging) {
@@ -4832,6 +4844,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     RequestRepaint(PaintLayer::Static);
                 }
             }
+SKIP_EDGE_NAV:;
 
           // Skip UI interactions (Toolbar, Window Controls, etc.) when Gallery covers screen
           if (!g_gallery.IsVisible()) {
@@ -5067,6 +5080,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
             return 0;
+        }
+        if (g_uiRenderer) {
+            auto hit = g_uiRenderer->HitTest((float)pt.x, (float)pt.y);
+            if (hit.type != UIHitResult::None) return 0;
         }
         // Fullscreen and maximized logic unified below
 

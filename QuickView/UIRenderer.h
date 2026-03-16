@@ -140,6 +140,19 @@ private:
     void DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawCompareInfoHUD(ID2D1DeviceContext* dc);
     
+    struct TooltipInfo {
+        std::wstring description;   // What is this?
+        std::wstring highMeaning;   // What if high?
+        std::wstring lowMeaning;    // What if low?
+        std::wstring reference;     // Typical range
+    };
+    
+    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false);
+    TooltipInfo GetTooltipInfo(const std::wstring& label);
+    
+private:
+    InfoRow m_hoverInfoRow; // Cached row for HUD tooltips
+    
     // 绘制函数
     void DrawOSD(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
@@ -174,6 +187,7 @@ private:
     D2D1_RECT_F m_panelCloseRect = {};
     D2D1_RECT_F m_gpsCoordRect = {};
     D2D1_RECT_F m_gpsLinkRect = {};
+    D2D1_RECT_F m_lastHUDRect = {}; // Track HUD area for hit testing
     
     // Grid Layout Constants
     static constexpr float GRID_ICON_WIDTH = 16.0f;

@@ -33,6 +33,11 @@ extern AppConfig g_config;  // [v3.2] For InfoPanelAlpha
 extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);
+extern bool IsCompareModeActive();
+
+static bool PointInRect(float x, float y, const D2D1_RECT_F& rect) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
 
 // ============================================================================
 // UIRenderer Implementation - 3-Layer Architecture
@@ -73,7 +78,8 @@ void UIRenderer::SetUIScale(float scale) {
 
 void UIRenderer::UpdateMetadata(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath) {
     m_metadata = metadata;
-    g_imagePath = imagePath;
+    m_imagePath = imagePath;
+    g_imagePath = imagePath; 
     BuildInfoGrid();  // Rebuild grid when metadata changes
     MarkStaticDirty();
 }
@@ -100,7 +106,19 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
     m_lastMousePos.x = (LONG)x;
     m_lastMousePos.y = (LONG)y;
     
-    // Only hit test if info panel is visible
+    // Only hit test if info panel OR HUD is visible
+    bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo;
+    if (!g_runtime.ShowInfoPanel && !hudVisible) return result;
+
+    // HUD Hit Test (if visible)
+    if (hudVisible) {
+        if (PointInRect(x, y, m_lastHUDRect)) {
+            result.type = UIHitResult::InfoRow; // Use InfoRow as a general indicator for HUD area
+            result.rowIndex = -2; // Special flag we use for HUD
+            return result;
+        }
+    }
+    
     if (!g_runtime.ShowInfoPanel) return result;
     
     // Panel Toggle Button
@@ -1297,29 +1315,47 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
     return result + L" B";
 }
 
-void UIRenderer::BuildInfoGrid() {
-    m_infoGrid.clear();
-    if (g_imagePath.empty()) return;
-    
+UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) {
+    if (label == L"File") return { L"File Name", L"Large files take more disk space", L"Small files are easier to transfer", L"N/A" };
+    if (label == L"Size") return { L"Image Dimensions & Zoom", L"Higher resolution means more detail", L"Lower resolution saves memory", L"> 20MP is High-Res" };
+    if (label == L"Disk") return { L"File Size on Disk", L"Large files may load slower", L"Highly compressed or small content", L"1-20MB typical for JPEG" };
+    if (label == L"Date") return { L"Capture Date/Time", L"Recent capture", L"Legacy content", L"N/A" };
+    if (label == L"Camera") return { L"Camera Make & Model", L"High-end gear usually has better SNR", L"Compact or mobile sensors", L"N/A" };
+    if (label == L"Exp") return { L"ISO, Aperture, Shutter", L"High ISO = More Noise; Fast Shutter = Freeze Motion", L"Low ISO = Clean; Slow Shutter = Motion Blur", L"ISO 100-800 is clean" };
+    if (label == L"Lens") return { L"Lens Information", L"Wide aperture (f/1.4) = Shallow DOF", L"Narrow aperture (f/11) = Deep DOF", L"f/2.8-f/8 is sweet spot" };
+    if (label == L"Focal") return { L"Focal Length", L"Telephoto (long)", L"Wide angle (short)", L"50mm is 'Normal'" };
+    if (label == L"Color") return { L"Color Space & ICC Profile", L"Wide Gamut (P3/Adobe) = Richer colors", L"Standard Gamut (sRGB)", L"sRGB is web standard" };
+    if (label == L"W.Bal") return { L"White Balance Setting", L"Manual offset", L"Auto calculation", L"5500K is Daylight" };
+    if (label == L"Meter") return { L"Metering Mode", L"Weighted area", L"Pinpoint accuracy", L"Matrix is general purpose" };
+    if (label == L"Prog") return { L"Exposure Program", L"Manual control", L"Full automation", L"N/A" };
+    if (label == L"Sharpness") return { L"Edge definition (Laplacian Variance)", L"Crisp edges, high detail", L"Soft focus or motion blur", L"> 500 is very sharp" };
+    if (label == L"Entropy") return { L"Information density (Shannon Entropy)", L"Complex textures or high noise", L"Flat areas or low detail", L"7.0-8.0 is high detail" };
+    return { L"Metadata Property", L"-", L"-", L"N/A" };
+}
+
+std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced) {
+    std::vector<InfoRow> rows;
+    if (imagePath.empty()) return rows;
+
     // Row 1: Filename
-    std::wstring filename = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
-    m_infoGrid.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
-    
+    std::wstring filename = imagePath.substr(imagePath.find_last_of(L"\\/") + 1);
+    rows.push_back({ L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true });
+
     // Row 2: Dimensions + Megapixels + Zoom
-    if (g_currentMetadata.Width > 0) {
-        UINT64 totalPixels = (UINT64)g_currentMetadata.Width * g_currentMetadata.Height;
+    if (metadata.Width > 0) {
+        UINT64 totalPixels = (UINT64)metadata.Width * metadata.Height;
         double megapixels = totalPixels / 1000000.0;
         wchar_t dimBuf[64];
-        swprintf_s(dimBuf, L"%u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
+        swprintf_s(dimBuf, L"%u x %u", metadata.Width, metadata.Height);
         wchar_t mpBuf[48];
         int zoomPct = GetCurrentZoomPercent();
         swprintf_s(mpBuf, L"(%.1f MP) @ %d%%", megapixels, zoomPct);
-        m_infoGrid.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
+        rows.push_back({ L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false });
     }
-    
+
     // Row 3: File Size
-    if (g_currentMetadata.FileSize > 0) {
-        UINT64 bytes = g_currentMetadata.FileSize;
+    if (metadata.FileSize > 0) {
+        UINT64 bytes = metadata.FileSize;
         wchar_t sizeBuf[32];
         if (bytes >= 1024 * 1024) {
             swprintf_s(sizeBuf, L"%.2f MB", bytes / (1024.0 * 1024.0));
@@ -1328,79 +1364,88 @@ void UIRenderer::BuildInfoGrid() {
         } else {
             swprintf_s(sizeBuf, L"%llu B", bytes);
         }
-        std::wstring sizeBufStr = sizeBuf;
-        std::wstring extra = g_currentMetadata.FormatDetails.empty() ? L"" : L" [" + g_currentMetadata.FormatDetails + L"]";
-        // [User Request] Remove (bytes) suffix. Only keep Size + Format Details.
-        m_infoGrid.push_back({L"\U0001F4BE", L"Disk", sizeBufStr + extra, L"", L"", TruncateMode::None, false});
+        std::wstring extra = metadata.FormatDetails.empty() ? L"" : L" [" + metadata.FormatDetails + L"]";
+        rows.push_back({ L"\U0001F4BE", L"Disk", (std::wstring)sizeBuf + extra, L"", L"", TruncateMode::None, false });
     }
 
-    // [User Request] Remove Decode Info Row
-    
-    // Row 4: Date
-    if (!g_currentMetadata.Date.empty()) {
-        m_infoGrid.push_back({L"\U0001F4C5", L"Date", g_currentMetadata.Date, L"", L"", TruncateMode::EndEllipsis, false});
+    if (!metadata.Date.empty()) {
+        rows.push_back({ L"\U0001F4C5", L"Date", metadata.Date, L"", L"", TruncateMode::EndEllipsis, false });
     }
-    
-    // Row 5: Camera
-    if (!g_currentMetadata.Make.empty() || !g_currentMetadata.Model.empty()) {
-        std::wstring camera = g_currentMetadata.Make;
-        if (!g_currentMetadata.Model.empty()) {
+
+    if (!metadata.Make.empty() || !metadata.Model.empty()) {
+        std::wstring camera = metadata.Make;
+        if (!metadata.Model.empty()) {
             if (!camera.empty()) camera += L" ";
-            camera += g_currentMetadata.Model;
+            camera += metadata.Model;
         }
-        m_infoGrid.push_back({L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false});
+        rows.push_back({ L"\U0001F4F7", L"Camera", camera, L"", camera, TruncateMode::EndEllipsis, false });
     }
-    
-    // Row 6: Exposure
-    if (!g_currentMetadata.ISO.empty()) {
-        std::wstring exp = L"ISO " + g_currentMetadata.ISO + L"  " + g_currentMetadata.Aperture + L"  " + g_currentMetadata.Shutter;
-        std::wstring sub = g_currentMetadata.ExposureBias.empty() ? L"" : g_currentMetadata.ExposureBias;
-        m_infoGrid.push_back({L"\U000026A1", L"Exp", exp, sub, exp + L" " + sub, TruncateMode::EndEllipsis, false});
+
+    if (!metadata.ISO.empty()) {
+        std::wstring exp = L"ISO " + metadata.ISO + L"  " + metadata.Aperture + L"  " + metadata.Shutter;
+        std::wstring sub = metadata.ExposureBias.empty() ? L"" : metadata.ExposureBias;
+        rows.push_back({ L"\U000026A1", L"Exp", exp, sub, exp + L" " + sub, TruncateMode::EndEllipsis, false });
     }
-    
-    // Row 7: Lens
-    if (!g_currentMetadata.Lens.empty()) {
-        m_infoGrid.push_back({L"\U0001F52D", L"Lens", g_currentMetadata.Lens, L"", g_currentMetadata.Lens, TruncateMode::EndEllipsis, false});
+
+    if (!metadata.Lens.empty()) {
+        rows.push_back({ L"\U0001F52D", L"Lens", metadata.Lens, L"", metadata.Lens, TruncateMode::EndEllipsis, false });
     }
-    
-    // Row 8: Focal
-    if (!g_currentMetadata.Focal.empty()) {
-        m_infoGrid.push_back({L"\U0001F3AF", L"Focal", g_currentMetadata.Focal, L"", L"", TruncateMode::None, false});
+
+    if (!metadata.Focal.empty()) {
+        rows.push_back({ L"\U0001F3AF", L"Focal", metadata.Focal, L"", L"", TruncateMode::None, false });
     }
-    
-    // Row 9: Color Space
-    if (!g_currentMetadata.ColorSpace.empty()) {
-        std::wstring colorText = g_currentMetadata.ColorSpace;
-        if (g_currentMetadata.HasEmbeddedColorProfile) {
-            colorText += L" [ICC]";
+
+    if (!metadata.ColorSpace.empty()) {
+        std::wstring colorText = metadata.ColorSpace;
+        if (metadata.HasEmbeddedColorProfile) colorText += L" [ICC]";
+        rows.push_back({ L"\U0001F3A8", L"Color", colorText, L"", L"", TruncateMode::None, false });
+    }
+
+    // Restore Missing EXIF Rows for Info Panel
+    if (!metadata.Flash.empty()) {
+        rows.push_back({ L"\U0001F4A1", L"Flash", metadata.Flash, L"", L"", TruncateMode::None, false });
+    }
+    if (!metadata.WhiteBalance.empty()) {
+        rows.push_back({ L"\U0001F321", L"W.Bal", metadata.WhiteBalance, L"", L"", TruncateMode::None, false });
+    }
+    if (!metadata.MeteringMode.empty()) {
+        rows.push_back({ L"\U000025CE", L"Meter", metadata.MeteringMode, L"", L"", TruncateMode::None, false });
+    }
+    if (!metadata.ExposureProgram.empty()) {
+        rows.push_back({ L"\U0001F4CA", L"Prog", metadata.ExposureProgram, L"", metadata.ExposureProgram, TruncateMode::EndEllipsis, false });
+    }
+    if (!metadata.Software.empty()) {
+        rows.push_back({ L"\U0001F4BB", L"Soft", metadata.Software, L"", metadata.Software, TruncateMode::EndEllipsis, false });
+    }
+
+    // Advanced Metrics at the very bottom (only for HUD/Geek mode)
+    if (showAdvanced) {
+        if (metadata.HasSharpness) {
+            wchar_t buf[32]; swprintf_s(buf, L"%.0f", metadata.Sharpness);
+            rows.push_back({ L"\U0001F3AF", L"Sharpness", buf, L"", L"", TruncateMode::None, false });
         }
-        m_infoGrid.push_back({L"\U0001F3A8", L"Color", colorText, L"", L"", TruncateMode::None, false});
-    }
-    
-    // Row 10: Flash
-    if (!g_currentMetadata.Flash.empty()) {
-        m_infoGrid.push_back({L"\U0001F4A1", L"Flash", g_currentMetadata.Flash, L"", L"", TruncateMode::None, false});
+        if (metadata.HasEntropy) {
+            wchar_t buf[32]; swprintf_s(buf, L"%.2f", metadata.Entropy);
+            rows.push_back({ L"\U0001F4CA", L"Entropy", buf, L"", L"", TruncateMode::None, false });
+        }
     }
 
-    // Row 11: White Balance
-    if (!g_currentMetadata.WhiteBalance.empty()) {
-        m_infoGrid.push_back({L"\U0001F321", L"W.Bal", g_currentMetadata.WhiteBalance, L"", L"", TruncateMode::None, false});
+    // Add extra tooltips based on label
+    for (auto& row : rows) {
+        TooltipInfo info = GetTooltipInfo(row.label);
+        if (!info.description.empty()) {
+            row.fullText = info.description + L"\n" + 
+                          L"High: " + info.highMeaning + L"\n" + 
+                          L"Low: "  + info.lowMeaning + L"\n" + 
+                          L"Ref: "  + info.reference;
+        }
     }
 
-    // Row 12: Metering
-    if (!g_currentMetadata.MeteringMode.empty()) {
-        m_infoGrid.push_back({L"\U000025CE", L"Meter", g_currentMetadata.MeteringMode, L"", L"", TruncateMode::None, false});
-    }
+    return rows;
+}
 
-    // Row 13: Program
-    if (!g_currentMetadata.ExposureProgram.empty()) {
-        m_infoGrid.push_back({L"\U0001F4CA", L"Prog", g_currentMetadata.ExposureProgram, L"", g_currentMetadata.ExposureProgram, TruncateMode::EndEllipsis, false});
-    }
-
-    // Row 14: Software
-    if (!g_currentMetadata.Software.empty()) {
-        m_infoGrid.push_back({L"\U0001F4BB", L"Soft", g_currentMetadata.Software, L"", g_currentMetadata.Software, TruncateMode::EndEllipsis, false});
-    }
+void UIRenderer::BuildInfoGrid() {
+    m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false);
 }
 
 void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width) {
@@ -1630,11 +1675,18 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
 }
 
 void UIRenderer::DrawGridTooltip(ID2D1DeviceContext* dc) {
-    if (m_hoverRowIndex < 0 || m_hoverRowIndex >= (int)m_infoGrid.size()) return;
     if (!m_panelFormat) return;
     
-    const auto& row = m_infoGrid[m_hoverRowIndex];
-    if (!row.isTruncated || row.fullText.empty()) return;
+    InfoRow row;
+    if (m_hoverRowIndex >= 0 && m_hoverRowIndex < (int)m_infoGrid.size()) {
+        row = m_infoGrid[m_hoverRowIndex];
+        if (!row.isTruncated || row.fullText.empty()) return;
+    } else if (m_hoverRowIndex == -2) {
+        row = m_hoverInfoRow;
+        if (row.fullText.empty()) return;
+    } else {
+        return;
+    }
     
     const float s = m_uiScale;
     float x = (float)m_lastMousePos.x + 10.0f * s;
@@ -1850,125 +1902,122 @@ namespace {
 void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     if (!g_runtime.ShowCompareInfo) return;
 
-    CImageLoader::ImageMetadata left, right;
-    if (!GetCompareInfoSnapshot(left, right)) return;
+    CImageLoader::ImageMetadata leftMeta, rightMeta;
+    if (!GetCompareInfoSnapshot(leftMeta, rightMeta)) return;
+
+    // Use centralized row building
+    // Note: We need some context for these (like path) if we want tooltips to work fully
+    // But for comparison, labeling is key.
+    auto leftRows = BuildGridRows(leftMeta, L"Left", true);
+    auto rightRows = BuildGridRows(rightMeta, L"Right", true);
 
     EnsureTextFormats();
-    if (!m_panelFormat) return;
+    if (!m_panelFormat || !m_debugFormat) return;
 
     const float s = m_uiScale;
-    const float panelW = std::min(680.0f * s, m_width - 40.0f * s);
+    const float panelW = std::min(720.0f * s, m_width - 40.0f * s);
     const float panelX = (m_width - panelW) * 0.5f;
     float panelY = 80.0f * s;
     if (panelY < 20.0f * s) panelY = 20.0f * s;
 
-    const float labelW = 160.0f * s;
-    const float colW = (panelW - labelW) * 0.5f;
-    const float rowH = 20.0f * s;
-    const float headerH = 28.0f * s;
-    const float sectionGap = 6.0f * s;
-    const float padding = 14.0f * s;
+    // Geeky Layout: [ Left Value (40%) | Label (20%) | Right Value (40%) ]
+    const float labelW = 120.0f * s;
+    const float valW = (panelW - labelW - 40.0f * s) * 0.5f;
+    const float rowH = 22.0f * s;
+    const float padding = 16.0f * s;
+    const float headerH = 32.0f * s;
 
-    struct DisplayRow {
-        std::wstring label;
-        std::wstring lval;
-        std::wstring rval;
-        int betterSide = 0; // -1 for left, 1 for right, 0 for none
-        bool isHeader = false;
-        bool isAlwaysShow = false;
+    // Calculate total height based on rows
+    // We want to show ALL rows that exist in either side for testing
+    std::vector<std::wstring> labels;
+    auto addLabels = [&](const std::vector<InfoRow>& r) {
+        for (const auto& row : r) {
+            if (std::find(labels.begin(), labels.end(), row.label) == labels.end())
+                labels.push_back(row.label);
+        }
     };
+    addLabels(leftRows);
+    addLabels(rightRows);
 
-    std::vector<DisplayRow> rows;
-
-    auto betterHigher = [](double l, double r) -> int { return (l > r) ? -1 : ((l < r) ? 1 : 0); };
-    auto betterLower = [](double l, double r) -> int { return (l < r) ? -1 : ((l > r) ? 1 : 0); };
-    auto isDiff = [](const std::wstring& l, const std::wstring& r) { return l != r && !l.empty() && !r.empty(); };
-
-    // Group 1: Identity & Format (Always Show)
-    rows.push_back({ L"Baseline", L"", L"", 0, true, true });
-    
-    // Dimensions
-    const std::wstring lDim = (left.Width > 0) ? (std::to_wstring(left.Width) + L" x " + std::to_wstring(left.Height)) : L"-";
-    const std::wstring rDim = (right.Width > 0) ? (std::to_wstring(right.Width) + L" x " + std::to_wstring(right.Height)) : L"-";
-    rows.push_back({ L"Dimensions", lDim, rDim, (left.Width > 0 && right.Width > 0) ? betterHigher((double)left.Width * left.Height, (double)right.Width * right.Height) : 0, false, true });
-
-    // File Size
-    const std::wstring lSize = (left.FileSize > 0) ? FormatBytesShortLocal(left.FileSize) : L"-";
-    const std::wstring rSize = (right.FileSize > 0) ? FormatBytesShortLocal(right.FileSize) : L"-";
-    rows.push_back({ L"File Size", lSize, rSize, (left.FileSize > 0 && right.FileSize > 0) ? betterLower((double)left.FileSize, (double)right.FileSize) : 0, false, true });
-
-    // Format
-    rows.push_back({ L"Format", left.Format, right.Format, 0, false, true });
-
-    // Group 2: Differential Info
-    // Quality
-    bool hasQualHeader = false;
-    auto checkQual = [&]() { if (!hasQualHeader) { rows.push_back({ L"Quality", L"", L"", 0, true }); hasQualHeader = true; } };
-
-    if (left.HasSharpness || right.HasSharpness) {
-        if (left.Sharpness != right.Sharpness) {
-            checkQual();
-            rows.push_back({ L"Sharpness", FormatDouble(left.Sharpness, 0), FormatDouble(right.Sharpness, 0), betterHigher(left.Sharpness, right.Sharpness) });
-        }
-    }
-    if (left.HasEntropy || right.HasEntropy) {
-        if (std::abs(left.Entropy - right.Entropy) > 0.01) {
-            checkQual();
-            rows.push_back({ L"Entropy", FormatDouble(left.Entropy, 2), FormatDouble(right.Entropy, 2), betterHigher(left.Entropy, right.Entropy) });
-        }
-    }
-
-    // Capture / EXIF
-    bool hasExifHeader = false;
-    auto checkExif = [&]() { if (!hasExifHeader) { rows.push_back({ L"Capture Details", L"", L"", 0, true }); hasExifHeader = true; } };
-    
-    if (isDiff(left.ISO, right.ISO)) { checkExif(); rows.push_back({ L"ISO", left.ISO, right.ISO }); }
-    if (isDiff(left.Shutter, right.Shutter)) { checkExif(); rows.push_back({ L"Shutter", left.Shutter, right.Shutter }); }
-    if (isDiff(left.Aperture, right.Aperture)) { checkExif(); rows.push_back({ L"Aperture", left.Aperture, right.Aperture }); }
-    if (isDiff(left.Focal, right.Focal)) { checkExif(); rows.push_back({ L"Focal Length", left.Focal, right.Focal }); }
-    if (isDiff(left.ExposureBias, right.ExposureBias)) { checkExif(); rows.push_back({ L"Exposure Bias", left.ExposureBias, right.ExposureBias }); }
-    if (isDiff(left.ColorSpace, right.ColorSpace)) { checkExif(); rows.push_back({ L"Color Profile", left.ColorSpace, right.ColorSpace }); }
-
-    // Final Calculation for Height
-    int actualRowCount = 0;
-    for (const auto& r : rows) actualRowCount++;
-    const float panelH = padding * 2 + headerH + actualRowCount * rowH + sectionGap;
-
+    const float panelH = padding * 2 + headerH + labels.size() * rowH + 10.0f * s;
     D2D1_RECT_F panelRect = D2D1::RectF(panelX, panelY, panelX + panelW, panelY + panelH);
+    m_lastHUDRect = panelRect; // Store for hit test
 
-    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushDim, brushGood;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.05f, 0.05f, 0.07f, 0.92f), &brushBg);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.25f, 0.30f, 0.8f), &brushBorder);
-    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White, 0.95f), &brushText);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.6f, 0.62f, 0.68f, 0.8f), &brushDim);
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.85f, 0.45f, 0.95f), &brushGood);
+    // Deep geeky background
+    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushLabel, brushGood, brushBad;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.02f, 0.02f, 0.03f, 0.95f), &brushBg);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f), &brushBorder);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.9f, 0.9f, 0.95f), &brushText);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.5f, 0.55f, 0.6f), &brushLabel);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.9f, 0.4f), &brushGood);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.2f), &brushBad);
 
-    if (brushBg) dc->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 6.0f * s, 6.0f * s), brushBg.Get());
-    if (brushBorder) dc->DrawRoundedRectangle(D2D1::RoundedRect(panelRect, 6.0f * s, 6.0f * s), brushBorder.Get(), 0.8f * s);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 4.0f * s, 4.0f * s), brushBg.Get());
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(panelRect, 4.0f * s, 4.0f * s), brushBorder.Get(), 1.0f * s);
 
     float y = panelY + padding;
-    D2D1_RECT_F titleRect = D2D1::RectF(panelX + padding, y, panelX + panelW - padding, y + headerH);
-    dc->DrawText(L"Image Comparison HUD", 20, m_panelFormat.Get(), titleRect, brushText.Get());
-    y += headerH + sectionGap;
+    
+    // Header
+    D2D1_RECT_F headerRect = D2D1::RectF(panelX, y, panelX + panelW, y + headerH);
+    dc->DrawText(L"TELEMETRY COMPARISON ENGINE v2.0", 31, m_debugFormat.Get(), headerRect, brushBorder.Get());
+    y += headerH;
 
-    for (const auto& row : rows) {
-        if (row.isHeader) {
-            D2D1_RECT_F hr = D2D1::RectF(panelX + padding, y, panelX + panelW - padding, y + rowH);
-            dc->DrawText(row.label.c_str(), (UINT32)row.label.length(), m_osdFormat.Get(), hr, brushDim.Get());
-            y += rowH;
-            continue;
+    // Grid Column Starts
+    float leftX = panelX + padding;
+    float labelX = leftX + valW + 10.0f * s;
+    float rightX = labelX + labelW + 10.0f * s;
+
+    for (const auto& label : labels) {
+        // Find corresponding rows
+        const InfoRow* lRow = nullptr;
+        const InfoRow* rRow = nullptr;
+        for (const auto& r : leftRows) if (r.label == label) { lRow = &r; break; }
+        for (const auto& r : rightRows) if (r.label == label) { rRow = &r; break; }
+
+        D2D1_RECT_F rowRect = D2D1::RectF(panelX + 4, y, panelX + panelW - 4, y + rowH);
+        if (PointInRect((float)m_lastMousePos.x, (float)m_lastMousePos.y, rowRect)) {
+            ComPtr<ID2D1SolidColorBrush> brushHover;
+            dc->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.05f), &brushHover);
+            dc->FillRectangle(rowRect, brushHover.Get());
+            
+            // Set hover state for tooltip
+            m_hoverRowIndex = -2; // Special flag for Comparison HUD
+            m_hoverInfoRow = lRow ? *lRow : (rRow ? *rRow : InfoRow{});
         }
 
-        D2D1_RECT_F lRect = D2D1::RectF(panelX + padding, y, panelX + padding + colW - 8 * s, y + rowH);
-        D2D1_RECT_F labelRect = D2D1::RectF(panelX + padding + colW, y, panelX + padding + colW + labelW, y + rowH);
-        D2D1_RECT_F rRect = D2D1::RectF(panelX + padding + colW + labelW + 8 * s, y, panelX + panelW - padding, y + rowH);
+        // Draw Label + Icon
+        std::wstring labelFull = (lRow ? lRow->icon : (rRow ? rRow->icon : L"")) + L" " + label;
+        dc->DrawText(labelFull.c_str(), (UINT32)labelFull.length(), m_debugFormat.Get(), 
+                    D2D1::RectF(labelX, y, labelX + labelW, y + rowH), brushLabel.Get());
 
-        ID2D1SolidColorBrush* lBrush = (row.betterSide == -1) ? brushGood.Get() : brushText.Get();
-        ID2D1SolidColorBrush* rBrush = (row.betterSide == 1) ? brushGood.Get() : brushText.Get();
+        // Draw Values
+        auto DrawValue = [&](const InfoRow* row, float x, float w, bool isLeft) {
+            if (!row) return;
+            std::wstring val = row->valueMain;
+            if (row->displayText != val && !row->displayText.empty()) val = row->displayText;
+            
+            D2D1_RECT_F rect = D2D1::RectF(x, y, x + w, y + rowH);
+            
+            // Difference detection
+            bool diff = false;
+            if (lRow && rRow) {
+                diff = (lRow->valueMain != rRow->valueMain);
+            }
 
-        dc->DrawText(row.lval.c_str(), (UINT32)row.lval.length(), m_panelFormat.Get(), lRect, lBrush);
-        dc->DrawText(row.label.c_str(), (UINT32)row.label.length(), m_panelFormat.Get(), labelRect, brushDim.Get());
-        dc->DrawText(row.rval.c_str(), (UINT32)row.rval.length(), m_panelFormat.Get(), rRect, rBrush);
+            ID2D1SolidColorBrush* brush = brushText.Get();
+            if (diff) brush = brushGood.Get(); // Highlight differences
+
+            // Right-align left values, left-align right values
+            m_debugFormat->SetTextAlignment(isLeft ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
+            dc->DrawText(val.c_str(), (UINT32)val.length(), m_debugFormat.Get(), rect, brush);
+        };
+
+        DrawValue(lRow, leftX, valW, true);
+        DrawValue(rRow, rightX, valW, false);
+
         y += rowH;
     }
+    
+    // Reset alignment
+    m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 }
