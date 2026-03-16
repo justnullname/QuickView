@@ -68,6 +68,7 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalIncludeDirectories>vcpkg_installed\x64-windows-static-opt\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>/Ob3 /sdl- /utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -98,7 +99,7 @@
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalOptions>/Ob3 /sdl- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Ob3 /sdl- /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>vcpkg_installed\x64-windows-static-opt\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>

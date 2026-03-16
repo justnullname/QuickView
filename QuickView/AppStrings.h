@@ -285,6 +285,7 @@ namespace AppStrings {
     extern const wchar_t* Help_Action_ContextMenu;
     extern const wchar_t* Help_Action_NextPrev;
     extern const wchar_t* Help_Action_Zoom;
+    extern const wchar_t* Help_Action_SmartZoom;
     extern const wchar_t* Help_Desc_Copy;
     extern const wchar_t* Help_Desc_Edit;
     

@@ -180,6 +180,7 @@ struct ViewState {
     float CompareSplitRatio = 0.5f;
     bool CompareActive = false;
     int ExifOrientation = 1; // EXIF Orientation (1-8, 1=Normal)
+    bool IsPendingFullscreenExitDrag = false; // [Requirement] Exit fullscreen on drag
 
     void Reset() {
         Zoom = 1.0f;
@@ -194,6 +195,7 @@ struct ViewState {
         CompareSplitRatio = 0.5f;
         CompareActive = false;
         ExifOrientation = 1;
+        IsPendingFullscreenExitDrag = false;
     }
 };
 

@@ -73,18 +73,8 @@ void HelpOverlay::RebuildList() {
     std::wstring ctrlLeft = L"Ctrl + " + std::wstring(AppStrings::Settings_Label_LeftDrag);
     m_items.push_back({ false, ctrlLeft, L"Same as Middle Drag" });
     
-    // Double Click = Smart Zoom (Fit/100%/ExitFS)
-    // Multilingual support for "Smart Zoom (100% / Fit / Exit Fullscreen)"
-    // We'll construct a composite string or use English for technical terms generally accepted
-    // "Fit / 100%"
-    std::wstring smartZoom = L"Smart Zoom (100% / Fit)";
-    if (wcscmp(AppStrings::Settings_Label_Language, L"Language") != 0) { // Check if not default EN (Heuristic)
-         // Or just use generic text: "Smart Zoom" is okay.
-         // Or use "100% / Fit" logic via AppStrings?
-         // AppStrings::OSD_Zoom100 + " / " + AppStrings::OSD_ZoomFit 
-         // "缩放: 100% / 缩放: 适应屏幕" -> A bit long.
-    }
-    m_items.push_back({ false, L"Double Click", L"Smart Zoom (100% / Fit / Exit Fullscreen)" });
+    // Double Click = Smart Zoom (Fit/100%)
+    m_items.push_back({ false, L"Double Click", AppStrings::Help_Action_SmartZoom });
     m_items.push_back({ false, L"Middle Click", AppStrings::Help_Item_Close });
 
     // Section: View

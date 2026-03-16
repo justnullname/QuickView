@@ -2262,7 +2262,7 @@ static void PerformZoom100(HWND hwnd) {
         float renderScaleTarget = (originalW / imgW);
             
         // Logic to resize window to wrap image at 100% if allowed
-        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+        if (g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_isFullScreen && !g_runtime.LockWindowSize) {
                 int targetW = (int)originalW; // Target TRUE pixel width
                 int targetH = (int)originalH;
                 
@@ -2409,6 +2409,16 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
 
 static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f) {
     if (g_imageResource) {
+        // [Requirement] If maximized or fullscreen, just reset zoom/pan without resizing window
+        if (IsZoomed(hwnd) || g_isFullScreen) {
+            g_viewState.Zoom = 1.0f;
+            g_viewState.PanX = 0;
+            g_viewState.PanY = 0;
+            g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            RequestRepaint(PaintLayer::All);
+            return;
+        }
+
         // [Existing Logic 0]
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
@@ -4932,6 +4942,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              return 0;
          }
 
+        // [Requirement 2] Exit fullscreen on drag detection
+        if (g_viewState.IsPendingFullscreenExitDrag) {
+            int dx = abs(pt.x - g_viewState.DragStartPos.x);
+            int dy = abs(pt.y - g_viewState.DragStartPos.y);
+            if (dx > 5 || dy > 5) {
+                g_viewState.IsPendingFullscreenExitDrag = false;
+                ReleaseCapture();
+                SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+                // Start dragging the restored window
+                SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                return 0;
+            }
+        }
+
         if (IsCompareModeActive() && g_compare.draggingDivider) {
             RECT rcSplit{};
             GetClientRect(hwnd, &rcSplit);
@@ -5044,11 +5068,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
             return 0;
         }
-        // [Fix] Fullscreen Exit on Double Click
-        if (g_isFullScreen) {
-            SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
-            return 0;
-        }
+        // Fullscreen and maximized logic unified below
 
         if (IsCompareModeActive()) {
             ComparePane pane = HitTestComparePane(hwnd, pt);
@@ -5162,15 +5182,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             int winWidth = rcWin.right - rcWin.left;
             int winHeight = rcWin.bottom - rcWin.top;
 
-            bool isWindowMaximizedOrFull = (winWidth >= maxW - 2 || winHeight >= maxH - 2);
+            bool isWindowMaximizedOrFull = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || IsZoomed(hwnd) || g_isFullScreen;
             
             // Is it a large image? (Original size is close to or larger than screen)
             bool isLargeImage = (originalW >= maxW - 100 || originalH >= maxH - 100);
 
             if (isLargeImage) {
                 if (is100Percent) {
-                    // State 3 -> State 1: At 100%. Shrink back to Initial Size.
-                    if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                    // State 3 -> State 1 (or State 2 if in fixed mode): At 100%.
+                    if (isWindowMaximizedOrFull) {
+                        PerformZoomFit(hwnd); // Dual-mode for maximized/fullscreen
+                    } else if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
                         int rW = s_restoredWindowRect.right - s_restoredWindowRect.left;
                         int rH = s_restoredWindowRect.bottom - s_restoredWindowRect.top;
                         SetWindowPos(hwnd, nullptr, s_restoredWindowRect.left, s_restoredWindowRect.top, rW, rH, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -5613,8 +5635,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         
         if (effectiveAction == MouseAction::WindowDrag) {
-            // [Fix] Disable Window Drag in Fullscreen
-            if (g_isFullScreen) return 0;
+            // [Requirement] Exit fullscreen on drag
+            if (g_isFullScreen) {
+                g_viewState.IsPendingFullscreenExitDrag = true;
+                g_viewState.DragStartPos = pt;
+                SetCapture(hwnd);
+                return 0;
+            }
             
             // Use HTCAPTION for smooth system window dragging (Left Button only)
             // Note: Middle button uses manual drag implementation because NCLBUTTONDOWN expects Left Button.
@@ -5638,6 +5665,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_LBUTTONUP: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        if (g_viewState.IsPendingFullscreenExitDrag) {
+            g_viewState.IsPendingFullscreenExitDrag = false;
+            ReleaseCapture();
+        }
         if (IsCompareModeActive()) {
             g_compare.activePane = HitTestComparePane(hwnd, pt);
         }
@@ -6104,6 +6135,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         DragFinish(hDrop);
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        if (g_viewState.IsPendingFullscreenExitDrag) {
+            g_viewState.IsPendingFullscreenExitDrag = false;
+        }
+        break;
+
     case WM_KEYDOWN: {
         // Verification Control (Phase 5 - Ctrl+1..5)
         if (GetKeyState(VK_CONTROL) & 0x8000) {

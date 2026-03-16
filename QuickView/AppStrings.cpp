@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "AppStrings.h"
 #include <windows.h> // For GetUserDefaultUILanguage
 
@@ -252,6 +252,7 @@ namespace AppStrings {
     const wchar_t* Help_Action_ContextMenu = nullptr;
     const wchar_t* Help_Action_NextPrev = nullptr;
     const wchar_t* Help_Action_Zoom = nullptr;
+    const wchar_t* Help_Action_SmartZoom = nullptr;
     const wchar_t* Help_Desc_Copy = nullptr;
     const wchar_t* Help_Desc_Edit = nullptr;
     
@@ -511,11 +512,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"Middle Button";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Wheel";
         static constexpr const wchar_t* Help_Mouse_Right = L"Right Button";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"Move Window";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Move Window / Exit Fullscreen / Exit Maximized";
         static constexpr const wchar_t* Help_Action_PanImage = L"Pan Image";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"Context Menu";
         static constexpr const wchar_t* Help_Action_NextPrev = L"Next/Prev Image";
         static constexpr const wchar_t* Help_Action_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"Smart Zoom (100% / Fit)";
         static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
         static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
         
@@ -686,11 +688,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"中键";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"滚轮";
         static constexpr const wchar_t* Help_Mouse_Right = L"右键";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"移动窗口";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"平移窗口/退出全屏/退出最大化";
         static constexpr const wchar_t* Help_Action_PanImage = L"平移图片";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"上下文菜单";
         static constexpr const wchar_t* Help_Action_NextPrev = L"切换图片";
         static constexpr const wchar_t* Help_Action_Zoom = L"缩放";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"智能缩放 (100% / 适应窗口)";
 
         // Context Menu
         static constexpr const wchar_t* Context_Open = L"打开...\tCtrl+O";
@@ -1018,11 +1021,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"中鍵";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"滾輪";
         static constexpr const wchar_t* Help_Mouse_Right = L"右鍵";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"移動視窗";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"平移視窗/退出全屏/退出最大化";
         static constexpr const wchar_t* Help_Action_PanImage = L"平移圖片";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"右鍵選單";
         static constexpr const wchar_t* Help_Action_NextPrev = L"切換圖片";
         static constexpr const wchar_t* Help_Action_Zoom = L"縮放";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"智能縮放 (100% / 適應窗口)";
         static constexpr const wchar_t* Help_Desc_Copy = L"復制圖像";
         static constexpr const wchar_t* Help_Desc_Edit = L"編輯";
         
@@ -1259,11 +1263,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"中ボタン";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"ホイール";
         static constexpr const wchar_t* Help_Mouse_Right = L"右ボタン";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"ウィンドウ移動";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"ウィンドウ移動 / 全画面終了 / 最大化解除";
         static constexpr const wchar_t* Help_Action_PanImage = L"画像をパン";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"コンテキストメニュー";
         static constexpr const wchar_t* Help_Action_NextPrev = L"次/前の画像";
         static constexpr const wchar_t* Help_Action_Zoom = L"ズーム";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"スマートズーム (100% / ウィンドウに合わせる)";
         static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
         static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
 
@@ -1500,11 +1505,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"Средняя кнопка";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Колесо";
         static constexpr const wchar_t* Help_Mouse_Right = L"Правая кнопка";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"Перемещение окна";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Перемещение окна / Выход из полноэкранного режима / Выход из максимизированного";
         static constexpr const wchar_t* Help_Action_PanImage = L"Панорамирование";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"Контекстное меню";
         static constexpr const wchar_t* Help_Action_NextPrev = L"След./Пред.";
         static constexpr const wchar_t* Help_Action_Zoom = L"Зум";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"Умный масштаб (100% / По размеру)";
         static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
         static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
 
@@ -1741,11 +1747,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"Mittlere Taste";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Mausrad";
         static constexpr const wchar_t* Help_Mouse_Right = L"Rechte Taste";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"Fenster bewegen";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Fenster bewegen / Vollbild beenden / Maximierung aufheben";
         static constexpr const wchar_t* Help_Action_PanImage = L"Bild schwenken";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"Kontextmenü";
         static constexpr const wchar_t* Help_Action_NextPrev = L"Weiter/Zurück";
         static constexpr const wchar_t* Help_Action_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"Smart-Zoom (100% / Anpassen)";
         static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
         static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
 
@@ -1982,11 +1989,12 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Mouse_Middle = L"Botón central";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Rueda";
         static constexpr const wchar_t* Help_Mouse_Right = L"Botón derecho";
-        static constexpr const wchar_t* Help_Action_MoveWindow = L"Mover ventana";
+        static constexpr const wchar_t* Help_Action_MoveWindow = L"Mover ventana / Salir de pantalla completa / Salir de maximizado";
         static constexpr const wchar_t* Help_Action_PanImage = L"Mover imagen";
         static constexpr const wchar_t* Help_Action_ContextMenu = L"Menú contextual";
         static constexpr const wchar_t* Help_Action_NextPrev = L"Sig./Ant.";
         static constexpr const wchar_t* Help_Action_Zoom = L"Zoom";
+        static constexpr const wchar_t* Help_Action_SmartZoom = L"Zoom inteligente (100% / Ajustar)";
         static constexpr const wchar_t* Help_Desc_Copy = L"Copy Image";
         static constexpr const wchar_t* Help_Desc_Edit = L"Edit";
 
@@ -2241,6 +2249,7 @@ namespace AppStrings {
         Help_Action_ContextMenu = T::Help_Action_ContextMenu;
         Help_Action_NextPrev = T::Help_Action_NextPrev;
         Help_Action_Zoom = T::Help_Action_Zoom;
+        Help_Action_SmartZoom = T::Help_Action_SmartZoom;
         Help_Desc_Copy = T::Help_Desc_Copy;
         Help_Desc_Edit = T::Help_Desc_Edit;
         
