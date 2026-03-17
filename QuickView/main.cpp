@@ -1103,9 +1103,11 @@ static void CaptureCurrentImageAsCompareLeft() {
         if (SUCCEEDED(g_imageLoader->ReadMetadata(g_imagePath.c_str(), &meta, true)) &&
             meta.ExifOrientation >= 1 && meta.ExifOrientation <= 8) {
             g_compare.left.view.ExifOrientation = meta.ExifOrientation;
+            g_compare.left.metadata.ExifOrientation = meta.ExifOrientation;
         }
     } else {
         g_compare.left.view.ExifOrientation = 1;
+        g_compare.left.metadata.ExifOrientation = 1;
     }
 }
 
@@ -1294,9 +1296,11 @@ static void EnterCompareMode(HWND hwnd) {
         if (SUCCEEDED(g_imageLoader->ReadMetadata(g_imagePath.c_str(), &rightMeta, true)) &&
             rightMeta.ExifOrientation >= 1 && rightMeta.ExifOrientation <= 8) {
             g_viewState.ExifOrientation = rightMeta.ExifOrientation;
+            g_currentMetadata.ExifOrientation = rightMeta.ExifOrientation;
         }
     } else {
         g_viewState.ExifOrientation = 1;
+        g_currentMetadata.ExifOrientation = 1;
     }
 
     g_compare.mode = ViewMode::CompareSideBySide;
@@ -1367,7 +1371,14 @@ static void ExitCompareMode(HWND hwnd) {
 
     if (g_imageResource) {
         RenderImageToDComp(hwnd, g_imageResource, false);
-        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+        if (g_viewState.ExifOrientation > 1 && g_config.AutoRotate) {
+            g_currentMetadata.ExifOrientation = 1;
+            g_viewState.ExifOrientation = 1;
+        }
+        AdjustWindowToImage(hwnd);
+        RECT updatedRc{};
+        GetClientRect(hwnd, &updatedRc);
+        SyncDCompState(hwnd, (float)updatedRc.right, (float)updatedRc.bottom);
         g_compEngine->Commit();
     }
 }
