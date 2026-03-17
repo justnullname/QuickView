@@ -7151,138 +7151,58 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
 HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* pMetadata) {
     if (!source || !pMetadata) return E_INVALIDARG;
 
-    auto computeEntropy = [](const std::vector<uint32_t>& hist, double& outEntropy, bool& outHas) {
-        uint64_t total = 0;
-        for (uint32_t v : hist) total += v;
-        if (total == 0) { outEntropy = 0.0; outHas = false; return; }
-        double entropy = 0.0;
-        const double invTotal = 1.0 / (double)total;
-        for (uint32_t v : hist) {
-            if (v == 0) continue;
-            const double p = (double)v * invTotal;
-            entropy -= p * std::log2(p);
-        }
-        outEntropy = entropy;
-        outHas = true;
-    };
-    
-    // Reset
-    pMetadata->HistR.assign(256, 0);
-    pMetadata->HistG.assign(256, 0);
-    pMetadata->HistB.assign(256, 0);
-    pMetadata->HistL.assign(256, 0);
-
     UINT width = 0, height = 0;
     source->GetSize(&width, &height);
     if (width == 0 || height == 0) return E_FAIL;
 
-    WICPixelFormatGUID format;
-    source->GetPixelFormat(&format);
-    
-    // Determine offsets (Enable for 32bpp BGRA/PBGRA)
-    int offsetR = 0, offsetG = 1, offsetB = 2; // Default RGBA order (if not BGRA)
-    bool isBGRA = false;
-    
-    if (IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA) || 
-        IsEqualGUID(format, GUID_WICPixelFormat32bppPBGRA)) {
-        offsetR = 2; offsetG = 1; offsetB = 0;
-        isBGRA = true;
-    } else {
-        // If not BGRA 32bpp, we might be reading garbage. 
-        // Ideally we should FormatConvert here, but for performance we might skip or simplistic check.
-        // Most of our pipeline ensures 32bpp conversion before this stage.
-    }
+    ComPtr<IWICBitmap> pBitmap;
+    if (SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&pBitmap)))) {
+        WICRect rcLock = { 0, 0, (INT)width, (INT)height };
+        ComPtr<IWICBitmapLock> pLock;
+        if (SUCCEEDED(pBitmap->Lock(&rcLock, WICBitmapLockRead, &pLock))) {
+            UINT cbStride = 0;
+            UINT cbBufferSize = 0;
+            BYTE* pPixels = nullptr;
+            pLock->GetStride(&cbStride);
+            pLock->GetDataPointer(&cbBufferSize, &pPixels);
 
-    // Optimization: Skip Sampling
-    UINT64 totalPixels = (UINT64)width * height;
-    UINT step = 1;
-    if (totalPixels > 2000000) { 
-         step = (UINT)sqrt(totalPixels / 250000.0);
-         if (step < 1) step = 1;
-    }
-    
-    // Row Buffer
-    UINT stride = width * 4; 
-    std::vector<BYTE> rowBuffer(stride);
-    
-    for (UINT y = 0; y < height; y += step) {
-        WICRect rect = { 0, (INT)y, (INT)width, 1 };
-        
-        // Use CopyPixels: Works on FormatConverters unlike Lock()
-        if (FAILED(source->CopyPixels(&rect, stride, stride, rowBuffer.data()))) continue;
-        
-        BYTE* row = rowBuffer.data();
-        for (UINT x = 0; x < width; x += step) {
-            BYTE r, g, b;
-            if (isBGRA) {
-                b = row[x * 4];
-                g = row[x * 4 + 1];
-                r = row[x * 4 + 2];
-            } else {
-                r = row[x * 4];
-                g = row[x * 4 + 1];
-                b = row[x * 4 + 2];
-            }
-            
-            pMetadata->HistR[r]++;
-            pMetadata->HistG[g]++;
-            pMetadata->HistB[b]++;
-            
-            BYTE l = (BYTE)((54 * r + 183 * g + 19 * b) >> 8);
-            pMetadata->HistL[l]++;
-        }
-    }
-    
-    // Laplacian Sharpness (sampled)
-    double lapSumSq = 0.0;
-    uint64_t lapCount = 0;
-    const UINT lapStep = step;
-    if (width > lapStep * 2 && height > lapStep * 2) {
-        std::vector<BYTE> prevRow(stride);
-        std::vector<BYTE> currRow(stride);
-        std::vector<BYTE> nextRow(stride);
+            WICPixelFormatGUID format;
+            pLock->GetPixelFormat(&format);
 
-        auto getLumaAt = [&](const BYTE* row, UINT x) -> int {
-            const BYTE b = row[x * 4 + (isBGRA ? 0 : 2)];
-            const BYTE g = row[x * 4 + 1];
-            const BYTE r = row[x * 4 + (isBGRA ? 2 : 0)];
-            return (int)((54 * r + 183 * g + 19 * b) >> 8);
-        };
+            if (IsEqualGUID(format, GUID_WICPixelFormat32bppPBGRA) || IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA)) {
+                QuickView::RawImageFrame frame = {};
+                frame.pixels = pPixels;
+                frame.width = width;
+                frame.height = height;
+                frame.stride = cbStride;
 
-        for (UINT y = lapStep; y + lapStep < height; y += lapStep) {
-            WICRect rectPrev = { 0, (INT)(y - lapStep), (INT)width, 1 };
-            WICRect rectCurr = { 0, (INT)y, (INT)width, 1 };
-            WICRect rectNext = { 0, (INT)(y + lapStep), (INT)width, 1 };
-            if (FAILED(source->CopyPixels(&rectPrev, stride, stride, prevRow.data()))) continue;
-            if (FAILED(source->CopyPixels(&rectCurr, stride, stride, currRow.data()))) continue;
-            if (FAILED(source->CopyPixels(&rectNext, stride, stride, nextRow.data()))) continue;
-
-            for (UINT x = lapStep; x + lapStep < width; x += lapStep) {
-                const int center = getLumaAt(currRow.data(), x);
-                const int left = getLumaAt(currRow.data(), x - lapStep);
-                const int right = getLumaAt(currRow.data(), x + lapStep);
-                const int up = getLumaAt(prevRow.data(), x);
-                const int down = getLumaAt(nextRow.data(), x);
-                const int lap = (up + down + left + right) - 4 * center;
-                lapSumSq += (double)lap * (double)lap;
-                lapCount++;
+                ComputeHistogramFromFrame(frame, pMetadata);
+                return S_OK;
             }
         }
     }
 
-    if (lapCount > 0) {
-        pMetadata->Sharpness = lapSumSq / (double)lapCount;
-        pMetadata->HasSharpness = true;
-    } else {
-        pMetadata->Sharpness = 0.0;
-        pMetadata->HasSharpness = false;
+    // Fallback if not IWICBitmap or not BGRA/PBGRA: Convert to memory and delegate
+    ComPtr<IWICFormatConverter> converter;
+    if (SUCCEEDED(m_wicFactory->CreateFormatConverter(&converter))) {
+        if (SUCCEEDED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeCustom))) {
+            UINT stride = width * 4;
+            std::vector<BYTE> buffer(stride * height);
+            if (SUCCEEDED(converter->CopyPixels(nullptr, stride, (UINT)buffer.size(), buffer.data()))) {
+                QuickView::RawImageFrame frame = {};
+                frame.pixels = buffer.data();
+                frame.width = width;
+                frame.height = height;
+                frame.stride = stride;
+
+                ComputeHistogramFromFrame(frame, pMetadata);
+                return S_OK;
+            }
+        }
     }
 
-    computeEntropy(pMetadata->HistL, pMetadata->Entropy, pMetadata->HasEntropy);
-    
-    return S_OK;
+    return E_FAIL;
 }
-
 // [v5.2] Histogram from RawImageFrame (for HeavyLanePool pipeline)
 void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& frame, ImageMetadata* pMetadata) {
     if (!frame.pixels || frame.width == 0 || frame.height == 0 || !pMetadata) return;
