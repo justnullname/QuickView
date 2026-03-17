@@ -42,7 +42,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     HMENU hViewMenu = CreatePopupMenu();
 
     // Compare Mode Toggle
-    AppendMenuW(hViewMenu, isCompareMode ? (MF_STRING | MF_CHECKED) : MF_STRING, IDM_COMPARE_MODE, L"Compare Mode\tC");
+    AppendMenuW(hViewMenu, isCompareMode ? (MF_STRING | MF_CHECKED) : MF_STRING, IDM_COMPARE_MODE, AppStrings::Context_CompareMode);
     AppendMenuW(hViewMenu, MF_SEPARATOR, 0, nullptr);    AppendMenuW(hViewMenu, MF_STRING, IDM_ZOOM_100, AppStrings::Context_ActualSize);
     AppendMenuW(hViewMenu, MF_STRING, IDM_ZOOM_FIT, AppStrings::Context_FitToScreen);
     AppendMenuW(hViewMenu, MF_STRING, IDM_ZOOM_IN, AppStrings::Context_ZoomIn);

@@ -2130,10 +2130,10 @@ static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval) {
     MarkCompareDirty();
     RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
 
-    const CompareView activeView = (pane == ComparePane::Left) ? g_compare.left.view : GetRightCompareView();
-    wchar_t zoomBuf[32];
-    swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(activeView.Zoom * 100.0f));
-    g_osd.Show(hwnd, zoomBuf, false, false, D2D1::ColorF(D2D1::ColorF::White));
+    wchar_t leftBuf[32], rightBuf[32];
+    swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(g_compare.left.view.Zoom * 100.0f));
+    swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
+    g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
 }
 
 // 便捷�?(保持向后兼容)
@@ -2225,6 +2225,11 @@ static void PerformCompareZoom100(HWND hwnd) {
     }
     MarkCompareDirty();
     RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+
+    wchar_t leftBuf[32], rightBuf[32];
+    swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(g_compare.left.view.Zoom * 100.0f));
+    swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
+    g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
 }
 
 static void PerformCompareZoomFit(HWND hwnd) {
@@ -2245,6 +2250,11 @@ static void PerformCompareZoomFit(HWND hwnd) {
     }
     MarkCompareDirty();
     RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+
+    wchar_t leftBuf[32], rightBuf[32];
+    swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(g_compare.left.view.Zoom * 100.0f));
+    swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
+    g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
 }
 
 static void PerformZoom100(HWND hwnd) {
@@ -5036,14 +5046,14 @@ SKIP_EDGE_NAV:;
          }
          
           // Hand cursor for info panel clickable areas
-          if (g_runtime.ShowInfoPanel && g_uiRenderer) {
+          if ((g_runtime.ShowInfoPanel || (IsCompareModeActive() && g_runtime.ShowCompareInfo)) && g_uiRenderer) {
               float mx = (float)pt.x, my = (float)pt.y;
               static int s_lastRowIndex = -2; // Track row index (-1 = no row, -2 = initial)
               static UIHitResult s_lastHitType = UIHitResult::None;
               
               auto hit = g_uiRenderer->HitTest(mx, my);
               
-              if (hit.type != UIHitResult::None) {
+              if (hit.type != UIHitResult::None && !(hit.type == UIHitResult::InfoRow && hit.rowIndex == -2)) {
                   SetCursor(LoadCursor(nullptr, IDC_HAND));
               }
               
@@ -5179,6 +5189,11 @@ SKIP_EDGE_NAV:;
             }
             MarkCompareDirty();
             RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+
+            wchar_t leftBuf[32], rightBuf[32];
+            swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(g_compare.left.view.Zoom * 100.0f));
+            swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
+            g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
             return 0;
         }
 
@@ -5571,10 +5586,15 @@ SKIP_EDGE_NAV:;
                      return 0;
                      
                  case UIHitResult::PanelClose:
-                     g_runtime.ShowInfoPanel = false;
-                     g_toolbar.SetExifState(false);
-                     RequestRepaint(PaintLayer::All);
-                     return 0;
+                      if (IsCompareModeActive()) {
+                          g_runtime.ShowCompareInfo = false;
+                          g_toolbar.SetCompareInfoState(false);
+                      } else {
+                          g_runtime.ShowInfoPanel = false;
+                          g_toolbar.SetExifState(false);
+                      }
+                      RequestRepaint(PaintLayer::All);
+                      return 0;
 
                  case UIHitResult::HudToggleLite:
                      // Toggle between Lite (0) and Normal (1)
@@ -5885,7 +5905,15 @@ SKIP_EDGE_NAV:;
                     break;
                 case ToolbarButtonID::CompareInfo:
                     if (IsCompareModeActive() && g_compare.left.valid && g_imageResource) {
-                        g_runtime.ShowCompareInfo = !g_runtime.ShowCompareInfo;
+                        if (!g_runtime.ShowCompareInfo) {
+                            g_runtime.ShowCompareInfo = true;
+                            g_runtime.CompareHudMode = 1; // Default to Normal
+                        } else if (g_runtime.CompareHudMode == 0) {
+                            g_runtime.CompareHudMode = 1; // Lite -> Normal
+                        } else {
+                            g_runtime.ShowCompareInfo = false; // Normal -> Hide
+                        }
+                        
                         g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
                         if (g_runtime.ShowCompareInfo) {
                             if (g_currentMetadata.HistL.empty()) {
@@ -6091,10 +6119,10 @@ SKIP_EDGE_NAV:;
             MarkCompareDirty();
             RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
 
-            const CompareView activeView = (pane == ComparePane::Left) ? g_compare.left.view : GetRightCompareView();
-            wchar_t zoomBuf[32];
-            swprintf_s(zoomBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(activeView.Zoom * 100.0f));
-            g_osd.Show(hwnd, zoomBuf, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            wchar_t leftBuf[32], rightBuf[32];
+            swprintf_s(leftBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(g_compare.left.view.Zoom * 100.0f));
+            swprintf_s(rightBuf, L"%s%d%%", AppStrings::OSD_ZoomPrefix, (int)std::round(GetRightCompareView().Zoom * 100.0f));
+            g_osd.ShowCompare(hwnd, leftBuf, rightBuf);
             return 0;
         }
 
@@ -6374,12 +6402,15 @@ SKIP_EDGE_NAV:;
             break;
         case VK_TAB: // Tab: Toggle compact info panel
             if (IsCompareModeActive()) {
-                if (g_runtime.CompareHudMode == 0) {
-                    g_runtime.CompareHudMode = 1;
+                if (!g_runtime.ShowCompareInfo) {
+                    g_runtime.ShowCompareInfo = true;
+                    g_runtime.CompareHudMode = 0; // Lite
+                } else if (g_runtime.CompareHudMode != 0) {
+                    g_runtime.CompareHudMode = 0; // Collapse to Lite
                 } else {
-                    g_runtime.CompareHudMode = 0;
-                    g_runtime.ShowCompareInfo = true; // Ensure it is visible if toggling via hotkey
+                    g_runtime.ShowCompareInfo = false; // Hide
                 }
+                g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
                 RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
             } else {
                 if (!g_runtime.ShowInfoPanel) {
@@ -6398,7 +6429,14 @@ SKIP_EDGE_NAV:;
         case 'I': // I: Toggle HUD (Compare) or Panel (Normal)
             if (IsCompareModeActive()) {
                 // Toggle Compare HUD
-                g_runtime.ShowCompareInfo = !g_runtime.ShowCompareInfo;
+                if (!g_runtime.ShowCompareInfo) {
+                    g_runtime.ShowCompareInfo = true;
+                    g_runtime.CompareHudMode = 1; // Default to Normal
+                } else if (g_runtime.CompareHudMode == 0) {
+                    g_runtime.CompareHudMode = 1; // Lite -> Normal
+                } else {
+                    g_runtime.ShowCompareInfo = false; // Normal -> Hide
+                }
                 g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
                 if (g_runtime.ShowCompareInfo) {
                     if (g_currentMetadata.HistL.empty() && !g_imagePath.empty()) {

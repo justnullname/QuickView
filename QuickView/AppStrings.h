@@ -79,6 +79,7 @@ namespace AppStrings {
     extern const wchar_t* Context_Delete;
     extern const wchar_t* Context_Settings;
     extern const wchar_t* Context_About;
+    extern const wchar_t* Context_CompareMode; // New
     extern const wchar_t* Context_Exit;
     
     // Messages
@@ -100,6 +101,20 @@ namespace AppStrings {
     extern const wchar_t* Toolbar_Tooltip_FixExtension;
     extern const wchar_t* Toolbar_Tooltip_Pin;
     extern const wchar_t* Toolbar_Tooltip_Unpin;
+    extern const wchar_t* Toolbar_Tooltip_NormalMode;
+    extern const wchar_t* Toolbar_Tooltip_CompareMode;
+    extern const wchar_t* Toolbar_Tooltip_CompareOpen;
+    extern const wchar_t* Toolbar_Tooltip_CompareSwap;
+    extern const wchar_t* Toolbar_Tooltip_CompareLayout;
+    extern const wchar_t* Toolbar_Tooltip_CompareInfo;
+    extern const wchar_t* Toolbar_Tooltip_CompareDelete;
+    extern const wchar_t* Toolbar_Tooltip_CompareZoomIn;
+    extern const wchar_t* Toolbar_Tooltip_CompareZoomOut;
+    extern const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn;
+    extern const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff;
+    extern const wchar_t* Toolbar_Tooltip_CompareSyncPanOn;
+    extern const wchar_t* Toolbar_Tooltip_CompareSyncPanOff;
+    extern const wchar_t* Toolbar_Tooltip_CompareExit;
 
     // OSD Messages
     extern const wchar_t* OSD_Copied;
@@ -276,6 +291,7 @@ namespace AppStrings {
     extern const wchar_t* Help_Item_Delete;
     extern const wchar_t* Help_Item_Fullscreen;
     extern const wchar_t* Help_Item_Close;
+    extern const wchar_t* Help_Item_Compare; // New
     extern const wchar_t* Help_Mouse_Left;
     extern const wchar_t* Help_Mouse_Middle;
     extern const wchar_t* Help_Mouse_Wheel;
@@ -304,4 +320,28 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_Balanced;
     extern const wchar_t* Settings_Option_Ultra;
     
+    // Compare HUD (Mode 1/2) Localized Labels
+    extern const wchar_t* HUD_Group_Physical;
+    extern const wchar_t* HUD_Group_Scientific;
+    extern const wchar_t* HUD_Group_Encoding;
+
+    // HUD Tooltips
+    extern const wchar_t* HUD_Tip_Sharp_Desc;
+    extern const wchar_t* HUD_Tip_Sharp_High;
+    extern const wchar_t* HUD_Tip_Sharp_Low;
+    extern const wchar_t* HUD_Tip_Sharp_Ref;
+
+    extern const wchar_t* HUD_Tip_Ent_Desc;
+    extern const wchar_t* HUD_Tip_Ent_High;
+    extern const wchar_t* HUD_Tip_Ent_Low;
+    extern const wchar_t* HUD_Tip_Ent_Ref;
+
+    extern const wchar_t* HUD_Tip_BPP_Desc;
+    extern const wchar_t* HUD_Tip_BPP_High;
+    extern const wchar_t* HUD_Tip_BPP_Low;
+    extern const wchar_t* HUD_Tip_BPP_Ref;
+    
+    extern const wchar_t* HUD_Label_High;
+    extern const wchar_t* HUD_Label_Low;
+    extern const wchar_t* HUD_Label_Ref;
 }

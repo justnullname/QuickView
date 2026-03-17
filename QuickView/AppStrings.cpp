@@ -95,7 +95,12 @@ namespace AppStrings {
     const wchar_t* Context_Delete = nullptr;
     const wchar_t* Context_Settings = nullptr;
     const wchar_t* Context_About = nullptr;
+    const wchar_t* Context_CompareMode = nullptr; // New
     const wchar_t* Context_Exit = nullptr;
+
+    const wchar_t* HUD_Label_High = nullptr;
+    const wchar_t* HUD_Label_Low = nullptr;
+    const wchar_t* HUD_Label_Ref = nullptr;
 
     // Messages
     const wchar_t* Message_SaveErrorTitle = nullptr;
@@ -115,6 +120,20 @@ namespace AppStrings {
     const wchar_t* Toolbar_Tooltip_FixExtension = nullptr;
     const wchar_t* Toolbar_Tooltip_Pin = nullptr;
     const wchar_t* Toolbar_Tooltip_Unpin = nullptr;
+    const wchar_t* Toolbar_Tooltip_NormalMode = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareMode = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareOpen = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareSwap = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareLayout = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareInfo = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareDelete = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareZoomIn = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareZoomOut = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = nullptr;
+    const wchar_t* Toolbar_Tooltip_CompareExit = nullptr;
 
     const wchar_t* OSD_Copied = nullptr;
     const wchar_t* OSD_CoordinatesCopied = nullptr;
@@ -243,6 +262,7 @@ namespace AppStrings {
     const wchar_t* Help_Item_Delete = nullptr;
     const wchar_t* Help_Item_Fullscreen = nullptr;
     const wchar_t* Help_Item_Close = nullptr;
+    const wchar_t* Help_Item_Compare = nullptr; // New
     const wchar_t* Help_Mouse_Left = nullptr;
     const wchar_t* Help_Mouse_Middle = nullptr;
     const wchar_t* Help_Mouse_Wheel = nullptr;
@@ -264,6 +284,22 @@ namespace AppStrings {
     const wchar_t* Help_Tip_DesignerMode = nullptr;
     const wchar_t* Help_Tip_Raw = nullptr;
     const wchar_t* Help_Tip_JpegQ = nullptr;
+
+    const wchar_t* HUD_Group_Physical = nullptr;
+    const wchar_t* HUD_Group_Scientific = nullptr;
+    const wchar_t* HUD_Group_Encoding = nullptr;
+    const wchar_t* HUD_Tip_Sharp_Desc = nullptr;
+    const wchar_t* HUD_Tip_Sharp_High = nullptr;
+    const wchar_t* HUD_Tip_Sharp_Low = nullptr;
+    const wchar_t* HUD_Tip_Sharp_Ref = nullptr;
+    const wchar_t* HUD_Tip_Ent_Desc = nullptr;
+    const wchar_t* HUD_Tip_Ent_High = nullptr;
+    const wchar_t* HUD_Tip_Ent_Low = nullptr;
+    const wchar_t* HUD_Tip_Ent_Ref = nullptr;
+    const wchar_t* HUD_Tip_BPP_Desc = nullptr;
+    const wchar_t* HUD_Tip_BPP_High = nullptr;
+    const wchar_t* HUD_Tip_BPP_Low = nullptr;
+    const wchar_t* HUD_Tip_BPP_Ref = nullptr;
 
     // ----------------------------------------------------------------
     // English Table (Source of Truth)
@@ -343,6 +379,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"Extension Mismatch (Fix)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"Pin Toolbar";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"Unpin Toolbar";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"Normal Mode";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"Compare Mode";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"Open New Image in Selection";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"Swap Left/Right";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"Toggle Layout";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"Compare Info";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"Delete Selected Image";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"Zoom In (Fine-tune)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"Zoom Out (Fine-tune)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"Zoom Sync: ON";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"Zoom Sync: OFF";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"Pan Sync: ON";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"Pan Sync: OFF";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"Exit Compare";
 
         // OSD
         static constexpr const wchar_t* OSD_Copied = L"Copied!";
@@ -402,6 +452,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"Delete\tDel";
         static constexpr const wchar_t* Context_Settings = L"Settings...";
         static constexpr const wchar_t* Context_About = L"About QuickView";
+        static constexpr const wchar_t* Context_CompareMode = L"Compare Mode\tC";
         static constexpr const wchar_t* Context_Exit = L"Exit\tMButton/Esc";
 
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Visuals";
@@ -508,6 +559,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Item_Delete = L"Delete Image";
         static constexpr const wchar_t* Help_Item_Fullscreen = L"Fullscreen";
         static constexpr const wchar_t* Help_Item_Close = L"Close";
+        static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
         static constexpr const wchar_t* Help_Mouse_Left = L"Left Button";
         static constexpr const wchar_t* Help_Mouse_Middle = L"Middle Button";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Wheel";
@@ -528,6 +580,26 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window + Lock Size. Use Zoom/Pan to focus on details. Useful for reference images.";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW: Shows embedded preview by default for speed. Click the RAW button to fully decode (colors may vary).";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q-value. May differ slightly from save settings due to encoder variance (e.g. PS 100% \u2248 98%), which is normal.";
+
+        static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"Edge definition (Laplacian Variance)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"Crisp edges, high detail";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"Soft focus or motion blur";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 is very sharp";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"Information density (Shannon Entropy)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"Complex textures or high noise";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"Flat areas or low detail";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 is high detail";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"Bits Per Pixel (Compression Efficiency)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"Lower efficiency (more data preserved)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"Higher efficiency (higher compression)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"High: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"Low: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"Ref: ";
     };
 
     // ----------------------------------------------------------------
@@ -730,6 +802,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"删除\tDel";
         static constexpr const wchar_t* Context_Settings = L"设置...";
         static constexpr const wchar_t* Context_About = L"关于 QuickView";
+        static constexpr const wchar_t* Context_CompareMode = L"对比模式\tC";
         static constexpr const wchar_t* Context_Exit = L"退出\tMButton/Esc";
 
         // Messages
@@ -751,6 +824,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"扩展名不匹配 (修复)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"固定工具栏";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"取消固定工具栏";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"普通模式";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"对比模式";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"在选区打开新图";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"交换左右";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"切换布局";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"对比信息";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"删除所选图片";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"放大 (微调)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"缩小 (微调)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"缩放同步: 开";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"缩放同步: 关";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"平移同步: 开";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"平移同步: 关";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"退出对比";
 
         // OSD
         static constexpr const wchar_t* OSD_Copied = L"已复制!";
@@ -786,6 +873,27 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"设计师参考图：窗口置顶+锁定尺寸。配合缩放平移，可作为固定参考悬浮窗使用。";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW 按钮可进行完整解码(色彩可能不同)。";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 质量：基于算法估算的 Q 值。因编码器差异，可能与保存数值有微小偏差(如 PS 100% \u2248 98%)，属正常现象。";
+
+        static constexpr const wchar_t* Help_Item_Compare = L"对比模式";
+        static constexpr const wchar_t* HUD_Group_Physical = L"物理属性";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"科学指标";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"光学与编码";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"边缘清晰度 (拉普拉斯方差)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"边缘锐利，细节丰富";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"软焦点或运动模糊";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 为非常锐利";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"信息密度 (香农熵)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"复杂纹理或高噪点";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"平坦区域或低细节";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 为高细节";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"每像素比特数 (压缩效率)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"低压缩率 (保留更多原始数据)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"高压缩率 (空间利用率更高)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (原始RGB), ~2.0-3.0 (高质量JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"高: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"低: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"参考: ";
     
         static constexpr const wchar_t* Dialog_UpdateTitle = L"发现新版本！";
         static constexpr const wchar_t* Dialog_UpdateContent = L"v%s 已准备就緒";
@@ -862,6 +970,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"副檔名不符 (修復)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"固定工具列";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"取消固定工具列";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"普通模式";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"對比模式";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"在選區開啟新圖";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"交換左右";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"切換佈局";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"對比資訊";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"刪除所選圖片";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"放大 (微調)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"縮小 (微調)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"縮放同步: 開";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"縮放同步: 關";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"平移同步: 開";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"平移同步: 關";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"退出對比";
         static constexpr const wchar_t* OSD_Copied = L"已複製!";
         static constexpr const wchar_t* OSD_CoordinatesCopied = L"座標已複製!";
         static constexpr const wchar_t* OSD_FilePathCopied = L"檔案路徑已複製!";
@@ -917,6 +1039,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"刪除\tDel";
         static constexpr const wchar_t* Context_Settings = L"設定...";
         static constexpr const wchar_t* Context_About = L"關於 QuickView";
+        static constexpr const wchar_t* Context_CompareMode = L"對比模式\tC";
         static constexpr const wchar_t* Context_Exit = L"結束\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"外觀";
         static constexpr const wchar_t* Settings_Tab_Controls = L"操作";
@@ -1037,6 +1160,27 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"設計師參考圖模式：設定窗口置頂，調整尺寸並鎖定，使用縮放/平移定位局部細節，拖動窗口至合適位置參考。";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW 按鈕：QuickView 默認顯示 RAW 預覽圖。點擊此按鈕將使用默認參數完整渲染 RAW 文件 (結果可能與預覽不同)。";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 壓縮率：信息面板顯示的 Q 值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% 可能顯示為 98)，屬正常情況。";
+
+        static constexpr const wchar_t* Help_Item_Compare = L"對比模式";
+        static constexpr const wchar_t* HUD_Group_Physical = L"物理屬性";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"科學指標";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"光學與編碼";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"邊緣清晰度 (拉普拉斯方差)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"邊緣銳利，細節豐富";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"軟焦點或運動模糊";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 為非常銳利";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"信息密度 (香農熵)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"複雜紋理或高噪點";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"平坦區域或低細節";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 為高細節";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"每像素比特數 (壓縮效率)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"低壓縮率 (保留更多原始數據)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"高壓縮率 (空間利用率更高)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (原始RGB), ~2.0-3.0 (高品質JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"高: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"低: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"參考: ";
     };
 
     // ----------------------------------------------------------------
@@ -1104,6 +1248,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"拡張子不一致 (修正)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"ツールバーを固定";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"ツールバーの固定を解除";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"ノーマルモード";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"比較モード";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"選択範囲に新しい画像を開く";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"左右を入れ替え";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"レイアウトを切り替え";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"比較情報";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"選択した画像を削除";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"拡大 (微調整)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"縮小 (微調整)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"ズーム同期: オン";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"ズーム同期: オフ";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"移動同期: オン";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"移動同期: オフ";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"比較を終了";
         static constexpr const wchar_t* OSD_Copied = L"コピーしました!";
         static constexpr const wchar_t* OSD_CoordinatesCopied = L"座標をコピーしました!";
         static constexpr const wchar_t* OSD_FilePathCopied = L"ファイルパスをコピーしました!";
@@ -1159,6 +1317,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"削除\tDel";
         static constexpr const wchar_t* Context_Settings = L"設定...";
         static constexpr const wchar_t* Context_About = L"QuickViewについて";
+        static constexpr const wchar_t* Context_CompareMode = L"比較モード\tC";
         static constexpr const wchar_t* Context_Exit = L"終了\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"外観";
         static constexpr const wchar_t* Settings_Tab_Controls = L"操作";
@@ -1279,6 +1438,27 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
+
+        static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"Edge definition (Laplacian Variance)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"Crisp edges, high detail";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"Soft focus or motion blur";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 is very sharp";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"Information density (Shannon Entropy)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"Complex textures or high noise";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"Flat areas or low detail";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 is high detail";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"Bits Per Pixel (Compression Efficiency)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"Lower efficiency (more data preserved)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"Higher efficiency (higher compression)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"High: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"Low: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"Ref: ";
     };
 
     // ----------------------------------------------------------------
@@ -1346,6 +1526,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"Несоответствие расширения (Исправить)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"Закрепить панель";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"Открепить панель";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"Обычный режим";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"Режим сравнения";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"Открыть новое изображение в выделении";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"Поменять местами";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"Переключить макет";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"Информация о сравнении";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"Удалить выбранное изображение";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"Увеличить (точно)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"Уменьшить (точно)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"Синхр. масштаба: ВКЛ";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"Синхр. масштаба: ВЫКЛ";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"Синхр. панорамирования: ВКЛ";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"Синхр. панорамирования: ВЫКЛ";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"Выйти из сравнения";
         static constexpr const wchar_t* OSD_Copied = L"Скопировано!";
         static constexpr const wchar_t* OSD_CoordinatesCopied = L"Координаты скопированы!";
         static constexpr const wchar_t* OSD_FilePathCopied = L"Путь к файлу скопирован!";
@@ -1401,6 +1595,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"Удалить\tDel";
         static constexpr const wchar_t* Context_Settings = L"Настройки...";
         static constexpr const wchar_t* Context_About = L"О QuickView";
+        static constexpr const wchar_t* Context_CompareMode = L"Режим сравнения\tC";
         static constexpr const wchar_t* Context_Exit = L"Выход\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Внешний вид";
         static constexpr const wchar_t* Settings_Tab_Controls = L"Управление";
@@ -1521,6 +1716,27 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
+
+        static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"Edge definition (Laplacian Variance)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"Crisp edges, high detail";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"Soft focus or motion blur";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 is very sharp";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"Information density (Shannon Entropy)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"Complex textures or high noise";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"Flat areas or low detail";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 is high detail";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"Bits Per Pixel (Compression Efficiency)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"Lower efficiency (more data preserved)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"Higher efficiency (higher compression)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"High: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"Low: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"Ref: ";
     };
 
     // ----------------------------------------------------------------
@@ -1588,6 +1804,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"Erweiterung stimmt nicht (Reparieren)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"Symbolleiste anheften";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"Symbolleiste lösen";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"Normaler Modus";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"Vergleichsmodus";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"Neues Bild in Auswahl öffnen";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"Links/Rechts tauschen";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"Layout umschalten";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"Vergleichsinformationen";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"Ausgewähltes Bild löschen";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"Vergrößern (Feineinstellung)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"Verkleinern (Feineinstellung)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"Zoom-Sync: AN";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"Zoom-Sync: AUS";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"Pan-Sync: AN";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"Pan-Sync: AUS";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"Vergleich beenden";
         static constexpr const wchar_t* OSD_Copied = L"Kopiert!";
         static constexpr const wchar_t* OSD_CoordinatesCopied = L"Koordinaten kopiert!";
         static constexpr const wchar_t* OSD_FilePathCopied = L"Dateipfad kopiert!";
@@ -1643,6 +1873,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"Löschen\tEntf";
         static constexpr const wchar_t* Context_Settings = L"Einstellungen...";
         static constexpr const wchar_t* Context_About = L"Über QuickView";
+        static constexpr const wchar_t* Context_CompareMode = L"Vergleichsmodus\tC";
         static constexpr const wchar_t* Context_Exit = L"Beenden\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Aussehen";
         static constexpr const wchar_t* Settings_Tab_Controls = L"Steuerung";
@@ -1763,6 +1994,27 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
+
+        static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"Edge definition (Laplacian Variance)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"Crisp edges, high detail";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"Soft focus or motion blur";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 is very sharp";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"Information density (Shannon Entropy)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"Complex textures or high noise";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"Flat areas or low detail";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 is high detail";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"Bits Per Pixel (Compression Efficiency)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"Lower efficiency (more data preserved)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"Higher efficiency (higher compression)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"High: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"Low: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"Ref: ";
     };
 
     // ----------------------------------------------------------------
@@ -1830,6 +2082,20 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_FixExtension = L"Extensión no coincide (Reparar)";
         static constexpr const wchar_t* Toolbar_Tooltip_Pin = L"Fijar barra de herramientas";
         static constexpr const wchar_t* Toolbar_Tooltip_Unpin = L"Soltar barra de herramientas";
+        static constexpr const wchar_t* Toolbar_Tooltip_NormalMode = L"Modo normal";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareMode = L"Modo comparación";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareOpen = L"Abrir nueva imagen en la selección";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSwap = L"Intercambiar izquierda/derecha";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareLayout = L"Cambiar diseño";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareInfo = L"Información de comparación";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareDelete = L"Eliminar imagen seleccionada";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomIn = L"Aumentar (Ajuste fino)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareZoomOut = L"Reducir (Ajuste fino)";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOn = L"Sincronizar zoom: ACTIVADO";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff = L"Sincronizar zoom: DESACTIVADO";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOn = L"Sincronizar panorámica: ACTIVADO";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareSyncPanOff = L"Sincronizar panorámica: DESACTIVADO";
+        static constexpr const wchar_t* Toolbar_Tooltip_CompareExit = L"Salir de comparación";
         static constexpr const wchar_t* OSD_Copied = L"¡Copiado!";
         static constexpr const wchar_t* OSD_CoordinatesCopied = L"¡Coordenadas copiadas!";
         static constexpr const wchar_t* OSD_FilePathCopied = L"¡Ruta del archivo copiada!";
@@ -1885,6 +2151,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Delete = L"Eliminar\tSupr";
         static constexpr const wchar_t* Context_Settings = L"Configuración...";
         static constexpr const wchar_t* Context_About = L"Acerca de QuickView";
+        static constexpr const wchar_t* Context_CompareMode = L"Modo comparación\tC";
         static constexpr const wchar_t* Context_Exit = L"Salir\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Apariencia";
         static constexpr const wchar_t* Settings_Tab_Controls = L"Controles";
@@ -2005,6 +2272,27 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_DesignerMode = L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference detail. Drag window to position.";
         static constexpr const wchar_t* Help_Tip_Raw = L"RAW Button: QuickView shows embedded preview by default. Click to fully decode (may look different due to rendering parameters).";
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
+
+        static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
+        static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
+        static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Desc = L"Edge definition (Laplacian Variance)";
+        static constexpr const wchar_t* HUD_Tip_Sharp_High = L"Crisp edges, high detail";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Low = L"Soft focus or motion blur";
+        static constexpr const wchar_t* HUD_Tip_Sharp_Ref = L"> 500 is very sharp";
+        static constexpr const wchar_t* HUD_Tip_Ent_Desc = L"Information density (Shannon Entropy)";
+        static constexpr const wchar_t* HUD_Tip_Ent_High = L"Complex textures or high noise";
+        static constexpr const wchar_t* HUD_Tip_Ent_Low = L"Flat areas or low detail";
+        static constexpr const wchar_t* HUD_Tip_Ent_Ref = L"7.0-8.0 is high detail";
+        static constexpr const wchar_t* HUD_Tip_BPP_Desc = L"Bits Per Pixel (Compression Efficiency)";
+        static constexpr const wchar_t* HUD_Tip_BPP_High = L"Lower efficiency (more data preserved)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Low = L"Higher efficiency (higher compression)";
+        static constexpr const wchar_t* HUD_Tip_BPP_Ref = L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)";
+
+        static constexpr const wchar_t* HUD_Label_High = L"High: ";
+        static constexpr const wchar_t* HUD_Label_Low = L"Low: ";
+        static constexpr const wchar_t* HUD_Label_Ref = L"Ref: ";
     };
 
     // ----------------------------------------------------------------
@@ -2100,6 +2388,7 @@ namespace AppStrings {
         Context_Delete = T::Context_Delete;
         Context_Settings = T::Context_Settings;
         Context_About = T::Context_About;
+        Context_CompareMode = T::Context_CompareMode;
         Context_Exit = T::Context_Exit;
 
         Message_SaveErrorTitle = T::Message_SaveErrorTitle;
@@ -2119,6 +2408,20 @@ namespace AppStrings {
         Toolbar_Tooltip_FixExtension = T::Toolbar_Tooltip_FixExtension;
         Toolbar_Tooltip_Pin = T::Toolbar_Tooltip_Pin;
         Toolbar_Tooltip_Unpin = T::Toolbar_Tooltip_Unpin;
+        Toolbar_Tooltip_NormalMode = T::Toolbar_Tooltip_NormalMode;
+        Toolbar_Tooltip_CompareMode = T::Toolbar_Tooltip_CompareMode;
+        Toolbar_Tooltip_CompareOpen = T::Toolbar_Tooltip_CompareOpen;
+        Toolbar_Tooltip_CompareSwap = T::Toolbar_Tooltip_CompareSwap;
+        Toolbar_Tooltip_CompareLayout = T::Toolbar_Tooltip_CompareLayout;
+        Toolbar_Tooltip_CompareInfo = T::Toolbar_Tooltip_CompareInfo;
+        Toolbar_Tooltip_CompareDelete = T::Toolbar_Tooltip_CompareDelete;
+        Toolbar_Tooltip_CompareZoomIn = T::Toolbar_Tooltip_CompareZoomIn;
+        Toolbar_Tooltip_CompareZoomOut = T::Toolbar_Tooltip_CompareZoomOut;
+        Toolbar_Tooltip_CompareSyncZoomOn = T::Toolbar_Tooltip_CompareSyncZoomOn;
+        Toolbar_Tooltip_CompareSyncZoomOff = T::Toolbar_Tooltip_CompareSyncZoomOff;
+        Toolbar_Tooltip_CompareSyncPanOn = T::Toolbar_Tooltip_CompareSyncPanOn;
+        Toolbar_Tooltip_CompareSyncPanOff = T::Toolbar_Tooltip_CompareSyncPanOff;
+        Toolbar_Tooltip_CompareExit = T::Toolbar_Tooltip_CompareExit;
 
         OSD_Copied = T::OSD_Copied;
         OSD_CoordinatesCopied = T::OSD_CoordinatesCopied;
@@ -2269,6 +2572,27 @@ namespace AppStrings {
         Dialog_ButtonStar = T::Dialog_ButtonStar;
         Dialog_Update_LoveTitle = T::Dialog_Update_LoveTitle;
         Dialog_Update_LoveMessage = T::Dialog_Update_LoveMessage;
+
+        Help_Item_Compare = T::Help_Item_Compare;
+        HUD_Group_Physical = T::HUD_Group_Physical;
+        HUD_Group_Scientific = T::HUD_Group_Scientific;
+        HUD_Group_Encoding = T::HUD_Group_Encoding;
+        HUD_Tip_Sharp_Desc = T::HUD_Tip_Sharp_Desc;
+        HUD_Tip_Sharp_High = T::HUD_Tip_Sharp_High;
+        HUD_Tip_Sharp_Low = T::HUD_Tip_Sharp_Low;
+        HUD_Tip_Sharp_Ref = T::HUD_Tip_Sharp_Ref;
+        HUD_Tip_Ent_Desc = T::HUD_Tip_Ent_Desc;
+        HUD_Tip_Ent_High = T::HUD_Tip_Ent_High;
+        HUD_Tip_Ent_Low = T::HUD_Tip_Ent_Low;
+        HUD_Tip_Ent_Ref = T::HUD_Tip_Ent_Ref;
+        HUD_Tip_BPP_Desc = T::HUD_Tip_BPP_Desc;
+        HUD_Tip_BPP_High = T::HUD_Tip_BPP_High;
+        HUD_Tip_BPP_Low = T::HUD_Tip_BPP_Low;
+        HUD_Tip_BPP_Ref = T::HUD_Tip_BPP_Ref;
+
+        HUD_Label_High = T::HUD_Label_High;
+        HUD_Label_Low = T::HUD_Label_Low;
+        HUD_Label_Ref = T::HUD_Label_Ref;
     }
 
     void Init() {

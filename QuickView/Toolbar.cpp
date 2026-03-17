@@ -326,27 +326,27 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
     return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unpin
                          : AppStrings::Toolbar_Tooltip_Pin;
   case ToolbarButtonID::CompareToggle:
-    return L"Compare Mode";
+    return btn.isToggled ? AppStrings::Toolbar_Tooltip_NormalMode : AppStrings::Toolbar_Tooltip_CompareMode;
   case ToolbarButtonID::CompareOpen:
-    return L"Open Selected";
+    return AppStrings::Toolbar_Tooltip_CompareOpen;
   case ToolbarButtonID::CompareSwap:
-    return L"Swap Left/Right";
+    return AppStrings::Toolbar_Tooltip_CompareSwap;
   case ToolbarButtonID::CompareLayout:
-    return L"Toggle Layout";
+    return AppStrings::Toolbar_Tooltip_CompareLayout;
   case ToolbarButtonID::CompareInfo:
-    return L"Compare Info";
+    return AppStrings::Toolbar_Tooltip_CompareInfo;
   case ToolbarButtonID::CompareDelete:
-    return L"Delete Selected";
+    return AppStrings::Toolbar_Tooltip_CompareDelete;
   case ToolbarButtonID::CompareZoomIn:
-    return L"Zoom In";
+    return AppStrings::Toolbar_Tooltip_CompareZoomIn;
   case ToolbarButtonID::CompareZoomOut:
-    return L"Zoom Out";
+    return AppStrings::Toolbar_Tooltip_CompareZoomOut;
   case ToolbarButtonID::CompareSyncZoom:
-    return btn.isToggled ? L"Zoom Sync: ON" : L"Zoom Sync: OFF";
+    return btn.isToggled ? AppStrings::Toolbar_Tooltip_CompareSyncZoomOn : AppStrings::Toolbar_Tooltip_CompareSyncZoomOff;
   case ToolbarButtonID::CompareSyncPan:
-    return btn.isToggled ? L"Pan Sync: ON" : L"Pan Sync: OFF";
+    return btn.isToggled ? AppStrings::Toolbar_Tooltip_CompareSyncPanOn : AppStrings::Toolbar_Tooltip_CompareSyncPanOff;
   case ToolbarButtonID::CompareExit:
-    return L"Exit Compare";
+    return AppStrings::Toolbar_Tooltip_CompareExit;
   default:
     return nullptr;
   }
@@ -602,7 +602,12 @@ void Toolbar::SetExtensionWarning(bool hasMismatch) {
   for (auto &btn : m_buttons) { if (btn.id == ToolbarButtonID::FixExtension) { btn.isWarning = hasMismatch; } }
 }
 
-void Toolbar::SetCompareMode(bool enabled) { m_compareMode = enabled; }
+void Toolbar::SetCompareMode(bool enabled) {
+  m_compareMode = enabled;
+  for (auto &btn : m_buttons) {
+    if (btn.id == ToolbarButtonID::CompareToggle) btn.isToggled = enabled;
+  }
+}
 
 void Toolbar::SetCompareSyncStates(bool syncZoom, bool syncPan) {
   for (auto &btn : m_buttons) {

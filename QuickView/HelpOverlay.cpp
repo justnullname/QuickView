@@ -98,6 +98,7 @@ void HelpOverlay::RebuildList() {
     
     std::wstring i_desc = std::wstring(AppStrings::Toolbar_Tooltip_Info);
     m_items.push_back({ false, L"I / Tab", L"Info Panel (Full / Lite)" });
+    m_items.push_back({ false, L"C", AppStrings::Help_Item_Compare });
     m_items.push_back({ false, L"Ctrl + F11", L"Span Displays (Video Wall)" });
 
     // Section: File Operations

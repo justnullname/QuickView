@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "UIRenderer.h"
+#include "AppStrings.h"
 #include "DebugMetrics.h"
 #include "Toolbar.h"
 #include "GalleryOverlay.h"
@@ -123,6 +124,11 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
             return result;
         }
         
+        if (PointInRect(x, y, m_panelCloseRect)) {
+            result.type = UIHitResult::PanelClose;
+            return result;
+        }
+
         if (PointInRect(x, y, m_lastHUDRect)) {
             result.type = UIHitResult::InfoRow; 
             result.rowIndex = -2; 
@@ -1387,9 +1393,9 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
 }
 
 UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) {
-    if (label == L"Sharp") return { L"Edge definition (Laplacian Variance)", L"Crisp edges, high detail", L"Soft focus or motion blur", L"> 500 is very sharp" };
-    if (label == L"Ent") return { L"Information density (Shannon Entropy)", L"Complex textures or high noise", L"Flat areas or low detail", L"7.0-8.0 is high detail" };
-    if (label == L"BPP") return { L"Bits Per Pixel (Compression Efficiency)", L"Lower efficiency (more data preserved)", L"Higher efficiency (higher compression)", L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)" };
+    if (label == L"Sharp") return { AppStrings::HUD_Tip_Sharp_Desc, AppStrings::HUD_Tip_Sharp_High, AppStrings::HUD_Tip_Sharp_Low, AppStrings::HUD_Tip_Sharp_Ref };
+    if (label == L"Ent") return { AppStrings::HUD_Tip_Ent_Desc, AppStrings::HUD_Tip_Ent_High, AppStrings::HUD_Tip_Ent_Low, AppStrings::HUD_Tip_Ent_Ref };
+    if (label == L"BPP") return { AppStrings::HUD_Tip_BPP_Desc, AppStrings::HUD_Tip_BPP_High, AppStrings::HUD_Tip_BPP_Low, AppStrings::HUD_Tip_BPP_Ref };
     if (label == L"File") return { L"Internal Filename", L"Source path of comparison image", L"N/A", L"N/A" };
     return { L"", L"", L"", L"" };
 }
@@ -1510,9 +1516,9 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         TooltipInfo info = GetTooltipInfo(row.label);
         if (!info.description.empty()) {
             row.fullText = info.description + L"\n" + 
-                          L"High: " + info.highMeaning + L"\n" + 
-                          L"Low: "  + info.lowMeaning + L"\n" + 
-                          L"Ref: "  + info.reference;
+                          AppStrings::HUD_Label_High + info.highMeaning + L"\n" + 
+                          AppStrings::HUD_Label_Low + info.lowMeaning + L"\n" + 
+                          AppStrings::HUD_Label_Ref + info.reference;
         }
     }
 
@@ -2066,14 +2072,25 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         DrawMetrics(leftMetrics, splitX - centerGap, true);
         DrawMetrics(rightMetrics, splitX + centerGap, false);
 
-        // Draw Expand Icon (Bottom Center)
-        float iconSize = 24.0f * s;
-        m_hudToggleExpandRect = D2D1::RectF((m_width - iconSize) * 0.5f, m_height - 40.0f * s, (m_width + iconSize) * 0.5f, m_height - 16.0f * s);
-        D2D1_RECT_F iconShadowRect = D2D1::RectF(m_hudToggleExpandRect.left + 1.0f * s, m_hudToggleExpandRect.top + 1.0f * s, m_hudToggleExpandRect.right + 1.0f * s, m_hudToggleExpandRect.bottom + 1.0f * s);
-        dc->DrawText(L"\uE740", 1, m_iconFormat.Get(), iconShadowRect, brushShadow.Get());
-        dc->DrawText(L"\uE740", 1, m_iconFormat.Get(), m_hudToggleExpandRect, brushText.Get());
+        // Draw [+] and [x] buttons
+        float rightTotalW = centerGap;
+        for (const auto& m : rightMetrics) rightTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
+        float buttonsX = splitX + rightTotalW;
 
-        m_lastHUDRect = {}; m_hudToggleLiteRect = {};
+        m_hudToggleLiteRect = D2D1::RectF(buttonsX + 8.0f * s, y, buttonsX + 32.0f * s, y + 24.0f * s);
+        m_panelCloseRect = D2D1::RectF(m_hudToggleLiteRect.right + 4.0f * s, y, m_hudToggleLiteRect.right + 28.0f * s, y + 24.0f * s);
+
+        dc->DrawText(L"[+]", 3, m_panelFormat.Get(), D2D1::RectF(m_hudToggleLiteRect.left + 1 * s, m_hudToggleLiteRect.top + 1 * s, m_hudToggleLiteRect.right + 1 * s, m_hudToggleLiteRect.bottom + 1 * s), brushShadow.Get());
+        dc->DrawText(L"[+]", 3, m_panelFormat.Get(), m_hudToggleLiteRect, brushText.Get());
+
+        ComPtr<ID2D1SolidColorBrush> brushRed;
+        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f), &brushRed);
+        dc->DrawText(L"[x]", 3, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 1 * s, m_panelCloseRect.top + 1 * s, m_panelCloseRect.right + 1 * s, m_panelCloseRect.bottom + 1 * s), brushShadow.Get());
+        dc->DrawText(L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get());
+
+        // Reset other Hit Rects for Lite mode
+        m_hudToggleExpandRect = {};
+        m_lastHUDRect = {};
         return;
     }
 
@@ -2168,12 +2185,12 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         };
     } else {
         hudGroups = {
-            { L"PHYSICAL ATTRIBUTES", { L"File", L"Size", L"Disk", L"Date" } },
-            { L"SCIENTIFIC QUALITY", { L"Sharp", L"Ent", L"BPP" } }
+            { AppStrings::HUD_Group_Physical, { L"File", L"Size", L"Disk", L"Date" } },
+            { AppStrings::HUD_Group_Scientific, { L"Sharp", L"Ent", L"BPP" } }
         };
         if (hudMode == 2) {
             // Full mode includes Optics & Encoding
-            hudGroups.push_back({ L"OPTICS & ENCODING", { L"Camera", L"Exp", L"Lens", L"Focal", L"Color", L"Chroma", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Soft" } });
+            hudGroups.push_back({ AppStrings::HUD_Group_Encoding, { L"Camera", L"Exp", L"Lens", L"Focal", L"Color", L"Chroma", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Soft" } });
         }
     }
 
@@ -2428,11 +2445,13 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     // Draw Toggle Icons (Bottom Right)
     float iconAreaY = panelRect.bottom - bottomBarH;
     float iconSize = 16.0f * s;
-    float liteIconX = panelRect.right - padding - iconSize * 2 - 8.0f * s;
-    float expandIconX = panelRect.right - padding - iconSize;
+    float liteIconX = panelRect.right - padding - iconSize * 3 - 16.0f * s;
+    float expandIconX = panelRect.right - padding - iconSize * 2 - 8.0f * s;
+    float closeIconX = panelRect.right - padding - iconSize;
 
-    m_hudToggleLiteRect = D2D1::RectF(liteIconX - 4*s, iconAreaY, liteIconX + iconSize + 4*s, iconAreaY + bottomBarH);
-    m_hudToggleExpandRect = D2D1::RectF(expandIconX - 4*s, iconAreaY, expandIconX + iconSize + 4*s, iconAreaY + bottomBarH);
+    m_hudToggleLiteRect = D2D1::RectF(liteIconX - 4 * s, iconAreaY, liteIconX + iconSize + 4 * s, iconAreaY + bottomBarH);
+    m_hudToggleExpandRect = D2D1::RectF(expandIconX - 4 * s, iconAreaY, expandIconX + iconSize + 4 * s, iconAreaY + bottomBarH);
+    m_panelCloseRect = D2D1::RectF(closeIconX - 4 * s, iconAreaY, closeIconX + iconSize + 4 * s, iconAreaY + bottomBarH);
 
     // Lite Mode Icon (e.g. Line list or Collapse)
     const wchar_t* liteIcon = (hudMode == 0) ? L"\uE738" : L"\uE8A0"; // \uE738 (List) or \uE8A0 (Remove)
@@ -2443,6 +2462,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     const wchar_t* expandIcon = (hudMode == 2) ? L"\uE73F" : L"\uE740"; // \uE73F (ChevronUp) or \uE740 (ChevronDown)
     ID2D1SolidColorBrush* expandBrush = (hudMode == 2) ? brushGood.Get() : brushLabel.Get();
     dc->DrawText(expandIcon, 1, m_iconFormat.Get(), m_hudToggleExpandRect, expandBrush);
+
+    // Close Icon
+    dc->DrawText(L"\uE711", 1, m_iconFormat.Get(), m_panelCloseRect, brushLabel.Get());
 
     // Reset hover if outside HUD
     if (!PointInRect((float)m_lastMousePos.x, (float)m_lastMousePos.y, m_lastHUDRect)) {
