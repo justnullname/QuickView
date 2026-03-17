@@ -551,19 +551,23 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Toolbar
     g_toolbar.Render(dc);
     
-    // Info Panel - Use g_runtime directly since SetRuntimeConfig may not be called
-    if (g_runtime.ShowInfoPanel) {
+    bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo;
+
+    // Info Panel or HUD - Use g_runtime directly since SetRuntimeConfig may not be called
+    if (g_runtime.ShowInfoPanel || hudVisible) {
         // [v5.3] Lazy Metadata Trigger (Split Strategy)
-        // If panel is visible, ensure we have full metadata (Async)
+        // If panel or HUD is visible, ensure we have full metadata (Async)
         // [v5.3] Debounce now handled by ImageEngine
         if (!g_currentMetadata.IsFullMetadataLoaded && g_pImageEngine) {
              g_pImageEngine->RequestFullMetadata();
         }
 
-        if (g_runtime.InfoPanelExpanded) {
-            DrawInfoPanel(dc);
-        } else {
-            DrawCompactInfo(dc);
+        if (g_runtime.ShowInfoPanel) {
+            if (g_runtime.InfoPanelExpanded) {
+                DrawInfoPanel(dc);
+            } else {
+                DrawCompactInfo(dc);
+            }
         }
     }
     
@@ -1934,17 +1938,41 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     auto rightRows = BuildGridRows(rightMeta, L"Right", true);
 
     // --- Smart Logic (Quality Assessment) ---
-    auto GetQualityTag = [](const CImageLoader::ImageMetadata& meta) -> std::wstring {
+    auto GetQualityTag = [](const CImageLoader::ImageMetadata& meta, int& outColor) -> std::wstring {
+        outColor = 0; // 0=Good, 1=Bad, 2=Warn
         if (!meta.HasSharpness || !meta.HasEntropy) return L"";
-        if (meta.Entropy > 7.0 && meta.Sharpness > 400.0) return L"🏆 Photo (Perfect)";
-        if (meta.Sharpness > 1000.0 && meta.Entropy > 7.5) return L"⚡ Noisy / Raw";
-        if (meta.Sharpness < 150.0 && meta.Entropy < 6.8) return L"💨 Soft / Blurry";
-        // Fake High Res Detection
-        if (meta.Width > 3000 && meta.Sharpness < 100.0) return L"⚠️ Fake High-Res";
+        
+        // 1. Fake High-Res Detection (High Res but Extremely Low Sharpness)
+        // This is a strong indicator of upscaling, checked first.
+        if (meta.Width >= 3000 && meta.Sharpness < 100.0) {
+            outColor = 1; // Bad
+            return L"⚠️ Fake High-Res";
+        }
+        
+        // 2. Noisy / Raw (Extreme Sharpness and Entropy)
+        // Must be checked before "Photo (Perfect)" to avoid being swallowed.
+        if (meta.Sharpness > 1000.0 && meta.Entropy > 7.5) {
+            outColor = 2; // Warn
+            return L"⚡ Noisy / Raw";
+        }
+        
+        // 3. Soft / Blurry (Low Sharpness and Entropy)
+        if (meta.Sharpness < 150.0 && meta.Entropy < 6.8) {
+            outColor = 2; // Warn
+            return L"💨 Soft / Blurry";
+        }
+        
+        // 4. Photo (Perfect) (High Entropy and Solid Sharpness)
+        if (meta.Entropy > 7.0 && meta.Sharpness > 400.0) {
+            outColor = 0; // Good
+            return L"🏆 Photo (Perfect)";
+        }
+        
         return L"";
     };
-    std::wstring leftTag = GetQualityTag(leftMeta);
-    std::wstring rightTag = GetQualityTag(rightMeta);
+    int leftColor = 0, rightColor = 0;
+    std::wstring leftTag = GetQualityTag(leftMeta, leftColor);
+    std::wstring rightTag = GetQualityTag(rightMeta, rightColor);
 
     EnsureTextFormats();
     if (!m_panelFormat || !m_debugFormat) return;
@@ -2003,13 +2031,14 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     m_lastHUDRect = panelRect; // Store for hit test
 
     // Deep geeky background
-    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushLabel, brushGood, brushBad, brushWinner;
+    ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushLabel, brushGood, brushBad, brushWarn, brushWinner;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.005f, 0.005f, 0.008f, g_config.InfoPanelAlpha), &brushBg); // [HUD Adjust] Apply User Alpha
     dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f), &brushBorder);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.9f, 0.9f, 0.95f), &brushText);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.5f, 0.55f, 0.6f), &brushLabel);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.9f, 0.4f), &brushGood);
     dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.2f), &brushBad);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.85f, 0.0f), &brushWarn); // Yellow for warnings
     dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.2f, 0.1f), &brushWinner); // Red winner arrow
 
     // Top-roll: No top corners rounded
@@ -2020,10 +2049,16 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     float y = panelY + padding;
     
     // Draw Quality Tags
+    auto getBrush = [&](int colorType) {
+        if (colorType == 1) return brushBad.Get();
+        if (colorType == 2) return brushWarn.Get();
+        return brushGood.Get();
+    };
+
     m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    if (!leftTag.empty()) dc->DrawText(leftTag.c_str(), (UINT32)leftTag.length(), m_debugFormat.Get(), D2D1::RectF(panelX + padding, y, panelX + 300*s, y + headerH), brushGood.Get());
+    if (!leftTag.empty()) dc->DrawText(leftTag.c_str(), (UINT32)leftTag.length(), m_debugFormat.Get(), D2D1::RectF(panelX + padding, y, panelX + 300*s, y + headerH), getBrush(leftColor));
     m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-    if (!rightTag.empty()) dc->DrawText(rightTag.c_str(), (UINT32)rightTag.length(), m_debugFormat.Get(), D2D1::RectF(panelX + panelW - 300*s, y, panelX + panelW - padding, y + headerH), brushGood.Get());
+    if (!rightTag.empty()) dc->DrawText(rightTag.c_str(), (UINT32)rightTag.length(), m_debugFormat.Get(), D2D1::RectF(panelX + panelW - 300*s, y, panelX + panelW - padding, y + headerH), getBrush(rightColor));
     m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 
     y += headerH;
@@ -2125,17 +2160,30 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                     
                     // Winning logic (Higher/Quality is better)
                     auto IsBetter = [&](const std::wstring& lbl, const std::wstring& val1, const std::wstring& val2) -> bool {
+                        if (lbl == L"Disk") return leftMeta.FileSize > rightMeta.FileSize;
+                        if (lbl == L"Size") return (leftMeta.Width * leftMeta.Height) > (rightMeta.Width * rightMeta.Height);
                         try {
                             // Extract numeric parts
                             float v1 = std::stof(val1); float v2 = std::stof(val2);
-                            if (lbl == L"Sharp" || lbl == L"Ent" || lbl == L"BPP" || lbl == L"Disk" || lbl == L"Size") return v1 > v2;
+                            if (lbl == L"Sharp" || lbl == L"Ent" || lbl == L"BPP") return v1 > v2;
                         } catch (...) {}
                         return false;
                     };
                     
                     if (lRow && rRow) {
-                        if (isLeft && IsBetter(label, lRow->valueMain, rRow->valueMain)) winnerMark = L" ↑";
-                        if (!isLeft && IsBetter(label, rRow->valueMain, lRow->valueMain)) winnerMark = L" ↑";
+                        // For Disk, we need to pass true/false correctly since IsBetter now hardcodes leftMeta/rightMeta
+                        if (label == L"Disk") {
+                            if (isLeft && leftMeta.FileSize > rightMeta.FileSize) winnerMark = L" ↑";
+                            if (!isLeft && rightMeta.FileSize > leftMeta.FileSize) winnerMark = L" ↑";
+                        } else if (label == L"Size") {
+                            UINT64 lSize = (UINT64)leftMeta.Width * leftMeta.Height;
+                            UINT64 rSize = (UINT64)rightMeta.Width * rightMeta.Height;
+                            if (isLeft && lSize > rSize) winnerMark = L" ↑";
+                            if (!isLeft && rSize > lSize) winnerMark = L" ↑";
+                        } else {
+                            if (isLeft && IsBetter(label, lRow->valueMain, rRow->valueMain)) winnerMark = L" ↑";
+                            if (!isLeft && IsBetter(label, rRow->valueMain, lRow->valueMain)) winnerMark = L" ↑";
+                        }
                     }
                 }
                 
