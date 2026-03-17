@@ -1942,6 +1942,83 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     CImageLoader::ImageMetadata leftMeta, rightMeta;
     if (!GetCompareInfoSnapshot(leftMeta, rightMeta)) return;
 
+    EnsureTextFormats();
+    if (!m_panelFormat || !m_debugFormat) return;
+
+    const float s = m_uiScale;
+
+    // --- LITE MODE (Single Line) ---
+    if (g_runtime.CompareHudMode == 0) {
+        // We only extract what we need for the string
+        auto buildLiteString = [&](const CImageLoader::ImageMetadata& meta, bool isLeft) -> std::wstring {
+            std::wstring str = meta.SourcePath.substr(meta.SourcePath.find_last_of(L"\\/") + 1);
+            if (meta.Width > 0) {
+                wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", meta.Width, meta.Height);
+                str += sz;
+            }
+            if (meta.FileSize > 0) {
+                wchar_t sz[64]; swprintf_s(sz, L"   %.2f MB", meta.FileSize / (1024.0 * 1024.0));
+                str += sz;
+            }
+            if (meta.HasSharpness) {
+                wchar_t sz[64]; swprintf_s(sz, L"   Sharp: %.1f", meta.Sharpness);
+                str += sz;
+            }
+            if (meta.HasEntropy) {
+                wchar_t sz[64]; swprintf_s(sz, L"   Ent: %.2f", meta.Entropy);
+                str += sz;
+            }
+            return str;
+        };
+
+        std::wstring leftStr = buildLiteString(leftMeta, true);
+        std::wstring rightStr = buildLiteString(rightMeta, false);
+
+        // Calculate single line layout
+        float leftW = MeasureTextWidth(leftStr, m_panelFormat.Get());
+        float rightW = MeasureTextWidth(rightStr, m_panelFormat.Get());
+
+        // Draw Shadow Text (No Background)
+        ComPtr<ID2D1SolidColorBrush> brushShadow, brushText;
+        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), &brushShadow);
+        dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brushText);
+
+        float padding = 16.0f * s;
+        float y = padding; // Top aligned for Lite mode
+
+        // Left Text
+        D2D1_RECT_F lRect = D2D1::RectF(padding, y, padding + leftW, y + 32.0f * s);
+        D2D1_RECT_F lShadowRect = D2D1::RectF(lRect.left + 1.0f * s, lRect.top + 1.0f * s, lRect.right + 1.0f * s, lRect.bottom + 1.0f * s);
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        dc->DrawText(leftStr.c_str(), (UINT32)leftStr.length(), m_panelFormat.Get(), lShadowRect, brushShadow.Get());
+        dc->DrawText(leftStr.c_str(), (UINT32)leftStr.length(), m_panelFormat.Get(), lRect, brushText.Get());
+
+        // Right Text
+        D2D1_RECT_F rRect = D2D1::RectF(m_width - padding - rightW, y, m_width - padding, y + 32.0f * s);
+        D2D1_RECT_F rShadowRect = D2D1::RectF(rRect.left + 1.0f * s, rRect.top + 1.0f * s, rRect.right + 1.0f * s, rRect.bottom + 1.0f * s);
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        dc->DrawText(rightStr.c_str(), (UINT32)rightStr.length(), m_panelFormat.Get(), rShadowRect, brushShadow.Get());
+        dc->DrawText(rightStr.c_str(), (UINT32)rightStr.length(), m_panelFormat.Get(), rRect, brushText.Get());
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING); // reset
+
+        // Draw Expand Icon (Bottom Center for Lite mode to transition to Normal)
+        float iconSize = 24.0f * s;
+        m_hudToggleExpandRect = D2D1::RectF((m_width - iconSize) * 0.5f, m_height - 40.0f * s, (m_width + iconSize) * 0.5f, m_height - 16.0f * s);
+        
+        // Shadow for icon
+        D2D1_RECT_F iconShadowRect = D2D1::RectF(m_hudToggleExpandRect.left + 1.0f * s, m_hudToggleExpandRect.top + 1.0f * s, m_hudToggleExpandRect.right + 1.0f * s, m_hudToggleExpandRect.bottom + 1.0f * s);
+        dc->DrawText(L"\uE740", 1, m_iconFormat.Get(), iconShadowRect, brushShadow.Get()); // ChevronDown
+        dc->DrawText(L"\uE740", 1, m_iconFormat.Get(), m_hudToggleExpandRect, brushText.Get());
+
+        // Nullify other hit rects
+        m_lastHUDRect = {};
+        m_hudToggleLiteRect = {};
+        
+        return;
+    }
+
+    // --- NORMAL / FULL MODE ---
+    
     // Use centralized row building
     // Note: We need some context for these (like path) if we want tooltips to work fully
     // But for comparison, labeling is key.
@@ -1988,7 +2065,6 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     EnsureTextFormats();
     if (!m_panelFormat || !m_debugFormat) return;
 
-    const float s = m_uiScale;
     const float panelW = std::min(400.0f * s, m_width - 20.0f * s);
     const float panelX = (m_width - panelW) * 0.5f;
     float panelY = 0.0f; 
