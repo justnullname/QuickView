@@ -129,6 +129,9 @@ public:
     // 兼容旧接口
     bool Render(HWND hwnd) { return RenderAll(hwnd); }
 
+    // ===== Info Panel Rendering Helpers =====
+    D2D1_SIZE_F GetRequiredInfoPanelSize() const; // Calculate required dimensions
+
 private:
     // 分层渲染方法
     void RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd);

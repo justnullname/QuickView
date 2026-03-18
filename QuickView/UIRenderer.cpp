@@ -1379,6 +1379,30 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
 // Info Panel Functions (Migrated from main.cpp)
 // ============================================================================
 
+D2D1_SIZE_F UIRenderer::GetRequiredInfoPanelSize() const {
+    const float s = m_uiScale;
+
+    if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded) {
+        float width = 260.0f * s;
+        float height = 230.0f * s;
+
+        if (g_currentMetadata.HasGPS) height += 50.0f * s;
+        if (!g_currentMetadata.HistL.empty()) height += 100.0f * s;
+        if (!g_currentMetadata.Software.empty()) height += 20.0f * s;
+
+        // Return required total window space
+        // startX = 16 * s, startY = 32 * s
+        // Add 32 padding for right/bottom margin
+        return D2D1::SizeF(16.0f * s + width + 32.0f * s, 32.0f * s + height + 32.0f * s);
+    } else if (g_runtime.ShowInfoPanel && !g_runtime.InfoPanelExpanded) {
+        // Compact info is just text
+        // For simplicity, request at least 400x100
+        return D2D1::SizeF(400.0f * s, 100.0f * s);
+    }
+
+    return D2D1::SizeF(0, 0);
+}
+
 // Helper: Format bytes with comma separators
 static std::wstring FormatBytesWithCommas(UINT64 bytes) {
     std::wstring num = std::to_wstring(bytes);
