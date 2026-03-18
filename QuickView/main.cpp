@@ -9223,16 +9223,20 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
                  finalWinW = targetW;
                  finalWinH = targetH;
                  
+                 bool cappedW = false;
+                 bool cappedH = false;
                  if (!g_config.EnableCrossMonitor) {
-                    if (finalWinW > maxW) { finalWinW = maxW; capped = true; }
-                    if (finalWinH > maxH) { finalWinH = maxH; capped = true; }
+                    if (finalWinW > maxW) { finalWinW = maxW; cappedW = true; }
+                    if (finalWinH > maxH) { finalWinH = maxH; cappedH = true; }
                  }
-                 resizeIsScreenLimited = capped;
+                 resizeIsScreenLimited = cappedW || cappedH;
+                 capped = cappedW && cappedH;
                  
                  if (finalWinW < 200) finalWinW = 200;
                  if (finalWinH < 200) finalWinH = 200;
                  
-                 if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+                 if (!cappedW) { g_viewState.PanX = 0; }
+                 if (!cappedH) { g_viewState.PanY = 0; }
              }
          }
     }
