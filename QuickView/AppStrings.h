@@ -216,6 +216,7 @@ namespace AppStrings {
     
     extern const wchar_t* Settings_Label_InvertWheel;
     extern const wchar_t* Settings_Label_ZoomSnapDamping; // New
+    extern const wchar_t* Settings_Label_MouseAnchorZoom;
     extern const wchar_t* Settings_Label_InvertButtons;
     extern const wchar_t* Settings_Label_LeftDrag;
     extern const wchar_t* Settings_Label_MiddleDrag;

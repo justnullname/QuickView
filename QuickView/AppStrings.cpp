@@ -189,6 +189,7 @@ namespace AppStrings {
     const wchar_t* Settings_Label_OpenFullScreenMode = nullptr;
     const wchar_t* Settings_Label_InvertWheel = nullptr;
     const wchar_t* Settings_Label_ZoomSnapDamping = nullptr; // New
+    const wchar_t* Settings_Label_MouseAnchorZoom = nullptr;
     const wchar_t* Settings_Label_InvertButtons = nullptr;
     const wchar_t* Settings_Label_LeftDrag = nullptr;
     const wchar_t* Settings_Label_MiddleDrag = nullptr;
@@ -485,6 +486,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Open Fullscreen";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Invert Wheel";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Zoom 100% Snap Damping";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Mouse-Anchored Window Zoom";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"Invert Side Buttons";
         static constexpr const wchar_t* Settings_Label_ZoomMode = L"Zoom Mode";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"Left Drag";
@@ -691,6 +693,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"打开时全屏";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"反转滚轮";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"缩放 100% 吸附阻尼";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"窗口缩放以鼠标为中线";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"反转侧键";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"左键拖动";
         static constexpr const wchar_t* Settings_Label_MiddleDrag = L"中键拖动";
@@ -1069,6 +1072,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開啟時全螢幕";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"反轉滾輪";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"縮放 100% 吸附阻尼";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"視窗縮放以滑鼠為中線";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"反轉側鍵";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"左鍵拖曳";
         static constexpr const wchar_t* Settings_Label_MiddleDrag = L"中鍵拖曳";
@@ -1347,6 +1351,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開くときに全画面表示";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"ホイール反転";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"100%ズーム吸着ダンピング";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"マウス中心でウィンドウを拡大";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"サイドボタン反転";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"左ドラッグ";
         static constexpr const wchar_t* Settings_Label_MiddleDrag = L"中ドラッグ";
@@ -1625,6 +1630,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Полноэкранный режим при открытии";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Инвертировать колесо";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Задержка привязки зума (100%)";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Масштабировать окно от позиции мыши";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"Инвертировать боковые кнопки";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"Перетаскивание левой кнопкой";
         static constexpr const wchar_t* Settings_Label_MiddleDrag = L"Перетаскивание средней кнопкой";
@@ -1903,6 +1909,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Im Vollbildmodus öffnen";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Mausrad invertieren";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Zoom 100% Einrast-Dämpfung";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Fensterzoom am Mauszeiger ausrichten";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"Seitentasten invertieren";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"Links ziehen";
         static constexpr const wchar_t* Settings_Label_MiddleDrag = L"Mitte ziehen";
@@ -2181,6 +2188,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Abrir en pantalla completa";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Invertir rueda";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Amortiguación de ajuste 100%";
+        static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Zoom de ventana anclado al raton";
         static constexpr const wchar_t* Settings_Label_InvertButtons = L"Invertir botones laterales";
         static constexpr const wchar_t* Settings_Label_LeftDrag = L"Arrastrar izquierdo";
         static constexpr const wchar_t* Settings_Label_MiddleDrag = L"Arrastrar central";
@@ -2479,6 +2487,7 @@ namespace AppStrings {
         Settings_Label_OpenFullScreenMode = T::Settings_Label_OpenFullScreenMode;
         Settings_Label_InvertWheel = T::Settings_Label_InvertWheel;
         Settings_Label_ZoomSnapDamping = T::Settings_Label_ZoomSnapDamping;
+        Settings_Label_MouseAnchorZoom = T::Settings_Label_MouseAnchorZoom;
         Settings_Label_InvertButtons = T::Settings_Label_InvertButtons;
         Settings_Label_LeftDrag = T::Settings_Label_LeftDrag;
         Settings_Label_MiddleDrag = T::Settings_Label_MiddleDrag;

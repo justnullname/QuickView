@@ -383,7 +383,7 @@ static float GetCompareSplitRatio();
 void AdjustWindowToImage(HWND hwnd);
 RECT GetVirtualScreenRect();
 static RECT GetWindowExpansionBounds(HWND hwnd);
-static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int targetW, int targetH, const RECT& bounds);
+static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int targetW, int targetH, const RECT& bounds, const POINT* anchorScreenPt = nullptr);
 
 
 static D2D1_SIZE_F GetLogicalImageSize();
@@ -3359,6 +3359,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"WheelActionMode", std::to_wstring(g_config.WheelActionMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"InvertXButton", g_config.InvertXButton ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"EnableZoomSnapDamping", g_config.EnableZoomSnapDamping ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"MouseAnchoredWindowZoom", g_config.MouseAnchoredWindowZoom ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"LeftDragAction", std::to_wstring((int)g_config.LeftDragAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"MiddleDragAction", std::to_wstring((int)g_config.MiddleDragAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"MiddleClickAction", std::to_wstring((int)g_config.MiddleClickAction).c_str(), iniPath.c_str());
@@ -3454,6 +3455,7 @@ void LoadConfig() {
     if (g_config.WheelActionMode < 0 || g_config.WheelActionMode > 1) g_config.WheelActionMode = 0;
     g_config.InvertXButton = GetPrivateProfileIntW(L"Controls", L"InvertXButton", 0, iniPath.c_str()) != 0;
     g_config.EnableZoomSnapDamping = GetPrivateProfileIntW(L"Controls", L"EnableZoomSnapDamping", 1, iniPath.c_str()) != 0;
+    g_config.MouseAnchoredWindowZoom = GetPrivateProfileIntW(L"Controls", L"MouseAnchoredWindowZoom", 0, iniPath.c_str()) != 0;
     g_config.LeftDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"LeftDragAction", (int)MouseAction::WindowDrag, iniPath.c_str());
     g_config.MiddleDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleDragAction", (int)MouseAction::PanImage, iniPath.c_str());
     g_config.MiddleClickAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleClickAction", (int)MouseAction::ExitApp, iniPath.c_str());
@@ -3849,15 +3851,27 @@ static RECT GetWindowExpansionBounds(HWND hwnd) {
     return bounds;
 }
 
-static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int targetW, int targetH, const RECT& bounds) {
+static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int targetW, int targetH, const RECT& bounds, const POINT* anchorScreenPt) {
     RECT result = currentRect;
     const int boundsW = bounds.right - bounds.left;
     const int boundsH = bounds.bottom - bounds.top;
+    const int currentW = currentRect.right - currentRect.left;
+    const int currentH = currentRect.bottom - currentRect.top;
+
+    float anchorFracX = 0.5f;
+    float anchorFracY = 0.5f;
+    if (anchorScreenPt && currentW > 0 && currentH > 0) {
+        anchorFracX = ((float)anchorScreenPt->x - (float)currentRect.left) / (float)currentW;
+        anchorFracY = ((float)anchorScreenPt->y - (float)currentRect.top) / (float)currentH;
+        anchorFracX = (std::clamp)(anchorFracX, 0.0f, 1.0f);
+        anchorFracY = (std::clamp)(anchorFracY, 0.0f, 1.0f);
+    }
+
     if (boundsW <= 0 || boundsH <= 0) {
-        int centerX = currentRect.left + (currentRect.right - currentRect.left) / 2;
-        int centerY = currentRect.top + (currentRect.bottom - currentRect.top) / 2;
-        result.left = centerX - targetW / 2;
-        result.top = centerY - targetH / 2;
+        int leftBias = (int)std::lround((double)(targetW - currentW) * anchorFracX);
+        int topBias = (int)std::lround((double)(targetH - currentH) * anchorFracY);
+        result.left = currentRect.left - leftBias;
+        result.top = currentRect.top - topBias;
         result.right = result.left + targetW;
         result.bottom = result.top + targetH;
         return result;
@@ -3866,14 +3880,15 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
     targetW = (std::min)(targetW, boundsW);
     targetH = (std::min)(targetH, boundsH);
 
-    auto resizeAxis = [](int currentStart, int currentEnd, int targetSize, int boundStart, int boundEnd, int& outStart, int& outEnd) {
+    auto resizeAxis = [](int currentStart, int currentEnd, int targetSize, int boundStart, int boundEnd, float anchorFrac, int& outStart, int& outEnd) {
         const int currentSize = currentEnd - currentStart;
         const int boundSize = boundEnd - boundStart;
         targetSize = (std::min)(targetSize, boundSize);
 
         if (targetSize <= currentSize) {
-            int center = currentStart + currentSize / 2;
-            outStart = center - targetSize / 2;
+            int shrink = currentSize - targetSize;
+            int shrinkNeg = (int)std::lround((double)shrink * anchorFrac);
+            outStart = currentStart + shrinkNeg;
             outEnd = outStart + targetSize;
         } else {
             const int grow = targetSize - currentSize;
@@ -3907,7 +3922,8 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
 
             const int availNeg = (std::max)(0, currentStart - boundStart);
             const int availPos = (std::max)(0, boundEnd - currentEnd);
-            const int desiredNeg = grow / 2;
+            int desiredNeg = (int)std::lround((double)grow * anchorFrac);
+            desiredNeg = (std::clamp)(desiredNeg, 0, grow);
             const int desiredPos = grow - desiredNeg;
 
             int growNeg = 0;
@@ -3932,8 +3948,8 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
     int right = 0;
     int top = 0;
     int bottom = 0;
-    resizeAxis((int)currentRect.left, (int)currentRect.right, targetW, (int)bounds.left, (int)bounds.right, left, right);
-    resizeAxis((int)currentRect.top, (int)currentRect.bottom, targetH, (int)bounds.top, (int)bounds.bottom, top, bottom);
+    resizeAxis((int)currentRect.left, (int)currentRect.right, targetW, (int)bounds.left, (int)bounds.right, anchorFracX, left, right);
+    resizeAxis((int)currentRect.top, (int)currentRect.bottom, targetH, (int)bounds.top, (int)bounds.bottom, anchorFracY, top, bottom);
     result.left = left;
     result.right = right;
     result.top = top;
@@ -6809,12 +6825,12 @@ SKIP_EDGE_NAV:;
         // Zoom
         case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
             if (IsCompareModeActive()) PerformCompareZoom100(hwnd);
-            else PerformZoom100(hwnd, false);
+            else PerformZoom100(hwnd);
             break;
             
         case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
             if (IsCompareModeActive()) PerformCompareZoomFit(hwnd);
-            else PerformZoomFit(hwnd, 1.0f, false);
+            else PerformZoomFit(hwnd);
             break;
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
@@ -9314,11 +9330,11 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
                  
                  // Apply Lock Size Immediately
                  RECT rcWin; GetWindowRect(hwnd, &rcWin);
-                 int cX = rcWin.left + (rcWin.right - rcWin.left) / 2;
-                 int cY = rcWin.top + (rcWin.bottom - rcWin.top) / 2;
-                 
                  g_programmaticResize = true;
-                 SetWindowPos(hwnd, nullptr, cX - finalWinW/2, cY - finalWinH/2, finalWinW, finalWinH, 
+                 const POINT* windowAnchor = (g_config.MouseAnchoredWindowZoom ? centerPt : nullptr);
+                 RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, finalWinW, finalWinH, bounds, windowAnchor);
+                 SetWindowPos(hwnd, nullptr, targetRect.left, targetRect.top,
+                              targetRect.right - targetRect.left, targetRect.bottom - targetRect.top,
                               SWP_NOZORDER | SWP_NOACTIVATE);
                               
                  if (g_compEngine && g_compEngine->IsInitialized()) {
@@ -9366,7 +9382,10 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
                  if (finalWinW < 200) finalWinW = 200;
                  if (finalWinH < 200) finalWinH = 200;
                  
-                 if (!capped) { g_viewState.PanX = 0; g_viewState.PanY = 0; }
+                 if (!capped && !centerPt) {
+                     g_viewState.PanX = 0;
+                     g_viewState.PanY = 0;
+                 }
              }
          }
     }
@@ -9386,7 +9405,8 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          // Apply Resize
          RECT rcWin; GetWindowRect(hwnd, &rcWin);
          g_programmaticResize = true;
-         RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, finalWinW, finalWinH, bounds);
+         const POINT* windowAnchor = (g_config.MouseAnchoredWindowZoom ? centerPt : nullptr);
+         RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, finalWinW, finalWinH, bounds, windowAnchor);
          SetWindowPos(hwnd, nullptr, targetRect.left, targetRect.top,
                       targetRect.right - targetRect.left, targetRect.bottom - targetRect.top,
                       SWP_NOZORDER | SWP_NOACTIVATE);
