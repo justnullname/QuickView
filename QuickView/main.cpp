@@ -388,6 +388,9 @@ static bool g_isAutoLocked = false;
 
 // True while the user is interactively resizing/moving the window (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE)
 static bool g_isInSizeMove = false;
+static float s_resizeInitialAbsoluteScale = 1.0f;
+static bool s_maintainAbsoluteScale = false;
+static bool s_resizeStartedWithBorders = false;
 
 // [v3.1.5] Auto-Lock State for Unified Scaling Logic (< 200x200)
 
@@ -3861,6 +3864,21 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
                 if (baseFit > 1.0f) baseFit = 1.0f;
             }
             float targetZoom = baseFit * g_viewState.Zoom;
+
+            // [Fix] Maintain absolute scale during interactive resize
+            if (g_isInSizeMove && s_maintainAbsoluteScale && baseFit > 0.0001f) {
+                float newZoom = s_resizeInitialAbsoluteScale / baseFit;
+
+                // If the user was zoomed out (borders visible), ensure we don't zoom in
+                // past 100% Fit when the window shrinks.
+                if (s_resizeStartedWithBorders && newZoom > 1.0f) {
+                    newZoom = 1.0f;
+                }
+
+                g_viewState.Zoom = newZoom;
+                targetZoom = baseFit * g_viewState.Zoom;
+            }
+
             ClampPanForViewport(vs, winW, winH, targetZoom);
 
             g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
@@ -4514,16 +4532,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_ENTERSIZEMOVE: {
         // User started interactive resize/move session
         g_isInSizeMove = true;
+
+        // [Fix] Maintain Absolute Scale during resize if a manual zoom is active
+        if (g_imageResource) {
+            VisualState vs = GetVisualState();
+            if (vs.VisualSize.width > 0 && vs.VisualSize.height > 0) {
+                RECT rc; GetClientRect(hwnd, &rc);
+                float winW = (float)rc.right;
+                float winH = (float)rc.bottom;
+                float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
+                if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f && !g_imageResource.isSvg) {
+                    if (baseFit > 1.0f) baseFit = 1.0f;
+                }
+
+                s_resizeInitialAbsoluteScale = baseFit * g_viewState.Zoom;
+                s_maintainAbsoluteScale = (abs(g_viewState.Zoom - 1.0f) > 0.001f);
+                s_resizeStartedWithBorders = (g_viewState.Zoom < 0.999f);
+            }
+        } else {
+            s_maintainAbsoluteScale = false;
+        }
         return 0;
     }
     case WM_EXITSIZEMOVE: {
         // Interactive resize/move ended - sync composition state immediately
-        g_isInSizeMove = false;
         if (g_compEngine && g_compEngine->IsInitialized()) {
             RECT rc; GetClientRect(hwnd, &rc);
+            // Sync one last time while g_isInSizeMove is true to finalize absolute scale adjustments
             SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
             g_compEngine->Commit();
         }
+        g_isInSizeMove = false;
+        s_maintainAbsoluteScale = false;
         return 0;
     }
     case WM_NCCALCSIZE: if (wParam) return 0; break;
