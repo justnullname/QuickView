@@ -123,6 +123,7 @@ private:
     // Draw Widgets
     void DrawToggle(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
     void DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered);
+    std::vector<float> CalculateSegmentWidths(const std::vector<std::wstring>& options, float totalW);
     void DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options);
     void DrawComboBox(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isOpen);
     void DrawComboDropdown(ID2D1RenderTarget* pRT); // Draws the floating list
