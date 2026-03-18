@@ -2470,8 +2470,12 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
         // Slider
         if (m_pHoverItem->type == OptionType::Slider && m_pHoverItem->pFloatVal) {
-            m_pActiveSlider = m_pHoverItem;
-            OnMouseMove(x, y);
+            float w = 150.0f;
+            float sliderLeft = m_pHoverItem->rect.right - w;
+            if (x >= sliderLeft && x <= m_pHoverItem->rect.right) {
+                m_pActiveSlider = m_pHoverItem;
+                OnMouseMove(x, y);
+            }
             return SettingsAction::RepaintStatic;
         }
         // Segment
