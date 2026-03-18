@@ -142,6 +142,7 @@ private:
     void DrawInfoPanel(ID2D1DeviceContext* dc);
     void DrawCompactInfo(ID2D1DeviceContext* dc);
     void DrawHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect);
+    void DrawCompareHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect, const CImageLoader::ImageMetadata& leftMeta, const CImageLoader::ImageMetadata& rightMeta);
     void DrawNavIndicators(ID2D1DeviceContext* dc);
     void DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawCompareInfoHUD(ID2D1DeviceContext* dc);

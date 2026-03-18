@@ -1638,6 +1638,86 @@ void UIRenderer::DrawHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect) {
     drawChannel(g_currentMetadata.HistR, D2D1::ColorF(1.0f, 0.3f, 0.3f, 0.4f));
 }
 
+void UIRenderer::DrawCompareHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect, const CImageLoader::ImageMetadata& leftMeta, const CImageLoader::ImageMetadata& rightMeta) {
+    // Get factory from device context
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory) return;
+
+    // Use Luminance (HistL) for comparison, or fallback to Red if Luminance is unavailable
+    const auto& leftHist = leftMeta.HistL.empty() ? leftMeta.HistR : leftMeta.HistL;
+    const auto& rightHist = rightMeta.HistL.empty() ? rightMeta.HistR : rightMeta.HistL;
+
+    if (leftHist.empty() && rightHist.empty()) return;
+
+    // Find max value across both
+    uint32_t maxVal = 1;
+    for (int i = 0; i < 256; i++) {
+        if (!leftHist.empty() && leftHist[i] > maxVal) maxVal = leftHist[i];
+        if (!rightHist.empty() && rightHist[i] > maxVal) maxVal = rightHist[i];
+    }
+
+    float stepX = (rect.right - rect.left) / 256.0f;
+    float bottom = rect.bottom - 12.0f * m_uiScale; // Leave space for legend
+    float height = bottom - rect.top;
+
+    auto drawLine = [&](const std::vector<uint32_t>& hist, D2D1::ColorF color, float strokeWidth) {
+        if (hist.empty()) return;
+
+        ComPtr<ID2D1PathGeometry> path;
+        factory->CreatePathGeometry(&path);
+        ComPtr<ID2D1GeometrySink> sink;
+        path->Open(&sink);
+
+        sink->BeginFigure(D2D1::Point2F(rect.left, bottom - ((float)hist[0] / maxVal) * height), D2D1_FIGURE_BEGIN_HOLLOW);
+        for (int i = 1; i < 256; i++) {
+            float val = (float)hist[i] / maxVal;
+            float y = bottom - val * height;
+            sink->AddLine(D2D1::Point2F(rect.left + i * stepX, y));
+        }
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
+
+        ComPtr<ID2D1SolidColorBrush> brush;
+        dc->CreateSolidColorBrush(color, &brush);
+        dc->DrawGeometry(path.Get(), brush.Get(), strokeWidth);
+    };
+
+    // Left (Blue-ish)
+    D2D1::ColorF leftColor(0.2f, 0.6f, 1.0f, 0.8f);
+    drawLine(leftHist, leftColor, 1.5f * m_uiScale);
+
+    // Right (Orange-ish)
+    D2D1::ColorF rightColor(1.0f, 0.6f, 0.2f, 0.8f);
+    drawLine(rightHist, rightColor, 1.5f * m_uiScale);
+
+    // Draw Background Grid / Baseline
+    ComPtr<ID2D1SolidColorBrush> gridBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &gridBrush);
+    dc->DrawLine(D2D1::Point2F(rect.left, bottom), D2D1::Point2F(rect.right, bottom), gridBrush.Get(), 1.0f * m_uiScale);
+
+    // Draw Legend
+    if (m_debugFormat) {
+        ComPtr<ID2D1SolidColorBrush> leftBrush, rightBrush;
+        dc->CreateSolidColorBrush(leftColor, &leftBrush);
+        dc->CreateSolidColorBrush(rightColor, &rightBrush);
+
+        float legendY = bottom + 2.0f * m_uiScale;
+        float center = rect.left + (rect.right - rect.left) / 2.0f;
+
+        m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        dc->DrawText(L"Left Histogram \x25A0", 16, m_debugFormat.Get(),
+                     D2D1::RectF(rect.left, legendY, center - 10.0f * m_uiScale, legendY + 14.0f * m_uiScale), leftBrush.Get());
+
+        m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        dc->DrawText(L"\x25A0 Right Histogram", 17, m_debugFormat.Get(),
+                     D2D1::RectF(center + 10.0f * m_uiScale, legendY, rect.right, legendY + 14.0f * m_uiScale), rightBrush.Get());
+
+        // Reset Alignment
+        m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+}
+
 void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     if (g_imagePath.empty() || !m_panelFormat) return;
     const float s = m_uiScale;
@@ -2229,9 +2309,14 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         if (hasData) activeGroups++;
     }
 
+    // Add Histogram Space
+    bool hasHistogram = hudMode > 0 && (!leftMeta.HistR.empty() || !rightMeta.HistR.empty());
+    const float histH = hasHistogram ? (60.0f * s) : 0;
+    const float histMargin = hasHistogram ? (8.0f * s) : 0;
+
     // Add extra space at bottom for toggle icons
     const float bottomBarH = 20.0f * s;
-    const float panelH = padding * 2 + headerH + (activeGroups * rowH) + (activeRows * rowH) + bottomBarH + 4.0f * s;
+    const float panelH = padding * 2 + headerH + (activeGroups * rowH) + (activeRows * rowH) + histH + histMargin + bottomBarH + 4.0f * s;
     D2D1_RECT_F panelRect = D2D1::RectF(panelX, panelY, panelX + panelW, panelY + panelH);
     m_lastHUDRect = panelRect; // Store for hit test
 
@@ -2452,6 +2537,14 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     // Reset alignment
     m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     
+    // Draw Compare Histogram
+    if (hasHistogram) {
+        y += histMargin;
+        D2D1_RECT_F histRect = D2D1::RectF(panelX + padding, y, panelX + panelW - padding, y + histH);
+        DrawCompareHistogram(dc, histRect, leftMeta, rightMeta);
+        y += histH;
+    }
+
     // Draw Toggle Icons (Bottom Right)
     float iconAreaY = panelRect.bottom - bottomBarH;
     float iconSize = 16.0f * s;
