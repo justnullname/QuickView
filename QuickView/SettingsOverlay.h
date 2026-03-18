@@ -55,6 +55,7 @@ struct SettingsItem {
 
     // Runtime Layout (Hit Testing)
     D2D1_RECT_F rect; 
+    D2D1_RECT_F interactRect = {0};
     bool isHovered = false;
     
     // Disabled State
