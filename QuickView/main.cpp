@@ -641,7 +641,7 @@ static void CheckAndExpandWindowForInfoPanel(HWND hwnd);
 static void CheckAndExpandWindowForInfoPanel(HWND hwnd) {
     if (!g_uiRenderer || !g_runtime.ShowInfoPanel) return;
     if (g_isFullScreen || IsZoomed(hwnd)) return; // Don't resize if maximized/fullscreen
-    if (!g_imageResource.bitmap && !g_imageResource.svgRoot) return; // Keep it simple
+    if (!g_imageResource) return; // Keep it simple
     if (g_compare.mode != ViewMode::Single) return;
 
     D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
