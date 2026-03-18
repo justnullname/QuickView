@@ -7277,7 +7277,9 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
 #else
         // [AVX2] SIMD Optimization for Luminance Calculation
         const __m256i vCoeffs = _mm256_set1_epi64x(0x0000012B024B0072);
-        const __m256i vMul = _mm256_set1_epi32(67109);
+        // Multiply by 8389 and shift by 23: 8389 / 2^23 = 8389 / 8388608 ≈ 0.000999999
+        // Max Luma = 255 * 1000 = 255000. Max mult = 255000 * 8389 = 2,139,195,000 < 2^31
+        const __m256i vMul = _mm256_set1_epi32(8389);
 
         for (; x < width8; x += 8) {
             __m256i vPixels = _mm256_loadu_si256((const __m256i*)(row + x * 4));
@@ -7287,8 +7289,8 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
             __m256i vSum47 = _mm256_madd_epi16(vPix47, vCoeffs);
             __m256i vLuma03 = _mm256_hadd_epi32(vSum03, vSum03);
             __m256i vLuma47 = _mm256_hadd_epi32(vSum47, vSum47);
-            __m256i vDiv03 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma03, vMul), 26);
-            __m256i vDiv47 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma47, vMul), 26);
+            __m256i vDiv03 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma03, vMul), 23);
+            __m256i vDiv47 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma47, vMul), 23);
 
             uint32_t l0 = _mm256_cvtsi256_si32(vDiv03);
             uint32_t l1 = _mm256_extract_epi32(vDiv03, 1);
