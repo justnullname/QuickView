@@ -46,7 +46,7 @@ public:
     // ===== Visual Ping-Pong Image Layer =====
     // BeginPendingUpdate: Get D2D context for the hidden (pending) layer
     // Call this to draw a new image. Surface is auto-created/resized as needed.
-    ID2D1DeviceContext* BeginPendingUpdate(UINT width, UINT height, bool isTitan = false, UINT fullWidth = 0, UINT fullHeight = 0);
+    ID2D1DeviceContext* BeginPendingUpdate(UINT width, UINT height, bool isTitan = false, UINT fullWidth = 0, UINT fullHeight = 0, bool allowOversizedStandard = false);
     HRESULT EndPendingUpdate();
     
     // PlayPingPongCrossFade: Animate transition from Active to Pending.

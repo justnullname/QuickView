@@ -297,7 +297,7 @@ static std::atomic<uint64_t> g_titanDispatchSerial{0};
 D2D1_POINT_2F g_lastFitOffset = {}; // Center offset of image on screen
 float g_lastFitScale = 1.0f;        // Scale factor to fit image to screen
 
-static constexpr UINT g_maxSvgSurfaceSize = 8192;  // Max dimension for SVG re-render
+static constexpr UINT g_fallbackSvgSurfaceSize = 8192;  // Safe fallback if GPU caps are unavailable
 static constexpr UINT g_maxBitmapSurfaceSize = 8192; // Max dimension for bitmap surface upgrades
 
 // === DComp Ping-Pong State ===
@@ -369,6 +369,7 @@ static CompareState g_compare;
 
 // Forward Declaration needed for UpgradeSvgSurface and Helpers
 static void SyncDCompState(HWND hwnd, float w, float h);
+static UINT GetSvgSurfaceSizeLimit();
 static bool RenderCompareComposite(HWND hwnd);
 static void MarkCompareDirty();
 static void EnterCompareMode(HWND hwnd);
@@ -382,6 +383,7 @@ void AdjustWindowToImage(HWND hwnd);
 
 
 static D2D1_SIZE_F GetLogicalImageSize();
+VisualState GetVisualState();
 static bool g_isAutoLocked = false;
 
 
@@ -1534,6 +1536,80 @@ struct SvgSurfaceSpec {
     float RawH = 0.0f;
 };
 
+static bool UseSvgViewportRendering(const ImageResource& res) {
+    return res.isSvg && res.svgDoc;
+}
+
+static float ComputeSvgViewportScale(float winW, float winH, const VisualState& vs) {
+    if (vs.VisualSize.width <= 0.0f || vs.VisualSize.height <= 0.0f) {
+        return 1.0f;
+    }
+    const float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
+    return baseFit * g_viewState.Zoom;
+}
+
+static D2D1_MATRIX_3X2_F BuildSvgViewportTransform(float winW, float winH, const ImageResource& res, const VisualState& vs) {
+    const float targetZoom = ComputeSvgViewportScale(winW, winH, vs);
+    const float centerX = winW * 0.5f + g_viewState.PanX;
+    const float centerY = winH * 0.5f + g_viewState.PanY;
+    return D2D1::Matrix3x2F::Translation(-res.svgW * 0.5f, -res.svgH * 0.5f) *
+           D2D1::Matrix3x2F::Scale(vs.FlipX, vs.FlipY) *
+           D2D1::Matrix3x2F::Rotation(vs.TotalRotation) *
+           D2D1::Matrix3x2F::Scale(targetZoom, targetZoom) *
+           D2D1::Matrix3x2F::Translation(centerX, centerY);
+}
+
+static float GetSvgMaxSharpTotalScale(const ImageResource& res) {
+    if (!res.isSvg || res.svgW <= 0.0f || res.svgH <= 0.0f) {
+        return (std::numeric_limits<float>::max)();
+    }
+
+    const float maxSurfaceSize = (float)GetSvgSurfaceSizeLimit();
+    const float maxSurfaceScale = std::min(maxSurfaceSize / res.svgW,
+                                           maxSurfaceSize / res.svgH);
+    // We render SVG backing surfaces at 2x supersampling, so the sharp on-screen
+    // scale limit is half of the maximum backing-surface scale.
+    return std::max(0.1f, maxSurfaceScale / 2.0f);
+}
+
+static UINT GetSvgSurfaceSizeLimit() {
+    UINT textureLimit = g_fallbackSvgSurfaceSize;
+    UINT64 budgetBytes = 256ull * 1024ull * 1024ull;
+
+    if (g_renderEngine) {
+        if (ID3D11Device* d3d = g_renderEngine->GetD3DDevice()) {
+            const D3D_FEATURE_LEVEL fl = d3d->GetFeatureLevel();
+            if (fl >= D3D_FEATURE_LEVEL_11_0) textureLimit = 16384;
+            else if (fl >= D3D_FEATURE_LEVEL_10_0) textureLimit = 8192;
+            else textureLimit = 4096;
+
+            ComPtr<IDXGIDevice> dxgiDevice;
+            if (SUCCEEDED(d3d->QueryInterface(IID_PPV_ARGS(&dxgiDevice)))) {
+                ComPtr<IDXGIAdapter> adapter;
+                if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+                    DXGI_ADAPTER_DESC desc{};
+                    if (SUCCEEDED(adapter->GetDesc(&desc))) {
+                        const UINT64 dedicatedBytes =
+                            desc.DedicatedVideoMemory ? desc.DedicatedVideoMemory : desc.DedicatedSystemMemory;
+                        const UINT64 sharedBytes = desc.SharedSystemMemory;
+                        const UINT64 sourceBytes = dedicatedBytes ? dedicatedBytes : sharedBytes;
+                        if (sourceBytes > 0) {
+                            budgetBytes = dedicatedBytes ? (sourceBytes / 4ull) : (sourceBytes / 8ull);
+                            budgetBytes = (std::max)(budgetBytes, 256ull * 1024ull * 1024ull);
+                            budgetBytes = (std::min)(budgetBytes, 1024ull * 1024ull * 1024ull);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const UINT64 maxPixelsByBudget = budgetBytes / 4ull; // BGRA8 backing surface
+    const long double maxDimByBudget = std::sqrt((long double)maxPixelsByBudget);
+    const UINT memoryLimit = (UINT)(std::max)(1024.0L, std::floor(maxDimByBudget));
+    return (std::min)(textureLimit, memoryLimit);
+}
+
 static SvgSurfaceSpec CalculateSvgSurfaceSpec(float viewportW, float viewportH, const ImageResource& res, float zoom) {
     SvgSurfaceSpec spec{};
     if (!res.isSvg || res.svgW <= 0.0f || res.svgH <= 0.0f) {
@@ -1551,8 +1627,9 @@ static SvgSurfaceSpec CalculateSvgSurfaceSpec(float viewportW, float viewportH, 
 
     spec.SurfaceScale = std::min(spec.RawW / res.svgW, spec.RawH / res.svgH);
 
-    const float maxScale = std::min((float)g_maxSvgSurfaceSize / res.svgW,
-                                    (float)g_maxSvgSurfaceSize / res.svgH);
+    const float maxSurfaceSize = (float)GetSvgSurfaceSizeLimit();
+    const float maxScale = std::min(maxSurfaceSize / res.svgW,
+                                    maxSurfaceSize / res.svgH);
     if (spec.SurfaceScale > maxScale) spec.SurfaceScale = maxScale;
 
     const float minScale = std::min(viewportW / res.svgW, viewportH / res.svgH);
@@ -1587,27 +1664,11 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
     RECT rc; GetClientRect(hwnd, &rc);
     if (rc.right == 0 || rc.bottom == 0) return false;
     
-    // [Adaptive] Calculate needed surface resolution based on current zoom
-    // The SVG should be rendered at: windowSize × zoom × supersampling(2x)
-    // This gives pixel-perfect quality at any zoom level
     float winW = (float)rc.right;
     float winH = (float)rc.bottom;
-    SvgSurfaceSpec spec = CalculateSvgSurfaceSpec(winW, winH, res, g_viewState.Zoom);
-
-    UINT surfW = spec.Width;
-    UINT surfH = spec.Height;
-
-    // [Skip] Don't re-render if resolution change is < 20% (avoid thrashing)
-    float currentW = g_lastSurfaceSize.width;
-    if (currentW > 0) {
-        float ratio = (float)surfW / currentW;
-        if (ratio > 0.8f && ratio < 1.2f) {
-            return false; // Within 20%, skip
-        }
-    }
-    float fitScale = spec.FitScale;
-    float offsetX = spec.OffsetX;
-    float offsetY = spec.OffsetY;
+    const UINT surfW = (UINT)std::max(1L, (long)rc.right);
+    const UINT surfH = (UINT)std::max(1L, (long)rc.bottom);
+    VisualState vs = GetVisualState();
     
     // Begin DComp update
     auto ctx = g_compEngine->BeginPendingUpdate(surfW, surfH);
@@ -1616,13 +1677,10 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
     // Clear with transparent
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
     
-    // Transform: Scale SVG to fit surface, centered
-    D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Scale(fitScale, fitScale) * 
-                                 D2D1::Matrix3x2F::Translation(offsetX, offsetY);
-    
     // Draw SVG with D2D Native
     ComPtr<ID2D1DeviceContext5> ctx5;
     if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
+        D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform(winW, winH, res, vs);
         ctx5->SetTransform(CombineWithCurrentTransform(ctx, transform));
         ctx5->DrawSvgDocument(res.svgDoc.Get());
         ctx5->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -1633,20 +1691,14 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
     // Update tracking
     g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
     
-    // [Seamless Transition] Calculate new DComp transforms to maintain exact visual state
+    g_lastFitScale = std::min(winW / std::max(1.0f, vs.VisualSize.width),
+                              winH / std::max(1.0f, vs.VisualSize.height));
+    g_lastFitOffset = D2D1::Point2F((winW - vs.VisualSize.width * g_lastFitScale) * 0.5f,
+                                    (winH - vs.VisualSize.height * g_lastFitScale) * 0.5f);
 
-    // Apply instant swap (0ms) to avoid visual pop.
-    // DComp Matrix applies to a shared container - crossfading two differently sized surfaces 
-    // using the newly calculated zoom matrix causes the old surface to instantly jump in size.
     g_compEngine->PlayPingPongCrossFade(0.0f);
-    
-    // [Refactor] Use Unified SyncDCompState
-    // This ensures the new surface is displayed correctly based on VisualState
     SyncDCompState(hwnd, winW, winH);
     g_compEngine->Commit();
-    
-    // ViewState unchanged - user's zoom/pan state preserved
-    
     return true;
 }
 
@@ -1654,28 +1706,9 @@ static void RefreshSvgSurfaceAfterZoom(HWND hwnd) {
     if (!g_imageResource.isSvg || !g_compEngine || !g_compEngine->IsInitialized()) {
         return;
     }
-
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    if (rc.right <= 0 || rc.bottom <= 0) {
-        return;
-    }
-
-    const float winW = (float)rc.right;
-    const float winH = (float)rc.bottom;
-
-    // When the current backing surface is still much larger than the viewport,
-    // redraw immediately instead of waiting for the debounce timer.
-    const bool needsImmediateRefresh =
-        g_lastSurfaceSize.width > winW * 3.0f ||
-        g_lastSurfaceSize.height > winH * 3.0f;
-
     KillTimer(hwnd, IDT_SVG_RERENDER);
-    if (needsImmediateRefresh) {
-        UpgradeSvgSurface(hwnd, g_imageResource);
-    } else {
-        SetTimer(hwnd, IDT_SVG_RERENDER, 200, nullptr);
-    }
+    g_isImageDirty = true;
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const ImageResource& res) {
@@ -1831,13 +1864,9 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
     // Calculate Surface Size based on TARGET window size (so it looks good after resize)
     UINT surfW = targetWinW;
     UINT surfH = targetWinH;
-    float svgMultiplier = 1.0f;
-
-    if (res.isSvg) {
-        SvgSurfaceSpec spec = CalculateSvgSurfaceSpec((float)winW, (float)winH, res, 1.0f);
-        surfW = spec.Width;
-        surfH = spec.Height;
-        svgMultiplier = spec.SurfaceScale;
+    if (UseSvgViewportRendering(res)) {
+        surfW = winW;
+        surfH = winH;
     }
 
     // [Titan Detection]
@@ -1861,23 +1890,15 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
 
     // [Fix] REMOVE AlignActiveLayer to prevent double-centering conflict with SetPan
     
-    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight);
+    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight, false);
     if (!ctx) return false;
     
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // Transparent to avoid baking background color
 
-    if (res.isSvg && res.svgDoc) {
-        // === SVG Direct2D Native Path ===
-        // Render FULL SVG to the scaled surface
-        SvgSurfaceSpec spec = CalculateSvgSurfaceSpec((float)winW, (float)winH, res, 1.0f);
-        float fitScale = spec.FitScale;
-        float centerOffsetX = spec.OffsetX;
-        float centerOffsetY = spec.OffsetY;
-        
-        // Transform: Scale to Fit surface, then Translate to Center of surface
-        D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Scale(fitScale, fitScale) * 
-                                     D2D1::Matrix3x2F::Translation(centerOffsetX, centerOffsetY);
-        
+    if (UseSvgViewportRendering(res)) {
+        // === SVG Viewport Path ===
+        VisualState vs = GetVisualState();
+        D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform((float)winW, (float)winH, res, vs);
         ComPtr<ID2D1DeviceContext5> ctx5;
         if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
              ctx5->SetTransform(CombineWithCurrentTransform(ctx, transform));
@@ -1885,18 +1906,12 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
              ctx5->SetTransform(D2D1::Matrix3x2F::Identity());
         }
         
-        // Store Metrics (relative to fit)
-        g_lastFitScale = fitScale;
-        g_lastFitOffset = D2D1::Point2F(centerOffsetX, centerOffsetY);
+        g_lastFitScale = std::min((float)winW / std::max(1.0f, vs.VisualSize.width),
+                                  (float)winH / std::max(1.0f, vs.VisualSize.height));
+        g_lastFitOffset = D2D1::Point2F(((float)winW - vs.VisualSize.width * g_lastFitScale) * 0.5f,
+                                        ((float)winH - vs.VisualSize.height * g_lastFitScale) * 0.5f);
         
-        // [Critical Fix] Update Global Surface Size Tracking
-        // Without this, subsequent Zoom logic works on old/zero dimensions!
         g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
-        
-        g_viewState.Zoom = 1.0f; // Initial zoom is 1.0 (Fit)
-        g_viewState.PanX = 0;
-        g_viewState.PanY = 0;
-        
     } else {
         // === Bitmap Path (Legacy) ===
         if (!res.bitmap) return false;
@@ -2531,6 +2546,9 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
     // 7. Limits
     float minScale = 0.1f * fitScale;
     float maxScale = std::max(50.0f * fitScale, 50.0f);
+    if (g_imageResource.isSvg && !UseSvgViewportRendering(g_imageResource)) {
+        maxScale = std::min(maxScale, GetSvgMaxSharpTotalScale(g_imageResource));
+    }
     
     if (newTotalScale < minScale) newTotalScale = minScale;
     if (newTotalScale > maxScale) newTotalScale = maxScale;
@@ -3881,7 +3899,18 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
 
             ClampPanForViewport(vs, winW, winH, targetZoom);
 
-            g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
+            if (UseSvgViewportRendering(g_imageResource)) {
+                VisualState surfaceVs{};
+                surfaceVs.PhysicalSize = D2D1::SizeF(winW, winH);
+                surfaceVs.VisualSize = surfaceVs.PhysicalSize;
+                surfaceVs.TotalRotation = 0.0f;
+                surfaceVs.IsRotated90 = false;
+                surfaceVs.FlipX = 1.0f;
+                surfaceVs.FlipY = 1.0f;
+                g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, 0.0f);
+            } else {
+                g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
+            }
         }
 
         // [Fix12] Tile uploads handled exclusively by OnPaint (line 5621) with correct visibleRect.
@@ -5177,13 +5206,14 @@ SKIP_EDGE_NAV:;
              } else {
                  g_viewState.PanX += dx; 
                  g_viewState.PanY += dy; 
-                 
-                 // [DComp] Use hardware pan with proper centering offset
-                 // [DComp] Use hardware pan via centralized Sync logic
-                 // Fixes jitter by ensuring Visual dimensions (Rotation) are respected
+
                  RECT rc; GetClientRect(hwnd, &rc);
                  SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                 RequestRepaint(PaintLayer::Dynamic);  // OSD update only
+                 if (UseSvgViewportRendering(g_imageResource)) {
+                     RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+                 } else {
+                     RequestRepaint(PaintLayer::Dynamic);  // OSD update only
+                 }
              }
          }
          
@@ -8809,6 +8839,7 @@ void OnPaint(HWND hwnd) {
     
     // [MIGRATED] Hover tracking moved to UIRenderer::UpdateHoverState
     
+    const bool imageWasDirty = g_isImageDirty;
     if (g_isImageDirty) {
         g_isImageDirty = false; // Reset dirty flag BEFORE drawing (Consume flag)
     }
@@ -8846,6 +8877,10 @@ void OnPaint(HWND hwnd) {
             // Canvas and Image rendering are now handled entirely within the DirectComposition visual tree.
             // Background clearing and grid drawing are moved to CompositionEngine surfaces.
             SyncDCompState(hwnd, winPixelsW, winPixelsH);
+
+            if (imageWasDirty && UseSvgViewportRendering(g_imageResource)) {
+                UpgradeSvgSurface(hwnd, g_imageResource);
+            }
 
             // [Fix] Snapshot metadata to avoid dangling .c_str() if coroutine resets g_currentMetadata mid-paint.
             const auto titanMeta = g_currentMetadata; // Value copy — safe from concurrent reset

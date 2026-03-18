@@ -528,7 +528,7 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
 // Ping-Pong Image Rendering
 // ============================================================================
 // [Smart Dispatch] Create surfaces based on size (Standard vs Titan)
-ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height, bool isTitan, UINT fullWidth, UINT fullHeight) {
+ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height, bool isTitan, UINT fullWidth, UINT fullHeight, bool allowOversizedStandard) {
     if (!m_device || !m_d2dDevice) return nullptr;
 
     // Determine target layer (the hidden one)
@@ -548,8 +548,10 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
     
     HRESULT hr = S_OK;
 
-    // [Smart Dispatch] Titan Mode: Explicit flag OR Size Threshold (Legacy fallback)
-    bool useTitan = isTitan || (width > 8192 || height > 8192);
+    // [Smart Dispatch] Titan Mode: Explicit flag OR size threshold for bitmap-style
+    // content. SVG can request an oversized standard surface so it stays on the
+    // single-surface vector path instead of being funneled into Titan.
+    bool useTitan = isTitan || (!allowOversizedStandard && (width > 8192 || height > 8192));
     
     // Fallback: If legacy implicit detection used, fill full dimensions
     if (useTitan && (fullWidth == 0 || fullHeight == 0)) {
