@@ -1644,18 +1644,33 @@ void UIRenderer::DrawCompareHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect, 
     dc->GetFactory(&factory);
     if (!factory) return;
 
-    // Use Luminance (HistL) for comparison, or fallback to Red if Luminance is unavailable
-    const auto& leftHist = leftMeta.HistL.empty() ? leftMeta.HistR : leftMeta.HistL;
-    const auto& rightHist = rightMeta.HistL.empty() ? rightMeta.HistR : rightMeta.HistL;
+    // Use combined RGB overlay (max of R, G, B per bin) to match standalone visual envelope
+    std::vector<uint32_t> leftHist(256, 0);
+    std::vector<uint32_t> rightHist(256, 0);
 
-    if (leftHist.empty() && rightHist.empty()) return;
+    bool hasLeft = !leftMeta.HistR.empty() && !leftMeta.HistG.empty() && !leftMeta.HistB.empty();
+    bool hasRight = !rightMeta.HistR.empty() && !rightMeta.HistG.empty() && !rightMeta.HistB.empty();
+
+    if (!hasLeft && !hasRight) {
+        // Fallback to Luminance if RGB not available (unlikely)
+        hasLeft = !leftMeta.HistL.empty();
+        hasRight = !rightMeta.HistL.empty();
+        if (!hasLeft && !hasRight) return;
+        if (hasLeft) leftHist = leftMeta.HistL;
+        if (hasRight) rightHist = rightMeta.HistL;
+    } else {
+        for (int i = 0; i < 256; i++) {
+            if (hasLeft) leftHist[i] = std::max({leftMeta.HistR[i], leftMeta.HistG[i], leftMeta.HistB[i]});
+            if (hasRight) rightHist[i] = std::max({rightMeta.HistR[i], rightMeta.HistG[i], rightMeta.HistB[i]});
+        }
+    }
 
     // Find independent max values to normalize shapes
     uint32_t maxLeft = 1;
     uint32_t maxRight = 1;
     for (int i = 0; i < 256; i++) {
-        if (!leftHist.empty() && leftHist[i] > maxLeft) maxLeft = leftHist[i];
-        if (!rightHist.empty() && rightHist[i] > maxRight) maxRight = rightHist[i];
+        if (hasLeft && leftHist[i] > maxLeft) maxLeft = leftHist[i];
+        if (hasRight && rightHist[i] > maxRight) maxRight = rightHist[i];
     }
 
     float stepX = (rect.right - rect.left) / 255.0f; // 256 bins means 255 intervals
