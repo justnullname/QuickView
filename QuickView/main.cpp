@@ -370,6 +370,7 @@ static CompareState g_compare;
 // Forward Declaration needed for UpgradeSvgSurface and Helpers
 static void SyncDCompState(HWND hwnd, float w, float h);
 static UINT GetSvgSurfaceSizeLimit();
+static D2D1_MATRIX_3X2_F CombineWithCurrentTransform(ID2D1DeviceContext* ctx, const D2D1_MATRIX_3X2_F& transform);
 static bool RenderCompareComposite(HWND hwnd);
 static void MarkCompareDirty();
 static void EnterCompareMode(HWND hwnd);
@@ -1559,6 +1560,23 @@ static D2D1_MATRIX_3X2_F BuildSvgViewportTransform(float winW, float winH, const
            D2D1::Matrix3x2F::Translation(centerX, centerY);
 }
 
+static void DrawSvgWithViewportTransform(ID2D1DeviceContext* ctx, const ImageResource& res, const D2D1_MATRIX_3X2_F& transform) {
+    if (!ctx || !res.svgDoc) return;
+
+    ComPtr<ID2D1DeviceContext5> ctx5;
+    if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) return;
+
+    const D2D1_ANTIALIAS_MODE oldAA = ctx5->GetAntialiasMode();
+    // Favor responsiveness while the user is actively dragging/zooming, then let
+    // the existing interaction timer trigger a high-quality redraw on settle.
+    ctx5->SetAntialiasMode(g_viewState.IsInteracting ? D2D1_ANTIALIAS_MODE_ALIASED
+                                                     : D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    ctx5->SetTransform(CombineWithCurrentTransform(ctx, transform));
+    ctx5->DrawSvgDocument(res.svgDoc.Get());
+    ctx5->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx5->SetAntialiasMode(oldAA);
+}
+
 static float GetSvgMaxSharpTotalScale(const ImageResource& res) {
     if (!res.isSvg || res.svgW <= 0.0f || res.svgH <= 0.0f) {
         return (std::numeric_limits<float>::max)();
@@ -1678,13 +1696,8 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
     
     // Draw SVG with D2D Native
-    ComPtr<ID2D1DeviceContext5> ctx5;
-    if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
-        D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform(winW, winH, res, vs);
-        ctx5->SetTransform(CombineWithCurrentTransform(ctx, transform));
-        ctx5->DrawSvgDocument(res.svgDoc.Get());
-        ctx5->SetTransform(D2D1::Matrix3x2F::Identity());
-    }
+    D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform(winW, winH, res, vs);
+    DrawSvgWithViewportTransform(ctx, res, transform);
     
     g_compEngine->EndPendingUpdate();
     
@@ -1899,12 +1912,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
         // === SVG Viewport Path ===
         VisualState vs = GetVisualState();
         D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform((float)winW, (float)winH, res, vs);
-        ComPtr<ID2D1DeviceContext5> ctx5;
-        if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
-             ctx5->SetTransform(CombineWithCurrentTransform(ctx, transform));
-             ctx5->DrawSvgDocument(res.svgDoc.Get());
-             ctx5->SetTransform(D2D1::Matrix3x2F::Identity());
-        }
+        DrawSvgWithViewportTransform(ctx, res, transform);
         
         g_lastFitScale = std::min((float)winW / std::max(1.0f, vs.VisualSize.width),
                                   (float)winH / std::max(1.0f, vs.VisualSize.height));
