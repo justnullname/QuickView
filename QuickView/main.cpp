@@ -6140,6 +6140,13 @@ SKIP_EDGE_NAV:;
 
         // Edge Navigation Click
         if (g_config.EdgeNavClick && !g_gallery.IsVisible() && !g_compare.draggingDivider && !g_viewState.IsDragging) {
+            // [Fix] Block edge nav if clicking on Info UI / HUD
+            if (g_uiRenderer) {
+                auto hit = g_uiRenderer->HitTest((float)pt.x, (float)pt.y);
+                if (hit.type != UIHitResult::None) {
+                    return 0; // Handled by Info UI
+                }
+            }
             RECT rc; GetClientRect(hwnd, &rc);
             int width = rc.right - rc.left;
             int height = rc.bottom - rc.top;

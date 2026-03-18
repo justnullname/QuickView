@@ -2005,7 +2005,10 @@ namespace {
 }
 
 void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
-    if (!g_runtime.ShowCompareInfo) return;
+    if (!g_runtime.ShowCompareInfo) {
+        m_lastHUDRect = {};
+        return;
+    }
 
     CImageLoader::ImageMetadata leftMeta, rightMeta;
     if (!GetCompareInfoSnapshot(leftMeta, rightMeta)) return;
@@ -2122,9 +2125,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         dc->DrawText(L"[x]", 3, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 1 * s, m_panelCloseRect.top + 1 * s, m_panelCloseRect.right + 1 * s, m_panelCloseRect.bottom + 1 * s), brushShadow.Get());
         dc->DrawText(L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get());
 
-        // Reset other Hit Rects for Lite mode
+        // Update Hit Rect for the whole Lite HUD line (prevent click-through)
+        m_lastHUDRect = D2D1::RectF(0, 0, (float)m_width, y + 24.0f * s);
         m_hudToggleExpandRect = {};
-        m_lastHUDRect = {};
         return;
     }
 
