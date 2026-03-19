@@ -3,6 +3,7 @@
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
 #include "AppStrings.h"
+#include "EditState.h"
 #include "ImageEngine.h"
 #include <algorithm>
 #include <Shlobj.h>
@@ -21,8 +22,6 @@
 
 // Global Accessor from main.cpp
 extern ImageEngine* g_pImageEngine;
-extern AppConfig g_config;
-extern RuntimeConfig g_runtime;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
 extern HelpOverlay g_helpOverlay;
 
@@ -768,9 +767,7 @@ static D2D1_RECT_F GetUpdateButtonRect(const D2D1_RECT_F& cardRect) {
     return cardRect; // The item itself IS the button now
 }
 
-#include "EditState.h"
-
-extern AppConfig g_config;
+// [Removed redundant include]
 
 // Helper to cast Enum to int*
 template<typename T>

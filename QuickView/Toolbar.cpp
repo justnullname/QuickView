@@ -2,9 +2,6 @@
 #include "Toolbar.h"
 #include "AppStrings.h"
 #include "EditState.h"
-
-extern AppConfig g_config;
-
 // Icon Codes (Segoe Fluent Icons)
 #define ICON_PREV L"\uE76B"
 #define ICON_NEXT L"\uE76C"
