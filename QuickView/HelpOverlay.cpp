@@ -227,7 +227,7 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             const wchar_t* pStr = item.key.c_str();
             UINT32 sLen = (UINT32)item.key.length();
             IDWriteTextFormat* pFmt = m_fmtTip.Get();
-            FLOAT maxWidth = 550.0f * s; // WIDTH (600) - 50
+            FLOAT maxWidth = (WIDTH - 48.0f) * s; // Account for left and right padding (24.0f * 2)
             FLOAT maxHeight = 1000.0f;
             
             HRESULT hr = m_dwriteFactory->CreateTextLayout(pStr, sLen, pFmt, maxWidth, maxHeight, layout.GetAddressOf());
