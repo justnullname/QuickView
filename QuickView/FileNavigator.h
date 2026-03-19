@@ -26,8 +26,10 @@ public:
         m_files.clear();
         m_currentIndex = -1;
 
-        // Parent directory
-        fs::path dir = p.parent_path();
+        const bool isDirectory = fs::is_directory(p);
+
+        // If a directory is passed in, scan it directly. Otherwise scan the parent directory.
+        fs::path dir = isDirectory ? p : p.parent_path();
         if (dir.empty()) return;
 
         // Supported extensions (comprehensive list including RAW formats)
@@ -100,11 +102,13 @@ public:
         }
 
         // Find current index
-        std::wstring currentFull = p.wstring();
-        for (size_t i = 0; i < m_files.size(); ++i) {
-            if (m_files[i] == currentFull) {
-                m_currentIndex = (int)i;
-                break;
+        if (!isDirectory) {
+            std::wstring currentFull = p.wstring();
+            for (size_t i = 0; i < m_files.size(); ++i) {
+                if (m_files[i] == currentFull) {
+                    m_currentIndex = (int)i;
+                    break;
+                }
             }
         }
     }

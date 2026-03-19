@@ -49,6 +49,7 @@ namespace AppStrings {
     extern const wchar_t* Context_OpenWith;
     extern const wchar_t* Context_Edit;
     extern const wchar_t* Context_ShowInExplorer;
+    extern const wchar_t* Context_OpenFolder;
     extern const wchar_t* Context_CopyImage;
     extern const wchar_t* Context_CopyPath;
     extern const wchar_t* Context_Print;

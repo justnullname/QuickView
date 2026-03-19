@@ -414,6 +414,9 @@ static SavedWindowState g_savedState;
 // Forward declarations for helper functions
 static void SaveOverlayWindowState(HWND hwnd);
 static void RestoreOverlayWindowState(HWND hwnd);
+static void ShowGallery(HWND hwnd);
+static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearThumbCache = true);
+static std::wstring PickFolder(HWND hwnd, const std::wstring& initialPath = L"");
 
 static void ApplyUIScale(float scale) {
     if (scale < 1.0f) scale = 1.0f;
@@ -2226,6 +2229,102 @@ void RequestRepaint(PaintLayer layer) {
     if (g_mainHwnd) {
         ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
     }
+}
+
+static void ShowGallery(HWND hwnd) {
+    SaveOverlayWindowState(hwnd);
+
+    const int MIN_GALLERY_WIDTH = 660;
+    const int MIN_GALLERY_HEIGHT = 720;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int curW = rc.right - rc.left;
+    int curH = rc.bottom - rc.top;
+    if (curW < MIN_GALLERY_WIDTH || curH < MIN_GALLERY_HEIGHT) {
+        int newW = std::max(curW, MIN_GALLERY_WIDTH);
+        int newH = std::max(curH, MIN_GALLERY_HEIGHT);
+        RECT winRect;
+        GetWindowRect(hwnd, &winRect);
+        int winW = winRect.right - winRect.left;
+        int winH = winRect.bottom - winRect.top;
+        int borderW = winW - curW;
+        int borderH = winH - curH;
+        int targetW = newW + borderW;
+        int targetH = newH + borderH;
+        int cx = (winRect.left + winRect.right) / 2;
+        int cy = (winRect.top + winRect.bottom) / 2;
+        SetWindowPos(hwnd, nullptr, cx - targetW / 2, cy - targetH / 2, targetW, targetH, SWP_NOZORDER);
+    }
+
+    g_gallery.Open(g_navigator.Index());
+    RequestRepaint(PaintLayer::All);
+    SetTimer(hwnd, 998, 16, nullptr);
+}
+
+static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearThumbCache) {
+    namespace fs = std::filesystem;
+
+    if (path.empty()) return false;
+
+    std::error_code ec;
+    const fs::path fsPath(path);
+    const bool isDirectory = fs::is_directory(fsPath, ec);
+    if (ec) return false;
+
+    g_editState.Reset();
+    g_viewState.Reset();
+    g_navigator.Initialize(path);
+    if (clearThumbCache) {
+        g_thumbMgr.ClearCache();
+    }
+
+    if (isDirectory) {
+        ShowGallery(hwnd);
+    } else {
+        LoadImageAsync(hwnd, path);
+    }
+
+    RequestRepaint(PaintLayer::All);
+    return true;
+}
+
+static std::wstring PickFolder(HWND hwnd, const std::wstring& initialPath) {
+    ComPtr<IFileOpenDialog> dialog;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || !dialog) return L"";
+
+    DWORD options = 0;
+    if (FAILED(dialog->GetOptions(&options))) return L"";
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+
+    if (!initialPath.empty()) {
+        std::error_code ec;
+        std::filesystem::path candidate(initialPath);
+        if (!std::filesystem::is_directory(candidate, ec)) {
+            candidate = candidate.parent_path();
+        }
+        if (!candidate.empty() && std::filesystem::exists(candidate, ec) && !ec) {
+            ComPtr<IShellItem> folderItem;
+            if (SUCCEEDED(SHCreateItemFromParsingName(candidate.c_str(), nullptr, IID_PPV_ARGS(&folderItem)))) {
+                dialog->SetDefaultFolder(folderItem.Get());
+                dialog->SetFolder(folderItem.Get());
+            }
+        }
+    }
+
+    hr = dialog->Show(hwnd);
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return L"";
+    if (FAILED(hr)) return L"";
+
+    ComPtr<IShellItem> result;
+    if (FAILED(dialog->GetResult(&result)) || !result) return L"";
+
+    PWSTR rawPath = nullptr;
+    if (FAILED(result->GetDisplayName(SIGDN_FILESYSPATH, &rawPath)) || !rawPath) return L"";
+
+    std::wstring folderPath(rawPath);
+    CoTaskMemFree(rawPath);
+    return folderPath;
 }
 
 static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval) {
@@ -4568,10 +4667,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // [Phase 0] Use ProcessRouter::ParseImagePath for correct --viewer-child handling.
     std::wstring initialImagePath = QuickView::ProcessRouter::ParseImagePath();
     if (!initialImagePath.empty()) {
-        g_navigator.Initialize(initialImagePath);
-        LoadImageAsync(hwnd, initialImagePath);
-        // [Fix Race] Force-check event queue for super-fast loads on startup
-        PostMessageW(hwnd, WM_ENGINE_EVENT, 0, 0);
+        if (OpenPathOrDirectory(hwnd, initialImagePath)) {
+            std::error_code ec;
+            if (!std::filesystem::is_directory(std::filesystem::path(initialImagePath), ec)) {
+                // [Fix Race] Force-check event queue for super-fast loads on startup
+                PostMessageW(hwnd, WM_ENGINE_EVENT, 0, 0);
+            }
+        }
     } else {
         // No file specified - auto open file dialog
         OPENFILENAMEW ofn = {};
@@ -4724,8 +4826,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_ROUTED_OPEN: {
         auto* pathStr = reinterpret_cast<std::wstring*>(lParam);
         if (pathStr && !pathStr->empty()) {
-            g_navigator.Initialize(*pathStr);
-            LoadImageAsync(hwnd, *pathStr);
+            OpenPathOrDirectory(hwnd, *pathStr);
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
             ForceForegroundWindow(hwnd);
         }
@@ -6116,33 +6217,10 @@ SKIP_EDGE_NAV:;
                     if (g_gallery.IsVisible()) {
                         g_gallery.Close();
                         RestoreOverlayWindowState(hwnd);
+                        RequestRepaint(PaintLayer::All);
                     } else {
-                        SaveOverlayWindowState(hwnd);
-                        
-                        // Expand window if too small for 3 columns
-                        const int MIN_GALLERY_WIDTH = 660;  // Ensure 3 columns
-                        const int MIN_GALLERY_HEIGHT = 720;  // 3 rows + margin
-                        RECT rc; GetClientRect(hwnd, &rc);
-                        int curW = rc.right - rc.left;
-                        int curH = rc.bottom - rc.top;
-                        if (curW < MIN_GALLERY_WIDTH || curH < MIN_GALLERY_HEIGHT) {
-                            int newW = std::max(curW, MIN_GALLERY_WIDTH);
-                            int newH = std::max(curH, MIN_GALLERY_HEIGHT);
-                            RECT winRect; GetWindowRect(hwnd, &winRect);
-                            int winW = winRect.right - winRect.left;
-                            int winH = winRect.bottom - winRect.top;
-                            int borderW = winW - curW;
-                            int borderH = winH - curH;
-                            int targetW = newW + borderW;
-                            int targetH = newH + borderH;
-                            int cx = (winRect.left + winRect.right) / 2;
-                            int cy = (winRect.top + winRect.bottom) / 2;
-                            SetWindowPos(hwnd, nullptr, cx - targetW/2, cy - targetH/2, targetW, targetH, SWP_NOZORDER);
-                        }
-                        g_gallery.Open(g_navigator.Index());
-                        SetTimer(hwnd, 998, 16, nullptr);
+                        ShowGallery(hwnd);
                     }
-                    RequestRepaint(PaintLayer::All);
                     break;
                 case ToolbarButtonID::CompareToggle:
                     if (IsCompareModeActive()) {
@@ -6508,20 +6586,10 @@ SKIP_EDGE_NAV:;
                 } else {
                     g_compare.activePane = ComparePane::Right;
                     g_compare.selectedPane = ComparePane::Right;
-                    g_editState.Reset();
-                    g_viewState.Reset();
-                    g_navigator.Initialize(path);
-                    g_thumbMgr.ClearCache();
-                    LoadImageAsync(hwnd, path); // Async
-                    RequestRepaint(PaintLayer::All);
+                    OpenPathOrDirectory(hwnd, path);
                 }
             } else {
-                g_editState.Reset();
-                g_viewState.Reset();
-                g_navigator.Initialize(path);
-                g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
-                LoadImageAsync(hwnd, path); // Async
-                RequestRepaint(PaintLayer::All);
+                OpenPathOrDirectory(hwnd, path);
             }
         }
         DragFinish(hDrop);
@@ -6679,31 +6747,7 @@ SKIP_EDGE_NAV:;
                     RestoreOverlayWindowState(hwnd);
                     RequestRepaint(PaintLayer::All);
                 } else {
-                    SaveOverlayWindowState(hwnd);
-                    
-                    // Expand window if too small for 3 columns
-                    const int MIN_GALLERY_WIDTH = 660;
-                    const int MIN_GALLERY_HEIGHT = 720;
-                    RECT rc; GetClientRect(hwnd, &rc);
-                    int curW = rc.right - rc.left;
-                    int curH = rc.bottom - rc.top;
-                    if (curW < MIN_GALLERY_WIDTH || curH < MIN_GALLERY_HEIGHT) {
-                        int newW = std::max(curW, MIN_GALLERY_WIDTH);
-                        int newH = std::max(curH, MIN_GALLERY_HEIGHT);
-                        RECT winRect; GetWindowRect(hwnd, &winRect);
-                        int winW = winRect.right - winRect.left;
-                        int winH = winRect.bottom - winRect.top;
-                        int borderW = winW - curW;
-                        int borderH = winH - curH;
-                        int targetW = newW + borderW;
-                        int targetH = newH + borderH;
-                        int cx = (winRect.left + winRect.right) / 2;
-                        int cy = (winRect.top + winRect.bottom) / 2;
-                        SetWindowPos(hwnd, nullptr, cx - targetW/2, cy - targetH/2, targetW, targetH, SWP_NOZORDER);
-                    }
-                    g_gallery.Open(g_navigator.Index());
-                    RequestRepaint(PaintLayer::All);
-                    SetTimer(hwnd, 998, 16, nullptr); // Fade in
+                    ShowGallery(hwnd);
                 }
             }
             break;
@@ -7014,6 +7058,14 @@ SKIP_EDGE_NAV:;
             if (!contextPath.empty()) {
                 std::wstring cmd = L"/select,\"" + contextPath + L"\"";
                 ShellExecuteW(nullptr, nullptr, L"explorer.exe", cmd.c_str(), nullptr, SW_SHOWNORMAL);
+            }
+            break;
+        }
+        case IDM_OPEN_FOLDER: {
+            if (!CheckUnsavedChanges(hwnd)) break;
+            const std::wstring selectedFolder = PickFolder(hwnd, contextPath);
+            if (!selectedFolder.empty()) {
+                OpenPathOrDirectory(hwnd, selectedFolder);
             }
             break;
         }

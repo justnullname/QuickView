@@ -65,6 +65,7 @@ namespace AppStrings {
     const wchar_t* Context_OpenWith = nullptr;
     const wchar_t* Context_Edit = nullptr;
     const wchar_t* Context_ShowInExplorer = nullptr;
+    const wchar_t* Context_OpenFolder = nullptr;
     const wchar_t* Context_CopyImage = nullptr;
     const wchar_t* Context_CopyPath = nullptr;
     const wchar_t* Context_Print = nullptr;
@@ -423,6 +424,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"Open With...";
         static constexpr const wchar_t* Context_Edit = L"Edit (Default App)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"Show in Explorer";
+        static constexpr const wchar_t* Context_OpenFolder = L"Open Folder";
         static constexpr const wchar_t* Context_CopyImage = L"Copy Image\tCtrl+C";
         static constexpr const wchar_t* Context_CopyPath = L"Copy Path\tCtrl+Alt+C";
         static constexpr const wchar_t* Context_Print = L"Print\tCtrl+P";
@@ -775,6 +777,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"打开方式...";
         static constexpr const wchar_t* Context_Edit = L"编辑 (默认应用)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"在资源管理器中显示";
+        static constexpr const wchar_t* Context_OpenFolder = L"打开文件夹";
         static constexpr const wchar_t* Context_CopyImage = L"复制图像\tCtrl+C";
         static constexpr const wchar_t* Context_CopyPath = L"复制路径\tCtrl+Alt+C";
         static constexpr const wchar_t* Context_Print = L"打印\tCtrl+P";
@@ -1012,6 +1015,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"開啟方式...";
         static constexpr const wchar_t* Context_Edit = L"編輯 (預設應用程式)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"在檔案總管中顯示";
+        static constexpr const wchar_t* Context_OpenFolder = L"開啟資料夾";
         static constexpr const wchar_t* Context_CopyImage = L"複製圖像\tCtrl+C";
         static constexpr const wchar_t* Context_CopyPath = L"複製路徑\tCtrl+Alt+C";
         static constexpr const wchar_t* Context_Print = L"列印\tCtrl+P";
@@ -1291,6 +1295,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"プログラムから開く...";
         static constexpr const wchar_t* Context_Edit = L"編集 (既定のアプリ)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"エクスプローラーで表示";
+        static constexpr const wchar_t* Context_OpenFolder = L"フォルダーを開く";
         static constexpr const wchar_t* Context_CopyImage = L"画像をコピー\tCtrl+C";
         static constexpr const wchar_t* Context_CopyPath = L"パスをコピー\tCtrl+Alt+C";
         static constexpr const wchar_t* Context_Print = L"印刷\tCtrl+P";
@@ -1570,6 +1575,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"Открыть с помощью...";
         static constexpr const wchar_t* Context_Edit = L"Редактировать (Программа по умолчанию)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"Показать в Проводнике";
+        static constexpr const wchar_t* Context_OpenFolder = L"Открыть папку";
         static constexpr const wchar_t* Context_CopyImage = L"Копировать изображение\tCtrl+C";
         static constexpr const wchar_t* Context_CopyPath = L"Копировать путь\tCtrl+Alt+C";
         static constexpr const wchar_t* Context_Print = L"Печать\tCtrl+P";
@@ -1849,6 +1855,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"Öffnen mit...";
         static constexpr const wchar_t* Context_Edit = L"Bearbeiten (Standard-App)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"Im Explorer anzeigen";
+        static constexpr const wchar_t* Context_OpenFolder = L"Ordner öffnen";
         static constexpr const wchar_t* Context_CopyImage = L"Bild kopieren\tStrg+C";
         static constexpr const wchar_t* Context_CopyPath = L"Pfad kopieren\tStrg+Alt+C";
         static constexpr const wchar_t* Context_Print = L"Drucken\tStrg+P";
@@ -2128,6 +2135,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_OpenWith = L"Abrir con...";
         static constexpr const wchar_t* Context_Edit = L"Editar (App predeterminada)\tE";
         static constexpr const wchar_t* Context_ShowInExplorer = L"Mostrar en Explorador";
+        static constexpr const wchar_t* Context_OpenFolder = L"Abrir carpeta";
         static constexpr const wchar_t* Context_CopyImage = L"Copiar imagen\tCtrl+C";
         static constexpr const wchar_t* Context_CopyPath = L"Copiar ruta\tCtrl+Alt+C";
         static constexpr const wchar_t* Context_Print = L"Imprimir\tCtrl+P";
@@ -2367,6 +2375,7 @@ namespace AppStrings {
         Context_OpenWith = T::Context_OpenWith;
         Context_Edit = T::Context_Edit;
         Context_ShowInExplorer = T::Context_ShowInExplorer;
+        Context_OpenFolder = T::Context_OpenFolder;
         Context_CopyImage = T::Context_CopyImage;
         Context_CopyPath = T::Context_CopyPath;
         Context_Print = T::Context_Print;

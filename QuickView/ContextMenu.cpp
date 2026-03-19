@@ -19,6 +19,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hMenu, hasImage ? MF_STRING : MF_GRAYED, IDM_OPENWITH_DEFAULT, AppStrings::Context_OpenWith);
     AppendMenuW(hMenu, MF_STRING, IDM_EDIT, AppStrings::Context_Edit);
     AppendMenuW(hMenu, MF_STRING, IDM_SHOW_IN_EXPLORER, AppStrings::Context_ShowInExplorer);
+    AppendMenuW(hMenu, hasImage ? MF_STRING : MF_GRAYED, IDM_OPEN_FOLDER, AppStrings::Context_OpenFolder);
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING, IDM_COPY_IMAGE, AppStrings::Context_CopyImage);
     AppendMenuW(hMenu, MF_STRING, IDM_COPY_PATH, AppStrings::Context_CopyPath);
