@@ -1067,8 +1067,9 @@ void SettingsOverlay::BuildMenu() {
             // Forward declaration to let main.cpp handle this cleanly
             extern void ApplyFullScreenZoomMode(HWND hwnd);
             ApplyFullScreenZoomMode(hwnd);
-            extern void RequestRepaint(PaintLayer layer);
-            RequestRepaint(PaintLayer::All);
+            // We use InvalidateRect here to avoid missing PaintLayer enum declaration in this file.
+            // main.cpp's WM_PAINT will handle the redraw.
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
     };
     tabVisuals.items.push_back(itemFsZoom);
