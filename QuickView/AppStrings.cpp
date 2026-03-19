@@ -182,6 +182,7 @@ namespace AppStrings {
     const wchar_t* Settings_Label_CanvasColor = nullptr;
     const wchar_t* Settings_Label_Overlay = nullptr;
     const wchar_t* Settings_Label_ShowGrid = nullptr;
+    const wchar_t* Settings_Label_CrossFade = nullptr;
     const wchar_t* Settings_Label_AlwaysOnTop = nullptr;
     const wchar_t* Settings_Label_LockWindow = nullptr;
     const wchar_t* Settings_Label_AutoHideTitle = nullptr;
@@ -493,6 +494,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Canvas Color";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Overlay";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Show Grid Overlay";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Image Transition Fade";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Always on Top";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Lock Window";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Auto-Hide Title Bar";
@@ -711,6 +713,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"画布颜色";
         static constexpr const wchar_t* Settings_Label_Overlay = L"叠加层";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"显示网格";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"图片切换淡入淡出";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"窗口置顶";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"锁定窗口";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"自动隐藏标题栏";
@@ -1106,6 +1109,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"畫布顏色";
         static constexpr const wchar_t* Settings_Label_Overlay = L"疊加層";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"顯示網格";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"圖片切換淡入淡出";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"視窗置頂";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"鎖定視窗";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"自動隱藏標題列";
@@ -1399,6 +1403,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"キャンバス色";
         static constexpr const wchar_t* Settings_Label_Overlay = L"オーバーレイ";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"グリッド表示";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"画像の切り替えフェード";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"常に手前";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"ウィンドウをロック";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"タイトルバー自動非表示";
@@ -1692,6 +1697,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Цвет холста";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Наложение";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Показать сетку";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Плавный переход между изображениями";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Поверх всех окон";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Заблокировать размер окна";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Автоскрытие заголовка";
@@ -1985,6 +1991,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Leinwandfarbe";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Überlagerung";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Raster anzeigen";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Bildübergang ausblenden";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Immer im Vordergrund";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Fenstergröße sperren";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Titelleiste automatisch ausblenden";
@@ -2278,6 +2285,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Color del lienzo";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Superposición";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Mostrar cuadrícula";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Desvanecimiento de transición de imagen";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Siempre visible";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Bloquear ventana";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Ocultar barra de título";
@@ -2591,6 +2599,7 @@ namespace AppStrings {
         Settings_Label_CanvasColor = T::Settings_Label_CanvasColor;
         Settings_Label_Overlay = T::Settings_Label_Overlay;
         Settings_Label_ShowGrid = T::Settings_Label_ShowGrid;
+        Settings_Label_CrossFade = T::Settings_Label_CrossFade;
         Settings_Label_AlwaysOnTop = T::Settings_Label_AlwaysOnTop;
         Settings_Label_LockWindow = T::Settings_Label_LockWindow;
         Settings_Label_AutoHideTitle = T::Settings_Label_AutoHideTitle;

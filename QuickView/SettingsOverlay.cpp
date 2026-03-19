@@ -952,6 +952,9 @@ void SettingsOverlay::BuildMenu() {
         // Standard Mode: Just Grid Toggle
         tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowGrid, OptionType::Toggle, &g_config.CanvasShowGrid });
     }
+
+    // Cross Fade Toggle
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_CrossFade, OptionType::Toggle, &g_config.EnableCrossFade });
     
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Window, OptionType::Header });
 

@@ -227,7 +227,7 @@ static bool g_isBlurry = false; // For Motion Blur (Ghost)
 static bool g_transitionFromThumb = false; // Flag: Did we transition from a thumbnail?
 static bool g_isCrossFading = false;
 static DWORD g_crossFadeStart = 0;
-static const DWORD CROSS_FADE_DURATION = 90; // ms (faster)
+static const DWORD CROSS_FADE_DURATION = 45; // ms (faster, reduced from 90)
 static const DWORD SLOW_MOTION_DURATION = 2000; // ms (debug)
 bool g_slowMotionMode = false; // [Debug] Slow crossfade for timing analysis
 static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
@@ -2151,7 +2151,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
     // [Fix] Enable smooth cross-fade transition.
     // Use 150ms fade to eliminate transparent flicker.
     // For fast upgrades (same image, new surface size), swap instantly to avoid scale-jump artifacts.
-    float fadeMs = isFastUpgrade ? 0.0f : 150.0f;
+    float fadeMs = (!g_config.EnableCrossFade || isFastUpgrade) ? 0.0f : 100.0f; // Reduced from 150ms to 100ms for faster transition
     g_compEngine->PlayPingPongCrossFade(fadeMs);
     if (g_compEngine->IsInitialized()) {
         SyncDCompState(hwnd, (float)winW, (float)winH);
@@ -3577,6 +3577,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"RoundedCorners", g_config.RoundedCorners ? L"1" : L"0", iniPath.c_str());
 
     // Control
+    WritePrivateProfileStringW(L"Controls", L"EnableCrossFade", g_config.EnableCrossFade ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"ZoomModeIn", std::to_wstring(g_config.ZoomModeIn).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"ZoomModeOut", std::to_wstring(g_config.ZoomModeOut).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"InvertWheel", g_config.InvertWheel ? L"1" : L"0", iniPath.c_str());
@@ -3692,6 +3693,7 @@ void LoadConfig() {
     g_config.RoundedCorners = GetPrivateProfileIntW(L"View", L"RoundedCorners", 1, iniPath.c_str()) != 0;
 
     // Control
+    g_config.EnableCrossFade = GetPrivateProfileIntW(L"Controls", L"EnableCrossFade", 1, iniPath.c_str()) != 0;
     g_config.ZoomModeIn = GetPrivateProfileIntW(L"Controls", L"ZoomModeIn", 0, iniPath.c_str());
     if (g_config.ZoomModeIn < 0 || g_config.ZoomModeIn > 3) g_config.ZoomModeIn = 0;
     g_config.ZoomModeOut = GetPrivateProfileIntW(L"Controls", L"ZoomModeOut", 0, iniPath.c_str());

@@ -108,6 +108,7 @@ struct AppConfig {
     bool UpscaleSmallImagesWhenLocked = false;
 
     // --- Control ---
+    bool EnableCrossFade = true;        // Enable cross-fade animation when changing images
     int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     bool InvertWheel = false;
@@ -226,7 +227,6 @@ struct RuntimeConfig {
     // Verification Flags (Phase 5)
     bool EnableScout = true;
     bool EnableHeavy = true;
-    bool EnableCrossFade = true;
     
     // [Phase 7] Fit Stage - Screen Dimensions
     int screenWidth = 0;  // 0 = full decode (no scaling)
