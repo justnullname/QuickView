@@ -98,6 +98,11 @@ struct AppConfig {
     wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
 
+    // --- Window Lock Behaviors ---
+    bool KeepWindowSizeOnNav = false;
+    bool RememberLastWindowSize = false;
+    bool UpscaleSmallImagesWhenLocked = false;
+
     // --- Control ---
     bool InvertWheel = false;
     int WheelActionMode = 0;            // 0=Zoom, 1=Navigate

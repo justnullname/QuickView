@@ -993,6 +993,11 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ResizeOnZoom, OptionType::Toggle, &g_config.ResizeWindowOnZoom });
     tabVisuals.items.push_back({ AppStrings::Settings_Label_AutoHideTitle, OptionType::Toggle, &g_config.AutoHideWindowControls });
     
+    tabVisuals.items.push_back({ AppStrings::Settings_Header_WindowLock, OptionType::Header });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_KeepWindowSizeOnNav, OptionType::Toggle, &g_config.KeepWindowSizeOnNav });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_RememberLastWindowSize, OptionType::Toggle, &g_config.RememberLastWindowSize });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_UpscaleSmallImagesWhenLocked, OptionType::Toggle, &g_config.UpscaleSmallImagesWhenLocked });
+
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Panel, OptionType::Header });
     
     // [Fix] Lock Toolbar: Update runtime state immediately

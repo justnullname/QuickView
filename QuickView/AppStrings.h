@@ -187,6 +187,7 @@ namespace AppStrings {
     // Visuals
     extern const wchar_t* Settings_Header_Backdrop;
     extern const wchar_t* Settings_Header_Window;
+    extern const wchar_t* Settings_Header_WindowLock;
     extern const wchar_t* Settings_Header_Panel;
     
     extern const wchar_t* Settings_Label_CanvasColor;
@@ -197,6 +198,10 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_AutoHideTitle;
     extern const wchar_t* Settings_Label_RoundedCorners; // [v3.1.2]
     extern const wchar_t* Settings_Label_LockToolbar;
+
+    extern const wchar_t* Settings_Label_KeepWindowSizeOnNav;
+    extern const wchar_t* Settings_Label_RememberLastWindowSize;
+    extern const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked;
     extern const wchar_t* Settings_Label_ExifMode;
     extern const wchar_t* Settings_Label_ToolbarInfoDefault;
     extern const wchar_t* Settings_Label_OpenFullScreenMode;
