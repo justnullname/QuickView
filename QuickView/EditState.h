@@ -133,6 +133,7 @@ struct AppConfig {
     
     // --- Image & Edit ---
     bool AutoRotate = true;
+    bool EnableSmoothScaling = false;    // New: Smooth Zoom toggle
     bool ColorManagement = false;
     bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
     

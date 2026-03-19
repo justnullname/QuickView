@@ -274,6 +274,7 @@ static int g_imageQualityLevel = 0;         // [v3.1] 0: Void, 1: Wiki/Scout, 2:
 static bool g_isImageScaled = false;         // True if current image was decoded at reduced resolution
 static constexpr UINT_PTR IDT_SVG_RERENDER = 44; // [SVG Lossless] Timer for lazy high-res re-render
 static constexpr UINT_PTR IDT_INTERACTION = 1001; // Interaction debounce for HQ redraw/surface upgrade
+static constexpr UINT_PTR IDT_SMOOTH_WINDOW_ZOOM = 1002;
 
 // Phase 2: Queue Drop Debounce (single-slot sliding window)
 struct Phase2PendingNavTask {
@@ -323,6 +324,23 @@ static float g_fps = 0.0f;
 // When true, WM_SIZE should not reset g_viewState.Zoom which would cancel
 // the intended zoom change. Cleared by WM_SIZE after handling.
 static bool g_programmaticResize = false;
+static bool g_deferProgrammaticZoomResizeSync = false;
+
+struct SmoothWindowZoomState {
+    bool active = false;
+    DWORD startTick = 0;
+    DWORD durationMs = 90;
+    RECT startRect{};
+    RECT targetRect{};
+    float startZoom = 1.0f;
+    float targetZoom = 1.0f;
+    float startPanX = 0.0f;
+    float startPanY = 0.0f;
+    float targetPanX = 0.0f;
+    float targetPanY = 0.0f;
+};
+
+static SmoothWindowZoomState g_smoothWindowZoom;
 
 enum class ViewMode {
     Single = 0,
@@ -377,7 +395,7 @@ struct CompareState {
 static CompareState g_compare;
 
 // Forward Declaration needed for UpgradeSvgSurface and Helpers
-static void SyncDCompState(HWND hwnd, float w, float h);
+static void SyncDCompState(HWND hwnd, float w, float h, bool animate = false);
 static UINT GetSvgSurfaceSizeLimit();
 static D2D1_MATRIX_3X2_F CombineWithCurrentTransform(ID2D1DeviceContext* ctx, const D2D1_MATRIX_3X2_F& transform);
 static bool RenderCompareComposite(HWND hwnd);
@@ -388,6 +406,17 @@ static void CaptureCurrentImageAsCompareLeft();
 static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
 static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval);
+static void CancelSmoothWindowZoom(HWND hwnd);
+static void StartSmoothWindowZoom(HWND hwnd,
+                                  const RECT& startRect,
+                                  const RECT& targetRect,
+                                  float startZoom,
+                                  float targetZoom,
+                                  float startPanX,
+                                  float startPanY,
+                                  float targetPanX,
+                                  float targetPanY);
+static void TickSmoothWindowZoom(HWND hwnd);
 static float GetCompareSplitRatio();
 void AdjustWindowToImage(HWND hwnd);
 RECT GetVirtualScreenRect();
@@ -2194,7 +2223,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
     // [Fix] Enable smooth cross-fade transition.
     // Use 150ms fade to eliminate transparent flicker.
     // For fast upgrades (same image, new surface size), swap instantly to avoid scale-jump artifacts.
-    float fadeMs = (!g_config.EnableCrossFade || isFastUpgrade) ? 0.0f : 100.0f; // Reduced from 150ms to 100ms for faster transition
+    float fadeMs = (isFastUpgrade || !g_config.EnableCrossFade) ? 0.0f : 90.0f;
     g_compEngine->PlayPingPongCrossFade(fadeMs);
     if (g_compEngine->IsInitialized()) {
         SyncDCompState(hwnd, (float)winW, (float)winH);
@@ -3620,6 +3649,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"NavIndicator", std::to_wstring(g_config.NavIndicator).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"EnableCrossMonitor", g_config.EnableCrossMonitor ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"RoundedCorners", g_config.RoundedCorners ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"EnableSmoothScaling", g_config.EnableSmoothScaling ? L"1" : L"0", iniPath.c_str());
 
     // Control
     WritePrivateProfileStringW(L"Controls", L"EnableCrossFade", g_config.EnableCrossFade ? L"1" : L"0", iniPath.c_str());
@@ -3738,6 +3768,7 @@ void LoadConfig() {
     g_config.NavIndicator = GetPrivateProfileIntW(L"View", L"NavIndicator", 0, iniPath.c_str());
     g_config.EnableCrossMonitor = GetPrivateProfileIntW(L"View", L"EnableCrossMonitor", 0, iniPath.c_str()) != 0;
     g_config.RoundedCorners = GetPrivateProfileIntW(L"View", L"RoundedCorners", 1, iniPath.c_str()) != 0;
+    g_config.EnableSmoothScaling = GetPrivateProfileIntW(L"View", L"EnableSmoothScaling", 0, iniPath.c_str()) != 0;
 
     // Control
     g_config.EnableCrossFade = GetPrivateProfileIntW(L"Controls", L"EnableCrossFade", 1, iniPath.c_str()) != 0;
@@ -4265,7 +4296,7 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
 // [Visual Rotation] Helper to calculate accumulated matrix
 // [Fix] Centralized DComp Synchronization Logic
 // Calculates correct Zoom/Pan/Centering based on Visual Dimensions (Rotated)
-static void SyncDCompState(HWND hwnd, float winW, float winH) {
+static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate) {
     if (!g_compEngine || !g_compEngine->IsInitialized()) return;
     if (winW <= 0 || winH <= 0) return;
 
@@ -4329,6 +4360,8 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
 
             ClampPanForViewport(vs, winW, winH, targetZoom);
 
+            float animationDurationMs = (animate && g_config.EnableSmoothScaling) ? 90.0f : 0.0f;
+
             if (UseSvgViewportRendering(g_imageResource)) {
                 VisualState surfaceVs{};
                 surfaceVs.PhysicalSize = D2D1::SizeF(winW, winH);
@@ -4337,9 +4370,9 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
                 surfaceVs.IsRotated90 = false;
                 surfaceVs.FlipX = 1.0f;
                 surfaceVs.FlipY = 1.0f;
-                g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, 0.0f);
+                g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, 0.0f, animationDurationMs);
             } else {
-                g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
+                g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY, animationDurationMs);
             }
 
             // Set DComp Interpolation Mode
@@ -4350,6 +4383,94 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
         // [Fix12] Tile uploads handled exclusively by OnPaint (line 5621) with correct visibleRect.
         // SyncDCompState only syncs transforms — no tile I/O here.
         // Previously called UpdateVirtualTiles without visibleRect, causing full-scan of all tiles.
+    }
+}
+
+static float EaseOutCubic01(float t) {
+    t = (std::clamp)(t, 0.0f, 1.0f);
+    float inv = 1.0f - t;
+    return 1.0f - inv * inv * inv;
+}
+
+static void CancelSmoothWindowZoom(HWND hwnd) {
+    g_smoothWindowZoom.active = false;
+    KillTimer(hwnd, IDT_SMOOTH_WINDOW_ZOOM);
+    g_deferProgrammaticZoomResizeSync = false;
+    g_programmaticResize = false;
+}
+
+static void StartSmoothWindowZoom(HWND hwnd,
+                                  const RECT& startRect,
+                                  const RECT& targetRect,
+                                  float startZoom,
+                                  float targetZoom,
+                                  float startPanX,
+                                  float startPanY,
+                                  float targetPanX,
+                                  float targetPanY) {
+    g_smoothWindowZoom.active = true;
+    g_smoothWindowZoom.startTick = GetTickCount();
+    g_smoothWindowZoom.durationMs = 90;
+    g_smoothWindowZoom.startRect = startRect;
+    g_smoothWindowZoom.targetRect = targetRect;
+    g_smoothWindowZoom.startZoom = startZoom;
+    g_smoothWindowZoom.targetZoom = targetZoom;
+    g_smoothWindowZoom.startPanX = startPanX;
+    g_smoothWindowZoom.startPanY = startPanY;
+    g_smoothWindowZoom.targetPanX = targetPanX;
+    g_smoothWindowZoom.targetPanY = targetPanY;
+    g_programmaticResize = true;
+    g_deferProgrammaticZoomResizeSync = true;
+    SetTimer(hwnd, IDT_SMOOTH_WINDOW_ZOOM, 16, nullptr);
+    TickSmoothWindowZoom(hwnd);
+}
+
+static void TickSmoothWindowZoom(HWND hwnd) {
+    if (!g_smoothWindowZoom.active) return;
+
+    DWORD now = GetTickCount();
+    float t = (g_smoothWindowZoom.durationMs > 0)
+        ? (float)(now - g_smoothWindowZoom.startTick) / (float)g_smoothWindowZoom.durationMs
+        : 1.0f;
+    float eased = EaseOutCubic01(t);
+
+    auto lerpFloat = [eased](float a, float b) {
+        return a + (b - a) * eased;
+    };
+    auto lerpLong = [eased](LONG a, LONG b) {
+        return (LONG)std::lround((double)a + ((double)b - (double)a) * (double)eased);
+    };
+
+    RECT stepRect{
+        lerpLong(g_smoothWindowZoom.startRect.left, g_smoothWindowZoom.targetRect.left),
+        lerpLong(g_smoothWindowZoom.startRect.top, g_smoothWindowZoom.targetRect.top),
+        lerpLong(g_smoothWindowZoom.startRect.right, g_smoothWindowZoom.targetRect.right),
+        lerpLong(g_smoothWindowZoom.startRect.bottom, g_smoothWindowZoom.targetRect.bottom)
+    };
+
+    g_viewState.Zoom = lerpFloat(g_smoothWindowZoom.startZoom, g_smoothWindowZoom.targetZoom);
+    g_viewState.PanX = lerpFloat(g_smoothWindowZoom.startPanX, g_smoothWindowZoom.targetPanX);
+    g_viewState.PanY = lerpFloat(g_smoothWindowZoom.startPanY, g_smoothWindowZoom.targetPanY);
+
+    SetWindowPos(hwnd, nullptr,
+                 stepRect.left,
+                 stepRect.top,
+                 stepRect.right - stepRect.left,
+                 stepRect.bottom - stepRect.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        RECT rc; GetClientRect(hwnd, &rc);
+        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom, false);
+        g_compEngine->Commit();
+    }
+    RequestRepaint(PaintLayer::Dynamic);
+
+    if (t >= 1.0f) {
+        g_viewState.Zoom = g_smoothWindowZoom.targetZoom;
+        g_viewState.PanX = g_smoothWindowZoom.targetPanX;
+        g_viewState.PanY = g_smoothWindowZoom.targetPanY;
+        CancelSmoothWindowZoom(hwnd);
     }
 }
 
@@ -5099,6 +5220,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     case WM_TIMER: {
         static const UINT_PTR OSD_TIMER_ID = 994;
+        if (wParam == IDT_SMOOTH_WINDOW_ZOOM) {
+            TickSmoothWindowZoom(hwnd);
+            return 0;
+        }
+
         // [SVG Adaptive] Re-rasterize SVG at current zoom's needed resolution
         if (wParam == IDT_SVG_RERENDER) {
              KillTimer(hwnd, IDT_SVG_RERENDER);
@@ -5298,6 +5424,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         if (wParam != SIZE_MINIMIZED) {
             OnResize(hwnd, LOWORD(lParam), HIWORD(lParam));
+            const bool deferZoomResizeSync = g_deferProgrammaticZoomResizeSync;
             
             // NOTE: Do not reset zoom/pan here. Window resize should not implicitly
             // reset user's manual zoom state.
@@ -5332,18 +5459,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          g_compare.left.view.ExifOrientation = g_compare.left.metadata.ExifOrientation;
                     }
                     RequestRepaint(PaintLayer::All);
-               } else if (isMaximized && !s_wasMaximized) {
-                    // Apply Fullscreen Zoom Mode when entering Maximized/Fullscreen
-                    ApplyFullScreenZoomMode(hwnd);
-               }
+                } else if (isMaximized && !s_wasMaximized) {
+                     // Apply Fullscreen Zoom Mode when entering Maximized/Fullscreen
+                     ApplyFullScreenZoomMode(hwnd);
+                }
             s_wasMaximized = isMaximized;
             
-            g_programmaticResize = false;
+            if (!deferZoomResizeSync) {
+                g_programmaticResize = false;
+            }
             
             // [DComp Fix] Update Image Layout (Fit + Zoom) logic
             // [Refactor] Use Centralized SyncDCompState
-            RECT rc; GetClientRect(hwnd, &rc);
-            SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+            if (!deferZoomResizeSync) {
+                RECT rc; GetClientRect(hwnd, &rc);
+                SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+            }
 
             
             // [Phase 7] Fit Stage: Update screen dimensions for decode-to-scale
@@ -8048,7 +8179,9 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
         // 2. SyncDCompState: Updates Background and Image Transforms (Commits both)
         // This ensures UI resize and Image visual jump happen in the SAME frame.
         g_compEngine->ResizeSurfaces(width, height);
-        SyncDCompState(hwnd, (float)width, (float)height);
+        if (!g_deferProgrammaticZoomResizeSync) {
+            SyncDCompState(hwnd, (float)width, (float)height);
+        }
         g_compEngine->Commit();
     }
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
@@ -9720,6 +9853,10 @@ void OnPaint(HWND hwnd) {
 // [Refactor] Centralized Zoom Logic
 // Unifies behavior for Mouse Wheel and Keyboard Zoom
 void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, bool forceWindowLock) {
+    if (g_smoothWindowZoom.active) {
+        CancelSmoothWindowZoom(hwnd);
+    }
+
     // Basic Eligibility Check
     // [Fix] Decouple "Ctrl Key" from "Force Lock". Accept explicit parameter.
     // Mouse Wheel passes 'isCtrl' (True). Keyboard Zoom passes 'False'.
@@ -9782,6 +9919,9 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     if (willResizeWindow) {
          // --- Resize Window Path ---
          float oldZoom = g_viewState.Zoom;
+         float startZoom = g_viewState.Zoom;
+         float startPanX = g_viewState.PanX;
+         float startPanY = g_viewState.PanY;
          
          float baseFit_next = std::min((float)finalWinW / imgW, (float)finalWinH / imgH);
          // [SVG Lossless] Vector images shouldn't be capped.
@@ -9789,39 +9929,51 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
              if (baseFit_next > 1.0f) baseFit_next = 1.0f;
          }
          
-         g_viewState.Zoom = newTotalScale / baseFit_next;
+         float targetZoomState = newTotalScale / baseFit_next;
 
          // Apply Resize
          RECT rcWin; GetWindowRect(hwnd, &rcWin);
-         g_programmaticResize = true;
          const POINT* windowAnchor = (g_config.MouseAnchoredWindowZoom ? centerPt : nullptr);
          RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, finalWinW, finalWinH, bounds, windowAnchor);
-         SetWindowPos(hwnd, nullptr, targetRect.left, targetRect.top,
-                      targetRect.right - targetRect.left, targetRect.bottom - targetRect.top,
-                      SWP_NOZORDER | SWP_NOACTIVATE);
+         float targetPanX = startPanX;
+         float targetPanY = startPanY;
 
-         if (g_compEngine && g_compEngine->IsInitialized()) {
-             RECT rc; GetClientRect(hwnd, &rc);
+         if (centerPt && oldZoom > 0.0001f) {
+             float winW = (float)finalWinW;
+             float winH = (float)finalWinH;
+             float zoomRatio = targetZoomState / oldZoom;
+             POINT pt = *centerPt;
+             ScreenToClient(hwnd, &pt);
 
-             // Keep the pixel under the cursor visually stable even while the window itself is resizing.
-             if (centerPt && oldZoom > 0.0001f) {
-                 float winW = (float)rc.right;
-                 float winH = (float)rc.bottom;
-                 float zoomRatio = g_viewState.Zoom / oldZoom;
+             float dx = (float)pt.x - winW / 2.0f;
+             float dy = (float)pt.y - winH / 2.0f;
+             targetPanX = startPanX * zoomRatio + dx * (1.0f - zoomRatio);
+             targetPanY = startPanY * zoomRatio + dy * (1.0f - zoomRatio);
+          }
 
-                 POINT pt = *centerPt;
-                 ScreenToClient(hwnd, &pt);
-
-                 float dx = (float)pt.x - winW / 2.0f;
-                 float dy = (float)pt.y - winH / 2.0f;
-                 g_viewState.PanX = g_viewState.PanX * zoomRatio + dx * (1.0f - zoomRatio);
-                 g_viewState.PanY = g_viewState.PanY * zoomRatio + dy * (1.0f - zoomRatio);
-             }
-
-             SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-             g_compEngine->Commit();
-             g_programmaticResize = false;
-         }
+          if (g_config.EnableSmoothScaling) {
+              StartSmoothWindowZoom(hwnd,
+                                    rcWin,
+                                    targetRect,
+                                    startZoom,
+                                    targetZoomState,
+                                    startPanX,
+                                    startPanY,
+                                    targetPanX,
+                                    targetPanY);
+          } else {
+              // Direct Mode - Snap to target immediately
+              g_viewState.Zoom = targetZoomState;
+              g_viewState.PanX = targetPanX;
+              g_viewState.PanY = targetPanY;
+              
+              SetWindowPos(hwnd, NULL, targetRect.left, targetRect.top, 
+                           targetRect.right - targetRect.left, targetRect.bottom - targetRect.top, 
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+              
+              SyncDCompState(hwnd, (float)finalWinW, (float)finalWinH, false);
+              g_compEngine->Commit();
+          }
          
          RequestRepaint(PaintLayer::Dynamic);
          
@@ -9874,7 +10026,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          g_viewState.Zoom = newZoom;
          
          if (g_compEngine && g_compEngine->IsInitialized()) {
-              SyncDCompState(hwnd, winW, winH);
+              SyncDCompState(hwnd, winW, winH, true);
               g_compEngine->Commit();
          }
          RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image); 

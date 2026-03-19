@@ -78,7 +78,7 @@ public:
     // zoom: Output Scale factor
     // winW/H: Window Viewport Size
     // panX/Y: Screen Space Panning Offsets
-    HRESULT UpdateTransformMatrix(VisualState vs, float winW, float winH, float zoom, float panX, float panY);
+    HRESULT UpdateTransformMatrix(VisualState vs, float winW, float winH, float zoom, float panX, float panY, float animationDurationMs = 0.0f);
     
     // ===== UI Layer Drawing =====
     ID2D1DeviceContext* BeginLayerUpdate(UILayer layer, const RECT* dirtyRect = nullptr);
@@ -210,4 +210,6 @@ private:
     float m_currentScale = 1.0f;
     float m_currentPanX = 0.0f;
     float m_currentPanY = 0.0f;
+    float m_currentCompScaleX = 1.0f;
+    float m_currentCompScaleY = 1.0f;
 };

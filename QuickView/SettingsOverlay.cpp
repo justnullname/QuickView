@@ -957,6 +957,10 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_CrossFade, OptionType::Toggle, &g_config.EnableCrossFade });
     
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Window, OptionType::Header });
+    SettingsItem itemSmooth = { AppStrings::Settings_Label_EnableSmoothScaling, OptionType::Toggle, &g_config.EnableSmoothScaling };
+    itemSmooth.onChange = []() { SaveConfig(); };
+    tabVisuals.items.push_back(itemSmooth);
+
 
     SettingsItem itemUiScale = {
         AppStrings::Settings_Label_UIScale,

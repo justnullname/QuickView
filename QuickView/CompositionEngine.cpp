@@ -929,19 +929,10 @@ HRESULT CompositionEngine::ResizeSurfaces(UINT width, UINT height) {
 }
 
 // [Refactor] Virtual Canvas Matrix Chain (VisualState)
-HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, float winH, float zoom, float panX, float panY) {
+HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, float winH, float zoom, float panX, float panY, float animationDurationMs) {
     if (!m_modelTransform || !m_scaleTransform || !m_translateTransform) return E_FAIL;
     
-    // 1. Reset Scale/Translate (Baked into Model)
-    m_scaleTransform->SetScaleX(1.0f);
-    m_scaleTransform->SetScaleY(1.0f);
-    m_scaleTransform->SetCenterX(0.0f);
-    m_scaleTransform->SetCenterY(0.0f);
-    m_translateTransform->SetOffsetX(0.0f);
-    m_translateTransform->SetOffsetY(0.0f);
-    
-    // 2. Build Matrix Chain
-    // Order: Translate(To Origin) -> Rotate -> Scale -> Translate(To Viewport Center) -> Translate(Pan)
+    // 1. Build Model Matrix (Flip * Rotate)
     
     // [Fix] Multi-layer size detection for Titan mode transition.
     const ImageLayer* pLayer = (m_activeLayerIndex == 0) ? &m_imageA : &m_imageB;
@@ -959,6 +950,10 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, flo
     // B. Rotate: Around (0,0)
     D2D1_MATRIX_3X2_F mRotate = D2D1::Matrix3x2F::Rotation(vs.TotalRotation);
     
+    // Set Model Matrix
+    m_modelTransform->SetMatrix(mFlip * mRotate);
+
+    // 2. Calculate Scale
     float compScaleX = 1.0f;
     float compScaleY = 1.0f;
     
@@ -968,23 +963,80 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, flo
         compScaleY = vs.PhysicalSize.height / (float)pLayer->height;
     }
 
-    D2D1_MATRIX_3X2_F mScale = D2D1::Matrix3x2F::Scale(zoom * compScaleX, zoom * compScaleY);
-    
-    // D. Pan: Screen Space Offset (Applied after rotation/scale)
-    D2D1_MATRIX_3X2_F mPan = D2D1::Matrix3x2F::Translation(panX, panY);
+    float targetScaleX = zoom * compScaleX;
+    float targetScaleY = zoom * compScaleY;
+
+    // 3. Apply Animation or Set Directly
+    bool targetChanged = (fabsf(targetScaleX - m_currentScale * m_currentCompScaleX) > 0.0001f) ||
+                         (fabsf(targetScaleY - m_currentScale * m_currentCompScaleY) > 0.0001f) ||
+                         (fabsf(panX - m_currentPanX) > 0.0001f) ||
+                         (fabsf(panY - m_currentPanY) > 0.0001f);
+
+    if (animationDurationMs > 0.0f) {
+        float duration = animationDurationMs / 1000.0f;
+
+        // Current start values
+        float startScaleX = m_currentScale * m_currentCompScaleX;
+        float startScaleY = m_currentScale * m_currentCompScaleY;
+        float startPanX = m_currentPanX;
+        float startPanY = m_currentPanY;
+
+        // Ensure we don't animate from 0 or negative infinity scale, just in case
+        if (startScaleX <= 0.0f) startScaleX = targetScaleX;
+        if (startScaleY <= 0.0f) startScaleY = targetScaleY;
+
+        ComPtr<IDCompositionAnimation> animScaleX, animScaleY, animPanX, animPanY;
+        HRESULT hr1 = m_device->CreateAnimation(&animScaleX);
+        HRESULT hr2 = m_device->CreateAnimation(&animScaleY);
+        HRESULT hr3 = m_device->CreateAnimation(&animPanX);
+        HRESULT hr4 = m_device->CreateAnimation(&animPanY);
+
+        if (SUCCEEDED(hr1) && SUCCEEDED(hr2) && SUCCEEDED(hr3) && SUCCEEDED(hr4)) {
+            // Cubic ease-out curve: starts fast, smoothly decelerates
+            // f(t) = 1 - (1-t)^3 = 3t - 3t^2 + t^3
+            // AddCubic params: offset, constant, linear, quadratic, cubic
+            auto addEaseOut = [](IDCompositionAnimation* anim, float start, float target, float d) {
+                float delta = target - start;
+                anim->AddCubic(0.0, start, 3.0f * delta / d, -3.0f * delta / (d * d), delta / (d * d * d));
+                anim->End(d, target);
+            };
+
+            addEaseOut(animScaleX.Get(), startScaleX, targetScaleX, duration);
+            addEaseOut(animScaleY.Get(), startScaleY, targetScaleY, duration);
+            addEaseOut(animPanX.Get(), startPanX, panX, duration);
+            addEaseOut(animPanY.Get(), startPanY, panY, duration);
+
+            m_scaleTransform->SetScaleX(animScaleX.Get());
+            m_scaleTransform->SetScaleY(animScaleY.Get());
+            m_translateTransform->SetOffsetX(animPanX.Get());
+            m_translateTransform->SetOffsetY(animPanY.Get());
+        } else {
+            // Fallback if animation creation fails
+            m_scaleTransform->SetScaleX(targetScaleX);
+            m_scaleTransform->SetScaleY(targetScaleY);
+            m_translateTransform->SetOffsetX(panX);
+            m_translateTransform->SetOffsetY(panY);
+        }
+
+    } else if (targetChanged) {
+        // No animation, set directly. Only set if changed to avoid canceling a running animation.
+        m_scaleTransform->SetScaleX(targetScaleX);
+        m_scaleTransform->SetScaleY(targetScaleY);
+        m_translateTransform->SetOffsetX(panX);
+        m_translateTransform->SetOffsetY(panY);
+    }
     
     // E. Center Screen: [REMOVED]
     // The Container is STATICALLY anchored at Window Center.
     // So (0,0) IS Window Center.
     
-    // Combine: Flip * Rotate * Scale * Pan
-    // (Origin and Screen are now handled by topology)
-    D2D1_MATRIX_3X2_F finalMatrix = mFlip * mRotate * mScale * mPan;
-    
-    m_modelTransform->SetMatrix(finalMatrix);
+    m_scaleTransform->SetCenterX(0.0f);
+    m_scaleTransform->SetCenterY(0.0f);
     
     // Update State Tracking
     m_currentScale = zoom;
+    m_currentCompScaleX = compScaleX;
+    m_currentCompScaleY = compScaleY;
     m_currentPanX = panX;
     m_currentPanY = panY;
     

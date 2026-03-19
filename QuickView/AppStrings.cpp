@@ -196,6 +196,7 @@ namespace AppStrings {
     const wchar_t* Settings_Label_KeepWindowSizeOnNav = nullptr;
     const wchar_t* Settings_Label_RememberLastWindowSize = nullptr;
     const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
+    const wchar_t* Settings_Label_EnableSmoothScaling = nullptr;
     const wchar_t* Settings_Label_ExifMode = nullptr;
     const wchar_t* Settings_Label_ToolbarInfoDefault = nullptr;
     const wchar_t* Settings_Label_OpenFullScreenMode = nullptr;
@@ -515,6 +516,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Keep window size on navigation";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Remember last window size";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Adapt small images";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"Smooth Window Scaling (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF Panel Mode";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Toolbar Info Default";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Open Fullscreen";
@@ -739,6 +741,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"导航时保持窗口尺寸不变";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"记住最后窗口尺寸";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小于窗口尺寸图片适应窗口";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"启用窗口平滑缩放 (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具栏信息默认值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"打开时全屏";
@@ -1144,6 +1147,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"導航時保持視窗尺寸不變";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"記住最後視窗尺寸";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小於視窗尺寸圖片適應視窗";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"起動視窗平滑縮放 (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具列資訊預設值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開啟時全螢幕";
@@ -1445,6 +1449,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"ナビゲーション時にウィンドウサイズを保持";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"最後のウィンドウサイズを記憶";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小さな画像をウィンドウに合わせる";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"ウィンドウの滑らかなスケーリング (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIFパネルモード";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"ツールバー情報デフォルト";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開くときに全画面表示";
@@ -1746,6 +1751,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Сохранять размер окна при навигации";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Запомнить последний размер окна";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Адаптировать мелкие изображения";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"Плавное масштабирование окна (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Режим панели EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Инфо. в панели по умолчанию";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Полноэкранный режим при открытии";
@@ -2047,6 +2053,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Fenstergröße bei Navigation beibehalten";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Letzte Fenstergröße merken";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Kleine Bilder anpassen";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"Flüssige Fensterskalierung (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF-Panel-Modus";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Symbolleisten-Info Standard";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Im Vollbildmodus öffnen";
@@ -2348,6 +2355,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Mantener el tamaño de la ventana al navegar";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Recordar el último tamaño de ventana";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Adaptar imágenes pequeñas";
+        static constexpr const wchar_t* Settings_Label_EnableSmoothScaling = L"Escalado suave de ventana (GPU)";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Modo panel EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Info de barra por defecto";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Abrir en pantalla completa";
@@ -2669,6 +2677,7 @@ namespace AppStrings {
         Settings_Label_KeepWindowSizeOnNav = T::Settings_Label_KeepWindowSizeOnNav;
         Settings_Label_RememberLastWindowSize = T::Settings_Label_RememberLastWindowSize;
         Settings_Label_UpscaleSmallImagesWhenLocked = T::Settings_Label_UpscaleSmallImagesWhenLocked;
+        Settings_Label_EnableSmoothScaling = T::Settings_Label_EnableSmoothScaling;
         Settings_Label_ExifMode = T::Settings_Label_ExifMode;
         Settings_Label_ToolbarInfoDefault = T::Settings_Label_ToolbarInfoDefault;
         Settings_Label_OpenFullScreenMode = T::Settings_Label_OpenFullScreenMode;
