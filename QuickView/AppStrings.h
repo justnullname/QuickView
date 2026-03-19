@@ -309,6 +309,7 @@ namespace AppStrings {
     extern const wchar_t* Help_Item_Fullscreen;
     extern const wchar_t* Help_Item_Close;
     extern const wchar_t* Help_Item_Compare; // New
+    extern const wchar_t* Help_Item_FirstLast;
     extern const wchar_t* Help_Mouse_Left;
     extern const wchar_t* Help_Mouse_Middle;
     extern const wchar_t* Help_Mouse_Wheel;

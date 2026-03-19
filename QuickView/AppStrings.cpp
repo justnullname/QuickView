@@ -279,6 +279,7 @@ namespace AppStrings {
     const wchar_t* Help_Item_Fullscreen = nullptr;
     const wchar_t* Help_Item_Close = nullptr;
     const wchar_t* Help_Item_Compare = nullptr; // New
+    const wchar_t* Help_Item_FirstLast = nullptr;
     const wchar_t* Help_Mouse_Left = nullptr;
     const wchar_t* Help_Mouse_Middle = nullptr;
     const wchar_t* Help_Mouse_Wheel = nullptr;
@@ -591,6 +592,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Item_Fullscreen = L"Fullscreen";
         static constexpr const wchar_t* Help_Item_Close = L"Close";
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"First / Last Image";
         static constexpr const wchar_t* Help_Mouse_Left = L"Left Button";
         static constexpr const wchar_t* Help_Mouse_Middle = L"Middle Button";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Wheel";
@@ -922,6 +924,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 质量：基于算法估算的 Q 值。因编码器差异，可能与保存数值有微小偏差(如 PS 100% \u2248 98%)，属正常现象。";
 
         static constexpr const wchar_t* Help_Item_Compare = L"对比模式";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"第一张 / 最后一张图片";
         static constexpr const wchar_t* HUD_Group_Physical = L"物理属性";
         static constexpr const wchar_t* HUD_Group_Scientific = L"科学指标";
         static constexpr const wchar_t* HUD_Group_Encoding = L"光学与编码";
@@ -1225,6 +1228,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 壓縮率：信息面板顯示的 Q 值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% 可能顯示為 98)，屬正常情況。";
 
         static constexpr const wchar_t* Help_Item_Compare = L"對比模式";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"第一張 / 最後一張圖片";
         static constexpr const wchar_t* HUD_Group_Physical = L"物理屬性";
         static constexpr const wchar_t* HUD_Group_Scientific = L"科學指標";
         static constexpr const wchar_t* HUD_Group_Encoding = L"光學與編碼";
@@ -1519,6 +1523,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"最初 / 最後の画像";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -1813,6 +1818,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"Первое / Последнее изображение";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -2107,6 +2113,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"Erstes / Letztes Bild";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -2401,6 +2408,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"Primera / Última imagen";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -2717,6 +2725,7 @@ namespace AppStrings {
         Dialog_Update_LoveMessage = T::Dialog_Update_LoveMessage;
 
         Help_Item_Compare = T::Help_Item_Compare;
+        Help_Item_FirstLast = T::Help_Item_FirstLast;
         HUD_Group_Physical = T::HUD_Group_Physical;
         HUD_Group_Scientific = T::HUD_Group_Scientific;
         HUD_Group_Encoding = T::HUD_Group_Encoding;

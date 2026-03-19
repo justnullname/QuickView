@@ -725,7 +725,8 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, 
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 FireAndForget UpdateCompareLeftHistogramAsync(HWND hwnd, std::wstring path);
 void ReloadCurrentImage(HWND hwnd);
-void Navigate(HWND hwnd, int direction); 
+void Navigate(HWND hwnd, int direction);
+void NavigateEdge(HWND hwnd, bool toLast);
 void RebuildInfoGrid(); // Fwd decl
 void ProcessEngineEvents(HWND hwnd);
 void ReleaseImageResources();
@@ -6902,6 +6903,10 @@ SKIP_EDGE_NAV:;
         case VK_UP: SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); break; // Up: Zoom In
         case VK_DOWN: SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0); break; // Down: Zoom Out
         case VK_SPACE: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
+        case VK_PRIOR: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break; // Page Up
+        case VK_NEXT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break; // Page Down
+        case VK_HOME: if (CheckUnsavedChanges(hwnd)) NavigateEdge(hwnd, false); break; // Home
+        case VK_END: if (CheckUnsavedChanges(hwnd)) NavigateEdge(hwnd, true); break; // End
         
         // File operations
         case 'O':
@@ -9166,6 +9171,56 @@ FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD, QuickVi
 }
 
 
+
+void NavigateEdge(HWND hwnd, bool toLast) {
+    if (IsCompareModeActive() && g_compare.selectedPane == ComparePane::Left) {
+        if (!g_compare.left.valid || g_compare.left.path.empty()) return;
+        FileNavigator tempNav;
+        tempNav.Initialize(g_compare.left.path);
+        if (tempNav.Count() <= 0) return;
+
+        std::wstring path = toLast ? tempNav.Last() : tempNav.First();
+
+        if (!path.empty()) {
+            if (LoadImageIntoCompareLeftSlot(hwnd, path)) {
+                g_compare.activePane = ComparePane::Left;
+                g_compare.contextPane = ComparePane::Left;
+                MarkCompareDirty();
+                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+            }
+        }
+        return;
+    }
+
+    if (g_navigator.Count() <= 0) return;
+    if (!CheckUnsavedChanges(hwnd)) return;
+
+    std::wstring path = toLast ? g_navigator.Last() : g_navigator.First();
+
+    if (IsCompareModeActive()) {
+        if (!path.empty()) {
+            g_compare.activePane = ComparePane::Right;
+            g_compare.contextPane = ComparePane::Right;
+            g_compare.selectedPane = ComparePane::Right;
+            g_editState.Reset();
+            g_viewState.Reset();
+            QuickView::BrowseDirection browseDir = toLast
+                ? QuickView::BrowseDirection::FORWARD
+                : QuickView::BrowseDirection::BACKWARD;
+            LoadImageAsync(hwnd, path, true, browseDir);
+            MarkCompareDirty();
+        }
+        return;
+    }
+
+    if (!path.empty()) {
+        g_editState.Reset();
+        QuickView::BrowseDirection browseDir = toLast
+            ? QuickView::BrowseDirection::FORWARD
+            : QuickView::BrowseDirection::BACKWARD;
+        LoadImageAsync(hwnd, path, true, browseDir);
+    }
+}
 
 void Navigate(HWND hwnd, int direction) {
     if (IsCompareModeActive() && g_compare.selectedPane == ComparePane::Left) {
