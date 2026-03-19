@@ -134,6 +134,20 @@ public:
         m_currentIndex = (m_currentIndex - 1 + m_files.size()) % m_files.size();
         return m_files[m_currentIndex];
     }
+
+    std::wstring First() {
+        if (m_files.empty()) return L"";
+        m_hitEnd = false;
+        m_currentIndex = 0;
+        return m_files[m_currentIndex];
+    }
+
+    std::wstring Last() {
+        if (m_files.empty()) return L"";
+        m_hitEnd = false;
+        m_currentIndex = (int)m_files.size() - 1;
+        return m_files[m_currentIndex];
+    }
     
     bool HitEnd() const { return m_hitEnd; }
 
