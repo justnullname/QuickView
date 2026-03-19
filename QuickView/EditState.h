@@ -97,6 +97,7 @@ struct AppConfig {
     int ToolbarInfoDefault = 0;         // 0=Lite, 1=Full (toolbar button default)
     wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
+    int FullScreenZoomMode = 0;         // 0=Fit, 1=Auto
 
     // --- Window Size Limits ---
     float WindowMinSize = 0.0f;         // Minimum window size (0 means auto-calculate from UI controls)

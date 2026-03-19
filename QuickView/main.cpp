@@ -191,7 +191,7 @@ static std::unique_ptr<UIRenderer> g_uiRenderer;  // 独立 UI 层渲染器
 static InputController g_inputController;  // Quantum Stream: 输入状态机
 
 // [Fix] Fullscreen State Tracking
-static bool g_isFullScreen = false;
+bool g_isFullScreen = false;
 static WINDOWPLACEMENT g_savedWindowPlacement = { sizeof(WINDOWPLACEMENT) };
 
 // [Step 3] Unified Resource Management
@@ -398,6 +398,47 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
 static D2D1_SIZE_F GetLogicalImageSize();
 static D2D1_SIZE_F GetVisualImageSize();
 VisualState GetVisualState();
+
+void ApplyFullScreenZoomMode(HWND hwnd) {
+    if (!g_imageResource || (!g_isFullScreen && !IsZoomed(hwnd))) return;
+
+    if (g_config.FullScreenZoomMode == 0) { // Fit
+        g_viewState.Zoom = 1.0f;
+    } else { // Auto (100% for small, Fit for large)
+        D2D1_SIZE_F effSize = GetVisualImageSize();
+        float imgW = effSize.width;
+        float imgH = effSize.height;
+        if (imgW <= 0 || imgH <= 0) return;
+
+        RECT rc; GetClientRect(hwnd, &rc);
+        float winW = (float)rc.right;
+        float winH = (float)rc.bottom;
+        if (winW <= 0 || winH <= 0) return;
+
+        // Base fit scale is the ratio needed to fit the image on screen
+        float fitScale = std::min(winW / imgW, winH / imgH);
+
+        // Use true original metadata size to determine 100% target
+        float originalW = imgW;
+        if (g_currentMetadata.Width > 0) {
+            VisualState vs = GetVisualState();
+            originalW = (float)(vs.IsRotated90 ? g_currentMetadata.Height : g_currentMetadata.Width);
+        }
+
+        // The scale factor required to render at exactly 100% original size
+        float renderScaleTarget = originalW / imgW;
+
+        // If the 100% size is smaller than the window, use 100% (renderScaleTarget),
+        // which means setting Zoom so that fitScale * Zoom = renderScaleTarget
+        if (fitScale > renderScaleTarget) {
+            g_viewState.Zoom = renderScaleTarget / fitScale;
+        } else {
+            g_viewState.Zoom = 1.0f; // Fit
+        }
+    }
+    g_viewState.PanX = 0;
+    g_viewState.PanY = 0;
+}
 static bool g_isAutoLocked = false;
 
 // [Interpolation] Get best interpolation mode
@@ -3556,6 +3597,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"CanvasShowGrid", g_config.CanvasShowGrid ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"AlwaysOnTop", g_config.AlwaysOnTop ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"OpenFullScreenMode", std::to_wstring(g_config.OpenFullScreenMode).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"FullScreenZoomMode", std::to_wstring(g_config.FullScreenZoomMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"LockWindowSize", g_config.LockWindowSize ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar ? L"1" : L"0", iniPath.c_str());
@@ -3657,6 +3699,7 @@ void LoadConfig() {
     g_config.CanvasShowGrid = GetPrivateProfileIntW(L"View", L"CanvasShowGrid", 0, iniPath.c_str()) != 0;
     g_config.AlwaysOnTop = GetPrivateProfileIntW(L"View", L"AlwaysOnTop", 0, iniPath.c_str()) != 0;
     g_config.OpenFullScreenMode = GetPrivateProfileIntW(L"View", L"OpenFullScreenMode", 0, iniPath.c_str());
+    g_config.FullScreenZoomMode = GetPrivateProfileIntW(L"View", L"FullScreenZoomMode", 0, iniPath.c_str());
     g_config.LockWindowSize = GetPrivateProfileIntW(L"View", L"LockWindowSize", 0, iniPath.c_str()) != 0;
 
     // Migration: if they had ResizeWindowOnZoom = 0, that's equivalent to LockWindowSize = true in old configs
@@ -5287,6 +5330,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                          g_compare.left.view.ExifOrientation = g_compare.left.metadata.ExifOrientation;
                     }
                     RequestRepaint(PaintLayer::All);
+               } else if (isMaximized && !s_wasMaximized) {
+                    // Apply Fullscreen Zoom Mode when entering Maximized/Fullscreen
+                    ApplyFullScreenZoomMode(hwnd);
                }
             s_wasMaximized = isMaximized;
             
@@ -8356,6 +8402,11 @@ void ProcessEngineEvents(HWND hwnd) {
                     // This ensures g_lastSurfaceSize is updated with the NEW image dimensions.
                     AdjustWindowToImage(hwnd);
                     
+                    // [Feature] Apply Fullscreen Zoom Mode if active
+                    if (g_isFullScreen || IsZoomed(hwnd)) {
+                        ApplyFullScreenZoomMode(hwnd);
+                    }
+
                     // [Fix] Explicitly Sync DComp State immediately after Window Adjustment
                     // This covers the case where the Window Size DOES NOT CHANGE (e.g. Locked or Maximized),
                     // so WM_SIZE is never fired, leaving the DComp Transform Matrix stale (using old image AR).

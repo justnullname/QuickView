@@ -198,6 +198,9 @@ namespace AppStrings {
     const wchar_t* Settings_Label_ExifMode = nullptr;
     const wchar_t* Settings_Label_ToolbarInfoDefault = nullptr;
     const wchar_t* Settings_Label_OpenFullScreenMode = nullptr;
+    const wchar_t* Settings_Label_FullScreenZoomMode = nullptr;
+    const wchar_t* Settings_Option_FitScreen = nullptr;
+    const wchar_t* Settings_Option_AutoFit = nullptr;
     const wchar_t* Settings_Label_InvertWheel = nullptr;
     const wchar_t* Settings_Label_ZoomSnapDamping = nullptr; // New
     const wchar_t* Settings_Label_MouseAnchorZoom = nullptr;
@@ -513,6 +516,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF Panel Mode";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Toolbar Info Default";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Open Fullscreen";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Fullscreen Zoom Mode";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"Fit to Screen";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Auto (100% for small, Fit for large)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Invert Wheel";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Zoom 100% Snap Damping";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Mouse-Anchored Window Zoom";
@@ -733,6 +739,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具栏信息默认值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"打开时全屏";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"全屏时缩放模式";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"适应屏幕";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"自动 (小图100% / 大图适应)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"反转滚轮";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"缩放 100% 吸附阻尼";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"窗口缩放以鼠标为中线";
@@ -1134,6 +1143,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具列資訊預設值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開啟時全螢幕";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"全螢幕縮放模式";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"適應螢幕";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"自動 (小圖100% / 大圖適應)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"反轉滾輪";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"縮放 100% 吸附阻尼";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"視窗縮放以滑鼠為中線";
@@ -1431,6 +1443,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIFパネルモード";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"ツールバー情報デフォルト";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開くときに全画面表示";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"全画面ズームモード";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"画面に合わせる";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"自動 (小さい画像は100% / 大きい画像は合わせる)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"ホイール反転";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"100%ズーム吸着ダンピング";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"マウス中心でウィンドウを拡大";
@@ -1728,6 +1743,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Режим панели EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Инфо. в панели по умолчанию";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Полноэкранный режим при открытии";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Режим масштаба на весь экран";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"По размеру экрана";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Авто (100% для мелких, по размеру для крупных)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Инвертировать колесо";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Задержка привязки зума (100%)";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Масштабировать окно от позиции мыши";
@@ -2025,6 +2043,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF-Panel-Modus";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Symbolleisten-Info Standard";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Im Vollbildmodus öffnen";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Vollbild-Zoom-Modus";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"An Bildschirm anpassen";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Auto (100% für kleine, anpassen für große)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Mausrad invertieren";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Zoom 100% Einrast-Dämpfung";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Fensterzoom am Mauszeiger ausrichten";
@@ -2322,6 +2343,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Modo panel EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Info de barra por defecto";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Abrir en pantalla completa";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Modo de zoom a pantalla completa";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"Ajustar a pantalla";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Auto (100% para pequeñas, ajustar para grandes)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Invertir rueda";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Amortiguación de ajuste 100%";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Zoom de ventana anclado al raton";
@@ -2639,6 +2663,9 @@ namespace AppStrings {
         Settings_Label_ExifMode = T::Settings_Label_ExifMode;
         Settings_Label_ToolbarInfoDefault = T::Settings_Label_ToolbarInfoDefault;
         Settings_Label_OpenFullScreenMode = T::Settings_Label_OpenFullScreenMode;
+        Settings_Label_FullScreenZoomMode = T::Settings_Label_FullScreenZoomMode;
+        Settings_Option_FitScreen = T::Settings_Option_FitScreen;
+        Settings_Option_AutoFit = T::Settings_Option_AutoFit;
         Settings_Label_InvertWheel = T::Settings_Label_InvertWheel;
         Settings_Label_ZoomSnapDamping = T::Settings_Label_ZoomSnapDamping;
         Settings_Label_MouseAnchorZoom = T::Settings_Label_MouseAnchorZoom;

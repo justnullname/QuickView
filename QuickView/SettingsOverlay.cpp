@@ -1061,6 +1061,22 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} });
     tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
     
+    SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
+    itemFsZoom.onChange = []() {
+        SaveConfig();
+        HWND hwnd = GetActiveWindow();
+        extern bool g_isFullScreen;
+        if (hwnd && (IsZoomed(hwnd) || g_isFullScreen)) {
+            // Forward declaration to let main.cpp handle this cleanly
+            extern void ApplyFullScreenZoomMode(HWND hwnd);
+            ApplyFullScreenZoomMode(hwnd);
+            // We use InvalidateRect here to avoid missing PaintLayer enum declaration in this file.
+            // main.cpp's WM_PAINT will handle the redraw.
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+    };
+    tabVisuals.items.push_back(itemFsZoom);
+
 
 
     m_tabs.push_back(tabVisuals);
