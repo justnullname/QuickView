@@ -2,6 +2,9 @@
 #include "HelpOverlay.h"
 #include "AppStrings.h"
 #include "EditState.h"
+
+extern AppConfig g_config;
+
 HelpOverlay::HelpOverlay() {
 }
 

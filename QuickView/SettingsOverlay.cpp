@@ -3,7 +3,6 @@
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
 #include "AppStrings.h"
-#include "EditState.h"
 #include "ImageEngine.h"
 #include <algorithm>
 #include <Shlobj.h>
@@ -22,6 +21,8 @@
 
 // Global Accessor from main.cpp
 extern ImageEngine* g_pImageEngine;
+extern AppConfig g_config;
+extern RuntimeConfig g_runtime;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
 extern HelpOverlay g_helpOverlay;
 
@@ -767,7 +768,9 @@ static D2D1_RECT_F GetUpdateButtonRect(const D2D1_RECT_F& cardRect) {
     return cardRect; // The item itself IS the button now
 }
 
-// [Removed redundant include]
+#include "EditState.h"
+
+extern AppConfig g_config;
 
 // Helper to cast Enum to int*
 template<typename T>
@@ -1098,8 +1101,8 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ AppStrings::Settings_Header_Render, OptionType::Header });
 
     // Zoom Mode
-    tabImage.items.push_back({ AppStrings::Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} });
-    tabImage.items.push_back({ AppStrings::Settings_Label_ZoomModeOut, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeOut), nullptr, 0, 0, {AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} });
+    tabImage.items.push_back({ AppStrings::Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} });
+    tabImage.items.push_back({ AppStrings::Settings_Label_ZoomModeOut, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeOut), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} });
 
     tabImage.items.push_back({ AppStrings::Settings_Label_AutoRotate, OptionType::Toggle, &g_config.AutoRotate });
     

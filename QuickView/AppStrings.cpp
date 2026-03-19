@@ -254,6 +254,7 @@ namespace AppStrings {
     const wchar_t* Settings_Option_Linear = nullptr;
     const wchar_t* Settings_Option_Nearest = nullptr;
     const wchar_t* Settings_Option_HighQualityCubic = nullptr;
+    const wchar_t* Settings_Option_ZoomAuto = nullptr;
     const wchar_t* Settings_Option_Auto = nullptr;
     const wchar_t* Settings_Option_Eco = nullptr;
     const wchar_t* Settings_Option_Balanced = nullptr;
@@ -557,7 +558,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"Linear: Basic smoothing";
         static constexpr const wchar_t* Settings_Option_Nearest = L"Nearest: Extreme sharpness";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"HQ Cubic: Extreme smoothing";
-        static constexpr const wchar_t* Settings_Option_Auto = L"Auto: Size-dependent";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"Auto: Size-dependent";
+        static constexpr const wchar_t* Settings_Option_Auto = L"Auto";
         static constexpr const wchar_t* Settings_Option_Eco = L"Eco";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Balanced";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ultra";
@@ -760,7 +762,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"线性 (Linear)：基础平滑";
         static constexpr const wchar_t* Settings_Option_Nearest = L"最近邻 (Nearest)：极端锐利";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"高质量双三次 (HQ Cubic)：极端平滑";
-        static constexpr const wchar_t* Settings_Option_Auto = L"自动：根据尺寸自动";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"自动：根据尺寸自动";
+        static constexpr const wchar_t* Settings_Option_Auto = L"自动";
         static constexpr const wchar_t* Settings_Option_Eco = L"节能";
         static constexpr const wchar_t* Settings_Option_Balanced = L"平衡";
         static constexpr const wchar_t* Settings_Option_Ultra = L"极速";
@@ -1152,7 +1155,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"線性 (Linear)：基礎平滑";
         static constexpr const wchar_t* Settings_Option_Nearest = L"最近鄰 (Nearest)：極端銳利";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"高品質雙三次 (HQ Cubic)：極端平滑";
-        static constexpr const wchar_t* Settings_Option_Auto = L"自動：根據尺寸自動";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"自動：根據尺寸自動";
+        static constexpr const wchar_t* Settings_Option_Auto = L"自動";
         static constexpr const wchar_t* Settings_Option_Eco = L"節能";
         static constexpr const wchar_t* Settings_Option_Balanced = L"平衡";
         static constexpr const wchar_t* Settings_Option_Ultra = L"極速";
@@ -1437,7 +1441,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"線形: 基本的な平滑化";
         static constexpr const wchar_t* Settings_Option_Nearest = L"ニアレスト: 極端なシャープネス";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"HQキュービック: 極端な平滑化";
-        static constexpr const wchar_t* Settings_Option_Auto = L"自動: サイズ依存";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"自動: サイズ依存";
+        static constexpr const wchar_t* Settings_Option_Auto = L"自動";
         static constexpr const wchar_t* Settings_Option_Eco = L"エコ";
         static constexpr const wchar_t* Settings_Option_Balanced = L"バランス";
         static constexpr const wchar_t* Settings_Option_Ultra = L"ウルトラ";
@@ -1722,7 +1727,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"Линейный: Базовое сглаживание";
         static constexpr const wchar_t* Settings_Option_Nearest = L"Ближайший: Максимальная резкость";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"HQ Кубический: Макс. сглаживание";
-        static constexpr const wchar_t* Settings_Option_Auto = L"Авто: Зависит от размера";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"Авто: Зависит от размера";
+        static constexpr const wchar_t* Settings_Option_Auto = L"Авто";
         static constexpr const wchar_t* Settings_Option_Eco = L"Эко";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Баланс";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ультра";
@@ -2007,7 +2013,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"Linear: Grundglättung";
         static constexpr const wchar_t* Settings_Option_Nearest = L"Nächster: Extreme Schärfe";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"HQ Kubisch: Extreme Glättung";
-        static constexpr const wchar_t* Settings_Option_Auto = L"Auto: Größenabhängig";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"Auto: Größenabhängig";
+        static constexpr const wchar_t* Settings_Option_Auto = L"Auto";
         static constexpr const wchar_t* Settings_Option_Eco = L"Öko";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Ausgewogen";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ultra";
@@ -2292,7 +2299,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Option_Linear = L"Lineal: Suavizado básico";
         static constexpr const wchar_t* Settings_Option_Nearest = L"Cercano: Extrema nitidez";
         static constexpr const wchar_t* Settings_Option_HighQualityCubic = L"Cúbico HQ: Extremo suavizado";
-        static constexpr const wchar_t* Settings_Option_Auto = L"Auto: Depende del tamaño";
+        static constexpr const wchar_t* Settings_Option_ZoomAuto = L"Auto: Depende del tamaño";
+        static constexpr const wchar_t* Settings_Option_Auto = L"Automático";
         static constexpr const wchar_t* Settings_Option_Eco = L"Eco";
         static constexpr const wchar_t* Settings_Option_Balanced = L"Equilibrado";
         static constexpr const wchar_t* Settings_Option_Ultra = L"Ultra";
@@ -2590,6 +2598,7 @@ namespace AppStrings {
         Settings_Option_Linear = T::Settings_Option_Linear;
         Settings_Option_Nearest = T::Settings_Option_Nearest;
         Settings_Option_HighQualityCubic = T::Settings_Option_HighQualityCubic;
+        Settings_Option_ZoomAuto = T::Settings_Option_ZoomAuto;
         Settings_Option_Auto = T::Settings_Option_Auto;
         Settings_Option_Eco = T::Settings_Option_Eco;
         Settings_Option_Balanced = T::Settings_Option_Balanced;

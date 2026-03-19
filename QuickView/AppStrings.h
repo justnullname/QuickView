@@ -205,6 +205,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_White;
     extern const wchar_t* Settings_Option_Grid;
     extern const wchar_t* Settings_Option_Custom;
+    extern const wchar_t* Settings_Option_ZoomAuto;
     extern const wchar_t* Settings_Option_Off;
     extern const wchar_t* Settings_Option_Lite;
     extern const wchar_t* Settings_Option_Full;

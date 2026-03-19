@@ -23,11 +23,14 @@ extern ImageEngine* g_pImageEngine; // [v3.1] Accessor (renamed from g_imageEngi
 // DrawDialog is still in main.cpp (modal dialog handling)
 extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 
+extern RuntimeConfig g_runtime;
 extern bool g_isLoading; // [Fix] Loading indicator for progress bar
 extern bool g_isNavigatingToTitan; // [Fix] Restrict decode progress bar to Titan images
+extern ViewState g_viewState;  // [v3.2] For Nav Indicators
 extern CImageLoader::ImageMetadata g_currentMetadata;  // [v3.2] For Info Panel
 extern std::wstring g_imagePath;  // [v3.2] For Info Panel
 extern bool g_slowMotionMode; // [Debug] Slow-motion crossfade mode
+extern AppConfig g_config;  // [v3.2] For InfoPanelAlpha
 extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);

@@ -235,9 +235,7 @@ struct RuntimeConfig {
     }
 };
 
-extern AppConfig g_config;
 extern RuntimeConfig g_runtime;
-extern ViewState g_viewState;
 bool CheckWritePermission(const std::wstring& dir);
 void SaveConfig(); // Ensure visible
 void LoadConfig(); // Ensure visible
