@@ -392,6 +392,8 @@ static bool g_isAutoLocked = false;
 
 // [Interpolation] Get best interpolation mode
 static D2D1_INTERPOLATION_MODE GetOptimalD2DInterpolationMode(float totalScale, float origW, float origH) {
+    if (g_runtime.ForcePixelArtMode) return D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+
     int mode = (totalScale >= 1.0f) ? g_config.ZoomModeIn : g_config.ZoomModeOut;
 
     if (mode == 1) return D2D1_INTERPOLATION_MODE_LINEAR;
@@ -412,6 +414,8 @@ static D2D1_INTERPOLATION_MODE GetOptimalD2DInterpolationMode(float totalScale, 
 }
 
 static DCOMPOSITION_BITMAP_INTERPOLATION_MODE GetOptimalDCompInterpolationMode(float totalScale, float origW, float origH) {
+    if (g_runtime.ForcePixelArtMode) return DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+
     int mode = (totalScale >= 1.0f) ? g_config.ZoomModeIn : g_config.ZoomModeOut;
 
     if (mode == 1) return DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR;
@@ -7557,26 +7561,25 @@ SKIP_EDGE_NAV:;
         }
 
         case IDM_PIXEL_ART_MODE: {
-             // Toggle Pixel Art Mode (Nearest Neighbor)
-             bool isPixelArtMode = (g_config.ZoomModeIn == 2 && g_config.ZoomModeOut == 2);
-             if (isPixelArtMode) {
-                 g_config.ZoomModeIn = 0; // Auto
-                 g_config.ZoomModeOut = 0; // Auto
-                 g_osd.Show(hwnd, L"Pixel Art Mode: OFF", false);
-             } else {
-                 g_config.ZoomModeIn = 2; // Nearest Neighbor
-                 g_config.ZoomModeOut = 2; // Nearest Neighbor
-                 g_osd.Show(hwnd, L"Pixel Art Mode: ON", false);
-             }
-             SaveConfig();
+             // Toggle Pixel Art Mode (Nearest Neighbor) - Temporary runtime override
+             g_runtime.ForcePixelArtMode = !g_runtime.ForcePixelArtMode;
 
-             // Update interpolation
-             if (g_compEngine && g_compEngine->IsInitialized()) {
-                 RECT rc; GetClientRect(hwnd, &rc);
-                 SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                 g_compEngine->Commit();
+             if (g_runtime.ForcePixelArtMode) {
+                 g_osd.Show(hwnd, L"Pixel Art Mode: ON", false);
+             } else {
+                 g_osd.Show(hwnd, L"Pixel Art Mode: OFF", false);
              }
-             RequestRepaint(PaintLayer::Image);
+
+             // Update interpolation immediately by redrawing the surface
+             if (g_imageResource) {
+                 RenderImageToDComp(hwnd, g_imageResource, true);
+                 if (g_compEngine && g_compEngine->IsInitialized()) {
+                     RECT rc; GetClientRect(hwnd, &rc);
+                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                     g_compEngine->Commit();
+                 }
+             }
+             RequestRepaint(PaintLayer::All);
              break;
         }
 

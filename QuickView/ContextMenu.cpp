@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ContextMenu.h"
 #include "AppStrings.h"
+#include "EditState.h"
 #include <shellapi.h>
 #include <shlobj.h>
 
@@ -66,9 +67,8 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hViewMenu, rawFlags, IDM_RENDER_RAW, AppStrings::Context_RenderRAW);
     
     // Toggle Pixel Art Mode
-    extern AppConfig g_config;
-    bool isPixelArtMode = (g_config.ZoomModeIn == 2 && g_config.ZoomModeOut == 2);
-    AppendMenuW(hViewMenu, MF_STRING | (isPixelArtMode ? MF_CHECKED : 0), IDM_PIXEL_ART_MODE, AppStrings::Context_PixelArtMode);
+    extern RuntimeConfig g_runtime;
+    AppendMenuW(hViewMenu, MF_STRING | (g_runtime.ForcePixelArtMode ? MF_CHECKED : 0), IDM_PIXEL_ART_MODE, AppStrings::Context_PixelArtMode);
 
     AppendMenuW(hViewMenu, MF_STRING | (isFullscreen ? MF_CHECKED : 0), IDM_FULLSCREEN, AppStrings::Context_Fullscreen);
     

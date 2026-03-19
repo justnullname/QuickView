@@ -212,6 +212,9 @@ struct RuntimeConfig {
     bool ForceRawDecode = false;
     bool RenderRAW = false;
 
+    // Feature Toggles (Temporary Session Flags)
+    bool ForcePixelArtMode = false;
+
     // Verification Flags (Phase 5)
     bool EnableScout = true;
     bool EnableHeavy = true;
