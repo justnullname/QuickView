@@ -4622,23 +4622,54 @@ namespace QuickView {
                 // Initialize Gamma LUT on first use
                 InitGammaLUT();
 
-                int stride = CalculateSIMDAlignedStride(w, 4);
-                size_t totalSize = (size_t)stride * h;
+                int outW = w;
+                int outH = h;
+                if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
+                    const double tw = (ctx.targetWidth > 0) ? static_cast<double>(ctx.targetWidth) : static_cast<double>(w);
+                    const double th = (ctx.targetHeight > 0) ? static_cast<double>(ctx.targetHeight) : static_cast<double>(h);
+                    double scale = (std::min)(tw / static_cast<double>(w), th / static_cast<double>(h));
+                    if (scale > 1.0) scale = 1.0;
+                    if (scale > 0.0 && scale < 1.0) {
+                        outW = (std::max)(1, static_cast<int>(w * scale + 0.5));
+                        outH = (std::max)(1, static_cast<int>(h * scale + 0.5));
+                    }
+                }
+
+                int stride = CalculateSIMDAlignedStride(outW, 4);
+                size_t totalSize = (size_t)stride * outH;
                 uint8_t* pixels = ctx.allocator(totalSize);
                 if (!pixels) return E_OUTOFMEMORY;
+
+                std::vector<int> srcXForOut(outW);
+                for (int ox = 0; ox < outW; ++ox) {
+                    int sx = static_cast<int>((static_cast<int64_t>(ox) * w) / outW);
+                    if (sx >= w) sx = w - 1;
+                    srcXForOut[ox] = sx;
+                }
+
+                std::vector<int> srcYToOut(h, -1);
+                for (int oy = 0; oy < outH; ++oy) {
+                    int sy = static_cast<int>((static_cast<int64_t>(oy) * h) / outH);
+                    if (sy >= h) sy = h - 1;
+                    srcYToOut[sy] = oy;
+                }
 
                 // [v9.9] Optimized Tone Mapping with LUT + OpenMP
                 // Fast gamma conversion using pre-computed LUT
                 #pragma omp parallel for schedule(dynamic, 16)
-                for (int y = 0; y < h; ++y) {
-                    uint8_t* rowDst = pixels + (size_t)y * stride;
-                    const float* rowSrc = floatPixels.data() + (size_t)y * w * 4;
+                for (int oy = 0; oy < outH; ++oy) {
+                    int sy = static_cast<int>((static_cast<int64_t>(oy) * h) / outH);
+                    if (sy >= h) sy = h - 1;
 
-                    for (int x = 0; x < w; ++x) {
-                        float r = rowSrc[x*4+0];
-                        float g = rowSrc[x*4+1];
-                        float b = rowSrc[x*4+2];
-                        float a = rowSrc[x*4+3];
+                    uint8_t* rowDst = pixels + (size_t)oy * stride;
+                    const float* rowSrc = floatPixels.data() + (size_t)sy * w * 4;
+
+                    for (int ox = 0; ox < outW; ++ox) {
+                        int sx = srcXForOut[ox];
+                        float r = rowSrc[sx*4+0];
+                        float g = rowSrc[sx*4+1];
+                        float b = rowSrc[sx*4+2];
+                        float a = rowSrc[sx*4+3];
 
                         // Fast gamma using LUT
                         uint8_t R = FastGamma(r);
@@ -4647,17 +4678,19 @@ namespace QuickView {
                         uint8_t A = (a <= 0.0f) ? 0 : (a >= 1.0f) ? 255 : (uint8_t)(a * 255.0f);
 
                         // BGRA output
-                        rowDst[x*4+0] = B;
-                        rowDst[x*4+1] = G;
-                        rowDst[x*4+2] = R;
-                        rowDst[x*4+3] = A;
+                        rowDst[ox*4+0] = B;
+                        rowDst[ox*4+1] = G;
+                        rowDst[ox*4+2] = R;
+                        rowDst[ox*4+3] = A;
                     }
                 }
 
                 result.pixels = pixels;
-                result.width = w;
-                result.height = h;
+                result.width = outW;
+                result.height = outH;
                 result.stride = stride;
+                result.metadata.Width = w;
+                result.metadata.Height = h;
                 result.format = PixelFormat::BGRA8888;
                 result.success = true;
                 result.metadata.LoaderName = L"TinyEXR";
