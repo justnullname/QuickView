@@ -142,7 +142,6 @@ struct AppConfig {
     float SettingsAlpha = 0.95f;
     
     // Default States (User Preference)
-    bool LockWindowSize = false;         
     bool ShowInfoPanel = false;          
     bool InfoPanelExpanded = false;      
     bool ForceRawDecode = false;         
