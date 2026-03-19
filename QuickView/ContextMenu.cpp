@@ -50,7 +50,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hViewMenu, MF_STRING, IDM_ZOOM_IN, AppStrings::Context_ZoomIn);
     AppendMenuW(hViewMenu, MF_STRING, IDM_ZOOM_OUT, AppStrings::Context_ZoomOut);
     AppendMenuW(hViewMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hViewMenu, MF_STRING | (isWindowLocked ? MF_CHECKED : 0), IDM_LOCK_WINDOW_SIZE, AppStrings::Context_LockWindowSize);
+    AppendMenuW(hViewMenu, MF_STRING | (isWindowLocked ? MF_CHECKED : 0), IDM_LOCK_WINDOW_SIZE, AppStrings::Context_LockWindow);
     AppendMenuW(hViewMenu, MF_STRING | (alwaysOnTop ? MF_CHECKED : 0), IDM_ALWAYS_ON_TOP, AppStrings::Context_AlwaysOnTop);
     AppendMenuW(hViewMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hViewMenu, MF_STRING, IDM_HUD_GALLERY, AppStrings::Context_HUDGallery);

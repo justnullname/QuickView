@@ -990,9 +990,21 @@ void SettingsOverlay::BuildMenu() {
     };
     tabVisuals.items.push_back(itemRounded);
 
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_ResizeOnZoom, OptionType::Toggle, &g_config.ResizeWindowOnZoom });
+    SettingsItem itemLockWindow = { AppStrings::Settings_Label_LockWindow, OptionType::Toggle, &g_config.LockWindowSize };
+    itemLockWindow.onChange = []() {
+        g_runtime.LockWindowSize = g_config.LockWindowSize;
+        g_toolbar.SetLockState(g_runtime.LockWindowSize);
+        SaveConfig();
+    };
+    tabVisuals.items.push_back(itemLockWindow);
+
     tabVisuals.items.push_back({ AppStrings::Settings_Label_AutoHideTitle, OptionType::Toggle, &g_config.AutoHideWindowControls });
     
+    tabVisuals.items.push_back({ AppStrings::Settings_Header_WindowLock, OptionType::Header });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_KeepWindowSizeOnNav, OptionType::Toggle, &g_config.KeepWindowSizeOnNav });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_RememberLastWindowSize, OptionType::Toggle, &g_config.RememberLastWindowSize });
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_UpscaleSmallImagesWhenLocked, OptionType::Toggle, &g_config.UpscaleSmallImagesWhenLocked });
+
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Panel, OptionType::Header });
     
     // [Fix] Lock Toolbar: Update runtime state immediately
@@ -1525,6 +1537,10 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
         float startContentY = contentY; 
         m_settingsContentHeight = 0.0f; // Reset
 
+        // Create scroll bounds clip
+        D2D1_RECT_F scrollClipRect = D2D1::RectF(contentX, hudY, contentX + contentW, hudY + hudH);
+        pRT->PushAxisAlignedClip(scrollClipRect, D2D1_ANTIALIAS_MODE_ALIASED);
+
         // Draw Active Tab Content
         if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
             auto& currentTab = m_tabs[m_activeTab];
@@ -1853,13 +1869,16 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             // 2. Normal Item Row
             
             // Label
-            D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + 250, contentY + rowHeight);
+            float labelWidth = 270.0f * s; // Balanced with button space
+            D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + labelWidth, contentY + rowHeight);
             pRT->DrawTextW(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), labelRect, m_brushTextDim.Get());
 
             // Control Area
-            float controlX = contentX + 260.0f;
-            float controlW = contentW - 260.0f;
-            D2D1_RECT_F controlRect = D2D1::RectF(controlX, contentY + 5, controlX + controlW, contentY + rowHeight - 5);
+            float controlOffset = 280.0f * s; 
+            float controlX = contentX + controlOffset;
+            float controlW = contentW - controlOffset;
+            float insetY = 5.0f * s;
+            D2D1_RECT_F controlRect = D2D1::RectF(controlX, contentY + insetY, controlX + controlW, contentY + rowHeight - insetY);
 
             bool isHovered = (&item == m_pHoverItem);
 
@@ -1928,7 +1947,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      }
 
                      float btnWidth = std::max(btnMinWidth, textW + btnPadX * 2.0f);
-                     float btnMaxWidth = controlW * 0.55f;
+                     float btnMaxWidth = controlW * 0.85f; // Increased from 0.55f to prevent button text wrap
                      if (btnWidth > btnMaxWidth) btnWidth = btnMaxWidth;
 
                      float btnX = controlX + controlW - btnWidth; // Right-aligned
@@ -2064,6 +2083,24 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             if (currentH > m_settingsContentHeight) m_settingsContentHeight = currentH;
         } // End Item Loop
     } // End Active Tab Check
+    pRT->PopAxisAlignedClip();
+
+    // Draw Scrollbar
+    float visibleH = hudH - 60.0f * s;
+    float overflow = m_settingsContentHeight - visibleH;
+    if (overflow > 0) {
+        float maxScroll = overflow;
+        float thumbRatio = visibleH / m_settingsContentHeight;
+        float thumbH = std::max(20.0f * s, visibleH * thumbRatio);
+        float scrollProgress = -m_scrollOffset / maxScroll;
+        float thumbY = hudY + 50.0f * s + (visibleH - thumbH) * scrollProgress;
+
+        D2D1_RECT_F thumbRect = D2D1::RectF(hudX + hudW - 8.0f * s, thumbY, hudX + hudW - 4.0f * s, thumbY + thumbH);
+        ComPtr<ID2D1SolidColorBrush> scrollBrush;
+        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.2f), &scrollBrush);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 2.0f * s, 2.0f * s), scrollBrush.Get());
+    }
+
     } // End if (m_visible)
 
     // Draw Update Toast on Top (Always check)
@@ -2088,7 +2125,10 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
     // Fallback to Settings Scroll
     if (!m_visible) return false;
     
-    m_scrollOffset += delta * 20.0f;
+    // delta is normalized in main.cpp to 1.0 or -1.0. Map to pixel scroll speed.
+    // E.g. delta > 0 -> Scroll Up (increase offset), delta < 0 -> Scroll Down (decrease offset)
+    m_scrollOffset += delta * 60.0f * m_uiScale;
+
     if (m_scrollOffset > 0.0f) m_scrollOffset = 0.0f;
     
     // Bottom Limit
@@ -2131,9 +2171,10 @@ void SettingsOverlay::DrawToggle(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect
 }
 
 void SettingsOverlay::DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered) {
-    // Width 150, Height 4
-    float w = 150.0f; 
-    float h = 4.0f;
+    const float s = m_uiScale;
+    // Width 150, Height 4 (Scaled)
+    float w = 150.0f * s; 
+    float h = 4.0f * s;
     float x = rect.right - w; // Right aligned
     float y = rect.top + (rect.bottom - rect.top - h) / 2.0f;
     
@@ -2294,10 +2335,11 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
     // 0. Active Combo Logic (Priority)
     if (m_pActiveCombo) {
-        float controlX = m_pActiveCombo->rect.left + 260.0f;
+        const float s = m_uiScale;
+        float controlX = m_pActiveCombo->rect.left + 280.0f * s;
         float controlW = m_pActiveCombo->rect.right - controlX;
         float dropY = m_pActiveCombo->rect.bottom;
-        float itemH = 30.0f;
+        float itemH = ITEM_HEIGHT * s;
         int count = (int)m_pActiveCombo->options.size();
         int maxItems = 8;
         int visibleItems = (count > maxItems) ? maxItems : count;
@@ -2350,10 +2392,16 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // Default Cursor
     ::SetCursor(::LoadCursor(NULL, IDC_ARROW));
 
+    // Scroll clipping bounds
+    float hudY = m_hudY;
+    float hudBottom = m_hudY + HUD_HEIGHT * m_uiScale;
+
     if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
         for (auto& item : m_tabs[m_activeTab].items) {
-            if (x >= item.interactRect.left && x <= item.interactRect.right &&
-                y >= item.interactRect.top && y <= item.interactRect.bottom) {
+            // Must be within visible vertical bounds (accounting for clip rect)
+            if (y >= hudY && y <= hudBottom) {
+                if (x >= item.interactRect.left && x <= item.interactRect.right &&
+                    y >= item.interactRect.top && y <= item.interactRect.bottom) {
                 
                 // If ComboBox is Active, do NOT verify hover on other items effectively?
                 // Actually, if we want to click outside to close, we should allow hover?
@@ -2362,18 +2410,19 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                 
                 m_pHoverItem = &item;
                 
-                // Sub-item Hit Testing
-                if (item.type == OptionType::AboutLinks) {
-                    LinkRects r = GetLinkButtonRects(item.rect);
-                    if (x >= r.github.left && x <= r.github.right && y >= r.github.top && y <= r.github.bottom) m_hoverLinkIndex = 0;
-                    else if (x >= r.issues.left && x <= r.issues.right && y >= r.issues.top && y <= r.issues.bottom) m_hoverLinkIndex = 1;
-                    else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) m_hoverLinkIndex = 2;
+                    // Sub-item Hit Testing
+                    if (item.type == OptionType::AboutLinks) {
+                        LinkRects r = GetLinkButtonRects(item.rect);
+                        if (x >= r.github.left && x <= r.github.right && y >= r.github.top && y <= r.github.bottom) m_hoverLinkIndex = 0;
+                        else if (x >= r.issues.left && x <= r.issues.right && y >= r.issues.top && y <= r.issues.bottom) m_hoverLinkIndex = 1;
+                        else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) m_hoverLinkIndex = 2;
+
+
+                        if (m_hoverLinkIndex != -1) ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+                    }
                     
-                    
-                    if (m_hoverLinkIndex != -1) ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+                    break;
                 }
-                
-                break;
             }
         }
     }
@@ -2457,10 +2506,11 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
     // 3. Active Combo Processing
     if (m_pActiveCombo) {
-        float controlX = m_pActiveCombo->rect.left + 260.0f;
+        const float s = m_uiScale;
+        float controlX = m_pActiveCombo->rect.left + 280.0f * s;
         float controlW = m_pActiveCombo->rect.right - controlX;
         float dropY = m_pActiveCombo->rect.bottom;
-        float itemH = 30.0f;
+        float itemH = ITEM_HEIGHT * s;
         int count = (int)m_pActiveCombo->options.size();
         int maxItems = 8;
         int visibleItems = (count > maxItems) ? maxItems : count;
@@ -2536,7 +2586,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
         // Segment
         if (m_pHoverItem->type == OptionType::Segment && m_pHoverItem->pIntVal) {
-             float controlX = m_pHoverItem->rect.left + 260.0f;
+             const float s = m_uiScale;
+             float controlX = m_pHoverItem->rect.left + 280.0f * s;
              float controlW = m_pHoverItem->rect.right - controlX;
              
              if (x >= controlX && x <= controlX + controlW) {
@@ -2590,7 +2641,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
         // Custom Color Row: Checkbox vs Button
         if (m_pHoverItem->type == OptionType::CustomColorRow) {
-             float controlX = m_pHoverItem->rect.left + 260.0f;
+             const float s = m_uiScale;
+             float controlX = m_pHoverItem->rect.left + 280.0f * s;
              // Checkbox Area (left half)
              if (x < controlX + 200.0f) {
                  g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
@@ -2602,7 +2654,17 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
     }
 
-    // Clicked content background - trigger window drag (unless combo box is active)
+    // Check if clicked in scroll bounds
+    float contentX = m_hudX + SIDEBAR_WIDTH * m_uiScale;
+    float contentRight = m_hudX + HUD_WIDTH * m_uiScale;
+
+    if (x >= contentX && x <= contentRight && y >= m_hudY && y <= m_hudY + HUD_HEIGHT * m_uiScale) {
+        // If clicked in content area but not on an item, do nothing (prevent dragging window if they miss a button)
+        // Actually native drag is nice on blank areas.
+        return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
+    }
+
+    // Clicked outside content?
     return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
 }
 
@@ -2674,11 +2736,12 @@ void SettingsOverlay::DrawComboBox(ID2D1RenderTarget* pRT, const D2D1_RECT_F& re
 void SettingsOverlay::DrawComboDropdown(ID2D1RenderTarget* pRT) {
     if (!m_pActiveCombo) return;
     
-    float controlX = m_pActiveCombo->rect.left + 260.0f;
+    const float s = m_uiScale;
+    float controlX = m_pActiveCombo->rect.left + 280.0f * s;
     float controlW = m_pActiveCombo->rect.right - controlX;
     float dropY = m_pActiveCombo->rect.bottom;
     
-    float itemH = 30.0f;
+    float itemH = ITEM_HEIGHT * s;
     int count = (int)m_pActiveCombo->options.size();
     int maxItems = 8;
     int visibleItems = (count > maxItems) ? maxItems : count;

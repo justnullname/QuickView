@@ -1840,8 +1840,14 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
     }
 
     float fitScale = std::min((float)winW / originalW, (float)winH / originalH);
-    if (originalW < 200.0f && originalH < 200.0f) {
-        if (fitScale > 1.0f) fitScale = 1.0f;
+    if (g_runtime.LockWindowSize) {
+        if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+            fitScale = 1.0f;
+        }
+    } else {
+        if (originalW < 200.0f && originalH < 200.0f) {
+            if (fitScale > 1.0f) fitScale = 1.0f;
+        }
     }
 
     float desiredScale = fitScale * g_viewState.Zoom;
@@ -2608,7 +2614,7 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
         float renderScaleTarget = (originalW / imgW);
             
         // Logic to resize window to wrap image at 100% if allowed
-        if (allowResizeWindow && g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_isFullScreen && !g_runtime.LockWindowSize) {
+        if (allowResizeWindow && !IsZoomed(hwnd) && !g_isFullScreen && !g_runtime.LockWindowSize) {
                 int targetW = (int)originalW; // Target TRUE pixel width
                 int targetH = (int)originalH;
                 
@@ -2671,8 +2677,16 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
     // 3. [Logic] Small Image Protection
     // If image < 200px, Fit Scale shouldn't blow it up to screen size by default.
     // Base fit becomes 1.0 for small images.
-    if (imageWidth < 200.0f && imageHeight < 200.0f && !g_imageResource.isSvg) {
-        if (fitScale > 1.0f) fitScale = 1.0f;
+    if (!g_imageResource.isSvg) {
+        if (g_runtime.LockWindowSize) {
+            if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+                fitScale = 1.0f;
+            }
+        } else {
+            if (imageWidth < 200.0f && imageHeight < 200.0f && fitScale > 1.0f) {
+                fitScale = 1.0f;
+            }
+        }
     }
 
     // 4. Current State
@@ -3531,9 +3545,15 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"CanvasShowGrid", g_config.CanvasShowGrid ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"AlwaysOnTop", g_config.AlwaysOnTop ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"OpenFullScreenMode", std::to_wstring(g_config.OpenFullScreenMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"ResizeWindowOnZoom", g_config.ResizeWindowOnZoom ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"LockWindowSize", g_config.LockWindowSize ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar ? L"1" : L"0", iniPath.c_str());
+
+    // Window Lock Behaviors
+    WritePrivateProfileStringW(L"View", L"KeepWindowSizeOnNav", g_config.KeepWindowSizeOnNav ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"RememberLastWindowSize", g_config.RememberLastWindowSize ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"UpscaleSmallImagesWhenLocked", g_config.UpscaleSmallImagesWhenLocked ? L"1" : L"0", iniPath.c_str());
+
     WritePrivateProfileStringW(L"View", L"ExifPanelMode", std::to_wstring(g_config.ExifPanelMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"ToolbarInfoDefault", std::to_wstring(g_config.ToolbarInfoDefault).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"InfoPanelAlpha", std::to_wstring(g_config.InfoPanelAlpha).c_str(), iniPath.c_str());
@@ -3621,9 +3641,20 @@ void LoadConfig() {
     g_config.CanvasShowGrid = GetPrivateProfileIntW(L"View", L"CanvasShowGrid", 0, iniPath.c_str()) != 0;
     g_config.AlwaysOnTop = GetPrivateProfileIntW(L"View", L"AlwaysOnTop", 0, iniPath.c_str()) != 0;
     g_config.OpenFullScreenMode = GetPrivateProfileIntW(L"View", L"OpenFullScreenMode", 0, iniPath.c_str());
-    g_config.ResizeWindowOnZoom = GetPrivateProfileIntW(L"View", L"ResizeWindowOnZoom", 1, iniPath.c_str()) != 0;
+    g_config.LockWindowSize = GetPrivateProfileIntW(L"View", L"LockWindowSize", 0, iniPath.c_str()) != 0;
+
+    // Migration: if they had ResizeWindowOnZoom = 0, that's equivalent to LockWindowSize = true in old configs
+    if (GetPrivateProfileIntW(L"View", L"ResizeWindowOnZoom", 1, iniPath.c_str()) == 0) {
+        g_config.LockWindowSize = true;
+    }
     g_config.AutoHideWindowControls = GetPrivateProfileIntW(L"View", L"AutoHideWindowControls", 1, iniPath.c_str()) != 0;
     g_config.LockBottomToolbar = GetPrivateProfileIntW(L"View", L"LockBottomToolbar", 0, iniPath.c_str()) != 0;
+
+    // Window Lock Behaviors
+    g_config.KeepWindowSizeOnNav = GetPrivateProfileIntW(L"View", L"KeepWindowSizeOnNav", 0, iniPath.c_str()) != 0;
+    g_config.RememberLastWindowSize = GetPrivateProfileIntW(L"View", L"RememberLastWindowSize", 0, iniPath.c_str()) != 0;
+    g_config.UpscaleSmallImagesWhenLocked = GetPrivateProfileIntW(L"View", L"UpscaleSmallImagesWhenLocked", 0, iniPath.c_str()) != 0;
+
     g_config.ExifPanelMode = GetPrivateProfileIntW(L"View", L"ExifPanelMode", 0, iniPath.c_str());
     g_config.ToolbarInfoDefault = GetPrivateProfileIntW(L"View", L"ToolbarInfoDefault", 0, iniPath.c_str());
     
@@ -3858,8 +3889,16 @@ int GetCurrentZoomPercent() {
     
     // Calculate BaseFit (same as WM_MOUSEWHEEL and SyncDCompState)
     float fitScale = std::min(winW / effSize.width, winH / effSize.height);
-    if (effSize.width < 200.0f && effSize.height < 200.0f && !g_imageResource.isSvg) {
-        if (fitScale > 1.0f) fitScale = 1.0f;
+    if (!g_imageResource.isSvg) {
+        if (g_runtime.LockWindowSize) {
+            if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+                fitScale = 1.0f;
+            }
+        } else {
+            if (effSize.width < 200.0f && effSize.height < 200.0f && fitScale > 1.0f) {
+                fitScale = 1.0f;
+            }
+        }
     }
     
     // TotalScale = BaseFit * Zoom
@@ -4188,10 +4227,20 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
         VisualState vs = GetVisualState();
         if (vs.VisualSize.width > 0 && vs.VisualSize.height > 0) {
             float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
-            // [SVG Lossless] Don't cap baseFit for SVG - vector content fills window at any size
-            if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f && !g_imageResource.isSvg) {
-                if (baseFit > 1.0f) baseFit = 1.0f;
+
+            // Handle Small Images Scale
+            if (!g_imageResource.isSvg) {
+                if (g_runtime.LockWindowSize) {
+                    if (!g_config.UpscaleSmallImagesWhenLocked && baseFit > 1.0f) {
+                        baseFit = 1.0f;
+                    }
+                } else {
+                    if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f) {
+                        if (baseFit > 1.0f) baseFit = 1.0f;
+                    }
+                }
             }
+
             float targetZoom = baseFit * g_viewState.Zoom;
 
             // [Fix] Maintain absolute scale during interactive resize
@@ -4650,6 +4699,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     int winW = 800;
     int winH = 600;
+
+    // Load last window size if RememberLastWindowSize is true
+    if (g_config.RememberLastWindowSize && g_config.LockWindowSize) {
+        std::wstring iniPath = GetConfigPath();
+        if (g_config.PortableMode) {
+            wchar_t exePath[MAX_PATH];
+            GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+            std::wstring exeDir = exePath;
+            size_t lastSlash = exeDir.find_last_of(L"\\/");
+            if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+            iniPath = exeDir + L"\\QuickView.ini";
+        }
+        int savedW = GetPrivateProfileIntW(L"View", L"LastWindowW", 0, iniPath.c_str());
+        int savedH = GetPrivateProfileIntW(L"View", L"LastWindowH", 0, iniPath.c_str());
+        if (savedW > 0 && savedH > 0) {
+            winW = savedW;
+            winH = savedH;
+        }
+    }
+
     int xPos = (screenW - winW) / 2;
     int yPos = (screenH - winH) / 2;
 
@@ -5232,6 +5301,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     
     case WM_CLOSE: {
         if (!CheckUnsavedChanges(hwnd)) return 0;
+
+        // Save Last Window Size
+        if (g_config.RememberLastWindowSize && g_config.LockWindowSize && !IsZoomed(hwnd) && !IsIconic(hwnd) && !g_isFullScreen) {
+            RECT rc;
+            if (GetWindowRect(hwnd, &rc)) {
+                std::wstring iniPath = GetConfigPath();
+                if (g_config.PortableMode) {
+                    wchar_t exePath[MAX_PATH];
+                    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+                    std::wstring exeDir = exePath;
+                    size_t lastSlash = exeDir.find_last_of(L"\\/");
+                    if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+                    iniPath = exeDir + L"\\QuickView.ini";
+                }
+                WritePrivateProfileStringW(L"View", L"LastWindowW", std::to_wstring(rc.right - rc.left).c_str(), iniPath.c_str());
+                WritePrivateProfileStringW(L"View", L"LastWindowH", std::to_wstring(rc.bottom - rc.top).c_str(), iniPath.c_str());
+            }
+        }
+
         // [Phase 0] Master lifecycle: if child viewers are alive, hide our window
         // but keep the process running so the pipe server stays active.
         if (g_isMasterProcess && QuickView::ProcessRouter::HasActiveChildren()) {
@@ -8870,8 +8958,14 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
         
         // [Fix] Window Lock Persistence: Reset Lock state to User Preference on navigation.
         // This ensures that an "Auto-Lock" (from small image zoom) doesn't trap subsequent large images.
-        g_runtime.LockWindowSize = g_config.LockWindowSize;
-        g_isAutoLocked = false; 
+        if (!g_config.KeepWindowSizeOnNav || !g_runtime.LockWindowSize) {
+            g_runtime.LockWindowSize = g_config.LockWindowSize;
+            g_isAutoLocked = false;
+        } else {
+            // If KeepWindowSizeOnNav is true AND currently locked, we force it to stay locked
+            g_runtime.LockWindowSize = true;
+            g_isAutoLocked = false;
+        }
 
         // Reset Temporary Pixel Art Mode override for new images
         g_runtime.PixelArtModeOverride = 0;
@@ -9452,7 +9546,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     // Basic Eligibility Check
     // [Fix] Decouple "Ctrl Key" from "Force Lock". Accept explicit parameter.
     // Mouse Wheel passes 'isCtrl' (True). Keyboard Zoom passes 'False'.
-    bool canResizeConfig = g_config.ResizeWindowOnZoom && !IsZoomed(hwnd) && !g_isFullScreen && !forceWindowLock;
+    bool canResizeConfig = !g_runtime.LockWindowSize && !IsZoomed(hwnd) && !g_isFullScreen && !forceWindowLock;
     
     // Get Image Dimensions
     VisualState vs = GetVisualState();
@@ -9524,8 +9618,16 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
                     float winW = (float)rc.right;
                     float winH = (float)rc.bottom;
                     float fitScale = std::min(winW / imgW, winH / imgH);
-                    if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg) {
-                        if (fitScale > 1.0f) fitScale = 1.0f;
+                    if (!g_imageResource.isSvg) {
+                        if (g_runtime.LockWindowSize) {
+                            if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+                                fitScale = 1.0f;
+                            }
+                        } else {
+                            if (imgW < 200.0f && imgH < 200.0f && fitScale > 1.0f) {
+                                fitScale = 1.0f;
+                            }
+                        }
                     }
                     if (fitScale > 0.0001f) {
                         float newZoom = newTotalScale / fitScale;
@@ -9626,8 +9728,16 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          
          float fitScale = std::min(winW / imgW, winH / imgH);
          // [SVG Lossless] Don't cap fitScale for SVG - vector content scales losslessly
-         if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg) {
-              if (fitScale > 1.0f) fitScale = 1.0f;
+         if (!g_imageResource.isSvg) {
+             if (g_runtime.LockWindowSize) {
+                 if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+                     fitScale = 1.0f;
+                 }
+             } else {
+                 if (imgW < 200.0f && imgH < 200.0f && fitScale > 1.0f) {
+                     fitScale = 1.0f;
+                 }
+             }
          }
          
          float oldZoom = g_viewState.Zoom;

@@ -144,6 +144,7 @@ private:
     SettingsItem* m_pActiveCombo = nullptr; // Currently open dropdown
     int m_comboHoverIdx = -1;
     float m_scrollOffset = 0.0f;
+    float m_settingsContentHeight = 0.0f;
 
     
     std::vector<SettingsTab> m_tabs;
@@ -200,7 +201,6 @@ private:
     float m_hudY = 0.0f;
     float m_windowWidth = 0.0f;
     float m_windowHeight = 0.0f;
-    float m_settingsContentHeight = 0.0f;
     float m_uiScale = 1.0f;
     
     // Toast Scrolling

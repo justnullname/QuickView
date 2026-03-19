@@ -78,7 +78,7 @@ namespace AppStrings {
     const wchar_t* Context_FitToScreen = nullptr;
     const wchar_t* Context_ZoomIn = nullptr;
     const wchar_t* Context_ZoomOut = nullptr;
-    const wchar_t* Context_LockWindowSize = nullptr;
+    const wchar_t* Context_LockWindow = nullptr;
     const wchar_t* Context_AlwaysOnTop = nullptr;
     const wchar_t* Context_HUDGallery = nullptr;
     const wchar_t* Context_LiteInfoPanel = nullptr;
@@ -168,6 +168,7 @@ namespace AppStrings {
 
     const wchar_t* Settings_Header_Backdrop = nullptr;
     const wchar_t* Settings_Header_Window = nullptr;
+    const wchar_t* Settings_Header_WindowLock = nullptr;
     const wchar_t* Settings_Header_Panel = nullptr;
     const wchar_t* Settings_Header_Mouse = nullptr;
     const wchar_t* Settings_Header_Edge = nullptr;
@@ -182,10 +183,13 @@ namespace AppStrings {
     const wchar_t* Settings_Label_Overlay = nullptr;
     const wchar_t* Settings_Label_ShowGrid = nullptr;
     const wchar_t* Settings_Label_AlwaysOnTop = nullptr;
-    const wchar_t* Settings_Label_ResizeOnZoom = nullptr;
+    const wchar_t* Settings_Label_LockWindow = nullptr;
     const wchar_t* Settings_Label_AutoHideTitle = nullptr;
     const wchar_t* Settings_Label_RoundedCorners = nullptr;
     const wchar_t* Settings_Label_LockToolbar = nullptr;
+    const wchar_t* Settings_Label_KeepWindowSizeOnNav = nullptr;
+    const wchar_t* Settings_Label_RememberLastWindowSize = nullptr;
+    const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
     const wchar_t* Settings_Label_ExifMode = nullptr;
     const wchar_t* Settings_Label_ToolbarInfoDefault = nullptr;
     const wchar_t* Settings_Label_OpenFullScreenMode = nullptr;
@@ -379,8 +383,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"Rotate Left (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"Rotate Right (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"Flip Horizontal (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Lock Window Size";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Unlock Window Size";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Lock Window";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Unlock Window";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"Gallery (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"Info Panel";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: Preview (Click for Full)";
@@ -411,8 +415,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"Zoom: Fit Screen";
         static constexpr const wchar_t* OSD_PrintInstruction = L"Print: Use Ctrl+P in opened app";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"Moved to Recycle Bin";
-        static constexpr const wchar_t* OSD_WindowLocked = L"Window Size Locked";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"Window Size Unlocked";
+        static constexpr const wchar_t* OSD_WindowLocked = L"Window Locked";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"Window Unlocked";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"Always on Top: ON";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"Always on Top: OFF";
         static constexpr const wchar_t* OSD_WallpaperSet = L"Wallpaper Set";
@@ -444,7 +448,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"Fit to Screen\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"Zoom In\t+ / Ctrl +";
         static constexpr const wchar_t* Context_ZoomOut = L"Zoom Out\t- / Ctrl -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"Lock Window Size";
+        static constexpr const wchar_t* Context_LockWindow = L"Lock Window";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"Always on Top\tCtrl+T";
         static constexpr const wchar_t* Context_HUDGallery = L"HUD Gallery\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"Lite Info Panel\tTab";
@@ -473,6 +477,7 @@ namespace AppStrings {
 
         static constexpr const wchar_t* Settings_Header_Backdrop = L"Backdrop";
         static constexpr const wchar_t* Settings_Header_Window = L"Window";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"Window Lock";
         static constexpr const wchar_t* Settings_Header_Panel = L"Panel";
         static constexpr const wchar_t* Settings_Header_Mouse = L"Mouse";
         static constexpr const wchar_t* Settings_Header_Edge = L"Edge";
@@ -487,10 +492,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"Overlay";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Show Grid Overlay";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Always on Top";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"Resize on Zoom";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"Lock Window";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Auto-Hide Title Bar";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"Rounded Corners";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Lock Bottom Toolbar";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Keep window size on navigation";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Remember last window size";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Adapt small images";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF Panel Mode";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Toolbar Info Default";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Open Fullscreen";
@@ -685,6 +693,7 @@ namespace AppStrings {
 
         static constexpr const wchar_t* Settings_Header_Backdrop = L"背景";
         static constexpr const wchar_t* Settings_Header_Window = L"窗口";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"锁定窗口时";
         static constexpr const wchar_t* Settings_Header_Panel = L"面板";
         static constexpr const wchar_t* Settings_Header_Mouse = L"鼠标";
         static constexpr const wchar_t* Settings_Header_Edge = L"边缘";
@@ -699,10 +708,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"叠加层";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"显示网格";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"窗口置顶";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"缩放时调整窗口";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"锁定窗口";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"自动隐藏标题栏";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"圆角窗口";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"锁定底部工具栏";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"导航时保持窗口尺寸不变";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"记住最后窗口尺寸";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小于窗口尺寸图片适应窗口";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具栏信息默认值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"打开时全屏";
@@ -809,7 +821,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"适应屏幕\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"放大\t+ / Ctrl +";
         static constexpr const wchar_t* Context_ZoomOut = L"缩小\t- / Ctrl -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"锁定窗口大小";
+        static constexpr const wchar_t* Context_LockWindow = L"锁定窗口";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"窗口置顶\tCtrl+T";
         static constexpr const wchar_t* Context_HUDGallery = L"HUD 照片墙\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"简略信息面板\tTab";
@@ -841,8 +853,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"向左旋转 (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"向右旋转 (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"水平翻转 (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"锁定窗口大小";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"解锁窗口大小";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"锁定窗口";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"解锁窗口";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"缩略图 (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"信息面板";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: 快速预览 (点击切换完整)";
@@ -873,8 +885,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"缩放: 适应屏幕";
         static constexpr const wchar_t* OSD_PrintInstruction = L"打印: 请在打开的应用中使用 Ctrl+P";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"已移至回收站";
-        static constexpr const wchar_t* OSD_WindowLocked = L"窗口大小已锁定";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"窗口大小已解锁";
+        static constexpr const wchar_t* OSD_WindowLocked = L"窗口已锁定";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"窗口已解锁";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"窗口置顶: 开";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"窗口置顶: 关";
         static constexpr const wchar_t* OSD_WallpaperSet = L"壁纸已设置";
@@ -987,8 +999,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"向左旋轉 (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"向右旋轉 (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"水平翻轉 (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"鎖定視窗大小";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"解鎖視窗大小";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"鎖定視窗";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"解鎖視窗";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"縮圖 (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"資訊面板";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: 快速預覽 (點選切換完整)";
@@ -1017,8 +1029,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"縮放: 適應螢幕";
         static constexpr const wchar_t* OSD_PrintInstruction = L"列印: 請在開啟的應用程式中使用 Ctrl+P";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"已移至資源回收筒";
-        static constexpr const wchar_t* OSD_WindowLocked = L"視窗大小已鎖定";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"視窗大小已解鎖";
+        static constexpr const wchar_t* OSD_WindowLocked = L"視窗已鎖定";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"視窗已解鎖";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"視窗置頂: 開";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"視窗置頂: 關";
         static constexpr const wchar_t* OSD_WallpaperSet = L"桌布已設定";
@@ -1048,7 +1060,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"適應螢幕\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"放大\t+ / Ctrl +";
         static constexpr const wchar_t* Context_ZoomOut = L"縮小\t- / Ctrl -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"鎖定視窗大小";
+        static constexpr const wchar_t* Context_LockWindow = L"鎖定視窗";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"視窗置頂\tCtrl+T";
         static constexpr const wchar_t* Context_HUDGallery = L"HUD 照片牆\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"簡略資訊面板\tTab";
@@ -1075,6 +1087,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Tab_Advanced = L"進階";
         static constexpr const wchar_t* Settings_Header_Backdrop = L"背景";
         static constexpr const wchar_t* Settings_Header_Window = L"視窗";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"鎖定視窗時";
         static constexpr const wchar_t* Settings_Header_Panel = L"面板";
         static constexpr const wchar_t* Settings_Header_Mouse = L"滑鼠";
         static constexpr const wchar_t* Settings_Header_Edge = L"邊緣";
@@ -1088,10 +1101,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"疊加層";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"顯示網格";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"視窗置頂";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"縮放時調整視窗";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"鎖定視窗";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"自動隱藏標題列";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"圓角視窗";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"鎖定底部工具列";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"導航時保持視窗尺寸不變";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"記住最後視窗尺寸";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小於視窗尺寸圖片適應視窗";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具列資訊預設值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開啟時全螢幕";
@@ -1274,8 +1290,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"左回転 (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"右回転 (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"水平反転 (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"ウィンドウサイズを固定";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"ウィンドウサイズを解除";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"ウィンドウをロック";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"ウィンドウ固定を解除";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"ギャラリー (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"情報パネル";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: プレビュー (クリックでフル)";
@@ -1304,8 +1320,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"ズーム: 画面に合わせる";
         static constexpr const wchar_t* OSD_PrintInstruction = L"印刷: 開いたアプリでCtrl+Pを使用";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"ごみ箱に移動しました";
-        static constexpr const wchar_t* OSD_WindowLocked = L"ウィンドウサイズ固定";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"ウィンドウサイズ解除";
+        static constexpr const wchar_t* OSD_WindowLocked = L"ウィンドウ固定";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"ウィンドウ固定解除";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"常に手前: オン";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"常に手前: オフ";
         static constexpr const wchar_t* OSD_WallpaperSet = L"壁紙を設定しました";
@@ -1335,7 +1351,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"画面に合わせる\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"拡大\t+ / Ctrl +";
         static constexpr const wchar_t* Context_ZoomOut = L"縮小\t- / Ctrl -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"ウィンドウサイズを固定";
+        static constexpr const wchar_t* Context_LockWindow = L"ウィンドウをロック";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"常に手前に表示\tCtrl+T";
         static constexpr const wchar_t* Context_HUDGallery = L"HUDギャラリー\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"簡易情報パネル\tTab";
@@ -1362,6 +1378,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Tab_Advanced = L"詳細";
         static constexpr const wchar_t* Settings_Header_Backdrop = L"背景";
         static constexpr const wchar_t* Settings_Header_Window = L"ウィンドウ";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"ウィンドウロック";
         static constexpr const wchar_t* Settings_Header_Panel = L"パネル";
         static constexpr const wchar_t* Settings_Header_Mouse = L"マウス";
         static constexpr const wchar_t* Settings_Header_Edge = L"エッジ";
@@ -1375,10 +1392,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"オーバーレイ";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"グリッド表示";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"常に手前";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"ズーム時にリサイズ";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"ウィンドウをロック";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"タイトルバー自動非表示";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"角丸ウィンドウ";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"下部ツールバー固定";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"ナビゲーション時にウィンドウサイズを保持";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"最後のウィンドウサイズを記憶";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小さな画像をウィンドウに合わせる";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIFパネルモード";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"ツールバー情報デフォルト";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開くときに全画面表示";
@@ -1561,8 +1581,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"Повернуть влево (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"Повернуть вправо (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"Отразить по горизонтали (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Зафиксировать размер окна";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Разблокировать размер окна";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Зафиксировать окно";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Разблокировать окно";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"Галерея (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"Информационная панель";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: Предпросмотр (Нажмите для полного)";
@@ -1591,8 +1611,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"Масштаб: По размеру экрана";
         static constexpr const wchar_t* OSD_PrintInstruction = L"Печать: Используйте Ctrl+P в открытом приложении";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"Перемещено в корзину";
-        static constexpr const wchar_t* OSD_WindowLocked = L"Размер окна зафиксирован";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"Размер окна разблокирован";
+        static constexpr const wchar_t* OSD_WindowLocked = L"Окно зафиксировано";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"Окно разблокировано";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"Always on Top: ON";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"Always on Top: OFF";
         static constexpr const wchar_t* OSD_WallpaperSet = L"Обои установлены";
@@ -1622,7 +1642,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"По размеру экрана\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"Увеличить\t+ / Ctrl +";
         static constexpr const wchar_t* Context_ZoomOut = L"Уменьшить\t- / Ctrl -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"Зафиксировать размер окна";
+        static constexpr const wchar_t* Context_LockWindow = L"Зафиксировать размер окна";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"Поверх всех окон\tCtrl+T";
         static constexpr const wchar_t* Context_HUDGallery = L"HUD Галерея\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"Краткая панель информации\tTab";
@@ -1649,6 +1669,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Tab_Advanced = L"Дополнительно";
         static constexpr const wchar_t* Settings_Header_Backdrop = L"Фон";
         static constexpr const wchar_t* Settings_Header_Window = L"Окно";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"Блокировка окна";
         static constexpr const wchar_t* Settings_Header_Panel = L"Панель";
         static constexpr const wchar_t* Settings_Header_Mouse = L"Мышь";
         static constexpr const wchar_t* Settings_Header_Edge = L"Край";
@@ -1662,10 +1683,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"Наложение";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Показать сетку";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Поверх всех окон";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"Изменять размер при масштабировании";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"Заблокировать размер окна";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Автоскрытие заголовка";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"Закругленные углы";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Закрепить нижнюю панель";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Сохранять размер окна при навигации";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Запомнить последний размер окна";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Адаптировать мелкие изображения";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Режим панели EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Инфо. в панели по умолчанию";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Полноэкранный режим при открытии";
@@ -1848,8 +1872,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"Links drehen (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"Rechts drehen (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"Horizontal spiegeln (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Fenstergröße sperren";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Fenstergröße entsperren";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Fenster sperren";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Fenster entsperren";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"Galerie (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"Info-Panel";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: Vorschau (Klick für Voll)";
@@ -1878,8 +1902,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"Zoom: An Bildschirm anpassen";
         static constexpr const wchar_t* OSD_PrintInstruction = L"Drucken: Benutzen Sie Strg+P in der geöffneten App";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"In Papierkorb verschoben";
-        static constexpr const wchar_t* OSD_WindowLocked = L"Fenstergröße gesperrt";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"Fenstergröße entsperrt";
+        static constexpr const wchar_t* OSD_WindowLocked = L"Fenster gesperrt";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"Fenster entsperrt";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"Immer im Vordergrund: AN";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"Immer im Vordergrund: AUS";
         static constexpr const wchar_t* OSD_WallpaperSet = L"Hintergrundbild gesetzt";
@@ -1909,7 +1933,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"An Bildschirm anpassen\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"Vergrößern\t+ / Strg +";
         static constexpr const wchar_t* Context_ZoomOut = L"Verkleinern\t- / Strg -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"Fenstergröße sperren";
+        static constexpr const wchar_t* Context_LockWindow = L"Fenstergröße sperren";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"Immer im Vordergrund\tStrg+T";
         static constexpr const wchar_t* Context_HUDGallery = L"HUD-Galerie\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"Kompaktes Info-Panel\tTab";
@@ -1936,6 +1960,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Tab_Advanced = L"Erweitert";
         static constexpr const wchar_t* Settings_Header_Backdrop = L"Hintergrund";
         static constexpr const wchar_t* Settings_Header_Window = L"Fenster";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"Fenstersperre";
         static constexpr const wchar_t* Settings_Header_Panel = L"Panel";
         static constexpr const wchar_t* Settings_Header_Mouse = L"Maus";
         static constexpr const wchar_t* Settings_Header_Edge = L"Rand";
@@ -1949,10 +1974,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"Überlagerung";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Raster anzeigen";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Immer im Vordergrund";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"Größe bei Zoom ändern";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"Fenstergröße sperren";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Titelleiste automatisch ausblenden";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"Abgerundete Ecken";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Untere Symbolleiste sperren";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Fenstergröße bei Navigation beibehalten";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Letzte Fenstergröße merken";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Kleine Bilder anpassen";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF-Panel-Modus";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Symbolleisten-Info Standard";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Im Vollbildmodus öffnen";
@@ -2135,8 +2163,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Toolbar_Tooltip_RotateL = L"Girar izquierda (Shift+R)";
         static constexpr const wchar_t* Toolbar_Tooltip_RotateR = L"Girar derecha (R)";
         static constexpr const wchar_t* Toolbar_Tooltip_FlipH = L"Voltear horizontal (H)";
-        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Bloquear tamaño de ventana";
-        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Desbloquear tamaño de ventana";
+        static constexpr const wchar_t* Toolbar_Tooltip_Lock = L"Bloquear ventana";
+        static constexpr const wchar_t* Toolbar_Tooltip_Unlock = L"Desbloquear ventana";
         static constexpr const wchar_t* Toolbar_Tooltip_Gallery = L"Galería (T)";
         static constexpr const wchar_t* Toolbar_Tooltip_Info = L"Panel de información";
         static constexpr const wchar_t* Toolbar_Tooltip_RawPreview = L"RAW: Vista previa (Clic para completo)";
@@ -2165,8 +2193,8 @@ namespace AppStrings {
         static constexpr const wchar_t* OSD_ZoomFit = L"Zoom: Ajustar a pantalla";
         static constexpr const wchar_t* OSD_PrintInstruction = L"Imprimir: Use Ctrl+P en la aplicación abierta";
         static constexpr const wchar_t* OSD_MovedToRecycleBin = L"Movido a la papelera";
-        static constexpr const wchar_t* OSD_WindowLocked = L"Tamaño de ventana bloqueado";
-        static constexpr const wchar_t* OSD_WindowUnlocked = L"Tamaño de ventana desbloqueado";
+        static constexpr const wchar_t* OSD_WindowLocked = L"Ventana bloqueada";
+        static constexpr const wchar_t* OSD_WindowUnlocked = L"Ventana desbloqueada";
         static constexpr const wchar_t* OSD_AlwaysOnTopOn = L"Siempre visible: ACTIVADO";
         static constexpr const wchar_t* OSD_AlwaysOnTopOff = L"Siempre visible: DESACTIVADO";
         static constexpr const wchar_t* OSD_WallpaperSet = L"Fondo de pantalla establecido";
@@ -2196,7 +2224,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_FitToScreen = L"Ajustar a pantalla\t0 / F";
         static constexpr const wchar_t* Context_ZoomIn = L"Acercar\t+ / Ctrl +";
         static constexpr const wchar_t* Context_ZoomOut = L"Alejar\t- / Ctrl -";
-        static constexpr const wchar_t* Context_LockWindowSize = L"Bloquear tamaño de ventana";
+        static constexpr const wchar_t* Context_LockWindow = L"Bloquear ventana";
         static constexpr const wchar_t* Context_AlwaysOnTop = L"Siempre visible\tCtrl+T";
         static constexpr const wchar_t* Context_HUDGallery = L"Galería HUD\tT";
         static constexpr const wchar_t* Context_LiteInfoPanel = L"Panel de info compacto\tTab";
@@ -2223,6 +2251,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Tab_Advanced = L"Avanzado";
         static constexpr const wchar_t* Settings_Header_Backdrop = L"Fondo";
         static constexpr const wchar_t* Settings_Header_Window = L"Ventana";
+        static constexpr const wchar_t* Settings_Header_WindowLock = L"Bloqueo de ventana";
         static constexpr const wchar_t* Settings_Header_Panel = L"Panel";
         static constexpr const wchar_t* Settings_Header_Mouse = L"Ratón";
         static constexpr const wchar_t* Settings_Header_Edge = L"Borde";
@@ -2236,10 +2265,13 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_Overlay = L"Superposición";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Mostrar cuadrícula";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Siempre visible";
-        static constexpr const wchar_t* Settings_Label_ResizeOnZoom = L"Redimensionar al hacer zoom";
+        static constexpr const wchar_t* Settings_Label_LockWindow = L"Bloquear ventana";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Ocultar barra de título";
         static constexpr const wchar_t* Settings_Label_RoundedCorners = L"Esquinas Redondeadas";
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Bloquear barra inferior";
+        static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Mantener el tamaño de la ventana al navegar";
+        static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Recordar el último tamaño de ventana";
+        static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Adaptar imágenes pequeñas";
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Modo panel EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Info de barra por defecto";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Abrir en pantalla completa";
@@ -2443,7 +2475,7 @@ namespace AppStrings {
         Context_FitToScreen = T::Context_FitToScreen;
         Context_ZoomIn = T::Context_ZoomIn;
         Context_ZoomOut = T::Context_ZoomOut;
-        Context_LockWindowSize = T::Context_LockWindowSize;
+        Context_LockWindow = T::Context_LockWindow;
         Context_AlwaysOnTop = T::Context_AlwaysOnTop;
         Context_HUDGallery = T::Context_HUDGallery;
         Context_LiteInfoPanel = T::Context_LiteInfoPanel;
@@ -2529,6 +2561,7 @@ namespace AppStrings {
 
         Settings_Header_Backdrop = T::Settings_Header_Backdrop;
         Settings_Header_Window = T::Settings_Header_Window;
+        Settings_Header_WindowLock = T::Settings_Header_WindowLock;
         Settings_Header_Panel = T::Settings_Header_Panel;
         Settings_Header_Mouse = T::Settings_Header_Mouse;
         Settings_Header_Edge = T::Settings_Header_Edge;
@@ -2543,10 +2576,13 @@ namespace AppStrings {
         Settings_Label_Overlay = T::Settings_Label_Overlay;
         Settings_Label_ShowGrid = T::Settings_Label_ShowGrid;
         Settings_Label_AlwaysOnTop = T::Settings_Label_AlwaysOnTop;
-        Settings_Label_ResizeOnZoom = T::Settings_Label_ResizeOnZoom;
+        Settings_Label_LockWindow = T::Settings_Label_LockWindow;
         Settings_Label_AutoHideTitle = T::Settings_Label_AutoHideTitle;
         Settings_Label_RoundedCorners = T::Settings_Label_RoundedCorners;
         Settings_Label_LockToolbar = T::Settings_Label_LockToolbar;
+        Settings_Label_KeepWindowSizeOnNav = T::Settings_Label_KeepWindowSizeOnNav;
+        Settings_Label_RememberLastWindowSize = T::Settings_Label_RememberLastWindowSize;
+        Settings_Label_UpscaleSmallImagesWhenLocked = T::Settings_Label_UpscaleSmallImagesWhenLocked;
         Settings_Label_ExifMode = T::Settings_Label_ExifMode;
         Settings_Label_ToolbarInfoDefault = T::Settings_Label_ToolbarInfoDefault;
         Settings_Label_OpenFullScreenMode = T::Settings_Label_OpenFullScreenMode;

@@ -89,7 +89,7 @@ struct AppConfig {
     bool CanvasShowGrid = false; // Overlay grid
     bool AlwaysOnTop = false;
     int OpenFullScreenMode = 0;         // 0=Off, 1=Large Only, 2=All
-    bool ResizeWindowOnZoom = true;
+    bool LockWindowSize = false;
     bool AutoHideWindowControls = true;
     bool LockBottomToolbar = false;
     bool EnableCrossMonitor = false; // [Phase 2] Cross-Monitor Spanning
@@ -97,6 +97,11 @@ struct AppConfig {
     int ToolbarInfoDefault = 0;         // 0=Lite, 1=Full (toolbar button default)
     wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
+
+    // --- Window Lock Behaviors ---
+    bool KeepWindowSizeOnNav = false;
+    bool RememberLastWindowSize = false;
+    bool UpscaleSmallImagesWhenLocked = false;
 
     // --- Control ---
     int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
@@ -137,7 +142,6 @@ struct AppConfig {
     float SettingsAlpha = 0.95f;
     
     // Default States (User Preference)
-    bool LockWindowSize = false;         
     bool ShowInfoPanel = false;          
     bool InfoPanelExpanded = false;      
     bool ForceRawDecode = false;         
