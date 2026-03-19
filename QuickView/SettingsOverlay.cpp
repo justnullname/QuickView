@@ -1009,12 +1009,14 @@ void SettingsOverlay::BuildMenu() {
         g_config.WindowMinSize = itemMinSize.minVal;
     }
     itemMinSize.maxVal = 800.0f;
+    itemMinSize.displayFormat = L"%.0f px";
     tabVisuals.items.push_back(itemMinSize);
 
     // Window Max Start Size Percent Slider (10% to 100%)
     SettingsItem itemMaxSize = { AppStrings::Settings_Label_WindowMaxSizePercent, OptionType::Slider, nullptr, &g_config.WindowMaxSizePercent };
     itemMaxSize.minVal = 10.0f;
     itemMaxSize.maxVal = 100.0f;
+    itemMaxSize.displayFormat = L"%.0f %%";
     tabVisuals.items.push_back(itemMaxSize);
 
     tabVisuals.items.push_back({ AppStrings::Settings_Header_WindowLock, OptionType::Header });
@@ -1225,9 +1227,23 @@ void SettingsOverlay::BuildMenu() {
     tabAdvanced.items.push_back(itemPrefetch);
 
     tabAdvanced.items.push_back({ AppStrings::Settings_Header_Transparency, OptionType::Header });
-    tabAdvanced.items.push_back({ AppStrings::Settings_Label_InfoPanelAlpha, OptionType::Slider, nullptr, &g_config.InfoPanelAlpha, nullptr, nullptr, 0.1f, 1.0f });
-    tabAdvanced.items.push_back({ AppStrings::Settings_Label_ToolbarAlpha, OptionType::Slider, nullptr, &g_config.ToolbarAlpha, nullptr, nullptr, 0.1f, 1.0f });
-    tabAdvanced.items.push_back({ AppStrings::Settings_Label_SettingsAlpha, OptionType::Slider, nullptr, &g_config.SettingsAlpha, nullptr, nullptr, 0.1f, 1.0f });
+    SettingsItem itemInfoPanelAlpha = { AppStrings::Settings_Label_InfoPanelAlpha, OptionType::Slider, nullptr, &g_config.InfoPanelAlpha };
+    itemInfoPanelAlpha.minVal = 0.1f;
+    itemInfoPanelAlpha.maxVal = 1.0f;
+    itemInfoPanelAlpha.displayFormat = L"%.2f";
+    tabAdvanced.items.push_back(itemInfoPanelAlpha);
+
+    SettingsItem itemToolbarAlpha = { AppStrings::Settings_Label_ToolbarAlpha, OptionType::Slider, nullptr, &g_config.ToolbarAlpha };
+    itemToolbarAlpha.minVal = 0.1f;
+    itemToolbarAlpha.maxVal = 1.0f;
+    itemToolbarAlpha.displayFormat = L"%.2f";
+    tabAdvanced.items.push_back(itemToolbarAlpha);
+
+    SettingsItem itemSettingsAlpha = { AppStrings::Settings_Label_SettingsAlpha, OptionType::Slider, nullptr, &g_config.SettingsAlpha };
+    itemSettingsAlpha.minVal = 0.1f;
+    itemSettingsAlpha.maxVal = 1.0f;
+    itemSettingsAlpha.displayFormat = L"%.2f";
+    tabAdvanced.items.push_back(itemSettingsAlpha);
     
     // System Helpers
     tabAdvanced.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
@@ -1933,8 +1949,8 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                     }
                     break;
                 case OptionType::Slider:
-                    item.interactRect = D2D1::RectF(controlRect.right - 150.0f, controlRect.top, controlRect.right, controlRect.bottom);
-                    DrawSlider(pRT, controlRect, (item.pFloatVal ? *item.pFloatVal : 0.0f), item.minVal, item.maxVal, isHovered);
+                    item.interactRect = D2D1::RectF(controlRect.right - 150.0f * s, controlRect.top, controlRect.right, controlRect.bottom);
+                    DrawSlider(pRT, controlRect, (item.pFloatVal ? *item.pFloatVal : 0.0f), item.minVal, item.maxVal, isHovered, item.displayFormat);
                     break;
                 case OptionType::Segment:
                     item.interactRect = controlRect;
@@ -2187,7 +2203,7 @@ void SettingsOverlay::DrawToggle(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect
     pRT->FillEllipse(knob, m_brushText.Get());
 }
 
-void SettingsOverlay::DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered) {
+void SettingsOverlay::DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered, const std::wstring& format) {
     const float s = m_uiScale;
     // Width 150, Height 4 (Scaled)
     float w = 150.0f * s; 
@@ -2214,9 +2230,16 @@ void SettingsOverlay::DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect
     pRT->FillEllipse(knob, m_brushText.Get());
     
     // Optional: Draw Value Text next to slider?
-    wchar_t buf[16];
-    swprintf_s(buf, L"%.1f", val);
-    D2D1_RECT_F valRect = D2D1::RectF(x - 50, rect.top, x - 10, rect.bottom);
+    wchar_t buf[32];
+    if (format.empty()) {
+        swprintf_s(buf, L"%.1f", val);
+    } else {
+        swprintf_s(buf, format.c_str(), val);
+    }
+
+    // Adjust right bounds based on format length to avoid clipping
+    float leftBound = x - 80.0f * s;
+    D2D1_RECT_F valRect = D2D1::RectF(leftBound, rect.top, x - 10.0f * s, rect.bottom);
     pRT->DrawTextW(buf, (UINT32)wcslen(buf), m_textFormatItem.Get(), valRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
     // ^ Note: using TextAlignment Leading in Init, so this might be left aligned.
     // Ideally right align this text. But OK for now.

@@ -49,6 +49,7 @@ struct SettingsItem {
     float minVal = 0.0f;
     float maxVal = 100.0f;
     std::vector<std::wstring> options; // For Segment
+    std::wstring displayFormat;        // E.g., L"%.0f px" for slider formatting
     
     // Callback (optional)
     std::function<void()> onChange;
@@ -123,7 +124,7 @@ private:
     
     // Draw Widgets
     void DrawToggle(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
-    void DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered);
+    void DrawSlider(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered, const std::wstring& format = L"");
     std::vector<float> CalculateSegmentWidths(const std::vector<std::wstring>& options, float totalW);
     void DrawSegment(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options);
     void DrawComboBox(ID2D1RenderTarget* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isOpen);
