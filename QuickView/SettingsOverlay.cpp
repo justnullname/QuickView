@@ -1546,7 +1546,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
             // Calculate Rect for Hit Testing
             item.rect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + rowHeight);
-
+            item.interactRect = item.rect; // Default
 
 
             // 1. Header Type
@@ -1860,6 +1860,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
             switch (item.type) {
                 case OptionType::Toggle:
+                    item.interactRect = D2D1::RectF(controlRect.right - 44.0f, controlRect.top + (controlRect.bottom - controlRect.top - 22.0f) / 2.0f, controlRect.right, controlRect.top + (controlRect.bottom - controlRect.top - 22.0f) / 2.0f + 22.0f);
                     if (item.isDisabled) {
                         // Disabled: Draw gray toggle background + disabled text
                         ComPtr<ID2D1SolidColorBrush> brushDisabled;
@@ -1891,9 +1892,11 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                     }
                     break;
                 case OptionType::Slider:
+                    item.interactRect = D2D1::RectF(controlRect.right - 150.0f, controlRect.top, controlRect.right, controlRect.bottom);
                     DrawSlider(pRT, controlRect, (item.pFloatVal ? *item.pFloatVal : 0.0f), item.minVal, item.maxVal, isHovered);
                     break;
                 case OptionType::Segment:
+                    item.interactRect = controlRect;
                     // Need index selection. Assume pIntVal or temporary pIntVal... 
                     // Segment usually binds to Int.
                     DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options);
@@ -1925,6 +1928,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
                      float btnX = controlX + controlW - btnWidth; // Right-aligned
                      D2D1_RECT_F btnRect = D2D1::RectF(btnX, contentY + btnInsetY, btnX + btnWidth, contentY + rowHeight - btnInsetY);
+                     item.interactRect = btnRect;
                      
                      ComPtr<ID2D1SolidColorBrush> btnBrush;
                      
@@ -2005,6 +2009,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      break;
                 }
                 case OptionType::CustomColorRow: {
+                     item.interactRect = controlRect;
                      // Inline DrawCustomColorRow logic
                      bool gridOn = g_config.CanvasShowGrid;
                      D2D1::ColorF color(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB);
@@ -2037,6 +2042,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      break;
                 }
                 case OptionType::ComboBox: {
+                    item.interactRect = controlRect;
                     // Render Closed State
                     bool isOpen = (m_pActiveCombo == &item);
                     DrawComboBox(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, isOpen);
@@ -2341,8 +2347,8 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
     if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
         for (auto& item : m_tabs[m_activeTab].items) {
-            if (x >= item.rect.left && x <= item.rect.right &&
-                y >= item.rect.top && y <= item.rect.bottom) {
+            if (x >= item.interactRect.left && x <= item.interactRect.right &&
+                y >= item.interactRect.top && y <= item.interactRect.bottom) {
                 
                 // If ComboBox is Active, do NOT verify hover on other items effectively?
                 // Actually, if we want to click outside to close, we should allow hover?
