@@ -107,3 +107,16 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     
     DestroyMenu(hMenu);
 }
+
+void ShowGalleryContextMenu(HWND hwnd, POINT pt) {
+    HMENU hMenu = CreatePopupMenu();
+    if (!hMenu) return;
+
+    AppendMenuW(hMenu, MF_STRING, IDM_GALLERY_OPEN_COMPARE, AppStrings::Context_GalleryOpenCompare);
+    AppendMenuW(hMenu, MF_STRING, IDM_GALLERY_OPEN_NEW_WINDOW, AppStrings::Context_GalleryOpenNewWindow);
+
+    TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
+                   pt.x, pt.y, 0, hwnd, nullptr);
+
+    DestroyMenu(hMenu);
+}

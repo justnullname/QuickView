@@ -31,6 +31,9 @@ public:
     // Returns selected index when closed via Enter/Click
     int GetSelectedIndex() const { return m_selectedIndex; }
     
+    // Calculate thumbnail index from client coordinates
+    int HitTestClient(int x, int y);
+
     // Animation tick (fade in)
     void Update(float deltaTime);
 

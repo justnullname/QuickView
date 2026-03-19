@@ -335,6 +335,11 @@ bool GalleryOverlay::OnMouseMove(int x, int y) {
     return m_hoverIndex != oldHover;  // Only repaint if hover changed
 }
 
+int GalleryOverlay::HitTestClient(int x, int y) {
+    if (!m_isVisible) return -1;
+    return HitTest((float)x, (float)y + m_scrollTop);
+}
+
 int GalleryOverlay::HitTest(float x, float y) {
     // Inverse of layout
     // y = PADDING + r * (h + GAP)

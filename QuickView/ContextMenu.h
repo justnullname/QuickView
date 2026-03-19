@@ -40,6 +40,10 @@ enum ContextMenuCommand : UINT {
     IDM_TOGGLE_SPAN, // [New] Video Wall Mode
     IDM_COMPARE_MODE, // Toggle Compare Mode
 
+    // [Gallery] Group
+    IDM_GALLERY_OPEN_COMPARE,
+    IDM_GALLERY_OPEN_NEW_WINDOW,
+
 
     // [Transform] Group
     IDM_ROTATE_CW,
@@ -71,3 +75,5 @@ enum ContextMenuCommand : UINT {
 /// <param name="renderRaw">Whether Render RAW mode is active</param>
 /// <param name="isRawFile">Whether current file is RAW format</param>
 void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode);
+
+void ShowGalleryContextMenu(HWND hwnd, POINT pt);

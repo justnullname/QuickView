@@ -166,6 +166,7 @@ private:
     // 绘制函数
     void DrawOSD(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);
+    void DrawBorderIndicators(ID2D1DeviceContext* dc);
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
     

@@ -15,6 +15,7 @@
 
 // External globals (retained - these are global state needed by overlays)
 extern Toolbar g_toolbar;
+extern D2D1_SIZE_F GetEffectiveImageSize();
 extern GalleryOverlay g_gallery;
 extern SettingsOverlay g_settingsOverlay;
 extern HelpOverlay g_helpOverlay;
@@ -602,6 +603,11 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         }
     }
     
+    // Border Indicators
+    if (g_config.ShowBorderIndicator) {
+        DrawBorderIndicators(dc);
+    }
+
     // Settings Overlay
     g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
     
@@ -1028,6 +1034,79 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     DrawIcon(L'\uE921', minRect, m_whiteBrush.Get());
     DrawIcon((IsZoomed(hwnd) || m_isFullscreen) ? L'\uE923' : L'\uE922', maxRect, m_whiteBrush.Get());
     DrawIcon(L'\uE8BB', closeRect, m_whiteBrush.Get());
+}
+
+void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
+    if (m_width <= 0 || m_height <= 0) return;
+
+    D2D1_SIZE_F imgSize = GetEffectiveImageSize();
+    if (imgSize.width <= 0.0f || imgSize.height <= 0.0f) return;
+
+    float winW = (float)m_width;
+    float winH = (float)m_height;
+
+    float baseFit = std::min(winW / imgSize.width, winH / imgSize.height);
+
+    // [SVG Lossless] Adjust bounds calculation baseFit just like main.cpp
+    if (g_runtime.LockWindowSize) {
+        if (!g_config.UpscaleSmallImagesWhenLocked && baseFit > 1.0f) {
+            baseFit = 1.0f;
+        }
+    } else {
+        if (imgSize.width < 200.0f && imgSize.height < 200.0f) {
+            if (baseFit > 1.0f) baseFit = 1.0f;
+        }
+    }
+
+    // Use the global g_viewState which is updated synchronously by main.cpp during panning
+    float targetZoom = baseFit * g_viewState.Zoom;
+    float scaledW = imgSize.width * targetZoom;
+    float scaledH = imgSize.height * targetZoom;
+
+    float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + g_viewState.PanX;
+    float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + g_viewState.PanX;
+    float imgTop = (winH * 0.5f) - (scaledH * 0.5f) + g_viewState.PanY;
+    float imgBottom = (winH * 0.5f) + (scaledH * 0.5f) + g_viewState.PanY;
+
+    // Buffer to avoid flickering at exact edge bounds
+    const float edgeBuffer = 1.0f;
+
+    bool drawLeft = (imgLeft < -edgeBuffer);
+    bool drawRight = (imgRight > winW + edgeBuffer);
+    bool drawTop = (imgTop < -edgeBuffer);
+    bool drawBottom = (imgBottom > winH + edgeBuffer);
+
+    if (!drawLeft && !drawRight && !drawTop && !drawBottom) return;
+
+    ComPtr<ID2D1SolidColorBrush> borderBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.8f), &borderBrush); // Distinct accent color
+
+    float s = m_uiScale;
+    float thickness = 4.0f * s; // 4px thick line, scaled
+
+    // If an edge is outside the window, draw an indicator along that window edge.
+    if (drawLeft) {
+        D2D1_RECT_F rect = D2D1::RectF(0.0f, 0.0f, thickness, winH);
+        dc->FillRectangle(rect, borderBrush.Get());
+    }
+    if (drawRight) {
+        D2D1_RECT_F rect = D2D1::RectF(winW - thickness, 0.0f, winW, winH);
+        dc->FillRectangle(rect, borderBrush.Get());
+    }
+    if (drawTop) {
+        D2D1_RECT_F rect = D2D1::RectF(0.0f, 0.0f, winW, thickness);
+        dc->FillRectangle(rect, borderBrush.Get());
+    }
+    if (drawBottom) {
+        // Exclude bottom edge if toolbar is pinned or hovered to avoid overlap issues
+        bool showBottom = true;
+        if (g_toolbar.IsVisible() || g_config.LockBottomToolbar) showBottom = false;
+
+        if (showBottom) {
+            D2D1_RECT_F rect = D2D1::RectF(0.0f, winH - thickness, winW, winH);
+            dc->FillRectangle(rect, borderBrush.Get());
+        }
+    }
 }
 
 // ============================================================================

@@ -98,6 +98,8 @@ namespace AppStrings {
     const wchar_t* Context_Settings = nullptr;
     const wchar_t* Context_About = nullptr;
     const wchar_t* Context_CompareMode = nullptr; // New
+    const wchar_t* Context_GalleryOpenCompare = nullptr;
+    const wchar_t* Context_GalleryOpenNewWindow = nullptr;
     const wchar_t* Context_Exit = nullptr;
 
     const wchar_t* HUD_Label_High = nullptr;
@@ -182,6 +184,7 @@ namespace AppStrings {
     const wchar_t* Settings_Label_CanvasColor = nullptr;
     const wchar_t* Settings_Label_Overlay = nullptr;
     const wchar_t* Settings_Label_ShowGrid = nullptr;
+    const wchar_t* Settings_Label_CrossFade = nullptr;
     const wchar_t* Settings_Label_AlwaysOnTop = nullptr;
     const wchar_t* Settings_Label_LockWindow = nullptr;
     const wchar_t* Settings_Label_AutoHideTitle = nullptr;
@@ -189,6 +192,7 @@ namespace AppStrings {
     const wchar_t* Settings_Label_LockToolbar = nullptr;
     const wchar_t* Settings_Label_WindowMinSize = nullptr;
     const wchar_t* Settings_Label_WindowMaxSizePercent = nullptr;
+    const wchar_t* Settings_Label_ShowBorderIndicator = nullptr;
     const wchar_t* Settings_Label_KeepWindowSizeOnNav = nullptr;
     const wchar_t* Settings_Label_RememberLastWindowSize = nullptr;
     const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
@@ -196,6 +200,9 @@ namespace AppStrings {
     const wchar_t* Settings_Label_ExifMode = nullptr;
     const wchar_t* Settings_Label_ToolbarInfoDefault = nullptr;
     const wchar_t* Settings_Label_OpenFullScreenMode = nullptr;
+    const wchar_t* Settings_Label_FullScreenZoomMode = nullptr;
+    const wchar_t* Settings_Option_FitScreen = nullptr;
+    const wchar_t* Settings_Option_AutoFit = nullptr;
     const wchar_t* Settings_Label_InvertWheel = nullptr;
     const wchar_t* Settings_Label_ZoomSnapDamping = nullptr; // New
     const wchar_t* Settings_Label_MouseAnchorZoom = nullptr;
@@ -279,6 +286,7 @@ namespace AppStrings {
     const wchar_t* Help_Item_Fullscreen = nullptr;
     const wchar_t* Help_Item_Close = nullptr;
     const wchar_t* Help_Item_Compare = nullptr; // New
+    const wchar_t* Help_Item_FirstLast = nullptr;
     const wchar_t* Help_Mouse_Left = nullptr;
     const wchar_t* Help_Mouse_Middle = nullptr;
     const wchar_t* Help_Mouse_Wheel = nullptr;
@@ -471,6 +479,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"Settings...";
         static constexpr const wchar_t* Context_About = L"About QuickView";
         static constexpr const wchar_t* Context_CompareMode = L"Compare Mode\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"Open in Compare Mode";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"Open in New Window";
         static constexpr const wchar_t* Context_Exit = L"Exit\tMButton/Esc";
 
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Visuals";
@@ -494,6 +504,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Canvas Color";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Overlay";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Show Grid Overlay";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Image Transition Fade";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Always on Top";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Lock Window";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Auto-Hide Title Bar";
@@ -501,6 +512,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Lock Bottom Toolbar";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"Minimum Window Width";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"Maximum Start Size (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"Show Edge Indicators";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Keep window size on navigation";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Remember last window size";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Adapt small images";
@@ -508,6 +520,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF Panel Mode";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Toolbar Info Default";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Open Fullscreen";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Fullscreen Zoom Mode";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"Fit to Screen";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Auto (100% for small, Fit for large)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Invert Wheel";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Zoom 100% Snap Damping";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Mouse-Anchored Window Zoom";
@@ -591,6 +606,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Item_Fullscreen = L"Fullscreen";
         static constexpr const wchar_t* Help_Item_Close = L"Close";
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"First / Last Image";
         static constexpr const wchar_t* Help_Mouse_Left = L"Left Button";
         static constexpr const wchar_t* Help_Mouse_Middle = L"Middle Button";
         static constexpr const wchar_t* Help_Mouse_Wheel = L"Wheel";
@@ -713,6 +729,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"画布颜色";
         static constexpr const wchar_t* Settings_Label_Overlay = L"叠加层";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"显示网格";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"图片切换淡入淡出";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"窗口置顶";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"锁定窗口";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"自动隐藏标题栏";
@@ -720,6 +737,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"锁定底部工具栏";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"默认最小窗口宽度";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"默认最大启动尺寸 (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"显示边界指示器";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"导航时保持窗口尺寸不变";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"记住最后窗口尺寸";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小于窗口尺寸图片适应窗口";
@@ -727,6 +745,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具栏信息默认值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"打开时全屏";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"全屏时缩放模式";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"适应屏幕";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"自动 (小图100% / 大图适应)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"反转滚轮";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"缩放 100% 吸附阻尼";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"窗口缩放以鼠标为中线";
@@ -850,6 +871,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"设置...";
         static constexpr const wchar_t* Context_About = L"关于 QuickView";
         static constexpr const wchar_t* Context_CompareMode = L"对比模式\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"在对比模式中打开";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"在新窗口中打开";
         static constexpr const wchar_t* Context_Exit = L"退出\tMButton/Esc";
 
         // Messages
@@ -922,6 +945,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 质量：基于算法估算的 Q 值。因编码器差异，可能与保存数值有微小偏差(如 PS 100% \u2248 98%)，属正常现象。";
 
         static constexpr const wchar_t* Help_Item_Compare = L"对比模式";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"第一张 / 最后一张图片";
         static constexpr const wchar_t* HUD_Group_Physical = L"物理属性";
         static constexpr const wchar_t* HUD_Group_Scientific = L"科学指标";
         static constexpr const wchar_t* HUD_Group_Encoding = L"光学与编码";
@@ -1089,6 +1113,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"設定...";
         static constexpr const wchar_t* Context_About = L"關於 QuickView";
         static constexpr const wchar_t* Context_CompareMode = L"對比模式\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"在對比模式中打開";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"在新視窗中打開";
         static constexpr const wchar_t* Context_Exit = L"結束\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"外觀";
         static constexpr const wchar_t* Settings_Tab_Controls = L"操作";
@@ -1109,6 +1135,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"畫布顏色";
         static constexpr const wchar_t* Settings_Label_Overlay = L"疊加層";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"顯示網格";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"圖片切換淡入淡出";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"視窗置頂";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"鎖定視窗";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"自動隱藏標題列";
@@ -1116,6 +1143,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"鎖定底部工具列";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"預設最小視窗寬度";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"預設最大啟動尺寸 (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"顯示邊界指示器";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"導航時保持視窗尺寸不變";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"記住最後視窗尺寸";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小於視窗尺寸圖片適應視窗";
@@ -1123,6 +1151,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF 面板模式";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"工具列資訊預設值";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開啟時全螢幕";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"全螢幕縮放模式";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"適應螢幕";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"自動 (小圖100% / 大圖適應)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"反轉滾輪";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"縮放 100% 吸附阻尼";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"視窗縮放以滑鼠為中線";
@@ -1225,6 +1256,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG 壓縮率：信息面板顯示的 Q 值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% 可能顯示為 98)，屬正常情況。";
 
         static constexpr const wchar_t* Help_Item_Compare = L"對比模式";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"第一張 / 最後一張圖片";
         static constexpr const wchar_t* HUD_Group_Physical = L"物理屬性";
         static constexpr const wchar_t* HUD_Group_Scientific = L"科學指標";
         static constexpr const wchar_t* HUD_Group_Encoding = L"光學與編碼";
@@ -1383,6 +1415,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"設定...";
         static constexpr const wchar_t* Context_About = L"QuickViewについて";
         static constexpr const wchar_t* Context_CompareMode = L"比較モード\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"比較モードで開く";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"新しいウィンドウで開く";
         static constexpr const wchar_t* Context_Exit = L"終了\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"外観";
         static constexpr const wchar_t* Settings_Tab_Controls = L"操作";
@@ -1403,6 +1437,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"キャンバス色";
         static constexpr const wchar_t* Settings_Label_Overlay = L"オーバーレイ";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"グリッド表示";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"画像の切り替えフェード";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"常に手前";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"ウィンドウをロック";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"タイトルバー自動非表示";
@@ -1410,6 +1445,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"下部ツールバー固定";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"最小ウィンドウ幅";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"最大起動サイズ (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"エッジインジケーターを表示";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"ナビゲーション時にウィンドウサイズを保持";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"最後のウィンドウサイズを記憶";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"小さな画像をウィンドウに合わせる";
@@ -1417,6 +1453,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIFパネルモード";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"ツールバー情報デフォルト";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"開くときに全画面表示";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"全画面ズームモード";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"画面に合わせる";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"自動 (小さい画像は100% / 大きい画像は合わせる)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"ホイール反転";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"100%ズーム吸着ダンピング";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"マウス中心でウィンドウを拡大";
@@ -1519,6 +1558,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"最初 / 最後の画像";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -1677,6 +1717,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"Настройки...";
         static constexpr const wchar_t* Context_About = L"О QuickView";
         static constexpr const wchar_t* Context_CompareMode = L"Режим сравнения\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"Открыть в режиме сравнения";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"Открыть в новом окне";
         static constexpr const wchar_t* Context_Exit = L"Выход\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Внешний вид";
         static constexpr const wchar_t* Settings_Tab_Controls = L"Управление";
@@ -1697,6 +1739,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Цвет холста";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Наложение";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Показать сетку";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Плавный переход между изображениями";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Поверх всех окон";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Заблокировать размер окна";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Автоскрытие заголовка";
@@ -1704,6 +1747,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Закрепить нижнюю панель";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"Мин. ширина окна";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"Макс. начальный размер (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"Показывать индикаторы границ";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Сохранять размер окна при навигации";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Запомнить последний размер окна";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Адаптировать мелкие изображения";
@@ -1711,6 +1755,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Режим панели EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Инфо. в панели по умолчанию";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Полноэкранный режим при открытии";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Режим масштаба на весь экран";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"По размеру экрана";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Авто (100% для мелких, по размеру для крупных)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Инвертировать колесо";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Задержка привязки зума (100%)";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Масштабировать окно от позиции мыши";
@@ -1813,6 +1860,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"Первое / Последнее изображение";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -1971,6 +2019,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"Einstellungen...";
         static constexpr const wchar_t* Context_About = L"Über QuickView";
         static constexpr const wchar_t* Context_CompareMode = L"Vergleichsmodus\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"Im Vergleichsmodus öffnen";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"In neuem Fenster öffnen";
         static constexpr const wchar_t* Context_Exit = L"Beenden\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Aussehen";
         static constexpr const wchar_t* Settings_Tab_Controls = L"Steuerung";
@@ -1991,6 +2041,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Leinwandfarbe";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Überlagerung";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Raster anzeigen";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Bildübergang ausblenden";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Immer im Vordergrund";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Fenstergröße sperren";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Titelleiste automatisch ausblenden";
@@ -1998,6 +2049,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Untere Symbolleiste sperren";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"Minimale Fensterbreite";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"Maximale Startgröße (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"Randindikatoren anzeigen";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Fenstergröße bei Navigation beibehalten";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Letzte Fenstergröße merken";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Kleine Bilder anpassen";
@@ -2005,6 +2057,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"EXIF-Panel-Modus";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Symbolleisten-Info Standard";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Im Vollbildmodus öffnen";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Vollbild-Zoom-Modus";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"An Bildschirm anpassen";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Auto (100% für kleine, anpassen für große)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Mausrad invertieren";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Zoom 100% Einrast-Dämpfung";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Fensterzoom am Mauszeiger ausrichten";
@@ -2107,6 +2162,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"Erstes / Letztes Bild";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -2265,6 +2321,8 @@ namespace AppStrings {
         static constexpr const wchar_t* Context_Settings = L"Configuración...";
         static constexpr const wchar_t* Context_About = L"Acerca de QuickView";
         static constexpr const wchar_t* Context_CompareMode = L"Modo comparación\tC";
+        static constexpr const wchar_t* Context_GalleryOpenCompare = L"Abrir en modo de comparación";
+        static constexpr const wchar_t* Context_GalleryOpenNewWindow = L"Abrir en una ventana nueva";
         static constexpr const wchar_t* Context_Exit = L"Salir\tMButton/Esc";
         static constexpr const wchar_t* Settings_Tab_Visuals = L"Apariencia";
         static constexpr const wchar_t* Settings_Tab_Controls = L"Controles";
@@ -2285,6 +2343,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_CanvasColor = L"Color del lienzo";
         static constexpr const wchar_t* Settings_Label_Overlay = L"Superposición";
         static constexpr const wchar_t* Settings_Label_ShowGrid = L"Mostrar cuadrícula";
+        static constexpr const wchar_t* Settings_Label_CrossFade = L"Desvanecimiento de transición de imagen";
         static constexpr const wchar_t* Settings_Label_AlwaysOnTop = L"Siempre visible";
         static constexpr const wchar_t* Settings_Label_LockWindow = L"Bloquear ventana";
         static constexpr const wchar_t* Settings_Label_AutoHideTitle = L"Ocultar barra de título";
@@ -2292,6 +2351,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_LockToolbar = L"Bloquear barra inferior";
         static constexpr const wchar_t* Settings_Label_WindowMinSize = L"Anchura mínima de ventana";
         static constexpr const wchar_t* Settings_Label_WindowMaxSizePercent = L"Tamaño máximo de inicio (%)";
+        static constexpr const wchar_t* Settings_Label_ShowBorderIndicator = L"Mostrar indicadores de borde";
         static constexpr const wchar_t* Settings_Label_KeepWindowSizeOnNav = L"Mantener el tamaño de la ventana al navegar";
         static constexpr const wchar_t* Settings_Label_RememberLastWindowSize = L"Recordar el último tamaño de ventana";
         static constexpr const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked = L"Adaptar imágenes pequeñas";
@@ -2299,6 +2359,9 @@ namespace AppStrings {
         static constexpr const wchar_t* Settings_Label_ExifMode = L"Modo panel EXIF";
         static constexpr const wchar_t* Settings_Label_ToolbarInfoDefault = L"Info de barra por defecto";
         static constexpr const wchar_t* Settings_Label_OpenFullScreenMode = L"Abrir en pantalla completa";
+        static constexpr const wchar_t* Settings_Label_FullScreenZoomMode = L"Modo de zoom a pantalla completa";
+        static constexpr const wchar_t* Settings_Option_FitScreen = L"Ajustar a pantalla";
+        static constexpr const wchar_t* Settings_Option_AutoFit = L"Auto (100% para pequeñas, ajustar para grandes)";
         static constexpr const wchar_t* Settings_Label_InvertWheel = L"Invertir rueda";
         static constexpr const wchar_t* Settings_Label_ZoomSnapDamping = L"Amortiguación de ajuste 100%";
         static constexpr const wchar_t* Settings_Label_MouseAnchorZoom = L"Zoom de ventana anclado al raton";
@@ -2401,6 +2464,7 @@ namespace AppStrings {
         static constexpr const wchar_t* Help_Tip_JpegQ = L"JPEG Quality: Estimated Q value (reverse engineered). May differ slightly from save setting due to algorithm variations.";
 
         static constexpr const wchar_t* Help_Item_Compare = L"Compare Mode";
+        static constexpr const wchar_t* Help_Item_FirstLast = L"Primera / Última imagen";
         static constexpr const wchar_t* HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
         static constexpr const wchar_t* HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
         static constexpr const wchar_t* HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -2518,6 +2582,8 @@ namespace AppStrings {
         Context_Settings = T::Context_Settings;
         Context_About = T::Context_About;
         Context_CompareMode = T::Context_CompareMode;
+        Context_GalleryOpenCompare = T::Context_GalleryOpenCompare;
+        Context_GalleryOpenNewWindow = T::Context_GalleryOpenNewWindow;
         Context_Exit = T::Context_Exit;
 
         Message_SaveErrorTitle = T::Message_SaveErrorTitle;
@@ -2599,6 +2665,7 @@ namespace AppStrings {
         Settings_Label_CanvasColor = T::Settings_Label_CanvasColor;
         Settings_Label_Overlay = T::Settings_Label_Overlay;
         Settings_Label_ShowGrid = T::Settings_Label_ShowGrid;
+        Settings_Label_CrossFade = T::Settings_Label_CrossFade;
         Settings_Label_AlwaysOnTop = T::Settings_Label_AlwaysOnTop;
         Settings_Label_LockWindow = T::Settings_Label_LockWindow;
         Settings_Label_AutoHideTitle = T::Settings_Label_AutoHideTitle;
@@ -2606,6 +2673,7 @@ namespace AppStrings {
         Settings_Label_LockToolbar = T::Settings_Label_LockToolbar;
         Settings_Label_WindowMinSize = T::Settings_Label_WindowMinSize;
         Settings_Label_WindowMaxSizePercent = T::Settings_Label_WindowMaxSizePercent;
+        Settings_Label_ShowBorderIndicator = T::Settings_Label_ShowBorderIndicator;
         Settings_Label_KeepWindowSizeOnNav = T::Settings_Label_KeepWindowSizeOnNav;
         Settings_Label_RememberLastWindowSize = T::Settings_Label_RememberLastWindowSize;
         Settings_Label_UpscaleSmallImagesWhenLocked = T::Settings_Label_UpscaleSmallImagesWhenLocked;
@@ -2613,6 +2681,9 @@ namespace AppStrings {
         Settings_Label_ExifMode = T::Settings_Label_ExifMode;
         Settings_Label_ToolbarInfoDefault = T::Settings_Label_ToolbarInfoDefault;
         Settings_Label_OpenFullScreenMode = T::Settings_Label_OpenFullScreenMode;
+        Settings_Label_FullScreenZoomMode = T::Settings_Label_FullScreenZoomMode;
+        Settings_Option_FitScreen = T::Settings_Option_FitScreen;
+        Settings_Option_AutoFit = T::Settings_Option_AutoFit;
         Settings_Label_InvertWheel = T::Settings_Label_InvertWheel;
         Settings_Label_ZoomSnapDamping = T::Settings_Label_ZoomSnapDamping;
         Settings_Label_MouseAnchorZoom = T::Settings_Label_MouseAnchorZoom;
@@ -2717,6 +2788,7 @@ namespace AppStrings {
         Dialog_Update_LoveMessage = T::Dialog_Update_LoveMessage;
 
         Help_Item_Compare = T::Help_Item_Compare;
+        Help_Item_FirstLast = T::Help_Item_FirstLast;
         HUD_Group_Physical = T::HUD_Group_Physical;
         HUD_Group_Scientific = T::HUD_Group_Scientific;
         HUD_Group_Encoding = T::HUD_Group_Encoding;

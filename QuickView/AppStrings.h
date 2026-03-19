@@ -82,6 +82,8 @@ namespace AppStrings {
     extern const wchar_t* Context_Settings;
     extern const wchar_t* Context_About;
     extern const wchar_t* Context_CompareMode; // New
+    extern const wchar_t* Context_GalleryOpenCompare;
+    extern const wchar_t* Context_GalleryOpenNewWindow;
     extern const wchar_t* Context_Exit;
     
     // Messages
@@ -194,6 +196,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_CanvasColor;
     extern const wchar_t* Settings_Label_Overlay;
     extern const wchar_t* Settings_Label_ShowGrid;
+    extern const wchar_t* Settings_Label_CrossFade;
     extern const wchar_t* Settings_Label_AlwaysOnTop;
     extern const wchar_t* Settings_Label_LockWindow;
     extern const wchar_t* Settings_Label_AutoHideTitle;
@@ -201,6 +204,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_LockToolbar;
     extern const wchar_t* Settings_Label_WindowMinSize;
     extern const wchar_t* Settings_Label_WindowMaxSizePercent;
+    extern const wchar_t* Settings_Label_ShowBorderIndicator;
 
     extern const wchar_t* Settings_Label_KeepWindowSizeOnNav;
     extern const wchar_t* Settings_Label_RememberLastWindowSize;
@@ -209,6 +213,9 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_ExifMode;
     extern const wchar_t* Settings_Label_ToolbarInfoDefault;
     extern const wchar_t* Settings_Label_OpenFullScreenMode;
+    extern const wchar_t* Settings_Label_FullScreenZoomMode;
+    extern const wchar_t* Settings_Option_FitScreen;
+    extern const wchar_t* Settings_Option_AutoFit;
     
     extern const wchar_t* Settings_Option_Black;
     extern const wchar_t* Settings_Option_White;
@@ -309,6 +316,7 @@ namespace AppStrings {
     extern const wchar_t* Help_Item_Fullscreen;
     extern const wchar_t* Help_Item_Close;
     extern const wchar_t* Help_Item_Compare; // New
+    extern const wchar_t* Help_Item_FirstLast;
     extern const wchar_t* Help_Mouse_Left;
     extern const wchar_t* Help_Mouse_Middle;
     extern const wchar_t* Help_Mouse_Wheel;

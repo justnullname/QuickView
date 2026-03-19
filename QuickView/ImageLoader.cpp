@@ -222,6 +222,9 @@ static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
     if (size >= 8 && magic[0] == 0x00 && magic[1] == 0x00 && magic[2] == 0x00 && magic[3] == 0x0C &&
              magic[4] == 'J' && magic[5] == 'X' && magic[6] == 'L' && magic[7] == ' ') return L"JXL";
         
+    // Check DDS: DDS\x20 (Magic Number: 0x20534444)
+    if (size >= 4 && magic[0] == 'D' && magic[1] == 'D' && magic[2] == 'S' && magic[3] == ' ') return L"DDS";
+
     // Check GIF: GIF87a or GIF89a
     if (size >= 6 && magic[0] == 'G' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == '8' &&
              (magic[4] == '7' || magic[4] == '9') && magic[5] == 'a') return L"GIF";
@@ -552,6 +555,7 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
     if (fmt == L"Unknown") {
         if (pathLower.ends_with(L".tga")) return L"TGA";
         if (pathLower.ends_with(L".jxl")) return L"JXL";
+        if (pathLower.ends_with(L".dds")) return L"DDS";
     }
     
     return fmt;
@@ -5069,12 +5073,12 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
     
     // --- Stream/File Based Codecs ---
     // [v9.1 Fix] Accept both "Raw" and "RAW" (case insensitive)
-    if (fmt == L"Raw" || fmt == L"RAW" || fmt == L"Unknown") {
+    if (fmt == L"Raw" || fmt == L"RAW" || fmt == L"Unknown" || fmt == L"DDS") {
         if (fmt == L"Raw" || fmt == L"RAW") {
              HRESULT hr = RawCodec::Load(filePath, ctx, result);
              if (SUCCEEDED(hr)) { result.metadata.LoaderName = L"LibRaw (Unified)"; return S_OK; }
         }
-        // If Unknown, falls through to WIC/Fallback (E_NOTIMPL -> WIC).
+        // If Unknown or DDS, falls through to WIC/Fallback (E_NOTIMPL -> WIC).
     }
 
     // --- Buffer Based Codecs ---

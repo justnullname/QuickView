@@ -952,6 +952,9 @@ void SettingsOverlay::BuildMenu() {
         // Standard Mode: Just Grid Toggle
         tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowGrid, OptionType::Toggle, &g_config.CanvasShowGrid });
     }
+
+    // Cross Fade Toggle
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_CrossFade, OptionType::Toggle, &g_config.EnableCrossFade });
     
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Window, OptionType::Header });
     SettingsItem itemSmooth = { AppStrings::Settings_Label_EnableSmoothScaling, OptionType::Toggle, &g_config.EnableSmoothScaling };
@@ -1023,6 +1026,8 @@ void SettingsOverlay::BuildMenu() {
     itemMaxSize.displayFormat = L"%.0f %%";
     tabVisuals.items.push_back(itemMaxSize);
 
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Toggle, &g_config.ShowBorderIndicator });
+
     tabVisuals.items.push_back({ AppStrings::Settings_Header_WindowLock, OptionType::Header });
     tabVisuals.items.push_back({ AppStrings::Settings_Label_KeepWindowSizeOnNav, OptionType::Toggle, &g_config.KeepWindowSizeOnNav });
     tabVisuals.items.push_back({ AppStrings::Settings_Label_RememberLastWindowSize, OptionType::Toggle, &g_config.RememberLastWindowSize });
@@ -1062,6 +1067,22 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} });
     tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
     
+    SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
+    itemFsZoom.onChange = []() {
+        SaveConfig();
+        HWND hwnd = GetActiveWindow();
+        extern bool g_isFullScreen;
+        if (hwnd && (IsZoomed(hwnd) || g_isFullScreen)) {
+            // Forward declaration to let main.cpp handle this cleanly
+            extern void ApplyFullScreenZoomMode(HWND hwnd);
+            ApplyFullScreenZoomMode(hwnd);
+            // We use InvalidateRect here to avoid missing PaintLayer enum declaration in this file.
+            // main.cpp's WM_PAINT will handle the redraw.
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+    };
+    tabVisuals.items.push_back(itemFsZoom);
+
 
 
     m_tabs.push_back(tabVisuals);

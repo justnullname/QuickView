@@ -97,6 +97,7 @@ struct AppConfig {
     int ToolbarInfoDefault = 0;         // 0=Lite, 1=Full (toolbar button default)
     wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
+    int FullScreenZoomMode = 0;         // 0=Fit, 1=Auto
 
     // --- Window Size Limits ---
     float WindowMinSize = 0.0f;         // Minimum window size (0 means auto-calculate from UI controls)
@@ -107,7 +108,10 @@ struct AppConfig {
     bool RememberLastWindowSize = false;
     bool UpscaleSmallImagesWhenLocked = false;
 
+    bool ShowBorderIndicator = true;
+
     // --- Control ---
+    bool EnableCrossFade = true;        // Enable cross-fade animation when changing images
     int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     bool InvertWheel = false;
@@ -227,7 +231,6 @@ struct RuntimeConfig {
     // Verification Flags (Phase 5)
     bool EnableScout = true;
     bool EnableHeavy = true;
-    bool EnableCrossFade = true;
     
     // [Phase 7] Fit Stage - Screen Dimensions
     int screenWidth = 0;  // 0 = full decode (no scaling)
