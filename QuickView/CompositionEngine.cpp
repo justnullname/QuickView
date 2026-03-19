@@ -766,6 +766,20 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs) {
     return S_OK;
 }
 
+void CompositionEngine::SetImageInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE mode) {
+    if (m_imageA.visual) m_imageA.visual->SetBitmapInterpolationMode(mode);
+    if (m_imageA.baseVisual) m_imageA.baseVisual->SetBitmapInterpolationMode(mode);
+    for (int i = 0; i <= QuickView::MAX_LOD_LEVELS; ++i) {
+        if (m_imageA.lodVisuals[i]) m_imageA.lodVisuals[i]->SetBitmapInterpolationMode(mode);
+    }
+
+    if (m_imageB.visual) m_imageB.visual->SetBitmapInterpolationMode(mode);
+    if (m_imageB.baseVisual) m_imageB.baseVisual->SetBitmapInterpolationMode(mode);
+    for (int i = 0; i <= QuickView::MAX_LOD_LEVELS; ++i) {
+        if (m_imageB.lodVisuals[i]) m_imageB.lodVisuals[i]->SetBitmapInterpolationMode(mode);
+    }
+}
+
 HRESULT CompositionEngine::AlignActiveLayer(float windowW, float windowH) {
     ImageLayer& active = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
     

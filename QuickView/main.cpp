@@ -387,8 +387,83 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
 
 
 static D2D1_SIZE_F GetLogicalImageSize();
+static D2D1_SIZE_F GetVisualImageSize();
 VisualState GetVisualState();
 static bool g_isAutoLocked = false;
+
+// [Interpolation] Get best interpolation mode
+static bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH) {
+    // 1. Temporary Override wins all
+    if (g_runtime.PixelArtModeOverride == 1) return true;
+    if (g_runtime.PixelArtModeOverride == 2) return false;
+
+    // 2. Setting
+    int mode = (totalScale >= 1.0f) ? g_config.ZoomModeIn : g_config.ZoomModeOut;
+    if (mode == 2) return true;
+
+    // 3. Auto Mode (0) heuristics
+    if (mode == 0 && totalScale >= 1.0f) {
+        if ((origW > 0 && origW <= 256 && origH > 0 && origH <= 256) || totalScale >= 3.0f) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static D2D1_INTERPOLATION_MODE GetOptimalD2DInterpolationMode(float totalScale, float origW, float origH) {
+    if (IsEffectivelyPixelArtMode(totalScale, origW, origH)) {
+        return D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+    }
+
+    int mode = (totalScale >= 1.0f) ? g_config.ZoomModeIn : g_config.ZoomModeOut;
+    if (mode == 1) return D2D1_INTERPOLATION_MODE_LINEAR;
+    if (mode == 3) return D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+
+    // Default Fallback
+    return D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+}
+
+static DCOMPOSITION_BITMAP_INTERPOLATION_MODE GetOptimalDCompInterpolationMode(float totalScale, float origW, float origH) {
+    if (IsEffectivelyPixelArtMode(totalScale, origW, origH)) {
+        return DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+    }
+
+    int mode = (totalScale >= 1.0f) ? g_config.ZoomModeIn : g_config.ZoomModeOut;
+    // DComp lacks cubic, fallback to linear for mode 3
+    return DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR;
+}
+
+bool GetCurrentPixelArtState(HWND hwnd) {
+    if (!g_imageResource) return false;
+
+    D2D1_SIZE_F visualSize = GetVisualImageSize();
+    float imgW = visualSize.width;
+    float imgH = visualSize.height;
+    if (imgW <= 0 || imgH <= 0) return false;
+
+    RECT rc; GetClientRect(hwnd, &rc);
+    float winW = (float)(rc.right - rc.left);
+    float winH = (float)(rc.bottom - rc.top);
+    if (winW <= 0 || winH <= 0) return false;
+
+    float fitScale = std::min(winW / imgW, winH / imgH);
+    if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg) {
+        if (fitScale > 1.0f) fitScale = 1.0f;
+    }
+
+    float totalScale = fitScale * g_viewState.Zoom;
+
+    // Also resolve origW/origH
+    float origW = imgW;
+    float origH = imgH;
+    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+        origW = (float)g_currentMetadata.Width;
+        origH = (float)g_currentMetadata.Height;
+    }
+
+    return IsEffectivelyPixelArtMode(totalScale, origW, origH);
+}
 
 
 
@@ -1112,13 +1187,15 @@ static void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
         const float imgH = rawSize.height;
         const bool rotated = (exifOrientation >= 2 && exifOrientation <= 8);
 
+        D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(totalScale, imgW, imgH);
+
         if (!rotated) {
             const float drawW = imgW * totalScale;
             const float drawH = imgH * totalScale;
             const float x = centerX - drawW * 0.5f;
             const float y = centerY - drawH * 0.5f;
             D2D1_RECT_F dest = D2D1::RectF(x, y, x + drawW, y + drawH);
-            ctx->DrawBitmap(res.bitmap.Get(), &dest, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+            ctx->DrawBitmap(res.bitmap.Get(), &dest, 1.0f, interpMode);
         } else {
             D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Translation(-imgW * 0.5f, -imgH * 0.5f);
             switch (exifOrientation) {
@@ -1135,7 +1212,7 @@ static void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
             m = m * D2D1::Matrix3x2F::Translation(centerX, centerY);
             ctx->SetTransform(m);
             D2D1_RECT_F src = D2D1::RectF(0.0f, 0.0f, imgW, imgH);
-            ctx->DrawBitmap(res.bitmap.Get(), &src, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+            ctx->DrawBitmap(res.bitmap.Get(), &src, 1.0f, interpMode);
             ctx->SetTransform(oldTransform);
         }
     }
@@ -2009,7 +2086,15 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
              // Draw bitmap at its original coordinates. The Transform handles placement.
              // Note: Source Rect is implicitly (0, 0, imgW, imgH).
              D2D1_RECT_F srcRect = D2D1::RectF(0, 0, imgW, imgH);
-             ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+
+             // Use Smart Interpolation
+             // DComp handles its own scaling for zooming, but here we are drawing the base bitmap
+             // to the DComp surface (often upscaling a small thumbnail to fit).
+             // To ensure sharp nearest-neighbor interpolation when requested, we apply it here as well.
+             float absoluteScale = g_viewState.Zoom * scale;
+             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, imgW, imgH);
+
+             ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, interpMode);
              
              // Reset Transform
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -2027,7 +2112,12 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
              float y = (surfH - drawH) / 2.0f;
              
              D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
-             ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+
+             // Use Smart Interpolation
+             float absoluteScale = g_viewState.Zoom * scale;
+             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, imgW, imgH);
+
+             ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, interpMode);
         }
         
         // [Optimization] We used the GPU to bake rotation. 
@@ -3454,6 +3544,8 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"RoundedCorners", g_config.RoundedCorners ? L"1" : L"0", iniPath.c_str());
 
     // Control
+    WritePrivateProfileStringW(L"Controls", L"ZoomModeIn", std::to_wstring(g_config.ZoomModeIn).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"ZoomModeOut", std::to_wstring(g_config.ZoomModeOut).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"InvertWheel", g_config.InvertWheel ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"WheelActionMode", std::to_wstring(g_config.WheelActionMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"InvertXButton", g_config.InvertXButton ? L"1" : L"0", iniPath.c_str());
@@ -3549,6 +3641,10 @@ void LoadConfig() {
     g_config.RoundedCorners = GetPrivateProfileIntW(L"View", L"RoundedCorners", 1, iniPath.c_str()) != 0;
 
     // Control
+    g_config.ZoomModeIn = GetPrivateProfileIntW(L"Controls", L"ZoomModeIn", 0, iniPath.c_str());
+    if (g_config.ZoomModeIn < 0 || g_config.ZoomModeIn > 3) g_config.ZoomModeIn = 0;
+    g_config.ZoomModeOut = GetPrivateProfileIntW(L"Controls", L"ZoomModeOut", 0, iniPath.c_str());
+    if (g_config.ZoomModeOut < 0 || g_config.ZoomModeOut > 3) g_config.ZoomModeOut = 0;
     g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
     g_config.WheelActionMode = GetPrivateProfileIntW(L"Controls", L"WheelActionMode", 0, iniPath.c_str());
     if (g_config.WheelActionMode < 0 || g_config.WheelActionMode > 1) g_config.WheelActionMode = 0;
@@ -4126,6 +4222,10 @@ static void SyncDCompState(HWND hwnd, float winW, float winH) {
             } else {
                 g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY);
             }
+
+            // Set DComp Interpolation Mode
+            DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(targetZoom, vs.VisualSize.width, vs.VisualSize.height);
+            g_compEngine->SetImageInterpolationMode(interpMode);
         }
 
         // [Fix12] Tile uploads handled exclusively by OnPaint (line 5621) with correct visibleRect.
@@ -6978,7 +7078,8 @@ SKIP_EDGE_NAV:;
              isRaw = IsRawFile(targetPath);
         }
         
-        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, g_runtime.ForceRawDecode, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive());
+        bool isPixelArtMode = GetCurrentPixelArtState(hwnd);
+        ShowContextMenu(hwnd, pt, hasImage, extensionFixNeeded, g_runtime.LockWindowSize, g_runtime.ShowInfoPanel, g_runtime.InfoPanelExpanded, g_config.AlwaysOnTop, g_runtime.ForceRawDecode, isRaw, IsZoomed(hwnd) != 0, g_runtime.CrossMonitorMode, IsCompareModeActive(), isPixelArtMode);
         return 0;
     }
     
@@ -7542,6 +7643,31 @@ SKIP_EDGE_NAV:;
              
              std::wstring msg = g_runtime.ForceRawDecode ? L"RAW: Full Decode (Temporary)" : L"RAW: Embedded Preview (Temporary)";
              g_osd.Show(hwnd, msg, false);
+             RequestRepaint(PaintLayer::All);
+             break;
+        }
+
+        case IDM_PIXEL_ART_MODE: {
+             // Toggle Pixel Art Mode (Nearest Neighbor) - Temporary runtime override
+             bool isCurrentlyPixelArt = GetCurrentPixelArtState(hwnd);
+
+             if (isCurrentlyPixelArt) {
+                 g_runtime.PixelArtModeOverride = 2; // Force OFF
+                 g_osd.Show(hwnd, L"Pixel Art Mode: OFF", false);
+             } else {
+                 g_runtime.PixelArtModeOverride = 1; // Force ON
+                 g_osd.Show(hwnd, L"Pixel Art Mode: ON", false);
+             }
+
+             // Update interpolation immediately by redrawing the surface
+             if (g_imageResource) {
+                 RenderImageToDComp(hwnd, g_imageResource, true);
+                 if (g_compEngine && g_compEngine->IsInitialized()) {
+                     RECT rc; GetClientRect(hwnd, &rc);
+                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                     g_compEngine->Commit();
+                 }
+             }
              RequestRepaint(PaintLayer::All);
              break;
         }
@@ -8746,6 +8872,9 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
         // This ensures that an "Auto-Lock" (from small image zoom) doesn't trap subsequent large images.
         g_runtime.LockWindowSize = g_config.LockWindowSize;
         g_isAutoLocked = false; 
+
+        // Reset Temporary Pixel Art Mode override for new images
+        g_runtime.PixelArtModeOverride = 0;
     }
     
     g_imagePath = path; // Set target path immediately for UI consistency

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ContextMenu.h"
 #include "AppStrings.h"
+#include "EditState.h"
 #include <shellapi.h>
 #include <shlobj.h>
 
@@ -8,7 +9,7 @@
 // ContextMenu.cpp - Right-click Context Menu Implementation
 // ============================================================
 
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode) {
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode) {
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
 
@@ -66,6 +67,9 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     if (renderRaw) rawFlags |= MF_CHECKED;
     AppendMenuW(hViewMenu, rawFlags, IDM_RENDER_RAW, AppStrings::Context_RenderRAW);
     
+    // Toggle Pixel Art Mode
+    AppendMenuW(hViewMenu, MF_STRING | (isPixelArtMode ? MF_CHECKED : 0), IDM_PIXEL_ART_MODE, AppStrings::Context_PixelArtMode);
+
     AppendMenuW(hViewMenu, MF_STRING | (isFullscreen ? MF_CHECKED : 0), IDM_FULLSCREEN, AppStrings::Context_Fullscreen);
     
     // [New] Video Wall Mode

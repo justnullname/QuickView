@@ -68,6 +68,7 @@ namespace AppStrings {
     extern const wchar_t* Context_LiteInfoPanel;
     extern const wchar_t* Context_FullInfoPanel;
     extern const wchar_t* Context_RenderRAW;
+    extern const wchar_t* Context_PixelArtMode;
     extern const wchar_t* Context_Fullscreen;
     extern const wchar_t* Context_SpanDisplays;
     extern const wchar_t* Context_View;
@@ -205,6 +206,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_White;
     extern const wchar_t* Settings_Option_Grid;
     extern const wchar_t* Settings_Option_Custom;
+    extern const wchar_t* Settings_Option_ZoomAuto;
     extern const wchar_t* Settings_Option_Off;
     extern const wchar_t* Settings_Option_Lite;
     extern const wchar_t* Settings_Option_Full;
@@ -219,6 +221,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_ZoomSnapDamping; // New
     extern const wchar_t* Settings_Label_MouseAnchorZoom;
     extern const wchar_t* Settings_Label_InvertButtons;
+    extern const wchar_t* Settings_Label_ZoomModeIn;
+    extern const wchar_t* Settings_Label_ZoomModeOut;
     extern const wchar_t* Settings_Label_LeftDrag;
     extern const wchar_t* Settings_Label_MiddleDrag;
     extern const wchar_t* Settings_Label_MiddleClick;
@@ -232,6 +236,9 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_Arrow;
     extern const wchar_t* Settings_Option_Cursor;
     extern const wchar_t* Settings_Option_Manual;
+    extern const wchar_t* Settings_Option_Linear;
+    extern const wchar_t* Settings_Option_Nearest;
+    extern const wchar_t* Settings_Option_HighQualityCubic;
 
     // Image
     extern const wchar_t* Settings_Header_Render;

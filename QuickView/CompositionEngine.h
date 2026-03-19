@@ -96,6 +96,9 @@ public:
     // Gallery scroll control (uses DComp SetOffset)
     HRESULT SetGalleryOffset(float offsetX, float offsetY);
     
+    // Update interpolation mode based on config and state
+    void SetImageInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE mode);
+
     // Resize (recreates UI surfaces, NOT image surfaces)
     HRESULT Resize(UINT width, UINT height);
     

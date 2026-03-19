@@ -99,6 +99,8 @@ struct AppConfig {
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
 
     // --- Control ---
+    int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
+    int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     bool InvertWheel = false;
     int WheelActionMode = 0;            // 0=Zoom, 1=Navigate
     bool InvertXButton = false;          // Invert mouse forward/back buttons for navigation
@@ -209,6 +211,9 @@ struct RuntimeConfig {
     int CompareHudMode = 1; // 0=Lite, 1=Normal (fold identical & optics), 2=Full
     bool ForceRawDecode = false;
     bool RenderRAW = false;
+
+    // Feature Toggles (Temporary Session Flags)
+    int PixelArtModeOverride = 0; // 0=None, 1=Force ON, 2=Force OFF
 
     // Verification Flags (Phase 5)
     bool EnableScout = true;

@@ -31,6 +31,7 @@ enum ContextMenuCommand : UINT {
     IDM_FULL_INFO,       // Full Info Panel (direct show)
     IDM_ALWAYS_ON_TOP,
     IDM_RENDER_RAW, // Sync with toolbar
+    IDM_PIXEL_ART_MODE,
     IDM_HUD_GALLERY,
     IDM_WALLPAPER_FILL,
     IDM_WALLPAPER_FIT,
@@ -69,4 +70,4 @@ enum ContextMenuCommand : UINT {
 /// <param name="alwaysOnTop">Whether window is always on top</param>
 /// <param name="renderRaw">Whether Render RAW mode is active</param>
 /// <param name="isRawFile">Whether current file is RAW format</param>
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode);
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode);
