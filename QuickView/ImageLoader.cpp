@@ -6488,7 +6488,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // Helper to try multiple paths
     auto TryGetText = [&](const std::initializer_list<const wchar_t*>& queries, std::wstring& target, bool force = false) {
         if (!target.empty() && !force) return;
-        for (auto q : queries) {
+        for (const auto& q : queries) {
             if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
                 if (var.vt == VT_LPSTR && var.pszVal) {
                      std::string s = var.pszVal; target = std::wstring(s.begin(), s.end());
@@ -6543,7 +6543,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // ISO
     if (pMetadata->ISO.empty()) {
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=34855}", L"/ifd/exif/{ushort=34855}", L"/xmp/exif:ISOSpeedRatings/xmpSeq:li" };
-        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+        for (const auto& q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
             if (var.vt == VT_UI2) pMetadata->ISO = std::to_wstring(var.uiVal);
             else if (var.vt == VT_UI4) pMetadata->ISO = std::to_wstring(var.ulVal);
             else if (var.vt == VT_LPSTR && var.pszVal) {
@@ -6560,7 +6560,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     if (pMetadata->Shutter.empty()) {
         double val = 0;
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=33434}", L"/ifd/exif/{ushort=33434}" };
-        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
+        for (const auto& q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
             wchar_t buf[32];
             if (val >= 1.0) swprintf_s(buf, L"%.1fs", val);
             else swprintf_s(buf, L"1/%.0fs", 1.0/val);
@@ -6573,7 +6573,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     if (pMetadata->Aperture.empty()) {
         double val = 0;
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=33437}", L"/ifd/exif/{ushort=33437}" };
-        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
+        for (const auto& q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
             wchar_t buf[32]; swprintf_s(buf, L"f/%.1f", val);
             pMetadata->Aperture = buf;
             break;
@@ -6584,12 +6584,12 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     if (pMetadata->Focal.empty()) {
         double val = 0;
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=37386}", L"/ifd/exif/{ushort=37386}" };
-        for (auto q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
+        for (const auto& q : queries) if (SUCCEEDED(GetMetadataRational(reader, q, &val))) {
             // Try 35mm equivalent
             double val35 = 0;
             const wchar_t* q35[] = { L"/app1/ifd/exif/{ushort=41989}", L"/ifd/exif/{ushort=41989}" };
             bool found35 = false;
-            for(auto q : q35) if(SUCCEEDED(GetMetadataRational(reader, q, &val35)) && val35 > 0) { found35 = true; break; }
+            for(const auto& q : q35) if(SUCCEEDED(GetMetadataRational(reader, q, &val35)) && val35 > 0) { found35 = true; break; }
             
             wchar_t buf[64];
             if (found35) {
@@ -6606,7 +6606,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // Exposure Bias
     double bias = 0.0;
     const wchar_t* biasQueries[] = { L"/app1/ifd/exif/{ushort=37380}", L"/ifd/exif/{ushort=37380}" };
-    for (auto q : biasQueries) if (SUCCEEDED(GetMetadataSignedRational(reader, q, &bias))) {
+    for (const auto& q : biasQueries) if (SUCCEEDED(GetMetadataSignedRational(reader, q, &bias))) {
         if (std::abs(bias) > 0.0001) {
             wchar_t buf[32]; swprintf_s(buf, L"%+.1f ev", bias);
             pMetadata->ExposureBias = buf;
@@ -6617,7 +6617,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // Flash
     if (pMetadata->Flash.empty()) {
          const wchar_t* flashQueries[] = { L"/app1/ifd/exif/{ushort=37377}", L"/ifd/exif/{ushort=37377}" };
-         for (auto q : flashQueries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+         for (const auto& q : flashQueries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
              UINT fVal = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
              pMetadata->Flash = (fVal & 1) ? L"Flash: On" : L"Flash: Off";
              PropVariantClear(&var); break;
@@ -6637,7 +6637,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // [v5.5] White Balance
     if (pMetadata->WhiteBalance.empty()) {
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=41987}", L"/ifd/exif/{ushort=41987}" };
-        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+        for (const auto& q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
              UINT val = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 99);
              if (val == 0) pMetadata->WhiteBalance = L"Auto";
              else if (val == 1) pMetadata->WhiteBalance = L"Manual";
@@ -6648,7 +6648,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // [v5.5] Metering Mode
     if (pMetadata->MeteringMode.empty()) {
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=37383}", L"/ifd/exif/{ushort=37383}" };
-        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+        for (const auto& q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
              UINT val = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
              switch (val) {
                  case 1: pMetadata->MeteringMode = L"Average"; break;
@@ -6667,7 +6667,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // [v5.5] Exposure Program
     if (pMetadata->ExposureProgram.empty()) {
         const wchar_t* queries[] = { L"/app1/ifd/exif/{ushort=34850}", L"/ifd/exif/{ushort=34850}" };
-        for (auto q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+        for (const auto& q : queries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
              UINT val = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
              switch (val) {
                  case 1: pMetadata->ExposureProgram = L"Manual"; break;
@@ -6687,7 +6687,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
     // Color Space
     if (pMetadata->ColorSpace.empty()) {
          const wchar_t* csQueries[] = { L"/app1/ifd/exif/{ushort=40961}", L"/ifd/exif/{ushort=40961}" };
-         for (auto q : csQueries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
+         for (const auto& q : csQueries) if (SUCCEEDED(reader->GetMetadataByName(q, &var))) {
              UINT csVal = (var.vt == VT_UI2) ? var.uiVal : (var.vt == VT_UI4 ? var.ulVal : 0);
              if (csVal == 1) pMetadata->ColorSpace = L"sRGB";
              else if (csVal == 2) pMetadata->ColorSpace = L"Adobe RGB";
@@ -6712,7 +6712,7 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
         // Altitude
         double alt = 0;
         const wchar_t* altQueries[] = { L"/app1/ifd/gps/{ushort=6}", L"/ifd/gps/{ushort=6}" };
-        for (auto q : altQueries) if (SUCCEEDED(GetMetadataRational(reader, q, &alt))) {
+        for (const auto& q : altQueries) if (SUCCEEDED(GetMetadataRational(reader, q, &alt))) {
             pMetadata->Altitude = alt;
             // Ref
             std::wstring refPath = q;
@@ -7091,7 +7091,7 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
         if (pMetadata->ColorSpace.empty()) {
             PROPVARIANT csVar; PropVariantInit(&csVar);
             const wchar_t* csQueries[] = { L"/app1/ifd/exif/{ushort=40961}", L"/ifd/exif/{ushort=40961}" };
-            for (auto q : csQueries) {
+            for (const auto& q : csQueries) {
                 if (SUCCEEDED(reader->GetMetadataByName(q, &csVar))) {
                     UINT csVal = 0;
                     if (csVar.vt == VT_UI2) csVal = csVar.uiVal;
