@@ -8912,65 +8912,217 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                 // =========================================================
                 // PHASE 2: STYLE INLINER (Fix Black Silhouette)
                 // =========================================================
-                // Adobe format: .st0{fill:url(#ID);} or .st0 { fill: #FFF; }
-                // Regex: Find class name and fill value
+                // D2D ignores <style> in <defs>. We extract CSS rules from
+                // <style> blocks and inline fill/stroke directly onto elements.
+                // Uses string_view zero-copy parsing. No std::regex.
+                // =========================================================
                 try {
                     int inlinedCount = 0;
-                    size_t pos_style = 0;
-                    while ((pos_style = svgContent.find(".", pos_style)) != std::string::npos) {
-                        size_t brace_open = svgContent.find("{", pos_style);
-                        if (brace_open == std::string::npos) break;
+                    
+                    // --- Utility lambdas (string_view based) ---
+                    auto SkipWS = [](std::string_view sv, size_t p) -> size_t {
+                        while (p < sv.size() && (sv[p] == ' ' || sv[p] == '\t' || sv[p] == '\n' || sv[p] == '\r')) ++p;
+                        return p;
+                    };
+                    auto TrimSV = [](std::string_view sv) -> std::string_view {
+                        size_t s = 0, e = sv.size();
+                        while (s < e && (sv[s] == ' ' || sv[s] == '\t' || sv[s] == '\n' || sv[s] == '\r')) ++s;
+                        while (e > s && (sv[e-1] == ' ' || sv[e-1] == '\t' || sv[e-1] == '\n' || sv[e-1] == '\r')) --e;
+                        return sv.substr(s, e - s);
+                    };
+                    // Extract "prop: value" from a CSS body string_view
+                    auto ExtractCSSProp = [&](std::string_view body, const char* prop) -> std::string_view {
+                        size_t propLen = strlen(prop);
+                        size_t p = 0;
+                        while (p < body.size()) {
+                            size_t found = body.find(prop, p);
+                            if (found == std::string_view::npos) return {};
+                            // Ensure it's at property boundary (start of body or after ; or whitespace)
+                            bool atBound = (found == 0) || body[found - 1] == ';' ||
+                                           body[found - 1] == ' ' || body[found - 1] == '\t' ||
+                                           body[found - 1] == '\n' || body[found - 1] == '\r' ||
+                                           body[found - 1] == '{';
+                            size_t afterKey = found + propLen;
+                            if (atBound && afterKey < body.size() && body[afterKey] == ':') {
+                                size_t valStart = afterKey + 1;
+                                // Skip whitespace after ':'
+                                while (valStart < body.size() && (body[valStart] == ' ' || body[valStart] == '\t')) ++valStart;
+                                size_t valEnd = body.find(';', valStart);
+                                if (valEnd == std::string_view::npos) valEnd = body.size();
+                                return TrimSV(body.substr(valStart, valEnd - valStart));
+                            }
+                            p = found + 1;
+                        }
+                        return {};
+                    };
+                    // Check if a multi-class attribute value contains a specific class token
+                    auto HasClassToken = [](std::string_view classVal, std::string_view token) -> bool {
+                        size_t p = 0;
+                        while (p < classVal.size()) {
+                            // Skip leading whitespace
+                            while (p < classVal.size() && (classVal[p] == ' ' || classVal[p] == '\t')) ++p;
+                            if (p >= classVal.size()) return false;
+                            size_t end = p;
+                            while (end < classVal.size() && classVal[end] != ' ' && classVal[end] != '\t') ++end;
+                            if (classVal.substr(p, end - p) == token) return true;
+                            p = end;
+                        }
+                        return false;
+                    };
+                    
+                    // Collected CSS rules: className -> {fill, stroke}
+                    struct CSSRule { std::string fill; std::string stroke; };
+                    std::map<std::string, CSSRule> cssRules;
+                    
+                    // --- Pass 1: Parse all <style> blocks ---
+                    size_t styleSearch = 0;
+                    while (true) {
+                        size_t styleStart = svgContent.find("<style", styleSearch);
+                        if (styleStart == std::string::npos) break;
+                        // Find end of opening tag '>'
+                        size_t tagClose = svgContent.find('>', styleStart);
+                        if (tagClose == std::string::npos) break;
+                        size_t contentStart = tagClose + 1;
+                        size_t styleEnd = svgContent.find("</style>", contentStart);
+                        if (styleEnd == std::string::npos) styleEnd = svgContent.find("</style", contentStart);
+                        if (styleEnd == std::string::npos) break;
                         
-                        std::string className = svgContent.substr(pos_style + 1, brace_open - pos_style - 1);
-                        // Simple Trim
-                        className.erase(0, className.find_first_not_of(" \n\r\t"));
-                        size_t last = className.find_last_not_of(" \n\r\t");
-                        if (last != std::string::npos) className.erase(last + 1);
+                        std::string_view styleBlock(svgContent.data() + contentStart, styleEnd - contentStart);
                         
-                        size_t brace_close = svgContent.find("}", brace_open);
-                        if (brace_close == std::string::npos) break;
-                        
-                        std::string styleBody = svgContent.substr(brace_open + 1, brace_close - brace_open - 1);
-                        size_t fillPos = styleBody.find("fill:");
-                        if (fillPos != std::string::npos) {
-                            size_t fillStart = fillPos + 5;
-                            // Skip whitespace
-                            while (fillStart < styleBody.length() && isspace((unsigned char)styleBody[fillStart])) fillStart++;
-                            size_t fillEnd = styleBody.find(";", fillStart);
-                            if (fillEnd == std::string::npos) fillEnd = styleBody.length();
+                        // Parse CSS rules within this <style> block
+                        size_t rp = 0;
+                        while (rp < styleBlock.size()) {
+                            // Find '.' that starts a class selector
+                            size_t dot = styleBlock.find('.', rp);
+                            if (dot == std::string_view::npos) break;
                             
-                            std::string fillVal = styleBody.substr(fillStart, fillEnd - fillStart);
-                            // Simple Trim
-                            fillVal.erase(0, fillVal.find_first_not_of(" \n\r\t"));
-                            size_t lastF = fillVal.find_last_not_of(" \n\r\t");
-                            if (lastF != std::string::npos) fillVal.erase(lastF + 1);
-
-                            if (!className.empty() && !fillVal.empty()) {
-                                std::string searchPattern = "class=\"" + className + "\"";
-                                std::string replacePattern = "fill=\"" + fillVal + "\" class=\"" + className + "\"";
-
-                                size_t firstMatch = svgContent.find(searchPattern);
-                                if (firstMatch != std::string::npos) {
-                                    std::string result;
-                                    result.reserve(svgContent.size() + svgContent.size() / 10);
-                                    result.append(svgContent, 0, firstMatch);
-                                    result.append(replacePattern);
-                                    inlinedCount++;
-
-                                    size_t pos = firstMatch + searchPattern.length();
-                                    size_t match_pos;
-                                    while ((match_pos = svgContent.find(searchPattern, pos)) != std::string::npos) {
-                                        result.append(svgContent, pos, match_pos - pos);
-                                        result.append(replacePattern);
-                                        pos = match_pos + searchPattern.length();
-                                        inlinedCount++;
-                                    }
-                                    result.append(svgContent, pos, svgContent.length() - pos);
-                                    svgContent = std::move(result);
-                                }
+                            size_t nameStart = dot + 1;
+                            if (nameStart >= styleBlock.size()) break;
+                            
+                            // Validate: class name must start with letter, underscore, or hyphen
+                            char firstCh = styleBlock[nameStart];
+                            if (!isalpha((unsigned char)firstCh) && firstCh != '_' && firstCh != '-') {
+                                rp = nameStart;
+                                continue;
+                            }
+                            
+                            // Read class name (alphanumeric, underscore, hyphen)
+                            size_t nameEnd = nameStart;
+                            while (nameEnd < styleBlock.size()) {
+                                char c = styleBlock[nameEnd];
+                                if (isalnum((unsigned char)c) || c == '_' || c == '-') ++nameEnd;
+                                else break;
+                            }
+                            if (nameEnd == nameStart) { rp = nameEnd; continue; }
+                            
+                            std::string_view clsName = styleBlock.substr(nameStart, nameEnd - nameStart);
+                            
+                            // Find opening brace
+                            size_t bo = styleBlock.find('{', nameEnd);
+                            if (bo == std::string_view::npos) break;
+                            size_t bc = styleBlock.find('}', bo);
+                            if (bc == std::string_view::npos) break;
+                            
+                            std::string_view body = styleBlock.substr(bo + 1, bc - bo - 1);
+                            
+                            // Extract fill and stroke
+                            std::string_view fillSV = ExtractCSSProp(body, "fill");
+                            std::string_view strokeSV = ExtractCSSProp(body, "stroke");
+                            
+                            if (!fillSV.empty() || !strokeSV.empty()) {
+                                std::string key(clsName);
+                                auto& rule = cssRules[key];
+                                if (!fillSV.empty() && rule.fill.empty()) rule.fill = std::string(fillSV);
+                                if (!strokeSV.empty() && rule.stroke.empty()) rule.stroke = std::string(strokeSV);
+                            }
+                            
+                            rp = bc + 1;
+                        }
+                        
+                        styleSearch = styleEnd + 8; // skip "</style>"
+                    }
+                    
+                    // --- Pass 2: Inline extracted rules onto elements ---
+                    if (!cssRules.empty()) {
+                        // Build injection map: for each class, build the attribute prefix string
+                        // e.g. fill="url(#ID)" stroke="#000" 
+                        struct Injection { std::string className; std::string attrPrefix; };
+                        std::vector<Injection> injections;
+                        injections.reserve(cssRules.size());
+                        for (auto& [cls, rule] : cssRules) {
+                            std::string prefix;
+                            if (!rule.fill.empty()) { prefix += "fill=\""; prefix += rule.fill; prefix += "\" "; }
+                            if (!rule.stroke.empty()) { prefix += "stroke=\""; prefix += rule.stroke; prefix += "\" "; }
+                            if (!prefix.empty()) {
+                                injections.push_back({cls, std::move(prefix)});
                             }
                         }
-                        pos_style = brace_close + 1;
+                        
+                        // Scan for class= attributes and inject
+                        // We rebuild the string once, processing all class= occurrences
+                        std::string result;
+                        result.reserve(svgContent.size() + svgContent.size() / 8);
+                        size_t lastCopy = 0;
+                        size_t scanPos = 0;
+                        
+                        while (scanPos < svgContent.size()) {
+                            // Find "class" keyword
+                            size_t classPos = svgContent.find("class", scanPos);
+                            if (classPos == std::string::npos) break;
+                            
+                            // Skip whitespace and '='
+                            size_t eq = SkipWS(svgContent, classPos + 5);
+                            if (eq >= svgContent.size() || svgContent[eq] != '=') {
+                                scanPos = classPos + 5;
+                                continue;
+                            }
+                            size_t qStart = SkipWS(svgContent, eq + 1);
+                            if (qStart >= svgContent.size()) break;
+                            
+                            // Determine quote character (" or ' or none)
+                            char quote = svgContent[qStart];
+                            size_t valStart, valEnd;
+                            if (quote == '"' || quote == '\'') {
+                                valStart = qStart + 1;
+                                valEnd = svgContent.find(quote, valStart);
+                                if (valEnd == std::string::npos) { scanPos = valStart; continue; }
+                            } else {
+                                // No quote: value runs until whitespace or '>' or '/'
+                                valStart = qStart;
+                                valEnd = valStart;
+                                while (valEnd < svgContent.size() && svgContent[valEnd] != ' ' && 
+                                       svgContent[valEnd] != '\t' && svgContent[valEnd] != '>' && 
+                                       svgContent[valEnd] != '/' && svgContent[valEnd] != '\n') ++valEnd;
+                            }
+                            
+                            std::string_view classVal(svgContent.data() + valStart, valEnd - valStart);
+                            
+                            // Check each injection rule
+                            std::string prefixToInject;
+                            for (auto& inj : injections) {
+                                if (HasClassToken(classVal, inj.className)) {
+                                    prefixToInject += inj.attrPrefix;
+                                    inlinedCount++;
+                                }
+                            }
+                            
+                            if (!prefixToInject.empty()) {
+                                // Copy everything up to "class", inject prefix, then continue
+                                result.append(svgContent, lastCopy, classPos - lastCopy);
+                                result.append(prefixToInject);
+                                // Copy the class attribute itself unchanged
+                                size_t attrEnd = (quote == '"' || quote == '\'') ? valEnd + 1 : valEnd;
+                                result.append(svgContent, classPos, attrEnd - classPos);
+                                lastCopy = attrEnd;
+                            }
+                            
+                            scanPos = (quote == '"' || quote == '\'') ? valEnd + 1 : valEnd;
+                        }
+                        
+                        if (inlinedCount > 0) {
+                            result.append(svgContent, lastCopy, svgContent.size() - lastCopy);
+                            svgContent = std::move(result);
+                        }
                     }
                     
                     if (inlinedCount > 0) {
@@ -8979,8 +9131,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                          OutputDebugStringW(msg);
                     }
                 } catch (...) {
-                    // Regex error safety
-                    OutputDebugStringW(L"[SVG] Style Inliner Pattern Failure\n");
+                    OutputDebugStringW(L"[SVG] Style Inliner Failure\n");
                 }
                 
                 // Commit changes
