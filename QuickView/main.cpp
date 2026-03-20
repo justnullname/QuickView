@@ -1345,14 +1345,26 @@ static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path) {
     if (SUCCEEDED(g_imageLoader->ReadMetadata(path.c_str(), &meta, true))) {
         g_compare.left.metadata = meta;
     }
+    D2D1_SIZE_U pixel = d2dBitmap->GetPixelSize();
     if (g_compare.left.metadata.Width == 0 || g_compare.left.metadata.Height == 0) {
-        D2D1_SIZE_U pixel = d2dBitmap->GetPixelSize();
         g_compare.left.metadata.Width = pixel.width;
         g_compare.left.metadata.Height = pixel.height;
     }
     if (g_compare.left.metadata.ExifOrientation < 1 || g_compare.left.metadata.ExifOrientation > 8) {
         g_compare.left.metadata.ExifOrientation = 1;
     }
+
+    // [Fix] Detect if Decoder already applied Exif Rotation (Pre-Rotation)
+    if (g_compare.left.metadata.ExifOrientation >= 5 && g_compare.left.metadata.ExifOrientation <= 8) {
+        int wDiff = (int)pixel.width - (int)g_compare.left.metadata.Height;
+        int hDiff = (int)pixel.height - (int)g_compare.left.metadata.Width;
+        if (wDiff < 0) wDiff = -wDiff;
+        if (hDiff < 0) hDiff = -hDiff;
+        if (wDiff < 5 && hDiff < 5) {
+            g_compare.left.metadata.ExifOrientation = 1;
+        }
+    }
+
     g_compare.left.view.ExifOrientation = g_config.AutoRotate ? g_compare.left.metadata.ExifOrientation : 1;
 
     // [v10.0] Trigger Histogram calculation if HUD is showing
@@ -1375,14 +1387,7 @@ static void CaptureCurrentImageAsCompareLeft() {
     g_compare.left.view.PanX = g_viewState.PanX;
     g_compare.left.view.PanY = g_viewState.PanY;
     g_compare.left.view.ExifOrientation = g_viewState.ExifOrientation;
-    if (g_config.AutoRotate && g_imageLoader) {
-        CImageLoader::ImageMetadata meta;
-        if (SUCCEEDED(g_imageLoader->ReadMetadata(g_imagePath.c_str(), &meta, true)) &&
-            meta.ExifOrientation >= 1 && meta.ExifOrientation <= 8) {
-            g_compare.left.view.ExifOrientation = meta.ExifOrientation;
-            g_compare.left.metadata.ExifOrientation = meta.ExifOrientation;
-        }
-    } else {
+    if (!g_config.AutoRotate) {
         g_compare.left.view.ExifOrientation = 1;
         g_compare.left.metadata.ExifOrientation = 1;
     }
