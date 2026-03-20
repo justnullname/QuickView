@@ -102,5 +102,8 @@ jpegview-static-post2024-vs2019-x64/
 
 .agent/
 
+# VCPKG intermediates
+QuickView/vcpkg_installed/
+
 
 
