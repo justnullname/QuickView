@@ -40,6 +40,9 @@ using namespace Microsoft::WRL;
 #include <shobjidl.h>
 #include <commdlg.h> 
 #include <vector>
+#include <string_view>
+#include <array>
+#include <ranges>
 #include <cstdlib>
 #include <limits>
 #include <cmath>
@@ -3822,45 +3825,66 @@ bool SaveCurrentImage(bool saveAs) {
     }
 }
 
+struct FormatExtRule {
+    std::wstring_view format;
+    std::wstring_view primary;
+    std::wstring_view alt1 = {};
+    std::wstring_view alt2 = {};
+    std::wstring_view alt3 = {};
+};
+
+static constexpr FormatExtRule g_formatRules[] = {
+    { L"jpeg", L".jpg", L".jpeg", L".jpe", L".jfif" },
+    { L"png",  L".png" },
+    { L"webp", L".webp" },
+    { L"avif", L".avif", L"libavif" },
+    { L"gif",  L".gif" },
+    { L"bmp",  L".bmp", L".dib" },
+    { L"tiff", L".tiff", L".tif" },
+    { L"heif", L".heic", L".heif" },
+    { L"heic", L".heic", L".heif" },
+    { L"jxl",  L".jxl", L"jpeg xl" },
+    { L"hdr",  L".hdr", L".pic" },
+    { L"psd",  L".psd", L".psb" },
+    { L"exr",  L".exr", L"tinyexr" },
+    { L"qoi",  L".qoi" },
+    { L"tga",  L".tga" },
+    { L"pcx",  L".pcx" },
+    { L"svg",  L".svg" },
+    { L"ico",  L".ico" },
+    { L"wbmp", L".wbmp" },
+    { L"pnm",  L".pnm", L".pgm", L".ppm" }
+};
+
+static std::wstring_view GetPrimaryExtensionForFormat(std::wstring_view fmt) {
+    for (const auto& rule : g_formatRules) {
+        if (fmt == rule.format || (rule.format.length() > 3 && fmt.contains(rule.format))) return rule.primary;
+    }
+    return {};
+}
+
 // Helper: Check if file extension matches detected format
-bool CheckExtensionMismatch(const std::wstring& path, const std::wstring& format) {
+bool CheckExtensionMismatch(std::wstring_view path, std::wstring_view format) {
     if (path.empty() || format.empty()) return false;
     
     // Skip .tmp files (temporary files during editing)
-    std::wstring pathLower = path;
-    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
-    if (pathLower.ends_with(L".tmp")) return false;
+    if (path.ends_with(L".tmp")) return false;
     
     size_t lastDot = path.find_last_of(L'.');
-    if (lastDot == std::wstring::npos) return true; // No extension is a mismatch (technically)
+    if (lastDot == std::wstring_view::npos) return true; // No extension is a mismatch (technically)
     
-    std::wstring ext = path.substr(lastDot);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+    std::wstring_view ext = path.substr(lastDot);
     
-    std::wstring fmt = format;
-    std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
-    
-    // Basic mapping & Loader Name Detection
-    if (fmt == L"jpeg" || fmt.contains(L"jpeg")) return (ext != L".jpg" && ext != L".jpeg" && ext != L".jpe" && ext != L".jfif");
-    if (fmt == L"png" || fmt.contains(L"png")) return (ext != L".png");
-    if (fmt == L"webp" || fmt.contains(L"webp")) return (ext != L".webp");
-    if (fmt == L"avif" || fmt.contains(L"avif") || fmt.contains(L"libavif")) return (ext != L".avif");
-    if (fmt == L"gif" || fmt.contains(L"gif")) return (ext != L".gif");
-    if (fmt == L"bmp" || fmt.contains(L"bmp")) return (ext != L".bmp" && ext != L".dib");
-    if (fmt == L"tiff" || fmt.contains(L"tiff")) return (ext != L".tif" && ext != L".tiff");
-    if (fmt == L"heif" || fmt == L"heic" || fmt.contains(L"heic")) return (ext != L".heic" && ext != L".heif");
-    
-    // JXL
-    if (fmt == L"jxl" || fmt == L"jpeg xl" || fmt.contains(L"jxl")) return (ext != L".jxl");
-    
-    // HDR (Stb Image (HDR))
-    if (fmt == L"hdr" || fmt.contains(L"hdr")) return (ext != L".hdr" && ext != L".pic");
-    
-    // PSD / PSB
-    if (fmt == L"psd" || fmt.contains(L"psd")) return (ext != L".psd" && ext != L".psb");
-    
-    // EXR
-    if (fmt == L"exr" || fmt.contains(L"exr") || fmt.contains(L"tinyexr")) return (ext != L".exr");
+    for (const auto& rule : g_formatRules) {
+        // Match format name (e.g. "jpeg" or "stb_image (jpeg)")
+        if (format == rule.format || (rule.format.length() > 3 && format.contains(rule.format))) {
+            if (ext == rule.primary) return false;
+            if (!rule.alt1.empty() && ext == rule.alt1) return false;
+            if (!rule.alt2.empty() && ext == rule.alt2) return false;
+            if (!rule.alt3.empty() && ext == rule.alt3) return false;
+            return true; // Format matches, but extension doesn't match any valid ones
+        }
+    }
 
     return false;
 }
@@ -8098,10 +8122,7 @@ SKIP_EDGE_NAV:;
              break;
         }
         
-        case IDM_HUD_GALLERY:
-             // Toggle Gallery
-             SendMessage(hwnd, WM_KEYDOWN, 'T', 0);
-             break;
+        case IDM_HUD_GALLERY: SendMessage(hwnd, WM_KEYDOWN, 'T', 0); break;
 
         case IDM_LITE_INFO:
              g_runtime.ShowInfoPanel = true;
@@ -8122,34 +8143,16 @@ SKIP_EDGE_NAV:;
              RequestRepaint(PaintLayer::Static);
              break;
 
-        case IDM_ZOOM_100:
-             SendMessage(hwnd, WM_KEYDOWN, '1', 0);
-             break;
-
-        case IDM_ZOOM_FIT:
-             SendMessage(hwnd, WM_KEYDOWN, '0', 0);
-             break;
+        case IDM_ZOOM_100: SendMessage(hwnd, WM_KEYDOWN, '1', 0); break;
+        case IDM_ZOOM_FIT: SendMessage(hwnd, WM_KEYDOWN, '0', 0); break;
              
-        case IDM_ZOOM_IN:
-            // Simulate Key Press
-            SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); 
-            break;
-        case IDM_ZOOM_OUT:
-            SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0);
-            break;
+        case IDM_ZOOM_IN:  SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); break;
+        case IDM_ZOOM_OUT: SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0); break;
 
-        case IDM_ROTATE_CW:
-             PerformTransform(hwnd, TransformType::Rotate90CW);
-             break;
-        case IDM_ROTATE_CCW:
-             PerformTransform(hwnd, TransformType::Rotate90CCW);
-             break;
-        case IDM_FLIP_H:
-             PerformTransform(hwnd, TransformType::FlipHorizontal);
-             break;
-        case IDM_FLIP_V:
-             PerformTransform(hwnd, TransformType::FlipVertical);
-             break;
+        case IDM_ROTATE_CW:  PerformTransform(hwnd, TransformType::Rotate90CW); break;
+        case IDM_ROTATE_CCW: PerformTransform(hwnd, TransformType::Rotate90CCW); break;
+        case IDM_FLIP_H:     PerformTransform(hwnd, TransformType::FlipHorizontal); break;
+        case IDM_FLIP_V:     PerformTransform(hwnd, TransformType::FlipVertical); break;
 
         case IDM_RENDER_RAW: {
              // [Fix] Toggle Force RAW Decode TEMPORARILY (only for runtime)
@@ -8240,34 +8243,14 @@ SKIP_EDGE_NAV:;
                 std::wstring fmt = contextMeta.Format;
                 std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
                 
-                std::wstring newExt;
-                if (fmt == L"jpeg") newExt = L".jpg";
-                else if (fmt == L"png") newExt = L".png";
-                else if (fmt == L"webp") newExt = L".webp";
-                else if (fmt == L"avif") newExt = L".avif";
-                else if (fmt == L"jxl" || fmt == L"jpeg xl") newExt = L".jxl";
-                else if (fmt == L"gif") newExt = L".gif";
-                else if (fmt == L"bmp") newExt = L".bmp";
-                else if (fmt == L"tiff") newExt = L".tiff";
-                else if (fmt == L"heif" || fmt == L"heic") newExt = L".heic";
-                else if (fmt == L"hdr") newExt = L".hdr";
-                else if (fmt == L"psd") newExt = L".psd";
-                else if (fmt == L"tga") newExt = L".tga";
-                else if (fmt == L"exr") newExt = L".exr";
-                else if (fmt == L"qoi") newExt = L".qoi";
-                else if (fmt == L"pcx") newExt = L".pcx";
-                else if (fmt == L"svg") newExt = L".svg";
-                else if (fmt == L"ico") newExt = L".ico";
-                else if (fmt == L"wbmp") newExt = L".wbmp";
-                else if (fmt == L"pic") newExt = L".pic";
-                else if (fmt == L"pnm") newExt = L".pnm";
+                std::wstring_view newExt = GetPrimaryExtensionForFormat(fmt);
                 
                 if (!newExt.empty()) {
                     size_t lastDot = contextPath.find_last_of(L'.');
-                    std::wstring basePath = (lastDot != std::wstring::npos) ? contextPath.substr(0, lastDot) : contextPath;
-                    std::wstring newPath = basePath + newExt;
+                    std::wstring basePath = (lastDot != std::wstring_view::npos) ? std::wstring(contextPath.substr(0, lastDot)) : std::wstring(contextPath);
+                    std::wstring newPath = basePath + std::wstring(newExt);
                     
-                    std::wstring msg = L"Format detected: " + contextMeta.Format + L"\nChange extension to " + newExt + L"?";
+                    std::wstring msg = L"Format detected: " + contextMeta.Format + L"\nChange extension to " + std::wstring(newExt) + L"?";
                     
                     std::vector<DialogButton> buttons = {
                         { DialogResult::Yes, L"Rename", true },
