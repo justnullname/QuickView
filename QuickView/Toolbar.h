@@ -16,6 +16,7 @@ enum class ToolbarButtonID {
     CompareSwap,
     CompareLayout,
     CompareInfo,
+    CompareRawToggle,
     CompareDelete,
     CompareZoomIn,
     CompareZoomOut,
@@ -68,6 +69,7 @@ public:
     bool IsCompareMode() const { return m_compareMode; }
     void SetCompareSyncStates(bool syncZoom, bool syncPan);
     void SetCompareInfoState(bool active);
+    void SetCompareRawState(bool anyRaw, bool selectedIsRaw, bool isFullDecode);
     float GetCompareZoomStepPercent() const { return m_compareZoomStepPercent; }
     
     // [Phase 3] Get minimum required width for toolbar

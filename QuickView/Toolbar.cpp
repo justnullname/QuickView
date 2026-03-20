@@ -63,6 +63,7 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::CompareSwap, ICON_SWAP[0], {}, true, false},
       {ToolbarButtonID::CompareLayout, ICON_LAYOUT[0], {}, true, false},
       {ToolbarButtonID::CompareInfo, ICON_INFO[0], {}, true, false},
+      {ToolbarButtonID::CompareRawToggle, ICON_RAW[0], {}, false, false}, // RAW toggle in compare mode (hidden if not RAW)
       {ToolbarButtonID::CompareDelete, ICON_DELETE[0], {}, true, false},
       {ToolbarButtonID::CompareZoomIn, ICON_ZOOM_IN[0], {}, true, false},
       {ToolbarButtonID::CompareZoomOut, ICON_ZOOM_OUT[0], {}, true, false},
@@ -192,6 +193,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     case ToolbarButtonID::CompareZoomOut:
     case ToolbarButtonID::CompareSyncZoom:
     case ToolbarButtonID::CompareSyncPan:
+    case ToolbarButtonID::CompareRawToggle:
     case ToolbarButtonID::CompareExit:
       return true;
     default:
@@ -210,6 +212,8 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     if (isCompareButton(btn.id))
       return false;
     if (btn.id == ToolbarButtonID::RawToggle && !btn.isEnabled)
+      return false;
+    if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning)
       return false;
     if (btn.id == ToolbarButtonID::FixExtension && !btn.isWarning)
       return false;
@@ -320,6 +324,10 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   case ToolbarButtonID::RawToggle:
     return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
                          : AppStrings::Toolbar_Tooltip_RawPreview;
+  case ToolbarButtonID::CompareRawToggle:
+    if (!btn.isEnabled) return nullptr;
+    return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
+                         : AppStrings::Toolbar_Tooltip_RawPreview;
   case ToolbarButtonID::FixExtension:
     return AppStrings::Toolbar_Tooltip_FixExtension;
   case ToolbarButtonID::Pin:
@@ -385,8 +393,10 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       ID2D1SolidColorBrush *pBrush = m_brushIcon.Get();
       if (btn.isToggled)
         pBrush = m_brushIconActive.Get();
-      if (btn.isWarning)
+      if (btn.isWarning && btn.id != ToolbarButtonID::CompareRawToggle)
         pBrush = m_brushWarning.Get();
+      if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isEnabled)
+        pBrush = m_brushIconDisabled.Get();
       if (btn.id == ToolbarButtonID::LockSize && btn.isToggled)
         pBrush = m_brushIconActive.Get();
       if (btn.id == ToolbarButtonID::Pin && btn.isToggled)
@@ -623,3 +633,15 @@ void Toolbar::SetCompareInfoState(bool active) {
     }
   }
 }
+
+void Toolbar::SetCompareRawState(bool anyRaw, bool selectedIsRaw, bool isFullDecode) {
+  for (auto &btn : m_buttons) {
+    if (btn.id == ToolbarButtonID::CompareRawToggle) {
+      // isWarning reused as 'visible in compare' flag
+      btn.isWarning = anyRaw;
+      btn.isEnabled = selectedIsRaw;
+      if (selectedIsRaw) { btn.isToggled = isFullDecode; }
+    }
+  }
+}
+

@@ -458,6 +458,17 @@ static void ExitCompareMode(HWND hwnd);
 static void CaptureCurrentImageAsCompareLeft();
 static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
+bool IsRawFile(const std::wstring& path); // Forward declaration
+
+// Helper: update CompareRawToggle button state from current compare context
+static void UpdateCompareRawButton() {
+    bool leftIsRaw = !g_compare.left.path.empty() && IsRawFile(g_compare.left.path);
+    bool rightIsRaw = !g_imagePath.empty() && IsRawFile(g_imagePath);
+    bool anyRaw = leftIsRaw || rightIsRaw;
+    bool selectedIsRaw = (g_compare.selectedPane == ComparePane::Left) ? leftIsRaw : rightIsRaw;
+    g_toolbar.SetCompareRawState(anyRaw, selectedIsRaw, g_runtime.ForceRawDecode);
+}
+
 static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval);
 static void CancelSmoothWindowZoom(HWND hwnd);
 static void StartSmoothWindowZoom(HWND hwnd,
@@ -1361,6 +1372,11 @@ static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path) {
         UpdateCompareLeftHistogramAsync(hwnd, path);
     }
 
+    // [Compare RAW] Update toolbar button if left pane is currently selected
+    if (g_compare.selectedPane == ComparePane::Left) {
+        UpdateCompareRawButton();
+    }
+
     return true;
 }
 
@@ -1610,6 +1626,8 @@ static void EnterCompareMode(HWND hwnd) {
     g_toolbar.SetCompareMode(true);
     g_toolbar.SetCompareSyncStates(g_compare.syncZoom, g_compare.syncPan);
     g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
+    // [Compare RAW] Initial state: right pane is selected by default
+    UpdateCompareRawButton();
     RECT rc{};
     GetClientRect(hwnd, &rc);
     g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
@@ -6765,6 +6783,12 @@ SKIP_EDGE_NAV:;
         if (IsCompareModeActive()) {
             g_compare.activePane = HitTestComparePane(hwnd, pt);
             g_compare.selectedPane = g_compare.activePane;
+            // [Compare RAW] Update button state when pane selection changes
+            UpdateCompareRawButton();
+            {
+                RECT trc; GetClientRect(hwnd, &trc);
+                g_toolbar.UpdateLayout((float)trc.right, (float)trc.bottom);
+            }
             MarkCompareDirty();
             RequestRepaint(PaintLayer::Image | PaintLayer::Static);
             if (IsNearCompareDivider(hwnd, pt)) {
@@ -6976,6 +7000,8 @@ SKIP_EDGE_NAV:;
                         }
                         MarkCompareDirty();
                         RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                        // [Compare RAW] Refresh after swap
+                        UpdateCompareRawButton();
                     }
                     break;
                 case ToolbarButtonID::CompareLayout:
@@ -6998,6 +7024,20 @@ SKIP_EDGE_NAV:;
                 case ToolbarButtonID::CompareInfo:
                     if (IsCompareModeActive() && g_compare.left.valid && g_imageResource) {
                         ToggleCompareHUD(hwnd, 1);
+                    }
+                    break;
+                case ToolbarButtonID::CompareRawToggle:
+                    if (IsCompareModeActive()) {
+                        bool isLeft = (g_compare.selectedPane == ComparePane::Left);
+                        const std::wstring& selPath = isLeft ? g_compare.left.path : g_imagePath;
+                        if (!IsRawFile(selPath)) break; // Selected pane is not RAW, ignore
+                        // Point context to selected pane, then delegate to IDM_RENDER_RAW
+                        g_compare.contextPane = g_compare.selectedPane;
+                        SendMessage(hwnd, WM_COMMAND, IDM_RENDER_RAW, 0);
+                        // After reload, update compare RAW button state
+                        UpdateCompareRawButton();
+                        RECT rc; GetClientRect(hwnd, &rc);
+                        g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
                     }
                     break;
                 case ToolbarButtonID::CompareDelete:
@@ -9495,6 +9535,10 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
     // Update Toolbar State for RAW
     // [Fix] Ensure RAW button visibility is updated immediately on navigation
     g_toolbar.SetRawState(IsRawFile(path), g_runtime.ForceRawDecode);
+    // [Compare RAW] Sync compare button when right pane loads new image
+    if (IsCompareModeActive() && g_compare.selectedPane == ComparePane::Right) {
+        UpdateCompareRawButton();
+    }
     
     // Level 0 Feedback: Immediate OSD before any decode starts
     // Level 0 Feedback: Immediate OSD removed as per user request
