@@ -5,17 +5,6 @@
 #include <regex>
 #include <map>
 
-// Helper
-static std::vector<uint8_t> ReadFileToVector(const std::wstring& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    size_t size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> buffer(size);
-    if (file.read((char*)buffer.data(), size)) return buffer;
-    return {};
-}
-
 
 #include "ImageLoader.h"
 #include "MemoryArena.h" // [Fix] Include for QuantumArena definition
@@ -6282,51 +6271,39 @@ HRESULT CImageLoader::LoadPCX(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 #include <cmath>
 #pragma comment(lib, "propsys.lib")
 
-static HRESULT GetMetadataString(IWICMetadataQueryReader* reader, LPCWSTR query, std::wstring& out) {
-    if (!reader) return E_INVALIDARG;
-    PROPVARIANT val; PropVariantInit(&val);
-    HRESULT hr = reader->GetMetadataByName(query, &val);
-    if (SUCCEEDED(hr)) {
-        WCHAR buf[512] = {};
-        if (SUCCEEDED(PropVariantToString(val, buf, 512))) {
-             out = buf;
-        }
-        PropVariantClear(&val);
+template <bool IsSigned>
+static double DecodeRationalT(unsigned __int64 val) {
+    if constexpr (IsSigned) {
+        int32_t num = (int32_t)(val & 0xFFFFFFFF);
+        int32_t den = (int32_t)(val >> 32);
+        if (den == 0) return 0.0;
+        return (double)num / (double)den;
+    } else {
+        uint32_t num = (uint32_t)(val & 0xFFFFFFFF);
+        uint32_t den = (uint32_t)(val >> 32);
+        if (den == 0) return 0.0;
+        return (double)num / (double)den;
     }
-    return hr;
 }
 
-static double DecodeRational(unsigned __int64 val) {
-    uint32_t num = (uint32_t)(val & 0xFFFFFFFF);
-    uint32_t den = (uint32_t)(val >> 32);
-    if (den == 0) return 0.0;
-    return (double)num / (double)den;
-}
-
-static double DecodeSignedRational(unsigned __int64 val) {
-    // EXIF SRATIONAL: Low 32 bits = signed numerator, High 32 bits = signed denominator
-    int32_t num = (int32_t)(val & 0xFFFFFFFF);
-    int32_t den = (int32_t)(val >> 32);
-    if (den == 0) return 0.0;
-    return (double)num / (double)den;
-}
-
-static HRESULT GetMetadataSignedRational(IWICMetadataQueryReader* reader, LPCWSTR query, double* out) {
+template <bool IsSigned>
+static HRESULT GetMetadataRationalT(IWICMetadataQueryReader* reader, LPCWSTR query, double* out) {
     if (!reader || !out) return E_INVALIDARG;
     PROPVARIANT val; PropVariantInit(&val);
     HRESULT hr = reader->GetMetadataByName(query, &val);
     if (SUCCEEDED(hr)) {
         if (val.vt == VT_UI8) {
-            *out = DecodeSignedRational(val.uhVal.QuadPart);
+            *out = DecodeRationalT<IsSigned>(val.uhVal.QuadPart);
         } else if (val.vt == VT_I8) {
-            *out = DecodeSignedRational((unsigned __int64)val.hVal.QuadPart);
+            *out = DecodeRationalT<IsSigned>((unsigned __int64)val.hVal.QuadPart);
         } else if (val.vt == VT_I4) {
-            *out = (double)val.lVal; // Already a ratio?
+            *out = (double)val.lVal;
         } else if (val.vt == VT_R8) {
             *out = val.dblVal;
+        } else if constexpr (!IsSigned) {
+            PropVariantToDouble(val, out);
         } else {
-            // Fallback: Try standard conversion but it may fail for RATIONAL
-            hr = E_FAIL; // Skip if unknown type
+            hr = E_FAIL;
         }
         PropVariantClear(&val);
     }
@@ -6334,18 +6311,11 @@ static HRESULT GetMetadataSignedRational(IWICMetadataQueryReader* reader, LPCWST
 }
 
 static HRESULT GetMetadataRational(IWICMetadataQueryReader* reader, LPCWSTR query, double* out) {
-    if (!reader || !out) return E_INVALIDARG;
-    PROPVARIANT val; PropVariantInit(&val);
-    HRESULT hr = reader->GetMetadataByName(query, &val);
-    if (SUCCEEDED(hr)) {
-        if (val.vt == VT_UI8) {
-            *out = DecodeRational(val.uhVal.QuadPart);
-        } else {
-            PropVariantToDouble(val, out);
-        }
-        PropVariantClear(&val);
-    }
-    return hr;
+    return GetMetadataRationalT<false>(reader, query, out);
+}
+
+static HRESULT GetMetadataSignedRational(IWICMetadataQueryReader* reader, LPCWSTR query, double* out) {
+    return GetMetadataRationalT<true>(reader, query, out);
 }
 
 
@@ -6370,9 +6340,9 @@ static HRESULT GetMetadataGPS(IWICMetadataQueryReader* reader, LPCWSTR coordQuer
     
     if (varCoord.vt == (VT_UI8 | VT_VECTOR)) {
         if (varCoord.cauh.cElems == 3) {
-            double deg = DecodeRational(varCoord.cauh.pElems[0].QuadPart);
-            double min = DecodeRational(varCoord.cauh.pElems[1].QuadPart);
-            double sec = DecodeRational(varCoord.cauh.pElems[2].QuadPart);
+            double deg = DecodeRationalT<false>(varCoord.cauh.pElems[0].QuadPart);
+            double min = DecodeRationalT<false>(varCoord.cauh.pElems[1].QuadPart);
+            double sec = DecodeRationalT<false>(varCoord.cauh.pElems[2].QuadPart);
             result = deg + min/60.0 + sec/3600.0;
         }
     }
@@ -6728,26 +6698,6 @@ static void PopulateExifFromQueryReader(IWICMetadataQueryReader* reader, CImageL
             break;
         }
     }
-}
-
-// [v5.3] Extract Metadata from Memory (Zero-IO)
-static void ExtractExifFromMemory(IWICImagingFactory* factory, const uint8_t* data, size_t size, CImageLoader::ImageMetadata* meta) {
-    if (!factory || !data || !size || !meta) return;
-    
-    ComPtr<IWICStream> stream;
-    if (FAILED(factory->CreateStream(&stream))) return;
-    if (FAILED(stream->InitializeFromMemory(const_cast<uint8_t*>(data), static_cast<DWORD>(size)))) return;
-    
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(factory->CreateDecoderFromStream(stream.Get(), NULL, WICDecodeMetadataCacheOnDemand, &decoder))) return;
-    
-    ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(decoder->GetFrame(0, &frame))) return;
-    
-    ComPtr<IWICMetadataQueryReader> reader;
-    if (FAILED(frame->GetMetadataQueryReader(&reader))) return;
-    
-    PopulateExifFromQueryReader(reader.Get(), meta);
 }
 
 // [v5.3] File Stats
