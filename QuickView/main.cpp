@@ -3856,7 +3856,11 @@ static constexpr FormatExtRule g_formatRules[] = {
     { L"pnm",  L".pnm", L".pgm", L".ppm" }
 };
 
-static std::wstring_view GetPrimaryExtensionForFormat(std::wstring_view fmt) {
+static std::wstring_view GetPrimaryExtensionForFormat(std::wstring_view format) {
+    if (format.empty()) return {};
+    std::wstring fmt(format);
+    std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
+    
     for (const auto& rule : g_formatRules) {
         if (fmt == rule.format || (rule.format.length() > 3 && fmt.contains(rule.format))) return rule.primary;
     }
@@ -3867,22 +3871,28 @@ static std::wstring_view GetPrimaryExtensionForFormat(std::wstring_view fmt) {
 bool CheckExtensionMismatch(std::wstring_view path, std::wstring_view format) {
     if (path.empty() || format.empty()) return false;
     
-    // Skip .tmp files (temporary files during editing)
+    // Normalize format
+    std::wstring fmt(format);
+    std::transform(fmt.begin(), fmt.end(), fmt.begin(), ::towlower);
+    
+    // Skip .tmp files
     if (path.ends_with(L".tmp")) return false;
     
     size_t lastDot = path.find_last_of(L'.');
-    if (lastDot == std::wstring_view::npos) return true; // No extension is a mismatch (technically)
+    if (lastDot == std::wstring_view::npos) return true;
     
-    std::wstring_view ext = path.substr(lastDot);
+    // Normalize extension
+    std::wstring extStr(path.substr(lastDot));
+    std::transform(extStr.begin(), extStr.end(), extStr.begin(), ::towlower);
+    std::wstring_view ext = extStr;
     
     for (const auto& rule : g_formatRules) {
-        // Match format name (e.g. "jpeg" or "stb_image (jpeg)")
-        if (format == rule.format || (rule.format.length() > 3 && format.contains(rule.format))) {
+        if (fmt == rule.format || (rule.format.length() > 3 && fmt.contains(rule.format))) {
             if (ext == rule.primary) return false;
             if (!rule.alt1.empty() && ext == rule.alt1) return false;
             if (!rule.alt2.empty() && ext == rule.alt2) return false;
             if (!rule.alt3.empty() && ext == rule.alt3) return false;
-            return true; // Format matches, but extension doesn't match any valid ones
+            return true;
         }
     }
 
