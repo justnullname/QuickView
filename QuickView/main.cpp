@@ -12,7 +12,6 @@
 #include "ToolProcessProtocol.h"
 #include "ProcessRouter.h"
 #include "InputController.h"  // Quantum Stream: Warp Mode
-#include <d2d1_1helper.h>
 #include "LosslessTransform.h"
 #include "EditState.h"
 #include "AppStrings.h"
@@ -39,7 +38,6 @@ using namespace Microsoft::WRL;
 #include <shellapi.h> 
 #include <shlobj.h>
 #include <shobjidl.h>
-#include <ShObjIdl_core.h>  // For IDesktopWallpaper
 #include <commdlg.h> 
 #include <vector>
 #include <cstdlib>
@@ -185,7 +183,6 @@ static std::unique_ptr<CRenderEngine> g_renderEngine;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
 ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
-// static std::unique_ptr<CompositionEngine> g_compEngine; 
 static CompositionEngine* g_compEngine = nullptr; // [Fix] Raw pointer to avoid unique_ptr include hell
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // 鐙珛 UI 灞傛覆鏌撳櫒
 static InputController g_inputController;  // Quantum Stream: 杈撳叆鐘舵€佹満
@@ -224,11 +221,7 @@ static ImageResource g_imageResource;
 std::wstring g_imagePath;  // Non-static for extern access from UIRenderer
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
 static bool g_isBlurry = false; // For Motion Blur (Ghost)
-static bool g_transitionFromThumb = false; // Flag: Did we transition from a thumbnail?
 static bool g_isCrossFading = false;
-static DWORD g_crossFadeStart = 0;
-static const DWORD CROSS_FADE_DURATION = 45; // ms (faster, reduced from 90)
-static const DWORD SLOW_MOTION_DURATION = 2000; // ms (debug)
 bool g_slowMotionMode = false; // [Debug] Slow crossfade for timing analysis
 static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
 OSDState g_osd; // Removed static, explicitly Global
@@ -258,13 +251,7 @@ static float GetMinWindowWidth() {
     return g_config.WindowMinSize;
 }
 
-static ComPtr<IDWriteTextFormat> g_pPanelTextFormat;
-static D2D1_RECT_F g_gpsLinkRect = {}; 
 int g_galleryContextMenuIndex = -1;
-static D2D1_RECT_F g_gpsCoordRect = {};  // GPS Coordinates click area
-static D2D1_RECT_F g_filenameRect = {};  // Filename click area
-static D2D1_RECT_F g_panelToggleRect = {}; // Expand/Collapse Button Rect
-static D2D1_RECT_F g_panelCloseRect = {};  // Close Button Rect
 bool g_isLoading = false;           // Show Wait Cursor
 std::atomic<bool> g_isPhase2Debouncing{false}; // Suppress IsIdle logic during phase 2 delay
 bool g_isNavigatingToTitan = false; // Is the currently loading image a Titan image?
@@ -366,7 +353,6 @@ static SmoothZoomState g_smoothZoom;
 DebugMetrics g_debugMetrics; // Global Metrics Instance
 static bool g_showDebugHUD = false;  // Toggle with F12
 static bool g_showTileGrid = false;  // Toggle with Ctrl+4
-static DWORD g_lastFrameTime = 0;
 static float g_fps = 0.0f;
 
 // Indicates a programmatic resize initiated by zoom/overlay logic.
@@ -848,9 +834,6 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 }
 
 
-// UI Grid System - Migrated to UIRenderer
-
-
 
 // --- Forward Declarations ---
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -1040,46 +1023,12 @@ static float ComputeZoomMultiplier(float delta, bool fineInterval) {
     return 1.0f / (1.0f + step * fabsf(delta));
 }
 
-static void ZoomCompareViewAtPoint(CompareView& view,
-                                   const ImageResource& res,
-                                   const D2D1_RECT_F& fitViewport,
-                                   const D2D1_RECT_F& centerViewport,
-                                   float wheelDelta,
-                                   const POINT& mousePt) {
-    const D2D1_SIZE_F oriented = GetOrientedSize(res, view.ExifOrientation);
-    if (oriented.width <= 0.0f || oriented.height <= 0.0f) return;
-
-    const float vpW = fitViewport.right - fitViewport.left;
-    const float vpH = fitViewport.bottom - fitViewport.top;
-    if (vpW <= 1.0f || vpH <= 1.0f) return;
-
-    float fit = std::min(vpW / oriented.width, vpH / oriented.height);
-    if (oriented.width < 200.0f && oriented.height < 200.0f && fit > 1.0f) {
-        fit = 1.0f;
-    }
-
-    const float oldZoom = (std::max)(0.02f, view.Zoom);
-    float newZoom = oldZoom * ComputeZoomStep(wheelDelta);
-    if (newZoom < 0.02f) newZoom = 0.02f;
-    if (newZoom > 80.0f) newZoom = 80.0f;
-
-    const float ratio = newZoom / oldZoom;
-    const float centerX = (centerViewport.left + centerViewport.right) * 0.5f;
-    const float centerY = (centerViewport.top + centerViewport.bottom) * 0.5f;
-    const float dx = (float)mousePt.x - centerX;
-    const float dy = (float)mousePt.y - centerY;
-
-    view.PanX = view.PanX * ratio + dx * (1.0f - ratio);
-    view.PanY = view.PanY * ratio + dy * (1.0f - ratio);
-    view.Zoom = newZoom;
-}
-
-static void ZoomCompareViewWithMultiplier(CompareView& view,
-                                          const ImageResource& res,
-                                          const D2D1_RECT_F& fitViewport,
-                                          const D2D1_RECT_F& centerViewport,
-                                          float multiplier,
-                                          const POINT& anchorPt) {
+static void ZoomCompareView(CompareView& view,
+                            const ImageResource& res,
+                            const D2D1_RECT_F& fitViewport,
+                            const D2D1_RECT_F& centerViewport,
+                            float multiplier,
+                            const POINT& anchorPt) {
     const D2D1_SIZE_F oriented = GetOrientedSize(res, view.ExifOrientation);
     if (oriented.width <= 0.0f || oriented.height <= 0.0f) return;
 
@@ -2584,11 +2533,11 @@ static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval) {
 
         if (p == ComparePane::Left) {
             if (!g_compare.left.valid) return;
-            ZoomCompareViewWithMultiplier(g_compare.left.view, g_compare.left.resource, fitVp, centerVp, multiplier, centerPt);
+            ZoomCompareView(g_compare.left.view, g_compare.left.resource, fitVp, centerVp, multiplier, centerPt);
         } else {
             if (!g_imageResource) return;
             CompareView right = GetRightCompareView();
-            ZoomCompareViewWithMultiplier(right, g_imageResource, fitVp, centerVp, multiplier, centerPt);
+            ZoomCompareView(right, g_imageResource, fitVp, centerVp, multiplier, centerPt);
             SetRightCompareView(right);
         }
     };
@@ -3223,8 +3172,6 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
     }
 }
 
-// --- REFACTOR: CalculateWindowControls removed, hit testing now in UIRenderer ---
-
 
 void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     if (!g_dialog.IsVisible || !context) return;
@@ -3481,6 +3428,20 @@ static void ClearDialogCenter() {
     g_dialog.UseCustomCenter = false;
 }
 
+static void EnsureWindowSizeForDialog(HWND hwnd) {
+    RECT clientRect; GetClientRect(hwnd, &clientRect);
+    float currentW = (float)(clientRect.right - clientRect.left);
+    float currentH = (float)(clientRect.bottom - clientRect.top);
+    DialogLayout layout = CalculateDialogLayout(D2D1::SizeF(2000, 2000));
+    float dlgW = layout.Box.right - layout.Box.left;
+    float dlgH = layout.Box.bottom - layout.Box.top;
+    float requiredW = dlgW + 60.0f;
+    float requiredH = dlgH + 60.0f;
+    if (currentW < requiredW || currentH < requiredH) {
+        SetWindowPos(hwnd, NULL, 0, 0, (int)std::max(currentW, requiredW), (int)std::max(currentH, requiredH), SWP_NOMOVE | SWP_NOZORDER);
+    }
+}
+
 DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std::wstring& messageContent, 
                              D2D1_COLOR_F accentColor, const std::vector<DialogButton>& buttons,
                              bool hasChecbox = false, const std::wstring& checkboxText = L"", const std::wstring& qualityText = L"") 
@@ -3502,27 +3463,7 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     
     g_dialog.FinalResult = DialogResult::None;
     
-    // [Auto-Resize] If window is too small for dialog, expand it
-    {
-        RECT clientRect; GetClientRect(hwnd, &clientRect);
-        float currentW = (float)(clientRect.right - clientRect.left);
-        float currentH = (float)(clientRect.bottom - clientRect.top);
-        
-        // Calculate needed size using dummy large container
-        DialogLayout layout = CalculateDialogLayout(D2D1::SizeF(2000, 2000));
-        float dlgW = layout.Box.right - layout.Box.left;
-        float dlgH = layout.Box.bottom - layout.Box.top;
-        
-        float requiredW = dlgW + 60.0f; // Padding
-        float requiredH = dlgH + 60.0f;
-        
-        if (currentW < requiredW || currentH < requiredH) {
-            SetWindowPos(hwnd, NULL, 0, 0, 
-                (int)std::max(currentW, requiredW), 
-                (int)std::max(currentH, requiredH), 
-                SWP_NOMOVE | SWP_NOZORDER);
-        }
-    }
+    EnsureWindowSizeForDialog(hwnd);
     
     RequestRepaint(PaintLayer::Dynamic);
     UpdateWindow(hwnd); 
@@ -3583,11 +3524,7 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
              // For now, let's keep it simple.
         }
         
-        if (msgStruct.message == WM_PAINT) {
-            TranslateMessage(&msgStruct); DispatchMessage(&msgStruct);
-        } else {
-            TranslateMessage(&msgStruct); DispatchMessage(&msgStruct);
-        }
+        TranslateMessage(&msgStruct); DispatchMessage(&msgStruct);
     }
     
     RequestRepaint(PaintLayer::Dynamic);
@@ -3609,22 +3546,7 @@ std::wstring ShowQuickViewInputDialog(HWND hwnd, const std::wstring& title, cons
     g_dialog.InputText = initialText;
     g_dialog.FinalResult = DialogResult::None;
     
-    // Auto-Resize logic 
-    {
-        RECT clientRect; GetClientRect(hwnd, &clientRect);
-        float currentW = (float)(clientRect.right - clientRect.left);
-        float currentH = (float)(clientRect.bottom - clientRect.top);
-        
-        DialogLayout layout = CalculateDialogLayout(D2D1::SizeF(2000, 2000));
-        float dlgW = layout.Box.right - layout.Box.left;
-        float dlgH = layout.Box.bottom - layout.Box.top;
-        float requiredW = dlgW + 60.0f;
-        float requiredH = dlgH + 60.0f;
-        
-        if (currentW < requiredW || currentH < requiredH) {
-            SetWindowPos(hwnd, NULL, 0, 0, (int)std::max(currentW, requiredW), (int)std::max(currentH, requiredH), SWP_NOMOVE | SWP_NOZORDER);
-        }
-    }
+    EnsureWindowSizeForDialog(hwnd);
     
     CreateDialogInput(hwnd);
     RequestRepaint(PaintLayer::Dynamic);
@@ -3716,8 +3638,6 @@ std::wstring ShowQuickViewInputDialog(HWND hwnd, const std::wstring& title, cons
     }
     return L"";
 }
-
-// (Old Rename logic removed)
 
 // --- Logic Functions ---
 
@@ -4111,7 +4031,6 @@ void LoadConfig() {
     g_config.AlwaysSaveLossy = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossy", 0, iniPath.c_str()) != 0;
 
     // Advanced / Debug
-    // Advanced / Debug
     g_config.EnableDebugFeatures = GetPrivateProfileIntW(L"Advanced", L"EnableDebugFeatures", 0, iniPath.c_str()) != 0;
     g_config.PrefetchGear = GetPrivateProfileIntW(L"Advanced", L"PrefetchGear", 1, iniPath.c_str());
     
@@ -4178,7 +4097,6 @@ bool CheckUnsavedChanges(HWND hwnd) {
     return false;
 }
 
-// [Refactor] Single Truth for Visual State (Physical + Rotation)
 // [Refactor] Single Truth for Visual State (Physical + Rotation)
 VisualState GetVisualState() {
     VisualState vs = {};
@@ -4603,6 +4521,16 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
     return result;
 }
 
+static D2D1_COLOR_F ResolveCanvasColor() {
+    switch (g_config.CanvasColor) {
+        case 0: return D2D1::ColorF(0.08f, 0.08f, 0.08f); // Black
+        case 1: return D2D1::ColorF(0.95f, 0.95f, 0.95f); // White
+        case 2: return D2D1::ColorF(0.18f, 0.18f, 0.18f); // Grid
+        case 3: return D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB);
+        default: return D2D1::ColorF(0.18f, 0.18f, 0.18f);
+    }
+}
+
 // [Visual Rotation] Helper to calculate accumulated matrix
 // [Fix] Centralized DComp Synchronization Logic
 // Calculates correct Zoom/Pan/Centering based on Visual Dimensions (Rotated)
@@ -4611,14 +4539,7 @@ static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate) {
     if (winW <= 0 || winH <= 0) return;
 
     // 1. Update Background (Independent of image state)
-    D2D1_COLOR_F bgColor;
-    switch (g_config.CanvasColor) {
-        case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break; // Black
-        case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break; // White
-        case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break; // Grid
-        case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break;
-        default: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
-    }
+    D2D1_COLOR_F bgColor = ResolveCanvasColor();
     g_compEngine->UpdateBackground(winW, winH, bgColor, g_config.CanvasColor == 2 || g_config.CanvasShowGrid);
 
     if (IsCompareModeActive()) {
@@ -4698,11 +4619,7 @@ static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate) {
                 surfaceVs.FlipY = 1.0f;
                 g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, 0.0f, animationDurationMs);
             } else {
-
-                g_compEngine->UpdateTransformMatrix(vs, winW, winH, targetZoom, g_viewState.PanX, g_viewState.PanY, animationDurationMs);
-
-                g_compEngine->UpdateTransformMatrix(vs, winW, winH, displayZoom, displayPanX, displayPanY);
-
+                g_compEngine->UpdateTransformMatrix(vs, winW, winH, displayZoom, displayPanX, displayPanY, animationDurationMs);
             }
 
             // Set DComp Interpolation Mode
@@ -4830,15 +4747,7 @@ static void DrawLocalBackground(ID2D1DeviceContext* context, float widthPixels, 
     
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     
-    // Canvas Color: 0=Black, 1=White, 2=Grid, 3=Custom
-    D2D1_COLOR_F bgColor;
-    switch (g_config.CanvasColor) {
-        case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break; // Black
-        case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break; // White
-        case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break; // Grid
-        case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break;
-        default: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
-    }
+    D2D1_COLOR_F bgColor = ResolveCanvasColor();
     context->Clear(bgColor);
     
     // Draw checkerboard grid
@@ -7216,13 +7125,13 @@ SKIP_EDGE_NAV:;
                     if (!g_compare.left.valid) return;
                     D2D1_RECT_F fitVp = GetCompareViewport(hwnd, ComparePane::Left);
                     D2D1_RECT_F centerVp = GetCompareInteractionViewport(hwnd, ComparePane::Left);
-                    ZoomCompareViewAtPoint(g_compare.left.view, g_compare.left.resource, fitVp, centerVp, delta, mappedPt);
+                    ZoomCompareView(g_compare.left.view, g_compare.left.resource, fitVp, centerVp, ComputeZoomStep(delta), mappedPt);
                 } else {
                     if (!g_imageResource) return;
                     CompareView right = GetRightCompareView();
                     D2D1_RECT_F fitVp = GetCompareViewport(hwnd, ComparePane::Right);
                     D2D1_RECT_F centerVp = GetCompareInteractionViewport(hwnd, ComparePane::Right);
-                    ZoomCompareViewAtPoint(right, g_imageResource, fitVp, centerVp, delta, mappedPt);
+                    ZoomCompareView(right, g_imageResource, fitVp, centerVp, ComputeZoomStep(delta), mappedPt);
                     SetRightCompareView(right);
                 }
             };
