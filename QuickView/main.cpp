@@ -8198,7 +8198,6 @@ SKIP_EDGE_NAV:;
         case IDM_RENDER_RAW: {
              // [Fix] Toggle Force RAW Decode based on the selected pane's ACTUAL decode state.
              // This prevents "double click required" bugs when switching panes with mismatched states.
-             contextLeft = IsCompareContextLeft();
              bool isFullDecode = contextLeft ? g_compare.left.metadata.IsRawFullDecode : g_currentMetadata.IsRawFullDecode;
              g_runtime.ForceRawDecode = !isFullDecode;
              g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
@@ -9632,11 +9631,14 @@ static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, 
         g_runtime.ForceRawDecode = g_config.ForceRawDecode;
     }
 
-    // [UI Responsiveness] Tell rendering system that an image is loading
-    // to show the marquee progress bar without freezing the mouse cursor
-    g_isLeftPaneDecoding = true;
-    RequestRepaint(PaintLayer::Dynamic);
-    SetTimer(hwnd, 995, 16, nullptr); // Start UI Heartbeat timer for animating progress bar
+    // [UI Responsiveness] Apply "Heavy Lane" heuristic from ImageEngine
+    // Only show decode progress bar for heavy computations (RAW, Titan), keeping fast JPEGs seamless like the right pane
+    bool isHeavy = IsRawFile(localPath) || ShouldUsePhase2TitanDebounce(localPath, 0);
+    if (isHeavy) {
+        g_isLeftPaneDecoding = true;
+        RequestRepaint(PaintLayer::Dynamic);
+        SetTimer(hwnd, 995, 16, nullptr); // Start UI Heartbeat timer for animating progress bar
+    }
 
     co_await ResumeBackground{};
 
