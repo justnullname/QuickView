@@ -115,6 +115,19 @@ HRESULT CRenderEngine::CreateDeviceResources() {
     return S_OK;
 }
 
+
+// Helper to standardize D2D1 bitmap properties creation
+static inline D2D1_BITMAP_PROPERTIES1 GetDefaultBitmapProps(
+    DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM,
+    D2D1_ALPHA_MODE alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED)
+{
+    return D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(format, alphaMode),
+        96.0f, 96.0f
+    );
+}
+
 HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bitmap** d2dBitmap) {
     if (!wicBitmap || !d2dBitmap) return E_INVALIDARG;
 
@@ -149,10 +162,7 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource* wicBitmap, ID2D1Bit
     }
 
     // Use PREMULTIPLIED mode for proper transparency support
-    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
-    );
+    D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps();
 
     // Create D2D bitmap from WIC using Resource Context
     hr = m_d2dContext->CreateBitmapFromWicBitmap(
@@ -168,11 +178,7 @@ HRESULT CRenderEngine::CreateBitmapFromMemory(const void* data, UINT width, UINT
     if (!m_d2dContext) return E_POINTER;
 
     // Assume BGRX (32bpp) as standard
-    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-        96.0f, 96.0f
-    );
+    D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps();
 
     return m_d2dContext->CreateBitmap(D2D1::SizeU(width, height), data, stride, &props, reinterpret_cast<ID2D1Bitmap1**>(ppBitmap));
 }
@@ -210,11 +216,7 @@ default:
             break;
     }
     
-    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE,
-        D2D1::PixelFormat(dxgiFormat, alphaMode),
-        96.0f, 96.0f
-    );
+    D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps(dxgiFormat, alphaMode);
     
     // [Optimization] Use GPU Compute for non-native format conversion
     if (m_computeEngine && m_computeEngine->IsAvailable() && 

@@ -30,7 +30,6 @@ using namespace QuickView;
 #include <immintrin.h> // SIMD
 #include "SIMDUtils.h"
 #include <thread>
-#include "PreviewExtractor.h"
 #include <shobjidl.h> // [Add] for IShellItemImageFactory
 #include "MappedFile.h" // [Opt]
 #if defined(__has_include)
@@ -581,16 +580,10 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
     return hr;
 }
 
-#include <turbojpeg.h>
 
 // High-Performance Library Includes
 
 #include <webp/decode.h>     // libwebp
-#include <webp/demux.h>
-#include <avif/avif.h>       // libavif
-#include <jxl/decode.h>      // libjxl
-#include <jxl/resizable_parallel_runner.h>
-#include <jxl/thread_parallel_runner.h>
 #include <libraw/libraw.h>   // libraw
 #include <wincodec.h>
 
@@ -600,13 +593,11 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 #include <sstream>
 #include <iomanip>
 #include "exif.h"
-#include <immintrin.h> // [AVX2]
  // [v6.0] EasyExif
 #include "ImageEngine.h"
 
 // Wuffs (Google's memory-safe decoder)
 // Implementation is in WuffsImpl.cpp with selective module loading
-#include "WuffsLoader.h"
 
 // [v5.3] Global storage - kept for internal decoder use, exposed via DecodeResult.metadata
 std::wstring g_lastFormatDetails;
@@ -7392,7 +7383,6 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
 // Phase 6: Surgical Format Optimizations
 // ============================================================================
 
-#include <webp/decode.h>
 
 
 
@@ -8700,7 +8690,6 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
 // It decodes images directly to RawImageFrame, bypassing WIC where possible.
 // ============================================================================
 
-#include "MemoryArena.h"
 
 HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* outFrame,
                                    QuantumArena* arena,

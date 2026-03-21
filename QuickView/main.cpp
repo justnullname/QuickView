@@ -5837,11 +5837,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             
             if (!deferZoomResizeSync) {
                 g_programmaticResize = false;
-            }
-            
-            // [DComp Fix] Update Image Layout (Fit + Zoom) logic
-            // [Refactor] Use Centralized SyncDCompState
-            if (!deferZoomResizeSync) {
+                // [DComp Fix] Update Image Layout (Fit + Zoom) logic
+                // [Refactor] Use Centralized SyncDCompState
                 RECT rc; GetClientRect(hwnd, &rc);
                 SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
             }
@@ -9075,10 +9072,7 @@ static bool TryBuildPhase1WicEmbeddedFrame(const std::wstring& path, std::shared
 
 // With SIIGBF_THUMBNAILONLY the Shell API never returns icons.
 // This is a defensive-only check for typical Windows icon dimensions.
-static bool IsLikelyShellIconFallback(
-    const std::shared_ptr<QuickView::RawImageFrame>& frame,
-    UINT /*sourceW*/,
-    UINT /*sourceH*/) {
+static bool IsLikelyShellIconFallback(const std::shared_ptr<QuickView::RawImageFrame>& frame) {
     if (!frame || !frame->IsValid()) return false;
     int w = frame->width;
     int h = frame->height;
@@ -9190,7 +9184,7 @@ static void PrimePhase1Placeholder(HWND hwnd, const std::wstring& path, ImageID 
     // Shell thumbnail: multi-level cache-only extraction (no disk decode, safe for UI thread)
     std::shared_ptr<QuickView::RawImageFrame> shellFrame;
     if (TryBuildPhase1ShellCachedFrame(path, &shellFrame)) {
-        if (IsLikelyShellIconFallback(shellFrame, sourceW, sourceH)) {
+        if (IsLikelyShellIconFallback(shellFrame)) {
             OutputDebugStringW(L"[Phase1] Shell cache returned icon-like bitmap. Treat as cache miss.\n");
         } else {
             if (ApplyPhase1PlaceholderFrame(hwnd, path, imageId, shellFrame, sourceW, sourceH, L"Shell Cache Thumbnail")) {
