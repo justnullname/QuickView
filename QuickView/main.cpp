@@ -255,6 +255,9 @@ static float GetMinWindowWidth() {
 }
 
 int g_galleryContextMenuIndex = -1;
+// [Fix] Track long operations in the compare left pane
+bool g_isLeftPaneDecoding = false;
+
 bool g_isLoading = false;           // Show Wait Cursor
 std::atomic<bool> g_isPhase2Debouncing{false}; // Suppress IsIdle logic during phase 2 delay
 bool g_isNavigatingToTitan = false; // Is the currently loading image a Titan image?
@@ -8193,9 +8196,11 @@ SKIP_EDGE_NAV:;
         case IDM_FLIP_V:     PerformTransform(hwnd, TransformType::FlipVertical); break;
 
         case IDM_RENDER_RAW: {
-             // [Fix] Toggle Force RAW Decode TEMPORARILY (only for runtime)
-             // Clicking the toolbar button should NOT modify the global system setting (config).
-             g_runtime.ForceRawDecode = !g_runtime.ForceRawDecode;
+             // [Fix] Toggle Force RAW Decode based on the selected pane's ACTUAL decode state.
+             // This prevents "double click required" bugs when switching panes with mismatched states.
+             contextLeft = IsCompareContextLeft();
+             bool isFullDecode = contextLeft ? g_compare.left.metadata.IsRawFullDecode : g_currentMetadata.IsRawFullDecode;
+             g_runtime.ForceRawDecode = !isFullDecode;
              g_toolbar.SetRawState(true, g_runtime.ForceRawDecode); // Update toolbar icon
              
              if (!contextPath.empty()) {
@@ -9628,9 +9633,8 @@ static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, 
     }
 
     // [UI Responsiveness] Tell rendering system that an image is loading
-    // to show the marquee progress bar
-    g_isLoading = true;
-    g_isNavigatingToTitan = ShouldUsePhase2TitanDebounce(localPath, 0); // Activate progress bar visibility logic
+    // to show the marquee progress bar without freezing the mouse cursor
+    g_isLeftPaneDecoding = true;
     RequestRepaint(PaintLayer::Dynamic);
     SetTimer(hwnd, 995, 16, nullptr); // Start UI Heartbeat timer for animating progress bar
 
@@ -9644,7 +9648,7 @@ static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, 
     
     co_await ResumeMainThread(hwnd);
 
-    g_isLoading = false;
+    g_isLeftPaneDecoding = false;
 
     if (FAILED(hr) || !frame.IsValid()) {
         if (callback) callback(false);

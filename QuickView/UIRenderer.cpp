@@ -28,6 +28,7 @@ extern void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect);
 
 extern RuntimeConfig g_runtime;
 extern bool g_isLoading; // [Fix] Loading indicator for progress bar
+extern bool g_isLeftPaneDecoding; // [Fix] Left pane decoding status
 extern bool g_isNavigatingToTitan; // [Fix] Restrict decode progress bar to Titan images
 extern ViewState g_viewState;  // [v3.2] For Nav Indicators
 extern CImageLoader::ImageMetadata g_currentMetadata;  // [v3.2] For Info Panel
@@ -785,10 +786,12 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     // [Fix] g_isLoading is the authoritative "load in progress" flag from main thread.
     // It bypasses telemetry conditions which can be stale (e.g. Phase 1 skeleton sets
     // baseLayerReady=true before Phase 2 resets it, leaving no OnPaint trigger between).
-    bool decodingActive = hasTileProgressGap || baseLoading || (g_isLoading && !tilePipelineActive);
+    bool decodingActive = hasTileProgressGap || baseLoading || (g_isLoading && !tilePipelineActive) || g_isLeftPaneDecoding;
     
     // [Fix] Only show decode progress bar for Titan images as per user requirement.
-    if (!g_isNavigatingToTitan && !hasTileProgressGap && !baseLoading) {
+    // However, if we are actively full-decoding on the main/background thread (g_isLeftPaneDecoding),
+    // we MUST show the progress bar to provide visual feedback.
+    if (!g_isNavigatingToTitan && !hasTileProgressGap && !baseLoading && !g_isLeftPaneDecoding) {
         decodingActive = false;
     }
 
