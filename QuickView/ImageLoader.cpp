@@ -175,33 +175,52 @@ static std::wstring DetectFormatFromContent(const uint8_t* magic, size_t size) {
     struct MagicSignature {
         const wchar_t* name;
         size_t offset;
-        std::initializer_list<uint8_t> signature;
+        const uint8_t* signature;
+        size_t sig_len;
     };
 
+    static const uint8_t sig_jpeg[] = {0xFF, 0xD8, 0xFF};
+    static const uint8_t sig_png[]  = {0x89, 0x50, 0x4E, 0x47};
+    static const uint8_t sig_webp[] = {'W', 'E', 'B', 'P'};
+    static const uint8_t sig_jxl1[] = {0xFF, 0x0A};
+    static const uint8_t sig_jxl2[] = {'J', 'X', 'L', ' '};
+    static const uint8_t sig_dds[]  = {'D', 'D', 'S', ' '};
+    static const uint8_t sig_bmp[]  = {'B', 'M'};
+    static const uint8_t sig_psd[]  = {'8', 'B', 'P', 'S'};
+    static const uint8_t sig_hdr[]  = {'#', '?'};
+    static const uint8_t sig_exr[]  = {0x76, 0x2F, 0x31, 0x01};
+    static const uint8_t sig_pic[]  = {0x53, 0x80, 0xF6, 0x34};
+    static const uint8_t sig_qoi[]  = {'q', 'o', 'i', 'f'};
+    static const uint8_t sig_pcx[]  = {0x0A};
+    static const uint8_t sig_ico[]  = {0x00, 0x00, 0x01, 0x00};
+    static const uint8_t sig_tif1[] = {0x49, 0x49, 0x2A, 0x00};
+    static const uint8_t sig_tif2[] = {0x4D, 0x4D, 0x00, 0x2A};
+
     static const MagicSignature signatures[] = {
-        { L"JPEG", 0, {0xFF, 0xD8, 0xFF} },
-        { L"PNG",  0, {0x89, 0x50, 0x4E, 0x47} },
-        { L"WebP", 8, {'W', 'E', 'B', 'P'} },
-        { L"JXL",  0, {0xFF, 0x0A} },
-        { L"JXL",  4, {'J', 'X', 'L', ' '} }, // For "00 00 00 0C JXL "
-        { L"DDS",  0, {'D', 'D', 'S', ' '} },
-        { L"BMP",  0, {'B', 'M'} },
-        { L"PSD",  0, {'8', 'B', 'P', 'S'} },
-        { L"HDR",  0, {'#', '?'} },
-        { L"EXR",  0, {0x76, 0x2F, 0x31, 0x01} },
-        { L"PIC",  0, {0x53, 0x80, 0xF6, 0x34} },
-        { L"QOI",  0, {'q', 'o', 'i', 'f'} },
-        { L"PCX",  0, {0x0A} },
-        { L"ICO",  0, {0x00, 0x00, 0x01, 0x00} },
-        { L"TIFF", 0, {0x49, 0x49, 0x2A, 0x00} },
-        { L"TIFF", 0, {0x4D, 0x4D, 0x00, 0x2A} }
+        { L"JPEG", 0, sig_jpeg, sizeof(sig_jpeg) },
+        { L"PNG",  0, sig_png,  sizeof(sig_png) },
+        { L"WebP", 8, sig_webp, sizeof(sig_webp) },
+        { L"JXL",  0, sig_jxl1, sizeof(sig_jxl1) },
+        { L"JXL",  4, sig_jxl2, sizeof(sig_jxl2) },
+        { L"DDS",  0, sig_dds,  sizeof(sig_dds) },
+        { L"BMP",  0, sig_bmp,  sizeof(sig_bmp) },
+        { L"PSD",  0, sig_psd,  sizeof(sig_psd) },
+        { L"HDR",  0, sig_hdr,  sizeof(sig_hdr) },
+        { L"EXR",  0, sig_exr,  sizeof(sig_exr) },
+        { L"PIC",  0, sig_pic,  sizeof(sig_pic) },
+        { L"QOI",  0, sig_qoi,  sizeof(sig_qoi) },
+        { L"PCX",  0, sig_pcx,  sizeof(sig_pcx) },
+        { L"ICO",  0, sig_ico,  sizeof(sig_ico) },
+        { L"TIFF", 0, sig_tif1, sizeof(sig_tif1) },
+        { L"TIFF", 0, sig_tif2, sizeof(sig_tif2) }
     };
 
     for (const auto& sig : signatures) {
-        if (size >= sig.offset + sig.signature.size()) {
+        if (size >= sig.offset + sig.sig_len) {
             bool match = true;
             size_t i = 0;
-            for (uint8_t byte : sig.signature) {
+            for (size_t k = 0; k < sig.sig_len; ++k) {
+                uint8_t byte = sig.signature[k];
                 if (magic[sig.offset + i] != byte) {
                     match = false;
                     break;

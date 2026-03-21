@@ -389,8 +389,6 @@ private:
     ComPtr<IWICImagingFactory> m_wicFactory;
     
     // [JXL Global Runner] Static singleton
-    static void* s_jxlRunner;
-    static std::mutex s_jxlRunnerMutex;
 
     // Specialized High-Performance Loaders
     HRESULT LoadThumbJPEG(LPCWSTR filePath, int targetSize, ThumbData* pData); // New TurboJPEG Scaled Loader
