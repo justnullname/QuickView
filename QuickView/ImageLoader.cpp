@@ -2311,9 +2311,42 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     HRESULT hr = LoadImageUnified(filePath, ctx, res);
     
     if (SUCCEEDED(hr)) {
-        pData->width = res.width;
-        pData->height = res.height;
-        pData->stride = res.stride;
+        if (res.width > targetSize || res.height > targetSize) {
+            float scaleW = (float)targetSize / res.width;
+            float scaleH = (float)targetSize / res.height;
+            float fitScale = std::min(scaleW, scaleH);
+
+            int newW = (int)(res.width * fitScale + 0.5f);
+            int newH = (int)(res.height * fitScale + 0.5f);
+            if (newW < 1) newW = 1;
+            if (newH < 1) newH = 1;
+
+            int newStride = CalculateSIMDAlignedStride(newW, 4);
+            size_t newSize = (size_t)newStride * newH;
+
+            // Allocate a temporary buffer for the scaled image
+            std::vector<uint8_t> newPixels(newSize);
+
+            // Perform the scaling
+            SIMDUtils::ResizeBilinear(res.pixels, res.width, res.height, res.stride, newPixels.data(), newW, newH, newStride);
+
+            // Assign the scaled image to the output buffer
+            pData->pixels = std::move(newPixels);
+
+            // Fix memory leak: free the original full-size image pixels from the codec allocator!
+            if (res.pixels) {
+                ctx.freeFunc(res.pixels);
+            }
+
+            pData->width = newW;
+            pData->height = newH;
+            pData->stride = newStride;
+        } else {
+            pData->width = res.width;
+            pData->height = res.height;
+            pData->stride = res.stride;
+        }
+
         pData->isValid = true;
         pData->loaderName = loaderName.empty() ? L"Unified" : loaderName;
         
@@ -2333,31 +2366,73 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
         return S_OK;
     }
     
-    if (hr == E_ABORT) return E_ABORT;
+    // E_ABORT indicates a circuit breaker was hit (e.g. image too large).
+    // Do not abort immediately because we can try PreviewExtractor to fetch a thumbnail.
 
-    // 2. Legacy Fallback (PSD/HEIC/Special)
-    // Recalculate extension
+    // 2. Legacy Fallback (PSD/HEIC/RAW/Special)
+    std::wstring format = DetectFormatFromContent(filePath);
     std::wstring path = filePath;
-    size_t dot = path.find_last_of(L'.');
-    if (dot != std::wstring::npos) {
-        std::wstring ext = path.substr(dot);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-        
-        if (ext == L".psd" || ext == L".psb") {
-             std::vector<uint8_t> buf;
-             if (ReadFileToVector(filePath, buf)) {
-                 PreviewExtractor::ExtractedData exData;
-                 if (PreviewExtractor::ExtractFromPSD(buf.data(), buf.size(), exData) && exData.IsValid()) {
-                     if (SUCCEEDED(LoadThumbJPEGFromMemory(exData.pData, exData.size, targetSize, pData))) {
-                         pData->loaderName = L"PSD (Preview)";
-                         // [BugFix] Set file size for Gallery tooltip (origWidth/Height from embedded preview is acceptable)
-                         pData->fileSize = buf.size();
-                         return S_OK;
-                     }
-                 }
-             }
+    std::transform(path.begin(), path.end(), path.begin(), ::towlower);
+
+    bool isPsd = (path.ends_with(L".psd") || path.ends_with(L".psb"));
+    bool isHeic = (format == L"HEIC" || format == L"AVIF" || path.ends_with(L".heic") || path.ends_with(L".heif") || path.ends_with(L".avif"));
+    bool isRaw = (format == L"RAW" || path.ends_with(L".arw") || path.ends_with(L".cr2") || path.ends_with(L".nef") || path.ends_with(L".dng") || path.ends_with(L".orf") || path.ends_with(L".rw2") || path.ends_with(L".raf"));
+
+    if (isPsd || isHeic || isRaw) {
+        std::vector<uint8_t> buf;
+        if (ReadFileToVector(filePath, buf)) {
+            PreviewExtractor::ExtractedData exData;
+            bool extracted = false;
+
+            if (isPsd) extracted = PreviewExtractor::ExtractFromPSD(buf.data(), buf.size(), exData);
+            else if (isHeic) extracted = PreviewExtractor::ExtractFromHEIC(buf.data(), buf.size(), exData);
+            else if (isRaw) extracted = PreviewExtractor::ExtractFromRAW(buf.data(), buf.size(), exData);
+
+            if (extracted && exData.IsValid()) {
+                if (SUCCEEDED(LoadThumbJPEGFromMemory(exData.pData, exData.size, targetSize, pData))) {
+                    pData->loaderName = L"PreviewExtractor";
+                    pData->fileSize = buf.size();
+                    return S_OK;
+                }
+            }
         }
     }
+
+    if (format == L"SVG") {
+        using namespace QuickView;
+        RawImageFrame* pFrame = new RawImageFrame();
+        
+        uint32_t w = 0, h = 0;
+        GetSvgDimensions(filePath, &w, &h);
+
+        HRESULT hrSvg = LoadToFrame(filePath, pFrame, nullptr, targetSize, targetSize, &pData->loaderName, nullptr, nullptr);
+
+        if (SUCCEEDED(hrSvg)) {
+             pData->width = pFrame->width;
+             pData->height = pFrame->height;
+             pData->stride = pFrame->stride;
+             pData->origWidth = (w > 0) ? w : pFrame->width;
+             pData->origHeight = (h > 0) ? h : pFrame->height;
+
+             size_t size = pData->stride * pData->height;
+             pData->pixels.resize(size);
+             if (pFrame->pixels) memcpy(pData->pixels.data(), pFrame->pixels, size);
+
+             pData->isValid = true;
+             pData->isBlurry = false;
+
+             WIN32_FILE_ATTRIBUTE_DATA fad;
+             if (GetFileAttributesExW(filePath, GetFileExInfoStandard, &fad)) {
+                 pData->fileSize = (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+             }
+
+             delete pFrame;
+             return S_OK;
+        }
+        delete pFrame;
+    }
+
+    if (hr == E_ABORT) return E_ABORT;
 
     if (!allowSlow) return E_FAIL; // Scout gives up
 
@@ -2365,17 +2440,51 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     ComPtr<IWICBitmapSource> source;
     if (SUCCEEDED(LoadFromFile(filePath, &source))) {
         // Simple Scale
-        UINT w=0, h=0;
-        source->GetSize(&w, &h);
-        if (w > 0 && h > 0) {
+        UINT origW = 0, origH = 0;
+        source->GetSize(&origW, &origH);
+        if (origW > 0 && origH > 0) {
              // Calculate scale (Fit)
-             double scale = (double)targetSize / std::max(w, h);
+             double scale = (double)targetSize / std::max(origW, origH);
              if (scale > 1.0) scale = 1.0;
-             // ... Scale Logic Omitted for brevity, use LoadToMemory logic or Scaler ...
-             // For now, return E_FAIL to encourage Unified migration.
-             // Or verify if we really need WIC thumbnails? 
-             // Yes, for Tiff/ICO/etc.
-             // We can implement full decode + resize here if needed.
+
+             UINT newW = (UINT)(origW * scale);
+             UINT newH = (UINT)(origH * scale);
+             if (newW < 1) newW = 1;
+             if (newH < 1) newH = 1;
+
+             ComPtr<IWICBitmapScaler> scaler;
+             if (SUCCEEDED(m_wicFactory->CreateBitmapScaler(&scaler))) {
+                 if (SUCCEEDED(scaler->Initialize(source.Get(), newW, newH, WICBitmapInterpolationModeFant))) {
+
+                     ComPtr<IWICFormatConverter> converter;
+                     if (SUCCEEDED(m_wicFactory->CreateFormatConverter(&converter))) {
+                         if (SUCCEEDED(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
+                             pData->width = newW;
+                             pData->height = newH;
+                             pData->stride = CalculateSIMDAlignedStride(newW, 4);
+                             size_t bufSize = (size_t)pData->stride * newH;
+
+                             try {
+                                 pData->pixels.resize(bufSize);
+                                 if (SUCCEEDED(converter->CopyPixels(nullptr, pData->stride, (UINT)bufSize, pData->pixels.data()))) {
+                                     pData->origWidth = origW;
+                                     pData->origHeight = origH;
+                                     pData->isValid = true;
+                                     pData->loaderName = L"WIC Fallback";
+
+                                     WIN32_FILE_ATTRIBUTE_DATA fad;
+                                     if (GetFileAttributesExW(filePath, GetFileExInfoStandard, &fad)) {
+                                         pData->fileSize = (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+                                     }
+                                     return S_OK;
+                                 }
+                             } catch (...) {
+                                 return E_OUTOFMEMORY;
+                             }
+                         }
+                     }
+                 }
+             }
         }
     }
 
