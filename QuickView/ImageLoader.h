@@ -82,6 +82,9 @@ public:
         FILETIME CreationTime = {0};
         FILETIME LastWriteTime = {0};
 
+        // True if this image was decoded from a RAW file using the 'Full Decode' logic
+        bool IsRawFullDecode = false;
+
         // Histogram (256 bins)
         std::vector<uint32_t> HistR;
         std::vector<uint32_t> HistG;

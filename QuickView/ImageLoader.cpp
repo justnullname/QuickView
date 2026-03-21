@@ -4581,6 +4581,7 @@ namespace QuickView {
                      result.format = PixelFormat::BGRA8888;
                      result.success = true;
                      result.metadata.LoaderName = L"LibRaw";
+                     result.metadata.IsRawFullDecode = true; // [Compare RAW] mark as full decode
                      result.metadata.FormatDetails = L"RAW Developed";
                      if (RawProcessor.imgdata.params.half_size) result.metadata.FormatDetails += L" (Half)";
                      else result.metadata.FormatDetails += L" (Full)";

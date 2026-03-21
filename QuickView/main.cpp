@@ -460,13 +460,21 @@ static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
 bool IsRawFile(const std::wstring& path); // Forward declaration
 
-// Helper: update CompareRawToggle button state from current compare context
 static void UpdateCompareRawButton() {
     bool leftIsRaw = !g_compare.left.path.empty() && IsRawFile(g_compare.left.path);
     bool rightIsRaw = !g_imagePath.empty() && IsRawFile(g_imagePath);
     bool anyRaw = leftIsRaw || rightIsRaw;
     bool selectedIsRaw = (g_compare.selectedPane == ComparePane::Left) ? leftIsRaw : rightIsRaw;
-    g_toolbar.SetCompareRawState(anyRaw, selectedIsRaw, g_runtime.ForceRawDecode);
+    
+    // [Fix] Read isolated decode state from the metadata of the selected pane instead of global g_runtime.ForceRawDecode
+    bool isFullDecode = false;
+    if (g_compare.selectedPane == ComparePane::Left) {
+        if (leftIsRaw) isFullDecode = g_compare.left.metadata.IsRawFullDecode;
+    } else {
+        if (rightIsRaw) isFullDecode = g_currentMetadata.IsRawFullDecode;
+    }
+
+    g_toolbar.SetCompareRawState(anyRaw, selectedIsRaw, isFullDecode);
 }
 
 static void ApplyCompareZoomStep(HWND hwnd, float delta, bool fineInterval);
@@ -1335,6 +1343,13 @@ static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path) {
     // below would invalidate it, causing empty path and broken state.
     const std::wstring localPath = path;
     if (localPath.empty() || !g_imageLoader || !g_renderEngine) return false;
+
+    // [Compare RAW] Reset ForceRawDecode to user config when loading a NEW file in the left pane.
+    // This matches the behavior of LoadImageAsync for the right pane, ensuring we don't
+    // get "stuck" in a full-decode state indefinitely after toggling it for one image.
+    if (g_compare.left.path != localPath) {
+        g_runtime.ForceRawDecode = g_config.ForceRawDecode;
+    }
 
     // [Fix] Use LoadToFrame (same pipeline as right pane / ImageEngine) instead of
     // LoadToMemory. This ensures identical output: same embedded preview for RAW,
