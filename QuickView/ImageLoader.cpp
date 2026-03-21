@@ -71,6 +71,7 @@ static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c);
 // [Fast Header] AVIF/HEIC dimension probes (implemented later in this file)
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
 static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
+static bool GetSvgDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
 
 
 
