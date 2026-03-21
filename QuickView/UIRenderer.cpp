@@ -2016,7 +2016,7 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
     float circleRadius = 16.0f * s;
     float arrowSize = 8.0f * s;
     float strokeWidth = 2.0f * s;
-    float margin = 24.0f * s;
+    float margin = 32.0f * s;
 
     ComPtr<ID2D1SolidColorBrush> brushCircle, brushArrow;
     dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &brushCircle);

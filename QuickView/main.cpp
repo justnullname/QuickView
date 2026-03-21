@@ -1179,8 +1179,9 @@ static int ComputeEdgeHoverForPane(const POINT& pt, const D2D1_RECT_F& paneRect)
     if (w <= 50.0f || h <= 100.0f) return 0;
     if (pt.x < paneRect.left || pt.x > paneRect.right || pt.y < paneRect.top || pt.y > paneRect.bottom) return 0;
 
-    const bool inHRange = (pt.x < paneRect.left + w * 0.15f) ||
-                          (pt.x > paneRect.right - w * 0.15f);
+    const float edgeMargin = 64.0f * g_uiScale;
+    const bool inHRange = (pt.x < paneRect.left + edgeMargin) ||
+                          (pt.x > paneRect.right - edgeMargin);
     bool inVRange = false;
     if (g_config.NavIndicator == 0) {
         inVRange = (pt.y > paneRect.top + h * 0.20f) && (pt.y < paneRect.bottom - h * 0.20f);
@@ -1189,7 +1190,7 @@ static int ComputeEdgeHoverForPane(const POINT& pt, const D2D1_RECT_F& paneRect)
     }
 
     if (inHRange && inVRange) {
-        return (pt.x < paneRect.left + w * 0.15f) ? -1 : 1;
+        return (pt.x < paneRect.left + edgeMargin) ? -1 : 1;
     }
     return 0;
 }
@@ -1201,10 +1202,11 @@ static int HitTestNavButtonInPane(const POINT& pt, const D2D1_RECT_F& paneRect) 
     if (w <= 50.0f || h <= 100.0f) return 0;
     if (pt.x < paneRect.left || pt.x > paneRect.right || pt.y < paneRect.top || pt.y > paneRect.bottom) return 0;
 
-    const float zoneWidth = w * 0.15f;
     const float centerY = paneRect.top + h * 0.5f;
-    const float radius = 20.0f * g_uiScale;
+    // The hot area is larger than the visual button (16.0f) to make it easier to click.
+    const float radius = 24.0f * g_uiScale;
     const float radiusSq = radius * radius;
+    const float margin = 32.0f * g_uiScale;
 
     auto hitCircle = [&](float cx) -> bool {
         const float dx = (float)pt.x - cx;
@@ -1212,9 +1214,9 @@ static int HitTestNavButtonInPane(const POINT& pt, const D2D1_RECT_F& paneRect) 
         return (dx * dx + dy * dy) <= radiusSq;
     };
 
-    const float leftX = paneRect.left + zoneWidth * 0.5f;
+    const float leftX = paneRect.left + margin;
     if (hitCircle(leftX)) return -1;
-    const float rightX = paneRect.right - zoneWidth * 0.5f;
+    const float rightX = paneRect.right - margin;
     if (hitCircle(rightX)) return 1;
     return 0;
 }
@@ -6002,7 +6004,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                     int oldState = g_viewState.EdgeHoverState; // Record old state
                     if (w > 50 && h > 100) {
-                        bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+                        float edgeMargin = 64.0f * g_uiScale;
+                        bool inHRange = (pt.x < edgeMargin) || (pt.x > w - edgeMargin);
                         bool inVRange;
 
                         if (g_config.NavIndicator == 0) {
@@ -6012,7 +6015,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         }
 
                         if (inHRange && inVRange) {
-                            g_viewState.EdgeHoverState = (pt.x < w * 0.15) ? -1 : 1;
+                            g_viewState.EdgeHoverState = (pt.x < edgeMargin) ? -1 : 1;
                         } else {
                             g_viewState.EdgeHoverState = 0;
                         }
@@ -6814,7 +6817,8 @@ SKIP_EDGE_NAV:;
                     D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, (float)w, (float)h);
                     inEdgeZone = (HitTestNavButtonInPane(pt, fullRect) != 0);
                 } else {
-                    bool inHRange = (pt.x < w * 0.15) || (pt.x > w * 0.85);
+                    float edgeMargin = 64.0f * g_uiScale;
+                    bool inHRange = (pt.x < edgeMargin) || (pt.x > w - edgeMargin);
                     bool inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
                     inEdgeZone = inHRange && inVRange;
                 }
@@ -7129,11 +7133,12 @@ SKIP_EDGE_NAV:;
                         direction = HitTestNavButtonInPane(pt, fullRect);
                         clickValid = (direction != 0);
                     } else {
-                        bool inHRange = (pt.x < width * 0.15) || (pt.x > width * 0.85);
+                        float edgeMargin = 64.0f * g_uiScale;
+                        bool inHRange = (pt.x < edgeMargin) || (pt.x > width - edgeMargin);
                         bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
                         if (inHRange && inVRange) {
                             clickValid = true;
-                            direction = (pt.x < width * 0.15) ? -1 : 1;
+                            direction = (pt.x < edgeMargin) ? -1 : 1;
                         }
                     }
 
