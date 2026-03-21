@@ -456,7 +456,7 @@ static void MarkCompareDirty();
 static void EnterCompareMode(HWND hwnd);
 static void ExitCompareMode(HWND hwnd);
 static void CaptureCurrentImageAsCompareLeft();
-static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path);
+static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, std::function<void(bool)> callback = nullptr);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
 bool IsRawFile(const std::wstring& path); // Forward declaration
 
@@ -1337,68 +1337,7 @@ static void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
     ctx->SetTransform(oldTransform);
 }
 
-static bool LoadImageIntoCompareLeftSlot(HWND hwnd, const std::wstring& path) {
-    // [Fix] Make a local copy immediately. `path` may be a reference to
-    // g_compare.left.path (via IDM_RENDER_RAW's contextPath), and Reset()
-    // below would invalidate it, causing empty path and broken state.
-    const std::wstring localPath = path;
-    if (localPath.empty() || !g_imageLoader || !g_renderEngine) return false;
-
-    // [Compare RAW] Reset ForceRawDecode to user config when loading a NEW file in the left pane.
-    // This matches the behavior of LoadImageAsync for the right pane, ensuring we don't
-    // get "stuck" in a full-decode state indefinitely after toggling it for one image.
-    if (g_compare.left.path != localPath) {
-        g_runtime.ForceRawDecode = g_config.ForceRawDecode;
-    }
-
-    // [Fix] Use LoadToFrame (same pipeline as right pane / ImageEngine) instead of
-    // LoadToMemory. This ensures identical output: same embedded preview for RAW,
-    // same decoder path, and accurate exifOrientation from the codec.
-    QuickView::RawImageFrame frame;
-    CImageLoader::ImageMetadata meta;
-    std::wstring loaderName;
-    HRESULT hr = g_imageLoader->LoadToFrame(localPath.c_str(), &frame, nullptr, 0, 0,
-                                             &loaderName, nullptr, &meta);
-    if (FAILED(hr) || !frame.IsValid()) return false;
-
-    // Upload pixel data to D2D bitmap (same as main pipeline)
-    ComPtr<ID2D1Bitmap> d2dBitmap;
-    hr = g_renderEngine->UploadRawFrameToGPU(frame, &d2dBitmap);
-    if (FAILED(hr) || !d2dBitmap) return false;
-
-    g_compare.left.Reset();
-    g_compare.left.resource.bitmap = d2dBitmap;
-    g_compare.left.path = localPath;
-    g_compare.left.valid = true;
-    g_compare.left.view = {};
-
-    g_compare.left.metadata = meta;
-    D2D1_SIZE_U pixel = d2dBitmap->GetPixelSize();
-    if (g_compare.left.metadata.Width == 0 || g_compare.left.metadata.Height == 0) {
-        g_compare.left.metadata.Width = pixel.width;
-        g_compare.left.metadata.Height = pixel.height;
-    }
-
-    // [Fix] EXIF orientation comes directly from the codec via RawImageFrame.
-    // No need for unreliable dimension-based pre-rotation heuristics.
-    int frameExif = frame.exifOrientation;
-    if (frameExif < 1 || frameExif > 8) frameExif = 1;
-    g_compare.left.metadata.ExifOrientation = frameExif;
-    g_compare.left.view.ExifOrientation = g_config.AutoRotate ? frameExif : 1;
-
-    // [v10.0] Trigger Histogram calculation if HUD is showing
-    if (g_runtime.ShowCompareInfo && (g_compare.left.metadata.HistL.empty() || !g_compare.left.metadata.IsFullMetadataLoaded)) {
-        UpdateCompareLeftHistogramAsync(hwnd, localPath);
-    }
-
-    // [Compare RAW] Update toolbar button if left pane is currently selected
-    if (g_compare.selectedPane == ComparePane::Left) {
-        UpdateCompareRawButton();
-    }
-
-    return true;
-}
-
+// LoadImageIntoCompareLeftSlot definition moved below to line 9690
 static void CaptureCurrentImageAsCompareLeft() {
     if (!g_imageResource || g_imagePath.empty()) return;
 
@@ -7333,11 +7272,13 @@ SKIP_EDGE_NAV:;
             if (IsCompareModeActive()) {
                 ComparePane pane = HitTestComparePane(hwnd, dropPt);
                 if (pane == ComparePane::Left) {
-                    if (LoadImageIntoCompareLeftSlot(hwnd, path)) {
-                        g_compare.activePane = ComparePane::Left;
-                        MarkCompareDirty();
-                        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                    }
+                    LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd](bool success){
+                        if (success) {
+                            g_compare.activePane = ComparePane::Left;
+                            MarkCompareDirty();
+                            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                        }
+                    });
                 } else {
                     g_compare.activePane = ComparePane::Right;
                     g_compare.selectedPane = ComparePane::Right;
@@ -7729,10 +7670,12 @@ SKIP_EDGE_NAV:;
                     EnterCompareMode(hwnd);
                 }
                 if (IsCompareModeActive()) {
-                    if (LoadImageIntoCompareLeftSlot(hwnd, path)) {
-                        g_compare.activePane = ComparePane::Left;
-                        MarkCompareDirty();
-                    }
+                    LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd](bool success){
+                        if (success) {
+                            g_compare.activePane = ComparePane::Left;
+                            MarkCompareDirty();
+                        }
+                    });
                 }
                 RequestRepaint(PaintLayer::All);
             }
@@ -7763,11 +7706,13 @@ SKIP_EDGE_NAV:;
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
                 if (GetOpenFileNameW(&ofn)) {
                     if (IsCompareModeActive() && g_compare.contextPane == ComparePane::Left) {
-                        if (LoadImageIntoCompareLeftSlot(hwnd, szFile)) {
-                            g_compare.activePane = ComparePane::Left;
-                            MarkCompareDirty();
-                            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                        }
+                        LoadImageIntoCompareLeftSlot(hwnd, szFile, [hwnd](bool success){
+                            if (success) {
+                                g_compare.activePane = ComparePane::Left;
+                                MarkCompareDirty();
+                                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                            }
+                        });
                     } else {
                         if (IsCompareModeActive()) {
                             g_compare.activePane = ComparePane::Right;
@@ -7960,11 +7905,13 @@ SKIP_EDGE_NAV:;
                 if (!newName.empty() && newName != currentName) {
                     std::wstring newPath = currentFolder + newName;
                     if (MoveFileW(g_compare.left.path.c_str(), newPath.c_str())) {
-                        if (LoadImageIntoCompareLeftSlot(hwnd, newPath)) {
-                            g_osd.Show(hwnd, L"Renamed (Left)", false);
-                            MarkCompareDirty();
-                            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                        }
+                        LoadImageIntoCompareLeftSlot(hwnd, newPath, [hwnd](bool success){
+                            if (success) {
+                                g_osd.Show(hwnd, L"Renamed (Left)", false);
+                                MarkCompareDirty();
+                                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                            }
+                        });
                     } else {
                         g_osd.Show(hwnd, L"Rename Failed", true);
                     }
@@ -8253,11 +8200,13 @@ SKIP_EDGE_NAV:;
              
              if (!contextPath.empty()) {
                  if (contextLeft) {
-                     if (LoadImageIntoCompareLeftSlot(hwnd, contextPath)) {
-                         g_compare.activePane = ComparePane::Left;
-                         MarkCompareDirty();
-                         RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                     }
+                     LoadImageIntoCompareLeftSlot(hwnd, contextPath, [hwnd](bool success){
+                         if (success) {
+                             g_compare.activePane = ComparePane::Left;
+                             MarkCompareDirty();
+                             RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                         }
+                     });
                  } else {
                      if (g_imageEngine) {
                          g_imageEngine->UpdateConfig(g_runtime); // [Fix] Push config to engine
@@ -8352,11 +8301,13 @@ SKIP_EDGE_NAV:;
                     if (result == DialogResult::Yes) {
                         if (contextLeft) {
                             if (MoveFileW(contextPath.c_str(), newPath.c_str())) {
-                                if (LoadImageIntoCompareLeftSlot(hwnd, newPath)) {
-                                    g_osd.Show(hwnd, L"Extension Fixed (Left)", false);
-                                    MarkCompareDirty();
-                                    RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                                }
+                                LoadImageIntoCompareLeftSlot(hwnd, newPath, [hwnd](bool success){
+                                    if (success) {
+                                        g_osd.Show(hwnd, L"Extension Fixed (Left)", false);
+                                        MarkCompareDirty();
+                                        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                                    }
+                                });
                             } else {
                                 g_osd.Show(hwnd, std::wstring(L"Rename Failed"), true);
                             }
@@ -9664,6 +9615,79 @@ FireAndForget UpdateCompareLeftHistogramAsync(HWND hwnd, std::wstring path) {
         }
     }
 }
+
+static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, std::function<void(bool)> callback) {
+    const std::wstring localPath = path;
+    if (localPath.empty() || !g_imageLoader || !g_renderEngine) {
+        if (callback) callback(false);
+        co_return;
+    }
+
+    if (g_compare.left.path != localPath) {
+        g_runtime.ForceRawDecode = g_config.ForceRawDecode;
+    }
+
+    // [UI Responsiveness] Tell rendering system that an image is loading
+    // to show the marquee progress bar
+    g_isLoading = true;
+    g_isNavigatingToTitan = ShouldUsePhase2TitanDebounce(localPath, 0); // Activate progress bar visibility logic
+    RequestRepaint(PaintLayer::Dynamic);
+    SetTimer(hwnd, 995, 16, nullptr); // Start UI Heartbeat timer for animating progress bar
+
+    co_await ResumeBackground{};
+
+    QuickView::RawImageFrame frame;
+    CImageLoader::ImageMetadata meta;
+    std::wstring loaderName;
+    HRESULT hr = g_imageLoader->LoadToFrame(localPath.c_str(), &frame, nullptr, 0, 0,
+                                             &loaderName, nullptr, &meta);
+    
+    co_await ResumeMainThread(hwnd);
+
+    g_isLoading = false;
+
+    if (FAILED(hr) || !frame.IsValid()) {
+        if (callback) callback(false);
+        co_return;
+    }
+
+    // Upload pixel data to D2D bitmap (same as main pipeline)
+    ComPtr<ID2D1Bitmap> d2dBitmap;
+    hr = g_renderEngine->UploadRawFrameToGPU(frame, &d2dBitmap);
+    if (FAILED(hr) || !d2dBitmap) {
+        if (callback) callback(false);
+        co_return;
+    }
+
+    g_compare.left.Reset();
+    g_compare.left.resource.bitmap = d2dBitmap;
+    g_compare.left.path = localPath;
+    g_compare.left.valid = true;
+    g_compare.left.view = {};
+
+    g_compare.left.metadata = meta;
+    D2D1_SIZE_U pixel = d2dBitmap->GetPixelSize();
+    if (g_compare.left.metadata.Width == 0 || g_compare.left.metadata.Height == 0) {
+        g_compare.left.metadata.Width = pixel.width;
+        g_compare.left.metadata.Height = pixel.height;
+    }
+
+    int frameExif = frame.exifOrientation;
+    if (frameExif < 1 || frameExif > 8) frameExif = 1;
+    g_compare.left.metadata.ExifOrientation = frameExif;
+    g_compare.left.view.ExifOrientation = g_config.AutoRotate ? frameExif : 1;
+
+    if (g_runtime.ShowCompareInfo && (g_compare.left.metadata.HistL.empty() || !g_compare.left.metadata.IsFullMetadataLoaded)) {
+        UpdateCompareLeftHistogramAsync(hwnd, localPath);
+    }
+
+    if (g_compare.selectedPane == ComparePane::Left) {
+        UpdateCompareRawButton();
+    }
+
+    if (callback) callback(true);
+}
+
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD, QuickView::BrowseDirection dir) {
     if (path.empty()) co_return;
     
@@ -9688,12 +9712,14 @@ void NavigateEdge(HWND hwnd, bool toLast) {
         std::wstring path = toLast ? tempNav.Last() : tempNav.First();
 
         if (!path.empty()) {
-            if (LoadImageIntoCompareLeftSlot(hwnd, path)) {
-                g_compare.activePane = ComparePane::Left;
-                g_compare.contextPane = ComparePane::Left;
-                MarkCompareDirty();
-                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-            }
+            LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd](bool success){
+                if (success) {
+                    g_compare.activePane = ComparePane::Left;
+                    g_compare.contextPane = ComparePane::Left;
+                    MarkCompareDirty();
+                    RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                }
+            });
         }
         return;
     }
@@ -9740,12 +9766,14 @@ void Navigate(HWND hwnd, int direction) {
             : tempNav.Previous(g_config.LoopNavigation);
 
         if (!path.empty()) {
-            if (LoadImageIntoCompareLeftSlot(hwnd, path)) {
-                g_compare.activePane = ComparePane::Left;
-                g_compare.contextPane = ComparePane::Left;
-                MarkCompareDirty();
-                RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-            }
+            LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd, tempNav, direction](bool success){
+                if (success) {
+                    g_compare.activePane = ComparePane::Left;
+                    g_compare.contextPane = ComparePane::Left;
+                    MarkCompareDirty();
+                    RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                }
+            });
         } else if (tempNav.HitEnd()) {
             if (direction > 0) g_osd.Show(hwnd, std::wstring(AppStrings::OSD_LastImage), false);
             else g_osd.Show(hwnd, std::wstring(AppStrings::OSD_FirstImage), false);
