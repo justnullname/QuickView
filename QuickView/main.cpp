@@ -407,6 +407,7 @@ struct CompareSlot {
     std::wstring path;
     CompareView view;
     bool valid = false;
+    EditState editState;
 
     void Reset() {
         resource.Reset();
@@ -414,6 +415,7 @@ struct CompareSlot {
         path.clear();
         view = {};
         valid = false;
+        editState.Reset();
     }
 };
 
@@ -1381,6 +1383,41 @@ static void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
 }
 
 // LoadImageIntoCompareLeftSlot definition moved below to line 9690
+static int GetEffectiveExifOrientation(int baseExif, const EditState& editState) {
+    int rot = 0;
+    bool flip = false;
+    switch(baseExif) {
+        case 1: rot = 0;   flip = false; break;
+        case 2: rot = 0;   flip = true;  break;
+        case 3: rot = 180; flip = false; break;
+        case 4: rot = 180; flip = true;  break;
+        case 5: rot = 270; flip = true;  break;
+        case 6: rot = 90;  flip = false; break;
+        case 7: rot = 90;  flip = true;  break;
+        case 8: rot = 270; flip = false; break;
+        default: rot = 0;  flip = false; break;
+    }
+    
+    rot += editState.TotalRotation;
+    if (editState.FlippedH) { flip = !flip; rot = -rot; }
+    if (editState.FlippedV) { flip = !flip; rot = 180 - rot; }
+    
+    rot = ((rot % 360) + 360) % 360;
+    
+    if (!flip) {
+        if (rot == 0) return 1;
+        if (rot == 90) return 6;
+        if (rot == 180) return 3;
+        if (rot == 270) return 8;
+    } else {
+        if (rot == 0) return 2;
+        if (rot == 90) return 7;
+        if (rot == 180) return 4;
+        if (rot == 270) return 5;
+    }
+    return 1;
+}
+
 static void CaptureCurrentImageAsCompareLeft() {
     if (!g_imageResource || g_imagePath.empty()) return;
 
@@ -1476,11 +1513,13 @@ static bool RenderCompareComposite(HWND hwnd) {
         const D2D1_RECT_F rightClip = D2D1::RectF(splitX, 0.0f, (float)winW, (float)winH);
 
         ctx->PushAxisAlignedClip(leftClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        DrawResourceIntoViewport(ctx, g_compare.left.resource, g_compare.left.view.ExifOrientation, g_compare.left.view, full);
+        int leftExif = GetEffectiveExifOrientation(g_compare.left.view.ExifOrientation, g_compare.left.editState);
+        DrawResourceIntoViewport(ctx, g_compare.left.resource, leftExif, g_compare.left.view, full);
         ctx->PopAxisAlignedClip();
 
         ctx->PushAxisAlignedClip(rightClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        DrawResourceIntoViewport(ctx, g_imageResource, g_viewState.ExifOrientation, rightView, full);
+        int rightExif = GetEffectiveExifOrientation(g_viewState.ExifOrientation, g_editState);
+        DrawResourceIntoViewport(ctx, g_imageResource, rightExif, rightView, full);
         ctx->PopAxisAlignedClip();
 
         ComPtr<ID2D1SolidColorBrush> dividerBrush;
@@ -1494,8 +1533,10 @@ static bool RenderCompareComposite(HWND hwnd) {
         const D2D1_RECT_F leftVp = D2D1::RectF(0.0f, 0.0f, splitX, (float)winH);
         const D2D1_RECT_F rightVp = D2D1::RectF(splitX, 0.0f, (float)winW, (float)winH);
 
-        DrawResourceIntoViewport(ctx, g_compare.left.resource, g_compare.left.view.ExifOrientation, g_compare.left.view, leftVp);
-        DrawResourceIntoViewport(ctx, g_imageResource, g_viewState.ExifOrientation, rightView, rightVp);
+        int leftExif = GetEffectiveExifOrientation(g_compare.left.view.ExifOrientation, g_compare.left.editState);
+        int rightExif = GetEffectiveExifOrientation(g_viewState.ExifOrientation, g_editState);
+        DrawResourceIntoViewport(ctx, g_compare.left.resource, leftExif, g_compare.left.view, leftVp);
+        DrawResourceIntoViewport(ctx, g_imageResource, rightExif, rightView, rightVp);
 
         ComPtr<ID2D1SolidColorBrush> dividerBrush;
         ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &dividerBrush);
@@ -1522,8 +1563,10 @@ static bool RenderCompareComposite(HWND hwnd) {
 static void SnapWindowToCompareImages(HWND hwnd) {
     if (!IsCompareModeActive() || !g_compare.left.valid || !g_imageResource) return;
 
-    D2D1_SIZE_F szLeft = GetOrientedSize(g_compare.left.resource, g_compare.left.view.ExifOrientation);
-    D2D1_SIZE_F szRight = GetOrientedSize(g_imageResource, g_viewState.ExifOrientation);
+    int leftExif = GetEffectiveExifOrientation(g_compare.left.view.ExifOrientation, g_compare.left.editState);
+    int rightExif = GetEffectiveExifOrientation(g_viewState.ExifOrientation, g_editState);
+    D2D1_SIZE_F szLeft = GetOrientedSize(g_compare.left.resource, leftExif);
+    D2D1_SIZE_F szRight = GetOrientedSize(g_imageResource, rightExif);
 
     if (szLeft.width <= 0 || szRight.width <= 0) return;
 
@@ -4908,28 +4951,37 @@ static void DrawLocalBackground(ID2D1DeviceContext* context, float widthPixels, 
 }
 
 void PerformTransform(HWND hwnd, TransformType type) {
-    if (g_imagePath.empty()) return;
+    bool isLeft = IsCompareModeActive() && (g_compare.selectedPane == ComparePane::Left);
+    EditState& state = isLeft ? g_compare.left.editState : g_editState;
+    std::wstring& path = isLeft ? g_compare.left.path : g_imagePath;
+
+    if (path.empty()) return;
     
     // 1. Update State
-    g_editState.PendingTransforms.push_back(type);
-    g_editState.IsDirty = true;
+    state.PendingTransforms.push_back(type);
+    state.IsDirty = true;
     
     // 2. Update Counters (for OSD display only)
-    if (type == TransformType::Rotate90CW) g_editState.TotalRotation = (g_editState.TotalRotation + 90) % 360;
-    else if (type == TransformType::Rotate90CCW) g_editState.TotalRotation = (g_editState.TotalRotation + 270) % 360;
-    else if (type == TransformType::Rotate180) g_editState.TotalRotation = (g_editState.TotalRotation + 180) % 360;
-    else if (type == TransformType::FlipHorizontal) g_editState.FlippedH = !g_editState.FlippedH;
-    else if (type == TransformType::FlipVertical) g_editState.FlippedV = !g_editState.FlippedV;
+    if (type == TransformType::Rotate90CW) state.TotalRotation = (state.TotalRotation + 90) % 360;
+    else if (type == TransformType::Rotate90CCW) state.TotalRotation = (state.TotalRotation + 270) % 360;
+    else if (type == TransformType::Rotate180) state.TotalRotation = (state.TotalRotation + 180) % 360;
+    else if (type == TransformType::FlipHorizontal) state.FlippedH = !state.FlippedH;
+    else if (type == TransformType::FlipVertical) state.FlippedV = !state.FlippedV;
     
     // 3. Apply Visual Transform
     
     // Force immediate visual update needed?
     // AdjustWindowToImage will trigger a resize -> UpdateLayout
     // But if size doesn't change (e.g. 180 flip), we need explicit repaint.
+    if (IsCompareModeActive()) {
+        MarkCompareDirty();
+    }
     RequestRepaint(PaintLayer::Image);
     
     // 4. Adjust Window & Layout (Handles aspect ratio change)
-    AdjustWindowToImage(hwnd); 
+    if (!IsCompareModeActive()) {
+        AdjustWindowToImage(hwnd); 
+    } 
     // Note: AdjustWindow calls SetWindowPos -> WM_SIZE -> UpdateLayout -> Commit.
     
     // 5. Show OSD
@@ -4945,14 +4997,14 @@ void PerformTransform(HWND hwnd, TransformType type) {
     };
     
     // Check if we are back to original state (Restored)
-    bool isNeutral = (g_editState.TotalRotation % 360 == 0) && !g_editState.FlippedH && !g_editState.FlippedV;
+    bool isNeutral = (state.TotalRotation % 360 == 0) && !state.FlippedH && !state.FlippedV;
     
     std::wstring msg;
     D2D1_COLOR_F color;
 
     if (isNeutral) {
-        g_editState.IsDirty = false;
-        g_editState.PendingTransforms.clear(); // Clear stack as we are back to start
+        state.IsDirty = false;
+        state.PendingTransforms.clear(); // Clear stack as we are back to start
         
         msg = AppStrings::OSD_Restored;
         color = D2D1::ColorF(D2D1::ColorF::LightGreen);
@@ -4961,7 +5013,7 @@ void PerformTransform(HWND hwnd, TransformType type) {
         std::wstring actionName = GetLocalizedTransformName(type); 
         
         const wchar_t* qualityText = L"";
-        switch (g_editState.Quality) {
+        switch (state.Quality) {
             case EditQuality::Lossless:      qualityText = AppStrings::OSD_Lossless; break;
             case EditQuality::LosslessReenc: qualityText = AppStrings::OSD_ReencodedLossless; break;
             case EditQuality::EdgeAdapted:   qualityText = AppStrings::OSD_EdgeAdapted; break;
@@ -4974,7 +5026,7 @@ void PerformTransform(HWND hwnd, TransformType type) {
         swprintf_s(buf, L"%s (%s)", actionName.c_str(), qualityText);
         msg = buf;
 
-        color = g_editState.GetQualityColor();
+        color = state.GetQualityColor();
     }
 
     // Show OSD (Default Position = Bottom, same as Zoom OSD)

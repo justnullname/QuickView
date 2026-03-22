@@ -206,7 +206,9 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 
   auto isVisibleButton = [&](const ToolbarButton &btn) {
     if (m_compareMode) {
-      return isCompareButton(btn.id) || isAlwaysVisible(btn.id);
+      if (!isCompareButton(btn.id) && !isAlwaysVisible(btn.id)) return false;
+      if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning) return false;
+      return true;
     }
 
     if (isCompareButton(btn.id))
