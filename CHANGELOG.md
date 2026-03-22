@@ -1,5 +1,42 @@
 # Changelog
 
+## [4.2.5] - Comparison & Precision Master
+**Release Date**: 2026-03-22
+
+### ✨ Features
+- **Compare Mode**: Full implementation featuring:
+  - Synchronized zoom, pan, and rotation between dual panes.
+  - RGB visual envelope and dual-curve histograms.
+  - Interactive HUD with Lite/Full modes and 'C' shortcut.
+  - Compare metrics for Entropy, Sharpness, and File Info (Winner labels).
+  - Smart transparency for Compare divider and edge navigation guards.
+- **Gallery Improvements**: Added context menu for thumbnails (Compare Mode / New Window).
+- **Navigation**: Map Home/End to first/last image, PgUp/PgDn to prev/next.
+- **UI Indicators**: Added zoom edge indicators for better viewport orientation.
+- **Window Management**: 
+  - Refined Window Lock logic with detailed configurability in Settings.
+  - Implemented drag-to-exit fullscreen and unified double-click zoom logic.
+- **Rendering**: Added smart interpolation algorithm with automatic Pixel Art mode detection.
+
+### ⚡ Performance
+- **SIMD JXL**: Optimized pixel swizzling in JXL decoders using SIMD.
+- **SVG Engine**: Optimized interactive SVG viewport redraws and string replacement performance.
+
+### 🛠 Improvements
+- **HUD**: Enhanced OSD messages and layout padding for localized text.
+- **Settings**: Support for scrollbar and improved segment button width consistency.
+- **Orientation**: Unified zoom and rotation coordinate systems for better stability.
+
+### 🐛 Bug Fixes
+- **Thumbnails**: Fixed EXR thumbnail blinking and cache exhaustion issues.
+- **Interaction**: Fixed edge navigation overlapping with HUD/Settings and hover interaction areas.
+- **Scaling**: Resolved zoom anchor behavior issues (#25, #40) and resize flicker.
+- **Build**: Fixed compilation errors related to `AdjustWindowToImage` and `LockWindowSize`.
+
+### 🤝 Acknowledgments
+- **Community Support**: **@hortiSquash** for providing critical testing assistance and bug reports throughout the development of this major update.
+
+
 ## [4.0.5] - Precision & RAW Stability Fix
 **Release Date**: 2026-03-13
 
@@ -276,5 +313,3 @@ This major release marks a complete departure from the legacy JPEGView codebase.
 ## Previous Versions
 
 Based on JPEGView-Static fork, which itself is based on sylikc's JPEGView fork of the original JPEGView by David Kleiner.
-
-For older changelog entries, see the original project documentation.

@@ -67,8 +67,8 @@ QuickView supports almost all modern and professional image formats:
 
 ---
 
-# QuickView v4.0.0 - The Titan Engine Update
-**Release Date**: 2026-03-06
+# QuickView v4.2.5 - Comparison & Precision Master
+**Release Date**: 2026-03-22
 
 ### 🚀 Core Architecture: "Titan System"
 - **Gigapixel Tiling**: The new Titan Pipeline dynamically slices massive image datasets into LOD (Level of Detail) tiles, enabling smooth 60fps panning over images that previously caused OOM crashes.
@@ -84,6 +84,11 @@ QuickView supports almost all modern and professional image formats:
 -   **True High-DPI**: The interface has been untethered from Windows' legacy scaling. We support explicit native D2D UI scaling with granular manual overrides (100%-250%).
 -   **Always Fullscreen**: Command QuickView to automatically launch images in exclusive Fullscreen mode (`Off`, `Large Only`, `All`) with intelligent auto-exit.
 -   **AVX-512 SIMD Resizing**: Critical bilinear scaling paths have been unrolled using AVX2/AVX-512 instructions for blazing-fast zooming.
+
+### 🔍 Pro-Level Comparison
+- **Visual Benchmarking**: Side-by-side comparison with synchronized zoom, pan, and rotation. 
+- **Analytical HUD**: Real-time RGB envelope/dual-curve histograms, Entropy, and Sharpness metrics.
+- **Smart Partition**: Integrated interaction divider with automated quality-winner identification.
 
 ---
 
@@ -127,6 +132,16 @@ QuickView automatically checks for updates in the background. When a new version
 * **Instant RAW Dev:** One-click toggle between "Fast Preview" and "Full Quality" decoding for RAW files.
 * **Deep Color Analysis:** Real-time display of **Color Space** (sRGB/P3/Rec.2020), **Color Mode** (YCC/RGB), and **Quality Factor**.
 
+### 5. 🔍 Visual Comparison Excellence
+> *"Compare with absolute precision."*
+
+QuickView features a powerful **Dual-View Compare Mode** built for deep visual analysis.
+* **Side-by-Side Sync:** Synchronized zoom, pan, and rotation between two images, allowing for millimetric inspection.
+* **Precision HUD:** Real-time **RGB Envelope Histograms** and quality metrics (Entropy/Sharpness) to identify the superior shot.
+* **Interactive Divider:** A smart, translucent divider that identifies the 'winner' of each comparison metric automatically.
+  <br><img src="ScreenShot/compare_mode.gif" alt="Compare Mode Basic" width="100%" style="border-radius: 6px; margin-top: 10px;">
+  <br><img src="ScreenShot/compare_mode2.gif" alt="Compare Mode HUD" width="100%" style="border-radius: 6px; margin-top: 10px;">
+
 ---
 
 ## ⚙️ The Engine Room
@@ -160,7 +175,6 @@ We are constantly evolving. Here is what's currently in development:
 - **Animation Support:** Full playback for GIF/WebP/APNG.
 - **Frame Inspector:** Pause and analyze animations frame-by-frame.
 - **Color Management (CMS):** ICC Profile support.
-- **Dual-View Compare:** Side-by-side image comparison.
 - **Tracing Mode:** Semi-transparent overlay mode, designed for designers to reference and trace over other windows.
 
 ---
