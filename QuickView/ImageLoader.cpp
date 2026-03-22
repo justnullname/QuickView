@@ -6800,9 +6800,43 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
         
         bool success = false;
         if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK) {
+             pMetadata->Format = L"JPEG";
              // [v10.0] Fix: Always extract dimensions natively to prevent WIC 2633px preview regression
              pMetadata->Width = cinfo.image_width;
              pMetadata->Height = cinfo.image_height;
+
+             // Fill JPEG format details even when there is no EXIF, so the Info Panel can show chroma/Q/progressive.
+             {
+                 int q = GetJpegQualityFromBuffer(header.data(), header.size());
+
+                 std::wstring sub;
+                 if (cinfo.num_components == 3) {
+                     int h0 = cinfo.comp_info[0].h_samp_factor;
+                     int v0 = cinfo.comp_info[0].v_samp_factor;
+                     int h1 = cinfo.comp_info[1].h_samp_factor;
+                     int v1 = cinfo.comp_info[1].v_samp_factor;
+                     int h2 = cinfo.comp_info[2].h_samp_factor;
+                     int v2 = cinfo.comp_info[2].v_samp_factor;
+
+                     if (h0 == 2 && v0 == 2 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1) sub = L"4:2:0";
+                     else if (h0 == 2 && v0 == 1 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1) sub = L"4:2:2";
+                     else if (h0 == 1 && v0 == 1 && h1 == 1 && v1 == 1 && h2 == 1 && v2 == 1) sub = L"4:4:4";
+                     else sub = L"4:4:0";
+                 } else if (cinfo.num_components == 1) {
+                     sub = L"Gray";
+                 }
+
+                 wchar_t fmtBuf[64]{};
+                 if (q > 0 && !sub.empty()) swprintf_s(fmtBuf, L"%s Q=%d", sub.c_str(), q);
+                 else if (q > 0) swprintf_s(fmtBuf, L"Q=%d", q);
+                 else if (!sub.empty()) swprintf_s(fmtBuf, L"%s", sub.c_str());
+
+                 pMetadata->FormatDetails = fmtBuf;
+                 if (jpeg_has_multiple_scans(&cinfo)) {
+                     if (!pMetadata->FormatDetails.empty()) pMetadata->FormatDetails += L" ";
+                     pMetadata->FormatDetails += L"Prog";
+                 }
+             }
 
              std::vector<uint8_t> iccData;
              
@@ -6828,7 +6862,7 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
              }
         }
         jpeg_destroy_decompress(&cinfo);
-        return success;
+        return success || !pMetadata->FormatDetails.empty() || pMetadata->Width > 0;
     }
     
     // 2. WebP

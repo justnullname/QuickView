@@ -157,8 +157,8 @@ private:
         std::wstring reference;     // Typical range
     };
     
-    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false);
-    TooltipInfo GetTooltipInfo(const std::wstring& label);
+    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false) const;
+    TooltipInfo GetTooltipInfo(const std::wstring& label) const;
     
 private:
     InfoRow m_hoverInfoRow; // Cached row for HUD tooltips

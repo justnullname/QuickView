@@ -1108,6 +1108,9 @@ void ImageEngine::FastLane::QueueWorker() {
                 e.metadata.Width = rawFrame.width;
                 e.metadata.Height = rawFrame.height;
                 e.metadata.Format = info.format; // [Scout] Direct from PeekHeader
+                e.metadata.FormatDetails = rawFrame.formatDetails;
+                e.metadata.LoaderName = loaderName;
+                e.metadata.FileSize = info.fileSize;
 
                 // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
                 // We don't call LoadToFrame with pMetadata in FastLane currently, 

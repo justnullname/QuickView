@@ -189,19 +189,10 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
         }
     }
     
-    // Info Grid Rows (when expanded) - Calculate hitRect dynamically
+    // Info Grid Rows (when expanded)
     if (g_runtime.InfoPanelExpanded && !m_infoGrid.empty()) {
-        const float s = m_uiScale;
-        // Use same layout constants as DrawInfoPanel/DrawInfoGrid
-        float startX = (20.0f + 10.0f) * s;  // Panel startX + padding
-        float startY = (40.0f + 30.0f) * s;  // Panel startY + button area
-        float width = (300.0f - 20.0f) * s;  // Panel width - 2*padding
-        float rowH = GRID_ROW_HEIGHT * s;
-        
-        float rowY = startY;
         for (size_t i = 0; i < m_infoGrid.size(); i++) {
-            D2D1_RECT_F rowRect = D2D1::RectF(startX, rowY, startX + width, rowY + rowH);
-            
+            const D2D1_RECT_F& rowRect = m_infoGrid[i].hitRect;
             if (x >= rowRect.left && x <= rowRect.right &&
                 y >= rowRect.top && y <= rowRect.bottom) {
                 result.type = UIHitResult::InfoRow;
@@ -221,7 +212,6 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
                 m_hoverRowIndex = (int)i;
                 return result;
             }
-            rowY += rowH;
         }
     }
     
@@ -1478,11 +1468,11 @@ D2D1_SIZE_F UIRenderer::GetRequiredInfoPanelSize() const {
 
     if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded) {
         float width = 260.0f * s;
-        float height = 230.0f * s;
+        std::vector<InfoRow> rows = BuildGridRows(g_currentMetadata, g_imagePath, false);
+        float height = 26.0f * s + (float)rows.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
 
         if (g_currentMetadata.HasGPS) height += 50.0f * s;
         if (!g_currentMetadata.HistL.empty()) height += 100.0f * s;
-        if (!g_currentMetadata.Software.empty()) height += 20.0f * s;
 
         // Return required total window space
         // startX = 16 * s, startY = 32 * s
@@ -1510,7 +1500,15 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
     return result + L" B";
 }
 
-UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) {
+namespace {
+    static std::wstring ExtractQualityEstimate(const std::wstring& details);
+    static std::wstring ExtractBitDepth(const std::wstring& details);
+    static std::wstring ExtractChroma(const std::wstring& details, int& rank);
+    static std::wstring BuildFormatFlagsSummary(const std::wstring& details);
+    static std::wstring StripQualityFromFormatDetails(const std::wstring& details);
+}
+
+UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) const {
     if (label == L"Sharp") return { AppStrings::HUD_Tip_Sharp_Desc, AppStrings::HUD_Tip_Sharp_High, AppStrings::HUD_Tip_Sharp_Low, AppStrings::HUD_Tip_Sharp_Ref };
     if (label == L"Ent") return { AppStrings::HUD_Tip_Ent_Desc, AppStrings::HUD_Tip_Ent_High, AppStrings::HUD_Tip_Ent_Low, AppStrings::HUD_Tip_Ent_Ref };
     if (label == L"BPP") return { AppStrings::HUD_Tip_BPP_Desc, AppStrings::HUD_Tip_BPP_High, AppStrings::HUD_Tip_BPP_Low, AppStrings::HUD_Tip_BPP_Ref };
@@ -1518,7 +1516,7 @@ UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) {
     return { L"", L"", L"", L"" };
 }
 
-std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced) {
+std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced) const {
     std::vector<InfoRow> rows;
     if (imagePath.empty()) return rows;
 
@@ -1531,10 +1529,10 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         UINT64 totalPixels = (UINT64)metadata.Width * metadata.Height;
         double megapixels = totalPixels / 1000000.0;
         wchar_t dimBuf[64];
-        swprintf_s(dimBuf, L"%u x %u", metadata.Width, metadata.Height);
+        swprintf_s(dimBuf, L"%ux%u", metadata.Width, metadata.Height);
         wchar_t mpBuf[48];
         int zoomPct = GetCurrentZoomPercent();
-        swprintf_s(mpBuf, L"(%.1f MP) @ %d%%", megapixels, zoomPct);
+        swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, zoomPct);
         rows.push_back({ L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false });
     }
 
@@ -1549,8 +1547,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         } else {
             swprintf_s(sizeBuf, L"%llu B", bytes);
         }
-        std::wstring extra = metadata.FormatDetails.empty() ? L"" : L" [" + metadata.FormatDetails + L"]";
-        rows.push_back({ L"\U0001F4BE", L"Disk", (std::wstring)sizeBuf + extra, L"", L"", TruncateMode::None, false });
+        rows.push_back({ L"\U0001F4BE", L"Disk", (std::wstring)sizeBuf, L"", L"", TruncateMode::None, false });
     }
 
     if (!metadata.Date.empty()) {
@@ -1577,7 +1574,11 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
     }
 
     if (!metadata.Focal.empty()) {
-        rows.push_back({ L"\U0001F3AF", L"Focal", metadata.Focal, L"", L"", TruncateMode::None, false });
+        std::wstring focalSub;
+        if (!metadata.Focal35mm.empty() && !metadata.Focal.contains(metadata.Focal35mm)) {
+            focalSub = metadata.Focal35mm;
+        }
+        rows.push_back({ L"\U0001F3AF", L"Focal", metadata.Focal, focalSub, L"", TruncateMode::None, false });
     }
 
     if (!metadata.ColorSpace.empty()) {
@@ -1603,11 +1604,37 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         rows.push_back({ L"\U0001F4BB", L"Soft", metadata.Software, L"", metadata.Software, TruncateMode::EndEllipsis, false });
     }
 
-    // Extraction: Subsampling / Chroma
-    if (metadata.FormatDetails.contains(L"4:")) {
-        size_t pos = metadata.FormatDetails.find(L"4:");
-        std::wstring chroma = metadata.FormatDetails.substr(pos, 5);
-        rows.push_back({ L"\U0001F3A8", L"Chroma", chroma, L"", L"", TruncateMode::None, false });
+    if (!metadata.Format.empty() || !metadata.FormatDetails.empty()) {
+        std::wstring formatMain = metadata.Format.empty() ? L"Image" : metadata.Format;
+        std::wstring formatSub;
+
+        int chromaRank = -1;
+        std::wstring chroma = ExtractChroma(metadata.FormatDetails, chromaRank);
+        if (chroma != L"-") formatSub += chroma;
+
+        std::wstring quality = ExtractQualityEstimate(metadata.FormatDetails);
+        if (quality != L"-") {
+            if (!formatSub.empty()) formatSub += L"  ";
+            formatSub += quality;
+        }
+
+        std::wstring bitDepth = ExtractBitDepth(metadata.FormatDetails);
+        if (bitDepth != L"-") {
+            if (!formatSub.empty()) formatSub += L"  ";
+            formatSub += bitDepth;
+        }
+
+        std::wstring formatFlags = BuildFormatFlagsSummary(metadata.FormatDetails);
+        if (!formatFlags.empty()) {
+            if (!formatSub.empty()) formatSub += L"  ";
+            formatSub += formatFlags;
+        }
+
+        if (formatSub.empty() && !metadata.FormatDetails.empty() && metadata.FormatDetails != metadata.Format) {
+            formatSub = metadata.FormatDetails;
+        }
+
+        rows.push_back({ L"\U0001F39E", L"Format", formatMain, formatSub, metadata.FormatDetails, TruncateMode::None, false });
     }
 
     // Advanced Metrics at the very bottom (only for HUD/Geek mode)
@@ -1873,6 +1900,13 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     // Add Compact EXIF
     std::wstring meta = g_currentMetadata.GetCompactString();
     if (!meta.empty()) info += L"   " + meta;
+
+    if (!g_currentMetadata.FormatDetails.empty()) {
+        std::wstring compactDetails = StripQualityFromFormatDetails(g_currentMetadata.FormatDetails);
+        if (!compactDetails.empty()) {
+            info += L"   [" + compactDetails + L"]";
+        }
+    }
     
     float textW = MeasureTextWidth(info);
     float totalW = textW + 56.0f * s;
@@ -1906,17 +1940,30 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
 void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     if (!g_runtime.ShowInfoPanel || !m_panelFormat) return;
     const float s = m_uiScale;
+    BuildInfoGrid();  // Populate m_infoGrid from g_currentMetadata before sizing.
     
     // Panel Rect
     float padding = 8.0f * s;
     float width = 260.0f * s; 
-    float height = 230.0f * s; 
+    float height = 26.0f * s + (float)m_infoGrid.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
     float startX = 16.0f * s;
     float startY = 32.0f * s; 
     
     if (g_currentMetadata.HasGPS) height += 50.0f * s;
     if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f * s;
-    if (!g_currentMetadata.Software.empty()) height += 20.0f * s;
+
+    {
+        wchar_t dbg[1024];
+        swprintf_s(
+            dbg,
+            L"[InfoPanel] expanded=%d rows=%u height=%.1f formatDetails='%s' loader='%s'\n",
+            g_runtime.InfoPanelExpanded ? 1 : 0,
+            (unsigned)m_infoGrid.size(),
+            height,
+            g_currentMetadata.FormatDetails.c_str(),
+            g_currentMetadata.LoaderName.c_str());
+        OutputDebugStringW(dbg);
+    }
 
     D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
     
@@ -1933,9 +1980,8 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     m_panelToggleRect = D2D1::RectF(startX + width - 40.0f * s, startY + 4.0f * s, startX + width - 24.0f * s, startY + 20.0f * s);
     dc->DrawText(L"-", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 5.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushWhite.Get());
 
-    // Grid - Build and Draw
-    BuildInfoGrid();  // Populate m_infoGrid from g_currentMetadata
-    float gridStartY = startY + 30.0f * s;
+    // Grid
+    float gridStartY = startY + 26.0f * s;
     DrawInfoGrid(dc, startX + padding, gridStartY, width - padding * 2);
     
     // Histogram
@@ -2190,6 +2236,66 @@ namespace {
         rank = -1;
         return L"-";
     }
+
+    static std::wstring ExtractQualityEstimate(const std::wstring& details) {
+        size_t pos = details.find(L"Q~");
+        size_t tokenLen = 2;
+        if (pos == std::wstring::npos) {
+            pos = details.find(L"Q=");
+            tokenLen = 2;
+        }
+        if (pos == std::wstring::npos) return L"-";
+        size_t end = pos + tokenLen;
+        while (end < details.size() && iswdigit(details[end])) end++;
+        if (end == pos + tokenLen) return L"-";
+        return L"Q~" + details.substr(pos + tokenLen, end - (pos + tokenLen));
+    }
+
+    static bool HasFormatFlag(const std::wstring& details, const wchar_t* token) {
+        return token && *token && details.contains(token);
+    }
+
+    static std::wstring BuildFormatFlagsSummary(const std::wstring& details) {
+        std::wstring summary;
+        auto append = [&](const wchar_t* token) {
+            if (!HasFormatFlag(details, token)) return;
+            if (!summary.empty()) summary += L"  ";
+            summary += token;
+        };
+
+        append(L"Lossless");
+        append(L"Lossy");
+        append(L"Alpha");
+        append(L"Anim");
+        append(L"Prog");
+        append(L"[Scaled]");
+        return summary;
+    }
+
+    static std::wstring StripQualityFromFormatDetails(const std::wstring& details) {
+        std::wstring stripped = details;
+        size_t pos = stripped.find(L"Q~");
+        size_t tokenLen = 2;
+        if (pos == std::wstring::npos) {
+            pos = stripped.find(L"Q=");
+            tokenLen = 2;
+        }
+        if (pos == std::wstring::npos) return stripped;
+
+        size_t end = pos + tokenLen;
+        while (end < stripped.size() && iswdigit(stripped[end])) end++;
+        while (end < stripped.size() && stripped[end] == L' ') end++;
+
+        if (pos > 0 && stripped[pos - 1] == L' ') pos--;
+        stripped.erase(pos, end - pos);
+
+        while (stripped.contains(L"  ")) {
+            stripped.replace(stripped.find(L"  "), 2, L" ");
+        }
+        if (!stripped.empty() && stripped.front() == L' ') stripped.erase(stripped.begin());
+        if (!stripped.empty() && stripped.back() == L' ') stripped.pop_back();
+        return stripped;
+    }
 }
 
 void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
@@ -2364,28 +2470,11 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     std::wstring leftTag = GetQualityTag(leftMeta, leftColor);
     std::wstring rightTag = GetQualityTag(rightMeta, rightColor);
 
-    EnsureTextFormats();
-    if (!m_panelFormat || !m_debugFormat) return;
-
-    const float panelW = std::min(400.0f * s, m_width - 20.0f * s);
-    const float panelX = (m_width - panelW) * 0.5f;
-    float panelY = 0.0f; 
-
-    // Geeky Layout: [ Left Value | Label | Right Value ]
-    const float labelW = 80.0f * s;
-    const float labelX = panelX + (panelW - labelW) * 0.5f;
-    const float valGap = 6.0f * s; // Space between val and label
-    const float valW = (panelW - labelW - 24.0f * s) * 0.5f - valGap; 
-    
-    const float leftX = labelX - valGap - valW;
-    const float rightX = labelX + labelW + valGap;
-
-    const float rowH = 22.0f * s;
-    const float padding = 8.0f * s; // [HUD Adjust] Reduced top/bottom padding
-    const float headerH = (leftTag.empty() && rightTag.empty()) ? 0 : 24.0f * s;
-
-    // --- Dynamic Height Calculation ---
-    std::vector<std::wstring> labels;
+	    EnsureTextFormats();
+	    if (!m_panelFormat || !m_debugFormat) return;
+	
+	    // --- Dynamic Height Calculation ---
+	    std::vector<std::wstring> labels;
     auto addLabels = [&](const std::vector<InfoRow>& r) {
         for (const auto& row : r) {
             if (std::find(labels.begin(), labels.end(), row.label) == labels.end())
@@ -2395,32 +2484,68 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     addLabels(leftRows);
     addLabels(rightRows);
 
-    struct Group {
-        std::wstring name;
-        std::vector<std::wstring> labels;
-    };
-    std::vector<Group> hudGroups;
-    
-    int hudMode = g_runtime.CompareHudMode; // 0=Lite, 1=Normal, 2=Full
+	    struct Group {
+	        std::wstring name;
+	        std::vector<std::wstring> labels;
+		    };
+		    std::vector<Group> hudGroups;
+			    auto GetHudRowText = [](const InfoRow* row) -> std::wstring {
+			        if (!row) return L"";
+			        if (row->label == L"Size") return row->valueMain + row->valueSub;
+			        if (row->valueSub.empty()) return row->valueMain;
+			        if (row->valueMain.empty()) return row->valueSub;
+			        return row->valueMain + L" " + row->valueSub;
+			    };
+			    int hudMode = g_runtime.CompareHudMode; // 0=Lite, 1=Normal, 2=Full
 
-    if (hudMode == 0) {
-        // Lite Mode
-        hudGroups = {
-            { L"LITE MODE", { L"File", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date" } }
-        };
-    } else {
-        hudGroups = {
-            { AppStrings::HUD_Group_Physical, { L"File", L"Size", L"Disk", L"Date" } },
-            { AppStrings::HUD_Group_Scientific, { L"Sharp", L"Ent", L"BPP" } }
-        };
-        if (hudMode == 2) {
-            // Full mode includes Optics & Encoding
-            hudGroups.push_back({ AppStrings::HUD_Group_Encoding, { L"Camera", L"Exp", L"Lens", L"Focal", L"Color", L"Chroma", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Soft" } });
-        }
-    }
+	    if (hudMode == 0) {
+	        // Lite Mode
+	        hudGroups = {
+	            { L"LITE MODE", { L"File", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date" } }
+	        };
+	    } else {
+	        hudGroups = {
+	            { AppStrings::HUD_Group_Physical, { L"File", L"Size", L"Disk", L"Date", L"Format" } },
+	            { AppStrings::HUD_Group_Scientific, { L"Sharp", L"Ent", L"BPP" } }
+	        };
+	        if (hudMode == 2) {
+	            // Full mode includes optics plus richer encoding/color information.
+	            hudGroups.push_back({ AppStrings::HUD_Group_Encoding, { L"Camera", L"Exp", L"Lens", L"Focal", L"Color", L"Flash", L"W.Bal", L"Meter", L"Prog", L"Soft" } });
+	        }
+		    }
 
-    int activeGroups = 0;
-    int activeRows = 0;
+		    const float rowH = 20.0f * s;
+		    const float padding = 6.0f * s;
+		    const float headerH = (leftTag.empty() && rightTag.empty()) ? 0 : 24.0f * s;
+		    const float labelW = 74.0f * s;
+		    const float valGap = 4.0f * s;
+
+		    float desiredValW = 120.0f * s;
+		    const InfoRow* leftSizeRow = nullptr;
+		    const InfoRow* rightSizeRow = nullptr;
+		    for (const auto& r : leftRows) if (r.label == L"Size") { leftSizeRow = &r; break; }
+		    for (const auto& r : rightRows) if (r.label == L"Size") { rightSizeRow = &r; break; }
+		    std::wstring leftSizeText = GetHudRowText(leftSizeRow);
+		    std::wstring rightSizeText = GetHudRowText(rightSizeRow);
+		    if (!leftSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(leftSizeText, m_debugFormat.Get()) + 10.0f * s);
+		    if (!rightSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(rightSizeText, m_debugFormat.Get()) + 10.0f * s);
+
+		    const float minPanelW = 400.0f * s;
+		    const float maxPanelW = m_width - 20.0f * s;
+		    float rawPanelW = labelW + 24.0f * s + 2.0f * (desiredValW + valGap);
+		    const float panelW = (std::clamp)(rawPanelW, minPanelW, maxPanelW);
+	    const float panelX = (m_width - panelW) * 0.5f;
+	    float panelY = 0.0f; 
+
+	    // Geeky Layout: [ Left Value | Label | Right Value ]
+	    const float labelX = panelX + (panelW - labelW) * 0.5f;
+	    const float valW = (panelW - labelW - 24.0f * s) * 0.5f - valGap; 
+	    
+	    const float leftX = labelX - valGap - valW;
+	    const float rightX = labelX + labelW + valGap;
+
+	    int activeGroups = 0;
+	    int activeRows = 0;
     for (const auto& group : hudGroups) {
         bool hasData = false;
         for (const auto& l : group.labels) {
@@ -2432,9 +2557,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                     const InfoRow* rRow = nullptr;
                     for (const auto& r : leftRows) if (r.label == l) { lRow = &r; break; }
                     for (const auto& r : rightRows) if (r.label == l) { rRow = &r; break; }
-                    if (lRow && rRow && lRow->valueMain == rRow->valueMain) {
-                        continue; // Skip identical data
-                    }
+	                    if (lRow && rRow && GetHudRowText(lRow) == GetHudRowText(rRow)) {
+	                        continue; // Skip identical data
+	                    }
                 }
                 
                 hasData = true; 
@@ -2501,7 +2626,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                     const InfoRow* rRow = nullptr;
                     for (const auto& r : leftRows) if (r.label == l) { lRow = &r; break; }
                     for (const auto& r : rightRows) if (r.label == l) { rRow = &r; break; }
-                    if (lRow && rRow && lRow->valueMain == rRow->valueMain) continue;
+	                    if (lRow && rRow && GetHudRowText(lRow) == GetHudRowText(rRow)) continue;
                 }
                 groupHasData = true; 
                 break; 
@@ -2526,10 +2651,10 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
             for (const auto& r : leftRows) if (r.label == label) { lRow = &r; break; }
             for (const auto& r : rightRows) if (r.label == label) { rRow = &r; break; }
 
-            // In Lite(0) and Normal(1) mode, hide identical metrics (except File)
-            if (hudMode < 2 && label != L"File") {
-                if (lRow && rRow && lRow->valueMain == rRow->valueMain) continue;
-            }
+	            // In Lite(0) and Normal(1) mode, hide identical metrics (except File)
+	            if (hudMode < 2 && label != L"File") {
+	                if (lRow && rRow && GetHudRowText(lRow) == GetHudRowText(rRow)) continue;
+	            }
 
             D2D1_RECT_F rowRect = D2D1::RectF(panelX + 4, y, panelX + panelW - 4, y + rowH);
             m_compareRowRects.push_back(rowRect);
@@ -2566,39 +2691,17 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
             m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 
             // Draw Values
-            auto DrawValue = [&](const InfoRow* row, float x, float w, bool isLeft) {
-                if (!row) return;
-                
-                std::wstring val = row->valueMain;
-                std::wstring originalVal = val;
-                if (label == L"File") {
-                    std::wstring fullPath = isLeft ? leftMeta.SourcePath : rightMeta.SourcePath;
-                    size_t lastSlash = fullPath.find_last_of(L"\\/");
-                    originalVal = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
-                    val = MakeMiddleEllipsis(w, originalVal, m_debugFormat.Get());
-                } else {
-                    if (row->displayText != val && !row->displayText.empty()) val = row->displayText;
-                    originalVal = val;
-                    val = MakeMiddleEllipsis(w, originalVal, m_debugFormat.Get());
-                }
-                
-                D2D1_RECT_F rect = D2D1::RectF(x, y, x + w, y + rowH);
-                
-                // Truncation detection for Tooltip
-                if (PointInRect((float)m_lastMousePos.x, (float)m_lastMousePos.y, rect)) {
-                    if (val != originalVal) {
-                        m_hoverInfoRow.fullText = originalVal;
-                    }
-                }
+	            auto DrawValue = [&](const InfoRow* row, float x, float w, bool isLeft) {
+	                if (!row) return;
+	                
+		                bool diff = false;
+		                if (lRow && rRow) {
+		                    diff = (GetHudRowText(lRow) != GetHudRowText(rRow));
+		                }
 
-                bool diff = false;
-                if (lRow && rRow) {
-                    diff = (lRow->valueMain != rRow->valueMain);
-                }
-
-                ID2D1SolidColorBrush* brush = brushText.Get();
-                ID2D1SolidColorBrush* winBrush = brushWinner.Get(); // Red
-                std::wstring winnerMark = L"";
+	                ID2D1SolidColorBrush* brush = brushText.Get();
+	                ID2D1SolidColorBrush* winBrush = brushWinner.Get(); // Red
+	                std::wstring winnerMark = L"";
                 
                 if (diff && label != L"File") { // [Fix] No green highlight for File row
                     brush = brushGood.Get(); 
@@ -2626,13 +2729,33 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                             if (isLeft && lSize > rSize) winnerMark = L" ↑";
                             if (!isLeft && rSize > lSize) winnerMark = L" ↑";
                         } else {
-                            if (isLeft && IsBetter(label, lRow->valueMain, rRow->valueMain)) winnerMark = L" ↑";
-                            if (!isLeft && IsBetter(label, rRow->valueMain, lRow->valueMain)) winnerMark = L" ↑";
-                        }
-                    }
-                }
-                
-                std::wstring finalVal = val;
+	                            if (isLeft && IsBetter(label, GetHudRowText(lRow), GetHudRowText(rRow))) winnerMark = L" ↑";
+	                            if (!isLeft && IsBetter(label, GetHudRowText(rRow), GetHudRowText(lRow))) winnerMark = L" ↑";
+		                        }
+		                    }
+	                }
+
+		                std::wstring originalVal = GetHudRowText(row);
+		                if (label == L"File") {
+		                    std::wstring fullPath = isLeft ? leftMeta.SourcePath : rightMeta.SourcePath;
+		                    size_t lastSlash = fullPath.find_last_of(L"\\/");
+		                    originalVal = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
+		                }
+
+		                float arrowWidth = winnerMark.empty() ? 0.0f : MeasureTextWidth(winnerMark, m_debugFormat.Get());
+		                float textMaxW = winnerMark.empty() ? w : (std::max)(0.0f, w - arrowWidth - 2.0f * s);
+		                std::wstring val = MakeMiddleEllipsis(textMaxW, originalVal, m_debugFormat.Get());
+		                
+	                D2D1_RECT_F rect = D2D1::RectF(x, y, x + w, y + rowH);
+	                
+	                // Truncation detection for Tooltip
+	                if (PointInRect((float)m_lastMousePos.x, (float)m_lastMousePos.y, rect)) {
+	                    if (val != originalVal) {
+	                        m_hoverInfoRow.fullText = originalVal;
+	                    }
+	                }
+	                
+	                std::wstring finalVal = val;
                 
                 // Add Volume Diff for Disk row
                 if (label == L"Disk" && leftMeta.FileSize > 0 && rightMeta.FileSize > 0) {
@@ -2645,14 +2768,13 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 }
                 
                 // Draw logic with separate arrow color
-                m_debugFormat->SetTextAlignment(isLeft ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
-                
-                if (!winnerMark.empty()) {
-                    float valWidth = MeasureTextWidth(val, m_debugFormat.Get());
-                    float arrowWidth = MeasureTextWidth(winnerMark, m_debugFormat.Get());
-                    
-                    if (isLeft) {
-                        D2D1_RECT_F valRect = rect; valRect.right -= arrowWidth;
+	                m_debugFormat->SetTextAlignment(isLeft ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
+	                
+	                if (!winnerMark.empty()) {
+	                    float valWidth = MeasureTextWidth(val, m_debugFormat.Get());
+	                    
+	                    if (isLeft) {
+	                        D2D1_RECT_F valRect = rect; valRect.right -= arrowWidth;
                         D2D1_RECT_F arrowRect = rect; arrowRect.left = rect.right - arrowWidth;
                         dc->DrawText(val.c_str(), (UINT32)val.length(), m_debugFormat.Get(), valRect, brush);
                         dc->DrawText(winnerMark.c_str(), (UINT32)winnerMark.length(), m_debugFormat.Get(), arrowRect, winBrush);

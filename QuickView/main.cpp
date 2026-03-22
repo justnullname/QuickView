@@ -4460,6 +4460,12 @@ void AdjustWindowToImage(HWND hwnd) {
          windowW = (int)(windowW * scaleUp);
          windowH = (int)(windowH * scaleUp);
     }
+
+    if (g_runtime.ShowInfoPanel && g_uiRenderer) {
+        D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
+        if (reqSize.width > 0.0f) windowW = (std::max)(windowW, (int)std::ceil(reqSize.width));
+        if (reqSize.height > 0.0f) windowH = (std::max)(windowH, (int)std::ceil(reqSize.height));
+    }
     
     // [Revert] Empirical Border Calculation removed as per request
     // Window Size = Content Size (let OS handle borders)
@@ -8705,6 +8711,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 if (finalMetadata.Aperture.empty() && !g_currentMetadata.Aperture.empty()) finalMetadata.Aperture = g_currentMetadata.Aperture;
                 if (finalMetadata.Shutter.empty() && !g_currentMetadata.Shutter.empty()) finalMetadata.Shutter = g_currentMetadata.Shutter;
                 if (finalMetadata.Focal.empty() && !g_currentMetadata.Focal.empty()) finalMetadata.Focal = g_currentMetadata.Focal;
+                if (finalMetadata.Focal35mm.empty() && !g_currentMetadata.Focal35mm.empty()) finalMetadata.Focal35mm = g_currentMetadata.Focal35mm;
                 if (finalMetadata.ExposureBias.empty() && !g_currentMetadata.ExposureBias.empty()) finalMetadata.ExposureBias = g_currentMetadata.ExposureBias;
                 if (finalMetadata.Flash.empty() && !g_currentMetadata.Flash.empty()) finalMetadata.Flash = g_currentMetadata.Flash;
                 if (finalMetadata.MeteringMode.empty() && !g_currentMetadata.MeteringMode.empty()) finalMetadata.MeteringMode = g_currentMetadata.MeteringMode;
@@ -8889,6 +8896,7 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.Shutter.empty()) g_currentMetadata.Shutter = evt.metadata.Shutter;
                  if (!evt.metadata.Aperture.empty()) g_currentMetadata.Aperture = evt.metadata.Aperture;
                  if (!evt.metadata.Focal.empty()) g_currentMetadata.Focal = evt.metadata.Focal;
+                 if (!evt.metadata.Focal35mm.empty()) g_currentMetadata.Focal35mm = evt.metadata.Focal35mm;
                  if (!evt.metadata.ExposureBias.empty()) g_currentMetadata.ExposureBias = evt.metadata.ExposureBias;
                  if (!evt.metadata.Flash.empty()) g_currentMetadata.Flash = evt.metadata.Flash;
                  if (!evt.metadata.Software.empty()) g_currentMetadata.Software = evt.metadata.Software;
@@ -9652,6 +9660,7 @@ FireAndForget UpdateCompareLeftHistogramAsync(HWND hwnd, std::wstring path) {
             if (g_compare.left.metadata.Aperture.empty()) g_compare.left.metadata.Aperture = fullMeta.Aperture;
             if (g_compare.left.metadata.Shutter.empty()) g_compare.left.metadata.Shutter = fullMeta.Shutter;
             if (g_compare.left.metadata.Focal.empty()) g_compare.left.metadata.Focal = fullMeta.Focal;
+            if (g_compare.left.metadata.Focal35mm.empty()) g_compare.left.metadata.Focal35mm = fullMeta.Focal35mm;
             if (g_compare.left.metadata.ExposureBias.empty()) g_compare.left.metadata.ExposureBias = fullMeta.ExposureBias;
             if (g_compare.left.metadata.Flash.empty()) g_compare.left.metadata.Flash = fullMeta.Flash;
             if (g_compare.left.metadata.WhiteBalance.empty()) g_compare.left.metadata.WhiteBalance = fullMeta.WhiteBalance;
