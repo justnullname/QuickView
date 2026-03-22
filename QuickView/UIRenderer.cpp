@@ -1506,6 +1506,7 @@ namespace {
     static std::wstring ExtractChroma(const std::wstring& details, int& rank);
     static std::wstring BuildFormatFlagsSummary(const std::wstring& details);
     static std::wstring StripQualityFromFormatDetails(const std::wstring& details);
+    static void AppendFormatToken(std::wstring& target, const std::wstring& token);
 }
 
 UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) const {
@@ -1604,38 +1605,28 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         rows.push_back({ L"\U0001F4BB", L"Soft", metadata.Software, L"", metadata.Software, TruncateMode::EndEllipsis, false });
     }
 
-    if (!metadata.Format.empty() || !metadata.FormatDetails.empty()) {
-        std::wstring formatMain = metadata.Format.empty() ? L"Image" : metadata.Format;
-        std::wstring formatSub;
+	    if (!metadata.Format.empty() || !metadata.FormatDetails.empty()) {
+	        std::wstring formatText = metadata.Format.empty() ? L"Image" : metadata.Format;
+	        std::wstring formatTokens;
 
-        int chromaRank = -1;
-        std::wstring chroma = ExtractChroma(metadata.FormatDetails, chromaRank);
-        if (chroma != L"-") formatSub += chroma;
+	        int chromaRank = -1;
+	        std::wstring chroma = ExtractChroma(metadata.FormatDetails, chromaRank);
+	        std::wstring bitDepth = ExtractBitDepth(metadata.FormatDetails);
+	        std::wstring quality = ExtractQualityEstimate(metadata.FormatDetails);
+	        std::wstring formatFlags = BuildFormatFlagsSummary(metadata.FormatDetails);
 
-        std::wstring quality = ExtractQualityEstimate(metadata.FormatDetails);
-        if (quality != L"-") {
-            if (!formatSub.empty()) formatSub += L"  ";
-            formatSub += quality;
-        }
+	        AppendFormatToken(formatTokens, bitDepth == L"-" ? L"" : bitDepth);
+	        AppendFormatToken(formatTokens, chroma == L"-" ? L"" : chroma);
+	        AppendFormatToken(formatTokens, quality == L"-" ? L"" : quality);
+	        AppendFormatToken(formatTokens, formatFlags);
 
-        std::wstring bitDepth = ExtractBitDepth(metadata.FormatDetails);
-        if (bitDepth != L"-") {
-            if (!formatSub.empty()) formatSub += L"  ";
-            formatSub += bitDepth;
-        }
+	        if (formatTokens.empty() && !metadata.FormatDetails.empty() && metadata.FormatDetails != metadata.Format) {
+	            formatTokens = metadata.FormatDetails;
+	        }
 
-        std::wstring formatFlags = BuildFormatFlagsSummary(metadata.FormatDetails);
-        if (!formatFlags.empty()) {
-            if (!formatSub.empty()) formatSub += L"  ";
-            formatSub += formatFlags;
-        }
-
-        if (formatSub.empty() && !metadata.FormatDetails.empty() && metadata.FormatDetails != metadata.Format) {
-            formatSub = metadata.FormatDetails;
-        }
-
-        rows.push_back({ L"\U0001F39E", L"Format", formatMain, formatSub, metadata.FormatDetails, TruncateMode::None, false });
-    }
+	        AppendFormatToken(formatText, formatTokens);
+	        rows.push_back({ L"\U0001F39E", L"Format", formatText, L"", metadata.FormatDetails, TruncateMode::EndEllipsis, false });
+	    }
 
     // Advanced Metrics at the very bottom (only for HUD/Geek mode)
     if (showAdvanced) {
@@ -2259,7 +2250,7 @@ namespace {
         std::wstring summary;
         auto append = [&](const wchar_t* token) {
             if (!HasFormatFlag(details, token)) return;
-            if (!summary.empty()) summary += L"  ";
+            if (!summary.empty()) summary += L" ";
             summary += token;
         };
 
@@ -2268,7 +2259,7 @@ namespace {
         append(L"Alpha");
         append(L"Anim");
         append(L"Prog");
-        append(L"[Scaled]");
+        append(L"Scaled");
         return summary;
     }
 
@@ -2295,6 +2286,12 @@ namespace {
         if (!stripped.empty() && stripped.front() == L' ') stripped.erase(stripped.begin());
         if (!stripped.empty() && stripped.back() == L' ') stripped.pop_back();
         return stripped;
+    }
+
+    static void AppendFormatToken(std::wstring& target, const std::wstring& token) {
+        if (token.empty()) return;
+        if (!target.empty()) target += L" ";
+        target += token;
     }
 }
 
@@ -2520,15 +2517,17 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 		    const float labelW = 74.0f * s;
 		    const float valGap = 4.0f * s;
 
-		    float desiredValW = 120.0f * s;
-		    const InfoRow* leftSizeRow = nullptr;
-		    const InfoRow* rightSizeRow = nullptr;
-		    for (const auto& r : leftRows) if (r.label == L"Size") { leftSizeRow = &r; break; }
-		    for (const auto& r : rightRows) if (r.label == L"Size") { rightSizeRow = &r; break; }
-		    std::wstring leftSizeText = GetHudRowText(leftSizeRow);
-		    std::wstring rightSizeText = GetHudRowText(rightSizeRow);
-		    if (!leftSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(leftSizeText, m_debugFormat.Get()) + 10.0f * s);
-		    if (!rightSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(rightSizeText, m_debugFormat.Get()) + 10.0f * s);
+			    float desiredValW = 120.0f * s;
+			    const InfoRow* leftSizeRow = nullptr;
+			    const InfoRow* rightSizeRow = nullptr;
+			    for (const auto& r : leftRows) if (r.label == L"Size") { leftSizeRow = &r; break; }
+			    for (const auto& r : rightRows) if (r.label == L"Size") { rightSizeRow = &r; break; }
+			    std::wstring leftSizeText = GetHudRowText(leftSizeRow);
+			    std::wstring rightSizeText = GetHudRowText(rightSizeRow);
+			    float sizeArrowReserve = MeasureTextWidth(L" ↑", m_debugFormat.Get()) + 4.0f * s;
+			    float sizeSafetyPadding = 6.0f * s;
+			    if (!leftSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(leftSizeText, m_debugFormat.Get()) + sizeArrowReserve + sizeSafetyPadding);
+			    if (!rightSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(rightSizeText, m_debugFormat.Get()) + sizeArrowReserve + sizeSafetyPadding);
 
 		    const float minPanelW = 400.0f * s;
 		    const float maxPanelW = m_width - 20.0f * s;
