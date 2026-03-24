@@ -855,11 +855,19 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         // [IO Throttling] Acquire IO Budget
         // [Perf] Titan Tiles use MMF (memory-mapped), skip IO throttling entirely.
         // IO Semaphore is designed for HDD file reads — MMF accesses are page faults, not disk IO.
-        bool acquiredIO = false;
-        if (!m_isTitanMode) {
-            m_ioSemaphore.acquire();
-            acquiredIO = true;
-        }
+        struct ScopedIOSlot {
+            std::counting_semaphore<>& sem;
+            bool acquired = false;
+            explicit ScopedIOSlot(std::counting_semaphore<>& s, bool isTitanMode) : sem(s) {
+                if (!isTitanMode) {
+                    sem.acquire();
+                    acquired = true;
+                }
+            }
+            ~ScopedIOSlot() { if (acquired) sem.release(); }
+        };
+
+        ScopedIOSlot ioSlot(m_ioSemaphore, m_isTitanMode);
 
         // [Safety] Post-Acquire Check
         // We might have waited 1-2 seconds to get here. Check if still needed.
@@ -884,7 +892,6 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         }
 
         if (!stillValid) {
-            if (acquiredIO) m_ioSemaphore.release();
             m_busyCount.fetch_sub(1);
             m_activeTileJobs.fetch_sub(1); 
             { std::lock_guard dlock(m_poolMutex); m_inFlightTiles.erase(MakeTileHash(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod)); }
@@ -895,8 +902,6 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
         // Pass the whole job info
         PerformDecode(workerId, job, st, &self.loaderName);
         
-        if (acquiredIO) m_ioSemaphore.release();
-
         auto t1 = std::chrono::steady_clock::now();
         
         // Decode complete
