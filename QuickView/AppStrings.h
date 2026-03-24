@@ -143,6 +143,13 @@ namespace AppStrings {
     extern const wchar_t* OSD_HD; // High Definition / Full Load
     extern const wchar_t* OSD_ZoomPrefix;
 
+    extern const wchar_t* Context_ColorSpace;
+    
+    // CMS Options
+    extern const wchar_t* Settings_Option_CmsUnmanaged;
+    extern const wchar_t* Settings_Option_CmssRGB;
+    extern const wchar_t* Settings_Option_CmsP3;
+
     
     // Checkbox Labels
     extern const wchar_t* Checkbox_AlwaysSaveLossless;
@@ -282,6 +289,11 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_Reset;
     extern const wchar_t* Settings_Action_Restore;
     extern const wchar_t* Settings_Action_Done;
+
+    // Color Management
+    extern const wchar_t* Settings_Option_CmsUnmanaged;
+    extern const wchar_t* Settings_Option_CmssRGB;
+    extern const wchar_t* Settings_Option_CmsP3;
     
     // About
     extern const wchar_t* Settings_Action_CheckUpdates;

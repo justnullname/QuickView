@@ -2443,25 +2443,8 @@ static int g_winCtrlHoverState = -1;
 // 涓ョ鐩存帴璋冪敤 InvalidateRect锛屽繀椤讳娇鐢ㄦ绯荤粺
 
 
-enum class PaintLayer : uint32_t {
-    None    = 0,
-    Static  = 1 << 0,   // Toolbar, Window Controls, Info Panel, Settings
-    Dynamic = 1 << 1,   // HUD, OSD, Tooltip, Dialog
-    Gallery = 1 << 2,   // Gallery Overlay
-    Image   = 1 << 3,   // DComp Image Layer
-    All     = 0xFF
-};
-
-// 鏀寔浣嶈繍?
-inline PaintLayer operator|(PaintLayer a, PaintLayer b) {
-    return static_cast<PaintLayer>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-}
-inline PaintLayer operator&(PaintLayer a, PaintLayer b) {
-    return static_cast<PaintLayer>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
-}
-inline bool HasLayer(PaintLayer flags, PaintLayer layer) {
-    return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(layer)) != 0;
-}
+using QuickView::PaintLayer;
+using QuickView::HasLayer;
 
 // Global window handle for RequestRepaint (set in wWinMain)
 static HWND g_mainHwnd = nullptr;
@@ -4075,6 +4058,7 @@ void SaveConfig() {
 
     // Image
     WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"CmsMode", std::to_wstring(g_config.CmsMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
@@ -4201,7 +4185,8 @@ void LoadConfig() {
     
     // Image
     g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;
-    g_config.ColorManagement = GetPrivateProfileIntW(L"Image", L"ColorManagement", 0, iniPath.c_str()) != 0;
+    g_config.CmsMode = GetPrivateProfileIntW(L"Image", L"CmsMode", 1, iniPath.c_str()); // 1 = Auto Default
+    g_config.ColorManagement = (g_config.CmsMode != 0); // Legacy mapping sync
     g_config.ForceRawDecode = GetPrivateProfileIntW(L"Image", L"ForceRawDecode", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveEdgeAdapted = GetPrivateProfileIntW(L"Image", L"AlwaysSaveEdgeAdapted", 0, iniPath.c_str()) != 0;
@@ -8353,6 +8338,31 @@ SKIP_EDGE_NAV:;
              break;
         }
 
+        case IDM_COLOR_SPACE: {
+             // Cycle through Color Spaces
+             g_runtime.CmsModeOverride = (g_runtime.CmsModeOverride + 1) % 4;
+             // Apply immediately
+             if (g_imageResource && !g_imagePath.empty()) {
+                 if (g_imageEngine) {
+                     g_imageEngine->UpdateConfig(g_runtime);
+                     g_imageEngine->SetForceRefresh(true);
+                 }
+                 ReleaseImageResources();
+                 LoadImageAsync(hwnd, g_imagePath, false, QuickView::BrowseDirection::IDLE);
+             }
+
+             std::wstring msg = L"Color Space: ";
+             switch (g_runtime.CmsModeOverride) {
+                 case 0: msg += AppStrings::Settings_Option_CmsUnmanaged; break;
+                 case 1: msg += AppStrings::Settings_Option_Auto; break;
+                 case 2: msg += AppStrings::Settings_Option_CmssRGB; break;
+                 case 3: msg += AppStrings::Settings_Option_CmsP3; break;
+             }
+             g_osd.Show(hwnd, msg, false);
+             RequestRepaint(PaintLayer::All);
+             break;
+        }
+
         case IDM_PIXEL_ART_MODE: {
              // Toggle Pixel Art Mode (Nearest Neighbor) - Temporary runtime override
              bool isCurrentlyPixelArt = GetCurrentPixelArtState(hwnd);
@@ -9579,6 +9589,9 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
 
         // Reset Temporary Pixel Art Mode override for new images
         g_runtime.PixelArtModeOverride = 0;
+
+        // Reset Temporary Color Space Mode override for new images
+        g_runtime.CmsModeOverride = -1;
     }
     
     g_imagePath = path; // Set target path immediately for UI consistency

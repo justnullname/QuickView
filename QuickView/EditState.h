@@ -68,6 +68,13 @@ enum class MouseAction {
     None, WindowDrag, PanImage, ExitApp, FitWindow
 };
 
+enum class ColorSpaceMode {
+    Unmanaged = 0,
+    Auto = 1,
+    sRGB = 2,
+    DisplayP3 = 3
+};
+
 /// <summary>
 /// Application configuration (for future settings menu)
 /// </summary>
@@ -134,7 +141,8 @@ struct AppConfig {
     // --- Image & Edit ---
     bool AutoRotate = true;
     bool EnableSmoothScaling = false;    // New: Smooth Zoom toggle
-    bool ColorManagement = false;
+    int CmsMode = 1;                     // ColorSpaceMode: 0=Unmanaged, 1=Auto, 2=sRGB, 3=P3
+    bool ColorManagement = false;        // Legacy boolean
     bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
     
     // --- Save Options --- (Functional options removed, fully automated/smart)
@@ -227,6 +235,7 @@ struct RuntimeConfig {
 
     // Feature Toggles (Temporary Session Flags)
     int PixelArtModeOverride = 0; // 0=None, 1=Force ON, 2=Force OFF
+    int CmsModeOverride = -1;     // -1=None(Use Config), 0=Unmanaged, 1=Auto, 2=sRGB, 3=P3
 
     // Verification Flags (Phase 5)
     bool EnableScout = true;
@@ -239,6 +248,11 @@ struct RuntimeConfig {
     // [Phase 2] Cross-Monitor Runtime State
     bool CrossMonitorMode = false;
     
+    // CMS Helper
+    int GetEffectiveCmsMode() const {
+        return (CmsModeOverride != -1) ? CmsModeOverride : -1; // -1 means use Config later
+    }
+
     // Sync Helper
     void SyncFrom(const AppConfig& cfg) {
         LockWindowSize = cfg.LockWindowSize;

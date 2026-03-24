@@ -1162,10 +1162,15 @@ void SettingsOverlay::BuildMenu() {
 
     tabImage.items.push_back({ AppStrings::Settings_Label_AutoRotate, OptionType::Toggle, &g_config.AutoRotate });
     
-    // CMS - Disabled (开发中)
-    SettingsItem itemCms = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
-    itemCms.isDisabled = true;
-    itemCms.disabledText = AppStrings::Settings_Value_ComingSoon;
+    // CMS - Color Space Mode
+    SettingsItem itemCms = { AppStrings::Settings_Label_CMS, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.CmsMode), nullptr, 0, 0, {AppStrings::Settings_Option_CmsUnmanaged, AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3} };
+    itemCms.onChange = []() {
+        g_config.ColorManagement = (g_config.CmsMode != 0); // Legacy toggle sync
+        SaveConfig();
+        // Force immediate redraw to apply new color profile
+        extern void RequestRepaint(QuickView::PaintLayer layerMask);
+        RequestRepaint(QuickView::PaintLayer::All);
+    };
     tabImage.items.push_back(itemCms);
     
     SettingsItem itemRaw = { AppStrings::Settings_Label_ForceRaw, OptionType::Toggle, &g_config.ForceRawDecode };

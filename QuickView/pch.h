@@ -23,6 +23,10 @@ using Microsoft::WRL::ComPtr;
 #include <vector>
 #include <algorithm>
 #include <stdexcept>
+#include <filesystem>
+#include <string_view>
+#include <memory_resource>
+#include <stop_token>
 
 // Pragmas for linking
 #pragma comment(lib, "d2d1.lib")

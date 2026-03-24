@@ -69,6 +69,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     
     // Toggle Pixel Art Mode
     AppendMenuW(hViewMenu, MF_STRING | (isPixelArtMode ? MF_CHECKED : 0), IDM_PIXEL_ART_MODE, AppStrings::Context_PixelArtMode);
+    AppendMenuW(hViewMenu, MF_STRING, IDM_COLOR_SPACE, AppStrings::Context_ColorSpace);
 
     AppendMenuW(hViewMenu, MF_STRING | (isFullscreen ? MF_CHECKED : 0), IDM_FULLSCREEN, AppStrings::Context_Fullscreen);
     

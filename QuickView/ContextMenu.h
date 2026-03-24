@@ -32,6 +32,7 @@ enum ContextMenuCommand : UINT {
     IDM_ALWAYS_ON_TOP,
     IDM_RENDER_RAW, // Sync with toolbar
     IDM_PIXEL_ART_MODE,
+    IDM_COLOR_SPACE,
     IDM_HUD_GALLERY,
     IDM_WALLPAPER_FILL,
     IDM_WALLPAPER_FIT,

@@ -406,6 +406,14 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
              return E_FAIL;
         }
         
+        // [CMS] Extract ICC Profile from TurboJPEG
+        uint8_t* iccBuf = nullptr;
+        size_t iccSize = 0;
+        if (tj3GetICCProfile(handle, &iccBuf, &iccSize) == 0 && iccSize > 0) {
+            outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
+            tj3Free(iccBuf);
+        }
+
         return S_OK;
     }
     
@@ -468,6 +476,37 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, finalSource.Get(), &sourceConverted);
     if (!sourceConverted) sourceConverted = finalSource; // Fallback
     
+    // [CMS] Extract ICC Profile
+    UINT count = 0;
+    if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
+        std::vector<ComPtr<IWICColorContext>> contexts(count);
+        std::vector<IWICColorContext*> rawContexts(count);
+        for (UINT i = 0; i < count; i++) {
+            m_wicFactory->CreateColorContext(&contexts[i]);
+            rawContexts[i] = contexts[i].Get();
+        }
+
+        UINT actual = 0;
+        if (SUCCEEDED(frame->GetColorContexts(count, rawContexts.data(), &actual))) {
+            for (UINT i = 0; i < actual; i++) {
+                WICColorContextType type;
+                contexts[i]->GetType(&type);
+                if (type == WICColorContextProfile) {
+                    UINT cbProfile = 0;
+                    contexts[i]->GetProfileBytes(0, nullptr, &cbProfile);
+                    if (cbProfile > 0) {
+                        outFrame->iccProfile.resize(cbProfile);
+                        if (SUCCEEDED(contexts[i]->GetProfileBytes(cbProfile, outFrame->iccProfile.data(), &cbProfile))) {
+                            break; // Got it
+                        } else {
+                            outFrame->iccProfile.clear();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     UINT w, h;
     sourceConverted->GetSize(&w, &h);
     outFrame->width = w;
@@ -1020,7 +1059,15 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         // Software Resize
         // We resize into the top-left 'contentW x contentH' of the buffer.
         SIMDUtils::ResizeBilinear(pDecodeBuf, tjScdW, tjScdH, 0 /*stride*/, outFrame->pixels, contentW, contentH, outFrame->stride);
-        
+
+        // [CMS] Extract ICC Profile from TurboJPEG (Software Resized)
+        uint8_t* iccBuf = nullptr;
+        size_t iccSize = 0;
+        if (tj3GetICCProfile(tj, &iccBuf, &iccSize) == 0 && iccSize > 0) {
+            outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
+            tj3Free(iccBuf);
+        }
+
         // Free temp
         if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
         
@@ -1065,6 +1112,14 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         // Stride handles the width.
         if (tj3Decompress8(tj, buf, bufSize, outFrame->pixels, outFrame->stride, TJPF_BGRX) != 0) {
             return E_FAIL;
+        }
+
+        // [CMS] Extract ICC Profile from TurboJPEG (Direct Decode)
+        uint8_t* iccBuf = nullptr;
+        size_t iccSize = 0;
+        if (tj3GetICCProfile(tj, &iccBuf, &iccSize) == 0 && iccSize > 0) {
+            outFrame->iccProfile.assign(iccBuf, iccBuf + iccSize);
+            tj3Free(iccBuf);
         }
     }
 

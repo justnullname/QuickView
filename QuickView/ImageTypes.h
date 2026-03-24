@@ -11,8 +11,27 @@
 #include <functional>
 #include <utility>
 #include <string>
+#include <vector>
+#include <memory>
 
 namespace QuickView {
+enum class PaintLayer : uint32_t {
+    None    = 0,
+    Static  = 1 << 0,   // Toolbar, Window Controls, Info Panel, Settings
+    Dynamic = 1 << 1,   // HUD, OSD, Tooltip, Dialog
+    Gallery = 1 << 2,   // Gallery Overlay
+    Image   = 1 << 3,   // DComp Image Layer
+    All     = 0xFF
+};
+inline PaintLayer operator|(PaintLayer a, PaintLayer b) {
+    return static_cast<PaintLayer>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+inline PaintLayer operator&(PaintLayer a, PaintLayer b) {
+    return static_cast<PaintLayer>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+inline bool HasLayer(PaintLayer flags, PaintLayer layer) {
+    return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(layer)) != 0;
+}
 
 // ============================================================================
 // PixelFormat - Supported pixel formats for RawImageFrame
@@ -82,6 +101,9 @@ struct RawImageFrame {
     // Zero means width/height ARE the original dimensions (no scaling).
     int srcWidth = 0;
     int srcHeight = 0;
+
+    // [v10.2] Embedded ICC Profile Payload
+    std::vector<uint8_t> iccProfile;
 
     // [D2D Native] SVG Specific Data (Used only when format == SVG_XML)
     // Use unique_ptr to ensure zero overhead for non-SVG paths
@@ -191,6 +213,7 @@ private:
         exifOrientation = other.exifOrientation;
         srcWidth = other.srcWidth;
         srcHeight = other.srcHeight;
+        iccProfile = std::move(other.iccProfile);
         memoryDeleter = std::move(other.memoryDeleter);
         
         // [D2D Native] Move SVG Data
@@ -204,6 +227,7 @@ private:
         other.srcWidth = 0;
         other.srcHeight = 0;
         // other.formatDetails is moved (empty)
+        // other.iccProfile is moved (empty)
         other.exifOrientation = 1;
         // memoryDeleter is moved, but setting to nullptr for clarity
         // other.svg is moved (becomes nullptr)
