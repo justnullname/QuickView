@@ -1563,53 +1563,57 @@ static bool RenderCompareComposite(HWND hwnd) {
 static void SnapWindowToCompareImages(HWND hwnd) {
     if (!IsCompareModeActive() || !g_compare.left.valid || !g_imageResource) return;
 
-    int leftExif = GetEffectiveExifOrientation(g_compare.left.view.ExifOrientation, g_compare.left.editState);
-    int rightExif = GetEffectiveExifOrientation(g_viewState.ExifOrientation, g_editState);
-    D2D1_SIZE_F szLeft = GetOrientedSize(g_compare.left.resource, leftExif);
-    D2D1_SIZE_F szRight = GetOrientedSize(g_imageResource, rightExif);
+    // [Fix] Respect Fullscreen, Maximized, and Lock states. Do not snap window if already in these modes.
+    if (!g_isFullScreen && !IsZoomed(hwnd) && !g_runtime.LockWindowSize) {
+        int leftExif = GetEffectiveExifOrientation(g_compare.left.view.ExifOrientation, g_compare.left.editState);
+        int rightExif = GetEffectiveExifOrientation(g_viewState.ExifOrientation, g_editState);
+        D2D1_SIZE_F szLeft = GetOrientedSize(g_compare.left.resource, leftExif);
+        D2D1_SIZE_F szRight = GetOrientedSize(g_imageResource, rightExif);
 
-    if (szLeft.width <= 0 || szRight.width <= 0) return;
+        if (szLeft.width > 0 && szRight.width > 0) {
+            float targetImgW, targetImgH;
+            if (g_compare.mode == ViewMode::CompareSideBySide) {
+                // Match heights to the larger one to avoid vertical bars
+                float commonH = (std::max)(szLeft.height, szRight.height);
+                targetImgW = szLeft.width * (commonH / szLeft.height) + szRight.width * (commonH / szRight.height);
+                targetImgH = commonH;
+            } else {
+                // Overlap / Wipe mode
+                targetImgW = (std::max)(szLeft.width, szRight.width);
+                targetImgH = (std::max)(szLeft.height, szRight.height);
+            }
 
-    float targetImgW, targetImgH;
-    if (g_compare.mode == ViewMode::CompareSideBySide) {
-        // Match heights to the larger one to avoid vertical bars
-        float commonH = std::max(szLeft.height, szRight.height);
-        targetImgW = szLeft.width * (commonH / szLeft.height) + szRight.width * (commonH / szRight.height);
-        targetImgH = commonH;
-    } else {
-        // Overlap / Wipe mode
-        targetImgW = std::max(szLeft.width, szRight.width);
-        targetImgH = std::max(szLeft.height, szRight.height);
+            // Get monitor work area
+            HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = { sizeof(mi) };
+            if (GetMonitorInfoW(hMon, &mi)) {
+                int maxW = mi.rcWork.right - mi.rcWork.left;
+                int maxH = mi.rcWork.bottom - mi.rcWork.top;
+
+                int winW = (int)targetImgW;
+                int winH = (int)targetImgH;
+
+                // Cap to screen work area
+                if (winW > maxW || winH > maxH) {
+                    float scale = (std::min)((float)maxW / winW, (float)maxH / winH);
+                    winW = (int)(winW * scale);
+                    winH = (int)(winH * scale);
+                }
+
+                // Minimum size for UI safety
+                winW = (std::max)(winW, 600);
+                winH = (std::max)(winH, 450);
+
+                // Center window
+                int x = mi.rcWork.left + (maxW - winW) / 2;
+                int y = mi.rcWork.top + (maxH - winH) / 2;
+
+                SetWindowPos(hwnd, nullptr, x, y, winW, winH, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+        }
     }
-
-    // Get monitor work area
-    HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO mi = { sizeof(mi) };
-    if (!GetMonitorInfoW(hMon, &mi)) return;
-    int maxW = mi.rcWork.right - mi.rcWork.left;
-    int maxH = mi.rcWork.bottom - mi.rcWork.top;
-
-    int winW = (int)targetImgW;
-    int winH = (int)targetImgH;
-
-    // Cap to screen work area
-    if (winW > maxW || winH > maxH) {
-        float scale = std::min((float)maxW / winW, (float)maxH / winH);
-        winW = (int)(winW * scale);
-        winH = (int)(winH * scale);
-    }
-
-    // Minimum size for UI safety
-    winW = std::max(winW, 600);
-    winH = std::max(winH, 450);
-
-    // Center window
-    int x = mi.rcWork.left + (maxW - winW) / 2;
-    int y = mi.rcWork.top + (maxH - winH) / 2;
-
-    SetWindowPos(hwnd, nullptr, x, y, winW, winH, SWP_NOZORDER | SWP_NOACTIVATE);
     
-    // Reset views to match the new size (Fit mode)
+    // Reset views to match the current window size (Fit mode)
     g_viewState.Reset();
     g_compare.left.view.Zoom = 1.0f;
     g_compare.left.view.PanX = 0;
@@ -4419,7 +4423,7 @@ void AdjustWindowToImage(HWND hwnd) {
     if (!g_imageResource) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
-    if (g_isFullScreen) return; // [Fix] Don't resize if in Fullscreen mode
+    if (g_isFullScreen || IsZoomed(hwnd)) return; // [Fix] Don't resize if in Fullscreen or Maximized mode
 
     // [Fix] Use Centralized First-Principles Dimension Logic
     D2D1_SIZE_F effSize = GetEffectiveImageSize();
