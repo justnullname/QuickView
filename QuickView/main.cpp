@@ -5414,6 +5414,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // g_compEngine = std::make_unique<CompositionEngine>();
     g_compEngine = new CompositionEngine();
     if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
+        if (g_compEngine->IsAdvancedColor()) {
+            g_renderEngine->SetAdvancedColorMode(true);
+        }
         // Pure DComp architecture: Surfaces are managed by CompositionEngine
         
         // Initialize UI Renderer (renders to independent DComp Surface)
@@ -8363,7 +8366,8 @@ SKIP_EDGE_NAV:;
         case IDM_CMS_SRGB:
         case IDM_CMS_P3:
         case IDM_CMS_ADOBERGB:
-        case IDM_CMS_GRAY: {
+        case IDM_CMS_GRAY:
+        case IDM_CMS_PROPHOTO: {
              int newMode = (int)wParam - (int)IDM_CMS_UNMANAGED;
              g_runtime.CmsModeOverride = newMode;
              
@@ -8385,6 +8389,7 @@ SKIP_EDGE_NAV:;
                  case 3: msg += AppStrings::Settings_Option_CmsP3; break;
                  case 4: msg += AppStrings::Settings_Option_CmsAdobeRGB; break;
                  case 5: msg += AppStrings::Settings_Option_CmsGray; break;
+                 case 6: msg += AppStrings::Settings_Option_CmsProPhoto; break;
              }
              g_osd.Show(hwnd, msg, false);
              RequestRepaint(PaintLayer::All);

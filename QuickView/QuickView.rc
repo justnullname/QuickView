@@ -2,6 +2,7 @@
 // Application Icon
 
 #include <windows.h>
+#include "resource.h"
 
 // Main Application Icon (ID = 1 for default)
 // IDI_APPLICATION will be overridden by this
@@ -35,3 +36,10 @@ BEGIN
         VALUE "Translation", 0x409, 1200
     END
 END
+
+// ============================================================================
+// ICC Profiles - Compact V4
+// ============================================================================
+IDR_ICC_P3          ICC                     "ICC\\DisplayP3.icc"
+IDR_ICC_ADOBERGB    ICC                     "ICC\\AdobeRGB.icc"
+IDR_ICC_PROPHOTO    ICC                     "ICC\\ProPhoto.icc"

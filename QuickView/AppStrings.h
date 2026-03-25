@@ -151,6 +151,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_CmsP3;
     extern const wchar_t* Settings_Option_CmsAdobeRGB;
     extern const wchar_t* Settings_Option_CmsGray;
+    extern const wchar_t* Settings_Option_CmsProPhoto;
+    extern const wchar_t* Settings_Option_CmsProPhoto;
 
     
     // Checkbox Labels
@@ -292,10 +294,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Action_Restore;
     extern const wchar_t* Settings_Action_Done;
 
-    // Color Management
-    extern const wchar_t* Settings_Option_CmsUnmanaged;
-    extern const wchar_t* Settings_Option_CmssRGB;
-    extern const wchar_t* Settings_Option_CmsP3;
+    // Removed duplicated Color Management declarations
     
     // About
     extern const wchar_t* Settings_Action_CheckUpdates;

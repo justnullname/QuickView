@@ -9,7 +9,7 @@
 // Direct2D and DirectWrite
 #include <d2d1_3.h>
 #include <d3d11_1.h>
-#include <dxgi1_3.h>
+#include <dxgi1_6.h>
 #include <dwrite.h>
 #include <wincodec.h>
 
@@ -27,6 +27,7 @@ using Microsoft::WRL::ComPtr;
 #include <string_view>
 #include <memory_resource>
 #include <stop_token>
+#include <unordered_map>
 
 // Pragmas for linking
 #pragma comment(lib, "d2d1.lib")

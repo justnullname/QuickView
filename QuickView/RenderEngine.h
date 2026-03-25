@@ -39,6 +39,8 @@ public:
     /// </summary>
     HRESULT Initialize(HWND hwnd);
 
+    void SetAdvancedColorMode(bool enabled) { m_isAdvancedColor = enabled; }
+
     /// <summary>
     /// Create D2D bitmap from WIC bitmap
     /// </summary>
@@ -80,6 +82,7 @@ private:
     HRESULT CreateDeviceResources();
 
     HWND m_hwnd = nullptr;
+    bool m_isAdvancedColor = false;
 
     // D3D11 resources
     ComPtr<ID3D11Device> m_d3dDevice;

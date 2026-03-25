@@ -91,6 +91,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hCmsMenu, (currentCms == 3 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_P3, AppStrings::Settings_Option_CmsP3);
     AppendMenuW(hCmsMenu, (currentCms == 4 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_ADOBERGB, AppStrings::Settings_Option_CmsAdobeRGB);
     AppendMenuW(hCmsMenu, (currentCms == 5 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_GRAY, AppStrings::Settings_Option_CmsGray);
+    AppendMenuW(hCmsMenu, (currentCms == 6 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_PROPHOTO, AppStrings::Settings_Option_CmsProPhoto);
 
     // Dynamic label for parent menu: "Color Space: <Current Mode>"
     std::wstring cmsLabel = AppStrings::Context_ColorSpace;
@@ -102,6 +103,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
         case 3: cmsLabel += AppStrings::Settings_Option_CmsP3; break;
         case 4: cmsLabel += AppStrings::Settings_Option_CmsAdobeRGB; break;
         case 5: cmsLabel += AppStrings::Settings_Option_CmsGray; break;
+        case 6: cmsLabel += AppStrings::Settings_Option_CmsProPhoto; break;
     }
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hCmsMenu, cmsLabel.c_str());
     

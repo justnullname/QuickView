@@ -69,6 +69,7 @@ enum ContextMenuCommand : UINT {
     IDM_CMS_P3,
     IDM_CMS_ADOBERGB,
     IDM_CMS_GRAY,
+    IDM_CMS_PROPHOTO,
 };
 
 /// <summary>

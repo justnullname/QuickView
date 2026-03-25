@@ -3,7 +3,6 @@
 #include <dcomp.h>
 #include <d2d1_1.h>
 #include <d3d11.h>
-#include <dxgi1_2.h>
 #include <wrl/client.h>
 #include "QuickView.h" // For VisualState
 #include <algorithm>
@@ -113,6 +112,7 @@ public:
     bool IsInitialized() const { return m_device != nullptr; }
     UINT GetWidth() const { return m_width; }
     UINT GetHeight() const { return m_height; }
+    bool IsAdvancedColor() const { return m_isAdvancedColor; }
     
     // Debug accessors
     int GetActiveLayerIndex() const { return m_activeLayerIndex; }
@@ -205,6 +205,10 @@ private:
     
     // D2D Device
     ComPtr<ID2D1Device> m_d2dDevice;
+
+    // Advanced Color (HDR) Support
+    bool m_isAdvancedColor = false;
+    DXGI_FORMAT m_surfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 
     // State tracking for Drift Compensation
     float m_currentScale = 1.0f;

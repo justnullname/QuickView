@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "CompositionEngine.h"
+#include <dxgi1_6.h>
 #include "TileManager.h"
 #include "TileTypes.h"
 
@@ -113,7 +114,7 @@ HRESULT CompositionEngine::DrawTiles(ID2D1DeviceContext* pContext,
                 if (!tile->bitmap && tile->frame && tile->frame->pixels) {
                      D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
                         D2D1_BITMAP_OPTIONS_NONE,
-                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+                        D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
                      );
                      pContext->CreateBitmap(
                          D2D1::SizeU(tile->frame->width, tile->frame->height),
@@ -278,7 +279,7 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         // Setup D2D Target
         D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
         );
         
         ComPtr<ID2D1Bitmap1> target;
@@ -298,7 +299,7 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         
         // Upload Pixels
         D2D1_BITMAP_PROPERTIES bmpProps = D2D1::BitmapProperties(
-             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+             D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
         );
         
         ComPtr<ID2D1Bitmap> srcBitmap;
@@ -389,6 +390,29 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     ComPtr<IDXGIDevice> dxgiDevice;
     hr = d3dDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
     if (FAILED(hr)) return hr;
+    
+    // [CMS] Advanced Color Hardware Check
+    m_isAdvancedColor = false;
+    m_surfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+    
+    ComPtr<IDXGIAdapter> adapter;
+    if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+        ComPtr<IDXGIOutput> output;
+        if (SUCCEEDED(adapter->EnumOutputs(0, &output))) {
+            ComPtr<IDXGIOutput6> output6;
+            if (SUCCEEDED(output.As(&output6))) {
+                DXGI_OUTPUT_DESC1 desc1;
+                if (SUCCEEDED(output6->GetDesc1(&desc1))) {
+                    if (desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 ||
+                        desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
+                        m_isAdvancedColor = true;
+                        m_surfaceFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                        OutputDebugStringW(L"[CMS] Advanced Color output detected. Enabling FP16 scRGB surface pipeline.\n");
+                    }
+                }
+            }
+        }
+    }
     
     // 2. Create DComp Device (V2 API for Visual3 support)
     hr = DCompositionCreateDevice2(dxgiDevice.Get(), IID_PPV_ARGS(&m_device));
@@ -589,7 +613,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
          
          // Standard Surface for Base
          hr = m_device->CreateSurface(baseAccurateW, baseAccurateH, 
-             DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.baseSurface);
+             m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.baseSurface);
              
          layer.baseVisual->SetContent(layer.baseSurface.Get());
          
@@ -613,7 +637,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
              if (lodH == 0) lodH = 1;
              
              m_device->CreateVirtualSurface(lodW, lodH, 
-                 DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.virtualSurfaces[i]);
+                 m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.virtualSurfaces[i]);
                  
              layer.lodVisuals[i]->SetContent(layer.virtualSurfaces[i].Get());
              
@@ -634,7 +658,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
 
          // Create standard surface
          hr = m_device->CreateSurface(width, height, 
-             DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.surface);
+             m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.surface);
              
          layer.visual->SetContent(layer.surface.Get());
          layer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -660,7 +684,7 @@ ID2D1DeviceContext* CompositionEngine::BeginDrawHelper(IDCompositionSurface* sur
     // Create D2D Context
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
     
     if (!m_pendingContext) {
@@ -806,7 +830,7 @@ HRESULT CompositionEngine::CreateLayerSurface(UILayer layer, UINT width, UINT he
     
     HRESULT hr = m_device->CreateSurface(
         width, height,
-        DXGI_FORMAT_B8G8R8A8_UNORM,
+        m_surfaceFormat,
         DXGI_ALPHA_MODE_PREMULTIPLIED,
         &data.surface
     );
@@ -824,7 +848,7 @@ HRESULT CompositionEngine::CreateAllSurfaces(UINT width, UINT height) {
     
     // Ensure background surface
     m_backgroundLayer.surface.Reset();
-    HRESULT hr = m_device->CreateSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
+    HRESULT hr = m_device->CreateSurface(width, height, m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
     if (SUCCEEDED(hr)) {
         m_backgroundLayer.width = width;
         m_backgroundLayer.height = height;
@@ -844,7 +868,7 @@ ID2D1DeviceContext* CompositionEngine::BeginLayerUpdate(UILayer layer, const REC
     
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
     
     data.target.Reset();
@@ -1076,7 +1100,7 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
 
     if (!m_backgroundLayer.surface || m_backgroundLayer.width != w || m_backgroundLayer.height != h) {
         m_backgroundLayer.surface.Reset();
-        HRESULT hr = m_device->CreateSurface(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
+        HRESULT hr = m_device->CreateSurface(w, h, m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_backgroundLayer.surface);
         if (FAILED(hr)) return hr;
         m_backgroundLayer.visual->SetContent(m_backgroundLayer.surface.Get());
         m_backgroundLayer.width = w;
@@ -1092,7 +1116,7 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
     ComPtr<ID2D1Bitmap1> target;
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
 
     hr = m_backgroundLayer.context->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, &target);

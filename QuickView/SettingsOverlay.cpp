@@ -1163,7 +1163,7 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ AppStrings::Settings_Label_AutoRotate, OptionType::Toggle, &g_config.AutoRotate });
     
     // CMS - Color Space Mode
-    SettingsItem itemCms = { AppStrings::Settings_Label_CMS, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsMode), nullptr, 0, 0, {AppStrings::Settings_Option_CmsUnmanaged, AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3, AppStrings::Settings_Option_CmsAdobeRGB, AppStrings::Settings_Option_CmsGray} };
+    SettingsItem itemCms = { AppStrings::Settings_Label_CMS, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsMode), nullptr, 0, 0, {AppStrings::Settings_Option_CmsUnmanaged, AppStrings::Settings_Option_Auto, AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3, AppStrings::Settings_Option_CmsAdobeRGB, AppStrings::Settings_Option_CmsGray, AppStrings::Settings_Option_CmsProPhoto} };
     itemCms.onChange = []() {
         g_config.ColorManagement = (g_config.CmsMode != 0); // Legacy toggle sync
         SaveConfig();
