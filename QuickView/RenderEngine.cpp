@@ -268,14 +268,17 @@ default:
     // Apply Color Management if needed
     extern RuntimeConfig g_runtime;
     extern AppConfig g_config;
-    int effectiveCmsMode = g_runtime.GetEffectiveCmsMode();
-    if (effectiveCmsMode == -1) effectiveCmsMode = g_config.CmsMode;
+    int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(); // Default is 1 (Auto)
 
-    if (effectiveCmsMode != 0) { // All managed modes (Auto, sRGB, P3) require processing, even if untagged
+    // Master Switch: Bypass entirely if Global ColorManagement is false AND context menu didn't override to a specific mode
+    bool applyCms = g_config.ColorManagement || (effectiveCmsMode != 0 && effectiveCmsMode != 1);
+
+    if (applyCms && effectiveCmsMode != 0) { // Mode 0 = Unmanaged (Force bypass)
         // Find best source context
         ComPtr<ID2D1ColorContext> srcContext;
 
-        if (effectiveCmsMode == 1 || effectiveCmsMode == 5) { // Auto or Grayscale: use embedded profile or fallback to sRGB
+        if (effectiveCmsMode == 1 || effectiveCmsMode == 5) { // Auto or Grayscale
+            // Priority 1: Use Embedded ICC Profile
             if (!frame.iccProfile.empty()) {
                 ColorContextCacheKey key{ frame.iccProfile };
                 std::lock_guard<std::mutex> lock(m_cacheMutex);
@@ -288,8 +291,22 @@ default:
                     }
                 }
             }
+            // Priority 2: If Untagged, apply the Global Default Fallback
             if (!srcContext) {
-                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+                int fallback = g_config.CmsDefaultFallback;
+                if (fallback == 1 && LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_P3, srcContext.GetAddressOf())) {
+                    // Loaded P3 Fallback
+                }
+                else if (fallback == 2 && LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_ADOBERGB, srcContext.GetAddressOf())) {
+                    // Loaded Adobe RGB Fallback
+                }
+                else if (fallback == 3 && LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_PROPHOTO, srcContext.GetAddressOf())) {
+                    // Loaded ProPhoto Fallback
+                }
+                else {
+                    // Fallback 0 = sRGB (or failed to load other profiles)
+                    m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+                }
             }
         }
         else if (effectiveCmsMode == 2) { // sRGB
@@ -319,7 +336,7 @@ default:
         // Find target context based on Mode (Always monitor profile or scRGB)
         ComPtr<ID2D1ColorContext> dstContext;
         
-        if (m_isAdvancedColor) {
+        if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
             // [Advanced Color Aware] Branch B: Map Everything to scRGB Linear Space
             m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &dstContext);
         }

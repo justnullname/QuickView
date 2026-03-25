@@ -141,8 +141,9 @@ struct AppConfig {
     // --- Image & Edit ---
     bool AutoRotate = true;
     bool EnableSmoothScaling = false;    // New: Smooth Zoom toggle
-    int CmsMode = 1;                     // ColorSpaceMode: 0=Unmanaged, 1=Auto, 2=sRGB, 3=P3
-    bool ColorManagement = false;        // Legacy boolean
+    bool ColorManagement = true;         // Master toggle for Color Management System
+    bool EnableAdvancedColor = false;    // HDR / FP16 scRGB pipeline toggle
+    int CmsDefaultFallback = 0;          // Fallback for untagged images: 0=sRGB, 1=P3, 2=AdobeRGB, 3=ProPhoto
     bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
     
     // --- Save Options --- (Functional options removed, fully automated/smart)
@@ -235,7 +236,7 @@ struct RuntimeConfig {
 
     // Feature Toggles (Temporary Session Flags)
     int PixelArtModeOverride = 0; // 0=None, 1=Force ON, 2=Force OFF
-    int CmsModeOverride = -1;     // -1=None(Use Config), 0=Unmanaged, 1=Auto, 2=sRGB, 3=P3
+    int CmsModeOverride = -1;     // -1=Auto, 0=Unmanaged, 1=Auto(Explicit), 2=sRGB, 3=P3, etc
 
     // Verification Flags (Phase 5)
     bool EnableScout = true;
@@ -250,7 +251,7 @@ struct RuntimeConfig {
     
     // CMS Helper
     int GetEffectiveCmsMode() const {
-        return (CmsModeOverride != -1) ? CmsModeOverride : -1; // -1 means use Config later
+        return (CmsModeOverride != -1) ? CmsModeOverride : 1; // Default to 1 (Auto) when no override
     }
 
     // Sync Helper

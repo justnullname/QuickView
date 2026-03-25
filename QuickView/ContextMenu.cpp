@@ -84,7 +84,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     // [CMS] Color Space Submenu (Promoted to Root)
     // ========================================================
     HMENU hCmsMenu = CreatePopupMenu();
-    int currentCms = (g_runtime.CmsModeOverride != -1) ? g_runtime.CmsModeOverride : g_config.CmsMode;
+    int currentCms = g_runtime.GetEffectiveCmsMode();
     AppendMenuW(hCmsMenu, (currentCms == 0 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_UNMANAGED, AppStrings::Settings_Option_CmsUnmanaged);
     AppendMenuW(hCmsMenu, (currentCms == 1 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_AUTO, AppStrings::Settings_Option_Auto);
     AppendMenuW(hCmsMenu, (currentCms == 2 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_SRGB, AppStrings::Settings_Option_CmssRGB);

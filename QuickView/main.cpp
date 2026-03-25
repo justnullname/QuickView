@@ -4059,8 +4059,9 @@ void SaveConfig() {
 
     // Image
     WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"CmsMode", std::to_wstring(g_config.CmsMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"EnableAdvancedColor", g_config.EnableAdvancedColor ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"CmsDefaultFallback", std::to_wstring(g_config.CmsDefaultFallback).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
@@ -4186,8 +4187,9 @@ void LoadConfig() {
     
     // Image
     g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;
-    g_config.CmsMode = GetPrivateProfileIntW(L"Image", L"CmsMode", 1, iniPath.c_str()); // 1 = Auto Default
-    g_config.ColorManagement = (g_config.CmsMode != 0); // Legacy mapping sync
+    g_config.ColorManagement = GetPrivateProfileIntW(L"Image", L"ColorManagement", 1, iniPath.c_str()) != 0;
+    g_config.EnableAdvancedColor = GetPrivateProfileIntW(L"Image", L"EnableAdvancedColor", 0, iniPath.c_str()) != 0;
+    g_config.CmsDefaultFallback = GetPrivateProfileIntW(L"Image", L"CmsDefaultFallback", 0, iniPath.c_str());
     g_config.ForceRawDecode = GetPrivateProfileIntW(L"Image", L"ForceRawDecode", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveEdgeAdapted = GetPrivateProfileIntW(L"Image", L"AlwaysSaveEdgeAdapted", 0, iniPath.c_str()) != 0;
@@ -5609,10 +5611,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         if (hMon != s_lastCmsMonitor) {
             s_lastCmsMonitor = hMon;
-            // Trigger CMS update (Auto mode depends on current monitor profile)
+            // Trigger CMS update (All managed modes now depend on the current monitor profile)
             extern AppConfig g_config;
             extern RuntimeConfig g_runtime;
-            if (g_config.CmsMode == 1 || g_runtime.CmsModeOverride == 1) { // Auto
+            int effectiveCmsMode = g_runtime.GetEffectiveCmsMode();
+            bool applyCms = g_config.ColorManagement || (effectiveCmsMode != 0 && effectiveCmsMode != 1);
+            if (applyCms && effectiveCmsMode != 0) {
                  RequestRepaint(PaintLayer::All);
             }
         }
