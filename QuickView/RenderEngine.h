@@ -10,15 +10,26 @@
 #include <unordered_map>
 #include "TileTypes.h"  // [Titan]
 #include "ComputeEngine.h"
+#include <mutex>
+#include <map>
+#include <vector>
 
 // Direct2D Effects GUIDs
 #include <d2d1effects.h>
+
+struct ColorContextCacheKey {
+    std::vector<uint8_t> data;
+    bool operator<(const ColorContextCacheKey& other) const { return data < other.data; }
+};
 
 /// <summary>
 /// Direct2D Resource Manager (Pure DComp Backend)
 /// Manages D3D11/D2D Devices and shared resources for DirectComposition.
 /// </summary>
 class CRenderEngine {
+private:
+    std::map<ColorContextCacheKey, Microsoft::WRL::ComPtr<ID2D1ColorContext>> m_colorContextCache;
+    std::mutex m_cacheMutex;
 public:
     CRenderEngine() = default;
     ~CRenderEngine();

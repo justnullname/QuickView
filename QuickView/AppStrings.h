@@ -149,6 +149,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_CmsUnmanaged;
     extern const wchar_t* Settings_Option_CmssRGB;
     extern const wchar_t* Settings_Option_CmsP3;
+    extern const wchar_t* Settings_Option_CmsAdobeRGB;
+    extern const wchar_t* Settings_Option_CmsGray;
 
     
     // Checkbox Labels

@@ -57,10 +57,18 @@ enum ContextMenuCommand : UINT {
     IDM_FIX_EXTENSION,
     IDM_DELETE,
 
-    // [应用设置] Group
+    // [應用設置] Group
     IDM_SETTINGS,
     IDM_ABOUT,
     IDM_EXIT,
+
+    // [CMS] Color Space Options
+    IDM_CMS_UNMANAGED,
+    IDM_CMS_AUTO,
+    IDM_CMS_SRGB,
+    IDM_CMS_P3,
+    IDM_CMS_ADOBERGB,
+    IDM_CMS_GRAY,
 };
 
 /// <summary>

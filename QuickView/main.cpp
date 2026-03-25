@@ -5599,6 +5599,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         s_maintainAbsoluteScale = false;
         return 0;
     }
+    case WM_WINDOWPOSCHANGED: {
+        // [CMS] Monitor-Aware tracking: Detect if window moved to a different monitor
+        static HMONITOR s_lastCmsMonitor = NULL;
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if (hMon != s_lastCmsMonitor) {
+            s_lastCmsMonitor = hMon;
+            // Trigger CMS update (Auto mode depends on current monitor profile)
+            extern AppConfig g_config;
+            extern RuntimeConfig g_runtime;
+            if (g_config.CmsMode == 1 || g_runtime.CmsModeOverride == 1) { // Auto
+                 RequestRepaint(PaintLayer::All);
+            }
+        }
+        break; // Still allow DefWindowProc for default handling
+    }
+    case WM_DISPLAYCHANGE: {
+        // [CMS] System/Monitor profile changed
+        RequestRepaint(PaintLayer::All);
+        break;
+    }
     case WM_NCCALCSIZE: if (wParam) return 0; break;
 
     case WM_ERASEBKGND: return 1;  // Prevent system background erase (D2D handles this)
@@ -8338,10 +8358,16 @@ SKIP_EDGE_NAV:;
              break;
         }
 
-        case IDM_COLOR_SPACE: {
-             // Cycle through Color Spaces
-             g_runtime.CmsModeOverride = (g_runtime.CmsModeOverride + 1) % 4;
-             // Apply immediately
+        case IDM_CMS_UNMANAGED:
+        case IDM_CMS_AUTO:
+        case IDM_CMS_SRGB:
+        case IDM_CMS_P3:
+        case IDM_CMS_ADOBERGB:
+        case IDM_CMS_GRAY: {
+             int newMode = (int)wParam - (int)IDM_CMS_UNMANAGED;
+             g_runtime.CmsModeOverride = newMode;
+             
+             // Apply immediately by forcing a re-decode
              if (g_imageResource && !g_imagePath.empty()) {
                  if (g_imageEngine) {
                      g_imageEngine->UpdateConfig(g_runtime);
@@ -8352,11 +8378,13 @@ SKIP_EDGE_NAV:;
              }
 
              std::wstring msg = L"Color Space: ";
-             switch (g_runtime.CmsModeOverride) {
+             switch (newMode) {
                  case 0: msg += AppStrings::Settings_Option_CmsUnmanaged; break;
                  case 1: msg += AppStrings::Settings_Option_Auto; break;
                  case 2: msg += AppStrings::Settings_Option_CmssRGB; break;
                  case 3: msg += AppStrings::Settings_Option_CmsP3; break;
+                 case 4: msg += AppStrings::Settings_Option_CmsAdobeRGB; break;
+                 case 5: msg += AppStrings::Settings_Option_CmsGray; break;
              }
              g_osd.Show(hwnd, msg, false);
              RequestRepaint(PaintLayer::All);

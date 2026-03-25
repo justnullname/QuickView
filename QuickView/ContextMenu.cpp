@@ -3,7 +3,11 @@
 #include "AppStrings.h"
 #include "EditState.h"
 #include <shellapi.h>
-#include <shlobj.h>
+#include "shlobj.h"
+#include "EditState.h"
+
+extern AppConfig g_config;
+extern RuntimeConfig g_runtime;
 
 // ============================================================
 // ContextMenu.cpp - Right-click Context Menu Implementation
@@ -69,14 +73,37 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     
     // Toggle Pixel Art Mode
     AppendMenuW(hViewMenu, MF_STRING | (isPixelArtMode ? MF_CHECKED : 0), IDM_PIXEL_ART_MODE, AppStrings::Context_PixelArtMode);
-    AppendMenuW(hViewMenu, MF_STRING, IDM_COLOR_SPACE, AppStrings::Context_ColorSpace);
 
     AppendMenuW(hViewMenu, MF_STRING | (isFullscreen ? MF_CHECKED : 0), IDM_FULLSCREEN, AppStrings::Context_Fullscreen);
     
-    // [New] Video Wall Mode
     AppendMenuW(hViewMenu, MF_STRING | (isCrossMonitor ? MF_CHECKED : 0), IDM_TOGGLE_SPAN, AppStrings::Context_SpanDisplays);
 
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hViewMenu, AppStrings::Context_View);
+    
+    // ========================================================
+    // [CMS] Color Space Submenu (Promoted to Root)
+    // ========================================================
+    HMENU hCmsMenu = CreatePopupMenu();
+    int currentCms = (g_runtime.CmsModeOverride != -1) ? g_runtime.CmsModeOverride : g_config.CmsMode;
+    AppendMenuW(hCmsMenu, (currentCms == 0 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_UNMANAGED, AppStrings::Settings_Option_CmsUnmanaged);
+    AppendMenuW(hCmsMenu, (currentCms == 1 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_AUTO, AppStrings::Settings_Option_Auto);
+    AppendMenuW(hCmsMenu, (currentCms == 2 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_SRGB, AppStrings::Settings_Option_CmssRGB);
+    AppendMenuW(hCmsMenu, (currentCms == 3 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_P3, AppStrings::Settings_Option_CmsP3);
+    AppendMenuW(hCmsMenu, (currentCms == 4 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_ADOBERGB, AppStrings::Settings_Option_CmsAdobeRGB);
+    AppendMenuW(hCmsMenu, (currentCms == 5 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_GRAY, AppStrings::Settings_Option_CmsGray);
+
+    // Dynamic label for parent menu: "Color Space: <Current Mode>"
+    std::wstring cmsLabel = AppStrings::Context_ColorSpace;
+    cmsLabel += L": ";
+    switch (currentCms) {
+        case 0: cmsLabel += AppStrings::Settings_Option_CmsUnmanaged; break;
+        case 1: cmsLabel += AppStrings::Settings_Option_Auto; break;
+        case 2: cmsLabel += AppStrings::Settings_Option_CmssRGB; break;
+        case 3: cmsLabel += AppStrings::Settings_Option_CmsP3; break;
+        case 4: cmsLabel += AppStrings::Settings_Option_CmsAdobeRGB; break;
+        case 5: cmsLabel += AppStrings::Settings_Option_CmsGray; break;
+    }
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hCmsMenu, cmsLabel.c_str());
     
     // Set as Wallpaper submenu
     HMENU hWallpaperMenu = CreatePopupMenu();

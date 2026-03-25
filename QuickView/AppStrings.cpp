@@ -236,6 +236,8 @@ const wchar_t *Settings_Action_Done = nullptr;
 const wchar_t *Settings_Option_CmsUnmanaged = nullptr;
 const wchar_t *Settings_Option_CmssRGB = nullptr;
 const wchar_t *Settings_Option_CmsP3 = nullptr;
+const wchar_t *Settings_Option_CmsAdobeRGB = nullptr;
+const wchar_t *Settings_Option_CmsGray = nullptr;
 
 const wchar_t *Settings_Action_CheckUpdates = nullptr;
 const wchar_t *Settings_Action_ViewUpdate = nullptr;
@@ -632,6 +634,8 @@ struct EN {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"Unmanaged";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"Grayscale (Tonal Check)";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates =
       L"Check for Updates";
@@ -925,6 +929,8 @@ struct CN {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"无管理";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"灰度模式 (影调检查)";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates = L"检查更新";
   static constexpr const wchar_t *Settings_Action_ViewUpdate = L"查看更新";
@@ -1438,6 +1444,8 @@ struct TW {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"無管理";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"灰度模式 (影調檢查)";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates = L"檢查更新";
   static constexpr const wchar_t *Settings_Action_ViewUpdate = L"檢視更新";
@@ -1960,6 +1968,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"未管理 (高速)";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB (標準)";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3 (広色域)";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"グレースケール (トーン確認)";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"更新内容:";
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
@@ -2416,6 +2426,8 @@ struct RU {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"Неуправляемый (быстро)";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB (стандарт)";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3 (широкий охват)";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"Оттенки серого (Контроль тона)";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"Что нового:";
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
@@ -2857,6 +2869,8 @@ struct DE {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"Unverwaltet (schnell)";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB (Standard)";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3 (Breites Farbspektrum)";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"Graustufen (Tonwertkontrolle)";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"Was ist neu:";
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
@@ -3314,6 +3328,8 @@ struct ES {
   static constexpr const wchar_t *Settings_Option_CmsUnmanaged = L"No gestionado (rápido)";
   static constexpr const wchar_t *Settings_Option_CmssRGB = L"sRGB (estándar)";
   static constexpr const wchar_t *Settings_Option_CmsP3 = L"Display P3 (gama amplia)";
+  static constexpr const wchar_t *Settings_Option_CmsAdobeRGB = L"Adobe RGB (1998)";
+  static constexpr const wchar_t *Settings_Option_CmsGray = L"Escala de grises (Control de tono)";
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
   static constexpr const wchar_t *HUD_Group_Encoding = L"OPTICS & ENCODING";
@@ -3575,6 +3591,8 @@ template <typename T> void ApplyT() {
   Settings_Option_CmsUnmanaged = T::Settings_Option_CmsUnmanaged;
   Settings_Option_CmssRGB = T::Settings_Option_CmssRGB;
   Settings_Option_CmsP3 = T::Settings_Option_CmsP3;
+  Settings_Option_CmsAdobeRGB = T::Settings_Option_CmsAdobeRGB;
+  Settings_Option_CmsGray = T::Settings_Option_CmsGray;
 
   Settings_Action_CheckUpdates = T::Settings_Action_CheckUpdates;
   Settings_Action_ViewUpdate = T::Settings_Action_ViewUpdate;

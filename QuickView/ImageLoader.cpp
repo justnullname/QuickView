@@ -3,7 +3,8 @@
 #include <fstream> 
 #include <memory>
 #include <map>
-
+#include <wincodec.h>
+#include <wincodecsdk.h>
 
 #include "ImageLoader.h"
 #include "MemoryArena.h" // [Fix] Include for QuantumArena definition
@@ -312,6 +313,13 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         int width = tj3Get(handle, TJPARAM_JPEGWIDTH);
         int height = tj3Get(handle, TJPARAM_JPEGHEIGHT);
 
+        // [CMS Fix] If the JPEG is CMYK, TurboJPEG's TJPF_BGRA is naive.
+        // Fall back to WIC which now uses IWICColorTransform for high-fidelity CMS.
+        int colorspace = tj3Get(handle, TJPARAM_COLORSPACE);
+        if (colorspace == TJCS_CMYK || colorspace == TJCS_YCCK) {
+             goto WIC_FALLBACK;
+        }
+
         // [Metadata] Populate Original Dimensions BEFORE Scaling
         if (pMetadata) {
             pMetadata->Width = width;
@@ -417,6 +425,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         return S_OK;
     }
     
+WIC_FALLBACK:
     // For other formats (WIC), we need a Stream.
     // Create IStream from Memory
     ComPtr<IStream> stream = SHCreateMemStream(data, (UINT)size);
@@ -471,12 +480,12 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     // Fallback if no scaler
     ComPtr<IWICBitmapSource> finalSource = sourceWithScaler ? sourceWithScaler : frame;
     
-    // Convert to BitmapSource (Format)
+    // 3. Convert to BitmapSource (Format)
     ComPtr<IWICBitmapSource> sourceConverted;
     WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, finalSource.Get(), &sourceConverted);
-    if (!sourceConverted) sourceConverted = finalSource; // Fallback
-    
-    // [CMS] Extract ICC Profile
+    if (!sourceConverted) sourceConverted = finalSource;
+
+    // 4. [CMS] Extract ICC Profile
     UINT count = 0;
     if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
         std::vector<ComPtr<IWICColorContext>> contexts(count);
@@ -496,10 +505,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
                     contexts[i]->GetProfileBytes(0, nullptr, &cbProfile);
                     if (cbProfile > 0) {
                         outFrame->iccProfile.resize(cbProfile);
-                        if (SUCCEEDED(contexts[i]->GetProfileBytes(cbProfile, outFrame->iccProfile.data(), &cbProfile))) {
-                            break; // Got it
-                        } else {
+                        if (FAILED(contexts[i]->GetProfileBytes(cbProfile, outFrame->iccProfile.data(), &cbProfile))) {
                             outFrame->iccProfile.clear();
+                        } else {
+                            break; // Got it
                         }
                     }
                 }
@@ -507,6 +516,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         }
     }
 
+    // 5. Build Final Frame
     UINT w, h;
     sourceConverted->GetSize(&w, &h);
     outFrame->width = w;
@@ -514,9 +524,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     outFrame->stride = QuickView::CalculateAlignedStride(w, 4);
     outFrame->format = PixelFormat::BGRA8888;
     outFrame->formatDetails = L"WIC Cache";
-    if (sourceWithScaler) {
-        outFrame->srcWidth = (int)origW;   // [v10.1] Preserve original resolution
-        outFrame->srcHeight = (int)origH;
+    
+    if (pMetadata) {
+        pMetadata->Width = (uint32_t)origW;
+        pMetadata->Height = (uint32_t)origH;
     }
     
     size_t bufSize = outFrame->GetBufferSize();
@@ -524,8 +535,8 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         outFrame->pixels = (uint8_t*)arena->Allocate(bufSize, 64);
         outFrame->memoryDeleter = nullptr; 
     } else {
-            outFrame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
-            outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        outFrame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
+        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
     }
     
     if (!outFrame->pixels) return E_OUTOFMEMORY;
