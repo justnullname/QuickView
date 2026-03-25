@@ -1,6 +1,4 @@
-// ============================================================
-// WuffsImpl.cpp - Wuffs Library Implementation (Optimized Build)
-// ============================================================
+#include "pch.h"
 
 // === Module Selection ===
 #define WUFFS_CONFIG__MODULES
@@ -19,17 +17,12 @@
 #define WUFFS_CONFIG__MODULE__QOI
 
 // === Performance Optimizations ===
-#define WUFFS_CONFIG__STATIC_FUNCTIONS  // Inline functions for better optimization
+#define WUFFS_CONFIG__STATIC_FUNCTIONS
 
-// [SIMD] MSVC AVX2 optimization hint
-// Wuffs will use runtime CPUID to enable SSE/AVX/AVX2 automatically
-// This macro silences the pragma message suggesting /arch:AVX
 #ifdef _MSC_VER
 #define WUFFS_CONFIG__I_KNOW_THAT_WUFFS_MSVC_PERFORMS_BEST_WITH_ARCH_AVX2
 #endif
 
-// [DST Format] Only generate code for BGRA variants we actually use
-// Reduces binary size and may improve instruction cache hit rate
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ENABLE_ALLOWLIST
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_NONPREMUL
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGRA_PREMUL
@@ -38,6 +31,15 @@
 #include "../third_party/wuffs/release/c/wuffs-v0.4.c"
 
 #include "WuffsLoader.h"
+#include "../third_party/vcpkg/packages/zlib-ng_x64-windows-static-opt/include/zlib.h"
+
+#ifndef Bytef
+typedef unsigned char Bytef;
+#endif
+#ifndef uLongf
+typedef unsigned long uLongf;
+#endif
+
 #include <vector>
 #include <cstring>
 #include <memory_resource>
@@ -85,6 +87,50 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
                Vec& outPixels,
                CancelPredicate checkCancel,
                WuffsImageInfo* pInfo) {
+    if (!data || size == 0) return false;
+
+    // [CMS] 提取 iCCP 并通过 zlib-ng 解压 (Zero-copy 预扫，无视 Wuffs API 版本限制)
+    if (pInfo && pInfo->iccProfile.empty()) {
+        const uint8_t* p = data;
+        size_t offset = 8; // skip PNG signature
+        while (offset + 12 <= size) {
+            uint32_t chunk_len = (p[offset]<<24) | (p[offset+1]<<16) | (p[offset+2]<<8) | p[offset+3];
+            uint32_t chunk_type = (p[offset+4]<<24) | (p[offset+5]<<16) | (p[offset+6]<<8) | p[offset+7];
+            if (chunk_type == 0x69434350) { // 'iCCP' = 0x69 0x43 0x43 0x50
+                size_t payload_offset = offset + 8;
+                if (payload_offset + chunk_len <= size) {
+                    const uint8_t* payload = p + payload_offset;
+                    // iCCP format: Name(1-79B) + Null(1B) + CompressionFlag(1B=0) + zlib_data
+                    size_t null_idx = 0;
+                    while (null_idx < 80 && null_idx < chunk_len && payload[null_idx] != 0) null_idx++;
+                    if (null_idx < chunk_len - 2 && payload[null_idx] == 0 && payload[null_idx+1] == 0) {
+                        const uint8_t* zlib_data = payload + null_idx + 2;
+                        size_t zlib_len = chunk_len - (null_idx + 2);
+                        
+                        uLongf destLen = 1048576; // Start with 1MB for ICC
+                        pInfo->iccProfile.resize(destLen);
+                        int ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, zlib_len);
+                        if (ret == Z_OK) {
+                            pInfo->iccProfile.resize(destLen);
+                        } else if (ret == Z_BUF_ERROR) {
+                            destLen = 1048576 * 4; // 4MB
+                            pInfo->iccProfile.resize(destLen);
+                            ret = uncompress(pInfo->iccProfile.data(), &destLen, zlib_data, zlib_len);
+                            if (ret == Z_OK) pInfo->iccProfile.resize(destLen);
+                            else pInfo->iccProfile.clear();
+                        } else {
+                            pInfo->iccProfile.clear();
+                        }
+                    }
+                }
+                break;
+            } else if (chunk_type == 0x49444154 || chunk_type == 0x49454E44) { // IDAT, IEND
+                break;
+            }
+            offset += 12 + chunk_len;
+        }
+    }
+
     wuffs_png__decoder dec;
     wuffs_base__status status = wuffs_png__decoder__initialize(
         &dec, sizeof(dec), WUFFS_VERSION,

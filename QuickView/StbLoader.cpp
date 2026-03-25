@@ -11,7 +11,17 @@
 // Keep PSD, HDR, PIC, PNM (stb handles these, Wuffs doesn't fully)
 
 #include "../third_party/stb/stb_image.h"
-#include <zlib.h>
+#include "../third_party/vcpkg/packages/zlib-ng_x64-windows-static-opt/include/zlib.h"
+
+#ifndef Bytef
+typedef unsigned char Bytef;
+#endif
+#ifndef uLongf
+typedef unsigned long uLongf;
+#endif
+#ifndef uLong
+typedef unsigned long uLong;
+#endif
 
 // ----------------------------------------------------------------------------
 // Zlib Shim for TinyEXR (using System Zlib / zlib-ng)
@@ -39,7 +49,7 @@ namespace StbLoader {
 
     bool LoadImage(const char* filename, 
                    int* width, int* height, int* channels, 
-                   std::vector<uint8_t>& outData, bool useFloat) {
+                   std::pmr::vector<uint8_t>& outData, bool useFloat) {
         
         // stbi_load returns data that needs to be freed
         // We want 4 channels (RGBA) forced for simplified handling
@@ -70,7 +80,7 @@ namespace StbLoader {
 
     bool LoadImageFromMemory(const uint8_t* inData, size_t size,
                              int* width, int* height, int* channels, 
-                             std::vector<uint8_t>& outData, bool useFloat) {
+                             std::pmr::vector<uint8_t>& outData, bool useFloat) {
         
         int w, h, c;
         void* data = nullptr;

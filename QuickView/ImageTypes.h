@@ -104,6 +104,8 @@ struct RawImageFrame {
 
     // [v10.2] Embedded ICC Profile Payload
     std::vector<uint8_t> iccProfile;
+    bool is_sRGB = false;        // [CMS] 标记为标准 sRGB
+    bool is_Linear_sRGB = false; // [CMS] 标记为线性 sRGB (HDR)
 
     // [D2D Native] SVG Specific Data (Used only when format == SVG_XML)
     // Use unique_ptr to ensure zero overhead for non-SVG paths
@@ -214,6 +216,8 @@ private:
         srcWidth = other.srcWidth;
         srcHeight = other.srcHeight;
         iccProfile = std::move(other.iccProfile);
+        is_sRGB = other.is_sRGB;
+        is_Linear_sRGB = other.is_Linear_sRGB;
         memoryDeleter = std::move(other.memoryDeleter);
         
         // [D2D Native] Move SVG Data
@@ -228,6 +232,8 @@ private:
         other.srcHeight = 0;
         // other.formatDetails is moved (empty)
         // other.iccProfile is moved (empty)
+        other.is_sRGB = false;
+        other.is_Linear_sRGB = false;
         other.exifOrientation = 1;
         // memoryDeleter is moved, but setting to nullptr for clarity
         // other.svg is moved (becomes nullptr)

@@ -98,6 +98,11 @@ public:
     bool HasSharpness = false;
     bool HasEntropy = false;
 
+    // [CMS] Color Management fallback tags & payload
+    bool is_sRGB = false;
+    bool is_Linear_sRGB = false;
+    std::pmr::vector<uint8_t> iccProfileData; // [CMS] Extracted raw ICC payload
+
     bool IsEmpty() const {
       return Make.empty() && Model.empty() && ISO.empty() && Date.empty();
     }
@@ -162,6 +167,7 @@ public:
 
     // [v5.4] Metadata
     std::wstring FormatDetails;
+    std::pmr::vector<uint8_t> iccProfileData; // [CMS]
   };
 
   // --- NEW: Pre-flight Check Types (v3.1) ---
@@ -449,11 +455,10 @@ private:
                                   ThumbData *pData); // Helper for WebP buffers
 
   // LoadPNG REMOVED - replaced by LoadPngWuffs
-  HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap **ppBitmap); // libwebp
-  HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap **ppBitmap); // libavif + dav1d
-  HRESULT LoadJXL(LPCWSTR filePath, IWICBitmap **ppBitmap);  // libjxl
-  HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                  bool forceFullDecode); // libraw
+  HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr); // libwebp
+  HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr); // libavif + dav1d
+  HRESULT LoadJXL(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr);  // libjxl
+  HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap, bool forceFullDecode, ImageMetadata* pMetadata = nullptr); // libraw
 
   // Wuffs (Google's memory-safe decoder) - Ultimate Performance
   // [v4.0] Cancellation Support
@@ -470,8 +475,7 @@ private:
 
   // Stb Image (Legacy/Special Formats: PSD, HDR, PIC, PNM)
   HRESULT LoadStbImage(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                       bool floatFormat = false);
-
+                       bool floatFormat = false, ImageMetadata* pMetadata = nullptr); // PIC, HDR, PNM, etc.
   // TinyEXR (OpenEXR)
   HRESULT LoadTinyExrImage(LPCWSTR filePath, IWICBitmap **ppBitmap);
 

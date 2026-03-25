@@ -53,6 +53,9 @@ using namespace QuickView;
 // Forward declaration
 static bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer);
 
+// [CMS/PMR] Forward declaration
+static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, std::pmr::memory_resource* mr = nullptr);
+
 // [v6.3] Forward Declaration for JXL Helper
 static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c);
 
@@ -796,6 +799,21 @@ static void PopulateMetadataFromEasyExif_Refined(const easyexif::EXIFInfo& exif,
 
 // Helper to read file to vector
 bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
+    HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    DWORD fileSize = GetFileSize(hFile, nullptr);
+    if (fileSize == INVALID_FILE_SIZE) { CloseHandle(hFile); return false; }
+
+    buffer.resize(fileSize);
+    DWORD bytesRead;
+    BOOL result = ReadFile(hFile, buffer.data(), fileSize, &bytesRead, nullptr);
+    CloseHandle(hFile);
+    return result && bytesRead == fileSize;
+}
+
+// [CMS/PMR] PMR-aware file reader
+static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, std::pmr::memory_resource* mr) {
     HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
 
@@ -3434,9 +3452,9 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
 // ----------------------------------------------------------------------------
 // WebP (libwebp)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
-    std::vector<uint8_t> webpBuf;
-    if (!ReadFileToVector(filePath, webpBuf)) return E_FAIL;
+HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMetadata* pMetadata) {
+    std::pmr::vector<uint8_t> webpBuf(std::pmr::get_default_resource());
+    if (!ReadFileToPMR(filePath, webpBuf, {})) return E_FAIL;
 
     // [v5.0] Unified via Codec
     using namespace QuickView::Codec;
@@ -3458,7 +3476,19 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         if (res.pixels) ctx.freeFunc(res.pixels);
         
         if (SUCCEEDED(hr)) {
-            // Metadata populated in Codec::WebP
+            // [CMS] Use WebPDemux to extract ICC Profile natively
+            if (pMetadata) {
+                WebPData webp_data = { webpBuf.data(), webpBuf.size() };
+                WebPDemuxer* demux = WebPDemux(&webp_data);
+                if (demux) {
+                    WebPChunkIterator chunk_iter;
+                    if (WebPDemuxGetChunk(demux, "ICCP", 1, &chunk_iter)) {
+                        pMetadata->iccProfileData.assign(chunk_iter.chunk.bytes, chunk_iter.chunk.bytes + chunk_iter.chunk.size);
+                        WebPDemuxReleaseChunkIterator(&chunk_iter);
+                    }
+                    WebPDemuxDelete(demux);
+                }
+            }
         }
         return hr;
     }
@@ -3469,12 +3499,12 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // ----------------------------------------------------------------------------
 // AVIF (libavif + dav1d)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMetadata* pMetadata) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
 
     // Read file to memory buffer
-    std::vector<uint8_t> avifBuf;
-    if (!ReadFileToVector(filePath, avifBuf)) return E_FAIL;
+    std::pmr::vector<uint8_t> avifBuf(std::pmr::get_default_resource());
+    if (!ReadFileToPMR(filePath, avifBuf, {})) return E_FAIL;
 
     // Create Decoder
     avifDecoder* decoder = avifDecoderCreate();
@@ -3574,6 +3604,11 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
         swprintf_s(buf, L"%d-bit", depth);
         g_lastFormatDetails = buf;
         if (decoder->image->alphaPlane != nullptr) g_lastFormatDetails += L" +Alpha";
+
+        // [CMS] Extract ICC profile
+        if (pMetadata && decoder->image->icc.data && decoder->image->icc.size > 0) {
+            pMetadata->iccProfileData.assign(decoder->image->icc.data, decoder->image->icc.data + decoder->image->icc.size);
+        }
     }
 
     avifDecoderDestroy(decoder);
@@ -3583,11 +3618,11 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // ----------------------------------------------------------------------------
 // JPEG XL (libjxl)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMetadata* pMetadata) {
     if (!filePath || !ppBitmap) return E_INVALIDARG;
 
-    std::vector<uint8_t> jxlBuf;
-    if (!ReadFileToVector(filePath, jxlBuf)) return E_FAIL;
+    std::pmr::vector<uint8_t> jxlBuf(std::pmr::get_default_resource());
+    if (!ReadFileToPMR(filePath, jxlBuf, {})) return E_FAIL;
 
     // 1. Create Decoder and Runner
     JxlDecoder* dec = JxlDecoderCreate(NULL);
@@ -3602,8 +3637,8 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
     
     JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
 
-    // 2. Subscribe to events
-    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME)) {
+    // 2. Subscribe to events (Drop output color profile override, extract ICC instead)
+    if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE | JXL_DEC_FRAME)) {
         // NOTE: Do NOT destroy global runner!
         JxlDecoderDestroy(dec);
         return E_FAIL;
@@ -3639,14 +3674,7 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
                  hr = E_FAIL; break; 
             }
-            // Force sRGB output color profile
-            JxlColorEncoding color_encoding = {};
-            color_encoding.color_space = JXL_COLOR_SPACE_RGB;
-            color_encoding.white_point = JXL_WHITE_POINT_D65;
-            color_encoding.primaries = JXL_PRIMARIES_SRGB;
-            color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
-            color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
-            JxlDecoderSetOutputColorProfile(dec, &color_encoding, NULL, 0);
+            // Removed Force sRGB output color profile so original color gets preserved.
 
             // [Optimization] Create WIC Bitmap Early and Lock
             hr = m_wicFactory->CreateBitmap(info.xsize, info.ysize, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnDemand, &pWicBitmap);
@@ -3657,6 +3685,16 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
                     UINT bufSize = 0;
                     pLock->GetDataPointer(&bufSize, &pWicBuf);
                     pLock->GetStride(&wicStride);
+                }
+            }
+        }
+        else if (status == JXL_DEC_COLOR_ENCODING) {
+            // [CMS] Extract exact original ICC Profile from JXL Stream
+            if (pMetadata) {
+                size_t icc_size = 0;
+                if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &icc_size) && icc_size > 0) {
+                    pMetadata->iccProfileData.resize(icc_size);
+                    JxlDecoderGetColorAsICCProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA, pMetadata->iccProfileData.data(), icc_size);
                 }
             }
         }
@@ -3719,12 +3757,12 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap) {
 // ----------------------------------------------------------------------------
 // RAW (LibRaw)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forceFullDecode) { 
+HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap** ppBitmap, bool forceFullDecode, ImageMetadata* pMetadata) { 
     // Optimization: Try to load embedded JPEG preview first (FAST)
     // Fallback: Full RAW decode (SLOW)
 
-    std::vector<uint8_t> rawBuf;
-    if (!ReadFileToVector(filePath, rawBuf)) return E_FAIL;
+    std::pmr::vector<uint8_t> rawBuf(std::pmr::get_default_resource());
+    if (!ReadFileToPMR(filePath, rawBuf, {})) return E_FAIL;
 
     LibRaw RawProcessor;
     if (RawProcessor.open_buffer(rawBuf.data(), rawBuf.size()) != LIBRAW_SUCCESS) return E_FAIL;
@@ -5562,8 +5600,8 @@ namespace QuickView {
         namespace Stb {
             static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 int w = 0, h = 0, c = 0;
-                std::vector<uint8_t> out;
-                // STB uses malloc, we use vector wrapper
+                std::pmr::vector<uint8_t> out(std::pmr::get_default_resource());
+                // STB uses malloc, we use pmr wrapper
                 if (StbLoader::LoadImageFromMemory(data, size, &w, &h, &c, out, false)) {
                      // Check if RGB or RGBA? StbLoader wrapper usually forces RGBA (4 channels) if possible or returns raw?
                      // Verify StbLoader implementation?
@@ -6634,17 +6672,22 @@ HRESULT CImageLoader::LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap** ppBitmap, Can
 // ----------------------------------------------------------------------------
 // Stb Image Decoder (PSD, HDR, PIC, PNM)
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadStbImage(LPCWSTR filePath, IWICBitmap** ppBitmap, bool floatFormat) {
+HRESULT CImageLoader::LoadStbImage(LPCWSTR filePath, IWICBitmap** ppBitmap, bool floatFormat, ImageMetadata* pMetadata) {
     // Read file to memory first (Solves Windows Unicode Path issues reliably)
-    std::vector<uint8_t> buf;
-    if (!ReadFileToVector(filePath, buf)) return E_FAIL;
+    std::pmr::vector<uint8_t> buf(std::pmr::get_default_resource());
+    if (!ReadFileToPMR(filePath, buf, {})) return E_FAIL;
 
     int width = 0, height = 0, channels = 0;
-    std::vector<uint8_t> pixelData;
+    std::pmr::vector<uint8_t> pixelData(std::pmr::get_default_resource());
     
     // Use Memory Loader
     if (!StbLoader::LoadImageFromMemory(buf.data(), buf.size(), &width, &height, &channels, pixelData, floatFormat)) {
         return E_FAIL;
+    }
+
+    if (pMetadata) {
+        if (floatFormat) pMetadata->is_Linear_sRGB = true;
+        else pMetadata->is_sRGB = true;
     }
 
     if (floatFormat) {
