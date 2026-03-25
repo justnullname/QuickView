@@ -285,7 +285,9 @@ default:
                     m_colorContextCache[key] = srcContext;
                 }
             }
-        } else {
+        }
+        
+        if (!srcContext) {
              m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
         }
 
@@ -382,10 +384,8 @@ default:
                     m_d2dContext->SetTarget(oldTarget.Get());
 
                     if (SUCCEEDED(endDrawHr)) {
-                        HRESULT copyHr = managedBitmap.CopyTo(outBitmap);
-                        if (SUCCEEDED(copyHr)) {
-                            return S_OK;
-                        }
+                        *outBitmap = managedBitmap.Detach();
+                        return S_OK;
                     }
                 }
             }
