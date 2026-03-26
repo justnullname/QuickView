@@ -4,6 +4,7 @@
 #include <memory>
 #include <dwrite.h>
 #include "ImageTypes.h"  // [Direct D2D] RawImageFrame support
+#include "DisplayColorInfo.h"
 
 #pragma comment(lib, "dwrite.lib")
 
@@ -40,6 +41,8 @@ public:
     HRESULT Initialize(HWND hwnd);
 
     void SetAdvancedColorMode(bool enabled) { m_isAdvancedColor = enabled; }
+    void SetDisplayColorState(const QuickView::DisplayColorState& state) { m_displayColorState = state; }
+    const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorState; }
 
     /// <summary>
     /// Create D2D bitmap from WIC bitmap
@@ -83,6 +86,7 @@ private:
 
     HWND m_hwnd = nullptr;
     bool m_isAdvancedColor = false;
+    QuickView::DisplayColorState m_displayColorState;
 
     // D3D11 resources
     ComPtr<ID3D11Device> m_d3dDevice;

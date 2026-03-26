@@ -84,6 +84,13 @@ void ImageEngine::CancelHeavy() {
     }
 }
 
+void ImageEngine::SetTargetHdrHeadroomStops(float stops) {
+    m_targetHdrHeadroomStops.store(stops, std::memory_order_relaxed);
+    if (m_heavyPool) {
+        m_heavyPool->SetTargetHdrHeadroomStops(stops);
+    }
+}
+
 // Request full resolution decode for current image (used by JXL serial pipeline)
 void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     if (path.empty()) return;
@@ -423,7 +430,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         if (isSmall) {
             OutputDebugStringW(L"[Dispatch] -> JXL Small: FastLane Direct Full\n");
             // FastLane will use target=0 if detected as small
-            m_fastLane.Push(path, imageId);
+            m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
         } 
         else {
             if (enableTitan) {
@@ -490,7 +497,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             wchar_t dbgBuf[128];
             swprintf_s(dbgBuf, L"[Dispatch] -> %s Small (<30ms): FastLane\n", info.format.c_str());
             OutputDebugStringW(dbgBuf);
-            m_fastLane.Push(path, imageId);
+            m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
         } else {
             wchar_t dbgBuf[128];
             swprintf_s(dbgBuf, L"[Dispatch] -> %s Large: Heavy Lane\n", info.format.c_str());
@@ -510,7 +517,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         // Logic: TypeA -> FastLane only. TypeB -> Heavy only.
         // Unknown type -> Parallel (Both).
         OutputDebugStringW(L"[Dispatch] -> FastLane\n");
-        m_fastLane.Push(path, imageId);
+        m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
     }
 }
 
@@ -948,11 +955,11 @@ void ImageEngine::FastLane::Clear() {
     // m_skipCount is not reset here, it accumulates for debug stats.
 }
 
-void ImageEngine::FastLane::Push(const std::wstring& path, ImageID id) {
+void ImageEngine::FastLane::Push(const std::wstring& path, ImageID id, float targetHdrHeadroomStops) {
     if (m_stopSignal) return;
     {
         std::lock_guard lock(m_queueMutex);
-        m_queue.push_back({path, id});
+        m_queue.push_back({path, id, targetHdrHeadroomStops});
         // [v3.1] Simplified Push: No complex anti-explosion here.
         // UpdateView()'s "Ruthless Purge" handles queue depth.
     }
@@ -1051,7 +1058,7 @@ void ImageEngine::FastLane::QueueWorker() {
             // [Unified Logic] SVG uses target=0 like other formats (User Request: Remove 80% special case)
 
             // [Direct D2D] Load directly to RawImageFrame backed by Arena
-            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName);
+            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, nullptr, nullptr, true, false, cmd.targetHdrHeadroomStops);
             
             int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
 
@@ -1329,7 +1336,7 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
             std::lock_guard lock(m_pendingMutex);
             m_pendingPaths.insert(path);
         }
-        m_fastLane.Push(path, ComputePathHash(path));
+        m_fastLane.Push(path, ComputePathHash(path), m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
     } else if (info.type == CImageLoader::ImageType::TypeB_Heavy) {
         // Large image: 
         // Critical: Always submit

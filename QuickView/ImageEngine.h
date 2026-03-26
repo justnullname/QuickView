@@ -86,6 +86,7 @@ public:
     // navToken: [Phase 3] Navigation session token for event filtering
     void NavigateTo(const std::wstring& path, uintmax_t fileSize = 0, uint64_t navToken = 0);
     void SetWindow(HWND hwnd);
+    void SetTargetHdrHeadroomStops(float stops);
     
     // [v3.1] Cancel Heavy Lane when Fast Pass succeeds
     void CancelHeavy();  // Implementation in ImageEngine.cpp
@@ -283,7 +284,7 @@ private:
         // [v3.1] Ruthless Purge: Clear pending queue
         // [v3.1] Ruthless Purge: Clear pending queue
         void Clear();
-        void Push(const std::wstring& path, ImageID id);
+        void Push(const std::wstring& path, ImageID id, float targetHdrHeadroomStops = -1.0f);
         std::optional<EngineEvent> TryPopResult();
         bool IsQueueEmpty() const;
         
@@ -321,6 +322,7 @@ private:
         struct FastLaneCommand {
             std::wstring path;
             ImageID id;
+            float targetHdrHeadroomStops = -1.0f;
         };
         std::deque<FastLaneCommand> m_queue; 
         std::deque<EngineEvent> m_results; 
@@ -337,6 +339,7 @@ private:
     // Tracking
     std::wstring m_currentNavPath;
     std::chrono::steady_clock::time_point m_lastInputTime;
+    std::atomic<float> m_targetHdrHeadroomStops{ -1.0f };
     
     // [v3.1]
     std::atomic<bool> m_hasEmbeddedThumb = false;

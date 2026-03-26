@@ -5,6 +5,17 @@
 
 extern AppConfig g_config;
 
+namespace {
+static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale) {
+    const float scale = (std::max)(1.0f, hdrWhiteScale);
+    return D2D1::ColorF(
+        (std::max)(0.0f, color.r * scale),
+        (std::max)(0.0f, color.g * scale),
+        (std::max)(0.0f, color.b * scale),
+        color.a);
+}
+}
+
 HelpOverlay::HelpOverlay() {
 }
 
@@ -31,14 +42,25 @@ void HelpOverlay::SetUIScale(float scale) {
 
 void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     if (!m_brushBg) {
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.96f), &m_brushBg);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &m_brushText);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), &m_brushHeader);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), &m_brushKey);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), &m_brushBorder);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &m_brushScrollBg);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), &m_brushScrollThumb);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.2f, 0.2f, 0.8f), &m_brushCloseBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.96f), m_hdrWhiteScale), &m_brushBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushText);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushHeader);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), m_hdrWhiteScale), &m_brushKey);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), m_hdrWhiteScale), &m_brushBorder);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale), &m_brushScrollBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale), &m_brushScrollThumb);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 0.2f, 0.2f, 0.8f), m_hdrWhiteScale), &m_brushCloseBg);
+    }
+
+    if (m_brushBg) {
+        m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.96f), m_hdrWhiteScale));
+        m_brushText->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
+        m_brushHeader->SetColor(ScaleUiColor(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale));
+        m_brushKey->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), m_hdrWhiteScale));
+        m_brushBorder->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), m_hdrWhiteScale));
+        m_brushScrollBg->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale));
+        m_brushScrollThumb->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale));
+        m_brushCloseBg->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 0.2f, 0.2f, 0.8f), m_hdrWhiteScale));
     }
 
     if (!m_dwriteFactory) {

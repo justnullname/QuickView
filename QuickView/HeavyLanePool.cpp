@@ -519,8 +519,9 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     job.type = JobType::Standard;
     job.path = path;
     job.imageId = imageId;
-    job.submitTime = std::chrono::steady_clock::now(); 
+    job.submitTime = std::chrono::steady_clock::now();
     job.mmf = mmf;
+    job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
     // Non-Titan: full decode only (JPEG upgrade path removed). Titan: scaled base layer.
     job.isFullDecode = !m_isTitanMode;
     job.priority = 200; 
@@ -540,8 +541,9 @@ void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, 
     job.type = JobType::Standard;
     job.path = path;
     job.imageId = imageId;
-    job.submitTime = std::chrono::steady_clock::now(); 
+    job.submitTime = std::chrono::steady_clock::now();
     job.mmf = mmf; 
+    job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
     job.isFullDecode = true; 
     job.priority = 150; 
     job.genID = m_generationID.load();
@@ -567,8 +569,9 @@ void HeavyLanePool::SubmitTile(const std::wstring& path, ImageID imageId, std::s
     job.type = JobType::Tile;
     job.path = path;
     job.imageId = imageId;
-    job.submitTime = std::chrono::steady_clock::now(); 
+    job.submitTime = std::chrono::steady_clock::now();
     job.mmf = mmf; 
+    job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
     job.tileCoord = coord;
     job.region = region;
     job.priority = priority; 
@@ -605,6 +608,7 @@ void HeavyLanePool::SubmitPriorityTileBatch(const std::wstring& path, ImageID im
         job.path = path;
         job.imageId = imageId;
         job.mmf = mmf;
+        job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
         job.submitTime = std::chrono::steady_clock::now();
         job.tileCoord = item.coord;
         job.region = item.region;
@@ -649,6 +653,7 @@ void HeavyLanePool::SubmitTileBatch(const std::wstring& path, ImageID imageId, s
         job.imageId = imageId;
         job.submitTime = std::chrono::steady_clock::now();
         job.mmf = mmf;
+        job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
         
         job.tileCoord = item.first;
         job.region = item.second;
@@ -1235,13 +1240,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
                    if (FAILED(hr)) {
                        // Fallback to file if MMF fails (shouldn't happen if valid)
-                       hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode);
+                       hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
                    } else {
                        // MMF Decode Success -> Trigger Touch-Up Prefetch!
                        TriggerPrefetch(job.mmf);
                    }
               } else {
-                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode);
+                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
               }
               } // end FAILED(hr) inline fallback
               // [Baseline Benchmark] Measure performance from Standard (base layer) decode
@@ -1989,7 +1994,7 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                     return st.stop_requested() ||
                            m_generationID.load(std::memory_order_acquire) != warmupGen;
                 };
-                hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, cancelPred, nullptr);
+                hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, cancelPred, nullptr, true, false, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
             }
 
             if (st.stop_requested()) return;
@@ -2841,7 +2846,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             if (!warmupResolved && FAILED(hr)) {
                 const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                 const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
-                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr);
+                hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops);
                 if (SUCCEEDED(hr)) {
                     loader = L"WIC(LOD-Fallback)";
                     OutputDebugStringW(L"[Phase4] Inline WIC fallback succeeded\n");

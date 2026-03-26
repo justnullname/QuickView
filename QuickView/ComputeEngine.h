@@ -10,6 +10,13 @@ using Microsoft::WRL::ComPtr;
 
 namespace QuickView {
 
+struct ToneMapSettings {
+    float contentPeakScRgb = 1.0f;
+    float displayPeakScRgb = 1.0f;
+    float paperWhiteScRgb = 1.0f;
+    float exposure = 1.0f;
+};
+
 // ============================================================================
 // ComputeEngine - GPU Acceleration for Image Processing
 // ============================================================================
@@ -53,6 +60,15 @@ public:
                              ID3D11Texture2D** outTexture);
 
     /// <summary>
+    /// Tone map a linear HDR float buffer into SDR BGRA8 on the GPU.
+    /// Input is expected to be RGBA float with scene-linear values where 1.0
+    /// represents SDR reference white.
+    /// </summary>
+    HRESULT ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height,
+                           int stride, const ToneMapSettings& settings,
+                           ID3D11Texture2D** outTexture);
+
+    /// <summary>
     /// Generate Mipmaps for a texture.
     /// </summary>
     HRESULT GenerateMips(ID3D11Texture2D* pTexture);
@@ -65,6 +81,8 @@ private:
     // Shader Cache
     ComPtr<ID3D11ComputeShader> m_csFormatConvert;
     ComPtr<ID3D11ComputeShader> m_csGenMips;
+    ComPtr<ID3D11ComputeShader> m_csToneMapHdrToSdr;
+    ComPtr<ID3D11Buffer> m_toneMapConstantBuffer;
 
     // Helper: Compile Embedded Shaders
     HRESULT CompileShaders();

@@ -102,6 +102,7 @@ public:
     bool is_sRGB = false;
     bool is_Linear_sRGB = false;
     std::pmr::vector<uint8_t> iccProfileData; // [CMS] Extracted raw ICC payload
+    QuickView::HdrStaticMetadata hdrMetadata;
 
     bool IsEmpty() const {
       return Make.empty() && Model.empty() && ISO.empty() && Date.empty();
@@ -307,7 +308,8 @@ public:
                       int targetHeight = 0, std::wstring *pLoaderName = nullptr,
                       CancelPredicate checkCancel = nullptr,
                       ImageMetadata *pMetadata = nullptr,
-                      bool allowFakeBase = true, bool isTitanMode = false);
+                      bool allowFakeBase = true, bool isTitanMode = false,
+                      float targetHdrHeadroomStops = -1.0f);
 
   /// <summary>
   /// [Optimization] Load full image from memory pointer (for MMF Preload) with

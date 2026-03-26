@@ -5,6 +5,17 @@
 
 extern AppConfig g_config;
 
+namespace {
+static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale) {
+  const float scale = (std::max)(1.0f, hdrWhiteScale);
+  return D2D1::ColorF(
+      (std::max)(0.0f, color.r * scale),
+      (std::max)(0.0f, color.g * scale),
+      (std::max)(0.0f, color.b * scale),
+      color.a);
+}
+}
+
 // Icon Codes (Segoe Fluent Icons)
 #define ICON_PREV L"\uE76B"
 #define ICON_NEXT L"\uE76C"
@@ -90,17 +101,17 @@ void Toolbar::SetUIScale(float scale) {
 
 void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
   if (!m_brushBg) {
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.85f),
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.85f), m_hdrWhiteScale),
                                &m_brushBg); // Dark background
-    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale),
                                &m_brushIcon);
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f),
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale),
                                &m_brushIconActive); // Blue for active
-    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f),
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale),
                                &m_brushIconDisabled);
-    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f),
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f), m_hdrWhiteScale),
                                &m_brushWarning); // Red for warning
-    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f),
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale),
                                &m_brushHover); // Hover highlight
 
     // Font
@@ -371,6 +382,13 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
   CreateResources(pRT);
 
+  m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.85f), m_hdrWhiteScale));
+  m_brushIcon->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
+  m_brushIconActive->SetColor(ScaleUiColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale));
+  m_brushIconDisabled->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale));
+  m_brushWarning->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f), m_hdrWhiteScale));
+  m_brushHover->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale));
+
   ComPtr<ID2D1Layer> layer;
   if (SUCCEEDED(pRT->CreateLayer(&layer))) {
     D2D1_LAYER_PARAMETERS params = D2D1::LayerParameters();
@@ -526,7 +544,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         if (tipX < 5.0f * m_uiScale) tipX = 5.0f * m_uiScale;
         D2D1_RECT_F tipRect = D2D1::RectF(tipX, tipY, tipX + tipWidth, tipY + tipHeight);
         ComPtr<ID2D1SolidColorBrush> tipBg;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f), &tipBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f), m_hdrWhiteScale), &tipBg);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f * m_uiScale, 4.0f * m_uiScale), tipBg.Get());
         pRT->DrawText(tipText, (UINT32)tipLen, tooltipFormat.Get(), tipRect, m_brushIcon.Get());
       }

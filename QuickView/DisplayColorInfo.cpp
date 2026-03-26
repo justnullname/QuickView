@@ -1,0 +1,189 @@
+#include "pch.h"
+#include "DisplayColorInfo.h"
+
+#include <vector>
+
+namespace QuickView {
+
+namespace {
+
+bool IsHdrColorSpace(DXGI_COLOR_SPACE_TYPE colorSpace) {
+    return colorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 ||
+           colorSpace == DXGI_COLOR_SPACE_RGB_STUDIO_G2084_NONE_P2020 ||
+           colorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+}
+
+HMONITOR GetWindowCenterMonitor(HWND hwnd) {
+    if (!hwnd) {
+        return nullptr;
+    }
+
+    RECT windowRect = {};
+    if (!GetWindowRect(hwnd, &windowRect)) {
+        return MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    }
+
+    const POINT center = {
+        windowRect.left + (windowRect.right - windowRect.left) / 2,
+        windowRect.top + (windowRect.bottom - windowRect.top) / 2
+    };
+    return MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+}
+
+} // namespace
+
+bool DisplayColorInfo::Refresh(HWND hwnd) {
+    HMONITOR monitor = GetWindowCenterMonitor(hwnd);
+    DisplayColorState nextState = {};
+    if (!QueryMonitorState(monitor, &nextState)) {
+        nextState.monitor = monitor;
+        nextState.sdrWhiteLevelNits = 80.0f;
+    }
+
+    const bool changed =
+        m_state.monitor != nextState.monitor ||
+        m_state.advancedColorActive != nextState.advancedColorActive ||
+        m_state.advancedColorSupported != nextState.advancedColorSupported ||
+        m_state.colorSpace != nextState.colorSpace ||
+        std::abs(m_state.maxLuminanceNits - nextState.maxLuminanceNits) > 0.01f ||
+        std::abs(m_state.maxFullFrameLuminanceNits - nextState.maxFullFrameLuminanceNits) > 0.01f ||
+        std::abs(m_state.sdrWhiteLevelNits - nextState.sdrWhiteLevelNits) > 0.01f ||
+        m_state.gdiDeviceName != nextState.gdiDeviceName;
+
+    m_state = std::move(nextState);
+    return changed;
+}
+
+bool DisplayColorInfo::QueryMonitorState(HMONITOR monitor, DisplayColorState* stateOut) {
+    DisplayColorInfo helper;
+    return helper.QueryForMonitor(monitor, stateOut);
+}
+
+bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stateOut) {
+    if (!stateOut) return false;
+
+    *stateOut = {};
+    stateOut->monitor = monitor;
+    stateOut->sdrWhiteLevelNits = 80.0f;
+
+    ComPtr<IDXGIFactory6> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        return false;
+    }
+
+    for (UINT adapterIndex = 0;; ++adapterIndex) {
+        ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(adapterIndex, &adapter) == DXGI_ERROR_NOT_FOUND) {
+            break;
+        }
+
+        for (UINT outputIndex = 0;; ++outputIndex) {
+            ComPtr<IDXGIOutput> output;
+            if (adapter->EnumOutputs(outputIndex, &output) == DXGI_ERROR_NOT_FOUND) {
+                break;
+            }
+
+            DXGI_OUTPUT_DESC outputDesc = {};
+            if (FAILED(output->GetDesc(&outputDesc)) || outputDesc.Monitor != monitor) {
+                continue;
+            }
+
+            stateOut->isValid = true;
+            stateOut->gdiDeviceName = outputDesc.DeviceName;
+
+            ComPtr<IDXGIOutput6> output6;
+            if (SUCCEEDED(output.As(&output6))) {
+                DXGI_OUTPUT_DESC1 desc1 = {};
+                if (SUCCEEDED(output6->GetDesc1(&desc1))) {
+                    stateOut->colorSpace = desc1.ColorSpace;
+                    stateOut->minLuminanceNits = desc1.MinLuminance;
+                    stateOut->maxLuminanceNits = desc1.MaxLuminance;
+                    stateOut->maxFullFrameLuminanceNits = desc1.MaxFullFrameLuminance;
+                    stateOut->advancedColorActive = IsHdrColorSpace(desc1.ColorSpace);
+                    stateOut->advancedColorSupported =
+                        stateOut->advancedColorActive || desc1.MaxLuminance > 0.0f;
+                }
+            }
+
+            stateOut->sdrWhiteLevelNits = QuerySdrWhiteLevelNits(stateOut->gdiDeviceName);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+float DisplayColorInfo::QuerySdrWhiteLevelNits(const std::wstring& gdiDeviceName) const {
+    if (gdiDeviceName.empty()) {
+        return 80.0f;
+    }
+
+    UINT32 pathCount = 0;
+    UINT32 modeCount = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount) != ERROR_SUCCESS) {
+        return 80.0f;
+    }
+
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount, modes.data(), nullptr) != ERROR_SUCCESS) {
+        return 80.0f;
+    }
+
+    for (UINT32 i = 0; i < pathCount; ++i) {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName = {};
+        sourceName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+        sourceName.header.size = sizeof(sourceName);
+        sourceName.header.adapterId = paths[i].sourceInfo.adapterId;
+        sourceName.header.id = paths[i].sourceInfo.id;
+
+        if (DisplayConfigGetDeviceInfo(&sourceName.header) != ERROR_SUCCESS) {
+            continue;
+        }
+
+        if (gdiDeviceName != sourceName.viewGdiDeviceName) {
+            continue;
+        }
+
+        DISPLAYCONFIG_SDR_WHITE_LEVEL whiteLevel = {};
+        whiteLevel.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+        whiteLevel.header.size = sizeof(whiteLevel);
+        whiteLevel.header.adapterId = paths[i].targetInfo.adapterId;
+        whiteLevel.header.id = paths[i].targetInfo.id;
+
+        if (DisplayConfigGetDeviceInfo(&whiteLevel.header) == ERROR_SUCCESS) {
+            return 80.0f * static_cast<float>(whiteLevel.SDRWhiteLevel) / 1000.0f;
+        }
+
+        break;
+    }
+
+    return 80.0f;
+}
+
+const wchar_t* ToString(TransferFunction value) {
+    switch (value) {
+        case TransferFunction::SRGB: return L"sRGB";
+        case TransferFunction::Linear: return L"Linear";
+        case TransferFunction::PQ: return L"PQ";
+        case TransferFunction::HLG: return L"HLG";
+        case TransferFunction::Gamma22: return L"Gamma 2.2";
+        case TransferFunction::Gamma28: return L"Gamma 2.8";
+        case TransferFunction::Rec709: return L"Rec.709";
+        default: return L"Unknown";
+    }
+}
+
+const wchar_t* ToString(ColorPrimaries value) {
+    switch (value) {
+        case ColorPrimaries::SRGB: return L"sRGB";
+        case ColorPrimaries::DisplayP3: return L"Display P3";
+        case ColorPrimaries::Rec2020: return L"Rec.2020";
+        case ColorPrimaries::AdobeRGB: return L"Adobe RGB";
+        case ColorPrimaries::ProPhotoRGB: return L"ProPhoto RGB";
+        case ColorPrimaries::ACES: return L"ACES";
+        default: return L"Unknown";
+    }
+}
+
+} // namespace QuickView

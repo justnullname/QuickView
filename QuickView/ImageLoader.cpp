@@ -3,6 +3,7 @@
 #include <fstream> 
 #include <memory>
 #include <map>
+#include <DirectXPackedVector.h>
 #include <wincodec.h>
 #include <wincodecsdk.h>
 
@@ -58,6 +59,25 @@ static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, s
 
 // [v6.3] Forward Declaration for JXL Helper
 static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c);
+static QuickView::TransferFunction MapJxlTransferFunction(JxlTransferFunction tf);
+static QuickView::ColorPrimaries MapJxlPrimaries(JxlPrimaries primaries);
+static QuickView::TransferFunction MapAvifTransferFunction(uint8_t tf);
+static QuickView::ColorPrimaries MapAvifPrimaries(uint16_t primaries);
+static void PopulateAvifHdrStaticMetadata(const avifImage* image, QuickView::HdrStaticMetadata* hdrMetadata);
+static float DecodePqToLinearScRgb(float value);
+static float DecodeHlgToLinear(float value);
+static float DecodeSrgbToLinear(float value);
+static float DecodeRec709ToLinear(float value);
+static float DecodeTransferToLinear(float value, QuickView::TransferFunction tf);
+static bool TryDecodeAvifGainMappedLinearRGBA(
+    avifDecoder* decoder,
+    const QuickView::Codec::DecodeContext& ctx,
+    uint8_t** outPixels,
+    int* outWidth,
+    int* outHeight,
+    int* outStride,
+    QuickView::HdrStaticMetadata* hdrMetadata,
+    std::wstring* formatDetails);
 
 // [Fast Header] AVIF/HEIC dimension probes (implemented later in this file)
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
@@ -109,6 +129,7 @@ namespace QuickView {
             int targetHeight = 0;
             PixelFormat format = PixelFormat::BGRA8888; // Preferred Output Format
             bool forcePreview = false; // Force fast preview (e.g. JXL/Embedded Thumb)
+            float targetHdrHeadroomStops = -1.0f; // < 0 = codec default
 
             // [v5.3] Telemetry Output - backward compatible
             std::wstring* pLoaderName = nullptr;
@@ -3609,6 +3630,15 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
         if (pMetadata && decoder->image->icc.data && decoder->image->icc.size > 0) {
             pMetadata->iccProfileData.assign(decoder->image->icc.data, decoder->image->icc.data + decoder->image->icc.size);
         }
+        if (pMetadata) {
+            PopulateAvifHdrStaticMetadata(decoder->image, &pMetadata->hdrMetadata);
+            if (decoder->image->gainMap) {
+                g_lastFormatDetails += L" [GainMap]";
+            }
+            if (decoder->image->clli.maxCLL > 0 || decoder->image->clli.maxPALL > 0) {
+                g_lastFormatDetails += L" [CLLI]";
+            }
+        }
     }
 
     avifDecoderDestroy(decoder);
@@ -3695,6 +3725,19 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMeta
                 if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &icc_size) && icc_size > 0) {
                     pMetadata->iccProfileData.resize(icc_size);
                     JxlDecoderGetColorAsICCProfile(dec, JXL_COLOR_PROFILE_TARGET_DATA, pMetadata->iccProfileData.data(), icc_size);
+                }
+
+                JxlColorEncoding colorEncoding = {};
+                if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &colorEncoding)) {
+                    pMetadata->hdrMetadata.isValid = true;
+                    pMetadata->hdrMetadata.transfer = MapJxlTransferFunction(colorEncoding.transfer_function);
+                    pMetadata->hdrMetadata.primaries = MapJxlPrimaries(colorEncoding.primaries);
+                    pMetadata->hdrMetadata.isSceneLinear =
+                        (pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::Linear);
+                    pMetadata->hdrMetadata.isHdr =
+                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
+                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::HLG ||
+                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::Linear;
                 }
             }
         }
@@ -3904,10 +3947,20 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         HRESULT hr = LoadWebP(filePath, ppBitmap);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libwebp"; return S_OK; }
     }
-    else if (detectedFmt == L"AVIF" || 
-             ((detectedFmt == L"HEIC" || detectedFmt == L"Unknown") && (path.ends_with(L".avif") || path.ends_with(L".avifs")))) {
+    else if (detectedFmt == L"AVIF" ||
+             detectedFmt == L"HEIC" ||
+             ((detectedFmt == L"Unknown") &&
+              (path.ends_with(L".avif") || path.ends_with(L".avifs") ||
+               path.ends_with(L".heic") || path.ends_with(L".heif")))) {
         HRESULT hr = LoadAVIF(filePath, ppBitmap);
-        if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libavif"; return S_OK; }
+        if (SUCCEEDED(hr)) {
+            if (pLoaderName) {
+                *pLoaderName = (detectedFmt == L"HEIC" || path.ends_with(L".heic") || path.ends_with(L".heif"))
+                    ? L"libavif/HEIF"
+                    : L"libavif";
+            }
+            return S_OK;
+        }
     }
     else if (detectedFmt == L"JXL") {
         HRESULT hr = LoadJXL(filePath, ppBitmap);
@@ -4641,6 +4694,10 @@ namespace QuickView {
                 }
 
                 JxlBasicInfo info = {};
+                JxlColorEncoding encodedColor = {};
+                bool useFloatOutput = false;
+                QuickView::TransferFunction transfer = QuickView::TransferFunction::Unknown;
+                QuickView::ColorPrimaries primaries = QuickView::ColorPrimaries::Unknown;
                 // Default RGBA
                 JxlPixelFormat format = { 4, JXL_TYPE_UINT8, JXL_LITTLE_ENDIAN, 0 };
 
@@ -4733,6 +4790,29 @@ namespace QuickView {
                                  }
                              }
                          }
+
+                         if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &encodedColor)) {
+                             transfer = MapJxlTransferFunction(encodedColor.transfer_function);
+                             primaries = MapJxlPrimaries(encodedColor.primaries);
+                             useFloatOutput =
+                                 !ctx.forcePreview &&
+                                 (transfer == QuickView::TransferFunction::Linear ||
+                                  transfer == QuickView::TransferFunction::PQ ||
+                                  transfer == QuickView::TransferFunction::HLG ||
+                                  info.bits_per_sample > 8);
+
+                             if (ctx.pMetadata) {
+                                 ctx.pMetadata->hdrMetadata.isValid = true;
+                                 ctx.pMetadata->hdrMetadata.transfer = transfer;
+                                 ctx.pMetadata->hdrMetadata.primaries = primaries;
+                                 ctx.pMetadata->hdrMetadata.isSceneLinear = (transfer == QuickView::TransferFunction::Linear);
+                                 ctx.pMetadata->hdrMetadata.isHdr =
+                                     transfer == QuickView::TransferFunction::Linear ||
+                                     transfer == QuickView::TransferFunction::PQ ||
+                                     transfer == QuickView::TransferFunction::HLG ||
+                                     info.bits_per_sample > 8;
+                             }
+                         }
                      }
                      
                      // [v6.2] Handle EXIF Box
@@ -4817,6 +4897,10 @@ namespace QuickView {
                         // else: not forcePreview, ignore DC event and continue to full decode
                     }
                     else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+                        if (useFloatOutput) {
+                            format.data_type = JXL_TYPE_FLOAT;
+                        }
+
                         size_t bufferSize = 0;
                         if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &format, &bufferSize)) {
                              JxlDecoderDestroy(dec); if (ctx.freeFunc && pixels) ctx.freeFunc(pixels); return E_FAIL;
@@ -4905,21 +4989,37 @@ namespace QuickView {
                         
                         // Success
                         JxlDecoderDestroy(dec);
-                        // [v8.6] Fix: JXL outputs RGBA Straight, D2D needs BGRA Premultiplied.
-                        // Solve "Red Car becomes Blue" and Alpha blending artifacts.
-                        SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pixels, (size_t)finalW * finalH);
-
                         result.pixels = pixels;
                         result.width = finalW;
                         result.height = finalH;
-                        result.stride = finalW * 4; 
-                        result.format = PixelFormat::BGRA8888; // Now Corrected to BGRA
+                        if (useFloatOutput) {
+                            float* pf = reinterpret_cast<float*>(pixels);
+                            const size_t pixelCount = static_cast<size_t>(finalW) * finalH;
+                            for (size_t i = 0; i < pixelCount; ++i) {
+                                pf[i * 4 + 0] = DecodeTransferToLinear(pf[i * 4 + 0], transfer);
+                                pf[i * 4 + 1] = DecodeTransferToLinear(pf[i * 4 + 1], transfer);
+                                pf[i * 4 + 2] = DecodeTransferToLinear(pf[i * 4 + 2], transfer);
+                            }
+                            result.stride = finalW * 16;
+                            result.format = PixelFormat::R32G32B32A32_FLOAT;
+                            result.metadata.is_Linear_sRGB = true;
+                            result.metadata.hdrMetadata.isSceneLinear = true;
+                        } else {
+                            // [v8.6] Fix: JXL outputs RGBA Straight, D2D needs BGRA Premultiplied.
+                            SIMDUtils::SwizzleRGBA_to_BGRA_Premul(pixels, (size_t)finalW * finalH);
+                            result.stride = finalW * 4;
+                            result.format = PixelFormat::BGRA8888;
+                        }
                         result.success = true;
                         
                         // [v5.3] Fill metadata directly
                         result.metadata.FormatDetails = L"JXL";
                         if (status == JXL_DEC_PREVIEW_IMAGE) result.metadata.FormatDetails += L" (Preview)";
                         if (info.have_animation) result.metadata.FormatDetails += L" [Anim]";
+                        result.metadata.hdrMetadata.isValid = true;
+                        result.metadata.hdrMetadata.transfer = transfer;
+                        result.metadata.hdrMetadata.primaries = primaries;
+                        result.metadata.hdrMetadata.isHdr = useFloatOutput;
                         
                         // [v6.2] Parse Captured EXIF
                         if (!jxlExifBuffer.empty() && result.metadata.IsEmpty()) {
@@ -4964,6 +5064,237 @@ namespace QuickView {
             }
 
         } // namespace JXL
+
+        namespace AVIF {
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                avifDecoder* decoder = avifDecoderCreate();
+                if (!decoder) return E_OUTOFMEMORY;
+
+                decoder->strictFlags = AVIF_STRICT_DISABLED;
+                const unsigned int threads = std::thread::hardware_concurrency();
+                decoder->maxThreads = threads > 0 ? threads : 4;
+
+                avifResult avifHr = avifDecoderSetIOMemory(decoder, data, size);
+                if (avifHr != AVIF_RESULT_OK) {
+                    avifDecoderDestroy(decoder);
+                    return E_FAIL;
+                }
+
+                avifHr = avifDecoderParse(decoder);
+                if (avifHr != AVIF_RESULT_OK) {
+                    avifDecoderDestroy(decoder);
+                    return E_FAIL;
+                }
+
+                avifHr = avifDecoderNextImage(decoder);
+                if (avifHr != AVIF_RESULT_OK) {
+                    avifDecoderDestroy(decoder);
+                    return E_FAIL;
+                }
+
+                const int origW = decoder->image->width;
+                const int origH = decoder->image->height;
+
+                if (ctx.targetWidth > 0 && ctx.targetHeight > 0 &&
+                    (origW > ctx.targetWidth || origH > ctx.targetHeight)) {
+                    const double scale = (std::min)(
+                        static_cast<double>(ctx.targetWidth) / (std::max)(1, origW),
+                        static_cast<double>(ctx.targetHeight) / (std::max)(1, origH));
+                    if (scale > 0.0 && scale < 1.0) {
+                        const uint32_t scaledW = (std::max)(1u, static_cast<uint32_t>(origW * scale + 0.5));
+                        const uint32_t scaledH = (std::max)(1u, static_cast<uint32_t>(origH * scale + 0.5));
+                        avifImageScale(decoder->image, scaledW, scaledH, &decoder->diag);
+                    }
+                }
+
+                const QuickView::TransferFunction transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
+                const QuickView::ColorPrimaries primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
+                const bool useFloatOutput =
+                    decoder->image->gainMap != nullptr ||
+                    transfer == QuickView::TransferFunction::Linear ||
+                    transfer == QuickView::TransferFunction::PQ ||
+                    transfer == QuickView::TransferFunction::HLG ||
+                    decoder->image->depth > 8;
+
+                if (useFloatOutput) {
+                    if (decoder->image->gainMap) {
+                        uint8_t* gainMappedPixels = nullptr;
+                        int gainMappedWidth = 0;
+                        int gainMappedHeight = 0;
+                        int gainMappedStride = 0;
+                        std::wstring gainMapFormatDetails;
+                        if (TryDecodeAvifGainMappedLinearRGBA(
+                                decoder,
+                                ctx,
+                                &gainMappedPixels,
+                                &gainMappedWidth,
+                                &gainMappedHeight,
+                                &gainMappedStride,
+                                &result.metadata.hdrMetadata,
+                                &gainMapFormatDetails)) {
+                            result.pixels = gainMappedPixels;
+                            result.width = gainMappedWidth;
+                            result.height = gainMappedHeight;
+                            result.stride = gainMappedStride;
+                            result.format = PixelFormat::R32G32B32A32_FLOAT;
+                            result.success = true;
+                            result.metadata.LoaderName = L"libavif (Unified HDR GainMap)";
+                            result.metadata.Width = origW;
+                            result.metadata.Height = origH;
+                            result.metadata.is_Linear_sRGB = true;
+                            if (decoder->image->icc.data && decoder->image->icc.size > 0) {
+                                result.metadata.iccProfileData.assign(
+                                    decoder->image->icc.data,
+                                    decoder->image->icc.data + decoder->image->icc.size);
+                            }
+                            result.metadata.FormatDetails = gainMapFormatDetails;
+                            avifDecoderDestroy(decoder);
+                            return S_OK;
+                        }
+                    }
+
+                    avifRGBImage rgb;
+                    avifRGBImageSetDefaults(&rgb, decoder->image);
+                    rgb.format = AVIF_RGB_FORMAT_RGBA;
+                    rgb.depth = 16;
+                    rgb.alphaPremultiplied = AVIF_FALSE;
+                    rgb.maxThreads = decoder->maxThreads;
+
+                    avifHr = avifRGBImageAllocatePixels(&rgb);
+                    if (avifHr != AVIF_RESULT_OK) {
+                        avifDecoderDestroy(decoder);
+                        return E_OUTOFMEMORY;
+                    }
+
+                    avifHr = avifImageYUVToRGB(decoder->image, &rgb);
+                    if (avifHr != AVIF_RESULT_OK) {
+                        avifRGBImageFreePixels(&rgb);
+                        avifDecoderDestroy(decoder);
+                        return E_FAIL;
+                    }
+
+                    const int width = rgb.width;
+                    const int height = rgb.height;
+                    const int stride = CalculateSIMDAlignedStride(width, 16);
+                    uint8_t* pixels = ctx.allocator(static_cast<size_t>(stride) * height);
+                    if (!pixels) {
+                        avifRGBImageFreePixels(&rgb);
+                        avifDecoderDestroy(decoder);
+                        return E_OUTOFMEMORY;
+                    }
+
+                    for (int y = 0; y < height; ++y) {
+                        float* dst = reinterpret_cast<float*>(pixels + static_cast<size_t>(y) * stride);
+                        const uint16_t* src = reinterpret_cast<const uint16_t*>(rgb.pixels + static_cast<size_t>(y) * rgb.rowBytes);
+                        for (int x = 0; x < width; ++x) {
+                            const float r = src[x * 4 + 0] / 65535.0f;
+                            const float g = src[x * 4 + 1] / 65535.0f;
+                            const float b = src[x * 4 + 2] / 65535.0f;
+                            const float a = src[x * 4 + 3] / 65535.0f;
+                            dst[x * 4 + 0] = DecodeTransferToLinear(r, transfer);
+                            dst[x * 4 + 1] = DecodeTransferToLinear(g, transfer);
+                            dst[x * 4 + 2] = DecodeTransferToLinear(b, transfer);
+                            dst[x * 4 + 3] = a;
+                        }
+                    }
+
+                    result.pixels = pixels;
+                    result.width = width;
+                    result.height = height;
+                    result.stride = stride;
+                    result.format = PixelFormat::R32G32B32A32_FLOAT;
+                    result.success = true;
+                    result.metadata.LoaderName = L"libavif (Unified HDR)";
+                    result.metadata.Width = origW;
+                    result.metadata.Height = origH;
+                    result.metadata.is_Linear_sRGB = true;
+                    PopulateAvifHdrStaticMetadata(decoder->image, &result.metadata.hdrMetadata);
+                    result.metadata.hdrMetadata.isSceneLinear = true;
+                    result.metadata.hdrMetadata.isHdr = true;
+                    if (decoder->image->icc.data && decoder->image->icc.size > 0) {
+                        result.metadata.iccProfileData.assign(
+                            decoder->image->icc.data,
+                            decoder->image->icc.data + decoder->image->icc.size);
+                    }
+
+                    wchar_t fmtBuf[128];
+                    swprintf_s(fmtBuf, L"%d-bit HDR AVIF", decoder->image->depth);
+                    result.metadata.FormatDetails = fmtBuf;
+                    if (decoder->image->clli.maxCLL > 0 || decoder->image->clli.maxPALL > 0) {
+                        result.metadata.FormatDetails += L" [CLLI]";
+                    }
+                    if (decoder->image->gainMap) {
+                        result.metadata.FormatDetails += L" [GainMap]";
+                    }
+
+                    avifRGBImageFreePixels(&rgb);
+                    avifDecoderDestroy(decoder);
+                    return S_OK;
+                }
+
+                avifRGBImage rgb;
+                avifRGBImageSetDefaults(&rgb, decoder->image);
+                rgb.format = AVIF_RGB_FORMAT_BGRA;
+                rgb.depth = 8;
+                rgb.alphaPremultiplied = AVIF_TRUE;
+                rgb.maxThreads = decoder->maxThreads;
+
+                avifHr = avifRGBImageAllocatePixels(&rgb);
+                if (avifHr != AVIF_RESULT_OK) {
+                    avifDecoderDestroy(decoder);
+                    return E_OUTOFMEMORY;
+                }
+
+                avifHr = avifImageYUVToRGB(decoder->image, &rgb);
+                if (avifHr != AVIF_RESULT_OK) {
+                    avifRGBImageFreePixels(&rgb);
+                    avifDecoderDestroy(decoder);
+                    return E_FAIL;
+                }
+
+                const int width = rgb.width;
+                const int height = rgb.height;
+                const int stride = static_cast<int>(rgb.rowBytes);
+                uint8_t* pixels = ctx.allocator(static_cast<size_t>(stride) * height);
+                if (!pixels) {
+                    avifRGBImageFreePixels(&rgb);
+                    avifDecoderDestroy(decoder);
+                    return E_OUTOFMEMORY;
+                }
+
+                memcpy(pixels, rgb.pixels, static_cast<size_t>(stride) * height);
+
+                result.pixels = pixels;
+                result.width = width;
+                result.height = height;
+                result.stride = stride;
+                result.format = PixelFormat::BGRA8888;
+                result.success = true;
+                result.metadata.LoaderName = L"libavif (Unified)";
+                result.metadata.Width = origW;
+                result.metadata.Height = origH;
+                PopulateAvifHdrStaticMetadata(decoder->image, &result.metadata.hdrMetadata);
+                result.metadata.hdrMetadata.isHdr = false;
+                if (decoder->image->icc.data && decoder->image->icc.size > 0) {
+                    result.metadata.iccProfileData.assign(
+                        decoder->image->icc.data,
+                        decoder->image->icc.data + decoder->image->icc.size);
+                }
+                wchar_t fmtBuf[128];
+                swprintf_s(fmtBuf, L"%d-bit AVIF", decoder->image->depth);
+                result.metadata.FormatDetails = fmtBuf;
+                if (decoder->image->clli.maxCLL > 0 || decoder->image->clli.maxPALL > 0) {
+                    result.metadata.FormatDetails += L" [CLLI]";
+                }
+                if (decoder->image->gainMap) {
+                    result.metadata.FormatDetails += L" [GainMap]";
+                }
+
+                avifRGBImageFreePixels(&rgb);
+                avifDecoderDestroy(decoder);
+                return S_OK;
+            }
+        } // namespace AVIF
 
         namespace RawCodec {
             // [v7.5] Optimized RAW Decoder (LibRaw)
@@ -5182,33 +5513,6 @@ namespace QuickView {
 
 
         namespace TinyEXR {
-            // [v9.9] Pre-computed Gamma 2.2 LUT for fast tone mapping
-            // 4096 entries covering [0, 1] range with 12-bit precision
-            static uint8_t s_GammaLUT[4096] = {0};
-            static bool s_GammaLUTInitialized = false;
-            
-            static void InitGammaLUT() {
-                if (s_GammaLUTInitialized) return;
-                for (int i = 0; i < 4096; ++i) {
-                    float linear = (float)i / 4095.0f;
-                    float gamma = powf(linear, 1.0f / 2.2f);
-                    s_GammaLUT[i] = (uint8_t)(gamma * 255.0f + 0.5f);
-                }
-                s_GammaLUTInitialized = true;
-            }
-            
-            // Fast gamma using LUT with linear interpolation
-            static inline uint8_t FastGamma(float x) {
-                // Clamp to [0, 1]
-                if (x <= 0.0f) return 0;
-                if (x >= 1.0f) return 255;
-                
-                // Scale to LUT index
-                float idx = x * 4095.0f;
-                int iLow = (int)idx;
-                return s_GammaLUT[iLow];
-            }
-            
             static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 int w = 0, h = 0;
                 std::vector<float> floatPixels;
@@ -5218,9 +5522,6 @@ namespace QuickView {
                 }
 
                 if (w <= 0 || h <= 0 || floatPixels.empty()) return E_FAIL;
-
-                // Initialize Gamma LUT on first use
-                InitGammaLUT();
 
                 int outW = w;
                 int outH = h;
@@ -5235,7 +5536,8 @@ namespace QuickView {
                     }
                 }
 
-                int stride = CalculateSIMDAlignedStride(outW, 4);
+                const int bytesPerPixel = 16;
+                int stride = CalculateSIMDAlignedStride(outW, bytesPerPixel);
                 size_t totalSize = (size_t)stride * outH;
                 uint8_t* pixels = ctx.allocator(totalSize);
                 if (!pixels) return E_OUTOFMEMORY;
@@ -5254,34 +5556,20 @@ namespace QuickView {
                     srcYToOut[sy] = oy;
                 }
 
-                // [v9.9] Optimized Tone Mapping with LUT + OpenMP
-                // Fast gamma conversion using pre-computed LUT
                 #pragma omp parallel for schedule(dynamic, 16)
                 for (int oy = 0; oy < outH; ++oy) {
                     int sy = static_cast<int>((static_cast<int64_t>(oy) * h) / outH);
                     if (sy >= h) sy = h - 1;
 
-                    uint8_t* rowDst = pixels + (size_t)oy * stride;
+                    float* rowDst = reinterpret_cast<float*>(pixels + (size_t)oy * stride);
                     const float* rowSrc = floatPixels.data() + (size_t)sy * w * 4;
 
                     for (int ox = 0; ox < outW; ++ox) {
                         int sx = srcXForOut[ox];
-                        float r = rowSrc[sx*4+0];
-                        float g = rowSrc[sx*4+1];
-                        float b = rowSrc[sx*4+2];
-                        float a = rowSrc[sx*4+3];
-
-                        // Fast gamma using LUT
-                        uint8_t R = FastGamma(r);
-                        uint8_t G = FastGamma(g);
-                        uint8_t B = FastGamma(b);
-                        uint8_t A = (a <= 0.0f) ? 0 : (a >= 1.0f) ? 255 : (uint8_t)(a * 255.0f);
-
-                        // BGRA output
-                        rowDst[ox*4+0] = B;
-                        rowDst[ox*4+1] = G;
-                        rowDst[ox*4+2] = R;
-                        rowDst[ox*4+3] = A;
+                        rowDst[ox*4+0] = rowSrc[sx*4+0];
+                        rowDst[ox*4+1] = rowSrc[sx*4+1];
+                        rowDst[ox*4+2] = rowSrc[sx*4+2];
+                        rowDst[ox*4+3] = rowSrc[sx*4+3];
                     }
                 }
 
@@ -5291,12 +5579,17 @@ namespace QuickView {
                 result.stride = stride;
                 result.metadata.Width = w;
                 result.metadata.Height = h;
-                result.format = PixelFormat::BGRA8888;
+                result.format = PixelFormat::R32G32B32A32_FLOAT;
                 result.success = true;
                 result.metadata.LoaderName = L"TinyEXR";
                 result.metadata.FormatDetails = L"TinyEXR";
                 result.metadata.Width = w;
                 result.metadata.Height = h;
+                result.metadata.is_Linear_sRGB = true;
+                result.metadata.hdrMetadata.isValid = true;
+                result.metadata.hdrMetadata.isHdr = true;
+                result.metadata.hdrMetadata.isSceneLinear = true;
+                result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::Linear;
                 return S_OK;
             }
         }
@@ -5646,6 +5939,43 @@ namespace QuickView {
                 }
                 return E_FAIL;
             }
+
+            static HRESULT LoadHdr(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
+                int w = 0, h = 0, c = 0;
+                std::pmr::vector<uint8_t> out(std::pmr::get_default_resource());
+                if (!StbLoader::LoadImageFromMemory(data, size, &w, &h, &c, out, true)) {
+                    return E_FAIL;
+                }
+
+                const int bytesPerPixel = 16;
+                const int stride = CalculateSIMDAlignedStride(w, bytesPerPixel);
+                const size_t totalSize = static_cast<size_t>(stride) * h;
+                uint8_t* pixels = ctx.allocator(totalSize);
+                if (!pixels) return E_OUTOFMEMORY;
+
+                for (int y = 0; y < h; ++y) {
+                    float* dstRow = reinterpret_cast<float*>(pixels + static_cast<size_t>(y) * stride);
+                    const float* srcRow = reinterpret_cast<const float*>(out.data() + static_cast<size_t>(y) * w * bytesPerPixel);
+                    memcpy(dstRow, srcRow, static_cast<size_t>(w) * bytesPerPixel);
+                }
+
+                result.pixels = pixels;
+                result.width = w;
+                result.height = h;
+                result.stride = stride;
+                result.format = PixelFormat::R32G32B32A32_FLOAT;
+                result.success = true;
+                result.metadata.LoaderName = L"StbImage (HDR)";
+                result.metadata.FormatDetails = L"Radiance HDR Float";
+                result.metadata.Width = w;
+                result.metadata.Height = h;
+                result.metadata.is_Linear_sRGB = true;
+                result.metadata.hdrMetadata.isValid = true;
+                result.metadata.hdrMetadata.isHdr = true;
+                result.metadata.hdrMetadata.isSceneLinear = true;
+                result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+                return S_OK;
+            }
         }
 
     } // namespace Codec
@@ -5681,7 +6011,7 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
     // [v6.7] Expanded: Include ALL integrated specialized formats
     bool isBufferCodec = (
         fmt == L"JPEG" || fmt == L"WebP" || fmt == L"PNG" || fmt == L"GIF" || fmt == L"BMP" || fmt == L"JXL" ||
-        fmt == L"AVIF" || 
+        fmt == L"AVIF" || fmt == L"HEIC" ||
         fmt == L"QOI" || fmt == L"TGA" || fmt == L"PNM" || fmt == L"WBMP" ||
         fmt == L"PSD" || fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX" ||
         fmt == L"SVG" || fmt == L"EXR"
@@ -5695,24 +6025,15 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
         size_t mappedSize = mapping.size();
         
         // Dispatch
-        if (fmt == L"AVIF") {
-            CImageLoader::ThumbData tmp;
-            int targetDim = (std::max)(ctx.targetWidth, ctx.targetHeight);
-            HRESULT hr = CImageLoader::LoadThumbAVIF_Proxy(mappedData, mappedSize, targetDim, &tmp, false, &result.metadata);
-            if (SUCCEEDED(hr) && tmp.isValid) {
-                 // Copy from ThumbData to DecodeResult
-                 // Need to account for stride
-                 result.width = tmp.width;
-                 result.height = tmp.height;
-                 result.stride = tmp.stride;
-                 size_t bufSize = (size_t)tmp.stride * tmp.height;
-                 result.pixels = ctx.allocator(bufSize);
-                 if (result.pixels) {
-                     memcpy(result.pixels, tmp.pixels.data(), bufSize);
-                     result.metadata.LoaderName = L"libavif (Unified)"; 
-                     return S_OK;
-                 }
-                 return E_OUTOFMEMORY;
+        if (fmt == L"AVIF" || fmt == L"HEIC") {
+            HRESULT hr = AVIF::Load(mappedData, mappedSize, ctx, result);
+            if (SUCCEEDED(hr)) {
+                if (fmt == L"HEIC" && result.metadata.LoaderName == L"libavif (Unified)") {
+                    result.metadata.LoaderName = L"libavif/HEIF (Unified)";
+                } else if (fmt == L"HEIC" && result.metadata.LoaderName == L"libavif (Unified HDR)") {
+                    result.metadata.LoaderName = L"libavif/HEIF (Unified HDR)";
+                }
+                return S_OK;
             }
         }
         else if (fmt == L"JXL") {
@@ -5839,10 +6160,15 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                  }
              }
         }
-        else if (fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX") {
+        else if (fmt == L"HDR") {
+             HRESULT hr = Stb::LoadHdr(mappedData, mappedSize, ctx, result);
+             if (SUCCEEDED(hr)) {
+                 return S_OK;
+             }
+        }
+        else if (fmt == L"PIC" || fmt == L"PCX") {
              HRESULT hr = Stb::Load(mappedData, mappedSize, ctx, result);
              if (SUCCEEDED(hr)) { 
-                 // Stb::Load sets LoaderName to StbImage
                  return S_OK; 
              }
         }
@@ -6688,6 +7014,13 @@ HRESULT CImageLoader::LoadStbImage(LPCWSTR filePath, IWICBitmap** ppBitmap, bool
     if (pMetadata) {
         if (floatFormat) pMetadata->is_Linear_sRGB = true;
         else pMetadata->is_sRGB = true;
+
+        if (floatFormat) {
+            pMetadata->hdrMetadata.isValid = true;
+            pMetadata->hdrMetadata.isHdr = true;
+            pMetadata->hdrMetadata.isSceneLinear = true;
+            pMetadata->hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+        }
     }
 
     if (floatFormat) {
@@ -9354,7 +9687,8 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                                    CancelPredicate checkCancel,
                                    ImageMetadata* pMetadata,
                                    bool allowFakeBase,
-                                   bool isTitanMode) {
+                                   bool isTitanMode,
+                                   float targetHdrHeadroomStops) {
     using namespace QuickView;
     
     if (!filePath || !outFrame) return E_INVALIDARG;
@@ -9399,6 +9733,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     ctx.forceRenderFull = true; // [v10] Ensure HeavyLane base layer decode does not abort for large non-DC JXLs
     ctx.allowFakeBase = allowFakeBase; // [v10.1] Pass the fallback behavior override
     ctx.isTitanMode = isTitanMode;
+    ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
 
     DecodeResult res;
     HRESULT hrUnified = LoadImageUnified(filePath, ctx, res);
@@ -9464,10 +9799,14 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         outFrame->width = res.width;
         outFrame->height = res.height;
         outFrame->stride = res.stride;
-        outFrame->format = PixelFormat::BGRA8888; // Default
+        outFrame->format = res.format;
         // [v5.4] Metadata
         outFrame->formatDetails = res.metadata.FormatDetails;
         outFrame->exifOrientation = res.metadata.ExifOrientation; // [v8.7] Propagate Orientation
+        outFrame->iccProfile.assign(res.metadata.iccProfileData.begin(), res.metadata.iccProfileData.end());
+        outFrame->is_sRGB = res.metadata.is_sRGB;
+        outFrame->is_Linear_sRGB = res.metadata.is_Linear_sRGB;
+        outFrame->hdrMetadata = res.metadata.hdrMetadata;
         
         // [v10.1] Preserve original resolution if frame is scaled
         if (res.metadata.Width > 0 && res.metadata.Height > 0 &&
@@ -10048,6 +10387,273 @@ static std::wstring ParseJXLColorEncoding(const JxlColorEncoding& c) {
         result += L" (" + transfer + L")";
     }
     return result;
+}
+
+static QuickView::TransferFunction MapJxlTransferFunction(JxlTransferFunction tf) {
+    switch (tf) {
+        case JXL_TRANSFER_FUNCTION_SRGB: return QuickView::TransferFunction::SRGB;
+        case JXL_TRANSFER_FUNCTION_LINEAR: return QuickView::TransferFunction::Linear;
+        case JXL_TRANSFER_FUNCTION_PQ: return QuickView::TransferFunction::PQ;
+        case JXL_TRANSFER_FUNCTION_HLG: return QuickView::TransferFunction::HLG;
+        case JXL_TRANSFER_FUNCTION_709: return QuickView::TransferFunction::Rec709;
+        default: return QuickView::TransferFunction::Unknown;
+    }
+}
+
+static QuickView::ColorPrimaries MapJxlPrimaries(JxlPrimaries primaries) {
+    switch (primaries) {
+        case JXL_PRIMARIES_SRGB: return QuickView::ColorPrimaries::SRGB;
+        case JXL_PRIMARIES_P3: return QuickView::ColorPrimaries::DisplayP3;
+        case JXL_PRIMARIES_2100: return QuickView::ColorPrimaries::Rec2020;
+        default: return QuickView::ColorPrimaries::Unknown;
+    }
+}
+
+static QuickView::TransferFunction MapAvifTransferFunction(uint8_t tf) {
+    switch (tf) {
+        case AVIF_TRANSFER_CHARACTERISTICS_SRGB: return QuickView::TransferFunction::SRGB;
+        case AVIF_TRANSFER_CHARACTERISTICS_LINEAR: return QuickView::TransferFunction::Linear;
+        case AVIF_TRANSFER_CHARACTERISTICS_PQ: return QuickView::TransferFunction::PQ;
+        case AVIF_TRANSFER_CHARACTERISTICS_HLG: return QuickView::TransferFunction::HLG;
+        case AVIF_TRANSFER_CHARACTERISTICS_BT709: return QuickView::TransferFunction::Rec709;
+        default: return QuickView::TransferFunction::Unknown;
+    }
+}
+
+static QuickView::ColorPrimaries MapAvifPrimaries(uint16_t primaries) {
+    switch (primaries) {
+        case AVIF_COLOR_PRIMARIES_BT709: return QuickView::ColorPrimaries::SRGB;
+        case AVIF_COLOR_PRIMARIES_BT2020: return QuickView::ColorPrimaries::Rec2020;
+        case AVIF_COLOR_PRIMARIES_SMPTE432: return QuickView::ColorPrimaries::DisplayP3;
+        default: return QuickView::ColorPrimaries::Unknown;
+    }
+}
+
+static float DecodePqToLinearScRgb(float value) {
+    value = (std::clamp)(value, 0.0f, 1.0f);
+    static constexpr float m1 = 2610.0f / 16384.0f;
+    static constexpr float m2 = 2523.0f / 32.0f;
+    static constexpr float c1 = 3424.0f / 4096.0f;
+    static constexpr float c2 = 2413.0f / 128.0f;
+    static constexpr float c3 = 2392.0f / 128.0f;
+
+    const float vp = powf(value, 1.0f / m2);
+    const float num = (std::max)(vp - c1, 0.0f);
+    const float den = c2 - c3 * vp;
+    if (den <= 0.0f) return 0.0f;
+    const float nits = 10000.0f * powf(num / den, 1.0f / m1);
+    return nits / 80.0f;
+}
+
+static float DecodeHlgToLinear(float value) {
+    value = (std::clamp)(value, 0.0f, 1.0f);
+    if (value <= 0.5f) {
+        return (value * value) / 3.0f;
+    }
+    static constexpr float a = 0.17883277f;
+    static constexpr float b = 0.28466892f;
+    static constexpr float c = 0.55991073f;
+    return (expf((value - c) / a) + b) / 12.0f;
+}
+
+static float DecodeSrgbToLinear(float value) {
+    value = (std::clamp)(value, 0.0f, 1.0f);
+    if (value <= 0.04045f) return value / 12.92f;
+    return powf((value + 0.055f) / 1.055f, 2.4f);
+}
+
+static float DecodeRec709ToLinear(float value) {
+    value = (std::clamp)(value, 0.0f, 1.0f);
+    if (value < 0.081f) return value / 4.5f;
+    return powf((value + 0.099f) / 1.099f, 1.0f / 0.45f);
+}
+
+static float AvifUnsignedFractionToFloat(const avifUnsignedFraction& value, float fallback = 0.0f) {
+    if (value.d == 0) return fallback;
+    return static_cast<float>(value.n) / static_cast<float>(value.d);
+}
+
+static avifColorPrimaries GetAvifGainMapOutputPrimaries(const avifImage* image) {
+    if (!image || !image->gainMap) {
+        return image ? image->colorPrimaries : AVIF_COLOR_PRIMARIES_UNSPECIFIED;
+    }
+
+    if (image->gainMap->useBaseColorSpace || image->gainMap->altColorPrimaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
+        return image->colorPrimaries;
+    }
+    return image->gainMap->altColorPrimaries;
+}
+
+static float GetAvifGainMapAlternateHeadroom(const avifImage* image) {
+    if (!image || !image->gainMap) return 0.0f;
+    return AvifUnsignedFractionToFloat(image->gainMap->alternateHdrHeadroom);
+}
+
+static float GetAvifGainMapBaseHeadroom(const avifImage* image) {
+    if (!image || !image->gainMap) return 0.0f;
+    return AvifUnsignedFractionToFloat(image->gainMap->baseHdrHeadroom);
+}
+
+static float ResolveAvifGainMapTargetHeadroom(const avifImage* image, float requestedHeadroom) {
+    const float baseHeadroom = GetAvifGainMapBaseHeadroom(image);
+    const float alternateHeadroom = GetAvifGainMapAlternateHeadroom(image);
+
+    if (requestedHeadroom >= 0.0f) {
+        return requestedHeadroom;
+    }
+    if (alternateHeadroom > 0.0f) {
+        return alternateHeadroom;
+    }
+    return (std::max)(baseHeadroom, 0.0f);
+}
+
+static bool TryDecodeAvifGainMappedLinearRGBA(
+    avifDecoder* decoder,
+    const QuickView::Codec::DecodeContext& ctx,
+    uint8_t** outPixels,
+    int* outWidth,
+    int* outHeight,
+    int* outStride,
+    QuickView::HdrStaticMetadata* hdrMetadata,
+    std::wstring* formatDetails)
+{
+    if (!decoder || !decoder->image || !decoder->image->gainMap || !outPixels || !outWidth || !outHeight || !outStride) {
+        return false;
+    }
+
+    const float hdrHeadroom = ResolveAvifGainMapTargetHeadroom(decoder->image, ctx.targetHdrHeadroomStops);
+    if (hdrHeadroom < 0.0f) {
+        return false;
+    }
+
+    avifRGBImage toneMappedRgb;
+    avifRGBImageSetDefaults(&toneMappedRgb, decoder->image);
+    toneMappedRgb.format = AVIF_RGB_FORMAT_RGBA;
+    toneMappedRgb.depth = 16;
+    toneMappedRgb.isFloat = AVIF_TRUE;
+    toneMappedRgb.alphaPremultiplied = AVIF_FALSE;
+    toneMappedRgb.maxThreads = decoder->maxThreads;
+
+    avifResult avifHr = avifRGBImageAllocatePixels(&toneMappedRgb);
+    if (avifHr != AVIF_RESULT_OK) {
+        return false;
+    }
+
+    avifContentLightLevelInformationBox gainMapClli = {};
+    avifHr = avifImageApplyGainMap(
+        decoder->image,
+        decoder->image->gainMap,
+        hdrHeadroom,
+        GetAvifGainMapOutputPrimaries(decoder->image),
+        AVIF_TRANSFER_CHARACTERISTICS_LINEAR,
+        &toneMappedRgb,
+        &gainMapClli,
+        &decoder->diag);
+
+    if (avifHr != AVIF_RESULT_OK) {
+        avifRGBImageFreePixels(&toneMappedRgb);
+        return false;
+    }
+
+    const int width = static_cast<int>(toneMappedRgb.width);
+    const int height = static_cast<int>(toneMappedRgb.height);
+    const int stride = CalculateSIMDAlignedStride(width, 16);
+    uint8_t* pixels = ctx.allocator(static_cast<size_t>(stride) * height);
+    if (!pixels) {
+        avifRGBImageFreePixels(&toneMappedRgb);
+        return false;
+    }
+
+    for (int y = 0; y < height; ++y) {
+        float* dst = reinterpret_cast<float*>(pixels + static_cast<size_t>(y) * stride);
+        const uint16_t* src = reinterpret_cast<const uint16_t*>(toneMappedRgb.pixels + static_cast<size_t>(y) * toneMappedRgb.rowBytes);
+        for (int x = 0; x < width; ++x) {
+            dst[x * 4 + 0] = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 0]);
+            dst[x * 4 + 1] = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 1]);
+            dst[x * 4 + 2] = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 2]);
+            dst[x * 4 + 3] = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 3]);
+        }
+    }
+
+    if (hdrMetadata) {
+        PopulateAvifHdrStaticMetadata(decoder->image, hdrMetadata);
+        hdrMetadata->isValid = true;
+        hdrMetadata->isHdr = true;
+        hdrMetadata->isSceneLinear = true;
+        hdrMetadata->gainMapApplied = true;
+        hdrMetadata->gainMapAppliedHeadroom = hdrHeadroom;
+        hdrMetadata->transfer = QuickView::TransferFunction::Linear;
+        hdrMetadata->primaries = MapAvifPrimaries(GetAvifGainMapOutputPrimaries(decoder->image));
+        if (gainMapClli.maxCLL > 0 || gainMapClli.maxPALL > 0) {
+            hdrMetadata->hasNitsMetadata = true;
+            hdrMetadata->maxCLLNits = static_cast<float>(gainMapClli.maxCLL);
+            hdrMetadata->maxFALLNits = static_cast<float>(gainMapClli.maxPALL);
+        }
+    }
+
+    if (formatDetails) {
+        wchar_t fmtBuf[160];
+        swprintf_s(fmtBuf, L"%d-bit HDR AVIF [GainMap Applied]", decoder->image->depth);
+        *formatDetails = fmtBuf;
+        if (gainMapClli.maxCLL > 0 || gainMapClli.maxPALL > 0) {
+            *formatDetails += L" [CLLI]";
+        }
+    }
+
+    *outPixels = pixels;
+    *outWidth = width;
+    *outHeight = height;
+    *outStride = stride;
+    avifRGBImageFreePixels(&toneMappedRgb);
+    return true;
+}
+
+static void PopulateAvifHdrStaticMetadata(const avifImage* image, QuickView::HdrStaticMetadata* hdrMetadata) {
+    if (!image || !hdrMetadata) return;
+
+    hdrMetadata->isValid = true;
+    hdrMetadata->transfer = MapAvifTransferFunction(image->transferCharacteristics);
+    hdrMetadata->primaries = MapAvifPrimaries(image->colorPrimaries);
+    hdrMetadata->isSceneLinear = (hdrMetadata->transfer == QuickView::TransferFunction::Linear);
+    hdrMetadata->isHdr =
+        hdrMetadata->transfer == QuickView::TransferFunction::PQ ||
+        hdrMetadata->transfer == QuickView::TransferFunction::HLG ||
+        image->depth > 8;
+    hdrMetadata->hasGainMap = (image->gainMap != nullptr);
+    hdrMetadata->gainMapApplied = false;
+    hdrMetadata->gainMapAppliedHeadroom = 0.0f;
+
+    if (image->gainMap) {
+        hdrMetadata->gainMapBaseHeadroom = GetAvifGainMapBaseHeadroom(image);
+        hdrMetadata->gainMapAlternateHeadroom = GetAvifGainMapAlternateHeadroom(image);
+    }
+
+    if (image->clli.maxCLL > 0 || image->clli.maxPALL > 0) {
+        hdrMetadata->hasNitsMetadata = true;
+        hdrMetadata->maxCLLNits = static_cast<float>(image->clli.maxCLL);
+        hdrMetadata->maxFALLNits = static_cast<float>(image->clli.maxPALL);
+    }
+
+    if (!hdrMetadata->hasNitsMetadata && image->gainMap) {
+        const auto& altCLLI = image->gainMap->altCLLI;
+        if (altCLLI.maxCLL > 0 || altCLLI.maxPALL > 0) {
+            hdrMetadata->hasNitsMetadata = true;
+            hdrMetadata->maxCLLNits = static_cast<float>(altCLLI.maxCLL);
+            hdrMetadata->maxFALLNits = static_cast<float>(altCLLI.maxPALL);
+        }
+    }
+}
+
+static float DecodeTransferToLinear(float value, QuickView::TransferFunction tf) {
+    switch (tf) {
+        case QuickView::TransferFunction::Linear: return value;
+        case QuickView::TransferFunction::PQ: return DecodePqToLinearScRgb(value);
+        case QuickView::TransferFunction::HLG: return DecodeHlgToLinear(value);
+        case QuickView::TransferFunction::Rec709: return DecodeRec709ToLinear(value);
+        case QuickView::TransferFunction::SRGB:
+        default:
+            return DecodeSrgbToLinear(value);
+    }
 }
 
 // ============================================================================

@@ -26,6 +26,17 @@ extern RuntimeConfig g_runtime;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
 extern HelpOverlay g_helpOverlay;
 
+namespace {
+static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale) {
+    const float scale = (std::max)(1.0f, hdrWhiteScale);
+    return D2D1::ColorF(
+        (std::max)(0.0f, color.r * scale),
+        (std::max)(0.0f, color.g * scale),
+        (std::max)(0.0f, color.b * scale),
+        color.a);
+}
+}
+
 
 static std::wstring GetAppVersion() {
     wchar_t fileName[MAX_PATH];
@@ -594,16 +605,27 @@ void SettingsOverlay::SetUIScale(float scale) {
 
 void SettingsOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     if (!m_brushBg) {
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f), &m_brushBg);        // Dimmer (40% opacity)
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f), &m_brushText);             // White
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.6f, 0.6f, 0.6f), &m_brushTextDim);          // Gray
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.84f), &m_brushAccent);         // Windows Blue
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.25f, 0.25f), &m_brushControlBg);     // Control Dark
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f), m_hdrWhiteScale), &m_brushBg);        // Dimmer (40% opacity)
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushText);             // White
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.6f, 0.6f, 0.6f), m_hdrWhiteScale), &m_brushTextDim);          // Gray
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.47f, 0.84f), m_hdrWhiteScale), &m_brushAccent);         // Windows Blue
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.25f, 0.25f, 0.25f), m_hdrWhiteScale), &m_brushControlBg);     // Control Dark
         
         // New Visuals
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f), &m_brushBorder);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.8f, 0.1f), &m_brushSuccess);
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.8f, 0.1f, 0.1f), &m_brushError);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.3f, 0.3f, 0.3f), m_hdrWhiteScale), &m_brushBorder);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.1f, 0.8f, 0.1f), m_hdrWhiteScale), &m_brushSuccess);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.8f, 0.1f, 0.1f), m_hdrWhiteScale), &m_brushError);
+    }
+
+    if (m_brushBg) {
+        m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f), m_hdrWhiteScale));
+        m_brushText->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
+        m_brushTextDim->SetColor(ScaleUiColor(D2D1::ColorF(0.6f, 0.6f, 0.6f), m_hdrWhiteScale));
+        m_brushAccent->SetColor(ScaleUiColor(D2D1::ColorF(0.0f, 0.47f, 0.84f), m_hdrWhiteScale));
+        m_brushControlBg->SetColor(ScaleUiColor(D2D1::ColorF(0.25f, 0.25f, 0.25f), m_hdrWhiteScale));
+        m_brushBorder->SetColor(ScaleUiColor(D2D1::ColorF(0.3f, 0.3f, 0.3f), m_hdrWhiteScale));
+        m_brushSuccess->SetColor(ScaleUiColor(D2D1::ColorF(0.1f, 0.8f, 0.1f), m_hdrWhiteScale));
+        m_brushError->SetColor(ScaleUiColor(D2D1::ColorF(0.8f, 0.1f, 0.1f), m_hdrWhiteScale));
     }
 
     // Get System Message Font (e.g. Microsoft YaHei UI on CN, Segoe UI on EN)
@@ -1510,7 +1532,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
         // 3. Draw HUD Panel Background (Opaque Dark)
         ComPtr<ID2D1SolidColorBrush> brushPanelBg;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.SettingsAlpha), &brushPanelBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.SettingsAlpha), m_hdrWhiteScale), &brushPanelBg);
         D2D1_ROUNDED_RECT hudRounded = D2D1::RoundedRect(hudRect, 8.0f, 8.0f);
         pRT->FillRoundedRectangle(hudRounded, brushPanelBg.Get());
 
@@ -1573,7 +1595,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             if (isActive) {
                 pRT->FillRectangle(D2D1::RectF(hudX, tabY + 10.0f * s, hudX + 3.0f * s, tabY + 30.0f * s), m_brushAccent.Get());
                 ComPtr<ID2D1SolidColorBrush> tint;
-                pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f), &tint);
+                pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f), m_hdrWhiteScale), &tint);
                 pRT->FillRectangle(tabRect, tint.Get());
             }
 
@@ -1951,7 +1973,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                     if (item.isDisabled) {
                         // Disabled: Draw gray toggle background + disabled text
                         ComPtr<ID2D1SolidColorBrush> brushDisabled;
-                        pRT->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f), &brushDisabled);
+                        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f), m_hdrWhiteScale), &brushDisabled);
                         D2D1_RECT_F toggleBg = D2D1::RectF(controlRect.left, controlRect.top + 5, controlRect.left + 44, controlRect.top + 27);
                         pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleBg, 11, 11), brushDisabled.Get());
                         
@@ -1972,7 +1994,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                         
                         if (!item.statusText.empty()) {
                             ComPtr<ID2D1SolidColorBrush> statusBrush;
-                            pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
+                            pRT->CreateSolidColorBrush(ScaleUiColor(item.statusColor, m_hdrWhiteScale), &statusBrush);
                             D2D1_RECT_F statusR = D2D1::RectF(controlX + 60, contentY, controlX + controlW, contentY + rowHeight);
                             pRT->DrawTextW(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
                         }
@@ -2022,7 +2044,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      // Handle disabled state
                      if (item.isDisabled) {
                          // Gray disabled button
-                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f), &btnBrush);
+                         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f), m_hdrWhiteScale), &btnBrush);
                          pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, btnRadius, btnRadius), btnBrush.Get());
                          
                          // Show disabled text on the left
@@ -2044,16 +2066,16 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      if (item.isDestructive) {
                          // Red
                          if (isHovered) {
-                              pRT->CreateSolidColorBrush(D2D1::ColorF(0.9f, 0.2f, 0.2f), &btnBrush); // Lighter Red
+                              pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.9f, 0.2f, 0.2f), m_hdrWhiteScale), &btnBrush); // Lighter Red
                          } else {
                               btnBrush = m_brushError; // Standard Red
                          }
                      } else {
                          // Blue
                          if (isHovered) {
-                             pRT->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.55f, 0.95f), &btnBrush); // Light blue
+                             pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.1f, 0.55f, 0.95f), m_hdrWhiteScale), &btnBrush); // Light blue
                          } else {
-                             pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.47f, 0.84f), &btnBrush); // Blue
+                             pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.47f, 0.84f), m_hdrWhiteScale), &btnBrush); // Blue
                          }
                      }
                      
@@ -2072,12 +2094,12 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                      
                      if (statusToShow.empty() && item.isActivated) {
                          statusToShow = item.buttonActivatedText.empty() ? L"Added" : item.buttonActivatedText;
-                         statusColor = D2D1::ColorF(0.2f, 0.8f, 0.3f);
+                         statusColor = ScaleUiColor(D2D1::ColorF(0.2f, 0.8f, 0.3f), m_hdrWhiteScale);
                      }
 
                      if (!statusToShow.empty()) {
                          ComPtr<ID2D1SolidColorBrush> statusBrush;
-                         pRT->CreateSolidColorBrush(statusColor, &statusBrush);
+                         pRT->CreateSolidColorBrush(ScaleUiColor(statusColor, m_hdrWhiteScale), &statusBrush);
                          
                          // Draw to the left of the button, right-aligned to match button proximity?
                          // Or Left-aligned as before. Let's stick to Left (default format) but ensure generic text works.
@@ -2160,7 +2182,7 @@ void SettingsOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
         D2D1_RECT_F thumbRect = D2D1::RectF(hudX + hudW - 8.0f * s, thumbY, hudX + hudW - 4.0f * s, thumbY + thumbH);
         ComPtr<ID2D1SolidColorBrush> scrollBrush;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.2f), &scrollBrush);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.2f), m_hdrWhiteScale), &scrollBrush);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 2.0f * s, 2.0f * s), scrollBrush.Get());
     }
 
@@ -2844,7 +2866,7 @@ void SettingsOverlay::DrawComboDropdown(ID2D1RenderTarget* pRT) {
         bool isSel = (m_pActiveCombo->pIntVal && *m_pActiveCombo->pIntVal == idx);
         if (isSel && idx != m_comboHoverIdx) {
              ComPtr<ID2D1SolidColorBrush> tint;
-             pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), &tint);
+             pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale), &tint);
              pRT->FillRectangle(itemRect, tint.Get());
         }
         

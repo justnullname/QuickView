@@ -43,6 +43,62 @@ void CSGenMips(uint3 id : SV_DispatchThreadID)
 }
 )";
 
+static const char* HLSL_ToneMapHdrToSdr = R"(
+Texture2D<float4> SrcTex : register(t0);
+RWTexture2D<unorm float4> DstTex : register(u0);
+
+cbuffer ToneMapParams : register(b0)
+{
+    float ContentPeakScRgb;
+    float DisplayPeakScRgb;
+    float PaperWhiteScRgb;
+    float Exposure;
+};
+
+float3 LinearToSrgb(float3 value)
+{
+    float3 cutoff = step(value, float3(0.0031308, 0.0031308, 0.0031308));
+    float3 low = value * 12.92;
+    float3 high = 1.055 * pow(abs(value), 1.0 / 2.4) - 0.055;
+    return lerp(high, low, cutoff);
+}
+
+float3 ToneMapAces(float3 value)
+{
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
+}
+
+[numthreads(8, 8, 1)]
+void CSToneMap(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    SrcTex.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) {
+        return;
+    }
+
+    float4 color = SrcTex[id.xy];
+    color.rgb = max(color.rgb, 0.0.xxx);
+    color.a = saturate(color.a);
+
+    float contentPeak = max(ContentPeakScRgb, 1.0);
+    float displayPeak = max(DisplayPeakScRgb, 1.0);
+    float paperWhite = max(PaperWhiteScRgb, 1.0);
+    float highlightCompression = max(contentPeak / displayPeak, 1.0);
+    float sceneScale = (Exposure * paperWhite) / sqrt(highlightCompression);
+
+    float3 mapped = ToneMapAces(color.rgb * sceneScale);
+    float3 encoded = LinearToSrgb(mapped) * color.a;
+
+    DstTex[id.xy] = float4(encoded.b, encoded.g, encoded.r, color.a);
+}
+)";
+
 HRESULT ComputeEngine::Initialize(ID3D11Device* pDevice) {
     if (!pDevice) return E_INVALIDARG;
     m_d3dDevice = pDevice;
@@ -73,6 +129,24 @@ HRESULT ComputeEngine::CompileShaders() {
     hr = D3DCompile(HLSL_GenerateMips, strlen(HLSL_GenerateMips), nullptr, nullptr, nullptr, "CSGenMips", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
     if (FAILED(hr)) return hr;
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csGenMips);
+    if (FAILED(hr)) return hr;
+
+    // 3. HDR Float -> SDR BGRA8 tone mapping
+    blob.Reset(); errorBlob.Reset();
+    hr = D3DCompile(HLSL_ToneMapHdrToSdr, strlen(HLSL_ToneMapHdrToSdr), nullptr, nullptr, nullptr, "CSToneMap", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        return hr;
+    }
+    hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csToneMapHdrToSdr);
+    if (FAILED(hr)) return hr;
+
+    D3D11_BUFFER_DESC cbDesc = {};
+    cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbDesc.ByteWidth = 16;
+    cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+    cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_toneMapConstantBuffer);
     
     return hr;
 }
@@ -175,6 +249,82 @@ HRESULT ComputeEngine::GenerateMips(ID3D11Texture2D* pTexture) {
 
     ID3D11ShaderResourceView* nullSRV[] = { nullptr };
     m_d3dContext->CSSetShaderResources(0, 1, nullSRV);
+    return S_OK;
+}
+
+HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture) {
+    if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
+
+    D3D11_TEXTURE2D_DESC srcDesc = {};
+    srcDesc.Width = static_cast<UINT>(width);
+    srcDesc.Height = static_cast<UINT>(height);
+    srcDesc.MipLevels = 1;
+    srcDesc.ArraySize = 1;
+    srcDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    srcDesc.SampleDesc.Count = 1;
+    srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initData = {};
+    initData.pSysMem = srcPixels;
+    initData.SysMemPitch = static_cast<UINT>(stride);
+
+    ComPtr<ID3D11Texture2D> pSrc;
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&srcDesc, &initData, &pSrc);
+    if (FAILED(hr)) return hr;
+
+    D3D11_TEXTURE2D_DESC dstDesc = {};
+    dstDesc.Width = srcDesc.Width;
+    dstDesc.Height = srcDesc.Height;
+    dstDesc.MipLevels = 1;
+    dstDesc.ArraySize = 1;
+    dstDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    dstDesc.SampleDesc.Count = 1;
+    dstDesc.Usage = D3D11_USAGE_DEFAULT;
+    dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+
+    ComPtr<ID3D11Texture2D> pDst;
+    hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11ShaderResourceView> pSRV;
+    ComPtr<ID3D11UnorderedAccessView> pUAV;
+    hr = m_d3dDevice->CreateShaderResourceView(pSrc.Get(), nullptr, &pSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pUAV);
+    if (FAILED(hr)) return hr;
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = m_d3dContext->Map(m_toneMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) return hr;
+
+    const float params[4] = {
+        settings.contentPeakScRgb,
+        settings.displayPeakScRgb,
+        settings.paperWhiteScRgb,
+        settings.exposure
+    };
+    memcpy(mapped.pData, params, sizeof(params));
+    m_d3dContext->Unmap(m_toneMapConstantBuffer.Get(), 0);
+
+    m_d3dContext->CSSetShader(m_csToneMapHdrToSdr.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* srvs[] = { pSRV.Get() };
+    m_d3dContext->CSSetShaderResources(0, 1, srvs);
+    ID3D11UnorderedAccessView* uavs[] = { pUAV.Get() };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    ID3D11Buffer* constantBuffers[] = { m_toneMapConstantBuffer.Get() };
+    m_d3dContext->CSSetConstantBuffers(0, 1, constantBuffers);
+    m_d3dContext->Dispatch((srcDesc.Width + 7) / 8, (srcDesc.Height + 7) / 8, 1);
+
+    ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+    ID3D11ShaderResourceView* nullSRV[] = { nullptr };
+    m_d3dContext->CSSetShaderResources(0, 1, nullSRV);
+    ID3D11Buffer* nullCB[] = { nullptr };
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullCB);
+    m_d3dContext->CSSetShader(nullptr, nullptr, 0);
+
+    *outTexture = pDst.Detach();
     return S_OK;
 }
 

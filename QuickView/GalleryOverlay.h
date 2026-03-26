@@ -15,6 +15,7 @@ public:
 
     // Render the gallery overlay
     void Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size);
+    void SetHdrWhiteScale(float scale) { m_hdrWhiteScale = scale; }
 
     // Interaction
     bool OnKeyDown(UINT key); // Returns true if handled
@@ -44,6 +45,7 @@ private:
 
     bool m_isVisible = false;
     float m_opacity = 0.0f; // 0.0 - 1.0 (Fade in)
+    float m_hdrWhiteScale = 1.0f;
     
     // Scroll state
     float m_scrollTop = 0.0f;

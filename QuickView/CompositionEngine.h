@@ -5,6 +5,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 #include "QuickView.h" // For VisualState
+#include "DisplayColorInfo.h"
 #include <algorithm>
 #include "TileTypes.h" // Resolve QuickView namespace
 
@@ -113,6 +114,8 @@ public:
     UINT GetWidth() const { return m_width; }
     UINT GetHeight() const { return m_height; }
     bool IsAdvancedColor() const { return m_isAdvancedColor; }
+    const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorInfo.GetState(); }
+    bool RefreshDisplayColorState();
     
     // Debug accessors
     int GetActiveLayerIndex() const { return m_activeLayerIndex; }
@@ -209,6 +212,7 @@ private:
     // Advanced Color (HDR) Support
     bool m_isAdvancedColor = false;
     DXGI_FORMAT m_surfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+    QuickView::DisplayColorInfo m_displayColorInfo;
 
     // State tracking for Drift Compensation
     float m_currentScale = 1.0f;

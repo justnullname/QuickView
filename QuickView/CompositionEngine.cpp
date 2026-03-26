@@ -391,28 +391,7 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = d3dDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
     if (FAILED(hr)) return hr;
     
-    // [CMS] Advanced Color Hardware Check
-    m_isAdvancedColor = false;
-    m_surfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-    
-    ComPtr<IDXGIAdapter> adapter;
-    if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
-        ComPtr<IDXGIOutput> output;
-        if (SUCCEEDED(adapter->EnumOutputs(0, &output))) {
-            ComPtr<IDXGIOutput6> output6;
-            if (SUCCEEDED(output.As(&output6))) {
-                DXGI_OUTPUT_DESC1 desc1;
-                if (SUCCEEDED(output6->GetDesc1(&desc1))) {
-                    if (desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 ||
-                        desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
-                        m_isAdvancedColor = true;
-                        m_surfaceFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
-                        OutputDebugStringW(L"[CMS] Advanced Color output detected. Enabling FP16 scRGB surface pipeline.\n");
-                    }
-                }
-            }
-        }
-    }
+    RefreshDisplayColorState();
     
     // 2. Create DComp Device (V2 API for Visual3 support)
     hr = DCompositionCreateDevice2(dxgiDevice.Get(), IID_PPV_ARGS(&m_device));
@@ -543,6 +522,18 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     hr = m_device->Commit();
     
     return hr;
+}
+
+bool CompositionEngine::RefreshDisplayColorState() {
+    const bool changed = m_displayColorInfo.Refresh(m_hwnd);
+    m_isAdvancedColor = m_displayColorInfo.GetState().ShouldUseScRgbPipeline();
+    m_surfaceFormat = m_isAdvancedColor ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+
+    if (m_isAdvancedColor) {
+        OutputDebugStringW(L"[HDR] Advanced color active on current monitor. Using FP16 scRGB composition surfaces.\n");
+    }
+
+    return changed;
 }
 
 // ============================================================================

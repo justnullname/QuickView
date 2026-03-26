@@ -109,7 +109,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>vcpkg_installed\x64-windows-static-opt\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dav1d.lib;avif.lib;mimalloc.lib;brotlicommon.lib;brotlidec.lib;hwy.lib;jpeg.lib;jxl_cms.lib;jxl_threads.lib;jxl.lib;lcms2.lib;libwebpdecoder.lib;libwebpdemux.lib;raw_r.lib;turbojpeg.lib;yuv.lib;zlibstatic.lib;dwrite.lib;windowscodecs.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dav1d.lib;avif.lib;mimalloc.lib;brotlicommon.lib;brotlidec.lib;hwy.lib;jpeg.lib;jxl_threads.lib;jxl.lib;libwebpdecoder.lib;libwebpdemux.lib;raw_r.lib;turbojpeg.lib;yuv.lib;zlibstatic.lib;dwrite.lib;windowscodecs.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>$(ProjectDir)QuickView.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
@@ -145,6 +145,7 @@
     <ClInclude Include="TileTypes.h" />
     <ClInclude Include="SIMDUtils.h" />
     <ClInclude Include="ComputeEngine.h" />
+    <ClInclude Include="DisplayColorInfo.h" />
     <ClInclude Include="ProcessRouter.h" />
   </ItemGroup>
   <ItemGroup>
@@ -180,6 +181,7 @@
     <ClCompile Include="TileManager.cpp" />
     <ClCompile Include="TileScheduler.cpp" />
     <ClCompile Include="ComputeEngine.cpp" />
+    <ClCompile Include="DisplayColorInfo.cpp" />
     <ClCompile Include="ProcessRouter.cpp" />
   </ItemGroup>
   <ItemGroup>

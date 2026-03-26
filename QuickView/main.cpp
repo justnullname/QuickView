@@ -291,6 +291,8 @@ static bool g_phase2HasPendingNavTask = false;
 static std::atomic<uint64_t> g_phase2NavSerial{0};
 static std::atomic<bool> g_phase2NavLoopRunning{false};
 static std::atomic<uint64_t> g_phase2DroppedNavTasks{0};
+static ULONGLONG g_lastHdrDisplayReloadTick = 0;
+static float g_lastHdrDisplayReloadHeadroomStops = -1000.0f;
 // Titan scheduling reseed flag:
 // Phase2 may advance imageId before QueueDispatch actually swaps content.
 // For same-size/same-zoom switches, vp/zoom deltas can be zero and suppress
@@ -462,6 +464,7 @@ static void EnterCompareMode(HWND hwnd);
 static void ExitCompareMode(HWND hwnd);
 static void CaptureCurrentImageAsCompareLeft();
 static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, std::function<void(bool)> callback = nullptr);
+static void ReloadComparePaneForDisplayChange(HWND hwnd, ComparePane pane);
 static ComparePane HitTestComparePane(HWND hwnd, POINT ptClient);
 static D2D1_RECT_F GetCompareViewport(HWND hwnd, ComparePane pane);
 static void SetDialogCenter(float x, float y);
@@ -902,6 +905,13 @@ std::wstring GetConfigPath(bool forcePortableCheck = false) {
 
 // --- Forward Declarations ---
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint);
+static float GetCurrentDisplayHdrHeadroomStops();
+static float GetDisplayHdrHeadroomStopsForPane(HWND hwnd, ComparePane pane);
+static bool GetDisplayColorStateForPane(HWND hwnd, ComparePane pane, QuickView::DisplayColorState* stateOut);
+static bool ShouldReloadForHdrDisplayChange(float displayHdrHeadroomStops);
+static bool HasActiveGainMapImage();
+static void ReloadGainMapImagesForDisplayChange(HWND hwnd);
 void OnPaint(HWND hwnd);
 void OnResize(HWND hwnd, UINT width, UINT height);
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
@@ -2475,6 +2485,133 @@ void RequestRepaint(PaintLayer layer) {
     }
 }
 
+static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
+    if (!g_compEngine) return;
+
+    const bool changed = g_compEngine->RefreshDisplayColorState();
+    const float displayHdrHeadroomStops = GetCurrentDisplayHdrHeadroomStops();
+    if (g_renderEngine) {
+        g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
+        g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());
+    }
+    if (g_imageEngine) {
+        g_imageEngine->SetTargetHdrHeadroomStops(displayHdrHeadroomStops);
+    }
+
+    if (changed) {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        if (rc.right > 0 && rc.bottom > 0) {
+            g_compEngine->ResizeSurfaces((UINT)rc.right, (UINT)rc.bottom);
+        }
+    }
+
+    if (changed && HasActiveGainMapImage() && ShouldReloadForHdrDisplayChange(displayHdrHeadroomStops)) {
+        ReloadGainMapImagesForDisplayChange(hwnd);
+        return;
+    }
+
+    if (requestFullRepaint || changed) {
+        RequestRepaint(PaintLayer::All);
+    }
+}
+
+static float GetCurrentDisplayHdrHeadroomStops() {
+    if (!g_compEngine) return -1.0f;
+    if (IsCompareModeActive()) {
+        return GetDisplayHdrHeadroomStopsForPane(g_mainHwnd, ComparePane::Right);
+    }
+    return g_compEngine->GetDisplayColorState().GetHdrHeadroomStops();
+}
+
+static float GetDisplayHdrHeadroomStopsForPane(HWND hwnd, ComparePane pane) {
+    QuickView::DisplayColorState paneState = {};
+    if (GetDisplayColorStateForPane(hwnd, pane, &paneState)) {
+        return paneState.GetHdrHeadroomStops();
+    }
+    if (g_compEngine) {
+        return g_compEngine->GetDisplayColorState().GetHdrHeadroomStops();
+    }
+    return -1.0f;
+}
+
+static bool GetDisplayColorStateForPane(HWND hwnd, ComparePane pane, QuickView::DisplayColorState* stateOut) {
+    if (!stateOut || !hwnd) return false;
+
+    RECT windowRect{};
+    if (!GetWindowRect(hwnd, &windowRect)) return false;
+
+    POINT center = {
+        (windowRect.left + windowRect.right) / 2,
+        (windowRect.top + windowRect.bottom) / 2
+    };
+
+    if (IsCompareModeActive()) {
+        const D2D1_RECT_F paneRect = GetCompareInteractionViewport(hwnd, pane);
+        center.x = windowRect.left + static_cast<LONG>((paneRect.left + paneRect.right) * 0.5f);
+        center.y = windowRect.top + static_cast<LONG>((paneRect.top + paneRect.bottom) * 0.5f);
+    }
+
+    HMONITOR paneMonitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+    if (!QuickView::DisplayColorInfo::QueryMonitorState(paneMonitor, stateOut)) {
+        return false;
+    }
+    return true;
+}
+
+static bool HasActiveGainMapImage() {
+    const bool mainHasGainMap = !g_imagePath.empty() && g_currentMetadata.hdrMetadata.hasGainMap;
+    const bool compareLeftHasGainMap =
+        IsCompareModeActive() &&
+        g_compare.left.valid &&
+        !g_compare.left.path.empty() &&
+        g_compare.left.metadata.hdrMetadata.hasGainMap;
+    return mainHasGainMap || compareLeftHasGainMap;
+}
+
+static bool ShouldReloadForHdrDisplayChange(float displayHdrHeadroomStops) {
+    const ULONGLONG now = GetTickCount64();
+    const float delta = fabsf(displayHdrHeadroomStops - g_lastHdrDisplayReloadHeadroomStops);
+    if ((now - g_lastHdrDisplayReloadTick) < 250 && delta < 0.05f) {
+        return false;
+    }
+
+    g_lastHdrDisplayReloadTick = now;
+    g_lastHdrDisplayReloadHeadroomStops = displayHdrHeadroomStops;
+    return true;
+}
+
+static void ReloadGainMapImagesForDisplayChange(HWND hwnd) {
+    if (IsCompareModeActive()) {
+        ReloadComparePaneForDisplayChange(hwnd, ComparePane::Left);
+        ReloadComparePaneForDisplayChange(hwnd, ComparePane::Right);
+        return;
+    }
+
+    ReloadComparePaneForDisplayChange(hwnd, ComparePane::Right);
+}
+
+static void ReloadComparePaneForDisplayChange(HWND hwnd, ComparePane pane) {
+    if (pane == ComparePane::Left) {
+        if (!IsCompareModeActive() || !g_compare.left.valid || g_compare.left.path.empty() ||
+            !g_compare.left.metadata.hdrMetadata.hasGainMap) {
+            return;
+        }
+
+        LoadImageIntoCompareLeftSlot(hwnd, g_compare.left.path, [hwnd](bool success) {
+            if (success) {
+                MarkCompareDirty();
+                RequestRepaint(PaintLayer::Image | PaintLayer::Static | PaintLayer::Dynamic);
+            }
+        });
+        return;
+    }
+
+    if (!g_imagePath.empty() && g_currentMetadata.hdrMetadata.hasGainMap) {
+        ReloadCurrentImage(hwnd);
+    }
+}
+
 static void ShowGallery(HWND hwnd) {
     SaveOverlayWindowState(hwnd);
 
@@ -3286,6 +3423,18 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
 
 void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     if (!g_dialog.IsVisible || !context) return;
+
+    const float hdrWhiteScale =
+        (g_compEngine && g_compEngine->IsAdvancedColor())
+        ? (std::max)(1.0f, g_compEngine->GetDisplayColorState().GetSdrWhiteScale())
+        : 1.0f;
+    auto scaleUiColor = [&](const D2D1_COLOR_F& color) {
+        return D2D1::ColorF(
+            (std::max)(0.0f, color.r * hdrWhiteScale),
+            (std::max)(0.0f, color.g * hdrWhiteScale),
+            (std::max)(0.0f, color.b * hdrWhiteScale),
+            color.a);
+    };
     
     // Use clientRect instead of context->GetSize() to avoid Dirty Rect size issue
     D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
@@ -3293,17 +3442,17 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     
     // Overlay (background dimming)
     ComPtr<ID2D1SolidColorBrush> pOverlayBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f), &pOverlayBrush); // Slightly clearer overlay
+    context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f)), &pOverlayBrush); // Slightly clearer overlay
     context->FillRectangle(D2D1::RectF(0, 0, size.width, size.height), pOverlayBrush.Get());
     
     // Box Background (with configurable alpha)
     ComPtr<ID2D1SolidColorBrush> pBgBrush;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.18f, 0.18f, g_config.SettingsAlpha), &pBgBrush);
+    context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.18f, 0.18f, 0.18f, g_config.SettingsAlpha)), &pBgBrush);
     context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f, 10.0f), pBgBrush.Get());
     
     // Border
     ComPtr<ID2D1SolidColorBrush> pBorderBrush;
-    context->CreateSolidColorBrush(g_dialog.AccentColor, &pBorderBrush);
+    context->CreateSolidColorBrush(scaleUiColor(g_dialog.AccentColor), &pBorderBrush);
     context->DrawRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f, 10.0f), pBorderBrush.Get(), 2.0f);
     
     // Fonts
@@ -3329,7 +3478,7 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     }
     
     ComPtr<ID2D1SolidColorBrush> pWhite;
-    context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &pWhite);
+    context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(D2D1::ColorF::White)), &pWhite);
     
     // Title (truncate to show end of filename with extension, single line)
     // [Fix] Use robust visual truncation instead of hardcoded char limit
@@ -3356,12 +3505,12 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     // [Input Mode] Draw Input Field Background
     if (g_dialog.HasInput) {
         ComPtr<ID2D1SolidColorBrush> pInputBg;
-        context->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.12f, 0.12f), &pInputBg);
+        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.12f, 0.12f, 0.12f)), &pInputBg);
         context->FillRoundedRectangle(D2D1::RoundedRect(layout.Input, 6.0f, 6.0f), pInputBg.Get());
         
         // Border
         ComPtr<ID2D1SolidColorBrush> pInputBorder;
-        context->CreateSolidColorBrush(D2D1::ColorF(0.35f, 0.35f, 0.35f), &pInputBorder);
+        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.35f, 0.35f, 0.35f)), &pInputBorder);
         D2D1_RECT_F borderRect = layout.Input;
         context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, 6.0f, 6.0f), pInputBorder.Get(), 1.0f);
         
@@ -3397,7 +3546,7 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
             context->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f, 4.0f), pBorderBrush.Get());
         } else {
              ComPtr<ID2D1SolidColorBrush> pGray;
-             context->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.25f, 0.25f), &pGray);
+             context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.25f, 0.25f, 0.25f)), &pGray);
              context->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f, 4.0f), pGray.Get());
         }
         
@@ -5415,9 +5564,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     // g_compEngine = std::make_unique<CompositionEngine>();
     g_compEngine = new CompositionEngine();
     if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
-        if (g_compEngine->IsAdvancedColor()) {
-            g_renderEngine->SetAdvancedColorMode(true);
-        }
+        g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
+        g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());
         // Pure DComp architecture: Surfaces are managed by CompositionEngine
         
         // Initialize UI Renderer (renders to independent DComp Surface)
@@ -5609,6 +5757,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         if (hMon != s_lastCmsMonitor) {
             s_lastCmsMonitor = hMon;
+            RefreshDisplayColorPipeline(hwnd, false);
             // Trigger CMS update (Auto mode depends on current monitor profile)
             extern AppConfig g_config;
             extern RuntimeConfig g_runtime;
@@ -5620,7 +5769,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_DISPLAYCHANGE: {
         // [CMS] System/Monitor profile changed
-        RequestRepaint(PaintLayer::All);
+        RefreshDisplayColorPipeline(hwnd, true);
         break;
     }
     case WM_NCCALCSIZE: if (wParam) return 0; break;
@@ -8703,7 +8852,19 @@ void ProcessEngineEvents(HWND hwnd) {
                      
                 } else {
                     // === Bitmap Path ===
+                    QuickView::DisplayColorState uploadState = {};
+                    const bool usePaneDisplayState =
+                        IsCompareModeActive() &&
+                        GetDisplayColorStateForPane(hwnd, ComparePane::Right, &uploadState);
+                    const QuickView::DisplayColorState restoreState =
+                        g_compEngine ? g_compEngine->GetDisplayColorState() : g_renderEngine->GetDisplayColorState();
+                    if (usePaneDisplayState) {
+                        g_renderEngine->SetDisplayColorState(uploadState);
+                    }
                     hr = g_renderEngine->UploadRawFrameToGPU(*evt.rawFrame, &bitmap);
+                    if (usePaneDisplayState) {
+                        g_renderEngine->SetDisplayColorState(restoreState);
+                    }
                     if (FAILED(hr)) {
                         wchar_t buf[128]; swprintf_s(buf, L"[Main] Upload Failed: HR=0x%X\n", hr);
                     } else {
@@ -9820,7 +9981,8 @@ static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, 
     CImageLoader::ImageMetadata meta;
     std::wstring loaderName;
     HRESULT hr = g_imageLoader->LoadToFrame(localPath.c_str(), &frame, nullptr, 0, 0,
-                                             &loaderName, nullptr, &meta);
+                                             &loaderName, nullptr, &meta, true, false,
+                                             GetDisplayHdrHeadroomStopsForPane(hwnd, ComparePane::Left));
     
     co_await ResumeMainThread(hwnd);
 
@@ -9834,7 +9996,17 @@ static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, 
 
     // Upload pixel data to D2D bitmap (same as main pipeline)
     ComPtr<ID2D1Bitmap> d2dBitmap;
+    QuickView::DisplayColorState uploadState = {};
+    const bool hasPaneDisplayState = GetDisplayColorStateForPane(hwnd, ComparePane::Left, &uploadState);
+    const QuickView::DisplayColorState restoreState =
+        g_compEngine ? g_compEngine->GetDisplayColorState() : g_renderEngine->GetDisplayColorState();
+    if (hasPaneDisplayState) {
+        g_renderEngine->SetDisplayColorState(uploadState);
+    }
     hr = g_renderEngine->UploadRawFrameToGPU(frame, &d2dBitmap);
+    if (hasPaneDisplayState) {
+        g_renderEngine->SetDisplayColorState(restoreState);
+    }
     if (FAILED(hr) || !d2dBitmap) {
         if (callback) callback(false);
         co_return;
