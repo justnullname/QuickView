@@ -372,6 +372,7 @@ default:
                 // [Soft Proofing] Dual-Node Setup
                 ComPtr<ID2D1ColorContext> proofContext;
                 ComPtr<ID2D1Effect> softProofEffect;
+                bool softProofSucceeded = false;
 
                 if (g_runtime.EnableSoftProofing && !g_runtime.SoftProofProfilePath.empty()) {
                     if (SUCCEEDED(m_d2dContext->CreateColorContextFromFilename(g_runtime.SoftProofProfilePath.c_str(), &proofContext))) {
@@ -382,14 +383,20 @@ default:
                             softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, proofContext.Get());
                             softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
 
+                            // Advanced Soft Proofing Rendering Intent: Relative Colorimetric
+                            // For simulating the target paper/media precisely (default is Perceptual)
+                            // softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT, D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC);
+                            // softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC);
+
                             softProofEffect->GetOutput(&currentInput);
+                            softProofSucceeded = true;
                         }
                     }
                 }
 
                 // Final Node: Source (or Proof) -> Physical Monitor
                 colorManagementEffect->SetInput(0, currentInput.Get());
-                colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, proofContext ? proofContext.Get() : srcContext.Get());
+                colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, softProofSucceeded ? proofContext.Get() : srcContext.Get());
                 colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, dstContext.Get());
                 
                 // [Fix] Handle Alpha Trap: Use STRAIGHT mode to avoid black border artifacts on transparent edges
@@ -408,24 +415,45 @@ default:
                 }
 
                 // We must render this effect to a new bitmap
-                ComPtr<ID2D1Bitmap1> managedBitmap;
                 D2D1_BITMAP_PROPERTIES1 targetProps = props;
                 targetProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
-                if (SUCCEEDED(m_d2dContext->CreateBitmap(D2D1::SizeU(frame.width, frame.height), nullptr, 0, &targetProps, &managedBitmap))) {
-                    ComPtr<ID2D1Image> oldTarget;
-                    m_d2dContext->GetTarget(&oldTarget);
-                    m_d2dContext->SetTarget(managedBitmap.Get());
-                    m_d2dContext->BeginDraw();
-                    m_d2dContext->Clear(D2D1::ColorF(0, 0, 0, 0));
-                    m_d2dContext->DrawImage(cmsOutput.Get());
+                D2D1_SIZE_U targetSize = D2D1::SizeU(frame.width, frame.height);
 
-                    HRESULT endDrawHr = m_d2dContext->EndDraw();
-                    m_d2dContext->SetTarget(oldTarget.Get());
+                // Reuse the cached target bitmap if it perfectly matches the needed dimensions and format
+                if (m_cmsTargetBitmap) {
+                    D2D1_SIZE_U cachedSize = m_cmsTargetBitmap->GetPixelSize();
+                    if (cachedSize.width != targetSize.width || cachedSize.height != targetSize.height ||
+                        m_cmsTargetBitmap->GetPixelFormat().format != targetProps.pixelFormat.format) {
+                        m_cmsTargetBitmap.Reset();
+                    }
+                }
 
-                    if (SUCCEEDED(endDrawHr)) {
-                        *outBitmap = managedBitmap.Detach();
+                if (!m_cmsTargetBitmap) {
+                    if (FAILED(m_d2dContext->CreateBitmap(targetSize, nullptr, 0, &targetProps, &m_cmsTargetBitmap))) {
+                        // Fallback to raw if caching allocation fails
+                        *outBitmap = rawBitmap.Detach();
                         return S_OK;
                     }
+                }
+
+                ComPtr<ID2D1Image> oldTarget;
+                m_d2dContext->GetTarget(&oldTarget);
+                m_d2dContext->SetTarget(m_cmsTargetBitmap.Get());
+                m_d2dContext->BeginDraw();
+                m_d2dContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+                m_d2dContext->DrawImage(cmsOutput.Get());
+
+                HRESULT endDrawHr = m_d2dContext->EndDraw();
+                m_d2dContext->SetTarget(oldTarget.Get());
+
+                if (SUCCEEDED(endDrawHr)) {
+                    // Detach a clone or the instance itself?
+                    // Actually, *outBitmap assumes ownership.
+                    // To reuse m_cmsTargetBitmap across frames, we must NOT detach it.
+                    // We must return an AddRef'd copy of the pointer, and the caller will Release() it.
+                    // ComPtr::CopyTo(T**) safely adds a reference and assigns.
+                    m_cmsTargetBitmap.CopyTo(outBitmap);
+                    return S_OK;
                 }
             }
         }

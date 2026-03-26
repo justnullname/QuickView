@@ -30,6 +30,7 @@ class CRenderEngine {
 private:
     std::map<ColorContextCacheKey, Microsoft::WRL::ComPtr<ID2D1ColorContext>> m_colorContextCache;
     std::mutex m_cacheMutex;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> m_cmsTargetBitmap; // Cached target for CMS effect
 public:
     CRenderEngine() = default;
     ~CRenderEngine();
