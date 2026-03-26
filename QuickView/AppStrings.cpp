@@ -218,6 +218,12 @@ const wchar_t *Settings_Label_EdgeNavClick = nullptr;
 const wchar_t *Settings_Label_NavIndicator = nullptr;
 const wchar_t *Settings_Label_AutoRotate = nullptr;
 const wchar_t *Settings_Label_CMS = nullptr;
+const wchar_t *Settings_Label_AdvancedColor = nullptr;
+const wchar_t *Settings_Label_CmsFallback = nullptr;
+const wchar_t *Settings_Label_CustomProof = nullptr;
+const wchar_t *Context_SoftProofing = nullptr;
+const wchar_t *Context_SoftProofProfile = nullptr;
+const wchar_t *Context_SoftProofCustom = nullptr;
 const wchar_t *Settings_Value_ComingSoon = nullptr;
 const wchar_t *Settings_Label_ForceRaw = nullptr;
 const wchar_t *Settings_Label_AddToOpenWith = nullptr;
@@ -613,7 +619,13 @@ struct EN {
       L"Nav Indicator";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"Auto Rotate (EXIF)";
-  static constexpr const wchar_t *Settings_Label_CMS = L"Color Mgmt (CMS)";
+  static constexpr const wchar_t *Settings_Label_CMS = L"Color Management";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Advanced Color (HDR)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"Untagged Image Fallback";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"Soft Proof Profile (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"Soft Proofing Preview";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"Proof Profile";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"Custom...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"Coming Soon";
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"Force RAW Decode";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
@@ -910,6 +922,12 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"自动旋转 (EXIF)";
   static constexpr const wchar_t *Settings_Label_CMS = L"色彩管理 (CMS)";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高级色彩与 HDR (scRGB)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"无配置图片的默认回退";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"自定义软打样配置 (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"软打样预览";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"打样配置文件";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"自定义...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"敬请期待";
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"强制 RAW 解码";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
@@ -1426,6 +1444,12 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"自動旋轉 (EXIF)";
   static constexpr const wchar_t *Settings_Label_CMS = L"色彩管理 (CMS)";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高級色彩與 HDR (scRGB)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"無配置圖片的預設回退";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"自訂軟打樣配置 (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"軟打樣預覽";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"打樣設定檔";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"自訂...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"敬請期待";
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"強制 RAW 解碼";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
@@ -1848,6 +1872,12 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"自動回転 (EXIF)";
   static constexpr const wchar_t *Settings_Label_CMS = L"カラー管理 (CMS)";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高度な色とHDR (scRGB)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"プロファイルなし画像のフォールバック";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"ソフトプルーフプロファイル (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"ソフトプルーフプレビュー";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"プルーフプロファイル";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"カスタム...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"近日公開";
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"RAW強制デコード";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
@@ -2300,6 +2330,12 @@ struct RU {
       L"Автоповорот (EXIF)";
   static constexpr const wchar_t *Settings_Label_CMS =
       L"Управление цветом (CMS)";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Расширенный цвет (HDR)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"Запасной профиль без тегов";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"Профиль цветопробы (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"Предварительный просмотр цветопробы";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"Профиль цветопробы";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"Пользовательский...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"Скоро";
   static constexpr const wchar_t *Settings_Label_ForceRaw =
       L"Принудительное декодирование RAW";
@@ -2750,6 +2786,12 @@ struct DE {
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"Automatisch drehen (EXIF)";
   static constexpr const wchar_t *Settings_Label_CMS = L"Farbmanagement (CMS)";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Erweiterte Farbe (HDR)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"Fallback für Bilder ohne Tags";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"Softproof-Profil (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"Softproof-Vorschau";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"Proof-Profil";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"Benutzerdefiniert...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"Demnächst";
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"RAW erzwingen";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
@@ -3205,6 +3247,12 @@ struct ES {
       L"Rotar automático (EXIF)";
   static constexpr const wchar_t *Settings_Label_CMS =
       L"Gestión de color (CMS)";
+  static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Color avanzado (HDR)";
+  static constexpr const wchar_t *Settings_Label_CmsFallback = L"Perfil alternativo sin etiquetas";
+  static constexpr const wchar_t *Settings_Label_CustomProof = L"Perfil de prueba en pantalla (.icc)";
+  static constexpr const wchar_t *Context_SoftProofing = L"Vista previa de prueba en pantalla";
+  static constexpr const wchar_t *Context_SoftProofProfile = L"Perfil de prueba";
+  static constexpr const wchar_t *Context_SoftProofCustom = L"Personalizado...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"Próximamente";
   static constexpr const wchar_t *Settings_Label_ForceRaw =
       L"Forzar decodificación RAW";
@@ -3581,6 +3629,12 @@ template <typename T> void ApplyT() {
   Settings_Label_NavIndicator = T::Settings_Label_NavIndicator;
   Settings_Label_AutoRotate = T::Settings_Label_AutoRotate;
   Settings_Label_CMS = T::Settings_Label_CMS;
+  Settings_Label_AdvancedColor = T::Settings_Label_AdvancedColor;
+  Settings_Label_CmsFallback = T::Settings_Label_CmsFallback;
+  Settings_Label_CustomProof = T::Settings_Label_CustomProof;
+  Context_SoftProofing = T::Context_SoftProofing;
+  Context_SoftProofProfile = T::Context_SoftProofProfile;
+  Context_SoftProofCustom = T::Context_SoftProofCustom;
   Settings_Value_ComingSoon = T::Settings_Value_ComingSoon;
   Settings_Label_ForceRaw = T::Settings_Label_ForceRaw;
   Settings_Label_AddToOpenWith = T::Settings_Label_AddToOpenWith;

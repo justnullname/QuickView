@@ -70,6 +70,11 @@ enum ContextMenuCommand : UINT {
     IDM_CMS_ADOBERGB,
     IDM_CMS_GRAY,
     IDM_CMS_PROPHOTO,
+
+    // [Soft Proofing] Options (Base ID, can dynamically grow)
+    IDM_SOFT_PROOF_TOGGLE = 60000,
+    IDM_SOFT_PROOF_BASE = 60100, // Range 60100 - 60199 for system profiles
+    IDM_SOFT_PROOF_CUSTOM = 60200,
 };
 
 /// <summary>

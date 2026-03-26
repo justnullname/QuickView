@@ -273,6 +273,12 @@ namespace AppStrings {
     
     extern const wchar_t* Settings_Label_AutoRotate;
     extern const wchar_t* Settings_Label_CMS;
+    extern const wchar_t* Settings_Label_AdvancedColor;
+    extern const wchar_t* Settings_Label_CmsFallback;
+    extern const wchar_t* Settings_Label_CustomProof;
+    extern const wchar_t* Context_SoftProofing;
+    extern const wchar_t* Context_SoftProofProfile;
+    extern const wchar_t* Context_SoftProofCustom;
     extern const wchar_t* Settings_Value_ComingSoon;
     extern const wchar_t* Settings_Label_ForceRaw;
     extern const wchar_t* Settings_Label_AddToOpenWith;

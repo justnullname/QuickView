@@ -2458,7 +2458,7 @@ using QuickView::PaintLayer;
 using QuickView::HasLayer;
 
 // Global window handle for RequestRepaint (set in wWinMain)
-static HWND g_mainHwnd = nullptr;
+HWND g_mainHwnd = nullptr;
 
 // 锟?缁熶竴閲嶇粯璇锋眰鍏ュ彛 - 鎵€鏈夊湴鏂瑰彧璋冭繖涓嚱锟?
 void RequestRepaint(PaintLayer layer) {
@@ -4208,8 +4208,10 @@ void SaveConfig() {
 
     // Image
     WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"CmsMode", std::to_wstring(g_config.CmsMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"EnableAdvancedColor", g_config.EnableAdvancedColor ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"CmsDefaultFallback", std::to_wstring(g_config.CmsDefaultFallback).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"CustomSoftProofProfile", g_config.CustomSoftProofProfile.c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
@@ -4335,8 +4337,14 @@ void LoadConfig() {
     
     // Image
     g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;
-    g_config.CmsMode = GetPrivateProfileIntW(L"Image", L"CmsMode", 1, iniPath.c_str()); // 1 = Auto Default
-    g_config.ColorManagement = (g_config.CmsMode != 0); // Legacy mapping sync
+    g_config.ColorManagement = GetPrivateProfileIntW(L"Image", L"ColorManagement", 1, iniPath.c_str()) != 0;
+    g_config.EnableAdvancedColor = GetPrivateProfileIntW(L"Image", L"EnableAdvancedColor", 0, iniPath.c_str()) != 0;
+    g_config.CmsDefaultFallback = GetPrivateProfileIntW(L"Image", L"CmsDefaultFallback", 0, iniPath.c_str());
+
+    wchar_t customProofPath[MAX_PATH];
+    GetPrivateProfileStringW(L"Image", L"CustomSoftProofProfile", L"", customProofPath, MAX_PATH, iniPath.c_str());
+    g_config.CustomSoftProofProfile = customProofPath;
+
     g_config.ForceRawDecode = GetPrivateProfileIntW(L"Image", L"ForceRawDecode", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveEdgeAdapted = GetPrivateProfileIntW(L"Image", L"AlwaysSaveEdgeAdapted", 0, iniPath.c_str()) != 0;
@@ -5758,10 +5766,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (hMon != s_lastCmsMonitor) {
             s_lastCmsMonitor = hMon;
             RefreshDisplayColorPipeline(hwnd, false);
-            // Trigger CMS update (Auto mode depends on current monitor profile)
+            // Trigger CMS update (All managed modes now depend on the current monitor profile)
             extern AppConfig g_config;
             extern RuntimeConfig g_runtime;
-            if (g_config.CmsMode == 1 || g_runtime.CmsModeOverride == 1) { // Auto
+            int effectiveCmsMode = g_runtime.GetEffectiveCmsMode();
+            bool applyCms = g_config.ColorManagement || (effectiveCmsMode != 0 && effectiveCmsMode != 1);
+            if (applyCms && effectiveCmsMode != 0) {
                  RequestRepaint(PaintLayer::All);
             }
         }
@@ -7563,6 +7573,10 @@ SKIP_EDGE_NAV:;
                     if (g_uiRenderer) g_uiRenderer->SetTileGridVisible(g_showTileGrid);
                     handled = true; 
                     break;
+                case 'Y': // Ctrl+Y: Toggle Soft Proofing
+                    SendMessageW(hwnd, WM_COMMAND, IDM_SOFT_PROOF_TOGGLE, 0);
+                    handled = true;
+                    break;
             }
             if (handled) {
                 g_imageEngine->UpdateConfig(g_runtime); // Push to engine
@@ -7918,6 +7932,21 @@ SKIP_EDGE_NAV:;
 
     case WM_COMMAND: {
         UINT cmdId = LOWORD(wParam);
+
+        // Soft Proofing Profile Dynamic Dispatch
+        if (cmdId >= IDM_SOFT_PROOF_BASE && cmdId <= IDM_SOFT_PROOF_BASE + 99) {
+            extern std::vector<std::wstring>& GetSystemIccProfiles();
+            std::vector<std::wstring>& profiles = GetSystemIccProfiles();
+            int idx = cmdId - IDM_SOFT_PROOF_BASE;
+            if (idx >= 0 && idx < profiles.size()) {
+                g_runtime.SoftProofProfilePath = profiles[idx];
+                g_runtime.EnableSoftProofing = true;
+                RequestRepaint(PaintLayer::All);
+                g_osd.Show(hwnd, L"Soft Proofing Target Updated", false);
+            }
+            return 0;
+        }
+
         const bool contextLeft = IsCompareContextLeft();
         const std::wstring& contextPath = contextLeft ? g_compare.left.path : g_imagePath;
         const CImageLoader::ImageMetadata& contextMeta = contextLeft ? g_compare.left.metadata : g_currentMetadata;
@@ -8543,6 +8572,27 @@ SKIP_EDGE_NAV:;
              }
              g_osd.Show(hwnd, msg, false);
              RequestRepaint(PaintLayer::All);
+             break;
+        }
+
+        case IDM_SOFT_PROOF_TOGGLE: {
+             if (g_runtime.SoftProofProfilePath.empty() && !g_config.CustomSoftProofProfile.empty()) {
+                 g_runtime.SoftProofProfilePath = g_config.CustomSoftProofProfile;
+             }
+             if (g_runtime.SoftProofProfilePath.empty()) {
+                 g_osd.Show(hwnd, L"Please select a Soft Proof Profile first.", false);
+                 break;
+             }
+             g_runtime.EnableSoftProofing = !g_runtime.EnableSoftProofing;
+             RequestRepaint(PaintLayer::All);
+             g_osd.Show(hwnd, g_runtime.EnableSoftProofing ? L"Soft Proofing: ON" : L"Soft Proofing: OFF", false);
+             break;
+        }
+        case IDM_SOFT_PROOF_CUSTOM: {
+             g_runtime.SoftProofProfilePath = g_config.CustomSoftProofProfile;
+             g_runtime.EnableSoftProofing = true;
+             RequestRepaint(PaintLayer::All);
+             g_osd.Show(hwnd, L"Soft Proofing Target Updated", false);
              break;
         }
 
@@ -10731,3 +10781,29 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     RefreshSvgSurfaceAfterZoom(hwnd);
 }
 
+
+#include <filesystem>
+std::vector<std::wstring>& GetSystemIccProfiles() {
+    static std::vector<std::wstring> profiles;
+    static bool initialized = false;
+    if (!initialized) {
+        wchar_t sysDir[MAX_PATH];
+        if (GetSystemDirectoryW(sysDir, MAX_PATH)) {
+            std::wstring colorDir = std::wstring(sysDir) + L"\\spool\\drivers\\color";
+            if (std::filesystem::exists(colorDir)) {
+                for (const auto& entry : std::filesystem::directory_iterator(colorDir)) {
+                    if (entry.is_regular_file()) {
+                        std::wstring ext = entry.path().extension().wstring();
+                        // case insensitive extension check
+                        if (_wcsicmp(ext.c_str(), L".icc") == 0 || _wcsicmp(ext.c_str(), L".icm") == 0) {
+                            profiles.push_back(entry.path().wstring());
+                        }
+                    }
+                }
+            }
+        }
+        std::sort(profiles.begin(), profiles.end());
+        initialized = true;
+    }
+    return profiles;
+}

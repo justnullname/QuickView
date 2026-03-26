@@ -3,7 +3,6 @@
 #include "RenderEngine.h"
 #include "EditState.h"
 #include "ImageTypes.h"  // [Direct D2D] RawImageFrame
-#include <algorithm>
 #include <mutex>
 #include <map>
 #include <vector>
@@ -469,27 +468,64 @@ default:
     // Apply Color Management if needed
     extern RuntimeConfig g_runtime;
     extern AppConfig g_config;
-    int effectiveCmsMode = g_runtime.GetEffectiveCmsMode();
-    if (effectiveCmsMode == -1) effectiveCmsMode = g_config.CmsMode;
+    int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(); // Default is 1 (Auto)
 
-    if (effectiveCmsMode != 0) { // All managed modes (Auto, sRGB, P3) require processing, even if untagged
+    // Master Switch: Bypass entirely if Global ColorManagement is false AND context menu didn't override to a specific mode
+    bool applyCms = g_config.ColorManagement || (effectiveCmsMode != 0 && effectiveCmsMode != 1);
+
+    if (applyCms && effectiveCmsMode != 0) { // Mode 0 = Unmanaged (Force bypass)
         // Find best source context
         ComPtr<ID2D1ColorContext> srcContext;
-        if (!frame.iccProfile.empty()) {
-            ColorContextCacheKey key{ frame.iccProfile };
-            std::lock_guard<std::mutex> lock(m_cacheMutex);
-            auto it = m_colorContextCache.find(key);
-            if (it != m_colorContextCache.end()) {
-                srcContext = it->second;
-            } else {
-                if (SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_CUSTOM, frame.iccProfile.data(), (UINT32)frame.iccProfile.size(), &srcContext))) {
-                    m_colorContextCache[key] = srcContext;
+
+        if (effectiveCmsMode == 1 || effectiveCmsMode == 5) { // Auto or Grayscale
+            // Priority 1: Use Embedded ICC Profile
+            if (!frame.iccProfile.empty()) {
+                ColorContextCacheKey key{ frame.iccProfile };
+                std::lock_guard<std::mutex> lock(m_cacheMutex);
+                auto it = m_colorContextCache.find(key);
+                if (it != m_colorContextCache.end()) {
+                    srcContext = it->second;
+                } else {
+                    if (SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_CUSTOM, frame.iccProfile.data(), (UINT32)frame.iccProfile.size(), &srcContext))) {
+                        m_colorContextCache[key] = srcContext;
+                    }
+                }
+            }
+            // Priority 2: If Untagged, apply the Global Default Fallback
+            if (!srcContext) {
+                int fallback = g_config.CmsDefaultFallback;
+                if (fallback == 1 && LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_P3, srcContext.GetAddressOf())) {
+                    // Loaded P3 Fallback
+                }
+                else if (fallback == 2 && LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_ADOBERGB, srcContext.GetAddressOf())) {
+                    // Loaded Adobe RGB Fallback
+                }
+                else if (fallback == 3 && LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_PROPHOTO, srcContext.GetAddressOf())) {
+                    // Loaded ProPhoto Fallback
+                }
+                else {
+                    // Fallback 0 = sRGB (or failed to load other profiles)
+                    m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
                 }
             }
         }
-        
-        if (!srcContext) {
+        else if (effectiveCmsMode == 2) { // sRGB
              m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+        }
+        else if (effectiveCmsMode == 3) { // Display P3
+            if (!LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_P3, srcContext.GetAddressOf())) {
+                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+            }
+        }
+        else if (effectiveCmsMode == 4) { // Adobe RGB (1998)
+            if (!LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_ADOBERGB, srcContext.GetAddressOf())) {
+                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+            }
+        }
+        else if (effectiveCmsMode == 6) { // ProPhoto RGB (ROMM RGB)
+            if (!LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_PROPHOTO, srcContext.GetAddressOf())) {
+                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
+            }
         }
 
         // [Feature] Support per-pane CMS logic for Compare Mode
@@ -497,14 +533,15 @@ default:
         // Wait, D2D1 effect handles the entire surface rendering.
         // We will keep the effect standard for the texture upload.
 
-        // Find target context based on Mode
+        // Find target context based on Mode (Always monitor profile or scRGB)
         ComPtr<ID2D1ColorContext> dstContext;
         
-        if (m_isAdvancedColor && effectiveCmsMode != 0) {
+        if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
             // [Advanced Color Aware] Branch B: Map Everything to scRGB Linear Space
             m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &dstContext);
         }
-        else if (effectiveCmsMode == 1) { // Auto (System Monitor Profile)
+        else {
+            // Standard monitor profile logic
             HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
             MONITORINFOEXW mi;
             mi.cbSize = sizeof(mi);
@@ -525,37 +562,47 @@ default:
             }
             if (!dstContext) m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
         }
-        else if (effectiveCmsMode == 2) { // sRGB
-             m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
-        }
-        else if (effectiveCmsMode == 3) { // Display P3
-            if (!LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_P3, dstContext.GetAddressOf())) {
-                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
-            }
-        }
-        else if (effectiveCmsMode == 4) { // Adobe RGB (1998)
-            if (!LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_ADOBERGB, dstContext.GetAddressOf())) {
-                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
-            }
-        }
-        else if (effectiveCmsMode == 5) { // Grayscale
-            m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
-        }
-        else if (effectiveCmsMode == 6) { // ProPhoto RGB (ROMM RGB)
-            if (!LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_PROPHOTO, dstContext.GetAddressOf())) {
-                 m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
-            }
-        }
 
         if (srcContext && dstContext) {
             ComPtr<ID2D1Effect> colorManagementEffect;
             if (SUCCEEDED(m_d2dContext->CreateEffect(CLSID_D2D1ColorManagement, &colorManagementEffect))) {
-                colorManagementEffect->SetInput(0, rawBitmap.Get());
-                colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, srcContext.Get());
+
+                ComPtr<ID2D1Image> currentInput = rawBitmap;
+
+                // [Soft Proofing] Dual-Node Setup
+                ComPtr<ID2D1ColorContext> proofContext;
+                ComPtr<ID2D1Effect> softProofEffect;
+                bool softProofSucceeded = false;
+
+                if (g_runtime.EnableSoftProofing && !g_runtime.SoftProofProfilePath.empty()) {
+                    if (SUCCEEDED(m_d2dContext->CreateColorContextFromFilename(g_runtime.SoftProofProfilePath.c_str(), &proofContext))) {
+                        if (SUCCEEDED(m_d2dContext->CreateEffect(CLSID_D2D1ColorManagement, &softProofEffect))) {
+                            // Node 1: Source -> Proof Profile (Simulate output on target device)
+                            softProofEffect->SetInput(0, currentInput.Get());
+                            softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, srcContext.Get());
+                            softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, proofContext.Get());
+                            softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
+
+                            // Advanced Soft Proofing Rendering Intent: Relative Colorimetric
+                            // For simulating the target paper/media precisely (default is Perceptual)
+                            softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST);
+                            softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT, D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC);
+                            softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC);
+
+                            softProofEffect->GetOutput(&currentInput);
+                            softProofSucceeded = true;
+                        }
+                    }
+                }
+
+                // Final Node: Source (or Proof) -> Physical Monitor
+                colorManagementEffect->SetInput(0, currentInput.Get());
+                colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, softProofSucceeded ? proofContext.Get() : srcContext.Get());
                 colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, dstContext.Get());
                 
                 // [Fix] Handle Alpha Trap: Use STRAIGHT mode to avoid black border artifacts on transparent edges
                 colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
+                colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST);
 
                 ComPtr<ID2D1Image> cmsOutput;
                 colorManagementEffect->GetOutput(&cmsOutput);
@@ -569,11 +616,14 @@ default:
                     }
                 }
 
-                // We must render this effect to a new bitmap
+                // We must render this effect to a new bitmap to ensure persistence and independence.
+                // Sharing a single target bitmap across frames causes race conditions during cross-fades or compare mode.
                 ComPtr<ID2D1Bitmap1> managedBitmap;
                 D2D1_BITMAP_PROPERTIES1 targetProps = props;
                 targetProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
-                if (SUCCEEDED(m_d2dContext->CreateBitmap(D2D1::SizeU(frame.width, frame.height), nullptr, 0, &targetProps, &managedBitmap))) {
+                D2D1_SIZE_U targetSize = D2D1::SizeU(frame.width, frame.height);
+
+                if (SUCCEEDED(m_d2dContext->CreateBitmap(targetSize, nullptr, 0, &targetProps, &managedBitmap))) {
                     ComPtr<ID2D1Image> oldTarget;
                     m_d2dContext->GetTarget(&oldTarget);
                     m_d2dContext->SetTarget(managedBitmap.Get());

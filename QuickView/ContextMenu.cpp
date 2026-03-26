@@ -84,7 +84,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     // [CMS] Color Space Submenu (Promoted to Root)
     // ========================================================
     HMENU hCmsMenu = CreatePopupMenu();
-    int currentCms = (g_runtime.CmsModeOverride != -1) ? g_runtime.CmsModeOverride : g_config.CmsMode;
+    int currentCms = g_runtime.GetEffectiveCmsMode();
     AppendMenuW(hCmsMenu, (currentCms == 0 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_UNMANAGED, AppStrings::Settings_Option_CmsUnmanaged);
     AppendMenuW(hCmsMenu, (currentCms == 1 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_AUTO, AppStrings::Settings_Option_Auto);
     AppendMenuW(hCmsMenu, (currentCms == 2 ? MF_CHECKED : 0) | MF_STRING, IDM_CMS_SRGB, AppStrings::Settings_Option_CmssRGB);
@@ -106,6 +106,36 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
         case 6: cmsLabel += AppStrings::Settings_Option_CmsProPhoto; break;
     }
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hCmsMenu, cmsLabel.c_str());
+
+    // ========================================================
+    // [Soft Proofing] Submenu
+    // ========================================================
+    HMENU hProofMenu = CreatePopupMenu();
+    AppendMenuW(hProofMenu, (g_runtime.EnableSoftProofing ? MF_CHECKED : 0) | MF_STRING, IDM_SOFT_PROOF_TOGGLE, AppStrings::Context_SoftProofing);
+    AppendMenuW(hProofMenu, MF_SEPARATOR, 0, nullptr);
+
+    extern std::vector<std::wstring>& GetSystemIccProfiles();
+    std::vector<std::wstring>& proofProfiles = GetSystemIccProfiles();
+
+    // Custom Profile (Saved in Config)
+    if (!g_config.CustomSoftProofProfile.empty()) {
+        std::wstring customName = g_config.CustomSoftProofProfile.substr(g_config.CustomSoftProofProfile.find_last_of(L"/\\") + 1);
+        bool isSelected = (g_runtime.SoftProofProfilePath == g_config.CustomSoftProofProfile);
+        AppendMenuW(hProofMenu, (isSelected ? MF_CHECKED : 0) | MF_STRING, IDM_SOFT_PROOF_CUSTOM, (L"[*] " + customName).c_str());
+        AppendMenuW(hProofMenu, MF_SEPARATOR, 0, nullptr);
+    }
+
+    // System Profiles (Limit to 50 to avoid ID collision)
+    int maxProfiles = (int)proofProfiles.size();
+    if (maxProfiles > 50) maxProfiles = 50;
+
+    for (int i = 0; i < maxProfiles; i++) {
+        std::wstring filename = proofProfiles[i].substr(proofProfiles[i].find_last_of(L"/\\") + 1);
+        bool isSelected = (g_runtime.SoftProofProfilePath == proofProfiles[i]);
+        AppendMenuW(hProofMenu, (isSelected ? MF_CHECKED : 0) | MF_STRING, IDM_SOFT_PROOF_BASE + i, filename.c_str());
+    }
+
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hProofMenu, AppStrings::Context_SoftProofProfile);
     
     // Set as Wallpaper submenu
     HMENU hWallpaperMenu = CreatePopupMenu();
