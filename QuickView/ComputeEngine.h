@@ -64,6 +64,13 @@ public:
     /// Input is expected to be RGBA float with scene-linear values where 1.0
     /// represents SDR reference white.
     /// </summary>
+        /// <summary>
+    /// Tone map a linear HDR float buffer into HDR float on the GPU, applying roll-off for extreme highlights.
+    /// </summary>
+    HRESULT ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int height,
+                           int stride, const ToneMapSettings& settings,
+                           ID3D11Texture2D** outTexture);
+
     HRESULT ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height,
                            int stride, const ToneMapSettings& settings,
                            ID3D11Texture2D** outTexture);
@@ -82,6 +89,8 @@ private:
     ComPtr<ID3D11ComputeShader> m_csFormatConvert;
     ComPtr<ID3D11ComputeShader> m_csGenMips;
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToSdr;
+    ComPtr<ID3D11ComputeShader> m_csToneMapHdrToHdr;
+
     ComPtr<ID3D11Buffer> m_toneMapConstantBuffer;
 
     // Helper: Compile Embedded Shaders

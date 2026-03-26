@@ -1479,9 +1479,17 @@ static bool RenderCompareComposite(HWND hwnd) {
         ComPtr<ID2D1SolidColorBrush> bgBrush;
         ComPtr<ID2D1SolidColorBrush> borderBrush;
         ComPtr<ID2D1SolidColorBrush> arrowBrush;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.50f * opacity), &bgBrush))) return;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity), &borderBrush))) return;
-        if (FAILED(ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * opacity), &arrowBrush))) return;
+        float hdrWhiteScale = g_compEngine ? (std::max)(1.0f, g_compEngine->GetDisplayColorState().GetSdrWhiteScale()) : 1.0f;
+        auto scaleUiColor = [hdrWhiteScale](const D2D1_COLOR_F& color) {
+            return D2D1::ColorF(
+                (std::max)(0.0f, color.r * hdrWhiteScale),
+                (std::max)(0.0f, color.g * hdrWhiteScale),
+                (std::max)(0.0f, color.b * hdrWhiteScale),
+                color.a);
+        };
+        if (FAILED(ctx->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.50f * opacity)), &bgBrush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity)), &borderBrush))) return;
+        if (FAILED(ctx->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * opacity)), &arrowBrush))) return;
 
         D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(splitX, centerY), radius, radius);
         ctx->FillEllipse(ellipse, bgBrush.Get());
@@ -1533,7 +1541,15 @@ static bool RenderCompareComposite(HWND hwnd) {
         ctx->PopAxisAlignedClip();
 
         ComPtr<ID2D1SolidColorBrush> dividerBrush;
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f), &dividerBrush);
+        float hdrWhiteScale = g_compEngine ? (std::max)(1.0f, g_compEngine->GetDisplayColorState().GetSdrWhiteScale()) : 1.0f;
+        auto scaleUiColor = [hdrWhiteScale](const D2D1_COLOR_F& color) {
+            return D2D1::ColorF(
+                (std::max)(0.0f, color.r * hdrWhiteScale),
+                (std::max)(0.0f, color.g * hdrWhiteScale),
+                (std::max)(0.0f, color.b * hdrWhiteScale),
+                color.a);
+        };
+        ctx->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f)), &dividerBrush);
         if (dividerBrush) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 2.0f);
         }
@@ -1549,7 +1565,15 @@ static bool RenderCompareComposite(HWND hwnd) {
         DrawResourceIntoViewport(ctx, g_imageResource, rightExif, rightView, rightVp);
 
         ComPtr<ID2D1SolidColorBrush> dividerBrush;
-        ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &dividerBrush);
+        float hdrWhiteScale = g_compEngine ? (std::max)(1.0f, g_compEngine->GetDisplayColorState().GetSdrWhiteScale()) : 1.0f;
+        auto scaleUiColor = [hdrWhiteScale](const D2D1_COLOR_F& color) {
+            return D2D1::ColorF(
+                (std::max)(0.0f, color.r * hdrWhiteScale),
+                (std::max)(0.0f, color.g * hdrWhiteScale),
+                (std::max)(0.0f, color.b * hdrWhiteScale),
+                color.a);
+        };
+        ctx->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f)), &dividerBrush);
         if (dividerBrush) {
             ctx->DrawLine(D2D1::Point2F(splitX, 0.0f), D2D1::Point2F(splitX, (float)winH), dividerBrush.Get(), 1.0f);
         }
@@ -5080,6 +5104,13 @@ static void DrawLocalBackground(ID2D1DeviceContext* context, float widthPixels, 
     if (g_config.CanvasColor == 2 || g_config.CanvasShowGrid) {
         float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
         D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f);
+
+        float hdrWhiteScale = g_compEngine ? (std::max)(1.0f, g_compEngine->GetDisplayColorState().GetSdrWhiteScale()) : 1.0f;
+        overlayColor = D2D1::ColorF(
+            (std::max)(0.0f, overlayColor.r * hdrWhiteScale),
+            (std::max)(0.0f, overlayColor.g * hdrWhiteScale),
+            (std::max)(0.0f, overlayColor.b * hdrWhiteScale),
+            overlayColor.a);
 
         ComPtr<ID2D1SolidColorBrush> brushOverlay;
         context->CreateSolidColorBrush(overlayColor, &brushOverlay);

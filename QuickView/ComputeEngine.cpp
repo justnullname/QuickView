@@ -99,6 +99,77 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
 }
 )";
 
+static const char* HLSL_ToneMapHdrToHdr = R"(
+Texture2D<float4> SrcTex : register(t0);
+RWTexture2D<float4> DstTex : register(u0);
+
+cbuffer ToneMapParams : register(b0)
+{
+    float ContentPeakScRgb;
+    float DisplayPeakScRgb;
+    float PaperWhiteScRgb;
+    float Exposure;
+};
+
+// ACES-like curve for smooth roll-off mapping from ContentPeak to DisplayPeak
+float3 ToneMapHDR(float3 color, float contentPeak, float displayPeak)
+{
+    // If content peak is less than display peak, no roll-off is strictly needed,
+    // but we can apply exposure scale.
+    // Basic Spline or BT.2390 variant:
+    // Here we map [0, displayPeak] linearly and smoothly roll off up to contentPeak.
+
+    // We will do a simple smooth step for highlights.
+
+    // For now, let's use a Reinhard-like curve adapted for HDR:
+    // This allows keeping SDR values intact while compressing extreme highlights.
+
+    // If we have headroom, we map up to displayPeak.
+    float L = max(color.r, max(color.g, color.b));
+    if (L <= 0.0) return color;
+
+    // Only compress if we exceed a certain threshold (e.g., 0.5 * displayPeak)
+    float threshold = displayPeak * 0.7;
+
+    if (L <= threshold || contentPeak <= displayPeak) {
+        return color;
+    }
+
+    // Roll-off region
+    float t = (L - threshold) / (contentPeak - threshold);
+    t = saturate(t);
+    // Smooth step
+    float compressed = threshold + (displayPeak - threshold) * (t * (2.0 - t));
+
+    return color * (compressed / L);
+}
+
+[numthreads(8, 8, 1)]
+void CSToneMapHDR(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    SrcTex.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) {
+        return;
+    }
+
+    float4 color = SrcTex[id.xy];
+    color.rgb = max(color.rgb, 0.0.xxx);
+    color.a = saturate(color.a);
+
+    float contentPeak = max(ContentPeakScRgb, 1.0);
+    float displayPeak = max(DisplayPeakScRgb, 1.0);
+
+    // Apply exposure
+    color.rgb *= Exposure;
+
+    // Tone Map high dynamic range into display's actual peak
+    color.rgb = ToneMapHDR(color.rgb, contentPeak * Exposure, displayPeak);
+
+    DstTex[id.xy] = color;
+}
+)";
+
 HRESULT ComputeEngine::Initialize(ID3D11Device* pDevice) {
     if (!pDevice) return E_INVALIDARG;
     m_d3dDevice = pDevice;
@@ -139,6 +210,16 @@ HRESULT ComputeEngine::CompileShaders() {
         return hr;
     }
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csToneMapHdrToSdr);
+    if (FAILED(hr)) return hr;
+
+    // 4. HDR to HDR roll-off mapping
+    blob.Reset(); errorBlob.Reset();
+    hr = D3DCompile(HLSL_ToneMapHdrToHdr, strlen(HLSL_ToneMapHdrToHdr), nullptr, nullptr, nullptr, "CSToneMapHDR", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        return hr;
+    }
+    hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csToneMapHdrToHdr);
     if (FAILED(hr)) return hr;
 
     D3D11_BUFFER_DESC cbDesc = {};
@@ -329,3 +410,79 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
 }
 
 } // namespace QuickView
+
+HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture) {
+    if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
+
+    D3D11_TEXTURE2D_DESC srcDesc = {};
+    srcDesc.Width = static_cast<UINT>(width);
+    srcDesc.Height = static_cast<UINT>(height);
+    srcDesc.MipLevels = 1;
+    srcDesc.ArraySize = 1;
+    srcDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    srcDesc.SampleDesc.Count = 1;
+    srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initData = {};
+    initData.pSysMem = srcPixels;
+    initData.SysMemPitch = static_cast<UINT>(stride);
+
+    ComPtr<ID3D11Texture2D> pSrc;
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&srcDesc, &initData, &pSrc);
+    if (FAILED(hr)) return hr;
+
+    D3D11_TEXTURE2D_DESC dstDesc = {};
+    dstDesc.Width = srcDesc.Width;
+    dstDesc.Height = srcDesc.Height;
+    dstDesc.MipLevels = 1;
+    dstDesc.ArraySize = 1;
+    dstDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    dstDesc.SampleDesc.Count = 1;
+    dstDesc.Usage = D3D11_USAGE_DEFAULT;
+    dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+
+    ComPtr<ID3D11Texture2D> pDst;
+    hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11ShaderResourceView> pSRV;
+    ComPtr<ID3D11UnorderedAccessView> pUAV;
+    hr = m_d3dDevice->CreateShaderResourceView(pSrc.Get(), nullptr, &pSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pUAV);
+    if (FAILED(hr)) return hr;
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = m_d3dContext->Map(m_toneMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) return hr;
+
+    const float params[4] = {
+        settings.contentPeakScRgb,
+        settings.displayPeakScRgb,
+        settings.paperWhiteScRgb,
+        settings.exposure
+    };
+    memcpy(mapped.pData, params, sizeof(params));
+    m_d3dContext->Unmap(m_toneMapConstantBuffer.Get(), 0);
+
+    m_d3dContext->CSSetShader(m_csToneMapHdrToHdr.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* srvs[] = { pSRV.Get() };
+    m_d3dContext->CSSetShaderResources(0, 1, srvs);
+    ID3D11UnorderedAccessView* uavs[] = { pUAV.Get() };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    ID3D11Buffer* constantBuffers[] = { m_toneMapConstantBuffer.Get() };
+    m_d3dContext->CSSetConstantBuffers(0, 1, constantBuffers);
+    m_d3dContext->Dispatch((srcDesc.Width + 7) / 8, (srcDesc.Height + 7) / 8, 1);
+
+    ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+    ID3D11ShaderResourceView* nullSRV[] = { nullptr };
+    m_d3dContext->CSSetShaderResources(0, 1, nullSRV);
+    ID3D11Buffer* nullCB[] = { nullptr };
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullCB);
+    m_d3dContext->CSSetShader(nullptr, nullptr, 0);
+
+    *outTexture = pDst.Detach();
+    return S_OK;
+}

@@ -386,9 +386,28 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
   D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps(dxgiFormat, alphaMode);
 
-  if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
-      !m_isAdvancedColor) {
-    if (m_computeEngine && m_computeEngine->IsAvailable()) {
+  if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
+      if (m_isAdvancedColor) {
+          // Pure HDR Environment (Roll-off)
+          const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, m_displayColorState);
+          if (m_computeEngine && m_computeEngine->IsAvailable() && toneMapSettings.contentPeakScRgb > toneMapSettings.displayPeakScRgb) {
+              ComPtr<ID3D11Texture2D> pTex;
+              if (SUCCEEDED(m_computeEngine->ToneMapHdrToHdr(
+                      frame.pixels, static_cast<int>(frame.width),
+                      static_cast<int>(frame.height), static_cast<int>(frame.stride),
+                      toneMapSettings, &pTex))) {
+                  ComPtr<IDXGISurface> dxgiSurface;
+                  if (SUCCEEDED(pTex.As(&dxgiSurface))) {
+                      return m_d2dContext->CreateBitmapFromDxgiSurface(
+                          dxgiSurface.Get(), &props,
+                          reinterpret_cast<ID2D1Bitmap1 **>(outBitmap));
+                  }
+              }
+          }
+          // Otherwise, just fall through to standard upload (no tone mapping needed or fallback).
+      } else {
+          // SDR Environment (Fallback Tone Mapping)
+          if (m_computeEngine && m_computeEngine->IsAvailable()) {
       ComPtr<ID3D11Texture2D> pTex;
       const QuickView::ToneMapSettings toneMapSettings =
           BuildToneMapSettings(frame, m_displayColorState);
@@ -445,6 +464,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                     static_cast<UINT32>(frame.height)),
         sdrPixels.data(), static_cast<UINT32>(frame.width * 4), &sdrProps,
         reinterpret_cast<ID2D1Bitmap1 **>(outBitmap));
+    }
   }
 
   // [Optimization] Use GPU Compute for non-native format conversion

@@ -4201,20 +4201,56 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         }
     }
     
-    // 2. Convert to D2D Compatible Format (PBGRA32)
+    // 2. Convert to D2D Compatible Format (PBGRA32 or 128bppRGBAFloat for HDR)
     ComPtr<IWICFormatConverter> converter;
     hr = m_wicFactory->CreateFormatConverter(&converter);
     if (FAILED(hr)) return hr;
 
+    WICPixelFormatGUID srcFormat;
+    hr = frame->GetPixelFormat(&srcFormat);
+
+    // Check if the source format is a high-precision/HDR format
+    bool isHighPrecision = false;
+    if (SUCCEEDED(hr)) {
+        if (IsEqualGUID(srcFormat, GUID_WICPixelFormat128bppRGBAFloat) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat128bppPRGBAFloat) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat128bppRGBFloat) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat64bppRGBAHalf) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat64bppPRGBAHalf) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat64bppRGBHalf) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat64bppRGBA) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat64bppPRGBA) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat64bppRGB) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat48bppRGB) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat48bppRGBHalf) ||
+            IsEqualGUID(srcFormat, GUID_WICPixelFormat32bppRGBE)) {
+            isHighPrecision = true;
+        }
+    }
+
+    WICPixelFormatGUID targetFormat = isHighPrecision ? GUID_WICPixelFormat128bppRGBAFloat : GUID_WICPixelFormat32bppPBGRA;
+
     hr = converter->Initialize(
         finalSource.Get(), // Use frame source
-        GUID_WICPixelFormat32bppPBGRA,
+        targetFormat,
         WICBitmapDitherTypeNone,
         nullptr,
         0.f,
         WICBitmapPaletteTypeMedianCut
     );
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        // Fallback to PBGRA if float conversion is not supported
+        targetFormat = GUID_WICPixelFormat32bppPBGRA;
+        hr = converter->Initialize(
+            finalSource.Get(),
+            targetFormat,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.f,
+            WICBitmapPaletteTypeMedianCut
+        );
+        if (FAILED(hr)) return hr;
+    }
 
     // 3. Force Decode to Memory
     HRESULT hrBitmap = m_wicFactory->CreateBitmapFromSource(
@@ -6335,7 +6371,12 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     UINT w = 0, h = 0;
     wicBitmap->GetSize(&w, &h);
     
-    UINT stride = w * 4;
+    WICPixelFormatGUID srcWicFmt;
+    wicBitmap->GetPixelFormat(&srcWicFmt);
+    bool isFloat = IsEqualGUID(srcWicFmt, GUID_WICPixelFormat128bppRGBAFloat);
+    int bpp = isFloat ? 16 : 4;
+
+    UINT stride = w * bpp;
     size_t bufSize = (size_t)stride * h;
     
     try {
@@ -6361,7 +6402,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
             } else {
                 for (UINT y = 0; y < h; ++y) {
                     memcpy(pOutput->pixels.data() + (size_t)y * stride, 
-                           pData + (size_t)y * cbStride, stride);
+                           pData + (size_t)y * cbStride, w * bpp);
                 }
             }
             pOutput->isValid = true;
@@ -10340,20 +10381,46 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         if (finalH < 1) finalH = 1;
     }
 
+    WICPixelFormatGUID outWicFormat;
+    wicBitmap->GetPixelFormat(&outWicFormat);
+    bool isFloat = IsEqualGUID(outWicFormat, GUID_WICPixelFormat128bppRGBAFloat);
+    int bpp = isFloat ? 16 : 4;
+    QuickView::PixelFormat outPixelFormat = isFloat ? QuickView::PixelFormat::R32G32B32A32_FLOAT : QuickView::PixelFormat::BGRA8888;
+
     // Allocate output buffer with aligned stride
-    int outStride = CalculateSIMDAlignedStride(finalW, 4);
+    int outStride = CalculateSIMDAlignedStride(finalW, bpp);
     size_t outSize = static_cast<size_t>(outStride) * finalH;
     uint8_t* pixels = AllocateBuffer(outSize);
     if (!pixels) return E_OUTOFMEMORY;
     
     if (needWicResize) {
         // Resize directly from WIC memory lock
-        SIMDUtils::ResizeBilinear(wicData, wicWidth, wicHeight, wicStride,
-                                  pixels, finalW, finalH, outStride);
+        if (isFloat) {
+            // Very simple fallback for resizing float buffers if needed.
+            // Ideally SIMDUtils should support it, but for WIC fallback resize we can just nearest-neighbor or skip.
+            // Using a simple row/col mapping for floats:
+            float* dst = (float*)pixels;
+            float* src = (float*)wicData;
+            for (int y = 0; y < finalH; ++y) {
+                int srcY = y * wicHeight / finalH;
+                for (int x = 0; x < finalW; ++x) {
+                    int srcX = x * wicWidth / finalW;
+                    int dstIdx = y * (outStride/4) + x * 4;
+                    int srcIdx = srcY * (wicStride/4) + srcX * 4;
+                    dst[dstIdx+0] = src[srcIdx+0];
+                    dst[dstIdx+1] = src[srcIdx+1];
+                    dst[dstIdx+2] = src[srcIdx+2];
+                    dst[dstIdx+3] = src[srcIdx+3];
+                }
+            }
+        } else {
+            SIMDUtils::ResizeBilinear(wicData, wicWidth, wicHeight, wicStride,
+                                      pixels, finalW, finalH, outStride);
+        }
     } else {
         // Copy row by row (handles stride mismatch)
         for (UINT y = 0; y < wicHeight; ++y) {
-            memcpy(pixels + y * outStride, wicData + y * wicStride, wicWidth * 4);
+            memcpy(pixels + y * outStride, wicData + y * wicStride, wicWidth * bpp);
         }
     }
     
@@ -10362,7 +10429,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     outFrame->width = finalW;
     outFrame->height = finalH;
     outFrame->stride = outStride;
-    outFrame->format = PixelFormat::BGRA8888; // WIC always converts to BGRA
+    outFrame->format = outPixelFormat; // Handle float correctly
     SetupDeleter(pixels);
     
     // [v5.3] WIC Fallback Metadata Population
