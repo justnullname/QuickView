@@ -144,6 +144,7 @@ struct AppConfig {
     bool ColorManagement = true;         // Master toggle for Color Management System
     bool EnableAdvancedColor = false;    // HDR / FP16 scRGB pipeline toggle
     int CmsDefaultFallback = 0;          // Fallback for untagged images: 0=sRGB, 1=P3, 2=AdobeRGB, 3=ProPhoto
+    int CmsRenderingIntent = 0;          // 0=Relative Colorimetric, 1=Perceptual
     std::wstring CustomSoftProofProfile; // Path to user-selected ICC file for soft proofing
     bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
     
@@ -225,6 +226,8 @@ struct ViewState {
     }
 };
 
+extern struct AppConfig g_config;
+
 // Runtime State (Reset on Restart)
 struct RuntimeConfig {
     bool LockWindowSize = false;
@@ -256,7 +259,7 @@ struct RuntimeConfig {
     
     // CMS Helper
     int GetEffectiveCmsMode() const {
-        return (CmsModeOverride != -1) ? CmsModeOverride : 1; // Default to 1 (Auto) when no override
+        return (CmsModeOverride != -1) ? CmsModeOverride : (g_config.ColorManagement ? 1 : 0); // Default to 0 (Unmanaged) if CMS is off
     }
 
     // Sync Helper

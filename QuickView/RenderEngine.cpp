@@ -589,6 +589,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
         ComPtr<ID2D1Image> currentInput = rawBitmap;
 
+        D2D1_COLORMANAGEMENT_RENDERING_INTENT renderIntent = g_config.CmsRenderingIntent == 1 ?
+            D2D1_COLORMANAGEMENT_RENDERING_INTENT_PERCEPTUAL : D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
+
         // Soft Proofing Node Setup
         ComPtr<ID2D1ColorContext> proofContext;
         ComPtr<ID2D1Effect> softProofEffect;
@@ -603,8 +606,8 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, proofContext.Get());
               softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
               softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST);
-              softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT, D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC);
-              softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC);
+              softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT, renderIntent);
+              softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, renderIntent);
               softProofEffect->GetOutput(&currentInput);
               softProofSucceeded = true;
               OutputDebugStringW(L"[CMS] Chained Soft Proofing Node.\n");
@@ -617,6 +620,8 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT, dstContext.Get());
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST);
+        colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT, renderIntent);
+        colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, renderIntent);
         OutputDebugStringW(L"[CMS] CMS Conversion Node Configured.\n");
 
         ComPtr<ID2D1Image> cmsOutput;

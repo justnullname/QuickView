@@ -275,6 +275,9 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_CMS;
     extern const wchar_t* Settings_Label_AdvancedColor;
     extern const wchar_t* Settings_Label_CmsFallback;
+    extern const wchar_t* Settings_Label_CmsIntent;
+    extern const wchar_t* Settings_Option_IntentRelative;
+    extern const wchar_t* Settings_Option_IntentPerceptual;
     extern const wchar_t* Settings_Label_CustomProof;
     extern const wchar_t* Context_SoftProofing;
     extern const wchar_t* Context_SoftProofProfile;

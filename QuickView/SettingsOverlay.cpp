@@ -1209,6 +1209,14 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemCmsFallback);
     
+    SettingsItem itemCmsIntent = { AppStrings::Settings_Label_CmsIntent, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsRenderingIntent), nullptr, 0, 0, {AppStrings::Settings_Option_IntentRelative, AppStrings::Settings_Option_IntentPerceptual} };
+    itemCmsIntent.onChange = []() {
+        SaveConfig();
+        extern void RequestRepaint(QuickView::PaintLayer layerMask);
+        RequestRepaint(QuickView::PaintLayer::All);
+    };
+    tabImage.items.push_back(itemCmsIntent);
+
     SettingsItem itemCustomProof = { AppStrings::Settings_Label_CustomProof, OptionType::ActionButton };
     itemCustomProof.buttonText = AppStrings::Context_SoftProofCustom;
     if (!g_config.CustomSoftProofProfile.empty()) {
