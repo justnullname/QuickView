@@ -59,6 +59,7 @@ struct EngineEvent {
     
     // Status Message Payload
     std::wstring message;
+    HRESULT hr = S_OK; // [HEIC] Propagate specific load errors
     
     bool isScaled = false; // [Phase 11] Was image scaled during decode?
     std::wstring loaderName; // Which decoder was used

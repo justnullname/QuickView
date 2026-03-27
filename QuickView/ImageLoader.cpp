@@ -235,6 +235,11 @@ namespace QuickView {
             
             // [v5.3] Unified metadata (includes loader name, format details, EXIF, etc.)
             CImageLoader::ImageMetadata metadata;
+
+            // [GPU Pipeline] Multi-layer composition asset package
+            GpuBlendOp blendOp = GpuBlendOp::None;
+            std::unique_ptr<AuxLayer> auxLayer;
+            GpuShaderPayload shaderPayload;
         };
 
         // File I/O Helpers
@@ -4397,6 +4402,151 @@ static bool ReadFileToPMR(LPCWSTR filePath, std::pmr::vector<uint8_t>& buffer, s
 // ============================================================================
 namespace QuickView {
     namespace Codec {
+        // ====================================================================
+        // [Ultra HDR] JPEG Gain Map Asset Extraction (ISO 21496-1)
+        // ====================================================================
+        // Stateless utility functions for extracting multi-layer data from
+        // Ultra HDR JPEGs. NO composition is performed here — all data is
+        // packaged into GpuShaderPayload + AuxLayer for GPU-side baking.
+        // ====================================================================
+        namespace UltraHdr {
+
+            // Extract float value from XMP attribute: attrName="value"
+            static bool FindXmpAttr(const std::string& xml, const char* attrName, float* out) {
+                auto pos = xml.find(attrName);
+                if (pos == std::string::npos) return false;
+                pos += strlen(attrName);
+                auto q1 = xml.find('"', pos);
+                if (q1 == std::string::npos) q1 = xml.find('\'', pos);
+                if (q1 == std::string::npos) return false;
+                char qc = xml[q1];
+                auto q2 = xml.find(qc, q1 + 1);
+                if (q2 == std::string::npos) return false;
+                char buf[64] = {};
+                size_t len = (std::min)((size_t)(q2 - q1 - 1), (size_t)63);
+                memcpy(buf, xml.c_str() + q1 + 1, len);
+                char* ep = nullptr;
+                *out = strtof(buf, &ep);
+                return (ep != buf);
+            }
+
+            // Parse XMP hdrgm: namespace → GpuShaderPayload
+            // Returns true if valid Ultra HDR metadata found
+            static bool ParseXmpToPayload(const uint8_t* xmpData, size_t xmpLen, GpuShaderPayload& payload) {
+                if (!xmpData || xmpLen < 10) return false;
+                std::string xml(reinterpret_cast<const char*>(xmpData), xmpLen);
+
+                // Require hdrgm namespace
+                if (xml.find("hdrgm:") == std::string::npos &&
+                    xml.find("HDRGainMap") == std::string::npos) {
+                    return false;
+                }
+
+                float v;
+                // GainMapMin (scalar → broadcast to RGB)
+                if (FindXmpAttr(xml, "hdrgm:GainMapMin=", &v))
+                    payload.gainMapMin[0] = payload.gainMapMin[1] = payload.gainMapMin[2] = v;
+                if (FindXmpAttr(xml, "hdrgm:GainMapMax=", &v))
+                    payload.gainMapMax[0] = payload.gainMapMax[1] = payload.gainMapMax[2] = v;
+                if (FindXmpAttr(xml, "hdrgm:Gamma=", &v))
+                    payload.gamma[0] = payload.gamma[1] = payload.gamma[2] = v;
+                if (FindXmpAttr(xml, "hdrgm:OffsetSDR=", &v))
+                    payload.offsetSdr[0] = payload.offsetSdr[1] = payload.offsetSdr[2] = v;
+                if (FindXmpAttr(xml, "hdrgm:OffsetHDR=", &v))
+                    payload.offsetHdr[0] = payload.offsetHdr[1] = payload.offsetHdr[2] = v;
+                if (FindXmpAttr(xml, "hdrgm:HDRCapacityMin=", &v))
+                    payload.hdrCapacityMin = v;
+                if (FindXmpAttr(xml, "hdrgm:HDRCapacityMax=", &v))
+                    payload.hdrCapacityMax = v;
+
+                // BaseRenditionIsHDR
+                if (xml.find("hdrgm:BaseRenditionIsHDR=\"True\"") != std::string::npos ||
+                    xml.find("hdrgm:BaseRenditionIsHDR=\"true\"") != std::string::npos) {
+                    payload.baseIsHdr = 1.0f;
+                }
+
+                return true;
+            }
+
+            // Find second JPEG SOI (0xFF 0xD8) in MPF container → Gain Map offset
+            static bool FindMpfSecondImage(const uint8_t* buf, size_t bufSize,
+                                           const uint8_t** outData, size_t* outSize) {
+                if (!buf || bufSize < 4) return false;
+                // [Diagnostic] Log scan start
+                for (size_t i = 2; i < bufSize - 1; ++i) {
+                    if (buf[i] == 0xFF && buf[i + 1] == 0xD8) {
+                        // Found an SOI. 
+                        *outData = buf + i;
+                        *outSize = bufSize - i;
+                        wchar_t logBuf[128];
+                        swprintf_s(logBuf, L"[UltraHDR] Found potential second JPEG SOI at offset %zu, size %zu\n", i, *outSize);
+                        OutputDebugStringW(logBuf);
+                        return true;
+                    }
+                }
+                OutputDebugStringW(L"[UltraHDR] Second JPEG SOI NOT found in MPF scan.\n");
+                return false;
+            }
+
+            // Decode a JPEG buffer to 8-bit grayscale, allocate via ctx.allocator
+            static std::unique_ptr<AuxLayer> DecodeGainMapJpeg(
+                const uint8_t* data, size_t size,
+                const DecodeContext& ctx)
+            {
+                struct jpeg_decompress_struct cinfo;
+                struct jpeg_error_mgr jerr;
+                cinfo.err = jpeg_std_error(&jerr);
+                jerr.error_exit = [](j_common_ptr ci) {
+                    OutputDebugStringW(L"[UltraHDR] Gain Map JPEG decode fatal error.\n");
+                    longjmp(*static_cast<jmp_buf*>(ci->client_data), 1);
+                };
+
+                jmp_buf jmpbuf;
+                cinfo.client_data = &jmpbuf;
+                if (setjmp(jmpbuf)) {
+                    jpeg_destroy_decompress(&cinfo);
+                    return nullptr;
+                }
+
+                jpeg_create_decompress(&cinfo);
+                jpeg_mem_src(&cinfo, data, (unsigned long)size);
+                if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+                    OutputDebugStringW(L"[UltraHDR] Gain Map JPEG read_header failed.\n");
+                    jpeg_destroy_decompress(&cinfo);
+                    return nullptr;
+                }
+
+                cinfo.out_color_space = JCS_GRAYSCALE;
+                jpeg_start_decompress(&cinfo);
+
+                const int w = cinfo.output_width;
+                const int h = cinfo.output_height;
+                const int stride = CalculateAlignedStride(w, 1, 64); // 64-byte aligned for GPU upload
+
+                auto aux = std::make_unique<AuxLayer>();
+                aux->pixels = ctx.allocator((size_t)stride * h);
+                if (!aux->pixels) {
+                    jpeg_abort_decompress(&cinfo);
+                    jpeg_destroy_decompress(&cinfo);
+                    return nullptr;
+                }
+                aux->width = w;
+                aux->height = h;
+                aux->stride = stride;
+                aux->bytesPerPixel = 1;
+
+                while (cinfo.output_scanline < cinfo.output_height) {
+                    JSAMPROW row = aux->pixels + (size_t)cinfo.output_scanline * stride;
+                    jpeg_read_scanlines(&cinfo, &row, 1);
+                }
+
+                jpeg_finish_decompress(&cinfo);
+                jpeg_destroy_decompress(&cinfo);
+                return aux;
+            }
+
+        } // namespace UltraHdr
+
         namespace JPEG {
 
             struct my_error_mgr {
@@ -4435,6 +4585,9 @@ namespace QuickView {
                     return E_FAIL;
                 }
                 
+                GpuShaderPayload ultraHdrPayload;
+                bool hasUltraHdr = false;
+
                 // [CMS] Extract and Merge Multi-segment ICC Profile from APP2 markers
                 {
                     size_t iccTotalSize = 0;
@@ -4442,6 +4595,41 @@ namespace QuickView {
                     
                     // First pass: identify markers and calculate size
                     for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {
+                        // [UltraHDR Diagnostic]
+                        if (marker->marker == JPEG_APP0 + 1 || marker->marker == JPEG_APP0 + 2) {
+                            wchar_t logBuf[256];
+                            swprintf_s(logBuf, L"[UltraHDR] Found Marker APP%d (0x%02X), Len=%d, Data[0..3]=%02X %02X %02X %02X\n",
+                                marker->marker - JPEG_APP0, marker->marker, (int)marker->data_length,
+                                marker->data_length > 0 ? marker->data[0] : 0,
+                                marker->data_length > 1 ? marker->data[1] : 0,
+                                marker->data_length > 2 ? marker->data[2] : 0,
+                                marker->data_length > 3 ? marker->data[3] : 0);
+                            OutputDebugStringW(logBuf);
+                        }
+
+                        // [UltraHDR Phase 1] Parse XMP while marker_list is alive
+                        if (marker->marker == JPEG_APP0 + 1 && marker->data_length >= 28) {
+                            const char* xmpId = "http://ns.adobe.com/xap/1.0/";
+                            bool match = false;
+                            if (marker->data_length >= 29 && memcmp(marker->data, xmpId, 29) == 0) match = true;
+                            else if (memcmp(marker->data, xmpId, 28) == 0) match = true;
+
+                            if (match) {
+                                const size_t matchedLen = (marker->data_length >= 29 && marker->data[28] == '\0') ? 29 : 28;
+                                const uint8_t* xmpData = marker->data + matchedLen;
+                                const size_t xmpLen = marker->data_length - matchedLen;
+                                
+                                if (UltraHdr::ParseXmpToPayload(xmpData, xmpLen, ultraHdrPayload)) {
+                                    ultraHdrPayload.sdrWidth = (uint32_t)cinfo.image_width;
+                                    ultraHdrPayload.sdrHeight = (uint32_t)cinfo.image_height;
+                                    hasUltraHdr = true;
+                                    OutputDebugStringW(L"[UltraHDR] XMP Gain Map parameters found and parsed (Early stage).\n");
+                                } else {
+                                    OutputDebugStringW(L"[UltraHDR] APP1 XMP found but ParseXmpToPayload failed.\n");
+                                }
+                            }
+                        }
+
                         if (marker->marker == 0xE2 && marker->data_length >= 14) {
                              if (memcmp(marker->data, "ICC_PROFILE", 11) == 0) {
                                  iccTotalSize += (marker->data_length - 14);
@@ -4644,6 +4832,7 @@ namespace QuickView {
                 result.metadata.Height = cinfo.image_height;
 
                 jpeg_finish_decompress(&cinfo);
+
                 jpeg_destroy_decompress(&cinfo);
 
                 result.pixels = pixels;
@@ -4656,6 +4845,29 @@ namespace QuickView {
                 // [Fix] Respect EasyExif result if available. Fallback to Raw Scan only if needed.
                 if (result.metadata.ExifOrientation == 1) {
                     result.metadata.ExifOrientation = ReadJpegExifOrientation(pBuf, bufSize);
+                }
+
+                // ============================================================
+                // [Ultra HDR] Phase 2: Extract MPF Gain Map (uses pBuf which
+                // is still alive — it's the original file buffer)
+                // ============================================================
+                if (hasUltraHdr) {
+                    ultraHdrPayload.sdrWidth = (uint32_t)result.width;
+                    ultraHdrPayload.sdrHeight = (uint32_t)result.height;
+
+                    const uint8_t* gainJpegData = nullptr;
+                    size_t gainJpegSize = 0;
+                    if (UltraHdr::FindMpfSecondImage(pBuf, bufSize, &gainJpegData, &gainJpegSize)) {
+                        OutputDebugStringW(L"[UltraHDR] MPF Secondary Image (Gain Map) found.\n");
+                        auto auxLayer = UltraHdr::DecodeGainMapJpeg(gainJpegData, gainJpegSize, ctx);
+                        if (auxLayer) {
+                            result.blendOp = GpuBlendOp::UltraHdrGainMap;
+                            result.auxLayer = std::move(auxLayer);
+                            result.shaderPayload = ultraHdrPayload;
+                            result.metadata.FormatDetails += L" Ultra HDR";
+                            result.metadata.hdrMetadata.hasGainMap = true;
+                        }
+                    }
                 }
 
                 return S_OK;
@@ -6291,12 +6503,18 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
             HRESULT hr = WIC_HEIC::Load(filePath, ctx, result, m_wicFactory.Get());
             if (SUCCEEDED(hr)) return S_OK;
             
+            // Remember if WIC failed due to missing HEVC codec
+            const bool hevcMissing = (hr == WINCODEC_ERR_COMPONENTNOTFOUND);
+            
             // Fallback to AVIF if WIC failed (Extension missing)
             hr = AVIF::Load(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) {
                 result.metadata.LoaderName = L"libavif/HEIF (Unified Fallback)";
                 return S_OK;
             }
+            
+            // Both failed: propagate HEVC-missing hint for user prompt
+            if (hevcMissing) return WINCODEC_ERR_COMPONENTNOTFOUND;
         }
         else if (fmt == L"JXL") {
             // [JXL DC] Only use DC Preview if scaling is requested (Stage 1)
@@ -10081,6 +10299,22 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             (res.metadata.Width != (UINT)outFrame->width || res.metadata.Height != (UINT)outFrame->height)) {
             outFrame->srcWidth = (int)res.metadata.Width;
             outFrame->srcHeight = (int)res.metadata.Height;
+        }
+        
+        // [GPU Pipeline] Bridge multi-layer composition data
+        if (res.blendOp != GpuBlendOp::None && res.auxLayer) {
+            outFrame->blendOp = res.blendOp;
+            outFrame->shaderPayload = res.shaderPayload;
+            // Setup deleter for aux layer pixel data
+            if (res.auxLayer->pixels) {
+                uint8_t* auxPtr = res.auxLayer->pixels;
+                if (arena && arena->Owns(auxPtr)) {
+                    res.auxLayer->deleter = nullptr;
+                } else {
+                    res.auxLayer->deleter = [](uint8_t* p) { _aligned_free(p); };
+                }
+            }
+            outFrame->auxLayer = std::move(res.auxLayer);
         }
         
         SetupDeleter(res.pixels);

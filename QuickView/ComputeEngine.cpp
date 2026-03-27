@@ -170,6 +170,77 @@ void CSToneMapHDR(uint3 id : SV_DispatchThreadID)
 }
 )";
 
+// ============================================================================
+// [GPU Pipeline] ISO 21496-1 Gain Map Composition Shader
+// ============================================================================
+// Input 0 (t0): SDR base layer (BGRA8)
+// Input 1 (t1): Gain Map (R8 grayscale, bilinear sampled via UV)
+// Output (u0): FP16 linear RGBA (R16G16B16A16_FLOAT)
+// Constant Buffer (b0): GpuShaderPayload (16-byte aligned rows)
+// ============================================================================
+static const char* HLSL_ComposeGainMap = R"(
+Texture2D<unorm float4> SdrTex  : register(t0);  // BGRA8 SDR base
+Texture2D<unorm float>  GainTex : register(t1);  // R8 Gain Map
+RWTexture2D<float4>     DstTex  : register(u0);  // FP16 output
+SamplerState LinearSampler      : register(s0);  // Bilinear filter
+
+cbuffer GainMapParams : register(b0)
+{
+    float3 GainMapMin;    float _pad0;
+    float3 GainMapMax;    float _pad1;
+    float3 Gamma;         float _pad2;
+    float3 OffsetSdr;     float _pad3;
+    float3 OffsetHdr;     float _pad4;
+    float  HdrCapacityMin;
+    float  HdrCapacityMax;
+    float  TargetHeadroom;
+    float  BaseIsHdr;
+    uint   SdrWidth;
+    uint   SdrHeight;
+    uint   _pad5;
+    uint   _pad6;
+};
+
+// sRGB EOTF (electrical → linear)
+float3 SrgbToLinear(float3 c)
+{
+    float3 lo = c / 12.92;
+    float3 hi = pow(abs((c + 0.055) / 1.055), 2.4);
+    return lerp(hi, lo, step(c, 0.04045));
+}
+
+[numthreads(8, 8, 1)]
+void CSComposeGainMap(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= SdrWidth || id.y >= SdrHeight) return;
+
+    // Read SDR pixel (D3D11 natively swizzles B8G8R8A8 into RGBA channels)
+    float4 sdrColor = SdrTex[id.xy];
+    float3 sdrLinear = SrgbToLinear(sdrColor.rgb);
+
+    // Bilinear sample gain map at normalized UV (handles resolution mismatch)
+    float2 uv = (float2(id.xy) + 0.5) / float2(SdrWidth, SdrHeight);
+    float gainEncoded = GainTex.SampleLevel(LinearSampler, uv, 0).r;
+
+    // Compute ISO 21496-1 weight from display headroom
+    float capRange = HdrCapacityMax - HdrCapacityMin;
+    float weight = 0.0;
+    if (capRange > 0.001)
+        weight = saturate((TargetHeadroom - HdrCapacityMin) / capRange);
+    if (BaseIsHdr > 0.5)
+        weight = 1.0 - weight;
+
+    // Per-channel gain map application
+    float3 safeGamma = max(Gamma, 0.001);
+    float3 gainLog = GainMapMin + (GainMapMax - GainMapMin) * pow(gainEncoded, 1.0 / safeGamma);
+
+    float3 hdrLinear = (sdrLinear + OffsetSdr) * exp2(gainLog * weight) - OffsetHdr;
+    hdrLinear = max(hdrLinear, 0.0);
+
+    DstTex[id.xy] = float4(hdrLinear, 1.0);
+}
+)";
+
 HRESULT ComputeEngine::Initialize(ID3D11Device* pDevice) {
     if (!pDevice) return E_INVALIDARG;
     m_d3dDevice = pDevice;
@@ -222,12 +293,37 @@ HRESULT ComputeEngine::CompileShaders() {
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csToneMapHdrToHdr);
     if (FAILED(hr)) return hr;
 
+    // 5. Gain Map Composition (ISO 21496-1)
+    blob.Reset(); errorBlob.Reset();
+    hr = D3DCompile(HLSL_ComposeGainMap, strlen(HLSL_ComposeGainMap), nullptr, nullptr, nullptr, "CSComposeGainMap", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        return hr;
+    }
+    hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csComposeGainMap);
+    if (FAILED(hr)) return hr;
+
+    // Constant Buffers
     D3D11_BUFFER_DESC cbDesc = {};
     cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     cbDesc.ByteWidth = 16;
     cbDesc.Usage = D3D11_USAGE_DYNAMIC;
     cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_toneMapConstantBuffer);
+    if (FAILED(hr)) return hr;
+
+    // Gain Map CB (sizeof GpuShaderPayload, must be 16-byte aligned)
+    cbDesc.ByteWidth = sizeof(GpuShaderPayload);
+    hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_gainMapConstantBuffer);
+    if (FAILED(hr)) return hr;
+
+    // Linear sampler for bilinear gain map interpolation
+    D3D11_SAMPLER_DESC sampDesc = {};
+    sampDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+    sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    hr = m_d3dDevice->CreateSamplerState(&sampDesc, &m_linearSampler);
     
     return hr;
 }
@@ -487,3 +583,133 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
 }
 
 } // namespace QuickView
+
+// ============================================================================
+// [GPU Pipeline] Gain Map Composition (ISO 21496-1) — appended outside namespace
+// to avoid line-ending matching issues, then wrapped back in.
+// ============================================================================
+namespace QuickView {
+
+HRESULT ComputeEngine::ComposeGainMap(
+    const uint8_t* sdrPixels, int sdrW, int sdrH, int sdrStride,
+    PixelFormat sdrFormat,
+    const uint8_t* gainPixels, int gainW, int gainH, int gainStride,
+    const GpuShaderPayload& payload,
+    ID3D11Texture2D** outTexture)
+{
+    if (!m_valid || !sdrPixels || !gainPixels || !outTexture) {
+        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.\n");
+        return E_INVALIDARG;
+    }
+    if (sdrW <= 0 || sdrH <= 0 || gainW <= 0 || gainH <= 0) {
+        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.\n");
+        return E_INVALIDARG;
+    }
+
+    // [Diagnostic] Log composition start
+    wchar_t logBuf[256];
+    swprintf_s(logBuf, L"[ComputeEngine] Compose: SDR %dx%d, Gain %dx%d, Headroom %.2f, MaxGain %.2f\n",
+        sdrW, sdrH, gainW, gainH, payload.targetHeadroom, payload.gainMapMax[0]);
+    OutputDebugStringW(logBuf);
+
+    // 1. Upload SDR base layer (BGRA8 immutable texture)
+    D3D11_TEXTURE2D_DESC sdrDesc = {};
+    sdrDesc.Width = (UINT)sdrW;
+    sdrDesc.Height = (UINT)sdrH;
+    sdrDesc.MipLevels = 1;
+    sdrDesc.ArraySize = 1;
+    sdrDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    sdrDesc.SampleDesc.Count = 1;
+    sdrDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    sdrDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA sdrData = {};
+    sdrData.pSysMem = sdrPixels;
+    sdrData.SysMemPitch = (UINT)sdrStride;
+
+    ComPtr<ID3D11Texture2D> pSdr;
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&sdrDesc, &sdrData, &pSdr);
+    if (FAILED(hr)) return hr;
+
+    // 2. Upload Gain Map (R8 grayscale immutable texture)
+    D3D11_TEXTURE2D_DESC gainDesc = {};
+    gainDesc.Width = (UINT)gainW;
+    gainDesc.Height = (UINT)gainH;
+    gainDesc.MipLevels = 1;
+    gainDesc.ArraySize = 1;
+    gainDesc.Format = DXGI_FORMAT_R8_UNORM;
+    gainDesc.SampleDesc.Count = 1;
+    gainDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    gainDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA gainData = {};
+    gainData.pSysMem = gainPixels;
+    gainData.SysMemPitch = (UINT)gainStride;
+
+    ComPtr<ID3D11Texture2D> pGain;
+    hr = m_d3dDevice->CreateTexture2D(&gainDesc, &gainData, &pGain);
+    if (FAILED(hr)) return hr;
+
+    // 3. Create FP16 output texture (R16G16B16A16_FLOAT)
+    D3D11_TEXTURE2D_DESC dstDesc = {};
+    dstDesc.Width = (UINT)sdrW;
+    dstDesc.Height = (UINT)sdrH;
+    dstDesc.MipLevels = 1;
+    dstDesc.ArraySize = 1;
+    dstDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    dstDesc.SampleDesc.Count = 1;
+    dstDesc.Usage = D3D11_USAGE_DEFAULT;
+    dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+
+    ComPtr<ID3D11Texture2D> pDst;
+    hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
+    if (FAILED(hr)) return hr;
+
+    // 4. Create views
+    ComPtr<ID3D11ShaderResourceView> pSdrSRV, pGainSRV;
+    ComPtr<ID3D11UnorderedAccessView> pDstUAV;
+    hr = m_d3dDevice->CreateShaderResourceView(pSdr.Get(), nullptr, &pSdrSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateShaderResourceView(pGain.Get(), nullptr, &pGainSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pDstUAV);
+    if (FAILED(hr)) return hr;
+
+    // 5. Upload constant buffer
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = m_d3dContext->Map(m_gainMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) return hr;
+    memcpy(mapped.pData, &payload, sizeof(GpuShaderPayload));
+    m_d3dContext->Unmap(m_gainMapConstantBuffer.Get(), 0);
+
+    // 6. Dispatch compute shader
+    m_d3dContext->CSSetShader(m_csComposeGainMap.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* srvs[] = { pSdrSRV.Get(), pGainSRV.Get() };
+    m_d3dContext->CSSetShaderResources(0, 2, srvs);
+    ID3D11UnorderedAccessView* uavs[] = { pDstUAV.Get() };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    ID3D11Buffer* cbs[] = { m_gainMapConstantBuffer.Get() };
+    m_d3dContext->CSSetConstantBuffers(0, 1, cbs);
+    ID3D11SamplerState* samplers[] = { m_linearSampler.Get() };
+    m_d3dContext->CSSetSamplers(0, 1, samplers);
+
+    m_d3dContext->Dispatch(((UINT)sdrW + 7) / 8, ((UINT)sdrH + 7) / 8, 1);
+
+    // 7. Cleanup GPU state
+    ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+    ID3D11ShaderResourceView* nullSRVs[] = { nullptr, nullptr };
+    m_d3dContext->CSSetShaderResources(0, 2, nullSRVs);
+    ID3D11Buffer* nullCB[] = { nullptr };
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullCB);
+    m_d3dContext->CSSetShader(nullptr, nullptr, 0);
+
+    // [v10.5] Force submission to GPU before passing DXGI surface to D2D
+    m_d3dContext->Flush();
+
+    *outTexture = pDst.Detach();
+    return S_OK;
+}
+
+} // namespace QuickView
+

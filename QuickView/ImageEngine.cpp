@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <chrono>
 
+extern HWND g_mainHwnd;
+
 // ============================================================================
 // ImageEngine Implementation
 // ============================================================================
@@ -633,6 +635,11 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                 // [v9.0] Startup Delay Check
                 CheckStartupDelay();
             } else if (e.type == EventType::LoadError) {
+                // [HEIC] Special handling for missing codec: Trigger install prompt on UI thread
+                if (e.hr == WINCODEC_ERR_COMPONENTNOTFOUND) {
+                     PostMessage(m_hwnd, WM_APP + 99, 0, 0);
+                }
+
                 // [JXL Scene C] FastLane Aborted (Modular?) -> Trigger Heavy Immediately
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
                      OutputDebugStringW(L"[PollState] FastLane Failed (Modular?) -> Triggering Heavy Immediate\n");
@@ -1116,6 +1123,24 @@ void ImageEngine::FastLane::QueueWorker() {
                     safeFrame->hdrMetadata = rawFrame.hdrMetadata;
                     safeFrame->srcWidth = rawFrame.srcWidth;
                     safeFrame->srcHeight = rawFrame.srcHeight;
+
+                    // [GPU Pipeline] Deep copy blend operation and payload
+                    safeFrame->blendOp = rawFrame.blendOp;
+                    safeFrame->shaderPayload = rawFrame.shaderPayload;
+                    if (rawFrame.auxLayer && rawFrame.auxLayer->pixels) {
+                        auto safeAux = std::make_unique<QuickView::AuxLayer>();
+                        safeAux->width = rawFrame.auxLayer->width;
+                        safeAux->height = rawFrame.auxLayer->height;
+                        safeAux->stride = rawFrame.auxLayer->stride;
+                        safeAux->bytesPerPixel = rawFrame.auxLayer->bytesPerPixel;
+                        
+                        size_t auxSize = (size_t)safeAux->stride * safeAux->height;
+                        uint8_t* auxHeap = new uint8_t[auxSize];
+                        memcpy(auxHeap, rawFrame.auxLayer->pixels, auxSize);
+                        safeAux->pixels = auxHeap;
+                        safeAux->deleter = [](uint8_t* p) { delete[] p; };
+                        safeFrame->auxLayer = std::move(safeAux);
+                    }
                 }
                 e.rawFrame = safeFrame;
                 
@@ -1174,6 +1199,7 @@ void ImageEngine::FastLane::QueueWorker() {
                     e.type = EventType::LoadError;
                     e.filePath = cmd.path;
                     e.imageId = cmd.id;
+                    e.hr = hr; // Propagate error code
                     {
                         std::lock_guard lock(m_queueMutex);
                         m_results.push_back(std::move(e));

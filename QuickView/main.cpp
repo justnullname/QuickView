@@ -5329,6 +5329,10 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
             hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, nullptr, &meta, !noFakeBase);
         }
         if (FAILED(hr) || !rawFrame.IsValid()) {
+            // [HEIC] Signal parent if HEVC component is missing
+            if (hr == WINCODEC_ERR_COMPONENTNOTFOUND) {
+                header->hr = static_cast<int32_t>(WINCODEC_ERR_COMPONENTNOTFOUND);
+            }
             if (SUCCEEDED(hr)) hr = E_FAIL;
             break;
         }
@@ -5822,6 +5826,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_APP + 1: {
         auto handle = std::coroutine_handle<>::from_address((void*)lParam);
         handle.resume();
+        return 0;
+    }
+
+    // [HEIC] HEVC Video Extensions missing — prompt user to install
+    case WM_APP + 99: {
+        std::vector<DialogButton> buttons = {
+            { DialogResult::Custom1, L"Install HEVC Extension", true },
+            { DialogResult::Cancel,  L"Cancel" }
+        };
+        DialogResult dlgResult = ShowQuickViewDialog(hwnd,
+            L"HEVC Codec Required",
+            L"This HEIC/HEIF image requires the HEVC Video Extensions.\n"
+            L"Install it from the Microsoft Store to enable decoding.",
+            D2D1::ColorF(D2D1::ColorF::Orange), buttons);
+        if (dlgResult == DialogResult::Custom1) {
+            ShellExecuteW(nullptr, L"open",
+                L"ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq",
+                nullptr, nullptr, SW_SHOWNORMAL);
+        }
         return 0;
     }
 

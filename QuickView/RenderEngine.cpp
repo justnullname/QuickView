@@ -360,9 +360,81 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   if (!frame.IsValid())
     return E_INVALIDARG;
 
+  // ====================================================================
+  // [GPU Pipeline] Multi-Layer Composition (GPU Bake)
+  // ====================================================================
+  // If the frame carries a blend operation (e.g. Ultra HDR Gain Map),
+  // compose the layers on GPU and produce an FP16 texture directly.
+  // The baked result is treated as a standard HDR bitmap.
+  // ====================================================================
+  if (frame.blendOp != QuickView::GpuBlendOp::None &&
+      frame.auxLayer && frame.auxLayer->pixels &&
+      m_computeEngine && m_computeEngine->IsAvailable())
+  {
+      switch (frame.blendOp) {
+      case QuickView::GpuBlendOp::UltraHdrGainMap: {
+          // Fill target headroom from current display state
+          QuickView::GpuShaderPayload payload = frame.shaderPayload;
+          if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
+              payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops();
+          } else {
+              payload.targetHeadroom = 0.0f; // SDR: no gain applied
+          }
+
+          // Only trigger GPU Bake if we actually need to apply HDR gain (Headroom > 0).
+          // For SDR displays, we fall back to the standard base-layer rendering
+          // which preserves the exact color/brightness of the original JPEG via its ICC profile.
+          if (payload.targetHeadroom <= 0.01f) {
+              break; 
+          }
+
+          wchar_t dbg[256];
+          swprintf_s(dbg, L"[RenderEngine] GPU Bake Triggered (UltraHDR). Target Headroom: %.2f stops.\n", payload.targetHeadroom);
+          OutputDebugStringW(dbg);
+
+          ComPtr<ID3D11Texture2D> pBaked;
+          HRESULT hrBake = m_computeEngine->ComposeGainMap(
+              frame.pixels, frame.width, frame.height, frame.stride,
+              frame.format,
+              frame.auxLayer->pixels,
+              frame.auxLayer->width, frame.auxLayer->height,
+              frame.auxLayer->stride,
+              payload, &pBaked);
+
+          if (SUCCEEDED(hrBake)) {
+              ComPtr<IDXGISurface> dxgiSurface;
+              if (SUCCEEDED(pBaked.As(&dxgiSurface))) {
+                  D2D1_BITMAP_PROPERTIES1 hdrProps = {};
+                  hdrProps.pixelFormat.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                  hdrProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED; 
+                  hdrProps.dpiX = 96.0f;
+                  hdrProps.dpiY = 96.0f;
+                  
+                  ComPtr<ID2D1ColorContext> scRgbContext;
+                  if (SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbContext))) {
+                      hdrProps.colorContext = scRgbContext.Get();
+                  }
+                  
+                  return m_d2dContext->CreateBitmapFromDxgiSurface(
+                      dxgiSurface.Get(), &hdrProps,
+                      reinterpret_cast<ID2D1Bitmap1**>(outBitmap));
+              }
+          }
+          break;
+      }
+      default:
+          break;
+      }
+  }
+
   // Map PixelFormat to DXGI_FORMAT and D2D1_ALPHA_MODE
   DXGI_FORMAT dxgiFormat;
   D2D1_ALPHA_MODE alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+
+  wchar_t dbgUpload[256];
+  swprintf_s(dbgUpload, L"[RenderEngine] Upload: %dx%d, Format=%d, BlendOp=%d, AdvColor=%d\n",
+      (int)frame.width, (int)frame.height, (int)frame.format, (int)frame.blendOp, (int)m_isAdvancedColor);
+  OutputDebugStringW(dbgUpload);
 
   switch (frame.format) {
   case QuickView::PixelFormat::BGRA8888:

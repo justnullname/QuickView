@@ -70,6 +70,85 @@ enum class Priority {
 };
 
 // ============================================================================
+// GPU Multi-Layer Composition Types (Data-Driven Pipeline)
+// ============================================================================
+
+// GPU blend operation dispatch tag
+enum class GpuBlendOp : uint8_t {
+    None = 0,             // No blend - standard single layer
+    UltraHdrGainMap = 1,  // ISO 21496-1 Gain Map composition
+    // Future: AppleGainMap, AdobeGainMap, ...
+};
+
+// Auxiliary layer data (Gain Map, depth map, etc.)
+// Lifetime managed by unique_ptr in RawImageFrame
+struct AuxLayer {
+    uint8_t* pixels = nullptr;
+    int width = 0;
+    int height = 0;
+    int stride = 0;         // Bytes per row
+    int bytesPerPixel = 1;  // 1 for grayscale Gain Map
+    std::function<void(uint8_t*)> deleter;
+
+    ~AuxLayer() {
+        if (pixels && deleter) deleter(pixels);
+        pixels = nullptr;
+    }
+
+    AuxLayer() = default;
+    AuxLayer(const AuxLayer&) = delete;
+    AuxLayer& operator=(const AuxLayer&) = delete;
+    AuxLayer(AuxLayer&& o) noexcept
+        : pixels(o.pixels), width(o.width), height(o.height),
+          stride(o.stride), bytesPerPixel(o.bytesPerPixel),
+          deleter(std::move(o.deleter)) {
+        o.pixels = nullptr;
+    }
+};
+
+// GPU shader constant buffer payload (strict 16-byte / float4 alignment)
+// Layout MUST match HLSL cbuffer exactly. Each float3 is padded to float4.
+//
+// HLSL cbuffer GainMapParams : register(b0) {
+//     float3 GainMapMin;    float _pad0;
+//     float3 GainMapMax;    float _pad1;
+//     float3 Gamma;         float _pad2;
+//     float3 OffsetSdr;     float _pad3;
+//     float3 OffsetHdr;     float _pad4;
+//     float  HdrCapacityMin;
+//     float  HdrCapacityMax;
+//     float  TargetHeadroom;
+//     float  BaseIsHdr;
+//     uint   SdrWidth;
+//     uint   SdrHeight;
+//     uint   _pad5;
+//     uint   _pad6;
+// };
+struct alignas(16) GpuShaderPayload {
+    // Row 0: GainMapMin.xyz + pad
+    float gainMapMin[3] = {0, 0, 0};    float _pad0 = 0;
+    // Row 1: GainMapMax.xyz + pad
+    float gainMapMax[3] = {1, 1, 1};    float _pad1 = 0;
+    // Row 2: Gamma.xyz + pad
+    float gamma[3] = {1, 1, 1};         float _pad2 = 0;
+    // Row 3: OffsetSdr.xyz + pad
+    float offsetSdr[3] = {0, 0, 0};     float _pad3 = 0;
+    // Row 4: OffsetHdr.xyz + pad
+    float offsetHdr[3] = {0, 0, 0};     float _pad4 = 0;
+    // Row 5: scalar params
+    float hdrCapacityMin = 0;
+    float hdrCapacityMax = 1;
+    float targetHeadroom = 0; // Filled at render time
+    float baseIsHdr = 0;      // 0.0 or 1.0
+    // Row 6: dimension info for UV calculation
+    uint32_t sdrWidth = 0;
+    uint32_t sdrHeight = 0;
+    uint32_t _pad5 = 0;
+    uint32_t _pad6 = 0;
+};
+static_assert(sizeof(GpuShaderPayload) % 16 == 0, "GpuShaderPayload must be 16-byte aligned for D3D11 cbuffer");
+
+// ============================================================================
 // RawImageFrame - The Standardized Cargo Box
 // ============================================================================
 // Design Principles:
@@ -119,6 +198,12 @@ struct RawImageFrame {
     
     // Helper: SVG only call
     bool IsSvg() const { return format == PixelFormat::SVG_XML && svg; }
+
+    // [GPU Pipeline] Multi-layer composition data
+    // Zero-overhead for standard single-layer images (unique_ptr + enum)
+    GpuBlendOp blendOp = GpuBlendOp::None;
+    std::unique_ptr<AuxLayer> auxLayer;   // nullptr = single layer
+    GpuShaderPayload shaderPayload;       // Only meaningful when blendOp != None
     
     // === Lifecycle Management ===
     // Callback to release memory when frame is destroyed.
@@ -195,6 +280,10 @@ struct RawImageFrame {
         memoryDeleter = nullptr;
         svg.reset(); // [D2D Native] Release SVG data
         iccProfile.clear(); // Ensure it is cleared on reset
+        // [GPU Pipeline] Release auxiliary layer
+        auxLayer.reset();
+        blendOp = GpuBlendOp::None;
+        shaderPayload = {};
     }
     
     /// Detach pointer without calling deleter (transfers ownership out)
@@ -226,6 +315,11 @@ private:
         // [D2D Native] Move SVG Data
         svg = std::move(other.svg);
         
+        // [GPU Pipeline] Move multi-layer data
+        blendOp = other.blendOp;
+        auxLayer = std::move(other.auxLayer);
+        shaderPayload = other.shaderPayload;
+        
         // Nullify source
         other.pixels = nullptr;
         other.width = 0;
@@ -239,8 +333,11 @@ private:
         other.is_Linear_sRGB = false;
         other.hdrMetadata = {};
         other.exifOrientation = 1;
+        other.blendOp = GpuBlendOp::None;
+        other.shaderPayload = {};
         // memoryDeleter is moved, but setting to nullptr for clarity
         // other.svg is moved (becomes nullptr)
+        // other.auxLayer is moved (becomes nullptr)
     }
 };
 

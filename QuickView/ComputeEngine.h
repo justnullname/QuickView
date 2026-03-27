@@ -76,6 +76,18 @@ public:
                            ID3D11Texture2D** outTexture);
 
     /// <summary>
+    /// GPU-side Gain Map composition (ISO 21496-1).
+    /// Fuses SDR base layer + grayscale gain map into FP16 HDR output.
+    /// Uses bilinear sampling for gain map (handles resolution mismatch).
+    /// </summary>
+    HRESULT ComposeGainMap(
+        const uint8_t* sdrPixels, int sdrW, int sdrH, int sdrStride,
+        PixelFormat sdrFormat,
+        const uint8_t* gainPixels, int gainW, int gainH, int gainStride,
+        const GpuShaderPayload& payload,
+        ID3D11Texture2D** outTexture);
+
+    /// <summary>
     /// Generate Mipmaps for a texture.
     /// </summary>
     HRESULT GenerateMips(ID3D11Texture2D* pTexture);
@@ -90,8 +102,11 @@ private:
     ComPtr<ID3D11ComputeShader> m_csGenMips;
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToSdr;
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToHdr;
+    ComPtr<ID3D11ComputeShader> m_csComposeGainMap;
 
     ComPtr<ID3D11Buffer> m_toneMapConstantBuffer;
+    ComPtr<ID3D11Buffer> m_gainMapConstantBuffer;
+    ComPtr<ID3D11SamplerState> m_linearSampler;
 
     // Helper: Compile Embedded Shaders
     HRESULT CompileShaders();
