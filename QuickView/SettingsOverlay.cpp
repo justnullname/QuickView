@@ -12,6 +12,7 @@
 #include <vector>
 #include <shellapi.h>
 #include <wincodec.h>
+#include "CoroutineTypes.h"
 
 // Windows headers
 #pragma comment(lib, "version.lib")
@@ -695,16 +696,16 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         m_debugInfo = L"Starting...";
         
         // Try Resource ID 1 (256x256 first)
-        HICON hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 256, 256, LR_DEFAULTCOLOR); 
+        HICON hIcon = (HICON)::LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 256, 256, LR_DEFAULTCOLOR); 
         
         if (!hIcon) {
             m_debugInfo += L" | Load(256) Fail Err=" + std::to_wstring(GetLastError());
             // Fallback to default
-            hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
+            hIcon = (HICON)::LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
              if (!hIcon) {
                  m_debugInfo += L" | Load(0) Fail Err=" + std::to_wstring(GetLastError());
                  // Fallback to System Hand
-                 hIcon = (HICON)LoadIconW(NULL, IDI_APPLICATION);
+                 hIcon = (HICON)::LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
                  if (hIcon) m_debugInfo += L" | Using SysIcon";
              }
         } else {
@@ -1189,10 +1190,9 @@ void SettingsOverlay::BuildMenu() {
     SettingsItem itemCmsToggle = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
     itemCmsToggle.onChange = []() {
         SaveConfig();
-        g_pImageEngine->InvalidateCache(g_imagePath);
-        g_pImageEngine->NavigateTo(g_imagePath, g_navigator.GetFileSize(g_navigator.Index()), g_navigator.GetCurrentImageID());
-        extern void RequestRepaint(QuickView::PaintLayer layerMask);
-        RequestRepaint(QuickView::PaintLayer::All);
+        extern HWND g_mainHwnd;
+        extern FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
+        LoadImageAsync(g_mainHwnd, g_imagePath, false, QuickView::BrowseDirection::IDLE);
     };
     tabImage.items.push_back(itemCmsToggle);
 
@@ -1210,8 +1210,9 @@ void SettingsOverlay::BuildMenu() {
     SettingsItem itemAdvColor = { AppStrings::Settings_Label_AdvancedColor, OptionType::Toggle, &g_config.EnableAdvancedColor };
     itemAdvColor.onChange = []() {
         SaveConfig();
-        extern void RequestRepaint(QuickView::PaintLayer layerMask);
-        RequestRepaint(QuickView::PaintLayer::All);
+        extern HWND g_mainHwnd;
+        extern FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
+        LoadImageAsync(g_mainHwnd, g_imagePath, false, QuickView::BrowseDirection::IDLE);
     };
     tabImage.items.push_back(itemAdvColor);
 

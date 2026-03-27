@@ -2125,19 +2125,6 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     if (g_currentMetadata.HasGPS) height += 50.0f * s;
     if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f * s;
 
-    {
-        wchar_t dbg[1024];
-        swprintf_s(
-            dbg,
-            L"[InfoPanel] expanded=%d rows=%u height=%.1f formatDetails='%s' loader='%s'\n",
-            g_runtime.InfoPanelExpanded ? 1 : 0,
-            (unsigned)m_infoGrid.size(),
-            height,
-            g_currentMetadata.FormatDetails.c_str(),
-            g_currentMetadata.LoaderName.c_str());
-        OutputDebugStringW(dbg);
-    }
-
     D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
     
     // Background - Use g_config.InfoPanelAlpha for transparency

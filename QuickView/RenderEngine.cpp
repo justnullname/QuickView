@@ -19,6 +19,8 @@
 #include <icm.h>
 
 
+extern AppConfig g_config;
+
 namespace {
 template <typename T>
 bool LoadIccFromResource(T *d2dContext, int resourceId,
@@ -389,10 +391,10 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps(dxgiFormat, alphaMode);
 
   if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
-      if (m_isAdvancedColor) {
+      if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
           // Pure HDR Environment (Roll-off)
           const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, m_displayColorState);
-          if (m_computeEngine && m_computeEngine->IsAvailable() && toneMapSettings.contentPeakScRgb > toneMapSettings.displayPeakScRgb) {
+          if (m_computeEngine && m_computeEngine->IsAvailable() && toneMapSettings.contentPeakScRgb > (toneMapSettings.displayPeakScRgb > 1.0f ? toneMapSettings.displayPeakScRgb : 1.0f)) {
               ComPtr<ID3D11Texture2D> pTex;
               if (SUCCEEDED(m_computeEngine->ToneMapHdrToHdr(
                       frame.pixels, static_cast<int>(frame.width),
@@ -507,33 +509,22 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       applyCms = true; // Manual Overrides (sRGB, ProPhoto, etc)
   }
 
-  {
-    wchar_t l_buf[256];
-    swprintf_s(l_buf, L"[CMS] Config.ColorManagement: %d, EffectiveMode: %d, FinalApplyCms: %d\n", 
-               g_config.ColorManagement, effectiveCmsMode, applyCms);
-    OutputDebugStringW(l_buf);
-  }
-
   if (effectiveCmsMode == 1 || effectiveCmsMode == 5) { // Auto or Grayscale
     if (!frame.iccProfile.empty()) {
       wchar_t d_buf[128];
       swprintf_s(d_buf, L"[CMS] Embedded Profile detected in frame. Size: %zu\n", frame.iccProfile.size());
-      OutputDebugStringW(d_buf);
 
       ColorContextCacheKey key{frame.iccProfile};
       std::lock_guard<std::mutex> lock(m_cacheMutex);
       auto it = m_colorContextCache.find(key);
       if (it != m_colorContextCache.end()) {
         srcContext = it->second;
-        OutputDebugStringW(L"[CMS] Using cached ColorContext.\n");
       } else {
         if (SUCCEEDED(m_d2dContext->CreateColorContext(
                 D2D1_COLOR_SPACE_CUSTOM, frame.iccProfile.data(),
                 (UINT32)frame.iccProfile.size(), &srcContext))) {
           m_colorContextCache[key] = srcContext;
-          OutputDebugStringW(L"[CMS] Successfully created new ColorContext from embedded ICC.\n");
         } else {
-          OutputDebugStringW(L"[CMS] FAILED to create ColorContext from embedded ICC data!\n");
         }
       }
     }
@@ -544,7 +535,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       else if (fallback == 3) LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_PROPHOTO, srcContext.GetAddressOf());
       else {
           m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
-          OutputDebugStringW(L"[CMS] Using sRGB fallback as srcContext.\n");
       }
     }
   }
@@ -553,7 +543,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   else if (effectiveCmsMode == 4) LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_ADOBERGB, srcContext.GetAddressOf());
   else if (effectiveCmsMode == 6) {
       LoadIccFromResource(m_d2dContext.Get(), IDR_ICC_PROPHOTO, srcContext.GetAddressOf());
-      OutputDebugStringW(L"[CMS] Manual Mode: Forced ProPhoto RGB.\n");
   }
   
   if (!srcContext) m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
@@ -577,7 +566,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
     if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
       m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &dstContext);
-      OutputDebugStringW(L"[CMS] Target Color Context: scRGB (HDR Aware Pipeline).\n");
     } else {
       HMONITOR hMon = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
       MONITORINFOEXW mi;
@@ -592,7 +580,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
             if (GetICMProfileW(hdcMon, &dwLen, &profilePath[0])) {
               profilePath.resize(dwLen - 1);
               m_d2dContext->CreateColorContextFromFilename(profilePath.c_str(), &dstContext);
-              OutputDebugStringW(L"[CMS] Target Color Context: Detected Monitor Profile.\n");
             }
           }
           DeleteDC(hdcMon);
@@ -600,7 +587,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       }
       if (!dstContext) {
           m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &dstContext);
-          OutputDebugStringW(L"[CMS] Target Color Context: Default sRGB.\n");
       }
     }
 
@@ -625,7 +611,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
               softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST);
               
-              // [Requirement 2] Use User-defined Rendering Intent
               const D2D1_COLORMANAGEMENT_RENDERING_INTENT intent = (g_config.CmsRenderingIntent == 0) ? 
                   D2D1_COLORMANAGEMENT_RENDERING_INTENT_PERCEPTUAL : 
                   D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
@@ -634,7 +619,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               softProofEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, intent);
               softProofEffect->GetOutput(&currentInput);
               softProofSucceeded = true;
-              OutputDebugStringW(L"[CMS] Chained Soft Proofing Node.\n");
             }
           }
         }
@@ -645,14 +629,11 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE, D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_QUALITY, D2D1_COLORMANAGEMENT_QUALITY_BEST);
 
-        // [Requirement 2] Main CMS Rendering Intent
         const D2D1_COLORMANAGEMENT_RENDERING_INTENT intent = (g_config.CmsRenderingIntent == 0) ? 
             D2D1_COLORMANAGEMENT_RENDERING_INTENT_PERCEPTUAL : 
             D2D1_COLORMANAGEMENT_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT, intent);
         colorManagementEffect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT, intent);
-
-        OutputDebugStringW(L"[CMS] CMS Conversion Node Configured.\n");
 
         ComPtr<ID2D1Image> cmsOutput;
         colorManagementEffect->GetOutput(&cmsOutput);
@@ -670,7 +651,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
         D2D1_BITMAP_PROPERTIES1 targetProps = props;
         targetProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
         targetProps.colorContext = dstContext.Get(); // Mandatory for correct DrawImage interpretation
-        D2D1_SIZE_U targetSize = D2D1::SizeU(frame.width, frame.height);
+        D2D1_SIZE_U targetSize = D2D1::SizeU(static_cast<UINT32>(frame.width), static_cast<UINT32>(frame.height));
 
         if (SUCCEEDED(m_d2dContext->CreateBitmap(targetSize, nullptr, 0, &targetProps, &managedBitmap))) {
           ComPtr<ID2D1Image> oldTarget;
@@ -683,7 +664,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           m_d2dContext->SetTarget(oldTarget.Get());
 
           if (SUCCEEDED(endDrawHr)) {
-            OutputDebugStringW(L"[CMS] Final CMS Rendering Successful.\n");
             *outBitmap = managedBitmap.Detach();
             return S_OK;
           }

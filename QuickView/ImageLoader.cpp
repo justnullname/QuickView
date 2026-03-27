@@ -83,6 +83,85 @@ static bool TryDecodeAvifGainMappedLinearRGBA(
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
 static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
 
+// [v18] Brute force scan for 'nclx' box in HEIF/AVIF streams.
+// Used when standard ISOBMFF parsing fails due to non-standard container brands (e.g. Canon 'heix').
+static bool FindNclx(const uint8_t* data, size_t size, uint16_t& p, uint16_t& t, uint16_t& m, size_t* outOffset = nullptr) {
+    if (size < 16) return false;
+    
+    // Safety: Only scan first 1MB to avoid false positives in media data (mdat)
+    const size_t scanLimit = (size > 1024 * 1024) ? 1024 * 1024 : size;
+    
+    for (size_t i = 0; i < scanLimit - 12; ++i) {
+        // Look for 'colr' followed by 'nclx'
+        if (data[i] == 'c' && data[i+1] == 'o' && data[i+2] == 'l' && data[i+3] == 'r' &&
+            data[i+4] == 'n' && data[i+5] == 'c' && data[i+6] == 'l' && data[i+7] == 'x') {
+            
+            // Standard nclx layout (ISO/IEC 14496-12): 
+            // Type(4) + Subtype(4) + Primaries(2) + Transfer(2) + Matrix(2) + FullRange(1)
+            // Big-endian 16-bit values:
+            p = (static_cast<uint16_t>(data[i+8]) << 8) | data[i+9];
+            t = (static_cast<uint16_t>(data[i+10]) << 8) | data[i+11];
+            m = (static_cast<uint16_t>(data[i+12]) << 8) | data[i+13];
+            
+            if (outOffset) *outOffset = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+// [v18] Helper to map CICP Primaries to Internal Enum
+static QuickView::ColorPrimaries MapCicpPrimaries(uint16_t p) {
+    if (p == 1) return QuickView::ColorPrimaries::SRGB;
+    if (p == 9) return QuickView::ColorPrimaries::Rec2020;
+    if (p == 11 || p == 12) return QuickView::ColorPrimaries::DisplayP3; // DCI-P3 or Display P3
+    return QuickView::ColorPrimaries::Unknown;
+}
+
+// [v18] Helper to map CICP Transfer function to Internal Enum
+static QuickView::TransferFunction MapCicpTransfer(uint16_t t) {
+    if (t == 1 || t == 6 || t == 14 || t == 15) return QuickView::TransferFunction::Rec709;
+    if (t == 8) return QuickView::TransferFunction::Linear;
+    if (t == 13) return QuickView::TransferFunction::SRGB;
+    if (t == 16) return QuickView::TransferFunction::PQ;
+    if (t == 18) return QuickView::TransferFunction::HLG;
+    return QuickView::TransferFunction::Unknown;
+}
+
+// [v18] Fallback Metadata Prober for Native WIC Path
+static void TryReadMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadata* pHdr) {
+    if (!filePath || !pHdr) return;
+    
+    // 1. Try standard libavif container parsing first
+    QuickView::MappedFile mapping(filePath);
+    if (!mapping.IsValid()) return;
+    
+    avifDecoder* decoder = avifDecoderCreate();
+    if (decoder) {
+        if (avifDecoderSetIOMemory(decoder, mapping.data(), mapping.size()) == AVIF_RESULT_OK) {
+            if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
+                pHdr->isHdr = (decoder->image->depth > 8);
+                pHdr->primaries = MapCicpPrimaries((uint8_t)decoder->image->colorPrimaries);
+                pHdr->transfer = MapCicpTransfer((uint8_t)decoder->image->transferCharacteristics);
+                pHdr->isValid = true;
+                avifDecoderDestroy(decoder);
+                return;
+            }
+        }
+        avifDecoderDestroy(decoder);
+    }
+    
+    // 2. Brute-force fallback for Canon .hif (Brand='heix') or other unhandled containers
+    uint16_t p = 0, t = 0, m = 0;
+    size_t offset = 0;
+    if (FindNclx(mapping.data(), mapping.size(), p, t, m, &offset)) {
+        pHdr->isHdr = (t == 16 || t == 18); // PQ or HLG
+        pHdr->primaries = MapCicpPrimaries(p);
+        pHdr->transfer = MapCicpTransfer(t);
+        pHdr->isValid = true;
+    }
+}
+
 
 
 std::mutex CImageLoader::s_jxlRunnerMutex;
@@ -6087,6 +6166,74 @@ namespace QuickView {
         }
 
     } // namespace Codec
+
+    namespace Codec {
+        namespace WIC_HEIC {
+            static HRESULT Load(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result, IWICImagingFactory* factory) {
+                if (!filePath || !factory) return E_INVALIDARG;
+
+                TryReadMetadataNative(filePath, &result.metadata.hdrMetadata);
+                
+                ComPtr<IWICBitmapDecoder> decoder;
+                HRESULT hr = factory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+                if (FAILED(hr)) return hr;
+
+                ComPtr<IWICBitmapFrameDecode> frame;
+                if (FAILED(decoder->GetFrame(0, &frame))) return E_FAIL;
+
+                WICPixelFormatGUID srcFormat;
+                frame->GetPixelFormat(&srcFormat);
+                
+                bool isHighBitDepth = (srcFormat == GUID_WICPixelFormat64bppRGBAHalf || 
+                                     srcFormat == GUID_WICPixelFormat128bppRGBAFloat ||
+                                     srcFormat == GUID_WICPixelFormat64bppRGBA ||
+                                     srcFormat == GUID_WICPixelFormat48bppRGB ||
+                                     result.metadata.hdrMetadata.isHdr);
+
+                ComPtr<IWICFormatConverter> converter;
+                if (FAILED(factory->CreateFormatConverter(&converter))) return E_FAIL;
+
+                WICPixelFormatGUID targetFmt = GUID_WICPixelFormat32bppPBGRA;
+                if (isHighBitDepth) {
+                    targetFmt = GUID_WICPixelFormat128bppRGBAFloat; 
+                    result.format = PixelFormat::R32G32B32A32_FLOAT;
+                } else {
+                    result.format = PixelFormat::BGRA8888;
+                }
+
+                if (FAILED(converter->Initialize(frame.Get(), targetFmt, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) return E_FAIL;
+
+                UINT w, h;
+                frame->GetSize(&w, &h);
+                int bpp = isHighBitDepth ? 16 : 4;
+                int stride = CalculateSIMDAlignedStride(w, bpp);
+                size_t bufSize = (size_t)stride * h;
+                uint8_t* pixels = ctx.allocator(bufSize);
+                if (!pixels) return E_OUTOFMEMORY;
+
+                if (FAILED(converter->CopyPixels(nullptr, stride, (UINT)bufSize, pixels))) return E_FAIL;
+
+                result.pixels = pixels;
+                result.width = w;
+                result.height = h;
+                result.stride = stride;
+                result.success = true;
+                result.metadata.LoaderName = L"WIC HEIF (Native Accelerated)";
+                result.metadata.Width = w;
+                result.metadata.Height = h;
+                
+                if (isHighBitDepth) {
+                    result.metadata.FormatDetails = L"High Precision (scRGB)";
+                    if (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ) result.metadata.FormatDetails += L" / PQ";
+                    else if (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG) result.metadata.FormatDetails += L" / HLG";
+                    
+                    if (result.metadata.hdrMetadata.primaries == QuickView::ColorPrimaries::Rec2020) result.metadata.FormatDetails += L" / P2020";
+                    else if (result.metadata.hdrMetadata.primaries == QuickView::ColorPrimaries::DisplayP3) result.metadata.FormatDetails += L" / P3";
+                }
+                return S_OK;
+            }
+        }
+    }
 } // namespace QuickView
 
 using namespace QuickView::Codec;
@@ -6133,14 +6280,21 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
         size_t mappedSize = mapping.size();
         
         // Dispatch
-        if (fmt == L"AVIF" || fmt == L"HEIC") {
+        if (fmt == L"AVIF") {
             HRESULT hr = AVIF::Load(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) {
-                if (fmt == L"HEIC" && result.metadata.LoaderName == L"libavif (Unified)") {
-                    result.metadata.LoaderName = L"libavif/HEIF (Unified)";
-                } else if (fmt == L"HEIC" && result.metadata.LoaderName == L"libavif (Unified HDR)") {
-                    result.metadata.LoaderName = L"libavif/HEIF (Unified HDR)";
-                }
+                result.metadata.LoaderName = L"libavif (Unified)";
+                return S_OK;
+            }
+        }
+        else if (fmt == L"HEIC") {
+            HRESULT hr = WIC_HEIC::Load(filePath, ctx, result, m_wicFactory.Get());
+            if (SUCCEEDED(hr)) return S_OK;
+            
+            // Fallback to AVIF if WIC failed (Extension missing)
+            hr = AVIF::Load(mappedData, mappedSize, ctx, result);
+            if (SUCCEEDED(hr)) {
+                result.metadata.LoaderName = L"libavif/HEIF (Unified Fallback)";
                 return S_OK;
             }
         }
