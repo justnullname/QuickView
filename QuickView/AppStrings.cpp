@@ -602,7 +602,7 @@ struct EN {
       L"Fullscreen Zoom Mode";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"Fit to Screen";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% for small, Fit for large)";
+      L"Auto (100% / Fit)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"Invert Wheel";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"Zoom 100% Snap Damping";
@@ -913,7 +913,7 @@ struct CN {
       L"全屏时缩放模式";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"适应屏幕";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自动 (小图100% / 大图适应)";
+      L"自动 (100% / 适应)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"反转滚轮";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"缩放 100% 吸附阻尼";
@@ -1437,7 +1437,7 @@ struct TW {
       L"全螢幕縮放模式";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"適應螢幕";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自動 (小圖100% / 大圖適應)";
+      L"自動 (100% / 適應)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"反轉滾輪";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"縮放 100% 吸附阻尼";
@@ -1864,7 +1864,7 @@ struct JA {
       L"全画面ズームモード";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"画面に合わせる";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自動 (小さい画像は100% / 大きい画像は合わせる)";
+      L"自動 (100% / 合わせる)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"ホイール反転";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"100%ズーム吸着ダンピング";
@@ -2320,7 +2320,7 @@ struct RU {
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"По размеру экрана";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Авто (100% для мелких, по размеру для крупных)";
+      L"Авто (100% / По размеру)";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Инвертировать колесо";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -2783,7 +2783,7 @@ struct DE {
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"An Bildschirm anpassen";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% für kleine, anpassen für große)";
+      L"Auto (100% / Anpassen)";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Mausrad invertieren";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -3244,7 +3244,7 @@ struct ES {
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"Ajustar a pantalla";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% para pequeñas, ajustar para grandes)";
+      L"Auto (100% / Ajustar)";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Invertir rueda";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
