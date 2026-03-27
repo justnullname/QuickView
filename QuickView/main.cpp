@@ -7032,6 +7032,13 @@ SKIP_EDGE_NAV:;
                      RequestRepaint(PaintLayer::All);
                      return 0;
 
+                 case UIHitResult::HdrInfoToggle:
+                     if (g_uiRenderer) {
+                         g_uiRenderer->ToggleHdrInfoExpanded();
+                         RequestRepaint(PaintLayer::All);
+                     }
+                     return 0;
+
                  case UIHitResult::InfoRow:                     if (hit.rowIndex != -2) { // Normal Info Panel row
                          if (CopyToClipboard(hwnd, hit.payload)) {
                              g_osd.Show(hwnd, AppStrings::OSD_Copied, false);

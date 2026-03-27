@@ -58,7 +58,8 @@ enum class UIHitResult {
     GPSLink,        // Click to open in Maps
     InfoRow,        // Click to copy row content
     HudToggleLite,  // Click to toggle HUD Lite mode
-    HudToggleExpand // Click to toggle HUD Expand mode
+    HudToggleExpand,// Click to toggle HUD Expand mode
+    HdrInfoToggle   // Toggle Expand/Collapse HDR Info
 };
 
 // Window Controls Hit Test Result
@@ -107,6 +108,7 @@ public:
     D2D1_RECT_F GetPanelCloseRect() const { return m_panelCloseRect; }
     
     // ===== UI 状态更新 =====
+    void ToggleHdrInfoExpanded() { m_hdrInfoExpanded = !m_hdrInfoExpanded; MarkStaticDirty(); }
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White), OSDPosition pos = OSDPosition::Bottom);
     void SetCompareOSD(const std::wstring& left, const std::wstring& right, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
@@ -157,7 +159,14 @@ private:
         std::wstring reference;     // Typical range
     };
     
-    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false) const;
+    enum class RenderPath {
+        Direct,     // HDR 直通
+        ToneMapped, // SDR 降级
+        NativeCMS   // SDR 原生
+    };
+    RenderPath DetermineRenderPath(const CImageLoader::ImageMetadata& metadata, const DisplayColorState& colorState) const;
+
+    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false, const DisplayColorState* colorState = nullptr) const;
     TooltipInfo GetTooltipInfo(const std::wstring& label) const;
     
 private:
@@ -197,6 +206,7 @@ private:
     // Info Panel Hit Rects
     D2D1_RECT_F m_panelToggleRect = {};
     D2D1_RECT_F m_panelCloseRect = {};
+    bool m_hdrInfoExpanded = false; // HDR Info Panel Toggle
     D2D1_RECT_F m_gpsCoordRect = {};
     D2D1_RECT_F m_gpsLinkRect = {};
     D2D1_RECT_F m_lastHUDRect = {}; // Track HUD area for hit testing

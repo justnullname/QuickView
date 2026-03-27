@@ -225,6 +225,14 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
             const D2D1_RECT_F& rowRect = m_infoGrid[i].hitRect;
             if (x >= rowRect.left && x <= rowRect.right &&
                 y >= rowRect.top && y <= rowRect.bottom) {
+
+                if (m_infoGrid[i].label == L"HDR_TOGGLE") {
+                    result.type = UIHitResult::HdrInfoToggle;
+                    result.rowIndex = (int)i;
+                    m_hoverRowIndex = (int)i;
+                    return result;
+                }
+
                 result.type = UIHitResult::InfoRow;
                 result.rowIndex = (int)i;
                 
@@ -1592,7 +1600,19 @@ UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) co
     return { L"", L"", L"", L"" };
 }
 
-std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced) const {
+UIRenderer::RenderPath UIRenderer::DetermineRenderPath(const CImageLoader::ImageMetadata& metadata, const DisplayColorState& colorState) const {
+    bool isHdr = metadata.hdrMetadata.isValid || metadata.hdrMetadata.hasGainMap;
+
+    if (colorState.advancedColorActive && isHdr) {
+        return RenderPath::Direct;
+    } else if (!colorState.advancedColorActive && isHdr && !metadata.hdrMetadata.hasGainMap) {
+        return RenderPath::ToneMapped;
+    } else {
+        return RenderPath::NativeCMS;
+    }
+}
+
+std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced, const DisplayColorState* colorState) const {
     std::vector<InfoRow> rows;
     if (imagePath.empty()) return rows;
 
@@ -1657,25 +1677,119 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         rows.push_back({ L"\U0001F3AF", L"Focal", metadata.Focal, focalSub, L"", TruncateMode::None, false });
     }
 
-    if (!metadata.ColorSpace.empty()) {
+    bool isHdrImage = metadata.hdrMetadata.isValid || metadata.hdrMetadata.hasGainMap;
+
+    if (!metadata.ColorSpace.empty() && !isHdrImage) {
         std::wstring colorText = metadata.ColorSpace;
         if (metadata.HasEmbeddedColorProfile) colorText += L" [ICC]";
         rows.push_back({ L"\U0001F3A8", L"Color", colorText, L"", L"", TruncateMode::None, false });
     }
 
-    if (metadata.hdrMetadata.isValid || metadata.hdrMetadata.hasGainMap) {
-        const std::wstring hdrSummary = BuildHdrSummary(metadata.hdrMetadata);
-        const std::wstring hdrDetail = BuildHdrDetail(metadata.hdrMetadata);
-        if (!hdrSummary.empty() || !hdrDetail.empty()) {
-            rows.push_back({
-                L"\U0001F31F",
-                L"HDR",
-                hdrSummary.empty() ? L"Metadata" : hdrSummary,
-                hdrDetail,
-                hdrSummary + (hdrDetail.empty() ? L"" : L"\n" + hdrDetail),
-                TruncateMode::EndEllipsis,
-                false
-            });
+    if (isHdrImage) {
+        std::wstring toggleLabel = m_hdrInfoExpanded ? L"[-] 收起 HDR 专业信息" : L"[+] 展开 HDR 专业信息";
+        rows.push_back({
+            L"\U0001F31F",
+            L"HDR_TOGGLE",
+            toggleLabel,
+            L"",
+            L"Click to toggle HDR professional metadata",
+            TruncateMode::None,
+            true
+        });
+
+        if (m_hdrInfoExpanded) {
+            // Tier 1: Basic Identity
+            std::wstring drStr;
+            if (metadata.hdrMetadata.hasGainMap) {
+                drStr = L"Ultra HDR (Gain Map)";
+            } else if (metadata.hdrMetadata.transfer == TransferFunction::PQ) {
+                drStr = L"HDR10 (PQ)";
+            } else if (metadata.hdrMetadata.transfer == TransferFunction::HLG) {
+                drStr = L"HLG";
+            } else {
+                drStr = L"SDR / Unknown HDR";
+            }
+            rows.push_back({ L"  \U0001F4F8", L"D.Range", drStr, L"", L"", TruncateMode::None, false });
+
+            // Color Space and Bit Depth
+            std::wstring colorSpaceText = metadata.ColorSpace;
+            if (metadata.HasEmbeddedColorProfile) colorSpaceText += L" [ICC]";
+            rows.push_back({ L"  \U0001F3A8", L"C.Space", colorSpaceText.empty() ? L"Unknown" : colorSpaceText, L"", L"", TruncateMode::None, false });
+
+            std::wstring bitDepth = ExtractBitDepth(metadata.FormatDetails);
+            rows.push_back({ L"  \U000025D1", L"B.Depth", bitDepth == L"-" ? L"Unknown" : bitDepth, L"", L"", TruncateMode::None, false });
+
+            // Tier 2: HDR Metadata
+            if (metadata.hdrMetadata.isValid) {
+                std::wstring eotf = QuickView::ToString(metadata.hdrMetadata.transfer);
+                if (metadata.hdrMetadata.transfer == TransferFunction::PQ) eotf = L"SMPTE ST 2084 (PQ)";
+                else if (metadata.hdrMetadata.transfer == TransferFunction::HLG) eotf = L"ARIB STD-B67 (HLG)";
+                else if (metadata.hdrMetadata.transfer == TransferFunction::SRGB) eotf = L"sRGB Gamma";
+                rows.push_back({ L"  \U0001F4DD", L"EOTF", eotf, L"", L"", TruncateMode::None, false });
+
+                if (metadata.hdrMetadata.maxCLLNits > 0.0f) {
+                    wchar_t cll[32]; swprintf_s(cll, L"%.0f nits", metadata.hdrMetadata.maxCLLNits);
+                    rows.push_back({ L"  \U00002600", L"MaxCLL", cll, L"", L"", TruncateMode::None, false });
+                }
+                if (metadata.hdrMetadata.maxFALLNits > 0.0f) {
+                    wchar_t fall[32]; swprintf_s(fall, L"%.0f nits", metadata.hdrMetadata.maxFALLNits);
+                    rows.push_back({ L"  \U0001F506", L"MaxFALL", fall, L"", L"", TruncateMode::None, false });
+                }
+                if (metadata.hdrMetadata.masteringMaxNits > 0.0f) {
+                    wchar_t mastering[64];
+                    swprintf_s(mastering, L"Min: %.3f, Max: %.0f nits", metadata.hdrMetadata.masteringMinNits, metadata.hdrMetadata.masteringMaxNits);
+                    rows.push_back({ L"  \U0001F5A5", L"Master", mastering, L"", L"", TruncateMode::None, false });
+                }
+            }
+
+            // Tier 3: Active Render Pipeline
+            if (colorState) {
+                RenderPath path = DetermineRenderPath(metadata, *colorState);
+                std::wstring renderPathStr;
+                if (path == RenderPath::Direct) renderPathStr = L"DirectComposition scRGB (FP16)";
+                else if (path == RenderPath::ToneMapped) renderPathStr = L"GPU Tone Mapped to SDR";
+                else if (path == RenderPath::NativeCMS) renderPathStr = L"D2D Color Management (SDR)";
+                rows.push_back({ L"  \U0001F6E0", L"R.Path", renderPathStr, L"", L"", TruncateMode::None, false });
+
+                float headroom = colorState->GetHdrHeadroomStops();
+                float ratio = powf(2.0f, headroom);
+                wchar_t headroomStr[64];
+                if (ratio > 1.05f) {
+                    swprintf_s(headroomStr, L"%.1fx (%.0f / %.0f nits)", ratio, colorState->sdrWhiteLevelNits, colorState->maxLuminanceNits);
+                } else {
+                    swprintf_s(headroomStr, L"1.0x (SDR Display)");
+                }
+                rows.push_back({ L"  \U0001F4CA", L"Headrm", headroomStr, L"", L"", TruncateMode::None, false });
+            }
+
+            // Tier 4: Gain Map Specifics
+            if (metadata.hdrMetadata.hasGainMap) {
+                rows.push_back({ L"  \U0001F5BC", L"Base", L"SDR", L"", L"", TruncateMode::None, false });
+                rows.push_back({ L"  \U0001F4C8", L"G.Map", L"Present (ISO 21496-1)", L"", L"", TruncateMode::None, false });
+
+                if (metadata.hdrMetadata.gainMapBaseHeadroom >= 0.0f || metadata.hdrMetadata.gainMapAlternateHeadroom > 0.0f) {
+                    float minGain = powf(2.0f, metadata.hdrMetadata.gainMapBaseHeadroom);
+                    float maxGain = powf(2.0f, metadata.hdrMetadata.gainMapAlternateHeadroom);
+                    wchar_t ratioStr[64];
+                    swprintf_s(ratioStr, L"Min: %.1fx, Max: %.1fx", minGain, maxGain);
+                    rows.push_back({ L"  \U00002696", L"G.Ratio", ratioStr, L"", L"", TruncateMode::None, false });
+                }
+
+                if (colorState) {
+                    float baseHR = metadata.hdrMetadata.gainMapBaseHeadroom;
+                    float altHR = metadata.hdrMetadata.gainMapAlternateHeadroom;
+                    float appliedHR = metadata.hdrMetadata.gainMapAppliedHeadroom;
+
+                    float range = altHR - baseHR;
+                    float weight = 0.0f;
+                    if (range > 0.001f) {
+                        weight = (std::max)(0.0f, (std::min)(1.0f, (appliedHR - baseHR) / range));
+                    }
+                    wchar_t weightStr[32];
+                    swprintf_s(weightStr, L"%.2f", weight);
+                    rows.push_back({ L"  \U0001F300", L"B.Weight", weightStr, L"", L"", TruncateMode::None, false });
+                }
+            }
         }
     }
 
@@ -1706,7 +1820,9 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
 	        std::wstring quality = ExtractQualityEstimate(metadata.FormatDetails);
 	        std::wstring formatFlags = BuildFormatFlagsSummary(metadata.FormatDetails);
 
-	        AppendFormatToken(formatTokens, bitDepth == L"-" ? L"" : bitDepth);
+	        if (!isHdrImage) {
+	            AppendFormatToken(formatTokens, bitDepth == L"-" ? L"" : bitDepth);
+	        }
 	        AppendFormatToken(formatTokens, chroma == L"-" ? L"" : chroma);
 	        AppendFormatToken(formatTokens, quality == L"-" ? L"" : quality);
 	        AppendFormatToken(formatTokens, formatFlags);
@@ -1839,7 +1955,12 @@ namespace {
 }
 
 void UIRenderer::BuildInfoGrid() {
-    m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false);
+    if (m_compEngine) {
+        const DisplayColorState& colorState = m_compEngine->GetDisplayColorState();
+        m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false, &colorState);
+    } else {
+        m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false, nullptr);
+    }
 }
 
 void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width) {
