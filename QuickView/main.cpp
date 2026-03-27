@@ -6142,6 +6142,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // [Refactor] Use Centralized SyncDCompState
                 RECT rc; GetClientRect(hwnd, &rc);
                 SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                if (g_compEngine) {
+                    g_compEngine->Commit();
+                    DwmFlush();
+                }
             }
 
             
@@ -8835,6 +8839,7 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
             SyncDCompState(hwnd, (float)width, (float)height);
         }
         g_compEngine->Commit();
+        DwmFlush();
     }
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
