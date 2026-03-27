@@ -249,10 +249,68 @@ static float g_uiScale = 1.0f;
 
 static float GetMinWindowWidth() {
     float defaultMinW = 4.0f * 38.0f * g_uiScale; // window controls
-    if (g_config.WindowMinSize < defaultMinW) {
-        return defaultMinW;
+    if (g_config.WindowMinSize > defaultMinW) {
+        defaultMinW = g_config.WindowMinSize;
     }
-    return g_config.WindowMinSize;
+
+    if (g_settingsOverlay.IsVisible()) {
+        defaultMinW = std::max(defaultMinW, 680.0f * g_uiScale + 50.0f * g_uiScale);
+    }
+    if (g_helpOverlay.IsVisible()) {
+        defaultMinW = std::max(defaultMinW, 500.0f * g_uiScale + 50.0f * g_uiScale);
+    }
+    if (g_dialog.IsVisible) {
+        defaultMinW = std::max(defaultMinW, 420.0f * g_uiScale + 45.0f * g_uiScale * 2);
+    }
+    if (g_runtime.ShowInfoPanel && g_uiRenderer) {
+        D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
+        if (reqSize.width > 0.0f) {
+            defaultMinW = std::max(defaultMinW, reqSize.width);
+        }
+    }
+
+    return defaultMinW;
+}
+
+static float GetMinWindowHeight() {
+    float defaultMinH = 4.0f * 38.0f * g_uiScale; // window controls
+    if (g_config.WindowMinSize > defaultMinH) {
+        defaultMinH = g_config.WindowMinSize;
+    }
+
+    if (g_settingsOverlay.IsVisible()) {
+        defaultMinH = std::max(defaultMinH, 560.0f * g_uiScale + 50.0f * g_uiScale);
+    }
+    if (g_helpOverlay.IsVisible()) {
+        defaultMinH = std::max(defaultMinH, 600.0f * g_uiScale + 50.0f * g_uiScale);
+    }
+    if (g_dialog.IsVisible) {
+        // Calculate dialog height logically
+        float titleHeight = 35.0f;
+        float messageHeight = 25.0f;
+        int titleLines = (int)(g_dialog.Title.length() / 22) + 1;
+        if (titleLines > 3) titleLines = 3;
+        float contentHeight = (titleLines * titleHeight) + (1 * messageHeight);
+        float qualityHeight = !g_dialog.QualityText.empty() ? 30.0f : 0.0f;
+        float inputHeight = g_dialog.HasInput ? 50.0f : 0.0f;
+        float checkboxHeight = g_dialog.HasCheckbox ? 45.0f : 0.0f;
+        float buttonsHeight = 55.0f;
+        float padding = 45.0f;
+
+        float dlgH = padding + contentHeight + qualityHeight + inputHeight + checkboxHeight + buttonsHeight + 30.0f;
+        if (dlgH < 200.0f) dlgH = 200.0f;
+        if (dlgH > 400.0f) dlgH = 400.0f;
+
+        defaultMinH = std::max(defaultMinH, dlgH * g_uiScale + 45.0f * g_uiScale * 2);
+    }
+    if (g_runtime.ShowInfoPanel && g_uiRenderer) {
+        D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
+        if (reqSize.height > 0.0f) {
+            defaultMinH = std::max(defaultMinH, reqSize.height);
+        }
+    }
+
+    return defaultMinH;
 }
 
 int g_galleryContextMenuIndex = -1;
@@ -4659,7 +4717,7 @@ void AdjustWindowToImage(HWND hwnd) {
     // [Phase 3] User Requested: Min 100x100. Small images stay at 100% inside this.
     // If Settings is visible, we might want larger, but AdjustWindowToImage returns early if Settings visible.
     int minW = (int)GetMinWindowWidth();
-    int minH = (int)GetMinWindowWidth();
+    int minH = (int)GetMinWindowHeight();
     
     // [Phase 3] Special handling for small images
     if (imgWidth < minW && imgHeight < minH) {
@@ -6015,7 +6073,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         
         // [Phase 3] Default minimum window size
         pMMI->ptMinTrackSize.x = (int)GetMinWindowWidth();
-        pMMI->ptMinTrackSize.y = (int)GetMinWindowWidth();
+        pMMI->ptMinTrackSize.y = (int)GetMinWindowHeight();
         
         // [Fix] For borderless/custom title bar windows, correctly position maximized window.
         // Without this, maximized window extends beyond screen edges (to hide resize borders),
@@ -10681,7 +10739,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          resizeIsScreenLimited = cappedW || cappedH;
          
          if (finalWinW < (int)GetMinWindowWidth()) finalWinW = (int)GetMinWindowWidth();
-         if (finalWinH < (int)GetMinWindowWidth()) finalWinH = (int)GetMinWindowWidth();
+         if (finalWinH < (int)GetMinWindowHeight()) finalWinH = (int)GetMinWindowHeight();
          
          if (!centerPt) {
              if (!cappedW) g_viewState.PanX = 0;
