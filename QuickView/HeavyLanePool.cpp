@@ -915,8 +915,18 @@ void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
     }
     
     // Cleanup
-    self.state = WorkerState::SLEEPING;
-    m_activeCount.fetch_sub(1);
+    {
+        std::lock_guard lock(m_poolMutex);
+        self.state = WorkerState::SLEEPING;
+        m_activeCount.fetch_sub(1);
+        
+        // [Fix Bug #85] Break the Race Condition. 
+        // If this worker is exiting due to cancellation, but new jobs arrived 
+        // while it was BUSY, we must wake a replacement worker to carry on.
+        if (!m_pendingJobs.empty()) {
+            TryExpand();
+        }
+    }
 }
 
 // ============================================================================
