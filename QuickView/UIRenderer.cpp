@@ -1551,8 +1551,8 @@ D2D1_SIZE_F UIRenderer::GetRequiredInfoPanelSize() const {
         return D2D1::SizeF(16.0f * s + width + 32.0f * s, 32.0f * s + height + 32.0f * s);
     } else if (g_runtime.ShowInfoPanel && !g_runtime.InfoPanelExpanded) {
         // Compact info is just text
-        // For simplicity, request at least 400x100
-        return D2D1::SizeF(400.0f * s, 100.0f * s);
+        // Ensure width is large enough so that the text and the top right pin button do not overlap
+        return D2D1::SizeF(600.0f * s, 100.0f * s);
     }
 
     return D2D1::SizeF(0, 0);

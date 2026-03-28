@@ -998,10 +998,17 @@ static void RestoreCurrentExifOrientation();
 static void CheckAndExpandWindowForInfoPanel(HWND hwnd);
 
 static void CheckAndExpandWindowForInfoPanel(HWND hwnd) {
-    if (!g_uiRenderer || !g_runtime.ShowInfoPanel) return;
+    if (!g_uiRenderer) return;
     if (g_isFullScreen || IsZoomed(hwnd)) return; // Don't resize if maximized/fullscreen
     if (!g_imageResource) return; // Keep it simple
     if (g_compare.mode != ViewMode::Single) return;
+
+    if (!g_runtime.ShowInfoPanel) {
+        if (!g_runtime.LockWindowSize) {
+            AdjustWindowToImage(hwnd);
+        }
+        return;
+    }
 
     D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
     if (reqSize.width <= 0 || reqSize.height <= 0) return;
@@ -7071,7 +7078,7 @@ SKIP_EDGE_NAV:;
                           g_runtime.ShowInfoPanel = false;
                           g_toolbar.SetExifState(false);
                       }
-
+                      CheckAndExpandWindowForInfoPanel(hwnd);
                       RequestRepaint(PaintLayer::All);
                       return 0;
 
