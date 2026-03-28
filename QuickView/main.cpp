@@ -910,22 +910,26 @@ static void RestoreOverlayWindowState(HWND hwnd) {
     // Restore exact saved state - no recalculation needed
     // The saved Zoom was relative to the saved window size, so they work together
     SetWindowPos(hwnd, nullptr, 
-        g_savedState.rect.left, g_savedState.rect.top,
-        g_savedState.rect.right - g_savedState.rect.left,
-        g_savedState.rect.bottom - g_savedState.rect.top,
+        g_savedState.windowRect.left, g_savedState.windowRect.top,
+        g_savedState.windowRect.right - g_savedState.windowRect.left,
+        g_savedState.windowRect.bottom - g_savedState.windowRect.top,
         SWP_NOZORDER | SWP_NOACTIVATE);
 
     g_viewState.Zoom = g_savedState.zoom;
     g_viewState.PanX = g_savedState.panX;
     g_viewState.PanY = g_savedState.panY;
     
+    g_savedState.isValid = false;
+    g_isImageDirty = true; // Force Image layer recalculation
+
     // [Fix] If Lock Window Size is OFF, we might need to shrink the window back down
     // since closing an overlay drops the minimum required size constraints.
     // AdjustWindowToImage checks g_runtime.LockWindowSize inside.
     if (!g_runtime.LockWindowSize) {
-         AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+         AdjustWindowToImage(hwnd);
     }
 }
+
 
 
 bool CheckWritePermission(const std::wstring& dir) {
@@ -3876,7 +3880,7 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     }
     
     if (!g_runtime.LockWindowSize) {
-        AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+        AdjustWindowToImage(hwnd);
     }
     RequestRepaint(PaintLayer::Dynamic);
     return g_dialog.FinalResult;
@@ -3985,7 +3989,7 @@ std::wstring ShowQuickViewInputDialog(HWND hwnd, const std::wstring& title, cons
     RequestRepaint(PaintLayer::Dynamic);
     
     if (!g_runtime.LockWindowSize) {
-        AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+        AdjustWindowToImage(hwnd);
     }
     if (g_dialog.FinalResult == DialogResult::Yes) {
         return g_dialog.InputText;
@@ -7727,7 +7731,7 @@ SKIP_EDGE_NAV:;
             if (wParam == VK_ESCAPE) {
                 g_helpOverlay.SetVisible(false);
                 if (!g_runtime.LockWindowSize) {
-                     AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+                     AdjustWindowToImage(hwnd);
                 }
                 RequestRepaint(PaintLayer::Static);
                 return 0;

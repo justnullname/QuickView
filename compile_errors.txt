@@ -1,0 +1,5 @@
+In file included from QuickView/main.cpp:1:
+QuickView/pch.h:6:10: fatal error: windows.h: No such file or directory
+    6 | #include <windows.h>
+      |          ^~~~~~~~~~~
+compilation terminated.
