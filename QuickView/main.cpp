@@ -611,7 +611,7 @@ void ApplyFullScreenZoomMode(HWND hwnd) {
 
     if (g_config.FullScreenZoomMode == 0) { // Fit
         g_viewState.Zoom = 1.0f;
-    } else { // Auto (100% for small, Fit for large)
+    } else { // Auto (100% / Fit)
         D2D1_SIZE_F effSize = GetVisualImageSize();
         float imgW = effSize.width;
         float imgH = effSize.height;

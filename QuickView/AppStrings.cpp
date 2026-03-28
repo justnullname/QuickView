@@ -602,7 +602,7 @@ struct EN {
       L"Fullscreen Zoom Mode";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"Fit to Screen";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% for small, Fit for large)";
+      L"Auto (100% / Fit)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"Invert Wheel";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"Zoom 100% Snap Damping";
@@ -655,9 +655,9 @@ struct EN {
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Rendering Intent";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative =
-      L"Relative Colorimetric (Accuracy First)";
+      L"Relative Colorimetric";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual =
-      L"Perceptual (Perception First)";
+      L"Perceptual";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates =
       L"Check for Updates";
@@ -913,7 +913,7 @@ struct CN {
       L"全屏时缩放模式";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"适应屏幕";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自动 (小图100% / 大图适应)";
+      L"自动 (100% / 适应)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"反转滚轮";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"缩放 100% 吸附阻尼";
@@ -961,8 +961,8 @@ struct CN {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"灰度模式 (影调检查)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"渲染意图";
-  static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相对色度 (准确优先)";
-  static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"感知意图 (感知优先)";
+  static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相对色度";
+  static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"感知意图";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates = L"检查更新";
   static constexpr const wchar_t *Settings_Action_ViewUpdate = L"查看更新";
@@ -1437,7 +1437,7 @@ struct TW {
       L"全螢幕縮放模式";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"適應螢幕";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自動 (小圖100% / 大圖適應)";
+      L"自動 (100% / 適應)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"反轉滾輪";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"縮放 100% 吸附阻尼";
@@ -1486,8 +1486,8 @@ struct TW {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"灰度模式 (影調檢查)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"渲染意圖";
-  static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相對色度 (准确優先)";
-  static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"感知意圖 (感知優先)";
+  static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相對色度";
+  static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"感知意圖";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates = L"檢查更新";
   static constexpr const wchar_t *Settings_Action_ViewUpdate = L"檢視更新";
@@ -1864,7 +1864,7 @@ struct JA {
       L"全画面ズームモード";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"画面に合わせる";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自動 (小さい画像は100% / 大きい画像は合わせる)";
+      L"自動 (100% / 合わせる)";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"ホイール反転";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"100%ズーム吸着ダンピング";
@@ -2020,8 +2020,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"グレースケール (トーン確認)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"レンダリングインテント";
-  static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相対的な色域を維持 (精度優先)";
-  static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"知覚的 (知覚優先)";
+  static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相対的な色域を維持";
+  static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"知覚的";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"更新内容:";
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
@@ -2320,7 +2320,7 @@ struct RU {
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"По размеру экрана";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Авто (100% для мелких, по размеру для крупных)";
+      L"Авто (100% / По размеру)";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Инвертировать колесо";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -2783,7 +2783,7 @@ struct DE {
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"An Bildschirm anpassen";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% für kleine, anpassen für große)";
+      L"Auto (100% / Anpassen)";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Mausrad invertieren";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -3244,7 +3244,7 @@ struct ES {
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"Ajustar a pantalla";
   static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% para pequeñas, ajustar para grandes)";
+      L"Auto (100% / Ajustar)";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Invertir rueda";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
