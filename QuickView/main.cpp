@@ -260,7 +260,7 @@ static float GetMinWindowWidth() {
         defaultMinW = std::max(defaultMinW, 500.0f * g_uiScale + 50.0f * g_uiScale);
     }
     if (g_dialog.IsVisible) {
-        defaultMinW = std::max(defaultMinW, 420.0f * g_uiScale + 45.0f * g_uiScale * 2);
+        defaultMinW = std::max(defaultMinW, 420.0f * g_uiScale);
     }
     if (g_runtime.ShowInfoPanel && g_uiRenderer) {
         D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
@@ -301,7 +301,7 @@ static float GetMinWindowHeight() {
         if (dlgH < 200.0f) dlgH = 200.0f;
         if (dlgH > 400.0f) dlgH = 400.0f;
 
-        defaultMinH = std::max(defaultMinH, dlgH * g_uiScale + 45.0f * g_uiScale * 2);
+        defaultMinH = std::max(defaultMinH, dlgH * g_uiScale);
     }
     if (g_runtime.ShowInfoPanel && g_uiRenderer) {
         D2D1_SIZE_F reqSize = g_uiRenderer->GetRequiredInfoPanelSize();
@@ -910,18 +910,23 @@ static void RestoreOverlayWindowState(HWND hwnd) {
     // Restore exact saved state - no recalculation needed
     // The saved Zoom was relative to the saved window size, so they work together
     SetWindowPos(hwnd, nullptr, 
-        g_savedState.windowRect.left, g_savedState.windowRect.top, 
-        g_savedState.windowRect.right - g_savedState.windowRect.left,
-        g_savedState.windowRect.bottom - g_savedState.windowRect.top, 
-        SWP_NOZORDER);
-    
+        g_savedState.rect.left, g_savedState.rect.top,
+        g_savedState.rect.right - g_savedState.rect.left,
+        g_savedState.rect.bottom - g_savedState.rect.top,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+
     g_viewState.Zoom = g_savedState.zoom;
     g_viewState.PanX = g_savedState.panX;
     g_viewState.PanY = g_savedState.panY;
     
-    g_savedState.isValid = false;
-    g_isImageDirty = true; // Force Image layer recalculation
+    // [Fix] If Lock Window Size is OFF, we might need to shrink the window back down
+    // since closing an overlay drops the minimum required size constraints.
+    // AdjustWindowToImage checks g_runtime.LockWindowSize inside.
+    if (!g_runtime.LockWindowSize) {
+         AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+    }
 }
+
 
 bool CheckWritePermission(const std::wstring& dir) {
     std::wstring testFile = dir + L"\\write_test.tmp";
@@ -3870,6 +3875,9 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
         TranslateMessage(&msgStruct); DispatchMessage(&msgStruct);
     }
     
+    if (!g_runtime.LockWindowSize) {
+        AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+    }
     RequestRepaint(PaintLayer::Dynamic);
     return g_dialog.FinalResult;
 }
@@ -3976,6 +3984,9 @@ std::wstring ShowQuickViewInputDialog(HWND hwnd, const std::wstring& title, cons
     DestroyDialogInput();
     RequestRepaint(PaintLayer::Dynamic);
     
+    if (!g_runtime.LockWindowSize) {
+        AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+    }
     if (g_dialog.FinalResult == DialogResult::Yes) {
         return g_dialog.InputText;
     }
@@ -7715,6 +7726,9 @@ SKIP_EDGE_NAV:;
         if (g_helpOverlay.IsVisible()) {
             if (wParam == VK_ESCAPE) {
                 g_helpOverlay.SetVisible(false);
+                if (!g_runtime.LockWindowSize) {
+                     AdjustWindowToImage(hwnd, g_imageResource, g_currentMetadata.Width, g_currentMetadata.Height);
+                }
                 RequestRepaint(PaintLayer::Static);
                 return 0;
             }
