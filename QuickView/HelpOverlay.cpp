@@ -266,14 +266,34 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
         else {
             // Key - Value Pair
             float keyW = 180.0f * s;
-            // Key (Right Aligned in Col 1)
-            // Actually Left aligned is better for keys like "Ctrl + Shift + ..."
+            // Key (Left Aligned in Col 1)
             pRT->DrawText(item.key.c_str(), (UINT32)item.key.length(), m_fmtKey.Get(), D2D1::RectF(x + 40.0f * s, contentY, x + 40.0f * s + keyW, contentY + rowH), m_brushKey.Get());
             
             // Value
-            pRT->DrawText(item.desc.c_str(), (UINT32)item.desc.length(), m_fmtDesc.Get(), D2D1::RectF(x + 50.0f * s + keyW, contentY, x + panelW - 24.0f * s, contentY + rowH), m_brushText.Get());
+            ComPtr<IDWriteTextLayout> layout;
+            float descX = x + 50.0f * s + keyW;
+            FLOAT maxWidth = x + panelW - 24.0f * s - descX;
+            FLOAT maxHeight = 1000.0f;
+
+            HRESULT hr = m_dwriteFactory->CreateTextLayout(
+                item.desc.c_str(), (UINT32)item.desc.length(), m_fmtDesc.Get(),
+                maxWidth, maxHeight, layout.GetAddressOf()
+            );
+
+            float itemHeight = 24.0f * s; // default min height
+            if (SUCCEEDED(hr)) {
+                DWRITE_TEXT_METRICS metrics;
+                layout->GetMetrics(&metrics);
+                pRT->DrawTextLayout(D2D1::Point2F(descX, contentY), layout.Get(), m_brushText.Get());
+                if (metrics.height > itemHeight) {
+                    itemHeight = metrics.height + 4.0f * s; // add some padding if multiline
+                }
+            } else {
+                // fallback
+                pRT->DrawText(item.desc.c_str(), (UINT32)item.desc.length(), m_fmtDesc.Get(), D2D1::RectF(descX, contentY, descX + maxWidth, contentY + rowH), m_brushText.Get());
+            }
             
-            contentY += 24.0f * s;
+            contentY += itemHeight;
         }
     }
     
