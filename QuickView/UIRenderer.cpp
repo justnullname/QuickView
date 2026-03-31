@@ -1601,7 +1601,7 @@ UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) co
     return { L"", L"", L"", L"" };
 }
 
-UIRenderer::RenderPath UIRenderer::DetermineRenderPath(const CImageLoader::ImageMetadata& metadata, const DisplayColorState& colorState) const {
+UIRenderer::RenderPath UIRenderer::DetermineRenderPath(const CImageLoader::ImageMetadata& metadata, const QuickView::DisplayColorState& colorState) const {
     bool isHdr = metadata.hdrMetadata.isValid || metadata.hdrMetadata.hasGainMap;
 
     if (colorState.advancedColorActive && isHdr) {
@@ -1613,7 +1613,7 @@ UIRenderer::RenderPath UIRenderer::DetermineRenderPath(const CImageLoader::Image
     }
 }
 
-std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced, const DisplayColorState* colorState) const {
+std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced, const QuickView::DisplayColorState* colorState) const {
     std::vector<InfoRow> rows;
     if (imagePath.empty()) return rows;
 
@@ -1703,9 +1703,9 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             std::wstring drStr;
             if (metadata.hdrMetadata.hasGainMap) {
                 drStr = L"Ultra HDR (Gain Map)";
-            } else if (metadata.hdrMetadata.transfer == TransferFunction::PQ) {
+            } else if (metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ) {
                 drStr = L"HDR10 (PQ)";
-            } else if (metadata.hdrMetadata.transfer == TransferFunction::HLG) {
+            } else if (metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG) {
                 drStr = L"HLG";
             } else {
                 drStr = L"SDR / Unknown HDR";
@@ -1723,9 +1723,9 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             // Tier 2: HDR Metadata
             if (metadata.hdrMetadata.isValid) {
                 std::wstring eotf = QuickView::ToString(metadata.hdrMetadata.transfer);
-                if (metadata.hdrMetadata.transfer == TransferFunction::PQ) eotf = L"SMPTE ST 2084 (PQ)";
-                else if (metadata.hdrMetadata.transfer == TransferFunction::HLG) eotf = L"ARIB STD-B67 (HLG)";
-                else if (metadata.hdrMetadata.transfer == TransferFunction::SRGB) eotf = L"sRGB Gamma";
+                if (metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ) eotf = L"SMPTE ST 2084 (PQ)";
+                else if (metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG) eotf = L"ARIB STD-B67 (HLG)";
+                else if (metadata.hdrMetadata.transfer == QuickView::TransferFunction::SRGB) eotf = L"sRGB Gamma";
                 rows.push_back({ L"  \U0001F4DD", L"EOTF", eotf, L"", L"", TruncateMode::None, false });
 
                 if (metadata.hdrMetadata.maxCLLNits > 0.0f) {
@@ -1957,7 +1957,7 @@ namespace {
 
 void UIRenderer::BuildInfoGrid() {
     if (m_compEngine) {
-        const DisplayColorState& colorState = m_compEngine->GetDisplayColorState();
+        const QuickView::DisplayColorState& colorState = m_compEngine->GetDisplayColorState();
         m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false, &colorState);
     } else {
         m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false, nullptr);
@@ -2722,8 +2722,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     // Use centralized row building
     // Note: We need some context for these (like path) if we want tooltips to work fully
     // But for comparison, labeling is key.
-    auto leftRows = BuildGridRows(leftMeta, L"Left", true);
-    auto rightRows = BuildGridRows(rightMeta, L"Right", true);
+    const QuickView::DisplayColorState* colorState = m_compEngine ? &m_compEngine->GetDisplayColorState() : nullptr;
+    auto leftRows = BuildGridRows(leftMeta, L"Left", true, colorState);
+    auto rightRows = BuildGridRows(rightMeta, L"Right", true, colorState);
 
     // --- Smart Logic (Quality Assessment) ---
     auto GetQualityTag = [](const CImageLoader::ImageMetadata& meta, int& outColor) -> std::wstring {

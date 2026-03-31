@@ -165,9 +165,9 @@ private:
         ToneMapped, // SDR 降级
         NativeCMS   // SDR 原生
     };
-    RenderPath DetermineRenderPath(const CImageLoader::ImageMetadata& metadata, const DisplayColorState& colorState) const;
+    RenderPath DetermineRenderPath(const CImageLoader::ImageMetadata& metadata, const QuickView::DisplayColorState& colorState) const;
 
-    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false, const DisplayColorState* colorState = nullptr) const;
+    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false, const QuickView::DisplayColorState* colorState = nullptr) const;
     TooltipInfo GetTooltipInfo(const std::wstring& label) const;
     
 private:
