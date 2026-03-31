@@ -9210,20 +9210,20 @@ void ProcessEngineEvents(HWND hwnd) {
                     
                     // [Fix] Update Window Size AFTER RenderImageToDComp
                     // This ensures g_lastSurfaceSize is updated with the NEW image dimensions.
-                    AdjustWindowToImage(hwnd);
-                    
-                    // [Feature] Apply Fullscreen Zoom Mode if active
-                    if (g_isFullScreen || IsZoomed(hwnd)) {
-                        ApplyFullScreenZoomMode(hwnd);
-                    }
-
-                    // [Fix] Restore View State if it was saved prior to reloading (e.g. Color Space switch)
-                    // Do this before SyncDCompState so it receives the correct zoom and pan
+                    // If we are preserving view state (e.g., Color Space switch), we DO NOT resize the window
+                    // and we bypass the Fullscreen zoom mode reset, ensuring exact visual continuity.
                     if (g_preserveViewStateOnNextLoad) {
                         g_viewState.Zoom = g_preservedViewState.Zoom;
                         g_viewState.PanX = g_preservedViewState.PanX;
                         g_viewState.PanY = g_preservedViewState.PanY;
                         g_preserveViewStateOnNextLoad = false; // Consume it
+                    } else {
+                        AdjustWindowToImage(hwnd);
+
+                        // [Feature] Apply Fullscreen Zoom Mode if active
+                        if (g_isFullScreen || IsZoomed(hwnd)) {
+                            ApplyFullScreenZoomMode(hwnd);
+                        }
                     }
 
                     // [Fix] Explicitly Sync DComp State immediately after Window Adjustment
