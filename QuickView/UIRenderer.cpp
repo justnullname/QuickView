@@ -14,6 +14,7 @@
 #pragma comment(lib, "psapi.lib")
 
 #include "ImageEngine.h" // [v3.1] Access for HasEmbeddedThumb
+#include "DisplayColorInfo.h"
 
 // External globals (retained - these are global state needed by overlays)
 extern Toolbar g_toolbar;

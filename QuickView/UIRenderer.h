@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "CompositionEngine.h"
 #include "ImageLoader.h"  // For ImageMetadata
+#include "DisplayColorInfo.h"
 #include <dwrite.h>
 #include <array>
 #include "EditState.h"
