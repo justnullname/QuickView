@@ -4207,6 +4207,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Image", L"CmsDefaultFallback", std::to_wstring(g_config.CmsDefaultFallback).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"CmsRenderingIntent", std::to_wstring(g_config.CmsRenderingIntent).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"CustomSoftProofProfile", g_config.CustomSoftProofProfile.c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"CustomEditorPath", g_config.CustomEditorPath.c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
@@ -4340,6 +4341,10 @@ void LoadConfig() {
     wchar_t customProofPath[MAX_PATH];
     GetPrivateProfileStringW(L"Image", L"CustomSoftProofProfile", L"", customProofPath, MAX_PATH, iniPath.c_str());
     g_config.CustomSoftProofProfile = customProofPath;
+
+    wchar_t customEditorPath[MAX_PATH];
+    GetPrivateProfileStringW(L"Image", L"CustomEditorPath", L"", customEditorPath, MAX_PATH, iniPath.c_str());
+    g_config.CustomEditorPath = customEditorPath;
 
     g_config.ForceRawDecode = GetPrivateProfileIntW(L"Image", L"ForceRawDecode", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
@@ -8201,7 +8206,8 @@ SKIP_EDGE_NAV:;
                     HINSTANCE result = ShellExecuteW(hwnd, L"edit", contextPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                     if ((intptr_t)result <= 32) {
                         // No editor registered, try mspaint
-                        ShellExecuteW(hwnd, nullptr, L"mspaint.exe", contextPath.c_str(), nullptr, SW_SHOWNORMAL);
+                        std::wstring quotedPath = L"\"" + contextPath + L"\"";
+                        ShellExecuteW(hwnd, L"open", L"mspaint.exe", quotedPath.c_str(), nullptr, SW_SHOWNORMAL);
                     }
                 }
             }
