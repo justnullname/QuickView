@@ -727,7 +727,11 @@ ImageEngine::DebugStats ImageEngine::GetDebugStats() const {
     s.heavyPendingCount = poolStats.pendingJobs;
     s.heavyDecodeTimeMs = poolStats.lastDecodeTimeMs; 
     s.heavyLastImageId = poolStats.lastDecodeId; // [HUD Fix]
-    // TODO: Add pool stats to DebugStats (busyWorkers, standbyWorkers, etc.)
+    s.heavyBusyWorkers = poolStats.busyWorkers;
+    s.heavyStandbyWorkers = poolStats.standbyWorkers;
+    s.heavyTotalWorkers = poolStats.totalWorkers;
+    s.heavyActiveWorkers = poolStats.activeWorkers;
+    s.heavyTileJobs = poolStats.activeTileJobs;
     
     // Memory
     s.memoryUsed = m_pool.GetUsedMemory();

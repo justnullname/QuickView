@@ -247,6 +247,11 @@ public:
 
         std::wstring loaderName;   // Last used decoder name
         int heavyPendingCount = 0; // New: Heavy Lane Pending Count
+        int heavyBusyWorkers = 0;
+        int heavyStandbyWorkers = 0;
+        int heavyTotalWorkers = 0;
+        int heavyActiveWorkers = 0;
+        int heavyTileJobs = 0;
         
         // Phase 4: HUD Enhancements
         CacheTopology topology;    // Cache strip [-2..+2]
