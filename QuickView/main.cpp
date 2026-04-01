@@ -8193,7 +8193,7 @@ SKIP_EDGE_NAV:;
                         SaveConfig();
                         extern SettingsOverlay g_settingsOverlay;
                         g_settingsOverlay.RebuildMenu();
-                        ShowOSD(AppStrings::OSD_EditorLaunchFailed);
+                        g_osd.Show(hwnd, AppStrings::OSD_EditorLaunchFailed);
                     }
                 }
 
