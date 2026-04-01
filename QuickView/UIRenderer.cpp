@@ -1583,7 +1583,7 @@ D2D1_SIZE_F UIRenderer::GetRequiredInfoPanelSize() const {
             if (!row.valueSub.empty()) rowWidth += MeasureTextWidth(row.valueSub) + 12.0f * s;
             width = (std::max)(width, rowWidth);
         }
-        width = (std::clamp)(width, 340.0f * s, 430.0f * s);
+        width = (std::clamp)(width, 280.0f * s, 430.0f * s);
         float height = 26.0f * s + (float)rows.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
 
         if (g_currentMetadata.HasGPS) height += 50.0f * s;
@@ -2432,7 +2432,7 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
         if (!row.valueSub.empty()) rowWidth += MeasureTextWidth(row.valueSub) + 12.0f * s;
         width = (std::max)(width, rowWidth);
     }
-    width = (std::clamp)(width, 340.0f * s, 430.0f * s);
+    width = (std::clamp)(width, 280.0f * s, 430.0f * s);
     float height = 26.0f * s + (float)m_infoGrid.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
     float startX = 16.0f * s;
     float startY = 32.0f * s; 

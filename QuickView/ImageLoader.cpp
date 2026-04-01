@@ -8982,6 +8982,12 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
         }
     }
 
+        // [New] Extract Original Bit-Depth/HDR format
+    WICPixelFormatGUID origFmt;
+    if (SUCCEEDED(frame->GetPixelFormat(&origFmt))) {
+        PopulateHdrInfoFromWicPixelFormat(origFmt, pMetadata);
+    }
+    
     // [v6.9.5] Redundant code removed. 
     // Exposure, Flash, and GPS are already populated by PopulateExifFromQueryReader above.
     // This avoids crashing when 'reader' is NULL (e.g. BMP/ICO).
@@ -11255,7 +11261,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     if (pMetadata) {
         ReadMetadata(filePath, pMetadata);
         pMetadata->LoaderName = loaderName;
-        PopulateHdrInfoFromWicPixelFormat(outWicFormat, pMetadata);
+        // Removed: PopulateHdrInfoFromWicPixelFormat(outWicFormat, pMetadata); to preserve orig format from ReadMetadata
         if (pMetadata->FormatDetails.empty()) pMetadata->FormatDetails = L"Legacy WIC";
         // Ensure basic hdrMetadata is always valid for Info Panel display
         if (!pMetadata->hdrMetadata.isValid) {

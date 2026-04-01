@@ -208,7 +208,7 @@ private:
     
     // Grid Layout Constants
     static constexpr float GRID_ICON_WIDTH = 16.0f;
-    static constexpr float GRID_LABEL_WIDTH = 56.0f;
+    static constexpr float GRID_LABEL_WIDTH = 60.0f;
     static constexpr float GRID_ROW_HEIGHT = 20.0f;
     static constexpr float GRID_PADDING = 6.0f;
     

@@ -83,11 +83,9 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
     color.rgb = max(color.rgb, 0.0.xxx);
     color.a = saturate(color.a);
 
-    float contentPeak = max(ContentPeakScRgb, 1.0);
-    float displayPeak = max(DisplayPeakScRgb, 1.0);
     float paperWhite = max(PaperWhiteScRgb, 1.0);
-    float highlightCompression = max(contentPeak / displayPeak, 1.0);
-    float sceneScale = (Exposure * paperWhite) / sqrt(highlightCompression);
+    // Use perceptual scale anchoring to system SDRWhiteLevel
+    float sceneScale = Exposure * paperWhite;
 
     float3 mapped = ToneMapAces(color.rgb * sceneScale);
     float3 encoded = LinearToSrgb(mapped) * color.a;

@@ -245,21 +245,9 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   settings.paperWhiteScRgb = paperWhiteScRgb;
 
   const float headroom = settings.displayPeakScRgb / settings.paperWhiteScRgb;
-  const float highlightCompression = sqrtf(
-      (settings.contentPeakScRgb / (headroom > 1.0f ? headroom : 1.0f) > 1.0f ? settings.contentPeakScRgb / (headroom > 1.0f ? headroom : 1.0f) : 1.0f));
-  float averageCompression = 1.0f;
-  if (contentAverageScRgb > 0.0f) {
-    const float displayAverageScRgb =
-        (displayState.maxFullFrameLuminanceNits > displayState.sdrWhiteLevelNits ? displayState.maxFullFrameLuminanceNits : displayState.sdrWhiteLevelNits) /
-        80.0f;
-    averageCompression = sqrtf(
-        (contentAverageScRgb / (displayAverageScRgb > 1.0f ? displayAverageScRgb : 1.0f) > 1.0f ? contentAverageScRgb / (displayAverageScRgb > 1.0f ? displayAverageScRgb : 1.0f) : 1.0f));
-  }
-
-  settings.exposure =
-      1.0f / (highlightCompression * averageCompression > 1.0f ? highlightCompression * averageCompression : 1.0f);
-  if (frame.hdrMetadata.hasGainMap && settings.exposure > 0.75f) {
-    settings.exposure = 0.75f;
+  settings.exposure = 1.0f;
+  if (frame.hdrMetadata.hasGainMap) {
+    settings.exposure = 1.0f;
   }
 
   if (frame.hdrMetadata.gainMapApplied) {
@@ -792,8 +780,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
     const QuickView::ToneMapSettings toneMapSettings =
         BuildToneMapSettings(frame, m_displayColorState);
     const float sceneScale =
-        toneMapSettings.exposure * toneMapSettings.paperWhiteScRgb /
-        sqrtf((toneMapSettings.contentPeakScRgb / (toneMapSettings.displayPeakScRgb > 1.0f ? toneMapSettings.displayPeakScRgb : 1.0f) > 1.0f ? toneMapSettings.contentPeakScRgb / (toneMapSettings.displayPeakScRgb > 1.0f ? toneMapSettings.displayPeakScRgb : 1.0f) : 1.0f));
+        toneMapSettings.exposure * toneMapSettings.paperWhiteScRgb;
     for (int y = 0; y < frame.height; ++y) {
       const float *srcRow = reinterpret_cast<const float *>(
           uploadPixels + static_cast<size_t>(y) * uploadStride);
