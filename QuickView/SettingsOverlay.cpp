@@ -342,6 +342,7 @@ bool SettingsOverlay::IsRegistrationNeeded() {
 }
 
 SettingsOverlay::SettingsOverlay() {
+    m_lastMousePos = { -1.0f, -1.0f };
     m_toastHoverBtn = -1;
     m_showUpdateToast = false;
     m_hudX = 0;
@@ -1801,16 +1802,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 // 3 Columns: GitHub, Issues, Hotkeys
                 LinkRects r = GetLinkButtonRects(D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 40));
                 
-                // Pass mouse pos logic?
-                // We'll simplisticly check if ANY sub-rect contains mouse in OnMouseMove but here we just render.
-                // We need to know mouse pos to render hover effect.
-                // Hack: We don't have mouse pos here easily unless stored.
-                // User ASKED for hover effect. 
-                // We can cache sub-hover index in OnMouseMove in "m_hoverLinkIndex" member if we add it.
-                // Or easier: Just draw outlined always, good enough?
-                // No, "增加鼠标经过效果".
-                // TODO: Implement `m_lastMousePos` in `OnMouseMove` and use it here.
-                // For now, assume we implement that next step or use simple outline.
+                // Update hover state for links using stored mouse position
+                m_hoverLinkIndex = -1;
+                if (m_lastMousePos.x >= r.github.left && m_lastMousePos.x <= r.github.right && m_lastMousePos.y >= r.github.top && m_lastMousePos.y <= r.github.bottom) m_hoverLinkIndex = 0;
+                else if (m_lastMousePos.x >= r.issues.left && m_lastMousePos.x <= r.issues.right && m_lastMousePos.y >= r.issues.top && m_lastMousePos.y <= r.issues.bottom) m_hoverLinkIndex = 1;
+                else if (m_lastMousePos.x >= r.keys.left && m_lastMousePos.x <= r.keys.right && m_lastMousePos.y >= r.keys.top && m_lastMousePos.y <= r.keys.bottom) m_hoverLinkIndex = 2;
                 
                 // GitHub
                 {
@@ -2439,6 +2435,7 @@ void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& re
 // ----------------------------------------------------------------------------
 
 SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
+    m_lastMousePos = D2D1::Point2F(x, y);
     // Toast Hit Test (Priority - Even if not visible)
     if (m_showUpdateToast) {
         m_toastHoverBtn = -1;

@@ -109,6 +109,7 @@ public:
     static bool IsRegistrationNeeded();
 
 private:
+    D2D1_POINT_2F m_lastMousePos;
     void CreateResources(ID2D1DeviceContext* pRT);
     
     void DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
