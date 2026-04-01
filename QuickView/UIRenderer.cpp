@@ -448,6 +448,9 @@ void UIRenderer::EnsureTextFormats() {
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
             12.0f, L"en-us", &m_debugFormat
         );
+        if (m_debugFormat) {
+            m_debugFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
     }
     
     if (!m_iconFormat) {
@@ -489,6 +492,7 @@ void UIRenderer::EnsureTextFormats() {
         );
         if (m_panelFormat) {
             m_panelFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            m_panelFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
 }
