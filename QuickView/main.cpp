@@ -5035,25 +5035,29 @@ static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate) {
 
             if (UseSvgViewportRendering(g_imageResource)) {
                 VisualState surfaceVs{};
-                surfaceVs.PhysicalSize = D2D1::SizeF(winW, winH);
+                float currentScale = 1.0f;
+                // [Fix] Maintain aspect ratio and sync zoom during interactive resize by uniformly scaling the old surface.
+                if (g_lastSurfaceSize.width > 0.0f && g_lastSurfaceSize.height > 0.0f) {
+                    currentScale = std::min(winW / g_lastSurfaceSize.width, winH / g_lastSurfaceSize.height);
+                    surfaceVs.PhysicalSize.width = g_lastSurfaceSize.width * currentScale;
+                    surfaceVs.PhysicalSize.height = g_lastSurfaceSize.height * currentScale;
+                } else {
+                    surfaceVs.PhysicalSize = D2D1::SizeF(winW, winH);
+                }
                 surfaceVs.VisualSize = surfaceVs.PhysicalSize;
                 surfaceVs.TotalRotation = 0.0f;
                 surfaceVs.IsRotated90 = false;
                 surfaceVs.FlipX = 1.0f;
                 surfaceVs.FlipY = 1.0f;
                 g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, 0.0f, animationDurationMs);
+                
+                // Use adaptive interpolation even during SVG viewport resizing to keep it smooth
+                DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(currentScale, g_lastSurfaceSize.width, g_lastSurfaceSize.height);
+                g_compEngine->SetImageInterpolationMode(interpMode);
             } else {
                 g_compEngine->UpdateTransformMatrix(vs, winW, winH, displayZoom, displayPanX, displayPanY, animationDurationMs);
             }
-
-            // Set DComp Interpolation Mode
-            DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
-            g_compEngine->SetImageInterpolationMode(interpMode);
         }
-
-        // [Fix12] Tile uploads handled exclusively by OnPaint (line 5621) with correct visibleRect.
-        // SyncDCompState only syncs transforms 鈥?no tile I/O here.
-        // Previously called UpdateVirtualTiles without visibleRect, causing full-scan of all tiles.
     } else {
         ResetSmoothZoomState();
     }
@@ -8950,6 +8954,12 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
             SyncDCompState(hwnd, (float)width, (float)height);
         }
         g_compEngine->Commit();
+        
+        // [SVG Sync] Trigger lazy re-render after window resize settles.
+        // During active resize, SyncDCompState handles smooth pixel scaling.
+        if (g_imageResource.isSvg && UseSvgViewportRendering(g_imageResource)) {
+            SetTimer(hwnd, IDT_SVG_RERENDER, 100, nullptr);
+        }
     }
     if (g_uiRenderer) g_uiRenderer->OnResize(width, height);
     g_toolbar.UpdateLayout((float)width, (float)height);
