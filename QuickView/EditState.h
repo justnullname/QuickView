@@ -147,6 +147,7 @@ struct AppConfig {
     bool EnableAdvancedColor = false;    // HDR / FP16 scRGB pipeline toggle
     int CmsDefaultFallback = 0;          // Fallback for untagged images: 0=sRGB, 1=P3, 2=AdobeRGB, 3=ProPhoto
     std::wstring CustomSoftProofProfile; // Path to user-selected ICC file for soft proofing
+    std::wstring CustomEditorPath;       // Path to user-selected custom image editor executable
     bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
     
     // --- Save Options --- (Functional options removed, fully automated/smart)

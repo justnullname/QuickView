@@ -286,6 +286,9 @@ namespace AppStrings {
     extern const wchar_t* Settings_Value_ComingSoon;
     extern const wchar_t* Settings_Label_ForceRaw;
     extern const wchar_t* Settings_Label_AddToOpenWith;
+    extern const wchar_t* Settings_Label_CustomEditor;
+    extern const wchar_t* Context_SelectEditor;
+    extern const wchar_t* OSD_EditorLaunchFailed;
     extern const wchar_t* Settings_Action_Add;
     extern const wchar_t* Settings_Action_Added;
     extern const wchar_t* Settings_Status_DisabledInPortable; // Hint for portable mode

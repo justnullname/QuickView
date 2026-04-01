@@ -228,6 +228,9 @@ const wchar_t *Context_SoftProofCustom = nullptr;
 const wchar_t *Settings_Value_ComingSoon = nullptr;
 const wchar_t *Settings_Label_ForceRaw = nullptr;
 const wchar_t *Settings_Label_AddToOpenWith = nullptr;
+const wchar_t *Settings_Label_CustomEditor = nullptr;
+const wchar_t *Context_SelectEditor = nullptr;
+const wchar_t *OSD_EditorLaunchFailed = nullptr;
 const wchar_t *Settings_Action_Add = nullptr;
 const wchar_t *Settings_Action_Added = nullptr;
 const wchar_t *Settings_Status_DisabledInPortable = nullptr;
@@ -500,7 +503,7 @@ struct EN {
   // Context Menu
   static constexpr const wchar_t *Context_Open = L"Open...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"Open With...";
-  static constexpr const wchar_t *Context_Edit = L"Edit (Default App)\tE";
+  static constexpr const wchar_t *Context_Edit = L"Edit\tE";
   static constexpr const wchar_t *Context_ShowInExplorer = L"Show in Explorer";
   static constexpr const wchar_t *Context_OpenFolder = L"Open Folder";
   static constexpr const wchar_t *Context_CopyImage = L"Copy Image\tCtrl+C";
@@ -636,6 +639,9 @@ struct EN {
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"Force RAW Decode";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"Add to Open With";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"Custom Image Editor";
+  static constexpr const wchar_t *Context_SelectEditor = L"Select Editor";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"Failed to launch editor. Please configure it again.";
   static constexpr const wchar_t *Settings_Action_Add = L"Add";
   static constexpr const wchar_t *Settings_Action_Added = L"Added";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -944,6 +950,9 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"强制 RAW 解码";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"添加到打开方式";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"自定义图片编辑器";
+  static constexpr const wchar_t *Context_SelectEditor = L"选择编辑器";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"编辑器启动失败，请重新配置。";
   static constexpr const wchar_t *Settings_Action_Add = L"添加";
   static constexpr const wchar_t *Settings_Action_Added = L"已添加";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -1033,7 +1042,7 @@ struct CN {
   // Context Menu
   static constexpr const wchar_t *Context_Open = L"打开...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"打开方式...";
-  static constexpr const wchar_t *Context_Edit = L"编辑 (默认应用)\tE";
+  static constexpr const wchar_t *Context_Edit = L"编辑\tE";
   static constexpr const wchar_t *Context_ShowInExplorer =
       L"在资源管理器中显示";
   static constexpr const wchar_t *Context_OpenFolder = L"打开文件夹";
@@ -1346,7 +1355,7 @@ struct TW {
   static constexpr const wchar_t *OSD_ZoomPrefix = L"縮放: ";
   static constexpr const wchar_t *Context_Open = L"開啟...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"開啟方式...";
-  static constexpr const wchar_t *Context_Edit = L"編輯 (預設應用程式)\tE";
+  static constexpr const wchar_t *Context_Edit = L"編輯\tE";
   static constexpr const wchar_t *Context_ShowInExplorer = L"在檔案總管中顯示";
   static constexpr const wchar_t *Context_OpenFolder = L"開啟資料夾";
   static constexpr const wchar_t *Context_CopyImage = L"複製圖像\tCtrl+C";
@@ -1470,6 +1479,9 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"強制 RAW 解碼";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"新增至開啟方式";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"自訂圖片編輯器";
+  static constexpr const wchar_t *Context_SelectEditor = L"選擇編輯器";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"編輯器啟動失敗，請重新配置。";
   static constexpr const wchar_t *Settings_Action_Add = L"新增";
   static constexpr const wchar_t *Settings_Action_Added = L"已新增";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -1764,7 +1776,7 @@ struct JA {
   static constexpr const wchar_t *OSD_ZoomPrefix = L"ズーム: ";
   static constexpr const wchar_t *Context_Open = L"開く...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"プログラムから開く...";
-  static constexpr const wchar_t *Context_Edit = L"編集 (既定のアプリ)\tE";
+  static constexpr const wchar_t *Context_Edit = L"編集\tE";
   static constexpr const wchar_t *Context_ShowInExplorer =
       L"エクスプローラーで表示";
   static constexpr const wchar_t *Context_OpenFolder = L"フォルダーを開く";
@@ -1903,6 +1915,9 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"RAW強制デコード";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"プログラムから開くに追加";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"カスタム画像エディタ";
+  static constexpr const wchar_t *Context_SelectEditor = L"エディタを選択";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"エディタの起動に失敗しました。再設定してください。";
   static constexpr const wchar_t *Settings_Action_Add = L"追加";
   static constexpr const wchar_t *Settings_Action_Added = L"追加済み";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -2213,8 +2228,7 @@ struct RU {
   static constexpr const wchar_t *OSD_ZoomPrefix = L"Масштаб: ";
   static constexpr const wchar_t *Context_Open = L"Открыть...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"Открыть с помощью...";
-  static constexpr const wchar_t *Context_Edit =
-      L"Изменить (в программе по умолчанию)\tE";
+  static constexpr const wchar_t *Context_Edit = L"Изменить\tE";
   static constexpr const wchar_t *Context_ShowInExplorer =
       L"Показать в Проводнике";
   static constexpr const wchar_t *Context_OpenFolder = L"Открыть папку";
@@ -2368,6 +2382,9 @@ struct RU {
       L"Принудительное декодирование RAW";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"Добавить в 'Открыть с помощью'";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"Пользовательский редактор";
+  static constexpr const wchar_t *Context_SelectEditor = L"Выбрать редактор";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"Не удалось запустить редактор. Пожалуйста, настройте его снова.";
   static constexpr const wchar_t *Settings_Action_Add = L"Добавить";
   static constexpr const wchar_t *Settings_Action_Added = L"Добавлено";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -2688,8 +2705,7 @@ struct DE {
   static constexpr const wchar_t *OSD_ZoomPrefix = L"Zoom: ";
   static constexpr const wchar_t *Context_Open = L"Öffnen...\tStrg+O";
   static constexpr const wchar_t *Context_OpenWith = L"Öffnen mit...";
-  static constexpr const wchar_t *Context_Edit =
-      L"Bearbeiten (Standard-App)\tE";
+  static constexpr const wchar_t *Context_Edit = L"Bearbeiten\tE";
   static constexpr const wchar_t *Context_ShowInExplorer =
       L"Im Explorer anzeigen";
   static constexpr const wchar_t *Context_OpenFolder = L"Ordner öffnen";
@@ -2832,6 +2848,9 @@ struct DE {
   static constexpr const wchar_t *Settings_Label_ForceRaw = L"RAW erzwingen";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"Zu Öffnen mit hinzufügen";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"Benutzerdefinierter Editor";
+  static constexpr const wchar_t *Context_SelectEditor = L"Editor auswählen";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"Editor konnte nicht gestartet werden. Bitte neu konfigurieren.";
   static constexpr const wchar_t *Settings_Action_Add = L"Hinzufügen";
   static constexpr const wchar_t *Settings_Action_Added = L"Hinzugefügt";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -3149,8 +3168,7 @@ struct ES {
   static constexpr const wchar_t *OSD_ZoomPrefix = L"Zoom: ";
   static constexpr const wchar_t *Context_Open = L"Abrir...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"Abrir con...";
-  static constexpr const wchar_t *Context_Edit =
-      L"Editar (App predeterminada)\tE";
+  static constexpr const wchar_t *Context_Edit = L"Editar\tE";
   static constexpr const wchar_t *Context_ShowInExplorer =
       L"Mostrar en Explorador";
   static constexpr const wchar_t *Context_OpenFolder = L"Abrir carpeta";
@@ -3299,6 +3317,9 @@ struct ES {
       L"Forzar decodificación RAW";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"Añadir a Abrir con";
+  static constexpr const wchar_t *Settings_Label_CustomEditor = L"Editor de imágenes personalizado";
+  static constexpr const wchar_t *Context_SelectEditor = L"Seleccionar editor";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"No se pudo iniciar el editor. Por favor, configúrelo de nuevo.";
   static constexpr const wchar_t *Settings_Action_Add = L"Añadir";
   static constexpr const wchar_t *Settings_Action_Added = L"Añadido";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
@@ -3683,6 +3704,9 @@ template <typename T> void ApplyT() {
   Settings_Value_ComingSoon = T::Settings_Value_ComingSoon;
   Settings_Label_ForceRaw = T::Settings_Label_ForceRaw;
   Settings_Label_AddToOpenWith = T::Settings_Label_AddToOpenWith;
+  Settings_Label_CustomEditor = T::Settings_Label_CustomEditor;
+  Context_SelectEditor = T::Context_SelectEditor;
+  OSD_EditorLaunchFailed = T::OSD_EditorLaunchFailed;
   Settings_Action_Add = T::Settings_Action_Add;
   Settings_Action_Added = T::Settings_Action_Added;
   Settings_Status_DisabledInPortable = T::Settings_Status_DisabledInPortable;

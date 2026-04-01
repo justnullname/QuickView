@@ -1275,6 +1275,33 @@ void SettingsOverlay::BuildMenu() {
     }
     tabImage.items.push_back(itemFileAssoc);
 
+    SettingsItem itemCustomEditor = { AppStrings::Settings_Label_CustomEditor, OptionType::ActionButton };
+    itemCustomEditor.buttonText = AppStrings::Context_SelectEditor;
+    if (!g_config.CustomEditorPath.empty()) {
+        std::wstring filename = g_config.CustomEditorPath.substr(g_config.CustomEditorPath.find_last_of(L"/\\") + 1);
+        itemCustomEditor.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
+    }
+    itemCustomEditor.onChange = []() {
+        extern HWND g_mainHwnd;
+        wchar_t filename[MAX_PATH] = { 0 };
+        OPENFILENAMEW ofn;
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = g_mainHwnd;
+        ofn.lpstrFilter = L"Executable Files (*.exe;*.bat;*.cmd)\0*.exe;*.bat;*.cmd\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (GetOpenFileNameW(&ofn)) {
+            g_config.CustomEditorPath = filename;
+            SaveConfig();
+            extern SettingsOverlay g_settingsOverlay;
+            g_settingsOverlay.RebuildMenu();
+        }
+    };
+    tabImage.items.push_back(itemCustomEditor);
+
     m_tabs.push_back(tabImage);
 
     // --- 5. Advanced (高级) ---
