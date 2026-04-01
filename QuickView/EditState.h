@@ -135,6 +135,7 @@ struct AppConfig {
     int MiddleDragIndex = 1; // 0=Window, 1=Pan
     int MiddleClickIndex = 1; // 0=None, 1=Exit (default Exit)
     bool EdgeNavClick = false;
+    bool DisableEdgeNavInCompare = true;
     int NavIndicator = 0;               // 0=Arrow
     int PrefetchGear = 1;               // 0=Off, 1=Auto, 2=Eco, 3=Balanced, 4=Ultra
     

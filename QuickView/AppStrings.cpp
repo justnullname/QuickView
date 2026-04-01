@@ -215,6 +215,7 @@ const wchar_t *Settings_Label_LeftDrag = nullptr;
 const wchar_t *Settings_Label_MiddleDrag = nullptr;
 const wchar_t *Settings_Label_MiddleClick = nullptr;
 const wchar_t *Settings_Label_EdgeNavClick = nullptr;
+const wchar_t *Settings_Label_DisableEdgeNavInCompare = nullptr;
 const wchar_t *Settings_Label_NavIndicator = nullptr;
 const wchar_t *Settings_Label_AutoRotate = nullptr;
 const wchar_t *Settings_Label_CMS = nullptr;
@@ -618,6 +619,8 @@ struct EN {
   static constexpr const wchar_t *Settings_Label_MiddleClick = L"Middle Click";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick =
       L"Edge Nav Click";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare =
+      L"Disable in Compare Mode";
   static constexpr const wchar_t *Settings_Label_NavIndicator =
       L"Nav Indicator";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
@@ -926,6 +929,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_MiddleDrag = L"中键拖动";
   static constexpr const wchar_t *Settings_Label_MiddleClick = L"中键点击";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick = L"边缘点击翻页";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare = L"在对比模式下禁用";
   static constexpr const wchar_t *Settings_Label_NavIndicator = L"翻页指示器";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"自动旋转 (EXIF)";
@@ -1451,6 +1455,7 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_MiddleDrag = L"中鍵拖曳";
   static constexpr const wchar_t *Settings_Label_MiddleClick = L"中鍵點選";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick = L"邊緣點選翻頁";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare = L"在對比模式下停用";
   static constexpr const wchar_t *Settings_Label_NavIndicator = L"翻頁指示器";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"自動旋轉 (EXIF)";
@@ -1881,6 +1886,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_MiddleClick = L"中クリック";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick =
       L"エッジナビクリック";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare =
+      L"比較モードで無効にする";
   static constexpr const wchar_t *Settings_Label_NavIndicator =
       L"ナビインジケーター";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
@@ -2342,6 +2349,8 @@ struct RU {
       L"Щелчок средней кнопкой";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick =
       L"Навигация при щелчке по краям";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare =
+      L"Отключить в режиме сравнения";
   static constexpr const wchar_t *Settings_Label_NavIndicator =
       L"Индикатор навигации";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
@@ -2806,6 +2815,8 @@ struct DE {
   static constexpr const wchar_t *Settings_Label_MiddleClick = L"Mittelklick";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick =
       L"Randnavigation-Klick";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare =
+      L"Im Vergleichsmodus deaktivieren";
   static constexpr const wchar_t *Settings_Label_NavIndicator =
       L"Navigationsanzeige";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
@@ -3269,6 +3280,8 @@ struct ES {
   static constexpr const wchar_t *Settings_Label_MiddleClick = L"Clic central";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick =
       L"Clic navegación borde";
+  static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare =
+      L"Desactivar en modo de comparación";
   static constexpr const wchar_t *Settings_Label_NavIndicator =
       L"Indicador navegación";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
@@ -3657,6 +3670,7 @@ template <typename T> void ApplyT() {
   Settings_Label_MiddleDrag = T::Settings_Label_MiddleDrag;
   Settings_Label_MiddleClick = T::Settings_Label_MiddleClick;
   Settings_Label_EdgeNavClick = T::Settings_Label_EdgeNavClick;
+  Settings_Label_DisableEdgeNavInCompare = T::Settings_Label_DisableEdgeNavInCompare;
   Settings_Label_NavIndicator = T::Settings_Label_NavIndicator;
   Settings_Label_AutoRotate = T::Settings_Label_AutoRotate;
   Settings_Label_CMS = T::Settings_Label_CMS;

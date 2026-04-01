@@ -7171,17 +7171,19 @@ SKIP_EDGE_NAV:;
         bool inEdgeZone = false;
         if (g_config.EdgeNavClick && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !g_dialog.IsVisible) {
             if (IsCompareModeActive()) {
-                float splitX = (g_compare.mode == ViewMode::CompareWipe)
-                    ? ClampCompareRatio(g_compare.splitRatio) * (float)w
-                    : 0.5f * (float)w;
-                D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)h);
-                D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
-                ComparePane pane = HitTestComparePane(hwnd, pt);
-                const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
-                if (g_config.NavIndicator == 0) {
-                    inEdgeZone = (HitTestNavButtonInPane(pt, paneRect) != 0);
-                } else {
-                    inEdgeZone = (ComputeEdgeHoverForPane(pt, paneRect) != 0);
+                if (!g_config.DisableEdgeNavInCompare) {
+                    float splitX = (g_compare.mode == ViewMode::CompareWipe)
+                        ? ClampCompareRatio(g_compare.splitRatio) * (float)w
+                        : 0.5f * (float)w;
+                    D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)h);
+                    D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)w, (float)h);
+                    ComparePane pane = HitTestComparePane(hwnd, pt);
+                    const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
+                    if (g_config.NavIndicator == 0) {
+                        inEdgeZone = (HitTestNavButtonInPane(pt, paneRect) != 0);
+                    } else {
+                        inEdgeZone = (ComputeEdgeHoverForPane(pt, paneRect) != 0);
+                    }
                 }
             } else if (w > 50 && h > 100) {
                 if (g_config.NavIndicator == 0) {
@@ -7477,24 +7479,26 @@ SKIP_EDGE_NAV:;
             // [Phase 3] Disable edge nav if window is too narrow
             if (!g_toolbar.IsWindowTooNarrow() && width > 50 && height > 100) {
                 if (IsCompareModeActive()) {
-                    float splitX = (g_compare.mode == ViewMode::CompareWipe)
-                        ? ClampCompareRatio(g_compare.splitRatio) * (float)width
-                        : 0.5f * (float)width;
-                    D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)height);
-                    D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)width, (float)height);
-                    ComparePane pane = HitTestComparePane(hwnd, pt);
-                    const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
-                    int direction = (g_config.NavIndicator == 0)
-                        ? HitTestNavButtonInPane(pt, paneRect)
-                        : ComputeEdgeHoverForPane(pt, paneRect);
-                    if (direction != 0) {
-                        ReleaseCapture();
-                        g_compare.selectedPane = pane;
-                        g_compare.contextPane = pane;
-                        MarkCompareDirty();
-                        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
-                        Navigate(hwnd, direction);
-                        return 0;
+                    if (!g_config.DisableEdgeNavInCompare) {
+                        float splitX = (g_compare.mode == ViewMode::CompareWipe)
+                            ? ClampCompareRatio(g_compare.splitRatio) * (float)width
+                            : 0.5f * (float)width;
+                        D2D1_RECT_F leftRect = D2D1::RectF(0.0f, 0.0f, splitX, (float)height);
+                        D2D1_RECT_F rightRect = D2D1::RectF(splitX, 0.0f, (float)width, (float)height);
+                        ComparePane pane = HitTestComparePane(hwnd, pt);
+                        const D2D1_RECT_F paneRect = (pane == ComparePane::Left) ? leftRect : rightRect;
+                        int direction = (g_config.NavIndicator == 0)
+                            ? HitTestNavButtonInPane(pt, paneRect)
+                            : ComputeEdgeHoverForPane(pt, paneRect);
+                        if (direction != 0) {
+                            ReleaseCapture();
+                            g_compare.selectedPane = pane;
+                            g_compare.contextPane = pane;
+                            MarkCompareDirty();
+                            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+                            Navigate(hwnd, direction);
+                            return 0;
+                        }
                     }
                 } else {
                     bool clickValid = false;

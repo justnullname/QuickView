@@ -1164,6 +1164,7 @@ void SettingsOverlay::BuildMenu() {
     
     tabControl.items.push_back({ AppStrings::Settings_Header_Edge, OptionType::Header });
     tabControl.items.push_back({ AppStrings::Settings_Label_EdgeNavClick, OptionType::Toggle, &g_config.EdgeNavClick });
+    tabControl.items.push_back({ AppStrings::Settings_Label_DisableEdgeNavInCompare, OptionType::Toggle, &g_config.DisableEdgeNavInCompare });
     tabControl.items.push_back({ AppStrings::Settings_Label_NavIndicator, OptionType::Segment, nullptr, nullptr, BindEnum(&g_config.NavIndicator), nullptr, 0, 0, {AppStrings::Settings_Option_Arrow, AppStrings::Settings_Option_Cursor, AppStrings::Settings_Option_None} });
 
     m_tabs.push_back(tabControl);
