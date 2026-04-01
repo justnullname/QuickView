@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream> 
 #include <memory>
+#include <charconv>
 #include <map>
 #include <DirectXPackedVector.h>
 #include <wincodec.h>
@@ -6642,8 +6643,7 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
              const char* p = (const char*)data + 2; // Skip P7
              const char* end = (const char*)data + std::min(size, (size_t)4096); // Check first 4KB
              
-             auto nextToken = [&](std::string& outToken) -> bool {
-                 outToken.clear();
+             auto nextToken = [&](std::string_view& outToken) -> bool {
                  // Skip non-graphical
                  while (p < end && (unsigned char)*p <= 32) p++;
                  // Skip comments
@@ -6654,22 +6654,22 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
                  if (p >= end) return false;
                  
                  // Read token
-                 while (p < end && (unsigned char)*p > 32) {
-                     outToken += *p++;
-                 }
+                 const char* startTok = p;
+                 while (p < end && (unsigned char)*p > 32) p++;
+                 outToken = std::string_view(startTok, p);
                  return !outToken.empty();
              };
              
              int w = 0, h = 0;
-             std::string tok;
+             std::string_view tok;
              while (nextToken(tok)) {
                  if (tok == "WIDTH") {
-                     std::string val; 
-                     if (nextToken(val)) w = std::atoi(val.c_str());
+                     std::string_view val;
+                     if (nextToken(val)) std::from_chars(val.data(), val.data() + val.size(), w);
                  }
                  else if (tok == "HEIGHT") {
-                     std::string val;
-                     if (nextToken(val)) h = std::atoi(val.c_str());
+                     std::string_view val;
+                     if (nextToken(val)) std::from_chars(val.data(), val.data() + val.size(), h);
                  }
                  else if (tok == "ENDHDR") {
                      break;
@@ -6866,32 +6866,41 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
         pInfo->height = 512; 
         
         // Parse Dimensions (approximate from first 64KB)
-        std::string xml(data, data + size);
+        std::string_view xml((const char*)data, size);
         
         try {
-            auto GetAttrVal = [](const std::string& s, const char* attr) -> std::string {
-                std::string key = attr;
-                key += "=\"";
-                size_t pos = s.find(key);
+            auto GetAttrVal = [](std::string_view s, std::string_view attr) -> std::string_view {
+                char key[64];
+                size_t keyLen = 0;
+                if (attr.size() + 2 < 64) {
+                    memcpy(key, attr.data(), attr.size());
+                    key[attr.size()] = '=';
+                    key[attr.size() + 1] = '\"';
+                    keyLen = attr.size() + 2;
+                } else {
+                    return "";
+                }
+                std::string_view keyView(key, keyLen);
+                size_t pos = s.find(keyView);
                 if (pos == std::string::npos) return "";
-                pos += key.length();
+                pos += keyLen;
                 size_t end = s.find("\"", pos);
                 if (end == std::string::npos) return "";
                 return s.substr(pos, end - pos);
             };
 
             float pw = 0, ph = 0;
-            std::string wStr = GetAttrVal(xml, "width");
-            std::string hStr = GetAttrVal(xml, "height");
-            if (!wStr.empty()) try { pw = std::stof(wStr); } catch (...) {}
-            if (!hStr.empty()) try { ph = std::stof(hStr); } catch (...) {}
+            std::string_view wStr = GetAttrVal(xml, "width");
+            std::string_view hStr = GetAttrVal(xml, "height");
+            if (!wStr.empty()) std::from_chars(wStr.data(), wStr.data() + wStr.size(), pw);
+            if (!hStr.empty()) std::from_chars(hStr.data(), hStr.data() + hStr.size(), ph);
 
             if (pw > 0 && ph > 0) {
                 pInfo->width = (int)std::lround(pw);
                 pInfo->height = (int)std::lround(ph);
                 return S_OK;
             } else {
-                std::string vbStr = GetAttrVal(xml, "viewBox");
+                std::string_view vbStr = GetAttrVal(xml, "viewBox");
                 if (!vbStr.empty()) {
                     size_t p = 0;
                     int skipped = 0;
@@ -6902,13 +6911,18 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
                         } else p++;
                     }
                     if (p < vbStr.length()) {
-                        char* endptr = nullptr;
-                        float vw = strtof(vbStr.c_str() + p, &endptr);
-                        if (endptr && endptr > vbStr.c_str() + p) {
-                            float vh = strtof(endptr, nullptr);
-                            if (vw > 0 && vh > 0) {
-                                pInfo->width = (int)std::lround(vw);
-                                pInfo->height = (int)std::lround(vh);
+                        float vw = 0, vh = 0;
+                        auto res = std::from_chars(vbStr.data() + p, vbStr.data() + vbStr.size(), vw);
+                        if (res.ec == std::errc{}) {
+                            p = res.ptr - vbStr.data();
+                            while (p < vbStr.length() && (isspace((unsigned char)vbStr[p]) || vbStr[p] == ',')) p++;
+                            if (p < vbStr.length()) {
+                                if (std::from_chars(vbStr.data() + p, vbStr.data() + vbStr.size(), vh).ec == std::errc{}) {
+                                    if (vw > 0 && vh > 0) {
+                                        pInfo->width = (int)std::lround(vw);
+                                        pInfo->height = (int)std::lround(vh);
+                                    }
+                                }
                             }
                         }
                     }
