@@ -10658,6 +10658,8 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
 
     int finalWinW = 0;
     int finalWinH = 0;
+    int finalTargetWinW = 0;
+    int finalTargetWinH = 0;
     bool willResizeWindow = false;
     bool resizeIsScreenLimited = false;
 
@@ -10669,24 +10671,33 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          int maxW = (bounds.right - bounds.left);
          int maxH = (bounds.bottom - bounds.top);
          
-         // Logic 1:1 Scale Target
-         int targetW = (int)(vs.VisualSize.width * newTotalScale);
-         int targetH = (int)(vs.VisualSize.height * newTotalScale);
+         RECT rcCurrentWin; GetWindowRect(hwnd, &rcCurrentWin);
+         int borderW = (rcCurrentWin.right - rcCurrentWin.left) - (int)currentWinW;
+         int borderH = (rcCurrentWin.bottom - rcCurrentWin.top) - (int)currentWinH;
+
+         // Logic 1:1 Scale Target (Client Area)
+         int targetClientW = (int)(vs.VisualSize.width * newTotalScale);
+         int targetClientH = (int)(vs.VisualSize.height * newTotalScale);
          
-         // 200px Minimum logic is now handled in 'Normal Resize' path below
-         // to prevent accidental mode switches that cause UI deadlocks.
+         int targetWinW = targetClientW + borderW;
+         int targetWinH = targetClientH + borderH;
+
          willResizeWindow = true;
-         finalWinW = targetW;
-         finalWinH = targetH;
          
          bool cappedW = false;
          bool cappedH = false;
-         if (finalWinW > maxW) { finalWinW = maxW; cappedW = true; }
-         if (finalWinH > maxH) { finalWinH = maxH; cappedH = true; }
+         if (targetWinW > maxW) { targetWinW = maxW; targetClientW = maxW - borderW; cappedW = true; }
+         if (targetWinH > maxH) { targetWinH = maxH; targetClientH = maxH - borderH; cappedH = true; }
          resizeIsScreenLimited = cappedW || cappedH;
          
-         if (finalWinW < (int)GetMinWindowWidth()) finalWinW = (int)GetMinWindowWidth();
-         if (finalWinH < (int)GetMinWindowWidth()) finalWinH = (int)GetMinWindowWidth();
+         int minWinW = (int)GetMinWindowWidth();
+         if (targetWinW < minWinW) { targetWinW = minWinW; targetClientW = minWinW - borderW; }
+         if (targetWinH < minWinW) { targetWinH = minWinW; targetClientH = minWinW - borderH; }
+
+         finalWinW = targetClientW;
+         finalWinH = targetClientH;
+         finalTargetWinW = targetWinW;
+         finalTargetWinH = targetWinH;
          
          if (!centerPt) {
              if (!cappedW) g_viewState.PanX = 0;
@@ -10713,7 +10724,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          RECT rcWin; GetWindowRect(hwnd, &rcWin);
 
          const POINT* windowAnchor = (g_config.MouseAnchoredWindowZoom ? centerPt : nullptr);
-         RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, finalWinW, finalWinH, bounds, windowAnchor);
+         RECT targetRect = ExpandWindowRectToTargetWithinBounds(rcWin, finalTargetWinW, finalTargetWinH, bounds, windowAnchor);
          float targetPanX = startPanX;
          float targetPanY = startPanY;
 
