@@ -1575,15 +1575,14 @@ D2D1_SIZE_F UIRenderer::GetRequiredInfoPanelSize() const {
 
     if (g_runtime.ShowInfoPanel && g_runtime.InfoPanelExpanded) {
         std::vector<InfoRow> rows = BuildGridRows(g_currentMetadata, g_imagePath, false);
-        float width = 340.0f * s;
+        float width = 0.0f;
+        const float baseWidth = (GRID_ICON_WIDTH + GRID_LABEL_WIDTH + GRID_PADDING) * s;
         for (const auto& row : rows) {
-            float rowWidth = 34.0f * s;
-            rowWidth += MeasureTextWidth(row.label) + 18.0f * s;
-            rowWidth += MeasureTextWidth(row.valueMain) + 12.0f * s;
-            if (!row.valueSub.empty()) rowWidth += MeasureTextWidth(row.valueSub) + 12.0f * s;
+            float rowWidth = baseWidth + MeasureTextWidth(row.valueMain) + 16.0f * s;
+            if (!row.valueSub.empty()) rowWidth += MeasureTextWidth(row.valueSub) + 16.0f * s;
             width = (std::max)(width, rowWidth);
         }
-        width = (std::clamp)(width, 280.0f * s, 430.0f * s);
+        width = (std::clamp)(width, 220.0f * s, 430.0f * s);
         float height = 26.0f * s + (float)rows.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
 
         if (g_currentMetadata.HasGPS) height += 50.0f * s;
@@ -2163,15 +2162,28 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         dc->DrawText(displayLabel.c_str(), (UINT32)displayLabel.length(), m_panelFormat.Get(), labelRect, brushGray.Get());
         
         // Value column - apply truncation
-        const float desiredSubWidth = row.valueSub.empty() ? 0 : MeasureTextWidth(row.valueSub) + 5.0f * s;
-        const float maxSubWidth = row.valueSub.empty() ? 0.0f : valueColWidth * 0.42f;
-        float subWidth = row.valueSub.empty() ? 0.0f : (std::min)(desiredSubWidth, maxSubWidth);
-        float mainMaxWidth = valueColWidth - subWidth;
-        if (mainMaxWidth < valueColWidth * 0.45f) {
-            mainMaxWidth = valueColWidth * 0.45f;
-            subWidth = row.valueSub.empty() ? 0.0f : (valueColWidth - mainMaxWidth);
+        const float mainW = MeasureTextWidth(row.valueMain) + 4.0f * s;
+        const float subW = row.valueSub.empty() ? 0.0f : MeasureTextWidth(row.valueSub) + 8.0f * s;
+        
+        float mainMaxWidth = mainW;
+        float subWidth = subW;
+        
+        if (mainW + subW > valueColWidth) {
+            // Priority: Give main at least 40%, then sub, then rest to main.
+            float minMain = valueColWidth * 0.40f;
+            if (subW < valueColWidth - minMain) {
+                subWidth = subW;
+                mainMaxWidth = valueColWidth - subWidth;
+            } else {
+                mainMaxWidth = (std::max)(minMain, valueColWidth * 0.5f);
+                subWidth = valueColWidth - mainMaxWidth;
+            }
+        } else {
+            // Plenty of space: just use natural widths
+            mainMaxWidth = valueColWidth - subW; 
+            subWidth = subW;
         }
-        if (mainMaxWidth < 24.0f * s) mainMaxWidth = 24.0f * s;
+        if (mainMaxWidth < 30.0f * s) mainMaxWidth = 30.0f * s;
         
         if (row.mode == TruncateMode::MiddleEllipsis) {
             row.displayText = MakeMiddleEllipsis(mainMaxWidth, row.valueMain);
@@ -2424,15 +2436,14 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     
     // Panel Rect
     float padding = 8.0f * s;
-    float width = 340.0f * s;
+    float width = 0.0f;
+    const float baseWidth = (GRID_ICON_WIDTH + GRID_LABEL_WIDTH + GRID_PADDING) * s;
     for (const auto& row : m_infoGrid) {
-        float rowWidth = 34.0f * s;
-        rowWidth += MeasureTextWidth(row.label) + 18.0f * s;
-        rowWidth += MeasureTextWidth(row.valueMain) + 12.0f * s;
-        if (!row.valueSub.empty()) rowWidth += MeasureTextWidth(row.valueSub) + 12.0f * s;
+        float rowWidth = baseWidth + MeasureTextWidth(row.valueMain) + 16.0f * s;
+        if (!row.valueSub.empty()) rowWidth += MeasureTextWidth(row.valueSub) + 16.0f * s;
         width = (std::max)(width, rowWidth);
     }
-    width = (std::clamp)(width, 280.0f * s, 430.0f * s);
+    width = (std::clamp)(width, 220.0f * s, 430.0f * s);
     float height = 26.0f * s + (float)m_infoGrid.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
     float startX = 16.0f * s;
     float startY = 32.0f * s; 
