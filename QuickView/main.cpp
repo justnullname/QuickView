@@ -5035,7 +5035,12 @@ static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate) {
 
             if (UseSvgViewportRendering(g_imageResource)) {
                 VisualState surfaceVs{};
-                surfaceVs.PhysicalSize = D2D1::SizeF(winW, winH);
+                // [Fix] Use actual backing surface size to prevent aspect ratio stretching during window resize
+                if (g_lastSurfaceSize.width > 0.0f && g_lastSurfaceSize.height > 0.0f) {
+                    surfaceVs.PhysicalSize = g_lastSurfaceSize;
+                } else {
+                    surfaceVs.PhysicalSize = D2D1::SizeF(winW, winH);
+                }
                 surfaceVs.VisualSize = surfaceVs.PhysicalSize;
                 surfaceVs.TotalRotation = 0.0f;
                 surfaceVs.IsRotated90 = false;
