@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "StbLoader.h"
+#include "ImageTypes.h"
 
 // Define implementation for stb_image
 #define STB_IMAGE_IMPLEMENTATION
@@ -69,7 +70,12 @@ namespace StbLoader {
         *channels = 4;
 
         size_t pixelSize = useFloat ? sizeof(float) : sizeof(uint8_t);
-        size_t totalSize = w * h * 4 * pixelSize;
+        size_t totalSize = QuickView::SafeCalculateBufferSize(w * 4, h);
+        if (totalSize == 0) {
+            stbi_image_free(data);
+            return false;
+        }
+        totalSize *= pixelSize;
 
         outData.resize(totalSize);
         memcpy(outData.data(), data, totalSize);
@@ -98,7 +104,12 @@ namespace StbLoader {
         *channels = 4;
 
         size_t pixelSize = useFloat ? sizeof(float) : sizeof(uint8_t);
-        size_t totalSize = w * h * 4 * pixelSize;
+        size_t totalSize = QuickView::SafeCalculateBufferSize(w * 4, h);
+        if (totalSize == 0) {
+            stbi_image_free(data);
+            return false;
+        }
+        totalSize *= pixelSize;
 
         outData.resize(totalSize);
         memcpy(outData.data(), data, totalSize);

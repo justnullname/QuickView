@@ -3332,10 +3332,10 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                             if (WebPAnimDecoderGetNext(dec, &frameBuf, &timestamp) && frameBuf) {
                                 int w = (int)animInfo.canvas_width;
                                 int h = (int)animInfo.canvas_height;
-                                int stride = CalculateSIMDAlignedStride(w, 4);
-                                size_t bufSize = (size_t)stride * h;
+                                int stride = SafeCalculateStride(w, 4);
+                                size_t bufSize = SafeCalculateBufferSize(stride, h);
 
-                                uint8_t* pixels = ctx.allocator(bufSize);
+                                uint8_t* pixels = (stride > 0 && bufSize > 0) ? ctx.allocator(bufSize) : nullptr;
                                 if (!pixels) { WebPAnimDecoderDelete(dec); return E_OUTOFMEMORY; }
 
                                 // Copy with periodic cancel check
@@ -3415,10 +3415,10 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo& exif, CImageL
                      finalH = config.options.scaled_height;
                 }
 
-                int stride = CalculateSIMDAlignedStride(finalW, 4);
-                size_t bufSize = (size_t)stride * finalH;
+                int stride = SafeCalculateStride(finalW, 4);
+                size_t bufSize = SafeCalculateBufferSize(stride, finalH);
 
-                uint8_t* pixels = ctx.allocator(bufSize);
+                uint8_t* pixels = (stride > 0 && bufSize > 0) ? ctx.allocator(bufSize) : nullptr;
                 if (!pixels) return E_OUTOFMEMORY;
 
                 // Direct Decode Setup
@@ -4494,10 +4494,10 @@ namespace QuickView {
 
                 int w = cinfo.output_width;
                 int h = cinfo.output_height;
-                int stride = CalculateSIMDAlignedStride(w, 4);
-                size_t totalSize = (size_t)stride * h;
+                int stride = SafeCalculateStride(w, 4);
+                size_t totalSize = SafeCalculateBufferSize(stride, h);
 
-                uint8_t* pixels = ctx.allocator(totalSize);
+                uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                 if (!pixels) {
                     jpeg_abort_decompress(&cinfo);
                     jpeg_destroy_decompress(&cinfo);
@@ -5247,8 +5247,9 @@ namespace QuickView {
 
                     const int width = rgb.width;
                     const int height = rgb.height;
-                    const int stride = CalculateSIMDAlignedStride(width, 16);
-                    uint8_t* pixels = ctx.allocator(static_cast<size_t>(stride) * height);
+                    const int stride = SafeCalculateStride(width, 16);
+                    const size_t totalSize = SafeCalculateBufferSize(stride, height);
+                    uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                     if (!pixels) {
                         avifRGBImageFreePixels(&rgb);
                         avifDecoderDestroy(decoder);
@@ -5459,10 +5460,10 @@ namespace QuickView {
                                 if (thumb->bits == 8 && thumb->colors == 3) {
                                     int w = thumb->width;
                                     int h = thumb->height;
-                                    int stride = CalculateSIMDAlignedStride(w, 4); 
-                                    size_t totalSize = (size_t)stride * h;
+                                    int stride = SafeCalculateStride(w, 4);
+                                    size_t totalSize = SafeCalculateBufferSize(stride, h);
                                     
-                                    uint8_t* pixels = ctx.allocator(totalSize);
+                                    uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                                     if (pixels) {
                                         uint8_t* src = (uint8_t*)thumb->data;
                                         uint8_t* dst = pixels;
@@ -5533,10 +5534,10 @@ namespace QuickView {
                 if (image->type == LIBRAW_IMAGE_BITMAP && image->bits == 8 && image->colors == 3) {
                      int w = image->width;
                      int h = image->height;
-                     int stride = CalculateSIMDAlignedStride(w, 4);
-                     size_t totalSize = (size_t)stride * h;
+                     int stride = SafeCalculateStride(w, 4);
+                     size_t totalSize = SafeCalculateBufferSize(stride, h);
                      
-                     uint8_t* pixels = ctx.allocator(totalSize);
+                     uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                      if (!pixels) {
                          RawProcessor.dcraw_clear_mem(image);
                          return E_OUTOFMEMORY;
@@ -5609,9 +5610,9 @@ namespace QuickView {
                 }
 
                 const int bytesPerPixel = 16;
-                int stride = CalculateSIMDAlignedStride(outW, bytesPerPixel);
-                size_t totalSize = (size_t)stride * outH;
-                uint8_t* pixels = ctx.allocator(totalSize);
+                int stride = SafeCalculateStride(outW, bytesPerPixel);
+                size_t totalSize = SafeCalculateBufferSize(stride, outH);
+                uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                 if (!pixels) return E_OUTOFMEMORY;
 
                 std::vector<int> srcXForOut(outW);
@@ -5850,11 +5851,9 @@ namespace QuickView {
                     }
                 }
 
-                const int stride = CalculateSIMDAlignedStride(static_cast<int>(outW), 4);
-                if (stride <= 0) return E_FAIL;
-
-                const size_t totalSize = static_cast<size_t>(stride) * static_cast<size_t>(outH);
-                uint8_t* pixels = ctx.allocator(totalSize);
+                const int stride = SafeCalculateStride(static_cast<int>(outW), 4);
+                const size_t totalSize = SafeCalculateBufferSize(stride, static_cast<int>(outH));
+                uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                 if (!pixels) return E_OUTOFMEMORY;
 
                 std::memset(pixels, 0, totalSize);
@@ -5973,9 +5972,9 @@ namespace QuickView {
                      // It says "LoadImage" - usually wrapping stbi_load_from_memory forcing 4 components?
                      // Assuming RGBA output from StbLoader wrapper.
                      
-                     int stride = CalculateSIMDAlignedStride(w, 4);
-                     size_t totalSize = (size_t)stride * h;
-                     uint8_t* pixels = ctx.allocator(totalSize);
+                     int stride = SafeCalculateStride(w, 4);
+                     size_t totalSize = SafeCalculateBufferSize(stride, h);
+                     uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                      if (!pixels) return E_OUTOFMEMORY;
                      
                      // [v9.9] Copy and Convert RGBA to BGRA with OpenMP parallelization
@@ -6020,9 +6019,9 @@ namespace QuickView {
                 }
 
                 const int bytesPerPixel = 16;
-                const int stride = CalculateSIMDAlignedStride(w, bytesPerPixel);
-                const size_t totalSize = static_cast<size_t>(stride) * h;
-                uint8_t* pixels = ctx.allocator(totalSize);
+                const int stride = SafeCalculateStride(w, bytesPerPixel);
+                const size_t totalSize = SafeCalculateBufferSize(stride, h);
+                uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
                 if (!pixels) return E_OUTOFMEMORY;
 
                 for (int y = 0; y < h; ++y) {
@@ -10341,9 +10340,9 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     }
 
     // Allocate output buffer with aligned stride
-    int outStride = CalculateSIMDAlignedStride(finalW, 4);
-    size_t outSize = static_cast<size_t>(outStride) * finalH;
-    uint8_t* pixels = AllocateBuffer(outSize);
+    int outStride = SafeCalculateStride(finalW, 4);
+    size_t outSize = SafeCalculateBufferSize(outStride, finalH);
+    uint8_t* pixels = (outStride > 0 && outSize > 0) ? AllocateBuffer(outSize) : nullptr;
     if (!pixels) return E_OUTOFMEMORY;
     
     if (needWicResize) {
@@ -10630,8 +10629,9 @@ static bool TryDecodeAvifGainMappedLinearRGBA(
 
     const int width = static_cast<int>(toneMappedRgb.width);
     const int height = static_cast<int>(toneMappedRgb.height);
-    const int stride = CalculateSIMDAlignedStride(width, 16);
-    uint8_t* pixels = ctx.allocator(static_cast<size_t>(stride) * height);
+    const int stride = SafeCalculateStride(width, 16);
+    const size_t totalSize = SafeCalculateBufferSize(stride, height);
+    uint8_t* pixels = (stride > 0 && totalSize > 0) ? ctx.allocator(totalSize) : nullptr;
     if (!pixels) {
         avifRGBImageFreePixels(&toneMappedRgb);
         return false;

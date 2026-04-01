@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <limits>
 #include "DisplayColorInfo.h"
 
 namespace QuickView {
@@ -264,6 +265,49 @@ private:
 /// Calculate 64-byte (cache line) aligned stride for SIMD operations
 [[nodiscard]] inline int CalculateSIMDAlignedStride(int width, int bytesPerPixel) noexcept {
     return CalculateAlignedStride(width, bytesPerPixel, 64);
+}
+
+// ============================================================================
+// [Security Fix] Safe Buffer Calculation Helpers
+// ============================================================================
+
+/// Calculate aligned stride with overflow protection.
+/// Returns 0 on overflow or invalid input.
+[[nodiscard]] inline int SafeCalculateStride(int width, int bytesPerPixel, int alignment = 64) noexcept {
+    if (width <= 0 || bytesPerPixel <= 0 || alignment <= 0) return 0;
+
+    const uint64_t w = static_cast<uint64_t>(width);
+    const uint64_t bpp = static_cast<uint64_t>(bytesPerPixel);
+    const uint64_t align = static_cast<uint64_t>(alignment);
+
+    // Check width * bytesPerPixel overflow
+    if (w > 0 && bpp > std::numeric_limits<uint64_t>::max() / w) return 0;
+    const uint64_t rawStride = w * bpp;
+
+    // Check alignment addition overflow: (rawStride + align - 1)
+    if (rawStride > std::numeric_limits<uint64_t>::max() - (align - 1)) return 0;
+    const uint64_t alignedStride = (rawStride + align - 1) & ~(align - 1);
+
+    // Final check for int cast
+    if (alignedStride > static_cast<uint64_t>(std::numeric_limits<int>::max())) return 0;
+
+    return static_cast<int>(alignedStride);
+}
+
+/// Calculate total buffer size with overflow protection.
+/// Returns 0 on overflow or invalid input.
+[[nodiscard]] inline size_t SafeCalculateBufferSize(int stride, int height) noexcept {
+    if (stride <= 0 || height <= 0) return 0;
+
+    const uint64_t s = static_cast<uint64_t>(stride);
+    const uint64_t h = static_cast<uint64_t>(height);
+
+    if (s > 0 && h > std::numeric_limits<uint64_t>::max() / s) return 0;
+    const uint64_t totalSize = s * h;
+
+    if (totalSize > std::numeric_limits<size_t>::max()) return 0;
+
+    return static_cast<size_t>(totalSize);
 }
 
 } // namespace QuickView
