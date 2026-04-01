@@ -2534,6 +2534,7 @@ void UIRenderer::DrawGridTooltip(ID2D1DeviceContext* dc) {
 void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
     // Only draw for Arrow mode (0)
     if (g_config.NavIndicator != 0) return;
+    if (g_viewState.CompareActive && g_config.DisableEdgeNavInCompare) return;
     const float s = m_uiScale;
     const float hdrWhiteScale = GetHdrUiWhiteScale(m_compEngine);
     float circleRadius = 16.0f * s;
@@ -2582,6 +2583,7 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
     };
 
     if (g_viewState.CompareActive) {
+        if (g_config.DisableEdgeNavInCompare) return;
         float splitRatio = g_viewState.CompareSplitRatio;
         if (splitRatio <= 0.05f || splitRatio >= 0.95f) splitRatio = 0.5f;
         float splitX = m_width * splitRatio;
