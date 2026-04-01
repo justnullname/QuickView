@@ -148,7 +148,8 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
         float rowH = GRID_ROW_HEIGHT * s;
         
         float rowY = startY;
-        for (size_t i = 0; i < m_infoGrid.size(); i++) {
+        const size_t gridSize = m_infoGrid.size();
+        for (size_t i = 0; i < gridSize; i++) {
             D2D1_RECT_F rowRect = D2D1::RectF(startX, rowY, startX + width, rowY + rowH);
             
             if (x >= rowRect.left && x <= rowRect.right &&
@@ -1412,7 +1413,8 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
     float valueColWidth = width - iconW - labelW - gridPad;
     float y = startY;
     
-    for (size_t i = 0; i < m_infoGrid.size(); i++) {
+    const size_t gridSize = m_infoGrid.size();
+    for (size_t i = 0; i < gridSize; i++) {
         auto& row = m_infoGrid[i];
         
         // Calculate hit rect
