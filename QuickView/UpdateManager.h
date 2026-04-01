@@ -65,6 +65,7 @@ private:
     bool m_isUpdatePending = false;     // True if user clicked "Later" or "Restart"
     bool m_shouldRestartNow = false;    // True if "Restart Now"
     std::wstring m_tempPath;            // Path to downloaded installer
+    std::wstring m_uniqueTempDir;       // Secure unique temp directory
 
     UpdateCallback m_callback;
 };

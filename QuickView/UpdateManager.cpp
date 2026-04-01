@@ -14,6 +14,15 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
 
+static DWORD GetTempPathSecure(DWORD nBufferLength, LPWSTR lpBuffer) {
+    typedef DWORD(WINAPI* PGETTEMPPATH2W)(DWORD, LPWSTR);
+    PGETTEMPPATH2W pGetTempPath2W = (PGETTEMPPATH2W)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetTempPath2W");
+    if (pGetTempPath2W) {
+        return pGetTempPath2W(nBufferLength, lpBuffer);
+    }
+    return GetTempPathW(nBufferLength, lpBuffer);
+}
+
 UpdateManager& UpdateManager::Get() {
     static UpdateManager instance;
     return instance;
@@ -53,70 +62,48 @@ void UpdateManager::CheckThread(int delaySeconds) {
     if (CheckVersion()) {
         m_status = UpdateStatus::NewVersionFound;
         
-        // Prepare Temp Path with Version suffix to prevent redownload
-        wchar_t tempPath[MAX_PATH];
-        GetTempPathW(MAX_PATH, tempPath);
-        std::wstring filename = L"QuickView_Update_" + std::wstring(m_remoteInfo.version.begin(), m_remoteInfo.version.end()) + L".exe";
-        std::wstring dest = std::wstring(tempPath) + filename;
-        m_tempPath = dest;
+        // Prepare Secure Unique Temp Directory
+        wchar_t baseTempPath[MAX_PATH];
+        GetTempPathSecure(MAX_PATH, baseTempPath);
 
-
-
-        // Check if already downloaded (Atomic: Check FINAL file)
-        bool cached = false;
-        std::ifstream f(dest, std::ios::binary | std::ios::ate);
-        if (f.good()) {
-            std::streamsize size = f.tellg();
-            if (size > 100000) cached = true;
-            f.close();
+        wchar_t uniqueTempFile[MAX_PATH];
+        if (GetTempFileNameW(baseTempPath, L"QVU", 0, uniqueTempFile) == 0) {
+            m_status = UpdateStatus::Error;
+            if (m_callback) m_callback(false, VersionInfo());
+            return;
         }
+        DeleteFileW(uniqueTempFile);
+        if (!CreateDirectoryW(uniqueTempFile, NULL)) {
+            m_status = UpdateStatus::Error;
+            if (m_callback) m_callback(false, VersionInfo());
+            return;
+        }
+        m_uniqueTempDir = uniqueTempFile;
+
+        bool isZip = (m_remoteInfo.downloadUrl.find(".zip") != std::string::npos);
+        std::wstring dest = m_uniqueTempDir + (isZip ? L"\\Update.zip" : L"\\Update.exe");
+        m_tempPath = dest;
 
         bool downloadSuccess = false;
 
-        // Determine if ZIP or EXE
-        bool isZip = (m_remoteInfo.downloadUrl.find(".zip") != std::string::npos);
+        // 2. Download to .part (Atomic Protection)
+        m_status = UpdateStatus::Downloading;
         
-        // Adjust destination based on actual type (if url says .zip but we defaulted to .exe in dest)
-        if (isZip) {
-             size_t dot = dest.find_last_of(L'.');
-             if (dot != std::wstring::npos) dest = dest.substr(0, dot) + L".zip";
-             m_tempPath = dest; // Update member
-             
-             // Re-check cache with new name
-             std::ifstream fz(dest, std::ios::binary | std::ios::ate);
-             if (fz.good()) {
-                 if (fz.tellg() > 100000) cached = true;
-             }
-        }
+        std::wstring partPath = dest + L".part";
         
-        if (cached) {
-             downloadSuccess = true;
-        } else {
-            // 2. Download to .part (Atomic Protection)
-            m_status = UpdateStatus::Downloading;
-            // Silent download - notify only when ready
-            // if (m_callback) m_callback(true, m_remoteInfo);
-            
-            std::wstring partPath = dest + L".part";
-            
-            // Clean old part
-            DeleteFileW(partPath.c_str());
-
-            if (DownloadUpdate(m_remoteInfo.downloadUrl, partPath)) {
-                // Download success -> Rename atomic
-                if (MoveFileW(partPath.c_str(), dest.c_str())) {
-                    downloadSuccess = true;
-                } else {
-                     // Error renaming?
-                     m_status = UpdateStatus::Error;
-                     if (m_callback) m_callback(false, VersionInfo());
-                }
+        if (DownloadUpdate(m_remoteInfo.downloadUrl, partPath)) {
+            // Download success -> Rename atomic
+            if (MoveFileW(partPath.c_str(), dest.c_str())) {
+                downloadSuccess = true;
             } else {
-                 // Download failed (invalid header or network)
-                 DeleteFileW(partPath.c_str()); // Clean up trash
+                 DeleteFileW(partPath.c_str());
                  m_status = UpdateStatus::Error;
                  if (m_callback) m_callback(false, VersionInfo());
             }
+        } else {
+             DeleteFileW(partPath.c_str());
+             m_status = UpdateStatus::Error;
+             if (m_callback) m_callback(false, VersionInfo());
         }
         
         if (downloadSuccess) {
@@ -232,13 +219,15 @@ bool UpdateManager::DownloadUpdate(const std::string& url, const std::wstring& d
         return false; // Invalid format
     }
 
-    // Write to file
-    std::ofstream outfile(destPath, std::ios::binary);
-    if (!outfile.is_open()) return false;
-    outfile.write(data.c_str(), data.size());
-    outfile.close();
+    // Secure Write to file
+    HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
 
-    return true;
+    DWORD bytesWritten = 0;
+    bool success = WriteFile(hFile, data.c_str(), (DWORD)data.size(), &bytesWritten, NULL) && (bytesWritten == data.size());
+    CloseHandle(hFile);
+
+    return success;
 }
 
 std::string UpdateManager::HttpGet(const std::wstring& host, const std::wstring& path) {
@@ -347,16 +336,24 @@ void UpdateManager::OnUserLater() {
 
 void UpdateManager::HandleExit() {
     if (IsUpdatePending() && !m_tempPath.empty() && m_status == UpdateStatus::ReadyToInstall) {
-        // Generate UpdateScript.bat
-        wchar_t batPath[MAX_PATH];
-        GetTempPathW(MAX_PATH, batPath);
-        std::wstring batFile = std::wstring(batPath) + L"QuickView_Update.bat";
+        // Generate Secure Unique UpdateScript.bat
+        wchar_t baseTempPath[MAX_PATH];
+        GetTempPathSecure(MAX_PATH, baseTempPath);
+
+        wchar_t batFile[MAX_PATH];
+        if (GetTempFileNameW(baseTempPath, L"QVB", 0, batFile) == 0) return;
+
+        // Ensure .bat extension for execution
+        std::wstring batPath = batFile;
+        size_t dot = batPath.find_last_of(L'.');
+        if (dot != std::wstring::npos) batPath = batPath.substr(0, dot) + L".bat";
+        if (!MoveFileW(batFile, batPath.c_str())) return;
         
         // Current EXE path
         wchar_t currentExe[MAX_PATH];
         GetModuleFileNameW(NULL, currentExe, MAX_PATH);
         
-        std::wofstream bat(batFile);
+        std::wofstream bat(batPath);
         bat << L"@echo off" << std::endl;
         bat << L":loop_del" << std::endl;
         bat << L"timeout /t 1 /nobreak > NUL" << std::endl;
@@ -367,6 +364,10 @@ void UpdateManager::HandleExit() {
         bat << L"move /Y \"" << m_tempPath << L"\" \"" << currentExe << L"\"" << std::endl;
         bat << L"if not exist \"" << currentExe << L"\" goto loop_move" << std::endl;
         
+        if (!m_uniqueTempDir.empty()) {
+            bat << L"rd /s /q \"" << m_uniqueTempDir << L"\"" << std::endl;
+        }
+
         if (m_shouldRestartNow) {
             bat << L"start \"\" \"" << currentExe << L"\"" << std::endl;
         }
@@ -374,6 +375,6 @@ void UpdateManager::HandleExit() {
         bat.close();
         
         // Execute Bat (Hidden)
-        ShellExecuteW(NULL, L"open", batFile.c_str(), NULL, NULL, SW_HIDE);
+        ShellExecuteW(NULL, L"open", batPath.c_str(), NULL, NULL, SW_HIDE);
     }
 }
