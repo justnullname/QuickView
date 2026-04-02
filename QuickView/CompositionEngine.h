@@ -116,7 +116,7 @@ public:
     bool IsAdvancedColor() const { return m_isAdvancedColor; }
     void SetAdvancedColorEnabled(bool enabled) { m_allowAdvancedColor = enabled; }
     const QuickView::DisplayColorState& GetDisplayColorState() const { return m_displayColorInfo.GetState(); }
-    bool RefreshDisplayColorState();
+    bool RefreshDisplayColorState(bool forceHdrSimulation = false);
     
     // Debug accessors
     int GetActiveLayerIndex() const { return m_activeLayerIndex; }

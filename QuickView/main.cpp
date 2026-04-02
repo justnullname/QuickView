@@ -2486,7 +2486,7 @@ static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
     if (!g_compEngine) return;
 
     g_compEngine->SetAdvancedColorEnabled(g_config.EnableAdvancedColor);
-    const bool changed = g_compEngine->RefreshDisplayColorState();
+    const bool changed = g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
     const float displayHdrHeadroomStops = GetCurrentDisplayHdrHeadroomStops();
     if (g_renderEngine) {
         g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
@@ -7775,7 +7775,11 @@ SKIP_EDGE_NAV:;
                     g_runtime.ForceHdrSimulation = !g_runtime.ForceHdrSimulation;
                     OutputDebugStringW(g_runtime.ForceHdrSimulation ? L"Force HDR Sim: ON\n" : L"Force HDR Sim: OFF\n");
                     handled = true;
-                    // Trigger full re-render because HDR simulation changes blendOp behavior and Info Panel attributes
+                    // Fully rebuild pipeline to swap between FP16 and 8bit UNORM surfaces
+                    if (g_compEngine) {
+                        g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
+                    }
+                    g_currentPipelineNeedsRebuild = true;
                     RefreshImageDisplay(hwnd);
                     break;
                 case 'Y': // Ctrl+Y: Toggle Soft Proofing

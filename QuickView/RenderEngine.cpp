@@ -631,10 +631,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               payload.targetHeadroom = 0.0f; // SDR: no gain applied
           }
 
-          if (g_runtime.ForceHdrSimulation) {
-              payload.targetHeadroom = 2.5f; // Hardcode a reasonable HDR headroom mapping for SDR verification
-          }
-
           // Only trigger GPU Bake if we actually need to apply HDR gain (Headroom > 0).
           // For SDR displays, we fall back to the standard base-layer rendering
           // which preserves the exact color/brightness of the original JPEG via its ICC profile.

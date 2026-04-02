@@ -119,7 +119,7 @@ struct DisplayColorState {
 
 class DisplayColorInfo {
 public:
-    bool Refresh(HWND hwnd);
+    bool Refresh(HWND hwnd, bool forceHdrSimulation = false);
     static bool QueryMonitorState(HMONITOR monitor, DisplayColorState* stateOut);
     const DisplayColorState& GetState() const { return m_state; }
 
