@@ -4800,6 +4800,39 @@ void AdjustWindowToImage(HWND hwnd) {
     }
 }
 
+// [v10.1] Refresh Current Image Display (Direct GPU Re-upload from cache)
+// Used for instant settings updates like Tone Mapping, CMS toggle, etc.
+void RefreshImageDisplay(HWND hwnd) {
+    if (!g_pImageEngine || !g_renderEngine || g_imagePath.empty()) return;
+
+    // 1. Get current frame from cache (Linear Raw Pixels)
+    auto frame = g_pImageEngine->GetCachedImage(g_imagePath);
+    if (frame && frame->IsValid()) {
+        ComPtr<ID2D1Bitmap> bitmap;
+        // 2. Direct GPU Re-upload (Applies new Tone Mapping / CMS settings)
+        if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*frame, &bitmap))) {
+            g_imageResource.bitmap = bitmap;
+            
+            // 3. Update DComp Surface for Composition Engine
+            if (!IsCompareModeActive()) {
+                extern bool RenderImageToDComp(HWND hwnd, ImageResource & res, bool isFastUpgrade);
+                RenderImageToDComp(hwnd, g_imageResource, false);
+            } else {
+                // In Compare Mode, we need a full composite update
+                extern bool RenderCompareComposite(HWND hwnd);
+                RenderCompareComposite(hwnd);
+            }
+
+            // 4. Force UI Repaint
+            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+        }
+    } else {
+        // Fallback: If not in cache, do a full asynchronous reload
+        void ReloadCurrentImage(HWND hwnd);
+        ReloadCurrentImage(hwnd);
+    }
+}
+
 void ReloadCurrentImage(HWND hwnd) {
     if (g_imagePath.empty() && g_editState.OriginalFilePath.empty()) return;
     g_imageResource.Reset();

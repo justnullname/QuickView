@@ -46,12 +46,9 @@ namespace SIMDUtils {
 
             // AVX-512 Loop
             if (HasAVX512F()) {
-                const __m512i shuffleMask512 = _mm512_setr_epi8(
-                    3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
-                    3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
-                    3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
+                const __m512i shuffleMask512 = _mm512_broadcast_i32x4(_mm_setr_epi8(
                     3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15
-                );
+                ));
                 
                 for (; x <= width - 16; x += 16) {
                     uint8_t* p = row + x * 4;
@@ -118,18 +115,12 @@ namespace SIMDUtils {
         
         // AVX-512 Swizzle
         if (HasAVX512F()) {
-            const __m512i swizzleMask512 = _mm512_setr_epi8(
-                2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15,
-                2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15,
-                2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15,
+            const __m512i swizzleMask512 = _mm512_broadcast_i32x4(_mm_setr_epi8(
                 2,1,0,3, 6,5,4,7, 10,9,8,11, 14,13,12,15
-            );
-            const __m512i alphaMask512 = _mm512_setr_epi8(
-                3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
-                3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
-                3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15,
+            ));
+            const __m512i alphaMask512 = _mm512_broadcast_i32x4(_mm_setr_epi8(
                 3,3,3,3, 7,7,7,7, 11,11,11,11, 15,15,15,15
-            );
+            ));
             
             for (; i + 16 <= pixelCount; i += 16) {
                  __m512i src = _mm512_loadu_si512(p + i * 4);
@@ -237,12 +228,12 @@ namespace SIMDUtils {
             for (int i = 0; i < dstSize; ++i) {
                 const double srcPos = static_cast<double>(i) * scale;
                 int idx0 = static_cast<int>(srcPos);
-                idx0 = std::clamp(idx0, 0, srcSize - 1);
-                const int idx1 = std::min(idx0 + 1, srcSize - 1);
+                idx0 = (std::clamp)(idx0, 0, srcSize - 1);
+                const int idx1 = (std::min)(idx0 + 1, srcSize - 1);
 
                 const double frac = srcPos - static_cast<double>(idx0);
                 int w1 = static_cast<int>(frac * static_cast<double>(kWeightScale) + 0.5);
-                w1 = std::clamp(w1, 0, kWeightScale);
+                w1 = (std::clamp)(w1, 0, kWeightScale);
                 const int w0 = kWeightScale - w1;
 
                 out[i].idx0 = idx0;
@@ -366,6 +357,95 @@ namespace SIMDUtils {
                 pd[dstBase + 3] = static_cast<uint8_t>((s00[3] * w00 + s01[3] * w01 + s10[3] * w10 + s11[3] * w11 + kWeightRound) >> kWeightShift);
             }
         }
+    }
+    // --- Peak Detection (HDR / Linear) ---
+
+    static inline float _mm256_reduce_max_ps(__m256 v) {
+        __m128 lo = _mm256_castps256_ps128(v);
+        __m128 hi = _mm256_extractf128_ps(v, 1);
+        __m128 m1 = _mm_max_ps(lo, hi);
+        __m128 m2 = _mm_max_ps(m1, _mm_movehdup_ps(m1));
+        m2 = _mm_max_ps(m2, _mm_movehl_ps(m2, m2));
+        return _mm_cvtss_f32(m2);
+    }
+
+#ifdef __AVX512F__
+    static inline float _mm512_reduce_max_ps(__m512 v) {
+        __m256 lo = _mm512_castps512_ps256(v);
+        __m256 hi = _mm512_extractf32x8_ps(v, 1);
+        return _mm256_reduce_max_ps(_mm256_max_ps(lo, hi));
+    }
+#endif
+
+    /// <summary>
+    /// Fast Peak Detection for R32G32B32A32_FLOAT (Full Scan)
+    /// Scans the entire buffer for the maximum color component value.
+    /// Baseline is 1.0f (SDR white).
+    /// </summary>
+    inline float FindPeak_R32G32B32A32_FLOAT(const float* pData, size_t pixelCount) {
+        if (!pData || pixelCount == 0) return 1.0f;
+        
+        float peak = 1.0f;
+        size_t i = 0;
+        
+        // --- 1. Top of the line: AVX-512 Scan ---
+        if (HasAVX512F()) {
+#ifdef __AVX512F__
+            __m512 vPeak = _mm512_set1_ps(1.0f);
+            // Unroll 4x (16 pixels per loop) to saturate memory throughput
+            for (; i + 16 <= pixelCount; i += 16) {
+                __m512 p0 = _mm512_loadu_ps(pData + (i + 0) * 4);
+                __m512 p1 = _mm512_loadu_ps(pData + (i + 4) * 4);
+                __m512 p2 = _mm512_loadu_ps(pData + (i + 8) * 4);
+                __m512 p3 = _mm512_loadu_ps(pData + (i + 12) * 4);
+                vPeak = _mm512_max_ps(vPeak, _mm512_max_ps(p0, p1));
+                vPeak = _mm512_max_ps(vPeak, _mm512_max_ps(p2, p3));
+            }
+            // Tail
+            for (; i + 4 <= pixelCount; i += 4) {
+                vPeak = _mm512_max_ps(vPeak, _mm512_loadu_ps(pData + i * 4));
+            }
+            peak = _mm512_reduce_max_ps(vPeak);
+#endif
+        } 
+        // --- 2. High Performance: AVX2 Scan ---
+        else {
+            __m256 vPeak = _mm256_set1_ps(1.0f);
+            // Unroll 8x (16 pixels per loop)
+            for (; i + 16 <= pixelCount; i += 16) {
+                __m256 p0 = _mm256_loadu_ps(pData + (i + 0) * 4);
+                __m256 p1 = _mm256_loadu_ps(pData + (i + 2) * 4);
+                __m256 p2 = _mm256_loadu_ps(pData + (i + 4) * 4);
+                __m256 p3 = _mm256_loadu_ps(pData + (i + 6) * 4);
+                __m256 p4 = _mm256_loadu_ps(pData + (i + 8) * 4);
+                __m256 p5 = _mm256_loadu_ps(pData + (i + 10) * 4);
+                __m256 p6 = _mm256_loadu_ps(pData + (i + 12) * 4);
+                __m256 p7 = _mm256_loadu_ps(pData + (i + 14) * 4);
+                
+                __m256 m0 = _mm256_max_ps(p0, p1);
+                __m256 m1 = _mm256_max_ps(p2, p3);
+                __m256 m2 = _mm256_max_ps(p4, p5);
+                __m256 m3 = _mm256_max_ps(p6, p7);
+                
+                vPeak = _mm256_max_ps(vPeak, _mm256_max_ps(m0, m1));
+                vPeak = _mm256_max_ps(vPeak, _mm256_max_ps(m2, m3));
+            }
+            // Tail
+            for (; i + 2 <= pixelCount; i += 2) {
+                vPeak = _mm256_max_ps(vPeak, _mm256_loadu_ps(pData + i * 4));
+            }
+            peak = _mm256_reduce_max_ps(vPeak);
+        }
+        
+        // --- 3. Robust Fix: Scalar Fallback for partial pixels ---
+        for (; i < pixelCount; ++i) {
+            float r = pData[i * 4 + 0];
+            float g = pData[i * 4 + 1];
+            float b = pData[i * 4 + 2];
+            peak = (std::max)({peak, r, g, b});
+        }
+        
+        return peak;
     }
 } // namespace SIMDUtils
 

@@ -1186,8 +1186,8 @@ void SettingsOverlay::BuildMenu() {
     itemCmsToggle.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
-        extern FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
-        LoadImageAsync(g_mainHwnd, g_imagePath, false, QuickView::BrowseDirection::IDLE);
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
     };
     tabImage.items.push_back(itemCmsToggle);
 
@@ -1195,10 +1195,9 @@ void SettingsOverlay::BuildMenu() {
         { AppStrings::Settings_Option_CmsIntentPerceptual, AppStrings::Settings_Option_CmsIntentRelative } };
     itemCmsIntent.onChange = []() {
         SaveConfig();
-        g_pImageEngine->InvalidateCache(g_imagePath);
-        g_pImageEngine->NavigateTo(g_imagePath, g_navigator.GetFileSize(g_navigator.Index()), g_navigator.GetCurrentImageID());
-        extern void RequestRepaint(QuickView::PaintLayer layerMask);
-        RequestRepaint(QuickView::PaintLayer::All);
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
     };
     tabImage.items.push_back(itemCmsIntent);
 
@@ -1220,10 +1219,9 @@ void SettingsOverlay::BuildMenu() {
         { AppStrings::Settings_Option_HdrPerceptual, AppStrings::Settings_Option_HdrColorimetric } };
     itemHdrToneMapping.onChange = []() {
         SaveConfig();
-        g_pImageEngine->InvalidateCache(g_imagePath);
-        g_pImageEngine->NavigateTo(g_imagePath, g_navigator.GetFileSize(g_navigator.Index()), g_navigator.GetCurrentImageID());
-        extern void RequestRepaint(QuickView::PaintLayer layerMask);
-        RequestRepaint(QuickView::PaintLayer::All);
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
     };
     tabImage.items.push_back(itemHdrToneMapping);
 
