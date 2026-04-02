@@ -1246,6 +1246,17 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               // Only use memory loader for formats that have true Zero-Copy memory decoders (JPEG).
               // For WIC formats (TIFF, AVIF, etc), loading from MMF via SHCreateMemStream COPIES the file,
               // leading to massive memory bloat/OOM for 1GB+ large files. Pass directly to file loader instead.
+              rawFrame.onAuxLayerReady = [this, cmdPath = job.path, cmdId = job.imageId](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                  EngineEvent ev;
+                  ev.type = EventType::AuxLayerReady;
+                  ev.filePath = cmdPath;
+                  ev.imageId = cmdId;
+                  ev.auxLayer = std::move(aux);
+                  ev.blendOp = op;
+                  ev.shaderPayload = payload;
+                  this->QueueResult(std::move(ev));
+              };
+
               if (job.mmf && job.mmf->IsValid() && m_titanFormat.load() == QuickView::TitanFormat::JPEG) {
                    hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
                    if (FAILED(hr)) {
@@ -2021,6 +2032,17 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
             ResetMasterBackingStore(); // Clean up any partial empty MMF
 
             QuickView::RawImageFrame fullFrame;
+            fullFrame.onAuxLayerReady = [this, cmdPath = path, cmdId = imageId](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                EngineEvent ev;
+                ev.type = EventType::AuxLayerReady;
+                ev.filePath = cmdPath;
+                ev.imageId = cmdId;
+                ev.auxLayer = std::move(aux);
+                ev.blendOp = op;
+                ev.shaderPayload = payload;
+                this->QueueResult(std::move(ev));
+            };
+
             hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame);
             if ((FAILED(hr) || !fullFrame.IsValid()) && !st.stop_requested()) {
                 auto cancelPred = [&]() {
@@ -2879,6 +2901,16 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             if (!warmupResolved && FAILED(hr)) {
                 const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                 const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
+                fullFrame.onAuxLayerReady = [this, cmdPath = job.path, cmdId = job.imageId](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                    EngineEvent ev;
+                    ev.type = EventType::AuxLayerReady;
+                    ev.filePath = cmdPath;
+                    ev.imageId = cmdId;
+                    ev.auxLayer = std::move(aux);
+                    ev.blendOp = op;
+                    ev.shaderPayload = payload;
+                    this->QueueResult(std::move(ev));
+                };
                 hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops);
                 if (SUCCEEDED(hr)) {
                     loader = L"WIC(LOD-Fallback)";

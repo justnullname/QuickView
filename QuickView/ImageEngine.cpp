@@ -1071,6 +1071,16 @@ void ImageEngine::FastLane::QueueWorker() {
             // [Unified Logic] SVG uses target=0 like other formats (User Request: Remove 80% special case)
 
             // [Direct D2D] Load directly to RawImageFrame backed by Arena
+            rawFrame.onAuxLayerReady = [this, cmdPath = cmd.path, cmdId = cmd.id](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                EngineEvent ev;
+                ev.type = EventType::AuxLayerReady;
+                ev.filePath = cmdPath;
+                ev.imageId = cmdId;
+                ev.auxLayer = std::move(aux);
+                ev.blendOp = op;
+                ev.shaderPayload = payload;
+                this->m_parent->QueueEvent(std::move(ev));
+            };
             HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, nullptr, nullptr, true, false, cmd.targetHdrHeadroomStops);
             
             int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();

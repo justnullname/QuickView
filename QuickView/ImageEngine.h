@@ -41,7 +41,8 @@ enum class EventType {
     LoadError,      // Something went wrong
     StatusChange,   // For UI debug/status bar "Loading...", "Idle"
     MetadataReady,  // [v5.3] Async metadata update (EXIF)
-    TileReady       // [Titan] A specific tile is ready
+    TileReady,      // [Titan] A specific tile is ready
+    AuxLayerReady   // Async AuxLayer (e.g. HDR Gain Map)
 };
 
 // ...
@@ -66,6 +67,11 @@ struct EngineEvent {
     
     // [Titan] Tile Info
     std::optional<QuickView::TileCoord> tileCoord; 
+
+    // [Async AuxLayer]
+    std::unique_ptr<QuickView::AuxLayer> auxLayer;
+    QuickView::GpuBlendOp blendOp = QuickView::GpuBlendOp::None;
+    QuickView::GpuShaderPayload shaderPayload;
 };
 
 class ImageEngine {

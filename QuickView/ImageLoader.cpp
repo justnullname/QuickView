@@ -415,6 +415,9 @@ namespace QuickView {
             // [v10.1] Override to prevent 1x1 Fake Base generation (e.g. for specific LODs)
             bool allowFakeBase = true;
             bool isTitanMode = false;
+
+            // [Async Gain Map] Callback to post AuxLayer back to main engine
+            std::function<void(std::unique_ptr<QuickView::AuxLayer>, QuickView::GpuBlendOp, QuickView::GpuShaderPayload)> onAuxLayerReady;
         };
 
         struct DecodeResult {
@@ -7009,20 +7012,39 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
         else if (fmt == L"HEIC") {
             HRESULT hr = WIC_HEIC::Load(filePath, ctx, result, m_wicFactory.Get());
             if (SUCCEEDED(hr)) {
-                // [v10.3] Extract hidden gain map via manual ISOBMFF scan
-                if (result.metadata.hdrMetadata.hasGainMap) {
-                    uint64_t gmOffset = 0, gmLength = 0;
-                    uint32_t pitmOffset = 0;
-                    uint8_t pitmSize = 0;
-                    uint32_t gmItemID = 0;
-                    FindHeifGainMapManual(mappedData, mappedSize, &gmOffset, &gmLength, &pitmOffset, &pitmSize, &gmItemID);
+                // [v10.3] Async Gain Map Decode for HEIC
+                if (result.metadata.hdrMetadata.hasGainMap && ctx.onAuxLayerReady) {
+                    // Copy necessary data to pass to thread
+                    std::vector<uint8_t> threadData(mappedData, mappedData + mappedSize);
+                    float headroom = result.metadata.hdrMetadata.gainMapAlternateHeadroom;
+                    uint32_t baseWidth = result.width;
+                    uint32_t baseHeight = result.height;
+                    auto callback = ctx.onAuxLayerReady;
                     
-                    if (gmItemID != 0 && pitmOffset != 0 && pitmSize != 0 && mappedSize > pitmOffset + pitmSize) {
-                        // God Mode: Patch the 'pitm' box to point to the gain map item!
-                        // WIC will treat the gain map as the primary image and decode all extents, grids, and dependencies natively.
-                        uint8_t* patchedData = (uint8_t*)_aligned_malloc(mappedSize, 64);
-                        if (patchedData) {
-                            memcpy(patchedData, mappedData, mappedSize);
+                    std::thread([threadData = std::move(threadData), headroom, baseWidth, baseHeight, callback]() {
+                        HRESULT hrCo = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+                        if (FAILED(hrCo)) return;
+
+                        Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
+                        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wicFactory)))) {
+                            CoUninitialize();
+                            return;
+                        }
+
+                        uint64_t gmOffset = 0, gmLength = 0;
+                        uint32_t pitmOffset = 0;
+                        uint8_t pitmSize = 0;
+                        uint32_t gmItemID = 0;
+                        FindHeifGainMapManual(threadData.data(), threadData.size(), &gmOffset, &gmLength, &pitmOffset, &pitmSize, &gmItemID);
+
+                        std::unique_ptr<QuickView::AuxLayer> aux;
+                        QuickView::GpuBlendOp op = QuickView::GpuBlendOp::None;
+                        QuickView::GpuShaderPayload payload = {};
+                        bool success = false;
+
+                        if (gmItemID != 0 && pitmOffset != 0 && pitmSize != 0 && threadData.size() > pitmOffset + pitmSize) {
+                            // God Mode: Patch the 'pitm' box to point to the gain map item!
+                            std::vector<uint8_t> patchedData = threadData;
                             
                             // Patch the primary item ID
                             if (pitmSize == 2) {
@@ -7036,123 +7058,97 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                             }
                             
                             // Decode gain map via WIC using the patched file
-                            ComPtr<IStream> gmStream;
-                            gmStream.Attach(SHCreateMemStream(patchedData, (UINT)mappedSize));
+                            Microsoft::WRL::ComPtr<IStream> gmStream;
+                            gmStream.Attach(SHCreateMemStream(patchedData.data(), (UINT)patchedData.size()));
                             if (gmStream) {
-                            ComPtr<IWICBitmapDecoder> gmDecoder;
-                            hr = m_wicFactory->CreateDecoderFromStream(gmStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &gmDecoder);
-                            if (SUCCEEDED(hr)) {
-                                ComPtr<IWICBitmapFrameDecode> gmFrame;
-                                if (SUCCEEDED(gmDecoder->GetFrame(0, &gmFrame))) {
-                                    UINT gw, gh;
-                                    gmFrame->GetSize(&gw, &gh);
-                                    
-                                    // Convert to 8-bit grayscale
-                                    ComPtr<IWICFormatConverter> gmConv;
-                                    if (SUCCEEDED(m_wicFactory->CreateFormatConverter(&gmConv)) &&
-                                        SUCCEEDED(gmConv->Initialize(gmFrame.Get(), GUID_WICPixelFormat8bppGray,
-                                            WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
+                                Microsoft::WRL::ComPtr<IWICBitmapDecoder> gmDecoder;
+                                if (SUCCEEDED(wicFactory->CreateDecoderFromStream(gmStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &gmDecoder))) {
+                                    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> gmFrame;
+                                    if (SUCCEEDED(gmDecoder->GetFrame(0, &gmFrame))) {
+                                        UINT gw, gh;
+                                        gmFrame->GetSize(&gw, &gh);
                                         
-                                        int gmStride = ((int)gw + 15) & ~15; // 16-byte align
-                                        size_t gmBufSize = (size_t)gmStride * gh;
-                                        uint8_t* gmPixels = (uint8_t*)_aligned_malloc(gmBufSize, 64);
-                                        if (gmPixels && SUCCEEDED(gmConv->CopyPixels(nullptr, gmStride, (UINT)gmBufSize, gmPixels))) {
-                                            auto aux = std::make_unique<AuxLayer>();
-                                            aux->pixels = gmPixels;
-                                            aux->width = (int)gw;
-                                            aux->height = (int)gh;
-                                            aux->stride = gmStride;
-                                            aux->bytesPerPixel = 1;
-                                            aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                        // Convert to 8-bit grayscale
+                                        Microsoft::WRL::ComPtr<IWICFormatConverter> gmConv;
+                                        if (SUCCEEDED(wicFactory->CreateFormatConverter(&gmConv)) &&
+                                            SUCCEEDED(gmConv->Initialize(gmFrame.Get(), GUID_WICPixelFormat8bppGray,
+                                                WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
                                             
-                                            result.blendOp = GpuBlendOp::UltraHdrGainMap;
-                                            result.auxLayer = std::move(aux);
-                                            
-                                            // Apple gain map shader defaults
-                                            float headroom = result.metadata.hdrMetadata.gainMapAlternateHeadroom;
-                                            if (headroom <= 0.0f) headroom = 1.5f;
-                                            result.shaderPayload = {};
-                                            result.shaderPayload.gainMapMin[0] = result.shaderPayload.gainMapMin[1] = result.shaderPayload.gainMapMin[2] = 0.0f;
-                                            result.shaderPayload.gainMapMax[0] = result.shaderPayload.gainMapMax[1] = result.shaderPayload.gainMapMax[2] = headroom;
-                                            result.shaderPayload.gamma[0] = result.shaderPayload.gamma[1] = result.shaderPayload.gamma[2] = 1.0f;
-                                            result.shaderPayload.offsetSdr[0] = result.shaderPayload.offsetSdr[1] = result.shaderPayload.offsetSdr[2] = 0.0f;
-                                            result.shaderPayload.offsetHdr[0] = result.shaderPayload.offsetHdr[1] = result.shaderPayload.offsetHdr[2] = 0.0f;
-                                            result.shaderPayload.hdrCapacityMin = 0.0f;
-                                            result.shaderPayload.hdrCapacityMax = headroom;
-                                            result.shaderPayload.sdrWidth = (uint32_t)result.width;
-                                            result.shaderPayload.sdrHeight = (uint32_t)result.height;
-                                            
-                                            wchar_t gmdbg[128];
-                                            swprintf_s(gmdbg, L"[WIC_HEIC] GainMap decoded: %ux%u (%.1f stops)\n", gw, gh, headroom);
-                                            OutputDebugStringW(gmdbg);
-                                        } else {
-                                            if (gmPixels) _aligned_free(gmPixels);
+                                            int gmStride = ((int)gw + 15) & ~15; // 16-byte align
+                                            size_t gmBufSize = (size_t)gmStride * gh;
+                                            uint8_t* gmPixels = (uint8_t*)_aligned_malloc(gmBufSize, 64);
+                                            if (gmPixels && SUCCEEDED(gmConv->CopyPixels(nullptr, gmStride, (UINT)gmBufSize, gmPixels))) {
+                                                aux = std::make_unique<QuickView::AuxLayer>();
+                                                aux->pixels = gmPixels;
+                                                aux->width = (int)gw;
+                                                aux->height = (int)gh;
+                                                aux->stride = gmStride;
+                                                aux->bytesPerPixel = 1;
+                                                aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                                success = true;
+                                            } else {
+                                                if (gmPixels) _aligned_free(gmPixels);
+                                            }
                                         }
                                     }
                                 }
                             }
-                            _aligned_free(patchedData);
-                        }
-                    } else if (gmLength > 0) {
-                        // Fallback: decode raw stream directly if it's a simple idat/extent (unlikely for DJI, but good for Apple)
-                        ComPtr<IStream> gmStream;
-                        gmStream.Attach(SHCreateMemStream(mappedData + gmOffset, (UINT)gmLength));
-                        if (gmStream) {
-                            ComPtr<IWICBitmapDecoder> gmDecoder;
-                            hr = m_wicFactory->CreateDecoderFromStream(gmStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &gmDecoder);
-                            if (SUCCEEDED(hr)) {
-                                ComPtr<IWICBitmapFrameDecode> gmFrame;
-                                if (SUCCEEDED(gmDecoder->GetFrame(0, &gmFrame))) {
-                                    UINT gw, gh;
-                                    gmFrame->GetSize(&gw, &gh);
-                                    
-                                    // Convert to 8-bit grayscale
-                                    ComPtr<IWICFormatConverter> gmConv;
-                                    if (SUCCEEDED(m_wicFactory->CreateFormatConverter(&gmConv)) &&
-                                        SUCCEEDED(gmConv->Initialize(gmFrame.Get(), GUID_WICPixelFormat8bppGray,
-                                            WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
+                        } else if (gmLength > 0) {
+                            // Fallback
+                            Microsoft::WRL::ComPtr<IStream> gmStream;
+                            gmStream.Attach(SHCreateMemStream(threadData.data() + gmOffset, (UINT)gmLength));
+                            if (gmStream) {
+                                Microsoft::WRL::ComPtr<IWICBitmapDecoder> gmDecoder;
+                                if (SUCCEEDED(wicFactory->CreateDecoderFromStream(gmStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &gmDecoder))) {
+                                    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> gmFrame;
+                                    if (SUCCEEDED(gmDecoder->GetFrame(0, &gmFrame))) {
+                                        UINT gw, gh;
+                                        gmFrame->GetSize(&gw, &gh);
                                         
-                                        int gmStride = ((int)gw + 15) & ~15; // 16-byte align
-                                        size_t gmBufSize = (size_t)gmStride * gh;
-                                        uint8_t* gmPixels = (uint8_t*)_aligned_malloc(gmBufSize, 64);
-                                        if (gmPixels && SUCCEEDED(gmConv->CopyPixels(nullptr, gmStride, (UINT)gmBufSize, gmPixels))) {
-                                            auto aux = std::make_unique<AuxLayer>();
-                                            aux->pixels = gmPixels;
-                                            aux->width = (int)gw;
-                                            aux->height = (int)gh;
-                                            aux->stride = gmStride;
-                                            aux->bytesPerPixel = 1;
-                                            aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                        Microsoft::WRL::ComPtr<IWICFormatConverter> gmConv;
+                                        if (SUCCEEDED(wicFactory->CreateFormatConverter(&gmConv)) &&
+                                            SUCCEEDED(gmConv->Initialize(gmFrame.Get(), GUID_WICPixelFormat8bppGray,
+                                                WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
                                             
-                                            result.blendOp = GpuBlendOp::UltraHdrGainMap;
-                                            result.auxLayer = std::move(aux);
-                                            
-                                            // Apple gain map shader defaults
-                                            float headroom = result.metadata.hdrMetadata.gainMapAlternateHeadroom;
-                                            if (headroom <= 0.0f) headroom = 1.5f;
-                                            result.shaderPayload = {};
-                                            result.shaderPayload.gainMapMin[0] = result.shaderPayload.gainMapMin[1] = result.shaderPayload.gainMapMin[2] = 0.0f;
-                                            result.shaderPayload.gainMapMax[0] = result.shaderPayload.gainMapMax[1] = result.shaderPayload.gainMapMax[2] = headroom;
-                                            result.shaderPayload.gamma[0] = result.shaderPayload.gamma[1] = result.shaderPayload.gamma[2] = 1.0f;
-                                            result.shaderPayload.offsetSdr[0] = result.shaderPayload.offsetSdr[1] = result.shaderPayload.offsetSdr[2] = 0.0f;
-                                            result.shaderPayload.offsetHdr[0] = result.shaderPayload.offsetHdr[1] = result.shaderPayload.offsetHdr[2] = 0.0f;
-                                            result.shaderPayload.hdrCapacityMin = 0.0f;
-                                            result.shaderPayload.hdrCapacityMax = headroom;
-                                            result.shaderPayload.sdrWidth = (uint32_t)result.width;
-                                            result.shaderPayload.sdrHeight = (uint32_t)result.height;
-                                            
-                                            wchar_t gmdbg[128];
-                                            swprintf_s(gmdbg, L"[WIC_HEIC] GainMap decoded (Fallback): %ux%u (%.1f stops)\n", gw, gh, headroom);
-                                            OutputDebugStringW(gmdbg);
-                                        } else {
-                                            if (gmPixels) _aligned_free(gmPixels);
+                                            int gmStride = ((int)gw + 15) & ~15; // 16-byte align
+                                            size_t gmBufSize = (size_t)gmStride * gh;
+                                            uint8_t* gmPixels = (uint8_t*)_aligned_malloc(gmBufSize, 64);
+                                            if (gmPixels && SUCCEEDED(gmConv->CopyPixels(nullptr, gmStride, (UINT)gmBufSize, gmPixels))) {
+                                                aux = std::make_unique<QuickView::AuxLayer>();
+                                                aux->pixels = gmPixels;
+                                                aux->width = (int)gw;
+                                                aux->height = (int)gh;
+                                                aux->stride = gmStride;
+                                                aux->bytesPerPixel = 1;
+                                                aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                                success = true;
+                                            } else {
+                                                if (gmPixels) _aligned_free(gmPixels);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    }
+
+                        if (success && aux) {
+                            op = QuickView::GpuBlendOp::UltraHdrGainMap;
+                            float actualHeadroom = headroom <= 0.0f ? 1.5f : headroom;
+                            payload.gainMapMin[0] = payload.gainMapMin[1] = payload.gainMapMin[2] = 0.0f;
+                            payload.gainMapMax[0] = payload.gainMapMax[1] = payload.gainMapMax[2] = actualHeadroom;
+                            payload.gamma[0] = payload.gamma[1] = payload.gamma[2] = 1.0f;
+                            payload.offsetSdr[0] = payload.offsetSdr[1] = payload.offsetSdr[2] = 0.0f;
+                            payload.offsetHdr[0] = payload.offsetHdr[1] = payload.offsetHdr[2] = 0.0f;
+                            payload.hdrCapacityMin = 0.0f;
+                            payload.hdrCapacityMax = actualHeadroom;
+                            payload.sdrWidth = baseWidth;
+                            payload.sdrHeight = baseHeight;
+
+                            callback(std::move(aux), op, payload);
+                        }
+
+                        CoUninitialize();
+                    }).detach();
                 }
                 return S_OK;
             }
@@ -11022,6 +11018,9 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     ctx.allowFakeBase = allowFakeBase; // [v10.1] Pass the fallback behavior override
     ctx.isTitanMode = isTitanMode;
     ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
+
+    // Pass callback to intercept async AuxLayer from LoadImageUnified
+    ctx.onAuxLayerReady = outFrame->onAuxLayerReady;
 
     DecodeResult res;
     HRESULT hrUnified = LoadImageUnified(filePath, ctx, res);

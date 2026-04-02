@@ -9557,6 +9557,30 @@ void ProcessEngineEvents(HWND hwnd) {
             }
             break;
 
+    case EventType::AuxLayerReady:
+        if (evt.imageId == g_currentImageId.load() && evt.auxLayer) {
+            if (g_config.EnableAdvancedColor) {
+                // Update active resource with the gain map
+                g_imageResource.blendOp = evt.blendOp;
+                g_imageResource.shaderPayload = evt.shaderPayload;
+                g_imageResource.auxLayer = std::move(evt.auxLayer);
+
+                // Set HDR metadata flag so renderer knows it has a gain map
+                g_currentMetadata.hdrMetadata.hasGainMap = true;
+
+                // Force full pipeline rebuild to ensure the gain map gets uploaded to GPU
+                g_currentPipeline.flags.isInitialized = false;
+
+                // Trigger full repaint to composite the gain map
+                RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+
+                wchar_t debugBuf[256];
+                swprintf_s(debugBuf, L"[Main] AuxLayerReady: Gain Map applied dynamically!\n");
+                OutputDebugStringW(debugBuf);
+            }
+        }
+        break;
+
     case EventType::TileReady:
         if (evt.imageId == g_currentImageId.load() && evt.tileCoord.has_value() && evt.rawFrame) {
             

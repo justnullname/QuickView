@@ -210,6 +210,9 @@ struct RawImageFrame {
     // - For malloc (stb): [](uint8_t* p) { stbi_image_free(p); }
     // - For new[]: [](uint8_t* p) { delete[] p; }
     std::function<void(uint8_t*)> memoryDeleter = nullptr;
+
+    // [Async Gain Map] Callback to post AuxLayer back to main engine
+    std::function<void(std::unique_ptr<QuickView::AuxLayer>, QuickView::GpuBlendOp, QuickView::GpuShaderPayload)> onAuxLayerReady;
     
     // === Helper Methods ===
     
