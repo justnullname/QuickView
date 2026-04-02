@@ -624,10 +624,15 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       case QuickView::GpuBlendOp::UltraHdrGainMap: {
           // Fill target headroom from current display state
           QuickView::GpuShaderPayload payload = frame.shaderPayload;
+          extern RuntimeConfig g_runtime;
           if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
               payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops();
           } else {
               payload.targetHeadroom = 0.0f; // SDR: no gain applied
+          }
+
+          if (g_runtime.ForceHdrSimulation) {
+              payload.targetHeadroom = 2.5f; // Hardcode a reasonable HDR headroom mapping for SDR verification
           }
 
           // Only trigger GPU Bake if we actually need to apply HDR gain (Headroom > 0).

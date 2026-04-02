@@ -130,6 +130,180 @@ static QuickView::TransferFunction MapCicpTransfer(uint16_t t) {
     return QuickView::TransferFunction::Unknown;
 }
 
+// [v10.3] Manual ISOBMFF Scanner for Hidden Gain Map Items
+// DJI and some Apple HEIC files store the gain map as an auxiliary Item
+// that WIC doesn't expose via GetFrameCount. This scanner locates it by:
+//   1. Parsing iref boxes to find ALL 'auxl' references
+//   2. Resolving each item's byte offset/length via iloc
+//   3. Picking the largest one (gain map is always the biggest aux item)
+static void FindHeifGainMapManual(const uint8_t* data, size_t size, uint64_t* outOffset, uint64_t* outLength, uint32_t* outPitmOffset = nullptr, uint8_t* outPitmSize = nullptr, uint32_t* outBestID = nullptr) {
+    if (!data || size < 64 || !outOffset || !outLength) return;
+    *outOffset = 0; *outLength = 0;
+    if (outPitmOffset) *outPitmOffset = 0;
+    if (outPitmSize) *outPitmSize = 0;
+    if (outBestID) *outBestID = 0;
+
+    auto read32 = [](const uint8_t* p) -> uint32_t {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    auto read16 = [](const uint8_t* p) -> uint16_t {
+        return (static_cast<uint16_t>(p[0]) << 8) | p[1];
+    };
+
+    const char* targetUrn = "urn:com:apple:photo:2020:aux:hdrgainmap";
+    const size_t targetUrnLen = strlen(targetUrn);
+    const size_t metaLimit = (size > 64000) ? 64000 : size;
+
+    // Collect ALL auxl item IDs and also check infe for URN
+    uint32_t auxlItems[32];
+    int auxlCount = 0;
+    uint32_t infeItemID = 0; // Precise match from infe URN
+
+    auto scanBoxChain = [&](size_t start, size_t end, auto& self) -> void {
+        size_t curr = start;
+        while (curr + 8 <= end) {
+            uint32_t bSize = read32(data + curr);
+            if (bSize < 8 || curr + bSize > end) break;
+            char bType[5] = {(char)data[curr+4], (char)data[curr+5], (char)data[curr+6], (char)data[curr+7], 0};
+
+            if (strcmp(bType, "meta") == 0) { self(curr + 12, curr + bSize, self); }
+            else if (strcmp(bType, "iinf") == 0) { self(curr + 14, curr + bSize, self); }
+            else if (strcmp(bType, "pitm") == 0) {
+                if (outPitmOffset && outPitmSize) {
+                    uint8_t ver = data[curr + 8];
+                    *outPitmOffset = static_cast<uint32_t>(curr + 12);
+                    *outPitmSize = (ver == 0) ? 2 : 4;
+                }
+            }
+            else if (strcmp(bType, "iref") == 0) {
+                uint8_t ver = data[curr + 8];
+                size_t rc = curr + 12;
+                while (rc + 12 <= curr + bSize) {
+                    uint32_t rSize = read32(data + rc);
+                    if (rSize < 12 || rc + rSize > curr + bSize) break;
+                    if (memcmp(data + rc + 4, "auxl", 4) == 0 && auxlCount < 32) {
+                        auxlItems[auxlCount++] = (ver == 0) ? read16(data + rc + 8) : read32(data + rc + 8);
+                    }
+                    rc += rSize;
+                }
+            }
+            else if (strcmp(bType, "infe") == 0 && bSize > targetUrnLen + 8) {
+                for (size_t j = curr + 8; j + targetUrnLen <= curr + bSize; ++j) {
+                    if (memcmp(data + j, targetUrn, targetUrnLen) == 0) {
+                        uint8_t ver = data[curr + 8];
+                        infeItemID = (ver == 2) ? read16(data + curr + 12) : read32(data + curr + 12);
+                        break;
+                    }
+                }
+            }
+            curr += bSize;
+        }
+    };
+    scanBoxChain(0, metaLimit, scanBoxChain);
+
+    // If infe found exact URN match, use it directly
+    if (infeItemID != 0) {
+        auxlItems[0] = infeItemID;
+        auxlCount = 1;
+    }
+
+    if (auxlCount == 0) return;
+
+    {
+        wchar_t dbg[128];
+        swprintf_s(dbg, L"[Scanner] Found %d auxl candidates (infe=%u)\n", auxlCount, infeItemID);
+        OutputDebugStringW(dbg);
+    }
+
+    // iloc resolver: returns offset+length for a given itemID
+    auto resolveIloc = [&](uint32_t targetID, uint64_t* off, uint64_t* len) -> bool {
+        *off = 0; *len = 0;
+        const size_t scanLimit = (size > 4 * 1024 * 1024) ? 4 * 1024 * 1024 : size;
+        for (size_t i = 4; i < scanLimit - 12; ++i) {
+            if (memcmp(data + i, "iloc", 4) != 0) continue;
+            uint32_t boxSize = read32(data + i - 4);
+            if (boxSize < 16 || i - 4 + boxSize > size) continue;
+
+            const uint8_t* p = data + i + 4;
+            const uint8_t* boxEnd = data + i - 4 + boxSize;
+            if (p + 12 > boxEnd) continue;
+
+            uint8_t version = *p++; p += 3;
+            uint8_t sizeInfo = *p++;
+            uint8_t offsetSize  = (sizeInfo >> 4) & 0x0F;
+            uint8_t lengthSize  = sizeInfo & 0x0F;
+            uint8_t baseOffSize = (*p >> 4) & 0x0F;
+            uint8_t indexSize   = (version >= 1) ? (*p & 0x0F) : 0;
+            p++;
+
+            if (p + 4 > boxEnd) continue;
+            uint32_t itemCount = (version < 2) ? read16(p) : read32(p);
+            p += (version < 2) ? 2 : 4;
+
+            for (uint32_t n = 0; n < itemCount; ++n) {
+                if (p + 8 > boxEnd) return false;
+                uint32_t id = (version < 2) ? read16(p) : read32(p);
+                p += (version < 2) ? 2 : 4;
+
+                if (version >= 1) p += 2; // construction_method
+                p += 2; // data_reference_index (ALWAYS)
+
+                uint64_t baseOffset = 0;
+                if (baseOffSize == 4 && p + 4 <= boxEnd) baseOffset = read32(p);
+                else if (baseOffSize == 8 && p + 8 <= boxEnd) baseOffset = (static_cast<uint64_t>(read32(p)) << 32) | read32(p + 4);
+                p += baseOffSize;
+
+                if (p + 2 > boxEnd) return false;
+                uint16_t extentCount = read16(p); p += 2;
+
+                for (uint16_t e = 0; e < extentCount; ++e) {
+                    if (version >= 1 && indexSize > 0) p += indexSize;
+                    if (p + offsetSize + lengthSize > boxEnd) return false;
+
+                    uint64_t extOff = 0;
+                    if (offsetSize == 4) extOff = read32(p);
+                    else if (offsetSize == 8) extOff = (static_cast<uint64_t>(read32(p)) << 32) | read32(p + 4);
+                    p += offsetSize;
+
+                    uint64_t extLen = 0;
+                    if (lengthSize == 4) extLen = read32(p);
+                    else if (lengthSize == 8) extLen = (static_cast<uint64_t>(read32(p)) << 32) | read32(p + 4);
+                    p += lengthSize;
+
+                    if (id == targetID && extLen > 0 && baseOffset + extOff + extLen <= size) {
+                        *off = baseOffset + extOff;
+                        *len = extLen;
+                        return true;
+                    }
+                }
+                if (p > boxEnd) return false;
+            }
+        }
+        return false;
+    };
+
+    // Resolve all candidates, pick the largest (gain map is always the biggest aux)
+    uint64_t bestOff = 0, bestLen = 0;
+    uint32_t bestID = 0;
+    for (int c = 0; c < auxlCount; ++c) {
+        uint64_t off = 0, len = 0;
+        if (resolveIloc(auxlItems[c], &off, &len) && len > bestLen) {
+            bestOff = off; bestLen = len; bestID = auxlItems[c];
+        }
+    }
+
+    if (bestLen > 0) {
+        *outOffset = bestOff;
+        *outLength = bestLen;
+        if (outBestID) *outBestID = bestID;
+        wchar_t sdbg[256];
+        swprintf_s(sdbg, L"[Scanner] SOLVED! ItemID %u -> Offset %llu, Length %llu. PitmOff=%u PitmSize=%u\n", 
+                   bestID, bestOff, bestLen, outPitmOffset ? *outPitmOffset : 0, outPitmSize ? *outPitmSize : 0);
+        OutputDebugStringW(sdbg);
+    }
+}
+
 // [v18] Fallback Metadata Prober for Native WIC Path
 static void TryReadMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadata* pHdr) {
     if (!filePath || !pHdr) return;
@@ -161,6 +335,22 @@ static void TryReadMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadata
         pHdr->primaries = MapCicpPrimaries(p);
         pHdr->transfer = MapCicpTransfer(t);
         pHdr->isValid = true;
+    }
+
+    // 3. Detect Apple HDR Gain Map (iso:hdrgainmap URN presence)
+    const char* appleUrn = "urn:com:apple:photo:2020:aux:hdrgainmap";
+    const size_t urnLen = strlen(appleUrn);
+    const size_t urnScanLimit = (mapping.size() > 64000) ? 64000 : mapping.size();
+    for (size_t i = 0; i + urnLen <= urnScanLimit; ++i) {
+        if (memcmp(mapping.data() + i, appleUrn, urnLen) == 0) {
+            pHdr->hasGainMap = true;
+            pHdr->isValid = true;
+            // Default headroom: 1.5 stops (Apple standard when no explicit tag found)
+            if (pHdr->gainMapAlternateHeadroom <= 0.0f)
+                pHdr->gainMapAlternateHeadroom = 1.5f;
+            OutputDebugStringW(L"[Metadata] Apple HDR Gain Map detected.\n");
+            break;
+        }
     }
 }
 
@@ -6702,7 +6892,8 @@ namespace QuickView {
                                      srcFormat == GUID_WICPixelFormat128bppRGBAFloat ||
                                      srcFormat == GUID_WICPixelFormat64bppRGBA ||
                                      srcFormat == GUID_WICPixelFormat48bppRGB ||
-                                     result.metadata.hdrMetadata.isHdr);
+                                     result.metadata.hdrMetadata.isHdr ||
+                                     result.metadata.hdrMetadata.hasGainMap);
 
                 PopulateHdrInfoFromWicPixelFormat(srcFormat, &result.metadata);
 
@@ -6817,7 +7008,154 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
         }
         else if (fmt == L"HEIC") {
             HRESULT hr = WIC_HEIC::Load(filePath, ctx, result, m_wicFactory.Get());
-            if (SUCCEEDED(hr)) return S_OK;
+            if (SUCCEEDED(hr)) {
+                // [v10.3] Extract hidden gain map via manual ISOBMFF scan
+                if (result.metadata.hdrMetadata.hasGainMap) {
+                    uint64_t gmOffset = 0, gmLength = 0;
+                    uint32_t pitmOffset = 0;
+                    uint8_t pitmSize = 0;
+                    uint32_t gmItemID = 0;
+                    FindHeifGainMapManual(mappedData, mappedSize, &gmOffset, &gmLength, &pitmOffset, &pitmSize, &gmItemID);
+                    
+                    if (gmItemID != 0 && pitmOffset != 0 && pitmSize != 0 && mappedSize > pitmOffset + pitmSize) {
+                        // God Mode: Patch the 'pitm' box to point to the gain map item!
+                        // WIC will treat the gain map as the primary image and decode all extents, grids, and dependencies natively.
+                        uint8_t* patchedData = (uint8_t*)_aligned_malloc(mappedSize, 64);
+                        if (patchedData) {
+                            memcpy(patchedData, mappedData, mappedSize);
+                            
+                            // Patch the primary item ID
+                            if (pitmSize == 2) {
+                                patchedData[pitmOffset] = (gmItemID >> 8) & 0xFF;
+                                patchedData[pitmOffset + 1] = gmItemID & 0xFF;
+                            } else if (pitmSize == 4) {
+                                patchedData[pitmOffset] = (gmItemID >> 24) & 0xFF;
+                                patchedData[pitmOffset + 1] = (gmItemID >> 16) & 0xFF;
+                                patchedData[pitmOffset + 2] = (gmItemID >> 8) & 0xFF;
+                                patchedData[pitmOffset + 3] = gmItemID & 0xFF;
+                            }
+                            
+                            // Decode gain map via WIC using the patched file
+                            ComPtr<IStream> gmStream;
+                            gmStream.Attach(SHCreateMemStream(patchedData, (UINT)mappedSize));
+                            if (gmStream) {
+                            ComPtr<IWICBitmapDecoder> gmDecoder;
+                            hr = m_wicFactory->CreateDecoderFromStream(gmStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &gmDecoder);
+                            if (SUCCEEDED(hr)) {
+                                ComPtr<IWICBitmapFrameDecode> gmFrame;
+                                if (SUCCEEDED(gmDecoder->GetFrame(0, &gmFrame))) {
+                                    UINT gw, gh;
+                                    gmFrame->GetSize(&gw, &gh);
+                                    
+                                    // Convert to 8-bit grayscale
+                                    ComPtr<IWICFormatConverter> gmConv;
+                                    if (SUCCEEDED(m_wicFactory->CreateFormatConverter(&gmConv)) &&
+                                        SUCCEEDED(gmConv->Initialize(gmFrame.Get(), GUID_WICPixelFormat8bppGray,
+                                            WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
+                                        
+                                        int gmStride = ((int)gw + 15) & ~15; // 16-byte align
+                                        size_t gmBufSize = (size_t)gmStride * gh;
+                                        uint8_t* gmPixels = (uint8_t*)_aligned_malloc(gmBufSize, 64);
+                                        if (gmPixels && SUCCEEDED(gmConv->CopyPixels(nullptr, gmStride, (UINT)gmBufSize, gmPixels))) {
+                                            auto aux = std::make_unique<AuxLayer>();
+                                            aux->pixels = gmPixels;
+                                            aux->width = (int)gw;
+                                            aux->height = (int)gh;
+                                            aux->stride = gmStride;
+                                            aux->bytesPerPixel = 1;
+                                            aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                            
+                                            result.blendOp = GpuBlendOp::UltraHdrGainMap;
+                                            result.auxLayer = std::move(aux);
+                                            
+                                            // Apple gain map shader defaults
+                                            float headroom = result.metadata.hdrMetadata.gainMapAlternateHeadroom;
+                                            if (headroom <= 0.0f) headroom = 1.5f;
+                                            result.shaderPayload = {};
+                                            result.shaderPayload.gainMapMin[0] = result.shaderPayload.gainMapMin[1] = result.shaderPayload.gainMapMin[2] = 0.0f;
+                                            result.shaderPayload.gainMapMax[0] = result.shaderPayload.gainMapMax[1] = result.shaderPayload.gainMapMax[2] = headroom;
+                                            result.shaderPayload.gamma[0] = result.shaderPayload.gamma[1] = result.shaderPayload.gamma[2] = 1.0f;
+                                            result.shaderPayload.offsetSdr[0] = result.shaderPayload.offsetSdr[1] = result.shaderPayload.offsetSdr[2] = 0.0f;
+                                            result.shaderPayload.offsetHdr[0] = result.shaderPayload.offsetHdr[1] = result.shaderPayload.offsetHdr[2] = 0.0f;
+                                            result.shaderPayload.hdrCapacityMin = 0.0f;
+                                            result.shaderPayload.hdrCapacityMax = headroom;
+                                            result.shaderPayload.sdrWidth = (uint32_t)result.width;
+                                            result.shaderPayload.sdrHeight = (uint32_t)result.height;
+                                            
+                                            wchar_t gmdbg[128];
+                                            swprintf_s(gmdbg, L"[WIC_HEIC] GainMap decoded: %ux%u (%.1f stops)\n", gw, gh, headroom);
+                                            OutputDebugStringW(gmdbg);
+                                        } else {
+                                            if (gmPixels) _aligned_free(gmPixels);
+                                        }
+                                    }
+                                }
+                            }
+                            _aligned_free(patchedData);
+                        }
+                    } else if (gmLength > 0) {
+                        // Fallback: decode raw stream directly if it's a simple idat/extent (unlikely for DJI, but good for Apple)
+                        ComPtr<IStream> gmStream;
+                        gmStream.Attach(SHCreateMemStream(mappedData + gmOffset, (UINT)gmLength));
+                        if (gmStream) {
+                            ComPtr<IWICBitmapDecoder> gmDecoder;
+                            hr = m_wicFactory->CreateDecoderFromStream(gmStream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &gmDecoder);
+                            if (SUCCEEDED(hr)) {
+                                ComPtr<IWICBitmapFrameDecode> gmFrame;
+                                if (SUCCEEDED(gmDecoder->GetFrame(0, &gmFrame))) {
+                                    UINT gw, gh;
+                                    gmFrame->GetSize(&gw, &gh);
+                                    
+                                    // Convert to 8-bit grayscale
+                                    ComPtr<IWICFormatConverter> gmConv;
+                                    if (SUCCEEDED(m_wicFactory->CreateFormatConverter(&gmConv)) &&
+                                        SUCCEEDED(gmConv->Initialize(gmFrame.Get(), GUID_WICPixelFormat8bppGray,
+                                            WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) {
+                                        
+                                        int gmStride = ((int)gw + 15) & ~15; // 16-byte align
+                                        size_t gmBufSize = (size_t)gmStride * gh;
+                                        uint8_t* gmPixels = (uint8_t*)_aligned_malloc(gmBufSize, 64);
+                                        if (gmPixels && SUCCEEDED(gmConv->CopyPixels(nullptr, gmStride, (UINT)gmBufSize, gmPixels))) {
+                                            auto aux = std::make_unique<AuxLayer>();
+                                            aux->pixels = gmPixels;
+                                            aux->width = (int)gw;
+                                            aux->height = (int)gh;
+                                            aux->stride = gmStride;
+                                            aux->bytesPerPixel = 1;
+                                            aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                            
+                                            result.blendOp = GpuBlendOp::UltraHdrGainMap;
+                                            result.auxLayer = std::move(aux);
+                                            
+                                            // Apple gain map shader defaults
+                                            float headroom = result.metadata.hdrMetadata.gainMapAlternateHeadroom;
+                                            if (headroom <= 0.0f) headroom = 1.5f;
+                                            result.shaderPayload = {};
+                                            result.shaderPayload.gainMapMin[0] = result.shaderPayload.gainMapMin[1] = result.shaderPayload.gainMapMin[2] = 0.0f;
+                                            result.shaderPayload.gainMapMax[0] = result.shaderPayload.gainMapMax[1] = result.shaderPayload.gainMapMax[2] = headroom;
+                                            result.shaderPayload.gamma[0] = result.shaderPayload.gamma[1] = result.shaderPayload.gamma[2] = 1.0f;
+                                            result.shaderPayload.offsetSdr[0] = result.shaderPayload.offsetSdr[1] = result.shaderPayload.offsetSdr[2] = 0.0f;
+                                            result.shaderPayload.offsetHdr[0] = result.shaderPayload.offsetHdr[1] = result.shaderPayload.offsetHdr[2] = 0.0f;
+                                            result.shaderPayload.hdrCapacityMin = 0.0f;
+                                            result.shaderPayload.hdrCapacityMax = headroom;
+                                            result.shaderPayload.sdrWidth = (uint32_t)result.width;
+                                            result.shaderPayload.sdrHeight = (uint32_t)result.height;
+                                            
+                                            wchar_t gmdbg[128];
+                                            swprintf_s(gmdbg, L"[WIC_HEIC] GainMap decoded (Fallback): %ux%u (%.1f stops)\n", gw, gh, headroom);
+                                            OutputDebugStringW(gmdbg);
+                                        } else {
+                                            if (gmPixels) _aligned_free(gmPixels);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    }
+                }
+                return S_OK;
+            }
             
             // Remember if WIC failed due to missing HEVC codec
             const bool hevcMissing = (hr == WINCODEC_ERR_COMPONENTNOTFOUND);

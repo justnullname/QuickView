@@ -251,6 +251,7 @@ struct RuntimeConfig {
     // Verification Flags (Phase 5)
     bool EnableScout = true;
     bool EnableHeavy = true;
+    bool ForceHdrSimulation = false; // [ctl5] Force HDR composition on SDR display
     
     // [Phase 7] Fit Stage - Screen Dimensions
     int screenWidth = 0;  // 0 = full decode (no scaling)
