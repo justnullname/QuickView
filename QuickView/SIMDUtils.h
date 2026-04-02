@@ -410,7 +410,9 @@ namespace SIMDUtils {
         } 
         // --- 2. High Performance: AVX2 Scan ---
         else {
-            __m256 vPeak = _mm256_set1_ps(1.0f);
+            __m256 vPeak = _mm256_setzero_ps();
+            __m256 vMask = _mm256_setr_ps(1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f); // Mask out Alpha
+            
             // Unroll 8x (16 pixels per loop)
             for (; i + 16 <= pixelCount; i += 16) {
                 __m256 p0 = _mm256_loadu_ps(pData + (i + 0) * 4);
@@ -422,6 +424,16 @@ namespace SIMDUtils {
                 __m256 p6 = _mm256_loadu_ps(pData + (i + 12) * 4);
                 __m256 p7 = _mm256_loadu_ps(pData + (i + 14) * 4);
                 
+                // Keep only R, G, B
+                p0 = _mm256_mul_ps(p0, vMask);
+                p1 = _mm256_mul_ps(p1, vMask);
+                p2 = _mm256_mul_ps(p2, vMask);
+                p3 = _mm256_mul_ps(p3, vMask);
+                p4 = _mm256_mul_ps(p4, vMask);
+                p5 = _mm256_mul_ps(p5, vMask);
+                p6 = _mm256_mul_ps(p6, vMask);
+                p7 = _mm256_mul_ps(p7, vMask);
+
                 __m256 m0 = _mm256_max_ps(p0, p1);
                 __m256 m1 = _mm256_max_ps(p2, p3);
                 __m256 m2 = _mm256_max_ps(p4, p5);
@@ -432,7 +444,8 @@ namespace SIMDUtils {
             }
             // Tail
             for (; i + 2 <= pixelCount; i += 2) {
-                vPeak = _mm256_max_ps(vPeak, _mm256_loadu_ps(pData + i * 4));
+                __m256 p = _mm256_loadu_ps(pData + i * 4);
+                vPeak = _mm256_max_ps(vPeak, _mm256_mul_ps(p, vMask));
             }
             peak = _mm256_reduce_max_ps(vPeak);
         }

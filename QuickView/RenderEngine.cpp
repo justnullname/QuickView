@@ -167,7 +167,7 @@ bool IsHdrLikeFrame(const QuickView::RawImageFrame &frame) {
          frame.colorInfo.IsSceneLinear() || frame.hdrMetadata.hasGainMap;
 }
 
-float EstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
+float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
   if (frame.format != QuickView::PixelFormat::R32G32B32A32_FLOAT ||
       !frame.pixels || frame.width <= 0 || frame.height <= 0) {
     return 1.0f;
@@ -206,7 +206,7 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   }
 
   if (contentPeakScRgb <= 1.0f) {
-    contentPeakScRgb = EstimateFramePeakScRgb(frame);
+    contentPeakScRgb = InternalEstimateFramePeakScRgb(frame);
   }
 
   if (contentPeakScRgb <= 1.0f && IsHdrLikeFrame(frame)) {
@@ -268,6 +268,10 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   return settings;
 }
 } // namespace
+
+float CRenderEngine::EstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
+  return InternalEstimateFramePeakScRgb(frame);
+}
 CRenderEngine::~CRenderEngine() {
   // ComPtr automatically releases resources
 }

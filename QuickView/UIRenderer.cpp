@@ -1796,7 +1796,10 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
                 rows.push_back({ L"\U0001F5A5", L"Mastering", mastering, L"", mastering, TruncateMode::EndEllipsis, false });
             }
             rows.push_back({ L"\U0001F6E0", L"Pipeline", BuildRenderPathLabel(metadata, displayState), L"", L"", TruncateMode::EndEllipsis, false });
-            rows.push_back({ L"\U0001F4A1", L"Headroom", BuildDisplayHeadroomLabel(displayState), L"", L"", TruncateMode::EndEllipsis, false });
+            if (metadata.MeasuredPeakNits > 0.0f) {
+                rows.push_back({ L"\U00002600", L"ImagePeak", FormatHdrNits(metadata.MeasuredPeakNits), L"", L"Max content luminance detected by SIMD scan", TruncateMode::None, false });
+            }
+            rows.push_back({ L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(displayState), L"", L"", TruncateMode::EndEllipsis, false });
 
             if (metadata.hdrMetadata.hasGainMap) {
                 rows.push_back({ L"\U0001F5BC", L"Base", L"SDR Base Layer", L"", L"", TruncateMode::EndEllipsis, false });

@@ -4813,6 +4813,12 @@ void RefreshImageDisplay(HWND hwnd) {
     // 1. Get current frame from cache (Linear Raw Pixels)
     auto frame = g_pImageEngine->GetCachedImage(g_imagePath);
     if (frame && frame->IsValid()) {
+        // [v10.0] Measure Image Peak on demand if it's an HDR-capable float frame
+        if (g_currentMetadata.MeasuredPeakNits < 0.0f && 
+            frame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
+            frame->pixels) {
+            g_currentMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*frame) * 80.0f;
+        }
         ComPtr<ID2D1Bitmap> bitmap;
         // 2. Direct GPU Re-upload (Applies new Tone Mapping / CMS settings)
         if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*frame, &bitmap))) {
@@ -9178,6 +9184,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 // [v5.4 Fix] Race Condition: Prevent FullReady (Basic) from overwriting Async EXIF
                 // If Async Metadata (lazy) arrived FIRST, we must preserve it!
                 auto finalMetadata = evt.metadata; // Create mutable copy
+                
+                // [v10.0] Measured Peak Scan (SIMD) - Only for HDR float frames
+                if (evt.rawFrame && evt.rawFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT && evt.rawFrame->pixels) {
+                    finalMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*evt.rawFrame) * 80.0f;
+                }
                 
                 // [Fix] For SVG frames, explicitly set Format and dimensions
                 if (g_imageResource.isSvg) {

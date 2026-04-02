@@ -69,6 +69,11 @@ public:
     HRESULT UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap);
 
     /// <summary>
+    /// Estimate the peak luminance of a floating point frame (scRGB) using SIMD.
+    /// </summary>
+    float EstimateFramePeakScRgb(const QuickView::RawImageFrame& frame);
+
+    /// <summary>
     /// Get WIC factory
     /// </summary>
     IWICImagingFactory* GetWICFactory() const { return m_wicFactory.Get(); }

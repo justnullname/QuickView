@@ -103,6 +103,9 @@ public:
     std::pmr::vector<uint8_t> iccProfileData; // [CMS] Extracted raw ICC payload
     QuickView::HdrStaticMetadata hdrMetadata;
 
+    // [v10.0] Measured Peak Statistics (Full Frame SIMD Scan)
+    float MeasuredPeakNits = -1.0f; // -1 = Not measured yet
+
     bool IsEmpty() const {
       return Make.empty() && Model.empty() && ISO.empty() && Date.empty();
     }
