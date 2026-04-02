@@ -59,6 +59,8 @@ struct SettingsItem {
     
     bool isDisabled = false;
     std::wstring disabledText; 
+    std::wstring tooltipText;
+    D2D1_RECT_F tooltipIconRect = {0};
     
     std::wstring buttonText = L"Select";  
     std::wstring buttonActivatedText;     
@@ -118,6 +120,7 @@ private:
     void DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isOpen);
     void DrawComboDropdown(ID2D1DeviceContext* pRT); 
     void RenderUpdateToast(ID2D1DeviceContext* pRT, float hudX, float hudY, float hudW, float hudH);
+    void RenderTooltip(ID2D1DeviceContext* pRT);
 
     bool m_visible = false;
     float m_opacity = 0.0f; 
@@ -129,6 +132,10 @@ private:
     int m_comboHoverIdx = -1;
     float m_scrollOffset = 0.0f;
     float m_settingsContentHeight = 0.0f;
+
+    SettingsItem* m_pHoverTooltipItem = nullptr;
+    float m_lastMouseX = 0.0f;
+    float m_lastMouseY = 0.0f;
 
     std::vector<SettingsTab> m_tabs;
 
