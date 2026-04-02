@@ -1530,6 +1530,24 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
             cachedFrame->iccProfile = frame->iccProfile;
             cachedFrame->colorInfo = frame->colorInfo;
             cachedFrame->hdrMetadata = frame->hdrMetadata;
+
+            // [GPU Pipeline] Deep copy blend operation and payload
+            cachedFrame->blendOp = frame->blendOp;
+            cachedFrame->shaderPayload = frame->shaderPayload;
+            if (frame->auxLayer && frame->auxLayer->pixels) {
+                auto safeAux = std::make_unique<QuickView::AuxLayer>();
+                safeAux->width = frame->auxLayer->width;
+                safeAux->height = frame->auxLayer->height;
+                safeAux->stride = frame->auxLayer->stride;
+                safeAux->bytesPerPixel = frame->auxLayer->bytesPerPixel;
+                
+                size_t auxSize = (size_t)safeAux->stride * safeAux->height;
+                uint8_t* auxHeap = new uint8_t[auxSize];
+                memcpy(auxHeap, frame->auxLayer->pixels, auxSize);
+                safeAux->pixels = auxHeap;
+                safeAux->deleter = [](uint8_t* p) { delete[] p; };
+                cachedFrame->auxLayer = std::move(safeAux);
+            }
         }
         
         CacheEntry entry;
