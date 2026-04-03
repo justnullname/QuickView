@@ -481,7 +481,7 @@ private:
   HRESULT LoadStbImage(LPCWSTR filePath, IWICBitmap **ppBitmap,
                        bool floatFormat = false, ImageMetadata* pMetadata = nullptr); // PIC, HDR, PNM, etc.
   // TinyEXR (OpenEXR)
-  HRESULT LoadTinyExrImage(LPCWSTR filePath, IWICBitmap **ppBitmap);
+  HRESULT LoadTinyExrImage(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr);
 
   // NanoSVG (SVG)
   HRESULT LoadSVG(LPCWSTR filePath, IWICBitmap **ppBitmap);

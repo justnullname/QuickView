@@ -19,6 +19,7 @@ bld/
 *.userosscache
 *.sln.docstates
 *.userprefs
+.vscode/
 
 # Build results
 *_i.c
@@ -100,7 +101,7 @@ jpegview-static-post2024-vs2019-x64/
 * .ps1
 *.bat
 *.py
-compile_commands.json
+
 
 .agent/
 
@@ -109,6 +110,7 @@ QuickView/vcpkg_installed/
 
 # Compilation database
 compile_commands.json
+.cache/
 
 
 

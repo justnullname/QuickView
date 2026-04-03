@@ -84,6 +84,8 @@ static bool TryDecodeAvifGainMappedLinearRGBA(
 // [Fast Header] AVIF/HEIC dimension probes (implemented later in this file)
 static bool GetAVIFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
 static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* height);
+static void ProbeHdrMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadata* pHdr);
+
 
 // [v18] Brute force scan for 'nclx' box in HEIF/AVIF streams.
 // Used when standard ISOBMFF parsing fails due to non-standard container brands (e.g. Canon 'heix').
@@ -305,7 +307,7 @@ static void FindHeifGainMapManual(const uint8_t* data, size_t size, uint64_t* ou
 }
 
 // [v18] Fallback Metadata Prober for Native WIC Path
-static void TryReadMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadata* pHdr) {
+static void ProbeHdrMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadata* pHdr) {
     if (!filePath || !pHdr) return;
     
     // 1. Try standard libavif container parsing first
@@ -933,24 +935,35 @@ static void PopulateHdrInfoFromWicPixelFormat(const WICPixelFormatGUID& pixelFor
         IsEqualGUID(pixelFormat, GUID_WICPixelFormat64bppPRGBAHalf) ||
         IsEqualGUID(pixelFormat, GUID_WICPixelFormat64bppRGBHalf) ||
         IsEqualGUID(pixelFormat, GUID_WICPixelFormat48bppRGBHalf) ||
-        IsEqualGUID(pixelFormat, GUID_WICPixelFormat32bppRGBE);
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat32bppRGBE) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat16bppGrayHalf) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat32bppGrayFloat);
+
+    const bool isFixedPoint =
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat16bppGrayFixedPoint) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat32bppGrayFixedPoint) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat48bppRGBFixedPoint) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat64bppRGBAFixedPoint) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat96bppRGBFixedPoint) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat128bppRGBAFixedPoint);
 
     const bool isHighBitDepth =
-        isFloat ||
+        isFloat || isFixedPoint ||
         IsEqualGUID(pixelFormat, GUID_WICPixelFormat64bppRGBA) ||
         IsEqualGUID(pixelFormat, GUID_WICPixelFormat64bppPRGBA) ||
         IsEqualGUID(pixelFormat, GUID_WICPixelFormat64bppRGB) ||
-        IsEqualGUID(pixelFormat, GUID_WICPixelFormat48bppRGB);
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat48bppRGB) ||
+        IsEqualGUID(pixelFormat, GUID_WICPixelFormat16bppGray);
 
     if (!isHighBitDepth) return;
 
     QuickView::PixelColorInfo inferred = metadata->colorInfo;
-    inferred.dataSpace = isFloat ? QuickView::PixelDataSpace::SceneLinear
-                                 : QuickView::PixelDataSpace::EncodedHdr;
-    inferred.transfer = isFloat ? QuickView::TransferFunction::Linear
-                                : (metadata->hdrMetadata.transfer != QuickView::TransferFunction::Unknown
-                                       ? metadata->hdrMetadata.transfer
-                                       : QuickView::TransferFunction::SRGB);
+    inferred.dataSpace = (isFloat || isFixedPoint) ? QuickView::PixelDataSpace::SceneLinear
+                                                   : QuickView::PixelDataSpace::EncodedHdr;
+    inferred.transfer = (isFloat || isFixedPoint) ? QuickView::TransferFunction::Linear
+                                                  : (metadata->hdrMetadata.transfer != QuickView::TransferFunction::Unknown
+                                                         ? metadata->hdrMetadata.transfer
+                                                         : QuickView::TransferFunction::SRGB);
     if (inferred.primaries == QuickView::ColorPrimaries::Unknown) {
         inferred.primaries = GuessPrimariesFromMetadataColorSpace(*metadata);
     }
@@ -958,7 +971,8 @@ static void PopulateHdrInfoFromWicPixelFormat(const WICPixelFormatGUID& pixelFor
         inferred.nominalBitDepth = isFloat ? 16 : 16;
         if (IsEqualGUID(pixelFormat, GUID_WICPixelFormat128bppRGBAFloat) ||
             IsEqualGUID(pixelFormat, GUID_WICPixelFormat128bppPRGBAFloat) ||
-            IsEqualGUID(pixelFormat, GUID_WICPixelFormat128bppRGBFloat)) {
+            IsEqualGUID(pixelFormat, GUID_WICPixelFormat128bppRGBFloat) ||
+            IsEqualGUID(pixelFormat, GUID_WICPixelFormat128bppRGBAFixedPoint)) {
             inferred.nominalBitDepth = 32;
         }
     }
@@ -971,7 +985,7 @@ static void PopulateHdrInfoFromWicPixelFormat(const WICPixelFormatGUID& pixelFor
     if (metadata->hdrMetadata.primaries == QuickView::ColorPrimaries::Unknown) {
         metadata->hdrMetadata.primaries = inferred.primaries;
     }
-    if (isFloat || inferred.dataSpace == QuickView::PixelDataSpace::EncodedHdr) {
+    if (isFloat || isFixedPoint || inferred.dataSpace == QuickView::PixelDataSpace::EncodedHdr) {
         metadata->hdrMetadata.isValid = true;
     }
 }
@@ -4234,7 +4248,8 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMeta
                     pMetadata->hdrMetadata.isHdr =
                         pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
                         pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::HLG ||
-                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::Linear;
+                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::Linear ||
+                        info.bits_per_sample > 8;
                 }
             }
         }
@@ -6881,7 +6896,7 @@ namespace QuickView {
             static HRESULT Load(LPCWSTR filePath, const DecodeContext& ctx, DecodeResult& result, IWICImagingFactory* factory) {
                 if (!filePath || !factory) return E_INVALIDARG;
 
-                TryReadMetadataNative(filePath, &result.metadata.hdrMetadata);
+                ProbeHdrMetadataNative(filePath, &result.metadata.hdrMetadata);
                 
                 ComPtr<IWICBitmapDecoder> decoder;
                 HRESULT hr = factory->CreateDecoderFromFilename(filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
@@ -8231,7 +8246,7 @@ HRESULT CImageLoader::LoadStbImage(LPCWSTR filePath, IWICBitmap** ppBitmap, bool
 // ----------------------------------------------------------------------------
 // TinyEXR Decoder
 // ----------------------------------------------------------------------------
-HRESULT CImageLoader::LoadTinyExrImage(LPCWSTR filePath, IWICBitmap** ppBitmap) {
+HRESULT CImageLoader::LoadTinyExrImage(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMetadata* pMetadata) {
     // Read file to memory (Solves Path and Locking issues)
     std::vector<uint8_t> buf;
     if (!ReadFileToVector(filePath, buf)) return E_FAIL;
@@ -8242,6 +8257,23 @@ HRESULT CImageLoader::LoadTinyExrImage(LPCWSTR filePath, IWICBitmap** ppBitmap) 
     // Use Memory Loader
     if (!TinyExrLoader::LoadEXRFromMemory(buf.data(), buf.size(), &width, &height, pixelData)) {
          return E_FAIL;
+    }
+
+    if (pMetadata) {
+        pMetadata->Width = (uint32_t)width;
+        pMetadata->Height = (uint32_t)height;
+        pMetadata->Format = L"EXR";
+        pMetadata->FormatDetails = L"OpenEXR (Linear Float)";
+        pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
+        pMetadata->colorInfo.transfer = QuickView::TransferFunction::Linear;
+        pMetadata->colorInfo.primaries = QuickView::ColorPrimaries::SRGB; // TinyEXR default
+        pMetadata->colorInfo.nominalBitDepth = 16; // Half or Float usually, ScRgb style
+        
+        pMetadata->hdrMetadata.isValid = true;
+        pMetadata->hdrMetadata.isHdr = true;
+        pMetadata->hdrMetadata.isSceneLinear = true;
+        pMetadata->hdrMetadata.transfer = QuickView::TransferFunction::Linear;
+        pMetadata->hdrMetadata.primaries = QuickView::ColorPrimaries::SRGB;
     }
 
     // TinyEXR returns RGBA floats.
@@ -8590,6 +8622,15 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath, CImageLoader::ImageMetadata*
         std::string lens = RawProcessor.imgdata.lens.Lens;
         pMetadata->Lens = std::wstring(lens.begin(), lens.end());
     }
+
+    // [HDR] RAW files are inherently high dynamic range and scene-linear
+    pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
+    pMetadata->colorInfo.transfer = QuickView::TransferFunction::Linear;
+    pMetadata->colorInfo.nominalBitDepth = 14; // Typical RAW bit depth
+    pMetadata->hdrMetadata.isValid = true;
+    pMetadata->hdrMetadata.isHdr = true;
+    pMetadata->hdrMetadata.isSceneLinear = true;
+    pMetadata->hdrMetadata.transfer = QuickView::TransferFunction::Linear;
     
     return S_OK;
 }
@@ -9157,10 +9198,9 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata* pMetadata, b
     // [v5.3] Read File Stats (Size/Date) - ALWAYS read this first
     PopulateFileStats(filePath, pMetadata);
 
-    // [v6.0] Try Native parsers first (Faster & No WIC dependency for JXL/AVIF)
-    if (TryReadMetadataNative(filePath, pMetadata)) {
-        return S_OK;
-    }
+    // [v6.0] Try Native parsers first (Faster for JXL/AVIF/HEIC)
+    // This populates basic HDR metadata if found.
+    ProbeHdrMetadataNative(filePath, &pMetadata->hdrMetadata);
     
     // 1. Detect Format (if missing)
 
