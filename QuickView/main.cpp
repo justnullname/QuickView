@@ -171,6 +171,7 @@ static bool SupportsAvx2ByCpuid() {
 }
 
 // Function Prototypes
+static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate);
 
 
 // --- Globals ---
@@ -2501,6 +2502,7 @@ static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
         GetClientRect(hwnd, &rc);
         if (rc.right > 0 && rc.bottom > 0) {
             g_compEngine->ResizeSurfaces((UINT)rc.right, (UINT)rc.bottom);
+            SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom, false);
         }
     }
 
@@ -2554,6 +2556,20 @@ static bool GetDisplayColorStateForPane(HWND hwnd, ComparePane pane, QuickView::
     if (!QuickView::DisplayColorInfo::QueryMonitorState(paneMonitor, stateOut)) {
         return false;
     }
+
+    // [Fix] Apply HDR simulation to individual pane queries to ensure Compare Mode is consistent
+    if (g_runtime.ForceHdrSimulation && !stateOut->advancedColorActive) {
+        stateOut->advancedColorActive = true;
+        stateOut->advancedColorSupported = true;
+        stateOut->colorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+        if (stateOut->maxLuminanceNits <= stateOut->sdrWhiteLevelNits) {
+            stateOut->maxLuminanceNits = stateOut->sdrWhiteLevelNits * 2.0f;
+        }
+        if (stateOut->maxFullFrameLuminanceNits <= stateOut->sdrWhiteLevelNits) {
+            stateOut->maxFullFrameLuminanceNits = stateOut->sdrWhiteLevelNits * 2.0f;
+        }
+    }
+
     return true;
 }
 

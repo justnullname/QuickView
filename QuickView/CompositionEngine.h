@@ -216,6 +216,13 @@ private:
     DXGI_FORMAT m_surfaceFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
     QuickView::DisplayColorInfo m_displayColorInfo;
 
+    // Background State Tracking (to avoid redundant redraws)
+    D2D1_COLOR_F m_lastBgColor = { -1.0f, -1.0f, -1.0f, -1.0f };
+    bool m_lastBgGrid = false;
+    UINT m_lastBgW = 0;
+    UINT m_lastBgH = 0;
+    DXGI_FORMAT m_lastBgFormat = DXGI_FORMAT_UNKNOWN;
+
     // State tracking for Drift Compensation
     float m_currentScale = 1.0f;
     float m_currentPanX = 0.0f;

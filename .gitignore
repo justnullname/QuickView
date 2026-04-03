@@ -106,5 +106,8 @@ jpegview-static-post2024-vs2019-x64/
 # VCPKG intermediates
 QuickView/vcpkg_installed/
 
+# Compilation database
+compile_commands.json
+
 
 

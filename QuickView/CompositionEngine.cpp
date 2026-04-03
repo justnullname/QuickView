@@ -1077,14 +1077,10 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
     UINT h = (UINT)height;
     if (w == 0 || h == 0) return S_OK;
 
-    // State Tracking to avoid redundant redraws (flicker cause)
-    static D2D1_COLOR_F lastColor = { -1, -1, -1, -1 };
-    static bool lastGrid = false;
-    static UINT lastW = 0, lastH = 0;
-
-    bool needsRedraw = (bgColor.r != lastColor.r || bgColor.g != lastColor.g || bgColor.b != lastColor.b || bgColor.a != lastColor.a) ||
-                       (showGrid != lastGrid) ||
-                       (w != lastW || h != lastH) ||
+    bool needsRedraw = (bgColor.r != m_lastBgColor.r || bgColor.g != m_lastBgColor.g || bgColor.b != m_lastBgColor.b || bgColor.a != m_lastBgColor.a) ||
+                       (showGrid != m_lastBgGrid) ||
+                       (w != m_lastBgW || h != m_lastBgH) ||
+                       (m_surfaceFormat != m_lastBgFormat) ||
                        (!m_backgroundLayer.surface);
 
     if (!needsRedraw) return S_OK;
@@ -1147,10 +1143,11 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
     m_backgroundLayer.surface->EndDraw();
     
     // Update state
-    lastColor = bgColor;
-    lastGrid = showGrid;
-    lastW = w;
-    lastH = h;
+    m_lastBgColor = bgColor;
+    m_lastBgGrid = showGrid;
+    m_lastBgW = w;
+    m_lastBgH = h;
+    m_lastBgFormat = m_surfaceFormat;
 
     return S_OK;
 }

@@ -624,7 +624,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       case QuickView::GpuBlendOp::UltraHdrGainMap: {
           // Fill target headroom from current display state
           QuickView::GpuShaderPayload payload = frame.shaderPayload;
-          extern RuntimeConfig g_runtime;
           if (m_isAdvancedColor && g_config.EnableAdvancedColor) {
               payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops();
           } else {
