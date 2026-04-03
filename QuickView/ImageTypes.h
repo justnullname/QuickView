@@ -8,6 +8,10 @@
 // ============================================================================
 
 #include <cstdint>
+#include <memory>
+#include <functional>
+#include <algorithm>
+#include <malloc.h>
 #include <functional>
 #include <utility>
 #include <string>
@@ -103,6 +107,36 @@ struct AuxLayer {
           stride(o.stride), bytesPerPixel(o.bytesPerPixel),
           deleter(std::move(o.deleter)) {
         o.pixels = nullptr;
+    }
+
+    AuxLayer& operator=(AuxLayer&& o) noexcept {
+        if (this != &o) {
+            if (pixels && deleter) deleter(pixels);
+            pixels = o.pixels;
+            width = o.width;
+            height = o.height;
+            stride = o.stride;
+            bytesPerPixel = o.bytesPerPixel;
+            deleter = std::move(o.deleter);
+            o.pixels = nullptr;
+        }
+        return *this;
+    }
+
+    std::unique_ptr<AuxLayer> Clone() const {
+        if (!pixels) return nullptr;
+        auto cloned = std::make_unique<AuxLayer>();
+        cloned->width = width;
+        cloned->height = height;
+        cloned->stride = stride;
+        cloned->bytesPerPixel = bytesPerPixel;
+        size_t size = (size_t)stride * height;
+        cloned->pixels = (uint8_t*)_aligned_malloc(size, 64);
+        if (cloned->pixels) {
+            memcpy(cloned->pixels, pixels, size);
+            cloned->deleter = [](uint8_t* p) { _aligned_free(p); };
+        }
+        return cloned;
     }
 };
 

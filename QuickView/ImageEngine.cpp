@@ -1142,23 +1142,9 @@ void ImageEngine::FastLane::QueueWorker() {
                     // [GPU Pipeline] Deep copy blend operation and payload
                     safeFrame->blendOp = rawFrame.blendOp;
                     safeFrame->shaderPayload = rawFrame.shaderPayload;
-                    if (rawFrame.auxLayer && rawFrame.auxLayer->pixels) {
-                        auto safeAux = std::make_unique<QuickView::AuxLayer>();
-                        safeAux->width = rawFrame.auxLayer->width;
-                        safeAux->height = rawFrame.auxLayer->height;
-                        safeAux->stride = rawFrame.auxLayer->stride;
-                        safeAux->bytesPerPixel = rawFrame.auxLayer->bytesPerPixel;
-                        
-                        size_t auxSize = (size_t)safeAux->stride * safeAux->height;
-                        uint8_t* auxHeap = new uint8_t[auxSize];
-                        memcpy(auxHeap, rawFrame.auxLayer->pixels, auxSize);
-                        safeAux->pixels = auxHeap;
-                        safeAux->deleter = [](uint8_t* p) { delete[] p; };
-                        safeFrame->auxLayer = std::move(safeAux);
-                    }
+                    if (rawFrame.auxLayer) safeFrame->auxLayer = rawFrame.auxLayer->Clone();
                 }
                 e.rawFrame = safeFrame;
-                
 
                 e.metadata.Width = rawFrame.width;
                 e.metadata.Height = rawFrame.height;

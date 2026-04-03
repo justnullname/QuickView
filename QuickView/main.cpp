@@ -216,6 +216,27 @@ struct ImageResource {
         shaderPayload = {};
         auxLayer.reset();
     }
+
+    ImageResource() = default;
+    ImageResource(const ImageResource&) = delete;
+    ImageResource& operator=(const ImageResource&) = delete;
+    ImageResource(ImageResource&&) = default;
+    ImageResource& operator=(ImageResource&&) = default;
+
+    ImageResource Clone() const {
+        ImageResource cloned;
+        cloned.bitmap = bitmap;
+        cloned.svgDoc = svgDoc;
+        cloned.isSvg = isSvg;
+        cloned.svgW = svgW;
+        cloned.svgH = svgH;
+        cloned.blendOp = blendOp;
+        cloned.shaderPayload = shaderPayload;
+        if (auxLayer) {
+            cloned.auxLayer = auxLayer->Clone();
+        }
+        return cloned;
+    }
     
     D2D1_SIZE_F GetSize() const {
         if (isSvg) return D2D1::SizeF(svgW, svgH);
@@ -1413,7 +1434,7 @@ static void CaptureCurrentImageAsCompareLeft() {
     if (!g_imageResource || g_imagePath.empty()) return;
 
     g_compare.left.Reset();
-    g_compare.left.resource = g_imageResource;
+    g_compare.left.resource = g_imageResource.Clone();
     g_compare.left.metadata = g_currentMetadata;
     g_compare.left.path = g_imagePath;
     g_compare.left.valid = true;
@@ -7406,17 +7427,17 @@ SKIP_EDGE_NAV:;
                     break;
                 case ToolbarButtonID::CompareSwap:
                     if (IsCompareModeActive() && g_compare.left.valid && g_imageResource) {
-                        ImageResource rightRes = g_imageResource;
+                        ImageResource rightRes = std::move(g_imageResource);
                         CImageLoader::ImageMetadata rightMeta = g_currentMetadata;
                         std::wstring rightPath = g_imagePath;
                         CompareView rightView = GetRightCompareView();
 
-                        g_imageResource = g_compare.left.resource;
+                        g_imageResource = std::move(g_compare.left.resource);
                         g_currentMetadata = g_compare.left.metadata;
                         g_imagePath = g_compare.left.path;
                         SetRightCompareView(g_compare.left.view);
 
-                        g_compare.left.resource = rightRes;
+                        g_compare.left.resource = std::move(rightRes);
                         g_compare.left.metadata = rightMeta;
                         g_compare.left.path = rightPath;
                         g_compare.left.view = rightView;
@@ -9091,7 +9112,7 @@ void ProcessEngineEvents(HWND hwnd) {
 
     bool needsRepaint = false;
     auto events = g_imageEngine->PollState();
-    for (const auto& evt : events) {
+    for (auto& evt : events) {
         switch (evt.type) {
         case EventType::PreviewReady:
         case EventType::FullReady: {
@@ -9537,7 +9558,7 @@ void ProcessEngineEvents(HWND hwnd) {
                      // [Fix] Only access rawFrame if it exists (MetadataReady may not have it)
                      if (evt.rawFrame) {
                          // [Fix] Infinite Loop Strategy: "No Improvement" Breaker
-                         float currentWidth = g_imageResource ? g_imageResource.GetSize().width : 0.0f;
+                         float currentWidth = g_imageResource.bitmap ? g_imageResource.GetSize().width : 0.0f;
                          bool noImprovement = ((int)currentWidth > 0 && abs((int)evt.rawFrame->width - (int)currentWidth) < 10);
                          
                          // HitLimit: Hardware Constraint (4096 or 16384) OR Just "Big Enough" (> 3000)
@@ -9571,7 +9592,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Update active resource with the gain map
                 g_imageResource.blendOp = evt.blendOp;
                 g_imageResource.shaderPayload = evt.shaderPayload;
-                g_imageResource.auxLayer = std::move(evt.auxLayer);
+                g_imageResource.auxLayer.reset(evt.auxLayer.release());
 
                 // Set HDR metadata flag so renderer knows it has a gain map
                 g_currentMetadata.hdrMetadata.hasGainMap = true;
