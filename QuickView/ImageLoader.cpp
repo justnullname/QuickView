@@ -9386,6 +9386,14 @@ HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* 
     return E_FAIL;
 }
 
+#ifndef HWY_TARGETS
+#if defined(_M_X64) || defined(__x86_64__)
+    #undef HWY_BASELINE_TARGETS
+    #define HWY_BASELINE_TARGETS (HWY_SSE4)
+#endif
+#endif
+#include <hwy/highway.h>
+
 HWY_BEFORE_NAMESPACE();
 namespace SIMD_ImageLoader {
 namespace HWY_NAMESPACE {
