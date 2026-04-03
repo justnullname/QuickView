@@ -310,7 +310,6 @@ const wchar_t *Settings_Option_SortDateTaken = nullptr;
 const wchar_t *Settings_Option_SortSize = nullptr;
 const wchar_t *Settings_Option_SortType = nullptr;
 const wchar_t *Settings_Option_NavLoop = nullptr;
-const wchar_t *Settings_Option_NavStop = nullptr;
 const wchar_t *Settings_Option_NavThrough = nullptr;
 const wchar_t *Settings_Option_Linear = nullptr;
 const wchar_t *Settings_Option_Nearest = nullptr;
@@ -430,7 +429,7 @@ struct EN {
       L"Single Instance";
   static constexpr const wchar_t *Settings_Label_CheckUpdates =
       L"Check Updates";
-  static constexpr const wchar_t *Settings_Label_NavLoopMode = L"Loop Navigation";
+  static constexpr const wchar_t *Settings_Label_NavLoopMode = L"Loop";
   static constexpr const wchar_t *Settings_Label_SortOrder = L"Sort Order";
   static constexpr const wchar_t *Settings_Label_SortDescending = L"Descending";
   static constexpr const wchar_t *Settings_Label_ConfirmDel = L"Confirm Delete";
@@ -749,8 +748,7 @@ struct EN {
   static constexpr const wchar_t *Settings_Option_SortDateTaken = L"Date Taken (EXIF)";
   static constexpr const wchar_t *Settings_Option_SortSize = L"Size";
   static constexpr const wchar_t *Settings_Option_SortType = L"Type";
-  static constexpr const wchar_t *Settings_Option_NavLoop = L"Loop in folder";
-  static constexpr const wchar_t *Settings_Option_NavStop = L"Stop at end";
+  static constexpr const wchar_t *Settings_Option_NavLoop = L"Loop";
   static constexpr const wchar_t *Settings_Option_NavThrough = L"Through subfolders";
 
   static constexpr const wchar_t *Settings_Option_Linear =
@@ -901,7 +899,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_Language = L"语言";
   static constexpr const wchar_t *Settings_Label_SingleInstance = L"单实例模式";
   static constexpr const wchar_t *Settings_Label_CheckUpdates = L"检查更新";
-  static constexpr const wchar_t *Settings_Label_NavLoopMode = L"循环导航";
+  static constexpr const wchar_t *Settings_Label_NavLoopMode = L"循环播放";
   static constexpr const wchar_t *Settings_Label_SortOrder = L"列表排序方式";
   static constexpr const wchar_t *Settings_Label_SortDescending = L"降序";
   static constexpr const wchar_t *Settings_Label_ConfirmDel = L"删除确认";
@@ -1061,8 +1059,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Option_SortDateTaken = L"拍摄时间 (EXIF)";
   static constexpr const wchar_t *Settings_Option_SortSize = L"大小";
   static constexpr const wchar_t *Settings_Option_SortType = L"类型";
-  static constexpr const wchar_t *Settings_Option_NavLoop = L"文件夹内循环";
-  static constexpr const wchar_t *Settings_Option_NavStop = L"到达末尾停止";
+  static constexpr const wchar_t *Settings_Option_NavLoop = L"循环播放";
   static constexpr const wchar_t *Settings_Option_NavThrough = L"穿透子文件夹";
 
   static constexpr const wchar_t *Settings_Option_Linear =
@@ -3762,10 +3759,6 @@ template <typename T> void ApplyT() {
   Context_NavOrder = T::Context_NavOrder;
   Context_SortAscending = T::Context_SortAscending;
   Context_SortDescending = T::Context_SortDescending;
-  Context_SortBy = T::Context_SortBy;
-  Context_NavOrder = T::Context_NavOrder;
-  Context_SortAscending = T::Context_SortAscending;
-  Context_SortDescending = T::Context_SortDescending;
   Context_Settings = T::Context_Settings;
   Context_About = T::Context_About;
   Context_CompareMode = T::Context_CompareMode;
@@ -3963,7 +3956,6 @@ template <typename T> void ApplyT() {
   Settings_Option_SortSize = T::Settings_Option_SortSize;
   Settings_Option_SortType = T::Settings_Option_SortType;
   Settings_Option_NavLoop = T::Settings_Option_NavLoop;
-  Settings_Option_NavStop = T::Settings_Option_NavStop;
   Settings_Option_NavThrough = T::Settings_Option_NavThrough;
   Settings_Option_Linear = T::Settings_Option_Linear;
   Settings_Option_Nearest = T::Settings_Option_Nearest;

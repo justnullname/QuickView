@@ -4190,7 +4190,10 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"General", L"Language", std::to_wstring(g_config.Language).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"SingleInstance", g_config.SingleInstance ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"CheckUpdates", g_config.CheckUpdates ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"NavLoopMode", std::to_wstring(g_config.NavLoopMode).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"NavLoop", g_config.NavLoop ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"NavTraverse", g_config.NavTraverse ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str()); // [Clean] Remove legacy key
+    WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());   // [Clean] Remove legacy key
     WritePrivateProfileStringW(L"General", L"SortOrder", std::to_wstring(g_config.SortOrder).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"SortDescending", g_config.SortDescending ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"ConfirmDelete", g_config.ConfirmDelete ? L"1" : L"0", iniPath.c_str());
@@ -4265,9 +4268,15 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Advanced", L"PrefetchGear", std::to_wstring((int)g_config.PrefetchGear).c_str(), iniPath.c_str());
     
-    // Internal
+    // Internal / Navigation
     WritePrivateProfileStringW(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"AutoSaveOnSwitch", g_config.AutoSaveOnSwitch ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"NavLoop", g_config.NavLoop ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"NavTraverse", g_config.NavTraverse ? L"1" : L"0", iniPath.c_str());
+
+    // Legacy cleanup
+    WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str());
 }
 
 void LoadConfig() {
@@ -4293,12 +4302,15 @@ void LoadConfig() {
     g_config.Language = GetPrivateProfileIntW(L"General", L"Language", 0, iniPath.c_str());
     g_config.SingleInstance = GetPrivateProfileIntW(L"General", L"SingleInstance", 1, iniPath.c_str()) != 0;
     g_config.CheckUpdates = GetPrivateProfileIntW(L"General", L"CheckUpdates", 1, iniPath.c_str()) != 0;
-    // Handle old LoopNavigation fallback
-    int oldLoopNav = GetPrivateProfileIntW(L"General", L"LoopNavigation", -1, iniPath.c_str());
-    if (oldLoopNav != -1) {
-        g_config.NavLoopMode = (oldLoopNav == 1) ? 0 : 1; // Translate old Loop to Loop/Stop
+    // Navigation: Decoupled Loop & Traverse (Legacy Migration)
+    int navLoopValue = GetPrivateProfileIntW(L"General", L"NavLoopMode", -1, iniPath.c_str());
+    if (navLoopValue != -1) {
+        g_config.NavLoop = (navLoopValue != 1); // 0 (Loop), 2 (Through) -> true
+        g_config.NavTraverse = (navLoopValue == 2);
     } else {
-        g_config.NavLoopMode = GetPrivateProfileIntW(L"General", L"NavLoopMode", 0, iniPath.c_str());
+        // New standard: bool
+        g_config.NavLoop = GetPrivateProfileIntW(L"General", L"NavLoop", 1, iniPath.c_str()) != 0;
+        g_config.NavTraverse = GetPrivateProfileIntW(L"General", L"NavTraverse", 0, iniPath.c_str()) != 0;
     }
 
     g_config.SortOrder = GetPrivateProfileIntW(L"General", L"SortOrder", 0, iniPath.c_str());
@@ -8204,6 +8216,7 @@ SKIP_EDGE_NAV:;
 
     case WM_COMMAND: {
         UINT cmdId = LOWORD(wParam);
+        UINT wmId = cmdId;
 
         // Soft Proofing Profile Dynamic Dispatch
         if (cmdId >= IDM_SOFT_PROOF_BASE && cmdId <= IDM_SOFT_PROOF_BASE + 99) {
@@ -8866,10 +8879,18 @@ SKIP_EDGE_NAV:;
             break;
         }
 
-        case IDM_NAV_LOOP:
-        case IDM_NAV_STOP:
+        case IDM_NAV_LOOP: {
+            g_config.NavLoop = !g_config.NavLoop;
+            g_runtime.NavLoop = g_config.NavLoop;
+            SaveConfig();
+            g_osd.Show(hwnd, g_runtime.NavLoop ? L"Navigation Loop: ON" : L"Navigation Loop: OFF", false);
+            break;
+        }
         case IDM_NAV_THROUGH: {
-            g_runtime.NavLoopMode = wmId - IDM_NAV_LOOP;
+            g_config.NavTraverse = !g_config.NavTraverse;
+            g_runtime.NavTraverse = g_config.NavTraverse;
+            SaveConfig();
+            g_osd.Show(hwnd, g_runtime.NavTraverse ? L"Traverse Subfolders: ON" : L"Traverse Subfolders: OFF", false);
             break;
         }
 
@@ -10583,8 +10604,8 @@ void Navigate(HWND hwnd, int direction) {
         if (tempNav.Count() <= 0) return;
 
         std::wstring path = (direction > 0)
-            ? tempNav.Next(g_config.LoopNavigation)
-            : tempNav.Previous(g_config.LoopNavigation);
+            ? tempNav.Next()
+            : tempNav.Previous();
 
         if (!path.empty()) {
             LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd, tempNav, direction](bool success){
@@ -10619,17 +10640,18 @@ void Navigate(HWND hwnd, int direction) {
             QuickView::BrowseDirection browseDir = (direction > 0)
                 ? QuickView::BrowseDirection::FORWARD
                 : QuickView::BrowseDirection::BACKWARD;
-            LoadImageAsync(hwnd, path, true, browseDir);
-            MarkCompareDirty();
-
             std::wstring crossMsg = g_navigator.GetCrossFolderMessage();
             if (!crossMsg.empty()) {
+                g_navigator.Initialize(path); // Update playlist to new folder
                 g_osd.Show(hwnd, crossMsg.c_str());
-            } else if (g_navigator.HitEnd() && g_runtime.NavLoopMode == 0) {
+            } else if (g_navigator.HitEnd() && g_runtime.NavLoop) {
                 wchar_t buf[256];
                 swprintf_s(buf, L"[Loop] %d / %zu", g_navigator.Index() + 1, g_navigator.Count());
                 g_osd.Show(hwnd, buf, false);
             }
+
+            LoadImageAsync(hwnd, path, true, browseDir);
+            MarkCompareDirty();
         } else if (g_navigator.HitEnd()) {
             if (direction > 0) g_osd.Show(hwnd, std::wstring(AppStrings::OSD_LastImage), false);
             else g_osd.Show(hwnd, std::wstring(AppStrings::OSD_FirstImage), false);
@@ -10651,21 +10673,17 @@ void Navigate(HWND hwnd, int direction) {
             ? QuickView::BrowseDirection::FORWARD 
             : QuickView::BrowseDirection::BACKWARD;
         
-        // [v8.16 Fix] Pass direction to LoadImageAsync -> StartNavigation
-        // Do NOT call UpdateView directly here, as LoadImageAsync calls StartNavigation which calls UpdateView.
-        // Previously, StartNavigation hardcoded IDLE, overwriting our direction.
-        // g_imageEngine->UpdateView(g_navigator.Index(), browseDir); // REMOVED
-        
-        LoadImageAsync(hwnd, path, true, browseDir);
-
         std::wstring crossMsg = g_navigator.GetCrossFolderMessage();
         if (!crossMsg.empty()) {
+            g_navigator.Initialize(path); // Update playlist to new folder
             g_osd.Show(hwnd, crossMsg.c_str());
-        } else if (g_navigator.HitEnd() && g_runtime.NavLoopMode == 0) {
+        } else if (g_navigator.HitEnd() && g_runtime.NavLoop) {
             wchar_t buf[256];
             swprintf_s(buf, L"[Loop] %d / %zu", g_navigator.Index() + 1, g_navigator.Count());
             g_osd.Show(hwnd, buf, false);
         }
+
+        LoadImageAsync(hwnd, path, true, browseDir);
     } else if (g_navigator.HitEnd()) {
         // Show OSD when reaching end without looping
         if (direction > 0) {

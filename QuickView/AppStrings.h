@@ -281,7 +281,6 @@ namespace AppStrings {
 
     // Nav Options
     extern const wchar_t* Settings_Option_NavLoop;
-    extern const wchar_t* Settings_Option_NavStop;
     extern const wchar_t* Settings_Option_NavThrough;
 
     extern const wchar_t* Settings_Option_Linear;

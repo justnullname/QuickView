@@ -170,9 +170,8 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hSortMenu, AppStrings::Context_SortBy);
 
     HMENU hNavMenu = CreatePopupMenu();
-    AppendMenuW(hNavMenu, (g_runtime.NavLoopMode == 0 ? MF_CHECKED : 0) | MF_STRING, IDM_NAV_LOOP, AppStrings::Settings_Option_NavLoop);
-    AppendMenuW(hNavMenu, (g_runtime.NavLoopMode == 1 ? MF_CHECKED : 0) | MF_STRING, IDM_NAV_STOP, AppStrings::Settings_Option_NavStop);
-    AppendMenuW(hNavMenu, (g_runtime.NavLoopMode == 2 ? MF_CHECKED : 0) | MF_STRING, IDM_NAV_THROUGH, AppStrings::Settings_Option_NavThrough);
+    AppendMenuW(hNavMenu, (g_runtime.NavLoop ? MF_CHECKED : 0) | MF_STRING, IDM_NAV_LOOP, AppStrings::Settings_Option_NavLoop);
+    AppendMenuW(hNavMenu, (g_runtime.NavTraverse ? MF_CHECKED : 0) | MF_STRING, IDM_NAV_THROUGH, AppStrings::Settings_Option_NavThrough);
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hNavMenu, AppStrings::Context_NavOrder);
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 

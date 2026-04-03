@@ -189,25 +189,24 @@ public:
         if (m_files.empty()) return L"";
 
         if (m_currentIndex >= (int)m_files.size() - 1) {
-            if (g_runtime.NavLoopMode == 1) {
-                // Stop at end
-                m_hitEnd = true;
-                return L"";
-            } else if (g_runtime.NavLoopMode == 2) {
+            if (g_runtime.NavTraverse) {
                 // Through folders
                 std::wstring nextFolderImg = FindAdjacentFolderImage(true);
                 if (!nextFolderImg.empty()) {
                     m_crossFolderMessage = L">>> Entering [" + std::filesystem::path(nextFolderImg).parent_path().filename().wstring() + L"] >>>";
                     return nextFolderImg;
-                } else {
-                    m_hitEnd = true; // No more folders
-                    return L"";
                 }
-            } else {
-                // Loop (default: 0)
+            }
+
+            if (g_runtime.NavLoop) {
+                // Loop
                 m_hitEnd = true; // Signal OSD
                 m_currentIndex = 0;
                 return m_files[m_currentIndex];
+            } else {
+                // Stop at end
+                m_hitEnd = true;
+                return L"";
             }
         }
 
@@ -220,25 +219,24 @@ public:
         if (m_files.empty()) return L"";
 
         if (m_currentIndex <= 0) {
-            if (g_runtime.NavLoopMode == 1) {
-                // Stop at start
-                m_hitEnd = true;
-                return L"";
-            } else if (g_runtime.NavLoopMode == 2) {
+            if (g_runtime.NavTraverse) {
                 // Through folders
                 std::wstring prevFolderImg = FindAdjacentFolderImage(false);
                 if (!prevFolderImg.empty()) {
                     m_crossFolderMessage = L"<<< Entering [" + std::filesystem::path(prevFolderImg).parent_path().filename().wstring() + L"] <<<";
                     return prevFolderImg;
-                } else {
-                    m_hitEnd = true; // No more folders
-                    return L"";
                 }
-            } else {
-                // Loop (default: 0)
+            }
+
+            if (g_runtime.NavLoop) {
+                // Loop
                 m_hitEnd = true; // Signal OSD
                 m_currentIndex = (int)m_files.size() - 1;
                 return m_files[m_currentIndex];
+            } else {
+                // Stop at start
+                m_hitEnd = true;
+                return L"";
             }
         }
 
@@ -340,16 +338,36 @@ private:
 
         namespace fs = std::filesystem;
         fs::path currentDir = fs::path(m_files[0]).parent_path();
-        fs::path parentDir = currentDir.parent_path();
+        
+        // [Logic Upgrade] Through Subfolders: 
+        // 1. If moving forward, check if currentDir has subfolders first.
+        if (next) {
+            try {
+                std::vector<std::wstring> subfolders;
+                for (const auto& entry : fs::directory_iterator(currentDir)) {
+                    if (entry.is_directory()) subfolders.push_back(entry.path().wstring());
+                }
+                if (!subfolders.empty()) {
+                    std::sort(subfolders.begin(), subfolders.end(), [](const std::wstring& a, const std::wstring& b) {
+                        return StrCmpLogicalW(a.c_str(), b.c_str()) < 0;
+                    });
+                    for (const auto& sub : subfolders) {
+                        FileNavigator tempNav;
+                        tempNav.Initialize(sub);
+                        if (tempNav.Count() > 0) return tempNav.First();
+                    }
+                }
+            } catch (...) {}
+        }
 
+        // 2. Siblings navigation
+        fs::path parentDir = currentDir.parent_path();
         if (parentDir.empty() || parentDir == currentDir) return L"";
 
         std::vector<std::wstring> folders;
         try {
             for (const auto& entry : fs::directory_iterator(parentDir)) {
-                if (entry.is_directory()) {
-                    folders.push_back(entry.path().wstring());
-                }
+                if (entry.is_directory()) folders.push_back(entry.path().wstring());
             }
         } catch(...) { return L""; }
 
@@ -361,17 +379,24 @@ private:
 
         std::wstring currentStr = currentDir.wstring();
         auto it = std::find(folders.begin(), folders.end(), currentStr);
-        if (it == folders.end()) return L"";
+        int idx = (it == folders.end()) ? -1 : (int)std::distance(folders.begin(), it);
 
-        int idx = (int)std::distance(folders.begin(), it);
-
+        int startIdx = idx;
         while (true) {
             if (next) idx++; else idx--;
 
-            if (idx < 0 || idx >= (int)folders.size()) return L"";
+            // Boundary logic
+            if (idx < 0 || idx >= (int)folders.size()) {
+                if (g_runtime.NavLoop) {
+                    // Loop globally: wrap around
+                    idx = (idx < 0) ? (int)folders.size() - 1 : 0;
+                } else {
+                    return L""; // Stop at global boundary
+                }
+            }
+            
+            if (idx == startIdx) break; // Wrapped full circle and found nothing
 
-            // Found a folder, let's instantiate a temporary navigator to find the first/last image.
-            // A bit heavy, but this only happens once per folder crossover.
             FileNavigator tempNav;
             tempNav.Initialize(folders[idx]);
             if (tempNav.Count() > 0) {

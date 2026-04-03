@@ -849,13 +849,19 @@ void SettingsOverlay::BuildMenu() {
     // Pro Habits
     tabGeneral.items.push_back({ AppStrings::Settings_Group_Habits, OptionType::Header });
 
-    SettingsItem itemNavLoop = { AppStrings::Settings_Label_NavLoopMode, OptionType::ComboBox, nullptr, nullptr, &g_config.NavLoopMode };
-    itemNavLoop.options = { AppStrings::Settings_Option_NavLoop, AppStrings::Settings_Option_NavStop, AppStrings::Settings_Option_NavThrough };
-    itemNavLoop.onChange = []() {
-        g_runtime.NavLoopMode = g_config.NavLoopMode;
+    SettingsItem itemLoop = { AppStrings::Settings_Label_NavLoopMode, OptionType::Toggle, &g_config.NavLoop };
+    itemLoop.onChange = []() {
+        g_runtime.NavLoop = g_config.NavLoop;
         SaveConfig();
     };
-    tabGeneral.items.push_back(itemNavLoop);
+    tabGeneral.items.push_back(itemLoop);
+
+    SettingsItem itemTraverse = { AppStrings::Settings_Option_NavThrough, OptionType::Toggle, &g_config.NavTraverse };
+    itemTraverse.onChange = []() {
+        g_runtime.NavTraverse = g_config.NavTraverse;
+        SaveConfig();
+    };
+    tabGeneral.items.push_back(itemTraverse);
 
     SettingsItem itemSortOrder = { AppStrings::Settings_Label_SortOrder, OptionType::ComboBox, nullptr, nullptr, &g_config.SortOrder };
     itemSortOrder.options = {

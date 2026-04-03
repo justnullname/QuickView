@@ -83,7 +83,8 @@ struct AppConfig {
     int Language = 0;                   // 0=Auto, 1=EN, 2=CN
     bool SingleInstance = false;
     bool CheckUpdates = true;
-    int NavLoopMode = 0;                // 0=Loop in Current Folder, 1=Stop at End, 2=Through Folders
+    bool NavLoop = true;                // Loop at limits (Global or Folder)
+    bool NavTraverse = false;           // Reach outside current folder (Subfolders)
     int SortOrder = 0;                  // 0=Auto(Name), 1=Name, 2=Modified, 3=DateTaken, 4=Size, 5=Type
     bool SortDescending = false;
     bool ConfirmDelete = true;
@@ -252,7 +253,8 @@ struct RuntimeConfig {
     int CmsModeOverride = -1;     // -1=Auto, 0=Unmanaged, 1=Auto(Explicit), 2=sRGB, 3=P3, etc
 
     // Navigation & Sort Session Overrides
-    int NavLoopMode = 0;          // Sync from AppConfig
+    bool NavLoop = true;          // Sync from AppConfig
+    bool NavTraverse = false;     // Sync from AppConfig
     int SortOrder = 0;            // Sync from AppConfig
     bool SortDescending = false;  // Sync from AppConfig
 
@@ -286,7 +288,8 @@ struct RuntimeConfig {
         ForceRawDecode = cfg.ForceRawDecode;
         RenderRAW = cfg.RenderRAW;
         CrossMonitorMode = cfg.EnableCrossMonitor; // Init from config
-        NavLoopMode = cfg.NavLoopMode;
+        NavLoop = cfg.NavLoop;
+        NavTraverse = cfg.NavTraverse;
         SortOrder = cfg.SortOrder;
         SortDescending = cfg.SortDescending;
     }
