@@ -149,27 +149,6 @@ static std::string GetAppVersionUTF8() {
     return "2.1.0";
 }
 
-static bool SupportsAvx2ByCpuid() {
-#if defined(_M_X64) || defined(_M_IX86)
-    int cpuInfo[4] = {};
-    __cpuid(cpuInfo, 0);
-    if (cpuInfo[0] < 7) return false;
-
-    __cpuid(cpuInfo, 1);
-    const bool hasOsxsave = (cpuInfo[2] & (1 << 27)) != 0;
-    const bool hasAvx = (cpuInfo[2] & (1 << 28)) != 0;
-    if (!hasOsxsave || !hasAvx) return false;
-
-    const unsigned long long xcr0 = _xgetbv(0);
-    if ((xcr0 & 0x6) != 0x6) return false;
-
-    __cpuidex(cpuInfo, 7, 0);
-    return (cpuInfo[1] & (1 << 5)) != 0;
-#else
-    return false;
-#endif
-}
-
 // Function Prototypes
 static void SyncDCompState(HWND hwnd, float winW, float winH, bool animate);
 
@@ -5629,20 +5608,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
             return 0; // Router exits in < 5ms
         }
         g_isMasterProcess = (routeResult == QuickView::ProcessRouter::RouteResult::BecameMaster);
-    }
-
-    // [v3.2.3] AVX2 Check - Critical: App compiled with /arch:AVX2, will crash without it
-    const bool hasAvx2 = IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE) || SupportsAvx2ByCpuid();
-    if (!hasAvx2) {
-        MessageBoxW(nullptr, 
-            L"QuickView requires a CPU with AVX2 support.\n\n"
-            L"Minimum Requirements:\n"
-            L"Intel: Core 4th Gen (Haswell, 2013) or later\n"
-            L"AMD: Ryzen (Zen, 2017) or later\n\n"
-            L"Your CPU does not support AVX2. The application cannot run.",
-            L"QuickView - Hardware Not Supported",
-            MB_OK | MB_ICONERROR);
-        return 1;
     }
     
     AppStrings::Init();

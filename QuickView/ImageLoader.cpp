@@ -9385,6 +9385,98 @@ HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* 
 
     return E_FAIL;
 }
+
+HWY_BEFORE_NAMESPACE();
+namespace {
+namespace HWY_NAMESPACE {
+namespace hn = hwy::HWY_NAMESPACE;
+
+inline void ComputeHistRow(const uint8_t* row, int width, uint32_t* HistR, uint32_t* HistG, uint32_t* HistB, uint32_t* HistL, int& x_out) {
+    int x = 0;
+    const hn::ScalableTag<uint8_t> d8;
+    const hn::ScalableTag<uint16_t> d16;
+    const hn::ScalableTag<uint32_t> d32;
+    const size_t N8 = hn::Lanes(d8);
+    const int step = (int)N8;
+
+    for (; x + step <= width; x += step) {
+        auto vB = hn::Zero(d8);
+        auto vG = hn::Zero(d8);
+        auto vR = hn::Zero(d8);
+        auto vA = hn::Zero(d8);
+        hn::LoadInterleaved4(d8, row + x * 4, vB, vG, vR, vA);
+
+        alignas(128) uint8_t b_arr[128];
+        alignas(128) uint8_t g_arr[128];
+        alignas(128) uint8_t r_arr[128];
+        hn::Store(vB, d8, b_arr);
+        hn::Store(vG, d8, g_arr);
+        hn::Store(vR, d8, r_arr);
+
+        auto r16_lo = hn::PromoteLowerTo(d16, vR);
+        auto r16_hi = hn::PromoteUpperTo(d16, vR);
+        auto g16_lo = hn::PromoteLowerTo(d16, vG);
+        auto g16_hi = hn::PromoteUpperTo(d16, vG);
+        auto b16_lo = hn::PromoteLowerTo(d16, vB);
+        auto b16_hi = hn::PromoteUpperTo(d16, vB);
+
+        auto r32_lo_lo = hn::PromoteLowerTo(d32, r16_lo);
+        auto r32_lo_hi = hn::PromoteUpperTo(d32, r16_lo);
+        auto r32_hi_lo = hn::PromoteLowerTo(d32, r16_hi);
+        auto r32_hi_hi = hn::PromoteUpperTo(d32, r16_hi);
+
+        auto g32_lo_lo = hn::PromoteLowerTo(d32, g16_lo);
+        auto g32_lo_hi = hn::PromoteUpperTo(d32, g16_lo);
+        auto g32_hi_lo = hn::PromoteLowerTo(d32, g16_hi);
+        auto g32_hi_hi = hn::PromoteUpperTo(d32, g16_hi);
+
+        auto b32_lo_lo = hn::PromoteLowerTo(d32, b16_lo);
+        auto b32_lo_hi = hn::PromoteUpperTo(d32, b16_lo);
+        auto b32_hi_lo = hn::PromoteLowerTo(d32, b16_hi);
+        auto b32_hi_hi = hn::PromoteUpperTo(d32, b16_hi);
+
+        auto c299 = hn::Set(d32, 299);
+        auto c587 = hn::Set(d32, 587);
+        auto c114 = hn::Set(d32, 114);
+        auto c500 = hn::Set(d32, 500);
+        auto c1000 = hn::Set(d32, 1000);
+
+        auto calc_l = [&](auto r, auto g, auto b) {
+            auto sum = hn::Add(hn::Add(hn::Add(hn::Mul(r, c299), hn::Mul(g, c587)), hn::Mul(b, c114)), c500);
+            return hn::Div(sum, c1000);
+        };
+
+        auto l_lo_lo = calc_l(r32_lo_lo, g32_lo_lo, b32_lo_lo);
+        auto l_lo_hi = calc_l(r32_lo_hi, g32_lo_hi, b32_lo_hi);
+        auto l_hi_lo = calc_l(r32_hi_lo, g32_hi_lo, b32_hi_lo);
+        auto l_hi_hi = calc_l(r32_hi_hi, g32_hi_hi, b32_hi_hi);
+
+        auto l16_lo = hn::OrderedDemote2To(d16, l_lo_lo, l_lo_hi);
+        auto l16_hi = hn::OrderedDemote2To(d16, l_hi_lo, l_hi_hi);
+        auto l8 = hn::OrderedDemote2To(d8, l16_lo, l16_hi);
+
+        alignas(128) uint8_t l_arr[128];
+        hn::Store(l8, d8, l_arr);
+
+        for (int j = 0; j < step; ++j) {
+            HistB[b_arr[j]]++;
+            HistG[g_arr[j]]++;
+            HistR[r_arr[j]]++;
+            HistL[l_arr[j]]++;
+        }
+    }
+    x_out = x;
+}
+}
+}
+HWY_AFTER_NAMESPACE();
+
+#if HWY_ONCE
+namespace {
+    HWY_EXPORT(ComputeHistRow);
+}
+#endif
+
 // [v5.2] Histogram from RawImageFrame (for HeavyLanePool pipeline)
 void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& frame, ImageMetadata* pMetadata) {
     if (!frame.pixels || frame.width == 0 || frame.height == 0 || !pMetadata) return;
@@ -9412,92 +9504,15 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
     uint64_t lapCount = 0;
     
     // Assume BGRA8888 (standard for RawImageFrame)
-    // Assume BGRA8888 (standard for RawImageFrame)
     for (UINT y = 0; y < frame.height; y += stepY) {
         const uint8_t* row = ptr + (UINT64)y * stride;
         UINT x = 0;
     
-        // Process 8 pixels per iteration.
-        const UINT width8 = frame.width & ~7u;
-
-#if QUICKVIEW_USE_STD_SIMD_HIST
-        using u32x8 = std::simd<uint32_t, std::simd_abi::fixed_size<8>>;
-        alignas(32) uint32_t bLane[8];
-        alignas(32) uint32_t gLane[8];
-        alignas(32) uint32_t rLane[8];
-        alignas(32) uint32_t lLane[8];
-
-        for (; x < width8; x += 8) {
-            const uint8_t* p = row + x * 4;
-            for (int i = 0; i < 8; ++i) {
-                const uint8_t* px = p + i * 4;
-                const uint32_t b = px[0];
-                const uint32_t g = px[1];
-                const uint32_t r = px[2];
-                bLane[i] = b;
-                gLane[i] = g;
-                rLane[i] = r;
-                pMetadata->HistB[b]++;
-                pMetadata->HistG[g]++;
-                pMetadata->HistR[r]++;
-            }
-
-            u32x8 vb;
-            u32x8 vg;
-            u32x8 vr;
-            vb.copy_from(bLane, std::element_aligned);
-            vg.copy_from(gLane, std::element_aligned);
-            vr.copy_from(rLane, std::element_aligned);
-
-            const u32x8 vl = (vr * 299u + vg * 587u + vb * 114u + 500u) / 1000u;
-            vl.copy_to(lLane, std::element_aligned);
-
-            for (int i = 0; i < 8; ++i) {
-                pMetadata->HistL[lLane[i]]++;
-            }
-        }
-#else
-        // [AVX2] SIMD Optimization for Luminance Calculation
-        const __m256i vCoeffs = _mm256_set1_epi64x(0x0000012B024B0072);
-        // Multiply by 8389 and shift by 23: 8389 / 2^23 = 8389 / 8388608 ≈ 0.000999999
-        // Max Luma = 255 * 1000 = 255000. Max mult = 255000 * 8389 = 2,139,195,000 < 2^31
-        const __m256i vMul = _mm256_set1_epi32(8389);
-
-        for (; x < width8; x += 8) {
-            __m256i vPixels = _mm256_loadu_si256((const __m256i*)(row + x * 4));
-            __m256i vPix03 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(vPixels));
-            __m256i vPix47 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(vPixels, 1));
-            __m256i vSum03 = _mm256_madd_epi16(vPix03, vCoeffs);
-            __m256i vSum47 = _mm256_madd_epi16(vPix47, vCoeffs);
-            __m256i vLuma03 = _mm256_hadd_epi32(vSum03, vSum03);
-            __m256i vLuma47 = _mm256_hadd_epi32(vSum47, vSum47);
-            __m256i vDiv03 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma03, vMul), 23);
-            __m256i vDiv47 = _mm256_srli_epi32(_mm256_mullo_epi32(vLuma47, vMul), 23);
-
-            uint32_t l0 = _mm256_cvtsi256_si32(vDiv03);
-            uint32_t l1 = _mm256_extract_epi32(vDiv03, 1);
-            uint32_t l2 = _mm256_extract_epi32(vDiv03, 4);
-            uint32_t l3 = _mm256_extract_epi32(vDiv03, 5);
-            uint32_t l4 = _mm256_cvtsi256_si32(vDiv47);
-            uint32_t l5 = _mm256_extract_epi32(vDiv47, 1);
-            uint32_t l6 = _mm256_extract_epi32(vDiv47, 4);
-            uint32_t l7 = _mm256_extract_epi32(vDiv47, 5);
-
-            const uint8_t* p = row + x * 4;
-            pMetadata->HistB[p[0]]++; pMetadata->HistG[p[1]]++; pMetadata->HistR[p[2]]++; pMetadata->HistL[l0]++;
-            pMetadata->HistB[p[4]]++; pMetadata->HistG[p[5]]++; pMetadata->HistR[p[6]]++; pMetadata->HistL[l1]++;
-            pMetadata->HistB[p[8]]++; pMetadata->HistG[p[9]]++; pMetadata->HistR[p[10]]++; pMetadata->HistL[l2]++;
-            pMetadata->HistB[p[12]]++; pMetadata->HistG[p[13]]++; pMetadata->HistR[p[14]]++; pMetadata->HistL[l3]++;
-            pMetadata->HistB[p[16]]++; pMetadata->HistG[p[17]]++; pMetadata->HistR[p[18]]++; pMetadata->HistL[l4]++;
-            pMetadata->HistB[p[20]]++; pMetadata->HistG[p[21]]++; pMetadata->HistR[p[22]]++; pMetadata->HistL[l5]++;
-            pMetadata->HistB[p[24]]++; pMetadata->HistG[p[25]]++; pMetadata->HistR[p[26]]++; pMetadata->HistL[l6]++;
-            pMetadata->HistB[p[28]]++; pMetadata->HistG[p[29]]++; pMetadata->HistR[p[30]]++; pMetadata->HistL[l7]++;
-        }
-#endif
+        int x_out = 0;
+        HWY_DYNAMIC_DISPATCH(ComputeHistRow)(row, frame.width, pMetadata->HistR.data(), pMetadata->HistG.data(), pMetadata->HistB.data(), pMetadata->HistL.data(), x_out);
+        x = (UINT)x_out;
 
     for (; x < frame.width; x++) {
-        // Unrolling or SIMD could be added here, but scalar is fast enough with skip sampling.
-        // Layout: B, G, R, A
         uint8_t b = row[x * 4 + 0];
         uint8_t g = row[x * 4 + 1];
         uint8_t r = row[x * 4 + 2];

@@ -61,14 +61,6 @@ static std::wstring GetAppVersion() {
     return L"2.1.0"; // Fallback
 }
 
-static bool CheckAVX2() {
-    int cpuInfo[4];
-    __cpuid(cpuInfo, 0);
-    if (cpuInfo[0] < 7) return false;
-    __cpuidex(cpuInfo, 7, 0);
-    return (cpuInfo[1] & (1 << 5)) != 0; 
-}
-
 // Helper to get Real Windows Version via RtlGetVersion
 typedef LONG (WINAPI *RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
 
@@ -123,8 +115,7 @@ std::wstring GetSystemInfo() {
     if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64) arch = L"ARM64";
 
     // 3. SIMD
-    std::wstring simd = L"SIMD: AVX2 [Active]"; // Default checked
-    if (!CheckAVX2()) simd = L"SIMD: SSE2";
+    std::wstring simd = L"SIMD: Highway [Active]"; // Default checked
 
     return osVer + L" | " + arch + L" | " + simd;
 }
@@ -1981,8 +1972,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 
                  D2D1_RECT_F textRect = D2D1::RectF(contentX, sysY, contentX + contentW, sysY + 20);
                  
-                 // Highlight "AVX2 [Active]" in Green
-                 size_t pos = item.label.find(L"SIMD: AVX2 [Active]");
+                 // Highlight "Highway [Active]" in Green
+                 size_t pos = item.label.find(L"SIMD: Highway [Active]");
                  if (pos != std::wstring::npos) {
                      // Draw first part Gray
                      std::wstring part1 = item.label.substr(0, pos);
@@ -1990,7 +1981,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      
                      // Draw active part Green (Approx offset)
                      D2D1_RECT_F avxRect = D2D1::RectF(contentX + 225.0f * s, sysY, contentX + contentW, sysY + 20.0f * s);
-                     pRT->DrawText(L"SIMD: AVX2 [Active]", 19, m_textFormatItem.Get(), avxRect, m_brushSuccess.Get());
+                     pRT->DrawText(L"SIMD: Highway [Active]", 22, m_textFormatItem.Get(), avxRect, m_brushSuccess.Get());
                  } else {
                      pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
                  }
