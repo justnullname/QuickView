@@ -419,6 +419,22 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
     return CreateScRgbColorContext(m_d2dContext.Get(), outContext);
   }
 
+  // [Fix] Manual overrides (modes 2,3,4,6) take absolute priority over embedded ICC.
+  // Without this, images with embedded ICC profiles silently ignore user's color space selection.
+  if (effectiveCmsMode == 2)
+    return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
+                                            outContext);
+  if (effectiveCmsMode == 3)
+    return LoadColorContextForPrimaries(QuickView::ColorPrimaries::DisplayP3,
+                                        outContext);
+  if (effectiveCmsMode == 4)
+    return LoadColorContextForPrimaries(QuickView::ColorPrimaries::AdobeRGB,
+                                        outContext);
+  if (effectiveCmsMode == 6)
+    return LoadColorContextForPrimaries(QuickView::ColorPrimaries::ProPhotoRGB,
+                                        outContext);
+
+  // Auto (1) and Gray (5): Use embedded ICC profile if available
   if (!frame.iccProfile.empty()) {
     ColorContextCacheKey key{frame.iccProfile};
     std::lock_guard<std::mutex> lock(m_cacheMutex);
@@ -469,19 +485,6 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
     return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
                                             outContext);
   }
-
-  if (effectiveCmsMode == 2)
-    return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
-                                            outContext);
-  if (effectiveCmsMode == 3)
-    return LoadColorContextForPrimaries(QuickView::ColorPrimaries::DisplayP3,
-                                        outContext);
-  if (effectiveCmsMode == 4)
-    return LoadColorContextForPrimaries(QuickView::ColorPrimaries::AdobeRGB,
-                                        outContext);
-  if (effectiveCmsMode == 6)
-    return LoadColorContextForPrimaries(QuickView::ColorPrimaries::ProPhotoRGB,
-                                        outContext);
 
   return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
                                           outContext);
@@ -816,27 +819,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
     }
   }
 
-  // [Optimization] Use GPU Compute for non-native format conversion
-  if (m_computeEngine && m_computeEngine->IsAvailable() &&
-      frame.format != QuickView::PixelFormat::BGRA8888 &&
-      frame.format != QuickView::PixelFormat::R32G32B32A32_FLOAT &&
-      frame.pixels) {
-    ComPtr<ID3D11Texture2D> pTex;
-    if (SUCCEEDED(m_computeEngine->UploadAndConvert(
-            frame.pixels, (int)frame.width, (int)frame.height, frame.format,
-            &pTex))) {
-      ComPtr<IDXGISurface> dxgiSurface;
-      if (SUCCEEDED(pTex.As(&dxgiSurface))) {
-        props.pixelFormat.format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        return m_d2dContext->CreateBitmapFromDxgiSurface(
-            dxgiSurface.Get(), &props,
-            reinterpret_cast<ID2D1Bitmap1 **>(outBitmap));
-      }
-    }
-  }
-
   // [ CMS Re-architected ] 
-  // Step 1: Find best source context BEFORE creating the raw bitmap
+  // Step 1: Determine CMS mode and resolve source context BEFORE bitmap creation.
+  // This ensures ALL non-HDR paths (BGRA, RGBA, BGRX) converge into the CMS chain.
   extern RuntimeConfig g_runtime;
   extern AppConfig g_config;
   int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
@@ -859,18 +844,41 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   if (!srcContext)
     m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srcContext);
 
-  // [v10.3] Critical Optimization: Attach detected color context to the bitmap creation properties
   D2D1_BITMAP_PROPERTIES1 propsWithContext = props;
   propsWithContext.colorContext = srcContext.Get();
 
-  // Create Direct Upload Bitmap with source context attached
+  // Step 2: Create raw bitmap via GPU compute or direct upload
   ComPtr<ID2D1Bitmap1> rawBitmap;
-  HRESULT hr = m_d2dContext->CreateBitmap(
-      D2D1::SizeU(static_cast<UINT32>(frame.width),
-                  static_cast<UINT32>(frame.height)),
-      frame.pixels, static_cast<UINT32>(frame.stride), &propsWithContext, &rawBitmap);
 
-  if (FAILED(hr)) return hr;
+  // [Optimization] GPU Compute for non-native format conversion (RGBA/BGRX)
+  // [Fix] No longer returns early - falls through to CMS effect chain below.
+  if (m_computeEngine && m_computeEngine->IsAvailable() &&
+      frame.format != QuickView::PixelFormat::BGRA8888 &&
+      frame.format != QuickView::PixelFormat::R32G32B32A32_FLOAT &&
+      frame.pixels) {
+    ComPtr<ID3D11Texture2D> pTex;
+    if (SUCCEEDED(m_computeEngine->UploadAndConvert(
+            frame.pixels, (int)frame.width, (int)frame.height, frame.format,
+            &pTex))) {
+      ComPtr<IDXGISurface> dxgiSurface;
+      if (SUCCEEDED(pTex.As(&dxgiSurface))) {
+        D2D1_BITMAP_PROPERTIES1 computeProps = propsWithContext;
+        computeProps.pixelFormat.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        computeProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+        m_d2dContext->CreateBitmapFromDxgiSurface(
+            dxgiSurface.Get(), &computeProps, &rawBitmap);
+      }
+    }
+  }
+
+  // Fallback: Direct pixel upload (BGRA8888 or if compute path failed)
+  if (!rawBitmap) {
+    HRESULT hr = m_d2dContext->CreateBitmap(
+        D2D1::SizeU(static_cast<UINT32>(frame.width),
+                    static_cast<UINT32>(frame.height)),
+        frame.pixels, static_cast<UINT32>(frame.stride), &propsWithContext, &rawBitmap);
+    if (FAILED(hr)) return hr;
+  }
 
   if (applyCms && effectiveCmsMode != 0) { // Mode 0 = Unmanaged (Force bypass)
     // Find destination context (Monitor or scRGB)

@@ -4894,7 +4894,7 @@ void RefreshImageDisplay(HWND hwnd) {
     if (needsRepaint) {
         if (!IsCompareModeActive()) {
             extern bool RenderImageToDComp(HWND hwnd, ImageResource & res, bool isFastUpgrade);
-            RenderImageToDComp(hwnd, g_imageResource, false);
+            RenderImageToDComp(hwnd, g_imageResource, true);
         } else {
             extern bool RenderCompareComposite(HWND hwnd);
             RenderCompareComposite(hwnd);
@@ -8856,12 +8856,10 @@ SKIP_EDGE_NAV:;
         case IDM_CMS_ADOBERGB:
         case IDM_CMS_GRAY:
         case IDM_CMS_PROPHOTO: {
-             int newMode = (int)wParam - (int)IDM_CMS_UNMANAGED;
+             int newMode = (int)cmdId - (int)IDM_CMS_UNMANAGED;
              g_runtime.CmsModeOverride = newMode;
              
-             // Apply immediately by forcing a GPU re-upload
-             g_preservedViewState = g_viewState;
-             g_preserveViewStateOnNextLoad = true;
+             // Apply immediately by forcing a GPU re-upload (isFastUpgrade=true, no window resize)
              RefreshImageDisplay(hwnd);
 
              std::wstring msg = L"Color Space: ";
