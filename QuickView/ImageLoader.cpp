@@ -5922,6 +5922,8 @@ namespace QuickView {
                 avifDecoder* decoder = avifDecoderCreate();
                 if (!decoder) return E_OUTOFMEMORY;
 
+                decoder->imageContentToDecode |= AVIF_IMAGE_CONTENT_GAIN_MAP;
+
                 decoder->strictFlags = AVIF_STRICT_DISABLED;
                 const unsigned int threads = std::thread::hardware_concurrency();
                 decoder->maxThreads = threads > 0 ? threads : 4;
