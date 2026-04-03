@@ -1834,18 +1834,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             else if (item.type == OptionType::AboutLinks) {
                 // 3 Columns: GitHub, Issues, Hotkeys
                 LinkRects r = GetLinkButtonRects(D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 40));
-                
-                // Pass mouse pos logic?
-                // We'll simplisticly check if ANY sub-rect contains mouse in OnMouseMove but here we just render.
-                // We need to know mouse pos to render hover effect.
-                // Hack: We don't have mouse pos here easily unless stored.
-                // User ASKED for hover effect. 
-                // We can cache sub-hover index in OnMouseMove in "m_hoverLinkIndex" member if we add it.
-                // Or easier: Just draw outlined always, good enough?
-                // No, "增加鼠标经过效果".
-                // TODO: Implement `m_lastMousePos` in `OnMouseMove` and use it here.
-                // For now, assume we implement that next step or use simple outline.
-                
+
                 // GitHub
                 {
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.github, 4.0f, 4.0f);
