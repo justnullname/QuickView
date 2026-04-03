@@ -4853,35 +4853,53 @@ void AdjustWindowToImage(HWND hwnd) {
 // [v10.1] Refresh Current Image Display (Direct GPU Re-upload from cache)
 // Used for instant settings updates like Tone Mapping, CMS toggle, etc.
 void RefreshImageDisplay(HWND hwnd) {
-    if (!g_pImageEngine || !g_renderEngine || g_imagePath.empty()) return;
+    if (!g_pImageEngine || !g_renderEngine) return;
 
-    // 1. Get current frame from cache (Linear Raw Pixels)
-    auto frame = g_pImageEngine->GetCachedImage(g_imagePath);
-    if (frame && frame->IsValid()) {
-        // [v10.0] Measure Image Peak on demand if it's an HDR-capable float frame
-        if (g_currentMetadata.MeasuredPeakNits < 0.0f && 
-            frame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
-            frame->pixels) {
-            g_currentMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*frame) * 80.0f;
-        }
-        ComPtr<ID2D1Bitmap> bitmap;
-        // 2. Direct GPU Re-upload (Applies new Tone Mapping / CMS settings)
-        if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*frame, &bitmap))) {
-            g_imageResource.bitmap = bitmap;
-            
-            // 3. Update DComp Surface for Composition Engine
-            if (!IsCompareModeActive()) {
-                extern bool RenderImageToDComp(HWND hwnd, ImageResource & res, bool isFastUpgrade);
-                RenderImageToDComp(hwnd, g_imageResource, false);
-            } else {
-                // In Compare Mode, we need a full composite update
-                extern bool RenderCompareComposite(HWND hwnd);
-                RenderCompareComposite(hwnd);
+    bool needsRepaint = false;
+
+    // Refresh Right Pane (Single or Compare Right)
+    if (!g_imagePath.empty()) {
+        auto frame = g_pImageEngine->GetCachedImage(g_imagePath);
+        if (frame && frame->IsValid()) {
+            if (g_currentMetadata.MeasuredPeakNits < 0.0f &&
+                frame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
+                frame->pixels) {
+                g_currentMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*frame) * 80.0f;
             }
-
-            // 4. Force UI Repaint
-            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+            ComPtr<ID2D1Bitmap> bitmap;
+            if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*frame, &bitmap))) {
+                g_imageResource.bitmap = bitmap;
+                needsRepaint = true;
+            }
         }
+    }
+
+    // Refresh Left Pane (Compare Mode)
+    if (IsCompareModeActive() && g_compare.left.valid && !g_compare.left.path.empty()) {
+        auto leftFrame = g_pImageEngine->GetCachedImage(g_compare.left.path);
+        if (leftFrame && leftFrame->IsValid()) {
+            if (g_compare.left.metadata.MeasuredPeakNits < 0.0f &&
+                leftFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
+                leftFrame->pixels) {
+                g_compare.left.metadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*leftFrame) * 80.0f;
+            }
+            ComPtr<ID2D1Bitmap> leftBitmap;
+            if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*leftFrame, &leftBitmap))) {
+                g_compare.left.resource.bitmap = leftBitmap;
+                needsRepaint = true;
+            }
+        }
+    }
+
+    if (needsRepaint) {
+        if (!IsCompareModeActive()) {
+            extern bool RenderImageToDComp(HWND hwnd, ImageResource & res, bool isFastUpgrade);
+            RenderImageToDComp(hwnd, g_imageResource, false);
+        } else {
+            extern bool RenderCompareComposite(HWND hwnd);
+            RenderCompareComposite(hwnd);
+        }
+        RequestRepaint(PaintLayer::Image | PaintLayer::Static);
     } else {
         // Fallback: If not in cache, do a full asynchronous reload
         void ReloadCurrentImage(HWND hwnd);
@@ -8200,7 +8218,7 @@ SKIP_EDGE_NAV:;
             if (idx >= 0 && idx < profiles.size()) {
                 g_runtime.SoftProofProfilePath = profiles[idx];
                 g_runtime.EnableSoftProofing = true;
-                RequestRepaint(PaintLayer::All);
+                RefreshImageDisplay(hwnd);
                 g_osd.Show(hwnd, L"Soft Proofing Target Updated", false);
             }
             return 0;
@@ -8841,17 +8859,10 @@ SKIP_EDGE_NAV:;
              int newMode = (int)wParam - (int)IDM_CMS_UNMANAGED;
              g_runtime.CmsModeOverride = newMode;
              
-             // Apply immediately by forcing a re-decode
-             if (g_imageResource && !g_imagePath.empty()) {
-                 if (g_imageEngine) {
-                     g_imageEngine->UpdateConfig(g_runtime);
-                     g_imageEngine->SetForceRefresh(true);
-                 }
-                 g_preservedViewState = g_viewState;
-                 g_preserveViewStateOnNextLoad = true;
-                 ReleaseImageResources();
-                 LoadImageAsync(hwnd, g_imagePath, false, QuickView::BrowseDirection::IDLE);
-             }
+             // Apply immediately by forcing a GPU re-upload
+             g_preservedViewState = g_viewState;
+             g_preserveViewStateOnNextLoad = true;
+             RefreshImageDisplay(hwnd);
 
              std::wstring msg = L"Color Space: ";
              switch (newMode) {
@@ -8877,14 +8888,14 @@ SKIP_EDGE_NAV:;
                  break;
              }
              g_runtime.EnableSoftProofing = !g_runtime.EnableSoftProofing;
-             RequestRepaint(PaintLayer::All);
+             RefreshImageDisplay(hwnd);
              g_osd.Show(hwnd, g_runtime.EnableSoftProofing ? L"Soft Proofing: ON" : L"Soft Proofing: OFF", false);
              break;
         }
         case IDM_SOFT_PROOF_CUSTOM: {
              g_runtime.SoftProofProfilePath = g_config.CustomSoftProofProfile;
              g_runtime.EnableSoftProofing = true;
-             RequestRepaint(PaintLayer::All);
+             RefreshImageDisplay(hwnd);
              g_osd.Show(hwnd, L"Soft Proofing Target Updated", false);
              break;
         }
