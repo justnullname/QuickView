@@ -9387,7 +9387,7 @@ HRESULT CImageLoader::ComputeHistogram(IWICBitmapSource* source, ImageMetadata* 
 }
 
 HWY_BEFORE_NAMESPACE();
-namespace {
+namespace SIMD_ImageLoader {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 
@@ -9467,12 +9467,12 @@ inline void ComputeHistRow(const uint8_t* row, int width, uint32_t* HistR, uint3
     }
     x_out = x;
 }
-}
-}
+} // HWY_NAMESPACE
+} // SIMD_ImageLoader
 HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
-namespace {
+namespace SIMD_ImageLoader {
     HWY_EXPORT(ComputeHistRow);
 }
 #endif
@@ -9509,7 +9509,7 @@ void CImageLoader::ComputeHistogramFromFrame(const QuickView::RawImageFrame& fra
         UINT x = 0;
     
         int x_out = 0;
-        HWY_DYNAMIC_DISPATCH(ComputeHistRow)(row, frame.width, pMetadata->HistR.data(), pMetadata->HistG.data(), pMetadata->HistB.data(), pMetadata->HistL.data(), x_out);
+        HWY_DYNAMIC_DISPATCH(SIMD_ImageLoader::ComputeHistRow)(row, frame.width, pMetadata->HistR.data(), pMetadata->HistG.data(), pMetadata->HistB.data(), pMetadata->HistL.data(), x_out);
         x = (UINT)x_out;
 
     for (; x < frame.width; x++) {
