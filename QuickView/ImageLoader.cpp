@@ -318,10 +318,7 @@ static void ProbeHdrMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadat
     if (decoder) {
         if (avifDecoderSetIOMemory(decoder, mapping.data(), mapping.size()) == AVIF_RESULT_OK) {
             if (avifDecoderParse(decoder) == AVIF_RESULT_OK) {
-                pHdr->isHdr = (decoder->image->depth > 8);
-                pHdr->primaries = MapCicpPrimaries((uint8_t)decoder->image->colorPrimaries);
-                pHdr->transfer = MapCicpTransfer((uint8_t)decoder->image->transferCharacteristics);
-                pHdr->isValid = true;
+                PopulateAvifHdrStaticMetadata(decoder->image, pHdr);
                 avifDecoderDestroy(decoder);
                 return;
             }

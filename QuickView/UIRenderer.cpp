@@ -1743,14 +1743,22 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         metadata.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
         metadata.colorInfo.IsSceneLinear()) {
         const std::wstring hdrSummary = BuildHdrSummary(metadata);
-        const std::wstring hdrDetail = BuildHdrDetail(metadata.hdrMetadata);
-        if (!hdrSummary.empty() || !hdrDetail.empty()) {
+        const std::wstring hdrDetailTooltip = BuildHdrDetail(metadata.hdrMetadata);
+        
+        // Very minimal detail for the summary line: Only show GainMap Alt stops if present
+        std::wstring hdrSummaryDetail; 
+        if (metadata.hdrMetadata.hasGainMap) {
+            const std::wstring altStops = FormatHdrStops(metadata.hdrMetadata.gainMapAlternateHeadroom);
+            if (!altStops.empty()) hdrSummaryDetail = L"Alt " + altStops;
+        }
+
+        if (!hdrSummary.empty() || !hdrDetailTooltip.empty()) {
             rows.push_back({
                 L"\U0001F31F",
                 L"HDR",
                 hdrSummary.empty() ? L"Metadata" : hdrSummary,
-                hdrDetail,
-                hdrSummary + (hdrDetail.empty() ? L"" : L"\n" + hdrDetail),
+                g_runtime.ShowHdrDetailsExpanded ? L"" : hdrSummaryDetail, 
+                hdrSummary + (hdrDetailTooltip.empty() ? L"" : L"\n" + hdrDetailTooltip),
                 TruncateMode::EndEllipsis,
                 false
             });
@@ -2062,16 +2070,11 @@ namespace {
         }
 
         if (hdr.gainMapApplied) {
-            if (!summary.empty()) summary += L" ";
-            summary += L"[GainMap Applied]";
+            // Already handled by showing "Ultra HDR" or "Applied" in details
+            // Keep it simple for summary
         } else if (hdr.hasGainMap) {
             if (!summary.empty()) summary += L" ";
             summary += L"[GainMap]";
-        }
-
-        if (metadata.colorInfo.IsSceneLinear()) {
-            if (!summary.empty()) summary += L" ";
-            summary += L"[Linear]";
         }
 
         return summary;
