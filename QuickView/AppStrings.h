@@ -283,6 +283,11 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_CmsIntent;
     extern const wchar_t* Settings_Option_CmsIntentRelative;
     extern const wchar_t* Settings_Option_CmsIntentPerceptual;
+    extern const wchar_t* Settings_Tooltip_CMS;
+    extern const wchar_t* Settings_Tooltip_CmsIntent;
+    extern const wchar_t* Settings_Tooltip_AdvancedColor;
+    extern const wchar_t* Settings_Tooltip_HdrToneMapping;
+    extern const wchar_t* Settings_Tooltip_ZoomAuto;
     extern const wchar_t* Context_SoftProofing;
     extern const wchar_t* Context_SoftProofProfile;
     extern const wchar_t* Context_SoftProofCustom;

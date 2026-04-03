@@ -1087,6 +1087,7 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
     
     SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
+    itemFsZoom.tooltipText = AppStrings::Settings_Tooltip_ZoomAuto;
     itemFsZoom.onChange = []() {
         SaveConfig();
         HWND hwnd = GetActiveWindow();
@@ -1184,6 +1185,7 @@ void SettingsOverlay::BuildMenu() {
     
     // CMS - Color Management System
     SettingsItem itemCmsToggle = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
+    itemCmsToggle.tooltipText = AppStrings::Settings_Tooltip_CMS;
     itemCmsToggle.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1194,6 +1196,7 @@ void SettingsOverlay::BuildMenu() {
 
     SettingsItem itemCmsIntent = { AppStrings::Settings_Label_CmsIntent, OptionType::ComboBox, nullptr, nullptr, &g_config.CmsRenderingIntent, nullptr, 0, 0,
         { AppStrings::Settings_Option_CmsIntentPerceptual, AppStrings::Settings_Option_CmsIntentRelative } };
+    itemCmsIntent.tooltipText = AppStrings::Settings_Tooltip_CmsIntent;
     itemCmsIntent.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1203,6 +1206,7 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back(itemCmsIntent);
 
     SettingsItem itemAdvColor = { AppStrings::Settings_Label_AdvancedColor, OptionType::Toggle, &g_config.EnableAdvancedColor };
+    itemAdvColor.tooltipText = AppStrings::Settings_Tooltip_AdvancedColor;
     itemAdvColor.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1218,6 +1222,7 @@ void SettingsOverlay::BuildMenu() {
 
     SettingsItem itemHdrToneMapping = { AppStrings::Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
         { AppStrings::Settings_Option_HdrPerceptual, AppStrings::Settings_Option_HdrColorimetric } };
+    itemHdrToneMapping.tooltipText = AppStrings::Settings_Tooltip_HdrToneMapping;
     itemHdrToneMapping.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -2033,6 +2038,36 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + labelWidth, contentY + rowHeight);
             pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), labelRect, m_brushTextDim.Get());
 
+            // Tooltip Icon (?)
+            if (!item.tooltipText.empty()) {
+                float textW = 100.0f * s; // Fallback
+                ComPtr<IDWriteTextLayout> layout;
+                if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                        item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
+                        labelWidth, rowHeight, &layout))) {
+                    DWRITE_TEXT_METRICS metrics = {};
+                    if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                        textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                    }
+                }
+
+                float iconX = contentX + textW + 8.0f * s;
+                item.tooltipIconRect = D2D1::RectF(iconX, contentY + 2.0f * s, iconX + 24.0f * s, contentY + 26.0f * s);
+
+                m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+                bool isHover = (&item == m_pHoverTooltipItem);
+                ComPtr<ID2D1SolidColorBrush> iconBrush = isHover ? m_brushText : m_brushTextDim;
+
+                pRT->DrawText(L"\xE946", 1, m_textFormatSymbol.Get(), item.tooltipIconRect, iconBrush.Get());
+
+                m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            } else {
+                item.tooltipIconRect = {0};
+            }
+
             // Control Area
             float controlOffset = 280.0f * s; 
             float controlX = contentX + controlOffset;
@@ -2244,6 +2279,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         } // End Item Loop
     } // End Active Tab Check
     pRT->PopAxisAlignedClip();
+
+    RenderTooltip(pRT);
 
     // Draw Scrollbar
     float visibleH = hudH - 60.0f * s;
@@ -2495,6 +2532,9 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
     if (!m_visible) return SettingsAction::None;
 
+    m_lastMouseX = x;
+    m_lastMouseY = y;
+
     // Calculate HUD bounds (must match Render)
     // NOTE: We need window size. For now, use cached/known values or assume calling code passes them.
     // A better approach is to store m_lastWinW/m_lastWinH. For now, apply simple logic.
@@ -2556,6 +2596,9 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     bool oldCopyHover = m_isHoveringCopyright;
     m_isHoveringCopyright = false;
 
+    SettingsItem* oldTooltipHover = m_pHoverTooltipItem;
+    m_pHoverTooltipItem = nullptr;
+
     // Default Cursor
     ::SetCursor(::LoadCursor(NULL, IDC_ARROW));
 
@@ -2567,6 +2610,14 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         for (auto& item : m_tabs[m_activeTab].items) {
             // Must be within visible vertical bounds (accounting for clip rect)
             if (y >= hudY && y <= hudBottom) {
+                // Tooltip Hit Testing (Takes priority over general item interaction if small icon clicked)
+                if (!item.tooltipText.empty()) {
+                    if (x >= item.tooltipIconRect.left && x <= item.tooltipIconRect.right &&
+                        y >= item.tooltipIconRect.top && y <= item.tooltipIconRect.bottom) {
+                        m_pHoverTooltipItem = &item;
+                    }
+                }
+
                 if (x >= item.interactRect.left && x <= item.interactRect.right &&
                     y >= item.interactRect.top && y <= item.interactRect.bottom) {
                 
@@ -2588,13 +2639,15 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         if (m_hoverLinkIndex != -1) ::SetCursor(::LoadCursor(NULL, IDC_HAND));
                     }
                     
-                    break;
+                    if (!m_pHoverTooltipItem) { // Only break if we didn't also find a tooltip this frame
+                        break;
+                    }
                 }
             }
         }
     }
 
-    return ((oldHover != m_pHoverItem) || (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) || m_visible) ? SettingsAction::RepaintStatic : SettingsAction::None;
+    return ((oldHover != m_pHoverItem) || (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) || (oldTooltipHover != m_pHoverTooltipItem) || m_visible) ? SettingsAction::RepaintStatic : SettingsAction::None;
 }
 
 SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
@@ -2956,3 +3009,57 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
     pRT->PopAxisAlignedClip();
 }
 
+
+void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
+    if (!m_pHoverTooltipItem || m_pHoverTooltipItem->tooltipText.empty()) return;
+
+    float s = m_uiScale;
+
+    // Setup format
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+    float padding = 12.0f * s;
+    float maxW = 300.0f * s;
+
+    ComPtr<IDWriteTextLayout> layout;
+    HRESULT hr = m_dwriteFactory->CreateTextLayout(
+        m_pHoverTooltipItem->tooltipText.c_str(),
+        (UINT32)m_pHoverTooltipItem->tooltipText.length(),
+        m_textFormatItem.Get(),
+        maxW,
+        5000.0f,
+        &layout);
+
+    if (FAILED(hr)) return;
+
+    DWRITE_TEXT_METRICS metrics;
+    layout->GetMetrics(&metrics);
+
+    float boxW = metrics.width + padding * 2.0f;
+    float boxH = metrics.height + padding * 2.0f;
+
+    // Position near mouse, bounded by window
+    float x = m_lastMouseX + 16.0f * s;
+    float y = m_lastMouseY + 16.0f * s;
+
+    D2D1_SIZE_F rtSize = pRT->GetSize();
+    if (x + boxW > rtSize.width) x = rtSize.width - boxW - 8.0f * s;
+    if (y + boxH > rtSize.height) y = rtSize.height - boxH - 8.0f * s;
+
+    D2D1_RECT_F bgRect = D2D1::RectF(x, y, x + boxW, y + boxH);
+    D2D1_ROUNDED_RECT roundedBg = D2D1::RoundedRect(bgRect, 4.0f * s, 4.0f * s);
+
+    // Soft shadow (simulated)
+    D2D1_ROUNDED_RECT shadow = D2D1::RoundedRect(D2D1::RectF(bgRect.left, bgRect.top + 4.0f, bgRect.right, bgRect.bottom + 4.0f), 4.0f * s, 4.0f * s);
+    ComPtr<ID2D1SolidColorBrush> shadowBrush;
+    pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.2f), &shadowBrush);
+    pRT->FillRoundedRectangle(shadow, shadowBrush.Get());
+
+    // Background and border
+    pRT->FillRoundedRectangle(roundedBg, m_brushControlBg.Get());
+    pRT->DrawRoundedRectangle(roundedBg, m_brushBorder.Get(), 1.0f * s);
+
+    // Text
+    pRT->DrawTextLayout(D2D1::Point2F(x + padding, y + padding), layout.Get(), m_brushText.Get());
+}

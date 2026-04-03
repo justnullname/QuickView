@@ -255,6 +255,11 @@ const wchar_t *Settings_Option_CmsProPhoto = nullptr;
 const wchar_t *Settings_Label_CmsIntent = nullptr;
 const wchar_t *Settings_Option_CmsIntentRelative = nullptr;
 const wchar_t *Settings_Option_CmsIntentPerceptual = nullptr;
+const wchar_t *Settings_Tooltip_CMS = nullptr;
+const wchar_t *Settings_Tooltip_CmsIntent = nullptr;
+const wchar_t *Settings_Tooltip_AdvancedColor = nullptr;
+const wchar_t *Settings_Tooltip_HdrToneMapping = nullptr;
+const wchar_t *Settings_Tooltip_ZoomAuto = nullptr;
 
 const wchar_t *Settings_Action_CheckUpdates = nullptr;
 const wchar_t *Settings_Action_ViewUpdate = nullptr;
@@ -608,8 +613,7 @@ struct EN {
   static constexpr const wchar_t *Settings_Label_FullScreenZoomMode =
       L"Fullscreen Zoom Mode";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"Fit to Screen";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% / Fit)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"Auto";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"Invert Wheel";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"Zoom 100% Snap Damping";
@@ -634,8 +638,8 @@ struct EN {
   static constexpr const wchar_t *Settings_Label_CMS = L"Color Management";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Advanced Color (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR Tone Mapping";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual (Dynamic Midtones)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimetric (Strict 80 nits)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimetric";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Untagged Image Fallback";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Soft Proof Profile (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Soft Proofing Preview";
@@ -722,8 +726,7 @@ struct EN {
       L"Nearest: Extreme sharpness";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"HQ Cubic: Extreme smoothing";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"Auto: Size-dependent";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"Auto";
   static constexpr const wchar_t *Settings_Option_Auto = L"Auto";
   static constexpr const wchar_t *Settings_Option_Eco = L"Eco";
   static constexpr const wchar_t *Settings_Option_Balanced = L"Balanced";
@@ -804,6 +807,11 @@ struct EN {
   static constexpr const wchar_t *HUD_Label_High = L"High: ";
   static constexpr const wchar_t *HUD_Label_Low = L"Low: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"Ref: ";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"Enable Color Management System.\nWhen enabled, applies high-precision color space conversion via GPU to restore true colors.\nDisabling it reduces GPU load, but may result in oversaturated colors on wide-gamut displays.";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"Rendering Intent for color space conversion.\nPerceptual: Compresses out-of-gamut colors to preserve details and gradients (ideal for photos).\nRelative Colorimetric: Preserves in-gamut colors and clips out-of-gamut ones (ideal for UI and icons).";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Enable 16-bit floating-point rendering pipeline (scRGB).\nWhen enabled, perfectly renders photo highlights on HDR-capable displays by breaking the SDR limit.\nDisabling it forces mapping to SDR output.\nNote: Enabling increases VRAM usage.";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR to SDR Tone Mapping strategy:\nDetermines how HDR images are displayed on SDR monitors.\nPerceptual: Preserves highlight details by smoothly compressing the luminance curve (softer look).\nColorimetric: Strict luminance mapping; highlights exceeding the monitor limit are clipped.";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.";
 };
 
 // ----------------------------------------------------------------
@@ -927,8 +935,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_FullScreenZoomMode =
       L"全屏时缩放模式";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"适应屏幕";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自动 (100% / 适应)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"自动";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"反转滚轮";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"缩放 100% 吸附阻尼";
@@ -948,8 +955,8 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_CMS = L"色彩管理 (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高级色彩与 HDR (scRGB)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR 色调映射";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知 (动态中间调)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度 (严格 80 尼特)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"无配置图片的默认回退";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"自定义软打样配置 (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"软打样预览";
@@ -1018,8 +1025,7 @@ struct CN {
       L"最近邻 (Nearest)：极端锐利";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"高质量双三次 (HQ Cubic)：极端平滑";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"自动：根据尺寸自动";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"自动";
   static constexpr const wchar_t *Settings_Option_Auto = L"自动";
   static constexpr const wchar_t *Settings_Option_Eco = L"节能";
   static constexpr const wchar_t *Settings_Option_Balanced = L"平衡";
@@ -1232,6 +1238,11 @@ struct CN {
       L"值得拥有一个更快、更纯粹的看图工具。 "
       L"我没有推广预算，也没有团队。如果您喜欢这次更新，在 GitHub "
       L"上点一颗星或分享给朋友，就是对我最大的支持。";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"启用色彩管理 (Color Management System)。\n开启后，将通过 GPU 进行高精度色彩空间转换以还原真实色彩。\n关闭可降低性能消耗，但在广色域屏幕上可能导致颜色过饱和。";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"色彩空间转换策略 (Rendering Intent)。\n感知模式 (Perceptual)：压缩超出色域的颜色，保留细节和渐变，适合照片。\n相对比色 (Relative Colorimetric)：保留在色域内的颜色，超出部分裁剪，适合 UI 和图标。";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"启用 16-bit 浮点渲染管线 (scRGB)。\n开启后，在支持 HDR 的显示器上能突破 SDR 亮度限制，完美呈现照片高光。\n关闭将强制降级映射至 SDR 输出。\n注意：开启会增加显存占用。";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR 至 SDR 降级策略 (Tone Mapping)：\n当 HDR 图片在 SDR 显示器上显示时的映射方式。\n感知模式：保留高光细节，平滑压缩亮度曲线，观感柔和。\n色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自动：图片小于屏幕尺寸时 100% 缩放，图片大于屏幕尺寸时适应屏幕尺寸缩放。";
 };
 
 // ----------------------------------------------------------------
@@ -1458,8 +1469,7 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_FullScreenZoomMode =
       L"全螢幕縮放模式";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"適應螢幕";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自動 (100% / 適應)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"自動";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"反轉滾輪";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"縮放 100% 吸附阻尼";
@@ -1480,8 +1490,8 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_CMS = L"色彩管理 (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高級色彩與 HDR (scRGB)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR 色調映射";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知 (動態中間調)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度 (嚴格 80 尼特)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"無配置圖片的預設回退";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"自訂軟打樣配置 (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"軟打樣預覽";
@@ -1563,8 +1573,7 @@ struct TW {
       L"最近鄰 (Nearest)：極端銳利";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"高品質雙三次 (HQ Cubic)：極端平滑";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"自動：根據尺寸自動";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"自動";
   static constexpr const wchar_t *Settings_Option_Auto = L"自動";
   static constexpr const wchar_t *Settings_Option_Eco = L"節能";
   static constexpr const wchar_t *Settings_Option_Balanced = L"平衡";
@@ -1644,6 +1653,11 @@ struct TW {
   static constexpr const wchar_t *HUD_Label_High = L"高: ";
   static constexpr const wchar_t *HUD_Label_Low = L"低: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"參考: ";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"啟用色彩管理 (Color Management System)。\n開啟後，將透過 GPU 進行高精度色彩空間轉換以還原真實色彩。\n關閉可降低效能消耗，但在廣色域螢幕上可能導致顏色過飽和。";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"色彩空間轉換策略 (Rendering Intent)。\n感知模式 (Perceptual)：壓縮超出色域的顏色，保留細節和漸變，適合照片。\n相對比色 (Relative Colorimetric)：保留在色域內的顏色，超出部分裁剪，適合 UI 和圖示。";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"啟用 16-bit 浮點渲染管線 (scRGB)。\n開啟後，在支援 HDR 的顯示器上能突破 SDR 亮度限制，完美呈現照片高光。\n關閉將強制降級對映至 SDR 輸出。\n注意：開啟會增加顯示卡記憶體佔用。";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR 至 SDR 降級策略 (Tone Mapping)：\n當 HDR 圖片在 SDR 顯示器上顯示時的對映方式。\n感知模式：保留高光細節，平滑壓縮亮度曲線，觀感柔和。\n色度模式：保持嚴格亮度對映，超出顯示器極限的亮度將被直接裁剪。";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自動：圖片小於螢幕尺寸時 100% 縮放，圖片大於螢幕尺寸時適應螢幕尺寸縮放。";
 };
 
 // ----------------------------------------------------------------
@@ -1892,8 +1906,7 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_FullScreenZoomMode =
       L"全画面ズームモード";
   static constexpr const wchar_t *Settings_Option_FitScreen = L"画面に合わせる";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"自動 (100% / 合わせる)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"自動";
   static constexpr const wchar_t *Settings_Label_InvertWheel = L"ホイール反転";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"100%ズーム吸着ダンピング";
@@ -1919,8 +1932,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_CMS = L"カラー管理 (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高度な色とHDR (scRGB)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR トーンマッピング";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"知覚的 (動的ミッドトーン)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"測色 (厳密な80 nits)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"知覚的";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"測色";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"プロファイルなし画像のフォールバック";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"ソフトプルーフプロファイル (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"ソフトプルーフプレビュー";
@@ -1993,8 +2006,7 @@ struct JA {
       L"ニアレスト: 極端なシャープネス";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"HQキュービック: 極端な平滑化";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"自動: サイズ依存";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"自動";
   static constexpr const wchar_t *Settings_Option_Auto = L"自動";
   static constexpr const wchar_t *Settings_Option_Eco = L"エコ";
   static constexpr const wchar_t *Settings_Option_Balanced = L"バランス";
@@ -2088,6 +2100,11 @@ struct JA {
   static constexpr const wchar_t *HUD_Label_High = L"High: ";
   static constexpr const wchar_t *HUD_Label_Low = L"Low: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"Ref: ";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"カラーマネジメントシステム (CMS) を有効にする。\n有効にすると、GPUによる高精度な色空間変換が適用され、正しい色を再現します。\n無効にするとGPUの負荷を減らせますが、広色域ディスプレイでは色が過飽和になる場合があります。";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"色空間の変換方法 (レンダリングインテント)。\n知覚的 (Perceptual)：色域外の色を圧縮し、階調とディテールを保持します (写真向け)。\n相対的な色域を維持 (Relative Colorimetric)：色域内の色はそのまま維持し、色域外の色はクリップします (UIやアイコン向け)。";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"16-bit浮動小数点レンダリングパイプライン (scRGB) を有効にする。\n有効にすると、HDR対応ディスプレイでSDRの制限を超え、写真のハイライトを完璧に表現します。\n無効にするとSDR出力に強制的にマッピングされます。\n注意: 有効にするとVRAMの使用量が増加します。";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR から SDR へのトーンマッピング戦略:\nHDR画像がSDRモニターでどのように表示されるかを決定します。\n知覚的：輝度カーブを滑らかに圧縮してハイライトのディテールを保持します（ソフトな見た目）。\n測色：厳密な輝度マッピング。モニターの限界を超えるハイライトはクリップされます。";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自動：画像が画面サイズより小さい場合は100%に拡大縮小し、大きい場合は画面サイズに合わせて拡大縮小します。";
 };
 
 // ----------------------------------------------------------------
@@ -2356,8 +2373,7 @@ struct RU {
       L"Масштаб в полноэкранном режиме";
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"Вписывать";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Авто (100% / По размеру)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"Авто";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Инвертировать действие колеса";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -2388,8 +2404,8 @@ struct RU {
       L"Управление цветом (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Расширенный цвет (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"Тональная компрессия HDR";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Перцептивная (динамические полутона)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Колориметрическая (строго 80 нит)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Перцептивная";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Колориметрическая";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Запасной профиль без тегов";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Профиль цветопробы (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Предпросмотр цветопробы";
@@ -2483,8 +2499,7 @@ struct RU {
       L"По соседним (макс. резкость)";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"HQ кубический (макс. сглаживание)";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"Авто (зависит от размера)";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"Авто";
   static constexpr const wchar_t *Settings_Option_Auto = L"Авто";
   static constexpr const wchar_t *Settings_Option_Eco = L"Эко";
   static constexpr const wchar_t *Settings_Option_Balanced = L"Баланс";
@@ -2568,6 +2583,11 @@ struct RU {
   static constexpr const wchar_t *HUD_Label_High = L"Высокая: ";
   static constexpr const wchar_t *HUD_Label_Low = L"Низкая: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"Эталон: ";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"Включить систему управления цветом (CMS).\nПри включении применяется высокоточное преобразование цветового пространства через GPU для восстановления истинных цветов.\nОтключение снижает нагрузку на GPU, но может привести к перенасыщению цветов на дисплеях с широким цветовым охватом.";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"Метод преобразования цветового пространства (Rendering Intent).\nПерцептивная: Сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительная колориметрическая: Сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для UI и иконок).";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Включить 16-битный конвейер рендеринга с плавающей запятой (scRGB).\nПри включении идеально отображает яркие участки фотографий на HDR-дисплеях, снимая ограничение SDR.\nОтключение принудительно отображает изображение в SDR.\nВнимание: Включение увеличивает использование видеопамяти.";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"Стратегия тональной компрессии HDR в SDR:\nОпределяет, как HDR-изображения отображаются на SDR-мониторах.\nПерцептивная: Сохраняет детали в светах за счет плавного сжатия кривой яркости (более мягкий вид).\nКолориметрическая: Строгое отображение яркости; светлые участки, превышающие предел монитора, обрезаются.";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.";
 };
 
 // ----------------------------------------------------------------
@@ -2830,8 +2850,7 @@ struct DE {
       L"Vollbild-Zoom-Modus";
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"An Bildschirm anpassen";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% / Anpassen)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"Auto";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Mausrad invertieren";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -2858,8 +2877,8 @@ struct DE {
   static constexpr const wchar_t *Settings_Label_CMS = L"Farbmanagement (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Erweiterte Farbe (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR-Tonzuordnung";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perzeptiv (Dynamische Mitteltöne)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Farbmetrisch (Strikt 80 nits)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perzeptiv";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Farbmetrisch";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Fallback für Bilder ohne Tags";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Softproof-Profil (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Softproof-Vorschau";
@@ -2934,8 +2953,7 @@ struct DE {
       L"Nächster: Extreme Schärfe";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"HQ Kubisch: Extreme Glättung";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"Auto: Größenabhängig";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"Auto";
   static constexpr const wchar_t *Settings_Option_Auto = L"Auto";
   static constexpr const wchar_t *Settings_Option_Eco = L"Öko";
   static constexpr const wchar_t *Settings_Option_Balanced = L"Ausgewogen";
@@ -3028,6 +3046,11 @@ struct DE {
   static constexpr const wchar_t *HUD_Label_High = L"High: ";
   static constexpr const wchar_t *HUD_Label_Low = L"Low: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"Ref: ";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"Farbmanagementsystem (CMS) aktivieren.\nWenn aktiviert, wird eine hochpräzise Farbraumkonvertierung über die GPU angewendet, um echte Farben wiederherzustellen.\nDeaktivieren verringert die GPU-Auslastung, kann aber auf Displays mit großem Farbraum zu übersättigten Farben führen.";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"Rendering-Intent für die Farbraumkonvertierung.\nPerzeptiv: Komprimiert Farben außerhalb des Farbraums, um Details und Farbverläufe zu erhalten (ideal für Fotos).\nRelativ farbmetrisch: Behält Farben im Farbraum bei und schneidet die anderen ab (ideal für UI und Symbole).";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"16-Bit-Gleitkomma-Rendering-Pipeline (scRGB) aktivieren.\nWenn aktiviert, werden die Lichter von Fotos auf HDR-fähigen Displays perfekt gerendert, indem das SDR-Limit überschritten wird.\nDeaktivieren erzwingt die Zuordnung zur SDR-Ausgabe.\nHinweis: Aktivieren erhöht die VRAM-Nutzung.";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR zu SDR Tonzuordnungsstrategie:\nLegt fest, wie HDR-Bilder auf SDR-Monitoren angezeigt werden.\nPerzeptiv: Erhält Highlight-Details durch sanfte Komprimierung der Luminanzkurve (weicherer Look).\nFarbmetrisch: Strikte Luminanzzuordnung; Highlights, die das Monitorlimit überschreiten, werden abgeschnitten.";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100 % Skalierung, wenn das Bild kleiner als der Bildschirm ist, und an den Bildschirm anpassen, wenn es größer ist.";
 };
 
 // ----------------------------------------------------------------
@@ -3298,8 +3321,7 @@ struct ES {
       L"Modo de zoom a pantalla completa";
   static constexpr const wchar_t *Settings_Option_FitScreen =
       L"Ajustar a pantalla";
-  static constexpr const wchar_t *Settings_Option_AutoFit =
-      L"Auto (100% / Ajustar)";
+  static constexpr const wchar_t *Settings_Option_AutoFit = L"Auto";
   static constexpr const wchar_t *Settings_Label_InvertWheel =
       L"Invertir rueda";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
@@ -3329,8 +3351,8 @@ struct ES {
       L"Gestión de color (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Color avanzado (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"Mapeo de tonos HDR";
-  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual (Tonos medios dinámicos)";
-  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimétrico (Estricto 80 nits)";
+  static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
+  static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimétrico";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Perfil alternativo sin etiquetas";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Perfil de prueba en pantalla (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Vista previa de prueba en pantalla";
@@ -3411,8 +3433,7 @@ struct ES {
       L"Cercano: Extrema nitidez";
   static constexpr const wchar_t *Settings_Option_HighQualityCubic =
       L"Cúbico HQ: Extremo suavizado";
-  static constexpr const wchar_t *Settings_Option_ZoomAuto =
-      L"Auto: Depende del tamaño";
+  static constexpr const wchar_t *Settings_Option_ZoomAuto = L"Auto";
   static constexpr const wchar_t *Settings_Option_Auto = L"Automático";
   static constexpr const wchar_t *Settings_Option_Eco = L"Eco";
   static constexpr const wchar_t *Settings_Option_Balanced = L"Equilibrado";
@@ -3503,6 +3524,11 @@ struct ES {
   static constexpr const wchar_t *HUD_Label_High = L"High: ";
   static constexpr const wchar_t *HUD_Label_Low = L"Low: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"Ref: ";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"Habilitar el Sistema de Gestión de Color (CMS).\nCuando se habilita, aplica una conversión de espacio de color de alta precisión a través de la GPU para restaurar los colores reales.\nDeshabilitarlo reduce la carga de la GPU, pero puede provocar colores sobresaturados en pantallas de amplia gama.";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"Propósito de representación (Rendering Intent) para la conversión del espacio de color.\nPerceptual: Comprime los colores fuera de gama para preservar los detalles y degradados (ideal para fotos).\nColorimétrico relativo: Preserva los colores dentro de la gama y recorta los que quedan fuera (ideal para UI e íconos).";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Habilitar el pipeline de renderizado de punto flotante de 16 bits (scRGB).\nCuando se habilita, renderiza perfectamente las luces de las fotos en pantallas compatibles con HDR rompiendo el límite SDR.\nDeshabilitarlo fuerza el mapeo a salida SDR.\nNota: Habilitarlo aumenta el uso de VRAM.";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"Estrategia de mapeo de tonos (Tone Mapping) de HDR a SDR:\nDetermina cómo se muestran las imágenes HDR en monitores SDR.\nPerceptual: Preserva los detalles de las luces comprimiendo suavemente la curva de luminancia (aspecto más suave).\nColorimétrico: Mapeo de luminancia estricto; las luces que exceden el límite del monitor se recortan.";
+  static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Automático: Escala al 100% cuando la imagen es más pequeña que la pantalla, se ajusta a la pantalla cuando es más grande.";
 };
 
 // ----------------------------------------------------------------
@@ -3755,6 +3781,11 @@ template <typename T> void ApplyT() {
   Settings_Label_CmsIntent = T::Settings_Label_CmsIntent;
   Settings_Option_CmsIntentRelative = T::Settings_Option_CmsIntentRelative;
   Settings_Option_CmsIntentPerceptual = T::Settings_Option_CmsIntentPerceptual;
+  Settings_Tooltip_CMS = T::Settings_Tooltip_CMS;
+  Settings_Tooltip_CmsIntent = T::Settings_Tooltip_CmsIntent;
+  Settings_Tooltip_AdvancedColor = T::Settings_Tooltip_AdvancedColor;
+  Settings_Tooltip_HdrToneMapping = T::Settings_Tooltip_HdrToneMapping;
+  Settings_Tooltip_ZoomAuto = T::Settings_Tooltip_ZoomAuto;
 
   Settings_Action_CheckUpdates = T::Settings_Action_CheckUpdates;
   Settings_Action_ViewUpdate = T::Settings_Action_ViewUpdate;
