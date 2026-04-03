@@ -107,5 +107,8 @@ compile_commands.json
 # VCPKG intermediates
 QuickView/vcpkg_installed/
 
+# Compilation database
+compile_commands.json
+
 
 

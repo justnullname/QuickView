@@ -32,12 +32,27 @@ HMONITOR GetWindowCenterMonitor(HWND hwnd) {
 
 } // namespace
 
-bool DisplayColorInfo::Refresh(HWND hwnd) {
+bool DisplayColorInfo::Refresh(HWND hwnd, bool forceHdrSimulation) {
     HMONITOR monitor = GetWindowCenterMonitor(hwnd);
     DisplayColorState nextState = {};
     if (!QueryMonitorState(monitor, &nextState)) {
         nextState.monitor = monitor;
         nextState.sdrWhiteLevelNits = 80.0f;
+    }
+
+    if (forceHdrSimulation && !nextState.advancedColorActive) {
+        nextState.advancedColorActive = true;
+        nextState.advancedColorSupported = true;
+        nextState.colorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+
+        // Provide enough headroom for testing without totally crushing the image on a real SDR display.
+        // A max luminance of 2x the SDR white level gives exactly 1.0 stop of HDR headroom.
+        if (nextState.maxLuminanceNits <= nextState.sdrWhiteLevelNits) {
+            nextState.maxLuminanceNits = nextState.sdrWhiteLevelNits * 2.0f;
+        }
+        if (nextState.maxFullFrameLuminanceNits <= nextState.sdrWhiteLevelNits) {
+            nextState.maxFullFrameLuminanceNits = nextState.sdrWhiteLevelNits * 2.0f;
+        }
     }
 
     const bool changed =
