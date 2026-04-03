@@ -1087,6 +1087,7 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
     
     SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
+    itemFsZoom.tooltipText = AppStrings::Settings_Tooltip_ZoomAuto;
     itemFsZoom.onChange = []() {
         SaveConfig();
         HWND hwnd = GetActiveWindow();
@@ -1184,7 +1185,7 @@ void SettingsOverlay::BuildMenu() {
     
     // CMS - Color Management System
     SettingsItem itemCmsToggle = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
-    itemCmsToggle.tooltipText = L"启用色彩管理 (Color Management System)。\n开启后，将通过 GPU 进行高精度色彩空间转换以还原真实色彩。\n关闭可降低性能消耗，但在广色域屏幕上可能导致颜色过饱和。";
+    itemCmsToggle.tooltipText = AppStrings::Settings_Tooltip_CMS;
     itemCmsToggle.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1195,7 +1196,7 @@ void SettingsOverlay::BuildMenu() {
 
     SettingsItem itemCmsIntent = { AppStrings::Settings_Label_CmsIntent, OptionType::ComboBox, nullptr, nullptr, &g_config.CmsRenderingIntent, nullptr, 0, 0,
         { AppStrings::Settings_Option_CmsIntentPerceptual, AppStrings::Settings_Option_CmsIntentRelative } };
-    itemCmsIntent.tooltipText = L"色彩空间转换策略 (Rendering Intent)。\n感知模式 (Perceptual)：压缩超出色域的颜色，保留细节和渐变，适合照片。\n相对比色 (Relative Colorimetric)：保留在色域内的颜色，超出部分裁剪，适合 UI 和图标。";
+    itemCmsIntent.tooltipText = AppStrings::Settings_Tooltip_CmsIntent;
     itemCmsIntent.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1205,7 +1206,7 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back(itemCmsIntent);
 
     SettingsItem itemAdvColor = { AppStrings::Settings_Label_AdvancedColor, OptionType::Toggle, &g_config.EnableAdvancedColor };
-    itemAdvColor.tooltipText = L"启用 16-bit 浮点渲染管线 (scRGB)。\n开启后，在支持 HDR 的显示器上能突破 SDR 亮度限制，完美呈现照片高光。\n关闭将强制降级映射至 SDR 输出。\n注意：开启会增加显存占用。";
+    itemAdvColor.tooltipText = AppStrings::Settings_Tooltip_AdvancedColor;
     itemAdvColor.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1221,7 +1222,7 @@ void SettingsOverlay::BuildMenu() {
 
     SettingsItem itemHdrToneMapping = { AppStrings::Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
         { AppStrings::Settings_Option_HdrPerceptual, AppStrings::Settings_Option_HdrColorimetric } };
-    itemHdrToneMapping.tooltipText = L"HDR 至 SDR 降级策略 (Tone Mapping)：\n当 HDR 图片在 SDR 显示器上显示时的映射方式。\n感知模式：保留高光细节，平滑压缩亮度曲线，观感柔和。\n色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。";
+    itemHdrToneMapping.tooltipText = AppStrings::Settings_Tooltip_HdrToneMapping;
     itemHdrToneMapping.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -2050,7 +2051,6 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
 
             // Tooltip Icon (?)
             if (!item.tooltipText.empty()) {
-                // Calculate label text width to position icon right after it
                 float textW = 100.0f * s; // Fallback
                 ComPtr<IDWriteTextLayout> layout;
                 if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
@@ -2626,8 +2626,6 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                     if (x >= item.tooltipIconRect.left && x <= item.tooltipIconRect.right &&
                         y >= item.tooltipIconRect.top && y <= item.tooltipIconRect.bottom) {
                         m_pHoverTooltipItem = &item;
-                        // Don't set normal hover when over tooltip to prevent highlight flicker
-                        // continue; // Or break? Tooltips don't steal click, so we can just set it
                     }
                 }
 
