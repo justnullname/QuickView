@@ -24,13 +24,13 @@ static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale)
 #define ICON_FLIP L"\uE8AB"   // Mirror
 #define ICON_LOCK L"\uE72E"   // Standard MDL2 Lock
 #define ICON_UNLOCK L"\uE785" // Standard MDL2 Unlock
-#define ICON_GALLERY L"\uE80A"
+#define ICON_GALLERY L"\uF0E2"
 #define ICON_INFO L"\uE946"
 #define ICON_RAW L"\uE722" // RAW icon (same for both states, color changes)
 #define ICON_WARNING L"\uE7BA"
 #define ICON_PIN L"\uE718"
 #define ICON_UNPIN L"\uE77A"
-#define ICON_COMPARE L"\uE7C4"
+#define ICON_COMPARE L"\uF57C"
 #define ICON_SWAP L"\uE8EE"
 #define ICON_LAYOUT L"\uECA5"
 #define ICON_OPEN L"\uE8E5"
@@ -38,7 +38,7 @@ static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale)
 #define ICON_ZOOM_OUT L"\uECC9"
 #define ICON_DELETE L"\uE74D"
 #define ICON_LINK L"\uE71B"
-#define ICON_PAN L"\uE7C2"
+#define ICON_PAN L"\uE759"
 #define ICON_EXIT L"\uE8BB"
 
 Toolbar::Toolbar() {
