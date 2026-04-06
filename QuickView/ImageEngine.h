@@ -15,6 +15,7 @@
 #include "ImageLoader.h"
 #include "ImageLoader.h"
 #include "ImageTypes.h"    // [Direct D2D] RawImageFrame
+#include "AnimationDecoder.h" // [v10.5] Animated Formats
 #include "MappedFile.h"    // [Optimization] MMF
 #include "EditState.h"
 #include "SystemInfo.h"  // [N+1] Hardware detection & auto-config
@@ -42,7 +43,8 @@ enum class EventType {
     StatusChange,   // For UI debug/status bar "Loading...", "Idle"
     MetadataReady,  // [v5.3] Async metadata update (EXIF)
     TileReady,      // [Titan] A specific tile is ready
-    AuxLayerReady   // Async AuxLayer (e.g. HDR Gain Map)
+    AuxLayerReady,  // Async AuxLayer (e.g. HDR Gain Map)
+    AnimationReady  // [v10.5] Animated Decoder Ready
 };
 
 // ...
@@ -72,6 +74,9 @@ struct EngineEvent {
     std::unique_ptr<QuickView::AuxLayer> auxLayer;
     QuickView::GpuBlendOp blendOp = QuickView::GpuBlendOp::None;
     QuickView::GpuShaderPayload shaderPayload;
+    
+    // [v10.5] Animation Support
+    std::shared_ptr<QuickView::IAnimationDecoder> animationDecoder;
 };
 
 class ImageEngine {

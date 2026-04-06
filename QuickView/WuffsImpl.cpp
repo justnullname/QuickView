@@ -33,6 +33,8 @@
 #include "../third_party/wuffs/release/c/wuffs-v0.4.c"
 
 #include "WuffsLoader.h"
+#include "AnimationDecoder.h"
+#include "MappedFile.h"
 #include <zlib.h>
 
 #ifndef Bytef
@@ -553,3 +555,308 @@ bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFu
 #undef WUFFS_TRY
 
 } // namespace WuffsLoader
+
+// ============================================================================
+// Wuffs Animator (GIF/APNG)
+// ============================================================================
+
+namespace QuickView {
+
+class WuffsAnimator : public IAnimationDecoder {
+public:
+    WuffsAnimator() {
+        memset(&m_gifDec, 0, sizeof(m_gifDec));
+        memset(&m_pngDec, 0, sizeof(m_pngDec));
+        memset(&m_src, 0, sizeof(m_src));
+    }
+    
+    ~WuffsAnimator() override = default;
+
+    bool Initialize(std::shared_ptr<QuickView::MappedFile> file, QuickView::PixelFormat preferredFormat) override {
+        m_mappedFile = file;
+        const uint8_t* data = file->data();
+        size_t size = file->size();
+        
+        m_src.data.ptr = const_cast<uint8_t*>(data);
+        m_src.data.len = size;
+        m_src.meta.wi = std::min(size, (size_t)1048576);
+        m_src.meta.ri = 0;
+        m_src.meta.closed = (m_src.meta.wi == size);
+
+        // Try GIF first
+        wuffs_base__status status = wuffs_gif__decoder__initialize(
+            &m_gifDec, sizeof(m_gifDec), WUFFS_VERSION,
+            WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
+            
+        if (wuffs_base__status__is_ok(&status)) {
+            status = wuffs_gif__decoder__decode_image_config(&m_gifDec, &m_ic, &m_src);
+            if (wuffs_base__status__is_ok(&status)) {
+                m_isGif = true;
+            }
+        }
+        
+        if (!m_isGif) {
+            // Try PNG (APNG)
+            m_src.meta.ri = 0;
+            status = wuffs_png__decoder__initialize(
+                &m_pngDec, sizeof(m_pngDec), WUFFS_VERSION,
+                WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED);
+            if (wuffs_base__status__is_ok(&status)) {
+                status = wuffs_png__decoder__decode_image_config(&m_pngDec, &m_ic, &m_src);
+                if (wuffs_base__status__is_ok(&status)) {
+                    m_isPng = true;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        
+        m_width = wuffs_base__pixel_config__width(&m_ic.pixcfg);
+        m_height = wuffs_base__pixel_config__height(&m_ic.pixcfg);
+        if (m_width == 0 || m_height == 0) return false;
+
+        // Is it actually animated?
+        uint32_t num_loops = 0;
+        if (m_isGif) num_loops = wuffs_gif__decoder__num_animation_loops(&m_gifDec);
+        if (m_isPng) num_loops = wuffs_png__decoder__num_animation_loops(&m_pngDec);
+        // Note: num_loops can be 0 (infinite) and still be animated. A better check is if first frame config implies more.
+        
+        // Let's assume initialized successfully
+        wuffs_base__pixel_config__set(&m_ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, m_width, m_height);
+        
+        m_pixelBytes = m_width * m_height * 4;
+        m_canvas.resize(m_pixelBytes);
+        
+        status = wuffs_base__pixel_buffer__set_from_slice(&m_pb, &m_ic.pixcfg, wuffs_base__make_slice_u8(m_canvas.data(), m_pixelBytes));
+        if (!wuffs_base__status__is_ok(&status)) return false;
+
+        uint64_t workbuf_len = 0;
+        if (m_isGif) workbuf_len = wuffs_gif__decoder__workbuf_len(&m_gifDec).max_incl;
+        if (m_isPng) workbuf_len = wuffs_png__decoder__workbuf_len(&m_pngDec).max_incl;
+        m_workbuf.resize((size_t)workbuf_len);
+        
+        m_isAnimated = true; // For now.
+        return true;
+    }
+
+    std::shared_ptr<RawImageFrame> GetNextFrame() override {
+        wuffs_base__status status;
+        wuffs_base__frame_config fc = {0};
+        
+        // Process previous frame disposalBEFORE decoding new frame config
+        if (m_currentIndex > 0) {
+            if (m_lastDisposal == FrameDisposalMode::RestoreBackground) {
+                // Clear the previous frame's rect to transparent (BGRA 0)
+                int safeLeft = std::max(0, m_lastRect.left);
+                int safeTop = std::max(0, m_lastRect.top);
+                int safeRight = std::min((int)m_width, m_lastRect.right);
+                int safeBottom = std::min((int)m_height, m_lastRect.bottom);
+                for (int y = safeTop; y < safeBottom; y++) {
+                    uint8_t* row = m_canvas.data() + (y * m_width * 4) + safeLeft * 4;
+                    memset(row, 0, (safeRight - safeLeft) * 4);
+                }
+            } else if (m_lastDisposal == FrameDisposalMode::RestorePrevious) {
+                // To properly support RestorePrevious, we need a backup buffer...
+                // For now, RestoreBackground is the most common fallback.
+            }
+        }
+
+        // Save snapshot BEFORE decode_frame_config (so restore puts us right before a new frame)
+        if (m_currentIndex % 20 == 0) {
+            SaveSnapshot(m_currentIndex);
+        }
+
+        // Decode Frame Config
+        while (true) {
+            if (m_isGif) status = wuffs_gif__decoder__decode_frame_config(&m_gifDec, &fc, &m_src);
+            else if (m_isPng) status = wuffs_png__decoder__decode_frame_config(&m_pngDec, &fc, &m_src);
+            
+            if (wuffs_base__status__is_ok(&status)) break;
+            if (status.repr == wuffs_base__suspension__short_read && !m_src.meta.closed) {
+                size_t next = std::min(m_mappedFile->size(), m_src.meta.wi + 1048576);
+                m_src.meta.wi = next;
+                m_src.meta.closed = (next == m_mappedFile->size());
+                continue;
+            }
+            // End of animation or error
+            return nullptr;
+        }
+
+        // Determine blend mode from frame config
+        // APNG: blend_op=SOURCE -> overwrite (SRC), blend_op=OVER -> alpha blend (SRC_OVER)
+        // GIF: always SRC_OVER (transparency via disposal, not alpha blending)
+        wuffs_base__pixel_blend blendMode = WUFFS_BASE__PIXEL_BLEND__SRC_OVER;
+        if (wuffs_base__frame_config__overwrite_instead_of_blend(&fc)) {
+            blendMode = WUFFS_BASE__PIXEL_BLEND__SRC;
+        }
+
+        // Decode Frame Pixels into Canvas
+        while (true) {
+            if (m_isGif) {
+                status = wuffs_gif__decoder__decode_frame(&m_gifDec, &m_pb, &m_src, 
+                    blendMode, wuffs_base__make_slice_u8(m_workbuf.data(), m_workbuf.size()), nullptr);
+            } else if (m_isPng) {
+                status = wuffs_png__decoder__decode_frame(&m_pngDec, &m_pb, &m_src, 
+                    blendMode, wuffs_base__make_slice_u8(m_workbuf.data(), m_workbuf.size()), nullptr);
+            }
+            
+            if (wuffs_base__status__is_ok(&status)) break;
+            if (status.repr == wuffs_base__suspension__short_read && !m_src.meta.closed) {
+                size_t next = std::min(m_mappedFile->size(), m_src.meta.wi + 1048576);
+                m_src.meta.wi = next;
+                m_src.meta.closed = (next == m_mappedFile->size());
+                continue;
+            }
+            return nullptr;
+        }
+
+        // Build shared frame wrapper
+        auto frame = std::make_shared<RawImageFrame>();
+        
+        size_t bufSize = m_canvas.size();
+        frame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
+        frame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        memcpy(frame->pixels, m_canvas.data(), bufSize);
+        
+        frame->width = m_width;
+        frame->height = m_height;
+        frame->stride = m_width * 4; // Canvas stride is always width * 4
+        frame->format = PixelFormat::BGRA8888;
+        frame->quality = DecodeQuality::Full;
+        
+        // Extract Meta
+        auto& meta = frame->frameMeta;
+        meta.index = m_currentIndex;
+        
+        wuffs_base__flicks ticks = wuffs_base__frame_config__duration(&fc);
+        meta.delayMs = (uint32_t)(ticks / (WUFFS_BASE__FLICKS_PER_SECOND / 1000));
+        if (meta.delayMs == 0) meta.delayMs = 100; // Fallback
+        
+        uint8_t d = wuffs_base__frame_config__disposal(&fc);
+        if (d == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_BACKGROUND) meta.disposal = FrameDisposalMode::RestoreBackground;
+        else if (d == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS) meta.disposal = FrameDisposalMode::RestorePrevious;
+        else meta.disposal = FrameDisposalMode::Keep;
+        
+        wuffs_base__rect_ie_u32 bounds = wuffs_base__frame_config__bounds(&fc);
+        meta.rcLeft = bounds.min_incl_x;
+        meta.rcTop = bounds.min_incl_y;
+        meta.rcRight = bounds.max_excl_x;
+        meta.rcBottom = bounds.max_excl_y;
+        meta.isDelta = true;
+        
+        m_lastDisposal = meta.disposal;
+        m_lastRect.left = meta.rcLeft;
+        m_lastRect.top = meta.rcTop;
+        m_lastRect.right = meta.rcRight;
+        m_lastRect.bottom = meta.rcBottom;
+        
+        m_currentIndex++;
+        if (m_currentIndex > m_knownTotalFrames) m_knownTotalFrames = m_currentIndex;
+        
+        return frame;
+    }
+
+    std::shared_ptr<RawImageFrame> SeekToFrame(uint32_t targetIndex) override {
+        if (targetIndex == m_currentIndex) {
+            // Already there
+            return GetNextFrame(); // wait, GetNextFrame advances to current+1
+        }
+        
+        // Find closest snapshot <= targetIndex
+        int bestSnap = -1;
+        for (int i = (int)m_snapshots.size() - 1; i >= 0; i--) {
+            if (m_snapshots[i].index <= targetIndex) {
+                bestSnap = i;
+                break;
+            }
+        }
+        
+        if (bestSnap >= 0) {
+            // Restore snapshot
+            auto& snap = m_snapshots[bestSnap];
+            m_currentIndex = snap.index;
+            memcpy(m_canvas.data(), snap.canvas.data(), m_canvas.size());
+            m_src = snap.srcState;
+            if (m_isGif) memcpy(&m_gifDec, snap.decoderState.data(), sizeof(m_gifDec));
+            else if (m_isPng) memcpy(&m_pngDec, snap.decoderState.data(), sizeof(m_pngDec));
+        } else {
+            // No snapshot, must restart from 0
+            // Re-initialize!
+            Initialize(m_mappedFile, PixelFormat::BGRA8888);
+            m_currentIndex = 0;
+            m_snapshots.clear();
+        }
+        
+        // Fast-forward
+        std::shared_ptr<RawImageFrame> lastFrame = nullptr;
+        while (m_currentIndex < targetIndex) {
+            lastFrame = GetNextFrame();
+            if (!lastFrame) break; // Error or EOF
+        }
+        
+        // Return target frame
+        return GetNextFrame();
+    }
+
+    uint32_t GetTotalFrames() const override { return m_knownTotalFrames; }
+    bool IsAnimated() const override { return m_isAnimated; }
+
+private:
+    struct Snapshot {
+        uint32_t index;
+        std::vector<uint8_t> canvas;
+        std::vector<uint8_t> decoderState;
+        wuffs_base__io_buffer srcState;
+    };
+    
+    void SaveSnapshot(uint32_t index) {
+        Snapshot snap;
+        snap.index = index;
+        snap.canvas = m_canvas;
+        snap.srcState = m_src;
+        if (m_isGif) {
+            snap.decoderState.resize(sizeof(wuffs_gif__decoder));
+            memcpy(snap.decoderState.data(), &m_gifDec, sizeof(wuffs_gif__decoder));
+        } else if (m_isPng) {
+            snap.decoderState.resize(sizeof(wuffs_png__decoder));
+            memcpy(snap.decoderState.data(), &m_pngDec, sizeof(wuffs_png__decoder));
+        }
+        m_snapshots.push_back(std::move(snap));
+    }
+
+    std::shared_ptr<QuickView::MappedFile> m_mappedFile;
+    
+    wuffs_gif__decoder m_gifDec;
+    wuffs_png__decoder m_pngDec;
+    bool m_isGif = false;
+    bool m_isPng = false;
+    
+    wuffs_base__io_buffer m_src;
+    wuffs_base__image_config m_ic;
+    wuffs_base__pixel_buffer m_pb;
+    
+    uint32_t m_width = 0;
+    uint32_t m_height = 0;
+    size_t m_pixelBytes = 0;
+    
+    std::vector<uint8_t> m_workbuf;
+    std::vector<uint8_t> m_canvas;
+    
+    uint32_t m_currentIndex = 0;
+    uint32_t m_knownTotalFrames = 0;
+    bool m_isAnimated = false;
+    
+    // Disposal State
+    FrameDisposalMode m_lastDisposal = FrameDisposalMode::Unspecified;
+    struct Rect { int left = 0; int top = 0; int right = 0; int bottom = 0; } m_lastRect;
+
+    std::vector<Snapshot> m_snapshots;
+};
+
+std::unique_ptr<IAnimationDecoder> CreateWuffsAnimator() {
+    return std::make_unique<WuffsAnimator>();
+}
+
+} // namespace QuickView

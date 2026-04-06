@@ -248,6 +248,7 @@
     <ClInclude Include="ComputeEngine.h" />
     <ClInclude Include="DisplayColorInfo.h" />
     <ClInclude Include="ProcessRouter.h" />
+    <ClInclude Include="AnimationDecoder.h" />
   </ItemGroup>
   <!-- Source Files -->
   <ItemGroup>
@@ -295,6 +296,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="WebPAnimator.cpp" />
+    <ClCompile Include="AvifAnimator.cpp" />
+    <ClCompile Include="JxlAnimator.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />

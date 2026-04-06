@@ -40,6 +40,11 @@ static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale)
 #define ICON_LINK L"\uE71B"
 #define ICON_PAN L"\uE7C2"
 #define ICON_EXIT L"\uE8BB"
+#define ICON_PLAY L"\uE768"
+#define ICON_PAUSE L"\uE769"
+#define ICON_SKIP_BACK L"\uE892"
+#define ICON_SKIP_FWD L"\uE893"
+#define ICON_DIAGNOSTIC L"\uE7B3"
 
 Toolbar::Toolbar() {
   // Define Buttons
@@ -81,7 +86,14 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::CompareSyncZoom, ICON_LINK[0], {}, true, true},
       {ToolbarButtonID::CompareSyncPan, ICON_PAN[0], {}, true, true},
       {ToolbarButtonID::CompareExit, ICON_EXIT[0], {}, true, false},
-      {ToolbarButtonID::Pin, ICON_PIN[0], {}, true, false}};
+      // Animation mode buttons (hidden in normal mode)
+      {ToolbarButtonID::AnimPrevFrame, ICON_SKIP_BACK[0], {}, true, false},
+      {ToolbarButtonID::AnimPlayPause, ICON_PLAY[0], {}, true, false},
+      {ToolbarButtonID::AnimNextFrame, ICON_SKIP_FWD[0], {}, true, false},
+      {ToolbarButtonID::AnimDirtyRect, ICON_DIAGNOSTIC[0], {}, true, false},
+      // Pin at the very end
+      {ToolbarButtonID::Pin, ICON_PIN[0], {}, true, false},
+  };
 }
 
 Toolbar::~Toolbar() {}
@@ -215,14 +227,34 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     return id == ToolbarButtonID::Pin;
   };
 
+  auto isAnimButton = [](ToolbarButtonID id) {
+    if (id == ToolbarButtonID::AnimPlayPause ||
+        id == ToolbarButtonID::AnimPrevFrame ||
+        id == ToolbarButtonID::AnimNextFrame ||
+        id == ToolbarButtonID::AnimDirtyRect) {
+        return true;
+    }
+    return false;
+  };
+
+  auto isNormalButton = [&](ToolbarButtonID id) {
+    return !isCompareButton(id) && id != ToolbarButtonID::AnimPlayPause && id != ToolbarButtonID::AnimPrevFrame && id != ToolbarButtonID::AnimNextFrame && id != ToolbarButtonID::AnimDirtyRect && !isAlwaysVisible(id);
+  };
+
   auto isVisibleButton = [&](const ToolbarButton &btn) {
+    if (m_animMode) {
+      if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif) return true;
+      if (isAnimButton(btn.id)) return true;
+      if (isAlwaysVisible(btn.id)) return true;
+      return false;
+    }
     if (m_compareMode) {
       if (!isCompareButton(btn.id) && !isAlwaysVisible(btn.id)) return false;
       if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning) return false;
       return true;
     }
 
-    if (isCompareButton(btn.id))
+    if (isCompareButton(btn.id) || isAnimButton(btn.id))
       return false;
     if (btn.id == ToolbarButtonID::RawToggle && !btn.isEnabled)
       return false;
@@ -236,6 +268,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   // Count visible buttons
   int visibleCount = 0;
   bool hasCompareZoom = false;
+  bool hasAnimSpeed = m_animMode;
   for (const auto &btn : m_buttons) {
     if (isVisibleButton(btn))
       visibleCount++;
@@ -254,6 +287,10 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   if (m_compareMode && hasCompareZoom) {
     const float zoomGap = 2.0f * m_uiScale;
     totalW += (56.0f * m_uiScale) + (zoomGap * 2.0f) - gap;
+  }
+  if (m_animMode && hasAnimSpeed) {
+    const float speedGap = 2.0f * m_uiScale;
+    totalW += (56.0f * m_uiScale) + (speedGap * 2.0f) - gap;
   }
   m_minRequiredWidth = totalW + (PADDING_X * 2 * m_uiScale);
   m_windowTooNarrow = (winW < m_minRequiredWidth);
@@ -277,7 +314,16 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   m_compareStepRect = D2D1::RectF(0, 0, 0, 0);
   m_compareStepUpRect = D2D1::RectF(0, 0, 0, 0);
   m_compareStepDownRect = D2D1::RectF(0, 0, 0, 0);
+  m_animSpeedRect = D2D1::RectF(0, 0, 0, 0);
+  m_animSpeedUpRect = D2D1::RectF(0, 0, 0, 0);
+  m_animSpeedDownRect = D2D1::RectF(0, 0, 0, 0);
+  m_animProgressRect = D2D1::RectF(0, 0, 0, 0);
   bool stepInserted = false;
+  bool speedInserted = false;
+  
+  if (m_animMode) {
+      m_animProgressRect = D2D1::RectF(m_bgRect.rect.left + 20.0f * m_uiScale, m_bgRect.rect.top - 4.0f * m_uiScale, m_bgRect.rect.right - 20.0f * m_uiScale, m_bgRect.rect.top + 4.0f * m_uiScale);
+  }
 
   for (auto &btn : m_buttons) {
     bool visible = isVisibleButton(btn);
@@ -308,6 +354,25 @@ void Toolbar::UpdateLayout(float winW, float winH) {
             m_compareStepRect.right, m_compareStepRect.bottom);
         cx += stepW + zoomGap; // Capsule width + padding after
         stepInserted = true;
+      }
+      
+      if (m_animMode && btn.id == ToolbarButtonID::AnimDirtyRect &&
+          !speedInserted) {
+        cx -= gap; // Backtrack standard gap
+        const float speedGap = 2.0f * m_uiScale;
+        cx += speedGap;
+        m_animSpeedRect = D2D1::RectF(cx, stepY, cx + stepW, stepY + stepH);
+        const float sBtnW = 14.0f * m_uiScale;
+        m_animSpeedUpRect = D2D1::RectF(m_animSpeedRect.right - sBtnW,
+                                        m_animSpeedRect.top,
+                                        m_animSpeedRect.right,
+                                        m_animSpeedRect.top + (stepH * 0.5f));
+        m_animSpeedDownRect = D2D1::RectF(
+            m_animSpeedRect.right - sBtnW,
+            m_animSpeedRect.top + (stepH * 0.5f),
+            m_animSpeedRect.right, m_animSpeedRect.bottom);
+        cx += stepW + speedGap;
+        speedInserted = true;
       }
     } else {
       btn.rect = D2D1::RectF(0, 0, 0, 0); // Hide
@@ -399,6 +464,39 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
     m_brushBg->SetOpacity(g_config.ToolbarAlpha);
     pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
+    
+    // [v10.5] Animation Progress Bar - dynamic placement and thickness
+    if (m_animMode && m_animProgress >= 0.0f) {
+      float barLeft = m_bgRect.rect.left + 20.0f * m_uiScale;
+      float barRight = m_bgRect.rect.right - 20.0f * m_uiScale;
+      float barY = m_bgRect.rect.top;
+      if (m_animProgressHover) barY -= 1.0f * m_uiScale; // Shift up slightly when hovered
+      float barW = barRight - barLeft;
+      float fillW = barW * m_animProgress;
+      float lineThickness = m_animProgressHover ? 4.0f * m_uiScale : 2.0f * m_uiScale;
+      
+      // Track (subtle)
+      ComPtr<ID2D1SolidColorBrush> trackBr;
+      pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.3f, 0.3f, 0.4f, 0.3f), m_hdrWhiteScale), &trackBr);
+      pRT->DrawLine(D2D1::Point2F(barLeft, barY), D2D1::Point2F(barRight, barY), trackBr.Get(), lineThickness);
+      
+      // Fill (accent blue)
+      if (fillW > 0.5f) {
+        D2D1_COLOR_F accentColor = m_animPlaying
+          ? D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.8f) // Blue when playing
+          : D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f); // Orange when paused
+        ComPtr<ID2D1SolidColorBrush> fillBr;
+        pRT->CreateSolidColorBrush(ScaleUiColor(accentColor, m_hdrWhiteScale), &fillBr);
+        pRT->DrawLine(D2D1::Point2F(barLeft, barY), D2D1::Point2F(barLeft + fillW, barY), fillBr.Get(), lineThickness);
+        
+        // Playhead dot
+        float dotRadius = m_animProgressHover ? 4.0f * m_uiScale : 3.0f * m_uiScale;
+        D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(barLeft + fillW, barY), dotRadius, dotRadius);
+        ComPtr<ID2D1SolidColorBrush> dotBr;
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(m_animProgressHover ? 1.0f : 0.3f, 0.65f, 1.0f, 0.95f), m_hdrWhiteScale), &dotBr);
+        pRT->FillEllipse(dot, dotBr.Get());
+      }
+    }
 
     for (const auto &btn : m_buttons) {
       if (btn.rect.right == 0)
@@ -420,6 +518,11 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       if (btn.id == ToolbarButtonID::LockSize && btn.isToggled)
         pBrush = m_brushIconActive.Get();
       if (btn.id == ToolbarButtonID::Pin && btn.isToggled)
+        pBrush = m_brushIconActive.Get();
+      // [v10.5] Animation button states
+      if (btn.id == ToolbarButtonID::AnimPlayPause && m_animPlaying)
+        pBrush = m_brushIconActive.Get();
+      if (btn.id == ToolbarButtonID::AnimDirtyRect && m_animDirtyRect)
         pBrush = m_brushIconActive.Get();
 
       wchar_t icon = btn.iconChar;
@@ -503,6 +606,65 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         drawChevron(m_compareStepDownRect, false);
       }
     }
+    
+    // [v10.5] Animation speed capsule
+    if (m_animMode && m_animSpeedRect.right > m_animSpeedRect.left) {
+      D2D1_ROUNDED_RECT speedRect = D2D1::RoundedRect(
+          m_animSpeedRect, 6.0f * m_uiScale, 6.0f * m_uiScale);
+      pRT->FillRoundedRectangle(speedRect, m_brushHover.Get());
+
+      if (m_animSpeedUpHover) {
+        D2D1_ROUNDED_RECT upRect = D2D1::RoundedRect(
+            m_animSpeedUpRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
+        pRT->FillRoundedRectangle(upRect, m_brushIconActive.Get());
+      } else if (m_animSpeedDownHover) {
+        D2D1_ROUNDED_RECT downRect = D2D1::RoundedRect(
+            m_animSpeedDownRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
+        pRT->FillRoundedRectangle(downRect, m_brushIconActive.Get());
+      }
+
+      const float sBtnW = 14.0f * m_uiScale;
+      D2D1_RECT_F divider = D2D1::RectF(
+          m_animSpeedRect.right - sBtnW, m_animSpeedRect.top + 2.0f * m_uiScale,
+          m_animSpeedRect.right - sBtnW + 1.0f, m_animSpeedRect.bottom - 2.0f * m_uiScale);
+      pRT->FillRectangle(divider, m_brushIconDisabled.Get());
+
+      wchar_t buf[16]{};
+      swprintf_s(buf, L"%.2gx", m_animSpeedMult);
+      D2D1_RECT_F textRect = D2D1::RectF(
+          m_animSpeedRect.left + 2.0f * m_uiScale, m_animSpeedRect.top,
+          m_animSpeedRect.right - sBtnW, m_animSpeedRect.bottom);
+      IDWriteTextFormat *sFmt = m_textFormatUI ? m_textFormatUI.Get() : m_textFormatIconSmall.Get();
+      pRT->DrawText(buf, (UINT32)wcslen(buf), sFmt, textRect, m_brushIcon.Get());
+
+      ComPtr<ID2D1Factory> factory;
+      pRT->GetFactory(&factory);
+      if (factory) {
+        auto drawChevron = [&](const D2D1_RECT_F &rect, bool up) {
+          const float cx = (rect.left + rect.right) * 0.5f;
+          const float cy = (rect.top + rect.bottom) * 0.5f;
+          const float size = 3.5f * m_uiScale;
+          ComPtr<ID2D1PathGeometry> path;
+          factory->CreatePathGeometry(&path);
+          ComPtr<ID2D1GeometrySink> sink;
+          path->Open(&sink);
+          if (up) {
+            sink->BeginFigure(D2D1::Point2F(cx - size, cy + size), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(cx, cy - size));
+            sink->AddLine(D2D1::Point2F(cx + size, cy + size));
+          } else {
+            sink->BeginFigure(D2D1::Point2F(cx - size, cy - size), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(cx, cy + size));
+            sink->AddLine(D2D1::Point2F(cx + size, cy - size));
+          }
+          sink->EndFigure(D2D1_FIGURE_END_OPEN);
+          sink->Close();
+          pRT->DrawGeometry(path.Get(), m_brushIcon.Get(), 1.5f * m_uiScale);
+        };
+        drawChevron(m_animSpeedUpRect, true);
+        drawChevron(m_animSpeedDownRect, false);
+      }
+    }
     pRT->PopLayer();
   }
 
@@ -574,6 +736,34 @@ bool Toolbar::OnMouseMove(float x, float y) {
     changed = true;
     m_compareStepHover = stepHover; m_compareStepUpHover = stepUpHover; m_compareStepDownHover = stepDownHover;
   }
+  // [v10.5] Animation speed capsule hover
+  bool sHover = false, sUpHover = false, sDownHover = false;
+  if (m_animMode && m_animSpeedRect.right > m_animSpeedRect.left) {
+    if (x >= m_animSpeedRect.left && x < m_animSpeedRect.right && y >= m_animSpeedRect.top && y < m_animSpeedRect.bottom) {
+      sHover = true;
+      if (x >= m_animSpeedUpRect.left && x < m_animSpeedUpRect.right && y >= m_animSpeedUpRect.top && y < m_animSpeedUpRect.bottom) sUpHover = true;
+      else if (x >= m_animSpeedDownRect.left && x < m_animSpeedDownRect.right && y >= m_animSpeedDownRect.top && y < m_animSpeedDownRect.bottom) sDownHover = true;
+    }
+  }
+  if (!m_animMode) { sHover = sUpHover = sDownHover = false; }
+  if (sHover != m_animSpeedHover || sUpHover != m_animSpeedUpHover || sDownHover != m_animSpeedDownHover) {
+    changed = true;
+    m_animSpeedHover = sHover; m_animSpeedUpHover = sUpHover; m_animSpeedDownHover = sDownHover;
+  }
+  
+  bool progHover = false;
+  if (m_animMode && m_animProgressRect.right > m_animProgressRect.left) {
+      if (x >= m_animProgressRect.left && x <= m_animProgressRect.right && y >= m_animProgressRect.top && y <= m_animProgressRect.bottom) {
+          progHover = true;
+          m_animSeekHoverProgress = (x - m_animProgressRect.left) / (m_animProgressRect.right - m_animProgressRect.left);
+          m_animSeekHoverProgress = (std::max)(0.0f, (std::min)(1.0f, m_animSeekHoverProgress));
+      }
+  }
+  if (progHover != m_animProgressHover) {
+      changed = true;
+      m_animProgressHover = progHover;
+  }
+  
   return changed;
 }
 
@@ -589,6 +779,22 @@ bool Toolbar::OnClick(float x, float y, ToolbarButtonID &outId) {
         m_compareZoomStepPercent = (std::max)(0.1f, m_compareZoomStepPercent - 0.1f);
         outId = ToolbarButtonID::None; return true;
       }
+    }
+    // [v10.5] Animation speed capsule clicks
+    if (m_animMode && m_animSpeedRect.right > m_animSpeedRect.left) {
+      if (x >= m_animSpeedUpRect.left && x < m_animSpeedUpRect.right && y >= m_animSpeedUpRect.top && y < m_animSpeedUpRect.bottom) {
+        m_animSpeedMult = (std::min)(4.0f, m_animSpeedMult + 0.25f);
+        outId = ToolbarButtonID::None; return true;
+      }
+      if (x >= m_animSpeedDownRect.left && x < m_animSpeedDownRect.right && y >= m_animSpeedDownRect.top && y < m_animSpeedDownRect.bottom) {
+        m_animSpeedMult = (std::max)(0.25f, m_animSpeedMult - 0.25f);
+        outId = ToolbarButtonID::None; return true;
+      }
+    }
+    // Progress bar click
+    if (m_animMode && m_animProgressHover) {
+      outId = ToolbarButtonID::AnimSeek;
+      return true;
     }
     for (auto &btn : m_buttons) {
       if (btn.rect.right > 0 && x >= btn.rect.left && x < btn.rect.right && y >= btn.rect.top && y < btn.rect.bottom) {
@@ -661,6 +867,21 @@ void Toolbar::SetCompareRawState(bool anyRaw, bool selectedIsRaw, bool isFullDec
       btn.isWarning = anyRaw;
       btn.isEnabled = selectedIsRaw;
       if (selectedIsRaw) { btn.isToggled = isFullDecode; }
+    }
+  }
+}
+
+void Toolbar::SetAnimationMode(bool enabled, bool playing, bool dirtyRect) {
+  m_animMode = enabled;
+  m_animPlaying = playing;
+  m_animDirtyRect = dirtyRect;
+  for (auto &btn : m_buttons) {
+    if (btn.id == ToolbarButtonID::AnimPlayPause) {
+      btn.iconChar = playing ? ICON_PAUSE[0] : ICON_PLAY[0];
+      btn.isToggled = playing;
+    }
+    if (btn.id == ToolbarButtonID::AnimDirtyRect) {
+      btn.isToggled = dirtyRect;
     }
   }
 }

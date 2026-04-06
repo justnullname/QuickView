@@ -132,6 +132,19 @@ void UIRenderer::UpdateHoverState(POINT mousePos, int hoverRowIndex) {
     if (changed) MarkStaticDirty();  // Tooltip/hover highlight change
 }
 
+void UIRenderer::UpdateAnimationState(const AnimationPlaybackState& animState) {
+    bool dirty = false;
+    if (m_animState.IsAnimated != animState.IsAnimated) dirty = true;
+    if (m_animState.IsPlaying != animState.IsPlaying) dirty = true;
+    if (m_animState.CurrentFrameIndex != animState.CurrentFrameIndex) dirty = true;
+    
+    m_animState = animState;
+    if (dirty) {
+        MarkStaticDirty();  // Toolbar buttons might change
+        MarkDynamicDirty(); // Scrubber and UI might change
+    }
+}
+
 // ============================================================================
 // Hit Testing
 // ============================================================================
@@ -680,6 +693,59 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Debug HUD
     if (m_showDebugHUD) DrawDebugHUD(dc);
     
+    // [v10.5] Animation overlays (scrubber is now in Toolbar)
+    if (m_animState.IsAnimated) {
+        
+        // [v10.5] Dirty Rect Overlay - Red pulsing border for sub-rect updates
+        if (m_animState.ShowDirtyRect && m_animState.HasDirtyRect) {
+            const float hdrW = hdrWhiteScale;
+            float s2 = m_uiScale;
+            
+            // Transform image-space dirty rect to screen-space
+            float fScale = m_animState.FitScale;
+            float fOfsX = m_animState.FitOffsetX;
+            float fOfsY = m_animState.FitOffsetY;
+            
+            // Apply DComp zoom/pan
+            float zoom = m_viewState.Zoom;
+            float panX = m_viewState.PanX;
+            float panY = m_viewState.PanY;
+            
+            float sx = (m_animState.DirtyRcLeft * fScale + fOfsX) * zoom + panX;
+            float sy = (m_animState.DirtyRcTop * fScale + fOfsY) * zoom + panY;
+            float ex = (m_animState.DirtyRcRight * fScale + fOfsX) * zoom + panX;
+            float ey = (m_animState.DirtyRcBottom * fScale + fOfsY) * zoom + panY;
+            
+            D2D1_RECT_F dirtyRect = D2D1::RectF(sx, sy, ex, ey);
+            
+            // Pulsing alpha (breathing effect)
+            float t = (float)(GetTickCount() % 1200) / 1200.0f;
+            float alpha = 0.5f + 0.4f * sinf(t * 6.2831853f);
+            
+            ComPtr<ID2D1SolidColorBrush> dirtyBrush;
+            dc->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 0.15f, 0.1f, alpha), hdrW), &dirtyBrush);
+            dc->DrawRectangle(dirtyRect, dirtyBrush.Get(), 2.0f * s2);
+            
+            // Corner markers (thick 6px corners for emphasis)
+            float cornerLen = 8.0f * s2;
+            ComPtr<ID2D1SolidColorBrush> cornerBrush;
+            dc->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 0.3f, 0.2f, alpha * 1.2f), hdrW), &cornerBrush);
+            float cw = 3.0f * s2;
+            // Top-left
+            dc->DrawLine(D2D1::Point2F(sx, sy), D2D1::Point2F(sx + cornerLen, sy), cornerBrush.Get(), cw);
+            dc->DrawLine(D2D1::Point2F(sx, sy), D2D1::Point2F(sx, sy + cornerLen), cornerBrush.Get(), cw);
+            // Top-right
+            dc->DrawLine(D2D1::Point2F(ex, sy), D2D1::Point2F(ex - cornerLen, sy), cornerBrush.Get(), cw);
+            dc->DrawLine(D2D1::Point2F(ex, sy), D2D1::Point2F(ex, sy + cornerLen), cornerBrush.Get(), cw);
+            // Bottom-left
+            dc->DrawLine(D2D1::Point2F(sx, ey), D2D1::Point2F(sx + cornerLen, ey), cornerBrush.Get(), cw);
+            dc->DrawLine(D2D1::Point2F(sx, ey), D2D1::Point2F(sx, ey - cornerLen), cornerBrush.Get(), cw);
+            // Bottom-right
+            dc->DrawLine(D2D1::Point2F(ex, ey), D2D1::Point2F(ex - cornerLen, ey), cornerBrush.Get(), cw);
+            dc->DrawLine(D2D1::Point2F(ex, ey), D2D1::Point2F(ex, ey - cornerLen), cornerBrush.Get(), cw);
+        }
+    }
+    
     // Nav Indicators
     DrawNavIndicators(dc);
     
@@ -1011,6 +1077,140 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
 
     if (shouldAnimate) {
         InvalidateRect(hwnd, nullptr, FALSE);
+    }
+}
+
+void UIRenderer::DrawAnimationScrubber(ID2D1DeviceContext* dc, HWND hwnd) {
+    if (!m_animState.IsAnimated || m_animState.TotalFrames <= 1) return;
+    
+    const float s = m_uiScale;
+    const float hdrWhiteScale = GetHdrUiWhiteScale(m_compEngine);
+    float winW = (float)m_width;
+    float winH = (float)m_height;
+    
+    // ======== Layout Constants ========
+    float panelW = std::min(520.0f * s, winW * 0.75f);
+    float panelX = (winW - panelW) / 2.0f;
+    float btnSize = 28.0f * s;
+    float btnGap = 4.0f * s;
+    float barH = m_animState.InspectorMode ? 10.0f * s : 5.0f * s;
+    float cornerR = barH / 2.0f;
+    
+    // Button row at the very bottom, scrubber above it
+    float bottomY = winH - 36.0f * s;
+    float btnY = bottomY;
+    float barY = btnY - barH - 10.0f * s;
+    
+    // ======== 1. Scrubber Progress Bar ========
+    D2D1_RECT_F trackRect = D2D1::RectF(panelX, barY, panelX + panelW, barY + barH);
+    
+    // Track background (frosted glass)
+    ComPtr<ID2D1SolidColorBrush> trackBrush;
+    dc->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.55f), hdrWhiteScale), &trackBrush);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(trackRect, cornerR, cornerR), trackBrush.Get());
+    
+    // Fill progress
+    float progress = (float)m_animState.CurrentFrameIndex / (std::max)(1.0f, (float)(m_animState.TotalFrames - 1));
+    float fillW = panelW * progress;
+    
+    D2D1_RECT_F fillRect = D2D1::RectF(panelX, barY, panelX + fillW, barY + barH);
+    ComPtr<ID2D1SolidColorBrush> fillBrush;
+    D2D1_COLOR_F fillColor = m_animState.InspectorMode 
+        ? D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.92f)   // Gold (inspector)
+        : D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.85f);   // Blue (playing)
+    dc->CreateSolidColorBrush(ScaleUiColor(fillColor, hdrWhiteScale), &fillBrush);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(fillRect, cornerR, cornerR), fillBrush.Get());
+    
+    // Playhead dot
+    if (m_animState.InspectorMode) {
+        float dotR = 5.0f * s;
+        float dotX = panelX + fillW;
+        float dotY = barY + barH / 2.0f;
+        // Clamp
+        dotX = std::max(panelX + dotR, std::min(dotX, panelX + panelW - dotR));
+        
+        D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(dotX, dotY), dotR, dotR);
+        ComPtr<ID2D1SolidColorBrush> dotBrush;
+        dc->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f), hdrWhiteScale), &dotBrush);
+        dc->FillEllipse(dot, dotBrush.Get());
+    }
+    
+    // ======== 2. Mini Toolbar Buttons ========
+    // Centered button row: [⏮] [⏵/⏸] [⏭] [⧈]  + frame counter
+    struct MiniBtn { const wchar_t* icon; bool active; };
+    MiniBtn btns[] = {
+        { L"\xE892", false },                            // Prev Frame (SkipBack10)
+        { m_animState.IsPlaying ? L"\xE769" : L"\xE768", m_animState.IsPlaying }, // Pause/Play
+        { L"\xE893", false },                            // Next Frame (SkipForward30)
+        { L"\xE7B3", m_animState.ShowDirtyRect },        // Dirty Rect toggle (Diagnostic)
+    };
+    int btnCount = 4;
+    float totalBtnW = btnCount * btnSize + (btnCount - 1) * btnGap;
+    float btnStartX = (winW - totalBtnW) / 2.0f;
+    
+    // Button background pill
+    float pillPad = 6.0f * s;
+    D2D1_RECT_F pillRect = D2D1::RectF(
+        btnStartX - pillPad, btnY - 2.0f * s,
+        btnStartX + totalBtnW + pillPad, btnY + btnSize + 2.0f * s);
+    ComPtr<ID2D1SolidColorBrush> pillBrush;
+    dc->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.50f), hdrWhiteScale), &pillBrush);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(pillRect, 14.0f * s, 14.0f * s), pillBrush.Get());
+    
+    // Draw each button
+    ComPtr<IDWriteTextFormat> iconFmt;
+    if (m_dwriteFactory) {
+        m_dwriteFactory->CreateTextFormat(L"Segoe Fluent Icons", nullptr,
+            DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+            14.0f * s, L"", &iconFmt);
+        if (iconFmt) {
+            iconFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            iconFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+
+    for (int i = 0; i < btnCount; i++) {
+        float bx = btnStartX + i * (btnSize + btnGap);
+        D2D1_RECT_F bRect = D2D1::RectF(bx, btnY, bx + btnSize, btnY + btnSize);
+        
+        if (iconFmt) {
+            ComPtr<ID2D1SolidColorBrush> iconBrush;
+            D2D1_COLOR_F iconColor = btns[i].active 
+                ? D2D1::ColorF(0.25f, 0.56f, 1.0f, 0.95f) // Active blue
+                : D2D1::ColorF(0.85f, 0.85f, 0.85f, 0.85f); // Default white
+            dc->CreateSolidColorBrush(ScaleUiColor(iconColor, hdrWhiteScale), &iconBrush);
+            dc->DrawText(btns[i].icon, (UINT32)wcslen(btns[i].icon), iconFmt.Get(), bRect, iconBrush.Get());
+        }
+    }
+    
+    // ======== 3. Frame Counter Text (right of buttons) ========
+    if (m_debugFormat) {
+        wchar_t txt[96];
+        if (m_animState.InspectorMode) {
+            const wchar_t* dispName = L"Keep";
+            if (m_animState.CurrentDisposal == QuickView::FrameDisposalMode::RestoreBackground) dispName = L"BG";
+            else if (m_animState.CurrentDisposal == QuickView::FrameDisposalMode::RestorePrevious) dispName = L"Prev";
+            swprintf_s(txt, L"%u / %u  |  %u ms  |  %s", 
+                m_animState.CurrentFrameIndex + 1, m_animState.TotalFrames,
+                m_animState.CurrentFrameDelayTime, dispName);
+        } else {
+            swprintf_s(txt, L"%u / %u", m_animState.CurrentFrameIndex + 1, m_animState.TotalFrames);
+        }
+        
+        ComPtr<IDWriteTextLayout> layout;
+        m_dwriteFactory->CreateTextLayout(txt, (UINT32)wcslen(txt), m_debugFormat.Get(), 250.0f, 30.0f, &layout);
+        if (layout) {
+            DWRITE_TEXT_METRICS tm; layout->GetMetrics(&tm);
+            float textX = btnStartX + totalBtnW + pillPad + 8.0f * s;
+            float textY = btnY + (btnSize - tm.height) / 2.0f;
+            
+            ComPtr<ID2D1SolidColorBrush> textBrush;
+            D2D1_COLOR_F textColor = m_animState.InspectorMode 
+                ? D2D1::ColorF(1.0f, 0.72f, 0.18f, 0.85f)
+                : D2D1::ColorF(0.7f, 0.7f, 0.7f, 0.7f);
+            dc->CreateSolidColorBrush(ScaleUiColor(textColor, hdrWhiteScale), &textBrush);
+            dc->DrawTextLayout(D2D1::Point2F(textX, textY), layout.Get(), textBrush.Get());
+        }
     }
 }
 
@@ -2376,37 +2576,63 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     const float s = m_uiScale;
     const float hdrWhiteScale = GetHdrUiWhiteScale(m_compEngine);
     
-    std::wstring info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
+    std::wstring info;
     
-    // Add Size
-    if (g_currentMetadata.Width > 0) {
-        wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
-        info += sz;
+    // [v10.5] Animation mode: show frame-centric info
+    if (m_animState.IsAnimated) {
+        wchar_t frameBuf[256];
+        const wchar_t* dispName = L"Keep";
+        if (m_animState.CurrentDisposal == QuickView::FrameDisposalMode::RestoreBackground) dispName = L"BG";
+        else if (m_animState.CurrentDisposal == QuickView::FrameDisposalMode::RestorePrevious) dispName = L"Prev";
         
-        if (g_currentMetadata.FileSize > 0) {
-            double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
-            swprintf_s(sz, L"   %.2f MB", mb);
-            info += sz;
+        std::wstring fileName = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
+        if (m_animState.TotalFrames > 0) {
+            swprintf_s(frameBuf, L"%u / %u   |   %u ms   |   %s   |   %u x %u   |   %s",
+                m_animState.CurrentFrameIndex + 1, m_animState.TotalFrames,
+                m_animState.CurrentFrameDelayTime, dispName,
+                g_currentMetadata.Width, g_currentMetadata.Height,
+                fileName.c_str());
+        } else {
+            swprintf_s(frameBuf, L"%u / ?   |   %u ms   |   %s   |   %u x %u   |   %s",
+                m_animState.CurrentFrameIndex + 1,
+                m_animState.CurrentFrameDelayTime, dispName,
+                g_currentMetadata.Width, g_currentMetadata.Height,
+                fileName.c_str());
         }
-    }
+        info = frameBuf;
+    } else {
+        info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
     
-    // Add Compact EXIF
-    std::wstring meta = g_currentMetadata.GetCompactString();
-    if (!meta.empty()) info += L"   " + meta;
-
-    if (!g_currentMetadata.FormatDetails.empty()) {
-        std::wstring compactDetails = StripQualityFromFormatDetails(g_currentMetadata.FormatDetails);
-        if (!compactDetails.empty()) {
-            info += L"   [" + compactDetails + L"]";
+        // Add Size
+        if (g_currentMetadata.Width > 0) {
+            wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
+            info += sz;
+            
+            if (g_currentMetadata.FileSize > 0) {
+                double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
+                swprintf_s(sz, L"   %.2f MB", mb);
+                info += sz;
+            }
         }
-    }
+    
+        // Add Compact EXIF
+        std::wstring meta = g_currentMetadata.GetCompactString();
+        if (!meta.empty()) info += L"   " + meta;
 
-    if (IsHdrLikeContent(g_currentMetadata) || g_currentMetadata.hdrMetadata.isValid) {
-        const std::wstring dynamicRange = BuildDynamicRangeLabel(g_currentMetadata);
-        if (!dynamicRange.empty()) {
-            info += L"   [";
-            info += dynamicRange;
-            info += L"]";
+        if (!g_currentMetadata.FormatDetails.empty()) {
+            std::wstring compactDetails = StripQualityFromFormatDetails(g_currentMetadata.FormatDetails);
+            if (!compactDetails.empty()) {
+                info += L"   [" + compactDetails + L"]";
+            }
+        }
+
+        if (IsHdrLikeContent(g_currentMetadata) || g_currentMetadata.hdrMetadata.isValid) {
+            const std::wstring dynamicRange = BuildDynamicRangeLabel(g_currentMetadata);
+            if (!dynamicRange.empty()) {
+                info += L"   [";
+                info += dynamicRange;
+                info += L"]";
+            }
         }
     }
     

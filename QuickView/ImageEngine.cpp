@@ -1142,6 +1142,10 @@ void ImageEngine::FastLane::QueueWorker() {
                     safeFrame->blendOp = rawFrame.blendOp;
                     safeFrame->shaderPayload = rawFrame.shaderPayload;
                     if (rawFrame.auxLayer) safeFrame->auxLayer = rawFrame.auxLayer->Clone();
+                    
+                    // [v10.5] Animation Decoder propagation
+                    safeFrame->animator = rawFrame.animator;
+                    safeFrame->frameMeta = rawFrame.frameMeta;
                 }
                 e.rawFrame = safeFrame;
 
@@ -1411,6 +1415,10 @@ void ImageEngine::PruneQueue(int currentIndex, QuickView::BrowseDirection dir) {
 
 void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_ptr<QuickView::RawImageFrame> frame) {
     if (!frame || !frame->IsValid()) return;
+    
+    // [v10.5] Skip caching for animated images - animator is stateful and cannot be deep-copied.
+    // Re-decoding through FastLane on re-navigation is cheap for small animated files.
+    if (frame->animator) return;
     
     // 1. Calculate size (RGBA: W * H * 4)
     size_t newSize = (size_t)frame->width * frame->height * 4;

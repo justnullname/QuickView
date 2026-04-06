@@ -183,6 +183,30 @@ struct alignas(16) GpuShaderPayload {
 static_assert(sizeof(GpuShaderPayload) % 16 == 0, "GpuShaderPayload must be 16-byte aligned for D3D11 cbuffer");
 
 // ============================================================================
+// Animation Types
+// ============================================================================
+class IAnimationDecoder;
+
+enum class FrameDisposalMode : uint8_t {
+    Unspecified = 0,
+    Keep = 1,                 // Core: do not dispose
+    RestoreBackground = 2,    // Clear to transparent/bg
+    RestorePrevious = 3       // Restore to state before this frame was drawn
+};
+
+struct AnimationFrameMeta {
+    uint32_t index = 0;              // Frame counter
+    uint32_t delayMs = 100;          // Delay before next frame in milliseconds
+    FrameDisposalMode disposal = FrameDisposalMode::Keep; // Disposal method
+    float blendOp = 0;               // usually 0 = over, 1 = source (APNG specific)
+    bool isDelta = false;            // If this frame just updates a sub-rect
+    int rcLeft = 0, rcTop = 0, rcRight = 0, rcBottom = 0; // Dirty rect details
+    
+    // Total frames info (if known from container)
+    uint32_t totalFrames = 0;
+};
+
+// ============================================================================
 // RawImageFrame - The Standardized Cargo Box
 // ============================================================================
 // Design Principles:
@@ -232,12 +256,15 @@ struct RawImageFrame {
     // Helper: SVG only call
     bool IsSvg() const { return format == PixelFormat::SVG_XML && svg; }
 
-    // [GPU Pipeline] Multi-layer composition data
-    // Zero-overhead for standard single-layer images (unique_ptr + enum)
+    // [GPU Pipeline] Release auxiliary layer
     GpuBlendOp blendOp = GpuBlendOp::None;
     std::unique_ptr<AuxLayer> auxLayer;   // nullptr = single layer
     GpuShaderPayload shaderPayload;       // Only meaningful when blendOp != None
     
+    // [v10.5] Animation Frame Metadata
+    AnimationFrameMeta frameMeta;
+    std::shared_ptr<IAnimationDecoder> animator; // Hand-off for animation player
+
     // === Lifecycle Management ===
     // Callback to release memory when frame is destroyed.
     // - For Arena: nullptr (Arena manages memory)
@@ -320,6 +347,7 @@ struct RawImageFrame {
         auxLayer.reset();
         blendOp = GpuBlendOp::None;
         shaderPayload = {};
+        frameMeta = {};
     }
     
     /// Detach pointer without calling deleter (transfers ownership out)
@@ -355,6 +383,8 @@ private:
         auxLayer = std::move(other.auxLayer);
         shaderPayload = other.shaderPayload;
         
+        frameMeta = other.frameMeta;
+        
         // Nullify source
         other.pixels = nullptr;
         other.width = 0;
@@ -369,6 +399,7 @@ private:
         other.exifOrientation = 1;
         other.blendOp = GpuBlendOp::None;
         other.shaderPayload = {};
+        other.frameMeta = {};
         // memoryDeleter is moved, but setting to nullptr for clarity
         // other.svg is moved (becomes nullptr)
         // other.auxLayer is moved (becomes nullptr)

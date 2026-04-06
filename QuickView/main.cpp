@@ -190,6 +190,10 @@ struct ImageResource {
     QuickView::GpuShaderPayload shaderPayload = {};
     std::unique_ptr<QuickView::AuxLayer> auxLayer;
 
+    // [v10.5] Animation state
+    std::shared_ptr<QuickView::IAnimationDecoder> animator;
+    QuickView::AnimationFrameMeta frameMeta;
+
     void Reset() {
         bitmap.Reset();
         svgDoc.Reset();
@@ -198,6 +202,8 @@ struct ImageResource {
         blendOp = QuickView::GpuBlendOp::None;
         shaderPayload = {};
         auxLayer.reset();
+        animator.reset();
+        frameMeta = {};
     }
 
     ImageResource() = default;
@@ -218,6 +224,8 @@ struct ImageResource {
         if (auxLayer) {
             cloned.auxLayer = auxLayer->Clone();
         }
+        cloned.animator = animator;
+        cloned.frameMeta = frameMeta;
         return cloned;
     }
     
@@ -240,6 +248,12 @@ static bool g_isBlurry = false; // For Motion Blur (Ghost)
 static bool g_isCrossFading = false;
 bool g_slowMotionMode = false; // [Debug] Slow crossfade for timing analysis
 static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
+
+// [v10.5] Animation Control
+static bool g_animPlaying = true;
+static int g_animInspectorFrame = -1; // -1 means playing normally
+static bool g_showAnimDirtyRect = false; // [v10.5] Dirty rect debug overlay
+#define IDT_ANIMATION 105
 OSDState g_osd; // Removed static, explicitly Global
 
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
@@ -6072,6 +6086,53 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     case WM_TIMER: {
         static const UINT_PTR OSD_TIMER_ID = 994;
+        
+        if (wParam == IDT_ANIMATION) {
+            if (!g_animPlaying || !g_imageResource.animator) {
+                KillTimer(hwnd, IDT_ANIMATION);
+                return 0;
+            }
+            
+            auto nextFrame = g_imageResource.animator->GetNextFrame();
+            if (!nextFrame || !nextFrame->pixels) {
+                // EOF: Loop back to frame 0
+                OutputDebugStringW(L"[Anim] EOF reached, looping to frame 0\n");
+                nextFrame = g_imageResource.animator->SeekToFrame(0);
+            }
+            
+            if (nextFrame && nextFrame->pixels) {
+                ComPtr<ID2D1Bitmap> newBitmap;
+                HRESULT hr = g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap);
+                if (SUCCEEDED(hr)) {
+                    g_imageResource.bitmap = newBitmap;
+                    g_imageResource.frameMeta = nextFrame->frameMeta;
+                    
+                    // Update timer delay with speed multiplier
+                    uint32_t delayMs = g_imageResource.frameMeta.delayMs;
+                    if (delayMs < 10) delayMs = 100;
+                    float speedMult = g_toolbar.GetAnimSpeedMultiplier();
+                    if (speedMult > 0.01f) delayMs = (uint32_t)(delayMs / speedMult);
+                    if (delayMs < 1) delayMs = 1;
+                    SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
+                    
+                    // Must re-render to DComp surface (not just RequestRepaint)
+                    RenderImageToDComp(hwnd, g_imageResource, true);
+                    if (g_compEngine) {
+                        RECT rc; GetClientRect(hwnd, &rc);
+                        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+                        g_compEngine->Commit();
+                    }
+                    RequestRepaint(PaintLayer::Dynamic); // For scrubber UI
+                } else {
+                    OutputDebugStringW(L"[Anim] UploadRawFrameToGPU FAILED\n");
+                }
+            } else {
+                OutputDebugStringW(L"[Anim] SeekToFrame(0) also returned null, stopping\n");
+                KillTimer(hwnd, IDT_ANIMATION);
+            }
+            return 0;
+        }
+
         if (wParam == IDT_SMOOTH_WINDOW_ZOOM) {
             TickSmoothWindowZoom(hwnd);
             return 0;
@@ -7551,6 +7612,83 @@ SKIP_EDGE_NAV:;
                 case ToolbarButtonID::None:
                     RequestRepaint(PaintLayer::Static);
                     break;
+                // [v10.5] Animation Toolbar Buttons
+                case ToolbarButtonID::AnimPlayPause:
+                    if (g_imageResource.animator) {
+                        SendMessage(hwnd, WM_KEYDOWN, VK_SPACE, 0);
+                    }
+                    break;
+                case ToolbarButtonID::AnimPrevFrame:
+                    if (g_imageResource.animator && !g_animPlaying) {
+                        uint32_t total = g_imageResource.animator->GetTotalFrames();
+                        if (total > 0) {
+                            uint32_t current = g_imageResource.frameMeta.index;
+                            uint32_t target = (current > 0) ? current - 1 : total - 1;
+                            auto nextFrame = g_imageResource.animator->SeekToFrame(target);
+                            if (nextFrame && nextFrame->pixels) {
+                                ComPtr<ID2D1Bitmap> newBitmap;
+                                if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap))) {
+                                    g_imageResource.bitmap = newBitmap;
+                                    g_imageResource.frameMeta = nextFrame->frameMeta;
+                                    RenderImageToDComp(hwnd, g_imageResource, true);
+                                    if (g_compEngine) { RECT rc; GetClientRect(hwnd, &rc); SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom); g_compEngine->Commit(); }
+                                    RequestRepaint(PaintLayer::Dynamic);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                case ToolbarButtonID::AnimNextFrame:
+                    if (g_imageResource.animator && !g_animPlaying) {
+                        uint32_t total = g_imageResource.animator->GetTotalFrames();
+                        if (total > 0) {
+                            uint32_t current = g_imageResource.frameMeta.index;
+                            uint32_t target = (current + 1) % total;
+                            auto nextFrame = g_imageResource.animator->SeekToFrame(target);
+                            if (nextFrame && nextFrame->pixels) {
+                                ComPtr<ID2D1Bitmap> newBitmap;
+                                if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap))) {
+                                    g_imageResource.bitmap = newBitmap;
+                                    g_imageResource.frameMeta = nextFrame->frameMeta;
+                                    RenderImageToDComp(hwnd, g_imageResource, true);
+                                    if (g_compEngine) { RECT rc; GetClientRect(hwnd, &rc); SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom); g_compEngine->Commit(); }
+                                    RequestRepaint(PaintLayer::Dynamic);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                case ToolbarButtonID::AnimDirtyRect:
+                    if (g_imageResource.animator) {
+                        g_showAnimDirtyRect = !g_showAnimDirtyRect;
+                        g_osd.Show(hwnd, g_showAnimDirtyRect ? L"[Animation] Dirty Rect: ON" : L"[Animation] Dirty Rect: OFF", true);
+                        RequestRepaint(PaintLayer::Dynamic);
+                    }
+                    break;
+                case ToolbarButtonID::AnimSeek: {
+                    float targetProgress = 0.0f;
+                    if (g_imageResource.animator && g_toolbar.GetAnimSeekTarget(targetProgress)) {
+                        uint32_t total = g_imageResource.animator->GetTotalFrames();
+                        if (total > 0) {
+                            g_animPlaying = false; // Pause when seeking
+                            KillTimer(hwnd, IDT_ANIMATION);
+                            uint32_t targetFrame = (uint32_t)(std::round(targetProgress * (total - 1)));
+                            auto nextFrame = g_imageResource.animator->SeekToFrame(targetFrame);
+                            if (nextFrame && nextFrame->pixels) {
+                                ComPtr<ID2D1Bitmap> newBitmap;
+                                if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap))) {
+                                    g_imageResource.bitmap = newBitmap;
+                                    g_imageResource.frameMeta = nextFrame->frameMeta;
+                                    RenderImageToDComp(hwnd, g_imageResource, true);
+                                    if (g_compEngine) { RECT rc; GetClientRect(hwnd, &rc); SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom); g_compEngine->Commit(); }
+                                    RequestRepaint(PaintLayer::Dynamic);
+                                }
+                            }
+                            g_osd.Show(hwnd, L"[Animation] Paused (Inspector Mode: Alt+Left/Right to Seek)", true);
+                        }
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -7911,17 +8049,83 @@ SKIP_EDGE_NAV:;
         
         // ?F10 绌?(F10 閫氬父浜х敓 WM_SYSKEYDOWN)
         // 鍏朵粬绯荤粺閿粛浜ょ粰 DefWindowProc 澶勭悊
-        if (message == WM_SYSKEYDOWN && wParam != VK_F10) {
+        if (message == WM_SYSKEYDOWN && wParam != VK_F10 && wParam != VK_LEFT && wParam != VK_RIGHT) {
             break; // 鍏朵粬绯荤粺閿氦缁欓粯璁ゅ?
         }
         
         switch (wParam) {
         // Navigation
-        case VK_LEFT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break;
-        case VK_RIGHT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
+        case VK_LEFT: 
+            if (alt && g_imageResource.animator && !g_animPlaying) {
+                uint32_t total = g_imageResource.animator->GetTotalFrames();
+                if (total > 0) {
+                    uint32_t current = g_imageResource.frameMeta.index;
+                    uint32_t target = (current > 0) ? current - 1 : total - 1;
+                    auto nextFrame = g_imageResource.animator->SeekToFrame(target);
+                    if (nextFrame && nextFrame->pixels) {
+                        ComPtr<ID2D1Bitmap> newBitmap;
+                        if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap))) {
+                            g_imageResource.bitmap = newBitmap;
+                            g_imageResource.frameMeta = nextFrame->frameMeta;
+                            RenderImageToDComp(hwnd, g_imageResource, true);
+                            if (g_compEngine) { RECT rc; GetClientRect(hwnd, &rc); SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom); g_compEngine->Commit(); }
+                            RequestRepaint(PaintLayer::Dynamic);
+                        }
+                    }
+                }
+            } else if (CheckUnsavedChanges(hwnd)) {
+                Navigate(hwnd, -1);
+            }
+            break;
+        case VK_RIGHT: 
+            if (alt && g_imageResource.animator && !g_animPlaying) {
+                uint32_t total = g_imageResource.animator->GetTotalFrames();
+                if (total > 0) {
+                    uint32_t current = g_imageResource.frameMeta.index;
+                    uint32_t target = (current + 1) % total;
+                    auto nextFrame = g_imageResource.animator->SeekToFrame(target);
+                    if (nextFrame && nextFrame->pixels) {
+                        ComPtr<ID2D1Bitmap> newBitmap;
+                        if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap))) {
+                            g_imageResource.bitmap = newBitmap;
+                            g_imageResource.frameMeta = nextFrame->frameMeta;
+                            RenderImageToDComp(hwnd, g_imageResource, true);
+                            if (g_compEngine) { RECT rc; GetClientRect(hwnd, &rc); SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom); g_compEngine->Commit(); }
+                            RequestRepaint(PaintLayer::Dynamic);
+                        }
+                    }
+                }
+            } else if (CheckUnsavedChanges(hwnd)) {
+                Navigate(hwnd, 1);
+            }
+            break;
         case VK_UP: SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); break; // Up: Zoom In
         case VK_DOWN: SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0); break; // Down: Zoom Out
-        case VK_SPACE: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
+        case VK_SPACE: 
+            if (g_imageResource.animator) {
+                g_animPlaying = !g_animPlaying;
+                if (g_animPlaying) {
+                    g_animInspectorFrame = -1;
+                    uint32_t delayMs = g_imageResource.frameMeta.delayMs;
+                    if (delayMs < 10) delayMs = 100;
+                    SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
+                    g_osd.Show(hwnd, L"[Animation] Playing", true);
+                } else {
+                    KillTimer(hwnd, IDT_ANIMATION);
+                    g_osd.Show(hwnd, L"[Animation] Paused (Inspector Mode: Alt+Left/Right to Seek)", true);
+                }
+                RequestRepaint(PaintLayer::Dynamic);
+            } else if (CheckUnsavedChanges(hwnd)) {
+                Navigate(hwnd, 1);
+            }
+            break;
+        case VK_SHIFT:
+            if (g_imageResource.animator && !ctrl && !alt) {
+                g_showAnimDirtyRect = !g_showAnimDirtyRect;
+                g_osd.Show(hwnd, g_showAnimDirtyRect ? L"[Animation] Dirty Rect: ON" : L"[Animation] Dirty Rect: OFF", true);
+                RequestRepaint(PaintLayer::Dynamic);
+            }
+            break;
         case VK_PRIOR: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break; // Page Up
         case VK_NEXT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break; // Page Down
         case VK_HOME: if (CheckUnsavedChanges(hwnd)) NavigateEdge(hwnd, false); break; // Home
@@ -9271,12 +9475,19 @@ void ProcessEngineEvents(HWND hwnd) {
                          g_imageResource.bitmap = bitmap;
                          g_isImageDirty = false; // [v10.3.1] Force refresh consumed, preventing redundant OnPaint cycle
                          
-                         // [v10.3.1] Restore AuxLayer from frame if present (ensures UI/Renderer consistency)
+                         // [v10.3.1] Restore AuxLayer from frame if present
                          if (evt.rawFrame && evt.rawFrame->auxLayer) {
                              g_imageResource.blendOp = evt.rawFrame->blendOp;
                              g_imageResource.shaderPayload = evt.rawFrame->shaderPayload;
                              g_imageResource.auxLayer = evt.rawFrame->auxLayer->Clone();
                          }
+                         
+                         // [v10.5] Animation State
+                         if (evt.rawFrame) {
+                             g_imageResource.animator = evt.rawFrame->animator;
+                             g_imageResource.frameMeta = evt.rawFrame->frameMeta;
+                         }
+
                          resourceReady = true;
                     }
                 }
@@ -9555,6 +9766,16 @@ void ProcessEngineEvents(HWND hwnd) {
                 // Cleanup
                 g_isLoading = false;
                 KillTimer(hwnd, 995); // Stop UI heartbeat timer
+                
+                // [v10.5] Start Animation Timer
+                if (!isPreview && g_imageResource.animator) {
+                    g_animPlaying = true;
+                    uint32_t delayMs = g_imageResource.frameMeta.delayMs;
+                    if (delayMs < 10) delayMs = 100;
+                    SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
+                } else if (!isPreview) {
+                    KillTimer(hwnd, IDT_ANIMATION);
+                }
                 
                 // Cursor Update
                 POINT pt;
@@ -10990,6 +11211,47 @@ void OnPaint(HWND hwnd) {
         RECT rc; GetClientRect(hwnd, &rc);
         if (rc.right > 0 && rc.bottom > 0) {
             g_uiRenderer->OnResize((UINT)rc.right, (UINT)rc.bottom);
+        }
+        
+        // Pass animation state
+        AnimationPlaybackState animState;
+        if (g_imageResource.animator) {
+            animState.IsAnimated = true;
+            animState.IsPlaying = g_animPlaying;
+            animState.InspectorMode = !g_animPlaying;
+            animState.ShowDirtyRect = g_showAnimDirtyRect;
+            animState.TotalFrames = g_imageResource.animator->GetTotalFrames();
+            animState.CurrentFrameIndex = g_imageResource.frameMeta.index;
+            animState.CurrentFrameDelayTime = g_imageResource.frameMeta.delayMs;
+            animState.CurrentDisposal = g_imageResource.frameMeta.disposal;
+            
+            // Dirty rect info
+            auto& fm = g_imageResource.frameMeta;
+            if (fm.isDelta && (fm.rcRight > fm.rcLeft || fm.rcBottom > fm.rcTop)) {
+                animState.HasDirtyRect = true;
+                animState.DirtyRcLeft = fm.rcLeft;
+                animState.DirtyRcTop = fm.rcTop;
+                animState.DirtyRcRight = fm.rcRight;
+                animState.DirtyRcBottom = fm.rcBottom;
+            }
+            
+            // Pass image-to-screen transform for dirty rect overlay
+            animState.FitScale = g_lastFitScale;
+            animState.FitOffsetX = g_lastFitOffset.x;
+            animState.FitOffsetY = g_lastFitOffset.y;
+        }
+        g_uiRenderer->UpdateAnimationState(animState);
+        
+        // [v10.5] Sync Toolbar animation mode
+        bool hasAnim = (g_imageResource.animator != nullptr);
+        g_toolbar.SetAnimationMode(hasAnim, hasAnim && g_animPlaying, g_showAnimDirtyRect);
+        if (hasAnim && animState.TotalFrames > 1) {
+            float progress = (float)animState.CurrentFrameIndex / (float)(animState.TotalFrames - 1);
+            g_toolbar.SetAnimProgress(progress);
+        }
+        {
+            RECT rc; GetClientRect(hwnd, &rc);
+            g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
         }
         
         g_uiRenderer->Render(hwnd);

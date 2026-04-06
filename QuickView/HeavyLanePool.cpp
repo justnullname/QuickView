@@ -1687,6 +1687,10 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                     safeFrame->colorInfo = rawFrame.colorInfo;
                     safeFrame->hdrMetadata = rawFrame.hdrMetadata;
 
+                    // [v10.5] Animation Meta propagation
+                    safeFrame->animator = rawFrame.animator;
+                    safeFrame->frameMeta = rawFrame.frameMeta;
+
                     // [GPU Pipeline] Deep copy blend operation and payload
                     safeFrame->blendOp = rawFrame.blendOp;
                     safeFrame->shaderPayload = rawFrame.shaderPayload;

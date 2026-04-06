@@ -8,6 +8,7 @@
 #include <wincodecsdk.h>
 
 #include "ImageLoader.h"
+#include "AnimationDecoder.h"
 #include "MemoryArena.h" // [Fix] Include for QuantumArena definition
 #include "EditState.h" // For g_runtime
 #include "TileMemoryManager.h" // [Titan]
@@ -418,6 +419,10 @@ namespace QuickView {
             GpuBlendOp blendOp = GpuBlendOp::None;
             std::unique_ptr<AuxLayer> auxLayer;
             GpuShaderPayload shaderPayload;
+            
+            // [v10.5] Animation Decoder Payload
+            std::shared_ptr<QuickView::IAnimationDecoder> animator;
+            QuickView::AnimationFrameMeta frameMeta; // Transport for first frame meta
         };
 
         // File I/O Helpers
@@ -7000,6 +7005,53 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
         size_t mappedSize = mapping.size();
         
         // Dispatch
+        if (fmt == L"WebP" || fmt == L"GIF" || fmt == L"PNG" || fmt == L"AVIF" || fmt == L"JXL") { // APNG supported by Wuffs
+            std::shared_ptr<QuickView::MappedFile> fileMap = std::make_shared<QuickView::MappedFile>(filePath);
+            if (fileMap->IsValid()) {
+                std::unique_ptr<QuickView::IAnimationDecoder> animator;
+                if (fmt == L"WebP") {
+                    animator = QuickView::CreateWebPAnimator();
+                } else if (fmt == L"AVIF") {
+                    animator = QuickView::CreateAvifAnimator();
+                } else if (fmt == L"JXL") {
+                    animator = QuickView::CreateJxlAnimator();
+                } else {
+                    animator = QuickView::CreateWuffsAnimator();
+                }
+                
+                if (animator && animator->Initialize(fileMap, QuickView::PixelFormat::BGRA8888)) {
+                    if (animator->IsAnimated()) {
+                        auto firstFrame = animator->GetNextFrame();
+                        if (firstFrame && firstFrame->pixels) {
+                            result.width = firstFrame->width;
+                            result.height = firstFrame->height;
+                            result.stride = firstFrame->stride;
+                            result.format = firstFrame->format;
+                            
+                            // Steal pixels
+                            result.pixels = firstFrame->pixels;
+                            firstFrame->pixels = nullptr; // prevent double free
+                            
+                            // Propagate Animation meta and Animator link
+                            result.frameMeta = firstFrame->frameMeta;
+                            result.animator = std::move(animator);
+                            result.metadata.LoaderName = fmt == L"WebP" ? L"WebPAnimator" : (fmt == L"AVIF" ? L"AvifAnimator" : (fmt == L"JXL" ? L"JxlAnimator" : L"WuffsAnimator"));
+                            OutputDebugStringW(L"[Anim] Animation hijack SUCCESS\n");
+                            return S_OK;
+                        } else {
+                            OutputDebugStringW(L"[Anim] GetNextFrame() returned null or no pixels\n");
+                        }
+                    } else {
+                        OutputDebugStringW(L"[Anim] IsAnimated() returned false, falling through to static decode\n");
+                    }
+                } else {
+                    OutputDebugStringW(L"[Anim] Initialize() FAILED, falling through to static decode\n");
+                }
+            } else {
+                OutputDebugStringW(L"[Anim] MappedFile invalid for animation\n");
+            }
+        }
+        
         if (fmt == L"AVIF") {
             HRESULT hr = AVIF::Load(mappedData, mappedSize, ctx, result);
             if (SUCCEEDED(hr)) {
@@ -10962,6 +11014,12 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         // [v5.0] Extract loader name from unified result
         if (pLoaderName && !res.metadata.LoaderName.empty()) {
             *pLoaderName = res.metadata.LoaderName;
+        }
+
+        // [v10.5] Animation Support
+        if (res.animator) {
+            outFrame->animator = std::move(res.animator);
+            outFrame->frameMeta = res.frameMeta;
         }
 
         if (pMetadata) {
