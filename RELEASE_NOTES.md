@@ -1,24 +1,35 @@
-# QuickView v4.2.5 - Comparison & Precision Master
-**Release Date**: 2026-03-22
+# QuickView v5.0.0 - The Advanced Color & Architecture Update
+**Release Date**: 2026-04-05
 
-This update introduces our highly anticipated **Compare Mode**, significant **UI refinements**, and specialized **Pixel Art** support. We've focused on making QuickView the most precise tool for image inspection.
+Welcome to the most significant update in QuickView's history. Version 5.0.0 introduces a modernized core architecture and professional-grade color tools, moving Beyond SDR.
 
-### 🔍 Compare Mode (Visual Benchmarking)
-- **Side-by-Side Analysis**: Compare two images with synchronized zoom/pan and rotation.
-- **Precision HUD**: Real-time RGB envelope histograms, dual-curve analysis, and quality metrics (Entropy/Sharpness).
-- **Interactive UI**: Smart divider with transparency and a dedicated 'C' shortcut to toggle HUD modes (Lite/Full).
+### 🚀 Google Highway & ARM64 Support
+We've re-engineered our SIMD acceleration using **Google Highway**. 
+- **Broader Hardware Support**: Optimized performance for all CPUs (SSE4, AVX2, AVX-512, NEON).
+- **Native ARM64**: QuickView now runs natively on Windows on ARM with full hardware acceleration.
 
-### 🎨 Rendering & Visuals
-- **Smart Interpolation**: New automated interpolation modes with specialized **Pixel Art** compatibility for crisp scaling.
-- **Zoom Integrity**: Added visual **edge indicators** for better viewport orientation and refined scaling anchors.
-- **SIMD JXL**: Faster JPEG-XL decoding leveraging SIMD-optimized pixel swizzling paths.
+### 🌈 Professional HDR Pipeline
+QuickView now features a full **32-bit float scRGB linear** rendering pipeline.
+- **Ultra HDR (Gain Map)**: Native GPU-accelerated composition for Google Ultra HDR and Samsung Gain Maps.
+- **Tone Mapping**: Professional HDR-to-SDR roll-off mapping ensures stunning results even on standard displays.
+- **HDR Pro Panel**: Real-time peak luminance estimation and detailed structural metadata for JXL, AVIF, EXR, and HEIC.
 
-### ⚙️ Window & Interaction
-- **Advanced Window Locking**: Highly customizable window lock behaviors with dedicated settings for different workflows.
-- **Workflow Shortcuts**: Native support for **Home/End** (Jump to First/Last) and **PgUp/PgDn** (Page Prev/Next).
-- **Gallery Context**: Right-click any gallery thumbnail to instantly enter Compare Mode or open in a new window.
+### 🎨 GPU-Driven CMS & Soft Proofing
+Accurate color reproduction is now at the heart of QuickView.
+- **Modern CMS**: Hardware-accelerated ICC profile extraction and application via Direct2D dual-node pipeline.
+- **Soft Proofing**: Professional simulation of output profiles (e.g., CMYK, Printer profiles) directly in the viewport.
+- **V4 Support**: Full compatibility with the latest ICC v4 and Compact ICC profiles.
+
+### 🧭 Advanced Navigation (#118)
+- **Natural Sorting**: Browsing order now matches Windows Explorer perfectly.
+- **Circular Loops**: Enhanced cross-folder navigation with independent toggle controls.
+- **Interactive Tooltips**: Complex settings now feature detailed descriptions on hover.
+
+### 🛠 Reliability Improvements
+- Resolved **HeavyLanePool** deadlock during rapid navigation (#85).
+- Fixed window resizing and info panel constraints (#88, #89).
+- Fixed AVIF HDR gain map decoding crash (#124).
+- Fixed manual rotation coordinate drift on zoomed images (#91).
 
 ### 🤝 Acknowledgments
-**@hortiSquash** for providing critical testing assistance and bug reports throughout the development of this major update.
-
----
+Special thanks to **@Dimmitrius** for optimization of the Russian translation, and our community for continuous feedback.

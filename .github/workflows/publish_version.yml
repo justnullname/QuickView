@@ -17,7 +17,7 @@ jobs:
       - name: Generate version.json with Changelog
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
-          DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/QuickView_${{ github.event.release.tag_name }}.zip
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           VERSION=${TAG_NAME#v}
@@ -25,12 +25,51 @@ jobs:
           
           mkdir -p public
           
+          # 1. Get all assets in JSON
+          ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets')
+          
+          # 2. Identify ARM64 asset (Case-Insensitive)
+          URL_ARM64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | contains("arm64"))) | .[0].url // ""')
+          NAME_ARM64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | contains("arm64"))) | .[0].name // ""')
+          
+          # 3. Identify X64 asset (Case-Insensitive)
+          URL_X64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("x64") or contains("amd64")))) | .[0].url // ""')
+          NAME_X64=$(echo "$ASSETS" | jq -r 'map(select(.name | ascii_downcase | (contains("x64") or contains("amd64")))) | .[0].name // ""')
+          
+          # If no explicit x64 found, take the first .zip/exe that isn't ARM64
+          if [ -z "$URL_X64" ]; then
+             URL_X64=$(echo "$ASSETS" | jq -r 'map(select((.name | ascii_downcase | contains("arm64") | not) and (.name | test("\\.(zip|exe)$"; "i")))) | .[0].url // ""')
+             NAME_X64=$(echo "$ASSETS" | jq -r 'map(select((.name | ascii_downcase | contains("arm64") | not) and (.name | test("\\.(zip|exe)$"; "i")))) | .[0].name // ""')
+          fi
+          
+          SHA_X64=""
+          SHA_ARM64=""
+          
+          # Download and Hash X64
+          if [ -n "$NAME_X64" ]; then
+             gh release download "$TAG_NAME" -p "$NAME_X64" -O x64_pkg
+             SHA_X64=$(sha256sum x64_pkg | awk '{print $1}')
+          fi
+          
+          # Download and Hash ARM64
+          if [ -n "$NAME_ARM64" ]; then
+             gh release download "$TAG_NAME" -p "$NAME_ARM64" -O arm64_pkg
+             SHA_ARM64=$(sha256sum arm64_pkg | awk '{print $1}')
+          fi
+          
+          # Fallback URL for legacy clients (pointing to X64)
+          URL=$URL_X64
+          
           jq -n \
             --arg v "$VERSION" \
-            --arg u "$DOWNLOAD_URL" \
+            --arg u "$URL" \
+            --arg u_x64 "$URL_X64" \
+            --arg u_arm "$URL_ARM64" \
+            --arg sha_x64 "$SHA_X64" \
+            --arg sha_arm "$SHA_ARM64" \
             --arg d "$DATE" \
             --arg c "$RELEASE_BODY" \
-            '{version: $v, url: $u, date: $d, changelog: $c}' \
+            '{version: $v, url: $u, url_x64: $u_x64, url_arm64: $u_arm, sha256_x64: $sha_x64, sha256_arm64: $sha_arm, date: $d, changelog: $c}' \
             > public/version.json
           
           echo "=== Generated JSON Content ==="

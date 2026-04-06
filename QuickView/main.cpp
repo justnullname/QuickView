@@ -71,7 +71,7 @@ using namespace Microsoft::WRL;
 
 // --- Dialog & OSD Definitions ---
 
-enum class DialogResult { None, Yes, No, Cancel, Custom1 };
+enum class DialogResult { None, Yes, No, Cancel, Custom1, Custom2 };
 
 struct DialogButton {
     DialogResult Result;
@@ -6032,17 +6032,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     // [HEIC] HEVC Video Extensions missing — prompt user to install
     case WM_APP + 99: {
         std::vector<DialogButton> buttons = {
-            { DialogResult::Custom1, L"Install HEVC Extension", true },
+            { DialogResult::Custom1, L"Standard Version ($0.99)", true },
+            { DialogResult::Custom2, L"OEM Version (Device)", false },
             { DialogResult::Cancel,  L"Cancel" }
         };
         DialogResult dlgResult = ShowQuickViewDialog(hwnd,
             L"HEVC Codec Required",
-            L"This HEIC/HEIF image requires the HEVC Video Extensions.\n"
-            L"Install it from the Microsoft Store to enable decoding.",
+            L"This HEIC/HEIF image requires the HEVC Video Extensions for Windows.\n"
+            L"Please choose the version that fits your device to enable decoding.",
             D2D1::ColorF(D2D1::ColorF::Orange), buttons);
+
         if (dlgResult == DialogResult::Custom1) {
             ShellExecuteW(nullptr, L"open",
-                L"ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq",
+                L"ms-windows-store://pdp/?ProductId=9nmzlz57r3t7", // Standard Paid Version
+                nullptr, nullptr, SW_SHOWNORMAL);
+        } else if (dlgResult == DialogResult::Custom2) {
+            ShellExecuteW(nullptr, L"open",
+                L"ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq", // OEM/Device Version
                 nullptr, nullptr, SW_SHOWNORMAL);
         }
         return 0;

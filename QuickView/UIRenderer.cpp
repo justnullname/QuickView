@@ -1520,47 +1520,6 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     dc->DrawText(buffer, (UINT32)wcslen(buffer), m_debugFormat.Get(), 
             D2D1::RectF(hudX + 10, hudY + 5, hudX + hudW - 10, hudY + 75), m_whiteBrush.Get());
 
-    {
-        std::wstring displayLine = L"Display: ";
-        if (m_compEngine) {
-            const auto& displayState = m_compEngine->GetDisplayColorState();
-            displayLine += displayState.advancedColorActive ? L"HDR" : L"SDR";
-            std::wstring peak = FormatHdrNits(displayState.maxLuminanceNits);
-            std::wstring full = FormatHdrNits(displayState.maxFullFrameLuminanceNits);
-            std::wstring sdrWhite = FormatHdrNits(displayState.sdrWhiteLevelNits);
-            std::wstring headroom = FormatHdrStops(displayState.GetHdrHeadroomStops());
-            if (!peak.empty()) displayLine += L"  Peak " + peak;
-            if (!full.empty()) displayLine += L"  Full " + full;
-            if (!sdrWhite.empty()) displayLine += L"  SDR " + sdrWhite;
-            if (!headroom.empty()) displayLine += L"  " + headroom;
-        } else {
-            displayLine += L"N/A";
-        }
-
-        std::wstring imageLine = L"Image: ";
-        if (IsHdrLikeContent(g_currentMetadata) || g_currentMetadata.hdrMetadata.isValid) {
-            const std::wstring hdrSummary = BuildHdrSummary(g_currentMetadata);
-            const std::wstring hdrDetail = BuildHdrDetail(g_currentMetadata.hdrMetadata);
-            imageLine += hdrSummary.empty() ? BuildDynamicRangeLabel(g_currentMetadata) : hdrSummary;
-            if (!hdrDetail.empty()) imageLine += L"  " + hdrDetail;
-        } else {
-            imageLine += L"SDR / no HDR metadata";
-        }
-
-        dc->DrawText(
-            displayLine.c_str(),
-            (UINT32)displayLine.length(),
-            m_debugFormat.Get(),
-            D2D1::RectF(hudX + 10, hudY + 78, hudX + hudW - 10, hudY + 94),
-            whiteBrush.Get());
-        dc->DrawText(
-            imageLine.c_str(),
-            (UINT32)imageLine.length(),
-            m_debugFormat.Get(),
-            D2D1::RectF(hudX + 10, hudY + 94, hudX + hudW - 10, hudY + 112),
-            whiteBrush.Get());
-    }
-    
     // 4. Matrix (Scout + Heavy)
     float px = hudX + 10.0f;
     float py = hudY + 146.0f; 
@@ -2180,10 +2139,12 @@ namespace {
     static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState) {
         const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
         const float peak = displayState.maxLuminanceNits > 0.0f ? displayState.maxLuminanceNits : sdrWhite;
+        const float full = displayState.maxFullFrameLuminanceNits > 0.0f ? displayState.maxFullFrameLuminanceNits : sdrWhite;
+        
         std::wstring label = FormatHdrRatio(peak / sdrWhite);
         if (!label.empty()) label += L" ";
-        wchar_t buf[96];
-        swprintf_s(buf, L"(%.0f nits SDR / %.0f nits Max)", sdrWhite, peak);
+        wchar_t buf[128];
+        swprintf_s(buf, L"(%.0f SDR / %.0f Max / %.0f Full)", sdrWhite, peak, full);
         label += buf;
         return label;
     }

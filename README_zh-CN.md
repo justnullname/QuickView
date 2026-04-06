@@ -27,7 +27,10 @@
         <img src="https://img.shields.io/github/v/release/justnullname/QuickView?style=flat-square&label=latest&color=2ea44f&logo=rocket" alt="Latest Release">
     </a>
     <a href="#">
-         <img src="https://img.shields.io/badge/arch-AVX2%20Optimized-critical?style=flat-square&logo=intel" alt="AVX2">
+         <img src="https://img.shields.io/badge/arch-ARM64%20%7C%20x64-darkred?style=flat-square&logo=cpu" alt="Architecture Support">
+    </a>
+    <a href="#">
+         <img src="https://img.shields.io/badge/simd-Highway%20SSE4%2B-blue?style=flat-square&logo=google" alt="Highway SIMD">
     </a>
 </p>
 
@@ -61,28 +64,26 @@ QuickView 支持几乎所有现代和专业图像格式：
 
 ---
 
-# QuickView v4.2.5 - Comparison & Precision Master
-**发布日期**: 2026-03-22
+# QuickView v5.0.0 - 高级色彩与架构升级
+**发布日期**: 2026-04-05
 
-### 🚀 核心架构："泰坦引擎 (Titan System)"
-- **十亿像素瓦片化 (Gigapixel Tiling)**：全新的 Titan 渲染管线可将巨幅图像动态切片为 LOD（多细节层次）瓦片，让过去会导致 OOM（内存溢出）崩溃的超大图像也能以 60fps 超顺滑平移。
-- **智能预取调度 (Smart Pull & Prefetch)**：彻底实现了内存智能流式传输。QuickView 仅解码和渲染当前屏幕可见的瓦片，并可预测平移方向以预读相邻区块。
-- **MMF 零拷贝解码 (Direct-to-MMF)**：基于内存映射文件 (Memory-Mapped File) 的零拷贝策略，直接将超大源图像传输到渲染合成引擎，大幅降低峰值内存占用。
+### 🚀 Google Highway & ARM64 支持
+- **全链路加速**: 将核心 SIMD 算子迁移至 **Google Highway**, 确保在从老旧 **SSE4** 到现代 **AVX-512** 的所有 CPU 上均能实现极致性能。
+- **原生 ARM64**: 完美支持 Windows on ARM 架构，通过 NEON 指令集实现原生硬件级加速。
 
-### ✨ 格式拓展与深度缓存
--   **原生 JPEG XL (JXL)**：在并行工作线程池的支持下，全面且高度优化地支持下一代 JXL 格式图像。
--   **专业设计格式**：新增对 Photoshop 大型文档格式 (PSB) 的支持，并实现 PSD/PSB 的极限秒开预览提取。
--   **系统级画廊融合**：照片墙（快捷键 `T`）现在直接接入 Windows Explorer（资源管理器）的外壳缩略图缓存，让包含数千张照片的文件夹也能瞬间完成索引显示。
+### 🌈 越级 HDR：全新渲染管线
+- **scRGB 线性流**: 整个渲染链路升级至 32 位浮点线性空间，彻底消除色阶断层，还原最真实的色彩细节。
+- **Ultra HDR GPU 合成**: 硬件加速支持 **Gain Maps** (Google/Samsung/Apple 增益图), 在 HDR 显示器上呈现令人惊叹的真实亮度。
+- **色调映射 v2**: 引入专业级 HDR-SDR 滚降映射算法，在普通显示器上也能获得均衡的视觉效果。
 
-### 💎 PerMonitorV2 与极致体验
--   **原生高 DPI 缩放**：界面渲染全面摆脱传统的 Windows DWM 缩放。我们现在支持原生的 Direct2D UI 显式缩放，并提供精确的手动比例调整（100%-250%），完美适配多显示器混合 DPI 场景。
--   **自动全屏模式 (Always Fullscreen)**：新增备受期待的启动选项，可强制以独占全屏模式自动打开图像（支持 `关闭` / `仅大图` / `所有` 模式），并配有智能退出逻辑。
--   **AVX-512 SIMD 缩放**：核心的二次线性插值缩放算法已经使用最前沿的 AVX2/AVX-512 指令集进行了循环展开与重写，带来极致的极速缩放体验。
+### 🎨 色彩管理与专业软打样
+- **硬件 CMS**: 将 ICC 配置文件管理深度集成至 GPU 渲染侧，支持双节点色彩空间变换。
+- **全局软打样 (Soft Proofing)**: 具备专业级输出仿真功能，一键预览 CMYK、打印机或印刷配置文件效果。
+- **V4 & 紧凑型配置**: 完美兼容最新的 ICC v4 及紧凑型色彩配置文件。
 
-### 🔍 极客比对模式 (Compare Mode)
-- **专业级基准比对**：支持多图同时缩放、平移和旋转同步。
-- **分析型 HUD**：实时显示 RGB 包络图/双曲线直方图，以及图像熵、锐度等专业质量指标。
-- **智能分割交互**：内置交互式分割线，自动标注各项比对指标的“优胜者”。
+### 🧭 导航与排序进阶 (#118)
+- **自然排序**: 浏览顺序现在与 Windows 资源管理器的自然数字逻辑完全一致。
+- **自定义循环规则**: 独立拆分文件夹循环与子目录遍历开关，提供更精细的浏览控制。
 
 ---
 
@@ -133,8 +134,16 @@ QuickView 提供了专为深度视觉分析打造的 **双图比对模式 (Compa
 * **双路同步：** 两个窗格之间的缩放、平移和旋转完全同步，支持毫米级的精细核对。
 * **极客 HUD：** 实时显示 **RGB 包络直方图** 和图像质量指标（熵、锐度），帮助您快速识别更优质的样张。
 * **智能分割线：** 带有智能透明度的分割线，自动标注每个对比维度的“优胜者”。
-  <br><img src="ScreenShot/compare_mode.gif" alt="基础比对演示" width="100%" style="border-radius: 6px; margin-top: 10px;">
-  <br><img src="ScreenShot/compare_mode2.gif" alt="HUD分析演示" width="100%" style="border-radius: 6px; margin-top: 10px;">
+  <br>![基础比对演示](ScreenShot/compare_mode.gif)
+  <br>![HUD分析演示](ScreenShot/compare_mode2.gif)
+
+### 6. 🌈 HDR 与色彩之巅
+> *"像光本身一样观察。"*
+
+QuickView 5.0 引入了工业级色彩工具链。
+*   **真实 HDR 面板**：基于 SIMD 加速的实时峰值亮度估算与 "HDR Pro" 元数据（MaxCLL/FALL）分析。
+*   **全局软打样**：瞬时模拟印刷效果或特殊色彩空间，支持自定义 ICC 映射。
+*   **全线性工作流**：内部 32 位浮点管线，确保无带宽阶梯感与绝对色准。
 
 ---
 
@@ -178,11 +187,10 @@ QuickView 提供了专为深度视觉分析打造的 **双图比对模式 (Compa
 | 组件 | 最低要求 | 备注 |
 | :--- | :--- | :--- |
 | **操作系统** | Windows 10 (1511+) | 需要 DirectComposition Visual3 支持 |
-| **处理器** | Intel Haswell / AMD Ryzen | **必须支持 AVX2** (编译时硬性要求) |
-| **显卡** | DirectX 10 兼容 | 2008 年后的任意显卡均可 |
-| **内存** | 4 GB+ | 推荐用于大型图片 |
+| **CPU** | 支持 SSE4 指令集的处理器 | **大幅扩展硬件覆盖** (Intel 2008+ / AMD 2011+) |
+| **架构** | x64 或 ARM64 | Windows on ARM 原生 NEON 优化 |
 
-> ⚠️ **重要提示:** QuickView 使用 `/arch:AVX2` 编译以获得最佳性能。它**无法在不支持 AVX2 的 CPU 上运行**（如 Intel Sandy Bridge、AMD FX 系列）。
+> ⚠️ **重要提示:** QuickView 现已集成 **Google Highway**，通过动态 SIMD 调度显著提升了老旧硬件的适应性。虽然要求降至 **SSE4**，但现代 CPU 用户仍可享受全速 NEON 或 AVX 带来的性能收益。
 
 ---
 
@@ -197,7 +205,7 @@ QuickView 提供了专为深度视觉分析打造的 **双图比对模式 (Compa
 
 ---
 
-## ⚖️ 致谢
+## ⚖️ 致谢鸣谢
 
 > [!NOTE]
 > **开发者寄语**
@@ -208,3 +216,4 @@ QuickView 提供了专为深度视觉分析打造的 **双图比对模式 (Compa
 **QuickView** 站在巨人的肩膀上。
 基于 **GPL-3.0** 许可。
 特别感谢 **David Kleiner** (JPEGView 原作者) 以及 **LibRaw, Google Wuffs, dav1d, 和 libjxl** 的维护者们。
+特别感谢 **@Dimmitrius** 对俄罗斯语翻译进行的深度优化。

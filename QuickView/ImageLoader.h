@@ -128,6 +128,15 @@ public:
         s += L"  " + ExposureBias;
       return s;
     }
+
+    // [v10.4] Universal Predicate: Returns true if the HRESULT indicates a missing UI/Codec plugin.
+    static bool IsWicCodecMissing(HRESULT hr) {
+      // 0x88982F50: WINCODEC_ERR_COMPONENTNOTFOUND (Common on Win10/11)
+      // 0x80040154: REGDB_E_CLASSNOTREG (Common when stub is present but no impl)
+      // 0x88982F03: WINCODEC_ERR_CODECNOTHANDLED (Fallback)
+      // 0xC00D5212: MF_E_TOPO_CODEC_NOT_FOUND (Crucial for Win10 HEVC missing)
+      return (hr == (HRESULT)0x88982F50) || (hr == (HRESULT)0x80040154) || (hr == (HRESULT)0x88982F03) || (hr == (HRESULT)0xC00D5212);
+    }
   };
 
   // [v6.2] Static Helpers (Defined here to see ImageMetadata)

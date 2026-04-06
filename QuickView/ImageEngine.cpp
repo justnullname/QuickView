@@ -640,11 +640,6 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                 
                 // [v9.0] Startup Delay Check
                 CheckStartupDelay();
-            } else if (e.type == EventType::LoadError) {
-                // [HEIC] Special handling for missing codec: Trigger install prompt on UI thread
-                if (e.hr == WINCODEC_ERR_COMPONENTNOTFOUND) {
-                     PostMessage(m_hwnd, WM_APP + 99, 0, 0);
-                }
 
                 // [JXL Scene C] FastLane Aborted (Modular?) -> Trigger Heavy Immediately
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
@@ -660,6 +655,13 @@ std::vector<EngineEvent> ImageEngine::PollState() {
         
         // [v9.2] Fix: Clean up pending paths on Error too (Fixes Blue Light Forever)
         if (e.type == EventType::LoadError) {
+             // [HEIC] Special handling for missing codec: Trigger install prompt on UI thread
+             if (CImageLoader::ImageMetadata::IsWicCodecMissing(e.hr)) {
+                  wchar_t dbg[128];
+                  swprintf_s(dbg, L"[ImageEngine] Detected missing HEVC codec: 0x%08X. Prompting user.\n", (uint32_t)e.hr);
+                  OutputDebugStringW(dbg);
+                  PostMessage(m_hwnd, WM_APP + 99, 0, 0);
+             }
              std::lock_guard lock(m_pendingMutex);
              m_pendingPaths.erase(e.filePath);
         }

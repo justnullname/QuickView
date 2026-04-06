@@ -20,6 +20,7 @@ enum class UpdateStatus {
 struct VersionInfo {
     std::string version;
     std::string downloadUrl;
+    std::string expectedSha256;
     std::string changelog;
 };
 
@@ -56,6 +57,7 @@ private:
     std::string HttpGet(const std::wstring& host, const std::wstring& path);
     VersionInfo ParseJson(const std::string& json);
     bool CompareVersions(const std::string& current, const std::string& remote);
+    std::string CalculateSHA256(const std::wstring& filePath);
 
 private:
     std::string m_currentVersion;

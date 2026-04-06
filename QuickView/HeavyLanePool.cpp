@@ -1591,8 +1591,8 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
           const wchar_t* opMode = (job.type == JobType::Tile)
               ? (isCopyOnly ? L"COPY" : L"DECODE")
               : L"DECODE";
-          swprintf_s(resultLog, L"[HeavyPool] Worker %d: %s %s in %d ms (Wait: %lld ms, Concurrency: %d, Mode: %s, Loader: %s)\n", 
-              workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), decodeMs, waitMs, activeWorkers, opMode, loaderName.c_str());
+          swprintf_s(resultLog, L"[HeavyPool] Worker %d: %s %s in %d ms (Wait: %lld ms, Concurrency: %d, Mode: %s, Loader: %s, hr=0x%08X)\n", 
+              workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), (int)decodeMs, waitMs, activeWorkers, opMode, loaderName.c_str(), (uint32_t)hr);
           OutputDebugStringW(resultLog);
           
 
@@ -1742,6 +1742,15 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                         job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod, hr);
                     OutputDebugStringW(failLog);
                 }
+            } else {
+                // [HEIC Fix] Explicitly notify Engine of Standard Load Failures
+                // This allows ImageEngine to capture hr=0xC00D5212 and show the prompt.
+                EngineEvent evt;
+                evt.type = EventType::LoadError;
+                evt.filePath = job.path;
+                evt.imageId = job.imageId;
+                evt.hr = hr;
+                QueueResult(std::move(evt));
             }
         }
         

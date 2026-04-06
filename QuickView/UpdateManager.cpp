@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <shellapi.h>
 #include <ctime>
+#include <wincrypt.h>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "advapi32.lib")
 
 UpdateManager& UpdateManager::Get() {
     static UpdateManager instance;
@@ -56,64 +58,69 @@ void UpdateManager::CheckThread(int delaySeconds) {
         // Prepare Temp Path with Version suffix to prevent redownload
         wchar_t tempPath[MAX_PATH];
         GetTempPathW(MAX_PATH, tempPath);
-        std::wstring filename = L"QuickView_Update_" + std::wstring(m_remoteInfo.version.begin(), m_remoteInfo.version.end()) + L".exe";
-        std::wstring dest = std::wstring(tempPath) + filename;
+        std::wstring filename = L"QuickView_Update_" + std::wstring(m_remoteInfo.version.begin(), m_remoteInfo.version.end());
+
+        // Determine if ZIP or EXE
+        bool isZip = (m_remoteInfo.downloadUrl.find(".zip") != std::string::npos);
+        
+        std::wstring dest = std::wstring(tempPath) + filename + (isZip ? L".zip" : L".exe");
         m_tempPath = dest;
-
-
 
         // Check if already downloaded (Atomic: Check FINAL file)
         bool cached = false;
-        std::ifstream f(dest, std::ios::binary | std::ios::ate);
-        if (f.good()) {
-            std::streamsize size = f.tellg();
-            if (size > 100000) cached = true;
-            f.close();
+        if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            bool valid = true;
+            if (!m_remoteInfo.expectedSha256.empty()) {
+                std::string fileHash = CalculateSHA256(dest);
+                if (_stricmp(fileHash.c_str(), m_remoteInfo.expectedSha256.c_str()) != 0) {
+                    valid = false;
+                }
+            } else {
+                std::ifstream f(dest, std::ios::binary | std::ios::ate);
+                if (!f.good() || f.tellg() < 100000) valid = false;
+            }
+            if (valid) {
+                 cached = true;
+            } else {
+                 DeleteFileW(dest.c_str()); // Invalid or partial, delete it
+            }
         }
 
         bool downloadSuccess = false;
 
-        // Determine if ZIP or EXE
-        bool isZip = (m_remoteInfo.downloadUrl.contains(".zip"));
-        
-        // Adjust destination based on actual type (if url says .zip but we defaulted to .exe in dest)
-        if (isZip) {
-             size_t dot = dest.find_last_of(L'.');
-             if (dot != std::wstring::npos) dest = dest.substr(0, dot) + L".zip";
-             m_tempPath = dest; // Update member
-             
-             // Re-check cache with new name
-             std::ifstream fz(dest, std::ios::binary | std::ios::ate);
-             if (fz.good()) {
-                 if (fz.tellg() > 100000) cached = true;
-             }
-        }
-        
         if (cached) {
              downloadSuccess = true;
         } else {
             // 2. Download to .part (Atomic Protection)
             m_status = UpdateStatus::Downloading;
-            // Silent download - notify only when ready
-            // if (m_callback) m_callback(true, m_remoteInfo);
             
             std::wstring partPath = dest + L".part";
-            
-            // Clean old part
             DeleteFileW(partPath.c_str());
 
             if (DownloadUpdate(m_remoteInfo.downloadUrl, partPath)) {
-                // Download success -> Rename atomic
-                if (MoveFileW(partPath.c_str(), dest.c_str())) {
-                    downloadSuccess = true;
+                // Verify hash of downloaded part before renaming
+                bool validHash = true;
+                if (!m_remoteInfo.expectedSha256.empty()) {
+                    std::string partHash = CalculateSHA256(partPath);
+                    if (_stricmp(partHash.c_str(), m_remoteInfo.expectedSha256.c_str()) != 0) {
+                        validHash = false;
+                    }
+                }
+                
+                if (validHash) {
+                    if (MoveFileW(partPath.c_str(), dest.c_str())) {
+                        downloadSuccess = true;
+                    } else {
+                         m_status = UpdateStatus::Error;
+                         if (m_callback) m_callback(false, VersionInfo());
+                    }
                 } else {
-                     // Error renaming?
-                     m_status = UpdateStatus::Error;
-                     if (m_callback) m_callback(false, VersionInfo());
+                    DeleteFileW(partPath.c_str()); // Clean up corrupted download
+                    m_status = UpdateStatus::Error;
+                    if (m_callback) m_callback(false, VersionInfo());
                 }
             } else {
-                 // Download failed (invalid header or network)
-                 DeleteFileW(partPath.c_str()); // Clean up trash
+                 DeleteFileW(partPath.c_str());
                  m_status = UpdateStatus::Error;
                  if (m_callback) m_callback(false, VersionInfo());
             }
@@ -123,33 +130,32 @@ void UpdateManager::CheckThread(int delaySeconds) {
             // 3. Extraction (if ZIP)
             if (isZip) {
                    std::wstring extractDir = dest + L"_extracted";
-                   // Clean ref extraction dir if exists
-                   // SHFileOperation or simple CreateDir. 
-                   // Win tar will overwrite usually?
                    CreateDirectoryW(extractDir.c_str(), NULL);
                    
-                   std::wstring fullCmd = L"/c tar -xf \"" + dest + L"\" -C \"" + extractDir + L"\"";
-                   
-                   SHELLEXECUTEINFOW sei = { sizeof(sei) };
-                   sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-                   sei.lpVerb = L"open";
-                   sei.lpFile = L"cmd.exe";
-                   sei.lpParameters = fullCmd.c_str();
-                   sei.nShow = SW_HIDE;
-                   
+                   std::wstring exeInZip = extractDir + L"\\QuickView.exe";
                    bool extracted = false;
-                   if (ShellExecuteExW(&sei)) {
-                       WaitForSingleObject(sei.hProcess, 15000); // 15s timeout
-                       CloseHandle(sei.hProcess);
+                   
+                   if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                       extracted = true;
+                       m_tempPath = exeInZip;
+                   } else {
+                       std::wstring fullCmd = L"-xf \"" + dest + L"\" -C \"" + extractDir + L"\"";
                        
-                       std::wstring exeInZip = extractDir + L"\\QuickView.exe";
-                       if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                           // Point m_tempPath to the extracted EXE for installation
-                           m_tempPath = exeInZip;
-                           extracted = true;
+                       SHELLEXECUTEINFOW sei = { sizeof(sei) };
+                       sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+                       sei.lpVerb = L"open";
+                       sei.lpFile = L"tar.exe";
+                       sei.lpParameters = fullCmd.c_str();
+                       sei.nShow = SW_HIDE;
+                       
+                       if (ShellExecuteExW(&sei)) {
+                           WaitForSingleObject(sei.hProcess, 15000); // 15s timeout
+                           CloseHandle(sei.hProcess);
                            
-                           // Clean up the source ZIP to save space/confusion
-                           DeleteFileW(dest.c_str());
+                           if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                               m_tempPath = exeInZip;
+                               extracted = true;
+                           }
                        }
                    }
                    
@@ -295,10 +301,66 @@ VersionInfo UpdateManager::ParseJson(const std::string& json) {
     if (v.is<picojson::object>()) {
         picojson::object& jsonObj = v.get<picojson::object>();
         if (jsonObj.contains("version")) info.version = jsonObj.at("version").to_str();
-        if (jsonObj.contains("url")) info.downloadUrl = jsonObj.at("url").to_str();
         if (jsonObj.contains("changelog")) info.changelog = jsonObj.at("changelog").to_str();
+        
+        SYSTEM_INFO si;
+        GetNativeSystemInfo(&si);
+        bool isArm64 = (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64);
+
+        if (isArm64 && jsonObj.contains("url_arm64") && jsonObj.contains("sha256_arm64")) {
+            info.downloadUrl = jsonObj.at("url_arm64").to_str();
+            info.expectedSha256 = jsonObj.at("sha256_arm64").to_str();
+        } else {
+            if (jsonObj.contains("url_x64")) {
+                info.downloadUrl = jsonObj.at("url_x64").to_str();
+            } else if (jsonObj.contains("url")) {
+                info.downloadUrl = jsonObj.at("url").to_str();
+            }
+            
+            if (jsonObj.contains("sha256_x64")) {
+                info.expectedSha256 = jsonObj.at("sha256_x64").to_str();
+            }
+        }
     }
     return info;
+}
+
+std::string UpdateManager::CalculateSHA256(const std::wstring& filePath) {
+    HCRYPTPROV hProv = 0;
+    HCRYPTHASH hHash = 0;
+    std::string hashStr = "";
+
+    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
+        return "";
+    }
+    if (!CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash)) {
+        CryptReleaseContext(hProv, 0);
+        return "";
+    }
+
+    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        BYTE rgbFile[1024 * 64];
+        DWORD cbRead = 0;
+        while (ReadFile(hFile, rgbFile, sizeof(rgbFile), &cbRead, NULL) && cbRead > 0) {
+            CryptHashData(hHash, rgbFile, cbRead, 0);
+        }
+        CloseHandle(hFile);
+
+        BYTE rgbHash[32];
+        DWORD cbHash = 32;
+        if (CryptGetHashParam(hHash, HP_HASHVAL, rgbHash, &cbHash, 0)) {
+            char hexMap[] = "0123456789abcdef";
+            for (DWORD i = 0; i < cbHash; i++) {
+                hashStr += hexMap[(rgbHash[i] >> 4) & 0xF];
+                hashStr += hexMap[rgbHash[i] & 0xF];
+            }
+        }
+    }
+
+    CryptDestroyHash(hHash);
+    CryptReleaseContext(hProv, 0);
+    return hashStr;
 }
 
 bool UpdateManager::CompareVersions(const std::string& current, const std::string& remote) {

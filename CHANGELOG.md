@@ -1,5 +1,48 @@
 # Changelog
 
+## [5.0.0] - The Advanced Color & Architecture Update
+**Release Date**: 2026-04-05
+
+### ✨ Features
+- **Google Highway SIMD**: Modernized core architecture using Google Highway SIMD abstraction.
+  - Expanded hardware support (SSE4, AVX2, AVX-512, NEON).
+  - Native **ARM64 (Windows on ARM)** support with optimized image processing.
+- **Advanced HDR Pipeline**:
+  - Professional-grade **Ultra HDR (Gain Map)** GPU composition pipeline.
+  - Full **32-bit float scRGB linear** pipeline for maximum precision and color fidelity.
+  - Hardware-accelerated HDR decoding for HEIF/AVIF via native WIC.
+- **HDR Info Panel**:
+  - Integrated real-time peak luminance estimation (SIMD-accelerated).
+  - Detailed "HDR Pro" metadata parsing for EXR, JXL, WDP, and RAW.
+- **GPU-driven CMS & Soft Proofing**:
+  - Unified hardware-accelerated CMS for all rendering paths.
+  - Global **Soft Proofing** feature using Direct2D dual-node CMS.
+  - Support for Adobe RGB (1998), Grayscale, and ICC v4 Compact profiles.
+- **Navigation & Sorting (#118)**:
+  - Implemented advanced natural/custom sorting and cross-folder loop navigation.
+  - Decoupled 'Loop' and 'Traverse Subfolders' into independent toggles.
+- **UI/UX**:
+  - Modernized toolbar icons for comparison and gallery modes.
+  - Added interactive tooltips for complex settings.
+
+### ⚡ Performance
+- **SIMD Optimized Ops**: Re-engineered core rendering operators with Highway for consistent 5x-10x speedups across architectures.
+- **HeavyLanePool**: Optimized worker lane scheduling and resource recycling.
+
+### 🐛 Bug Fixes
+- **Stability**: Fixed HeavyLanePool starvation deadlock during rapid navigation (#85).
+- **Layout**: Fixed window resizing logic (center-based expansion) and Info Panel constraints (#88).
+- **Formats**: Fixed SVG dimension parsing for complex viewports (#87).
+- **HDR**: Fixed AVIF HDR gain map decoding crash (#124).
+- **Interaction**: Fixed window resize direction after manual rotation during zoom (#91).
+- **UI**: Fixed settings menu text overflow and button alignment issues (#89).
+- **Core**: Fixed persistent zoom/pan state loss when switching color spaces or RAW mode.
+
+### 🤝 Acknowledgments
+- **@Dimmitrius**: For the comprehensive optimization of the Russian translation.
+- **@hortiSquash**: For continuous bug reporting and UX feedback.
+
+
 ## [4.2.5] - Comparison & Precision Master
 **Release Date**: 2026-03-22
 

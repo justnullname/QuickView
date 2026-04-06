@@ -33,7 +33,10 @@
         <img src="https://img.shields.io/github/v/release/justnullname/QuickView?style=flat-square&label=latest&color=2ea44f&logo=rocket" alt="Latest Release">
     </a>
     <a href="#">
-         <img src="https://img.shields.io/badge/arch-AVX2%20Optimized-critical?style=flat-square&logo=intel" alt="AVX2">
+         <img src="https://img.shields.io/badge/arch-ARM64%20%7C%20x64-darkred?style=flat-square&logo=cpu" alt="Architecture Support">
+    </a>
+    <a href="#">
+         <img src="https://img.shields.io/badge/simd-Highway%20SSE4%2B-blue?style=flat-square&logo=google" alt="Highway SIMD">
     </a>
 </p>
 
@@ -67,8 +70,26 @@ QuickView supports almost all modern and professional image formats:
 
 ---
 
-# QuickView v4.2.5 - Comparison & Precision Master
-**Release Date**: 2026-03-22
+# QuickView v5.0.0 - The Advanced Color & Architecture Update
+**Release Date**: 2026-04-05
+
+### 🚀 Google Highway & ARM64 Support
+- **Universal Acceleration**: Migrated all core SIMD operators to **Google Highway**, enabling high-performance execution on everything from older **SSE4** CPUs to modern **AVX-512**.
+- **Native ARM64 Port**: Full, native support for Windows on ARM architectures (NEON SIMD) with zero performance compromise.
+
+### 🌈 Beyond SDR: The HDR Pipeline
+- **scRGB Linear Pipeline**: A complete architectural shift to a 32-bit floating-point linear rendering pipeline, preserving extreme color precision and dynamic range.
+- **Ultra HDR GPU Composition**: Native hardware-accelerated support for **Gain Maps** (Google/Samsung/Apple), delivering true-to-life brightness on HDR displays.
+- **Tone Mapping v2**: Advanced HDR-to-SDR roll-off mapping for consistent results on legacy monitors.
+
+### 🎨 Color Management & Soft Proofing
+- **Hardware CMS**: Deep integration of ICC profile management directly into the GPU pipeline.
+- **Soft Proofing**: Professional simulation of output profiles (CMYK, Printer, Grayscale) with real-time HUD toggles.
+- **V4 Profile Support**: Robust handling of ICC v4 and Compact ICC profiles.
+
+### 🧭 Advanced Navigation (#118)
+- **Natural Sorting**: Browsing order now standardizes to Windows Explorer's natural numeric sorting.
+- **Loop & Traverse**: Decoupled folder looping and subfolder traversal options for granular control.
 
 ### 🚀 Core Architecture: "Titan System"
 - **Gigapixel Tiling**: The new Titan Pipeline dynamically slices massive image datasets into LOD (Level of Detail) tiles, enabling smooth 60fps panning over images that previously caused OOM crashes.
@@ -139,8 +160,16 @@ QuickView features a powerful **Dual-View Compare Mode** built for deep visual a
 * **Side-by-Side Sync:** Synchronized zoom, pan, and rotation between two images, allowing for millimetric inspection.
 * **Precision HUD:** Real-time **RGB Envelope Histograms** and quality metrics (Entropy/Sharpness) to identify the superior shot.
 * **Interactive Divider:** A smart, translucent divider that identifies the 'winner' of each comparison metric automatically.
-  <br><img src="ScreenShot/compare_mode.gif" alt="Compare Mode Basic" width="100%" style="border-radius: 6px; margin-top: 10px;">
-  <br><img src="ScreenShot/compare_mode2.gif" alt="Compare Mode HUD" width="100%" style="border-radius: 6px; margin-top: 10px;">
+  <br>![Compare Mode Basic](ScreenShot/compare_mode.gif)
+  <br>![Compare Mode HUD](ScreenShot/compare_mode2.gif)
+
+### 6. 🌈 HDR & Color Mastery
+> *"View light as it was meant to be seen."*
+
+QuickView 5.0 introduces a world-class color management suite.
+*   **True HDR Panel:** SIMD-accelerated peak luminance estimation and "HDR Pro" structural metadata (MaxCLL/FALL).
+*   **Global Soft Proofing:** Instantly preview how your photos will look when printed or converted to specialized color spaces.
+*   **Linear workflow:** 32-bit internal pipeline ensures zero banding and absolute precision.
 
 ---
 
@@ -174,8 +203,8 @@ We are constantly evolving. Here is what's currently in development:
 
 - **Animation Support:** Full playback for GIF/WebP/APNG.
 - **Frame Inspector:** Pause and analyze animations frame-by-frame.
-- **Color Management (CMS):** ICC Profile support.
 - **Tracing Mode:** Semi-transparent overlay mode, designed for designers to reference and trace over other windows.
+- **Video Wall Port:** Direct output to multi-monitor visual arrays.
 
 ---
 
@@ -184,11 +213,10 @@ We are constantly evolving. Here is what's currently in development:
 | Component | Minimum Requirement | Notes |
 | :--- | :--- | :--- |
 | **OS** | Windows 10 (1511+) | DirectComposition Visual3 required |
-| **CPU** | Intel Haswell / AMD Ryzen | **AVX2 support required** (compile-time hard requirement) |
-| **GPU** | DirectX 10 Compatible | Any GPU from 2008+ should work |
-| **RAM** | 4 GB+ | Recommended for large images |
+| **CPU** | SSE4-Capable CPU | **Broadened Support** (Intel 2008+ / AMD 2011+) |
+| **Arch** | x64 or ARM64 | Native ARM64 support for NEON |
 
-> ⚠️ **Important:** QuickView is compiled with `/arch:AVX2` for maximum performance. It will **not run** on CPUs without AVX2 support (e.g., Intel Sandy Bridge, AMD FX series).
+> ⚠️ **Important:** QuickView uses **Google Highway** for dynamic SIMD dispatching. While we've broadened support to **SSE4**, ARM64 users enjoy full NEON acceleration.
 
 ---
 

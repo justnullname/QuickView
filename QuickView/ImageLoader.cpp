@@ -4446,16 +4446,12 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libwebp"; return S_OK; }
     }
     else if (detectedFmt == L"AVIF" ||
-             detectedFmt == L"HEIC" ||
              ((detectedFmt == L"Unknown") &&
-              (path.ends_with(L".avif") || path.ends_with(L".avifs") ||
-               path.ends_with(L".heic") || path.ends_with(L".heif") || path.ends_with(L".hif")))) {
+              (path.ends_with(L".avif") || path.ends_with(L".avifs")))) {
         HRESULT hr = LoadAVIF(filePath, ppBitmap);
         if (SUCCEEDED(hr)) {
             if (pLoaderName) {
-                *pLoaderName = (detectedFmt == L"HEIC" || path.ends_with(L".heic") || path.ends_with(L".heif") || path.ends_with(L".hif"))
-                    ? L"libavif/HEIF"
-                    : L"libavif";
+                *pLoaderName = L"libavif";
             }
             return S_OK;
         }
@@ -7204,7 +7200,8 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
             }
             
             // Remember if WIC failed due to missing HEVC codec
-            const bool hevcMissing = (hr == WINCODEC_ERR_COMPONENTNOTFOUND);
+            const HRESULT hrErr = hr;
+            const bool hevcMissing = ImageMetadata::IsWicCodecMissing(hrErr);
             
             // Fallback to AVIF if WIC failed (Extension missing)
             hr = AVIF::Load(mappedData, mappedSize, ctx, result);
@@ -7213,8 +7210,9 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                 return S_OK;
             }
             
-            // Both failed: propagate HEVC-missing hint for user prompt
-            if (hevcMissing) return WINCODEC_ERR_COMPONENTNOTFOUND;
+            // Both failed: propagate the original HEVC-missing hint for user prompt if recognized
+            if (hevcMissing) return hrErr;
+            return hr; // Returns libavif error if WIC error was generic
         }
         else if (fmt == L"JXL") {
             // [JXL DC] Only use DC Preview if scaling is requested (Stage 1)
