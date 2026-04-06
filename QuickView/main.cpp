@@ -7965,6 +7965,7 @@ SKIP_EDGE_NAV:;
         }
         break;
 
+    case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
         // Verification Control (Phase 5 - Ctrl+1..5)
         if (GetKeyState(VK_CONTROL) & 0x8000) {

@@ -243,7 +243,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 
   auto isVisibleButton = [&](const ToolbarButton &btn) {
     if (m_animMode) {
-      if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif) return true;
+      if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::LockSize) return true;
       if (isAnimButton(btn.id)) return true;
       if (isAlwaysVisible(btn.id)) return true;
       return false;
