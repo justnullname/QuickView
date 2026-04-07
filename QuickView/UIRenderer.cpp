@@ -7,9 +7,11 @@
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
 #include "EditState.h"
+#include "ImageLoaderSimd.h"
 #include <psapi.h>
 #include <algorithm>
 #include <ranges>
+#include <cmath>
 
 #pragma comment(lib, "psapi.lib")
 
@@ -39,6 +41,7 @@ extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);
 extern bool IsCompareModeActive();
+extern bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapshot);
 
 static bool PointInRect(float x, float y, const D2D1_RECT_F& rect) {
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
@@ -73,6 +76,32 @@ static HRESULT CreateScaledBrush(
     ID2D1SolidColorBrush** brush)
 {
     return dc->CreateSolidColorBrush(ScaleUiColor(color, hdrWhiteScale), brush);
+}
+
+static int ClampToInt(float value, int low, int high) {
+    if (high < low) return low;
+    const int rounded = static_cast<int>(std::lround(value));
+    return (std::clamp)(rounded, low, high);
+}
+
+static void DrawTextWithFourWayShadow(
+    ID2D1DeviceContext* dc,
+    const wchar_t* text,
+    UINT32 length,
+    IDWriteTextFormat* format,
+    const D2D1_RECT_F& rect,
+    ID2D1Brush* textBrush,
+    ID2D1Brush* shadowBrush,
+    float shadowOffset)
+{
+    if (!dc || !text || !format || !textBrush) return;
+    if (shadowBrush && shadowOffset > 0.0f) {
+        dc->DrawText(text, length, format, D2D1::RectF(rect.left - shadowOffset, rect.top, rect.right - shadowOffset, rect.bottom), shadowBrush);
+        dc->DrawText(text, length, format, D2D1::RectF(rect.left + shadowOffset, rect.top, rect.right + shadowOffset, rect.bottom), shadowBrush);
+        dc->DrawText(text, length, format, D2D1::RectF(rect.left, rect.top - shadowOffset, rect.right, rect.bottom - shadowOffset), shadowBrush);
+        dc->DrawText(text, length, format, D2D1::RectF(rect.left, rect.top + shadowOffset, rect.right, rect.bottom + shadowOffset), shadowBrush);
+    }
+    dc->DrawText(text, length, format, rect, textBrush);
 }
 }
 
@@ -1041,6 +1070,8 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     D2D1_RECT_F maxRect = D2D1::RectF(rightEdge - btnW * 2, yOffset, rightEdge - btnW, btnH + yOffset);
     D2D1_RECT_F minRect = D2D1::RectF(rightEdge - btnW * 3, yOffset, rightEdge - btnW * 2, btnH + yOffset);
     D2D1_RECT_F pinRect = D2D1::RectF(rightEdge - btnW * 4, yOffset, rightEdge - btnW * 3, btnH + yOffset);
+    D2D1_RECT_F sampleRect = D2D1::RectF(pinRect.left, pinRect.top, closeRect.right, closeRect.bottom);
+    const AdaptiveUiPalette palette = BuildAdaptivePalette(EstimateRectLuminance(sampleRect), &m_windowControlsAdaptiveBlend);
     
     // [NEW] Cache hit rects for HitTestWindowControls
     m_winCloseRect = closeRect;
@@ -1055,29 +1086,30 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
         dc->FillRectangle(closeRect, redBrush.Get());
     } else if (m_winCtrlHover >= 1 && m_winCtrlHover <= 3) {
         ComPtr<ID2D1SolidColorBrush> grayBrush;
-        CreateScaledBrush(dc, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), hdrWhiteScale, &grayBrush);
+        CreateScaledBrush(dc, palette.hoverFill, hdrWhiteScale, &grayBrush);
         if (m_winCtrlHover == 1) dc->FillRectangle(maxRect, grayBrush.Get());
         else if (m_winCtrlHover == 2) dc->FillRectangle(minRect, grayBrush.Get());
         else if (m_winCtrlHover == 3) dc->FillRectangle(pinRect, grayBrush.Get());
     }
-    
-    if (!m_iconFormat || !m_whiteBrush) return;
+
+    if (!m_iconFormat) return;
+
+    ComPtr<ID2D1SolidColorBrush> foregroundBrush, shadowBrush, accentBrush;
+    CreateScaledBrush(dc, palette.foreground, hdrWhiteScale, &foregroundBrush);
+    CreateScaledBrush(dc, palette.shadow, hdrWhiteScale, &shadowBrush);
+    CreateScaledBrush(dc, palette.accent, hdrWhiteScale, &accentBrush);
     
     auto DrawIcon = [&](wchar_t icon, D2D1_RECT_F rect, ID2D1Brush* brush) {
-        if (m_blackBrush) {
-            D2D1_RECT_F shadowRect = D2D1::RectF(rect.left + 1, rect.top + 1, rect.right + 1, rect.bottom + 1);
-            dc->DrawText(&icon, 1, m_iconFormat.Get(), shadowRect, m_blackBrush.Get());
-        }
-        dc->DrawText(&icon, 1, m_iconFormat.Get(), rect, brush);
+        DrawTextWithFourWayShadow(dc, &icon, 1, m_iconFormat.Get(), rect, brush, shadowBrush.Get(), 1.2f * s);
     };
     
     wchar_t pinIcon = m_pinActive ? L'\uE77A' : L'\uE718';
-    ID2D1Brush* pinBrush = m_pinActive ? m_accentBrush.Get() : m_whiteBrush.Get();
+    ID2D1Brush* pinBrush = m_pinActive ? accentBrush.Get() : foregroundBrush.Get();
     DrawIcon(pinIcon, pinRect, pinBrush);
     
-    DrawIcon(L'\uE921', minRect, m_whiteBrush.Get());
-    DrawIcon((IsZoomed(hwnd) || m_isFullscreen) ? L'\uE923' : L'\uE922', maxRect, m_whiteBrush.Get());
-    DrawIcon(L'\uE8BB', closeRect, m_whiteBrush.Get());
+    DrawIcon(L'\uE921', minRect, foregroundBrush.Get());
+    DrawIcon((IsZoomed(hwnd) || m_isFullscreen) ? L'\uE923' : L'\uE922', maxRect, foregroundBrush.Get());
+    DrawIcon(L'\uE8BB', closeRect, foregroundBrush.Get());
 }
 
 void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
@@ -2375,29 +2407,198 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     float totalW = textW + 56.0f * s;
     
     D2D1_RECT_F rect = D2D1::RectF(16.0f * s, 8.0f * s, 16.0f * s + textW, 32.0f * s);
-    
+    const AdaptiveUiPalette palette = BuildAdaptivePalette(EstimateRectLuminance(rect), &m_compactInfoAdaptiveBlend);
+
     // Shadow Text
     ComPtr<ID2D1SolidColorBrush> brushShadow, brushText, brushYellow, brushRed;
-    CreateScaledBrush(dc, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), hdrWhiteScale, &brushShadow);
-    CreateScaledBrush(dc, D2D1::ColorF(D2D1::ColorF::White), hdrWhiteScale, &brushText);
-    CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.85f, 0.0f), hdrWhiteScale, &brushYellow);
-    CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.3f, 0.3f), hdrWhiteScale, &brushRed);
+    CreateScaledBrush(dc, palette.shadow, hdrWhiteScale, &brushShadow);
+    CreateScaledBrush(dc, palette.foreground, hdrWhiteScale, &brushText);
+    CreateScaledBrush(dc, palette.warning, hdrWhiteScale, &brushYellow);
+    CreateScaledBrush(dc, palette.danger, hdrWhiteScale, &brushRed);
     
-    D2D1_RECT_F shadowRect = D2D1::RectF(rect.left + 1.0f * s, rect.top + 1.0f * s, rect.right + 1.0f * s, rect.bottom + 1.0f * s);
-    dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), shadowRect, brushShadow.Get());
-    dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), rect, brushText.Get());
+    DrawTextWithFourWayShadow(dc, info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), rect, brushText.Get(), brushShadow.Get(), 1.1f * s);
 
     // Expand Button [+]
     m_panelToggleRect = D2D1::RectF(rect.right + 6.0f * s, rect.top, rect.right + 30.0f * s, rect.bottom);
-    D2D1_RECT_F shadowRect1 = D2D1::RectF(m_panelToggleRect.left + 1.0f * s, m_panelToggleRect.top + 1.0f * s, m_panelToggleRect.right + 1.0f * s, m_panelToggleRect.bottom + 1.0f * s);
-    dc->DrawText(L"[+]", 3, m_panelFormat.Get(), shadowRect1, brushShadow.Get());
-    dc->DrawText(L"[+]", 3, m_panelFormat.Get(), m_panelToggleRect, brushYellow.Get());
+    DrawTextWithFourWayShadow(dc, L"[+]", 3, m_panelFormat.Get(), m_panelToggleRect, brushYellow.Get(), brushShadow.Get(), 1.1f * s);
     
     // Close Button [x]
     m_panelCloseRect = D2D1::RectF(m_panelToggleRect.right + 4.0f * s, rect.top, m_panelToggleRect.right + 28.0f * s, rect.bottom);
-    D2D1_RECT_F shadowRect2 = D2D1::RectF(m_panelCloseRect.left + 1.0f * s, m_panelCloseRect.top + 1.0f * s, m_panelCloseRect.right + 1.0f * s, m_panelCloseRect.bottom + 1.0f * s);
-    dc->DrawText(L"[x]", 3, m_panelFormat.Get(), shadowRect2, brushShadow.Get());
-    dc->DrawText(L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get());
+    DrawTextWithFourWayShadow(dc, L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get(), brushShadow.Get(), 1.1f * s);
+}
+
+float UIRenderer::EstimateCanvasLuminance() const {
+    D2D1_COLOR_F bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f);
+    switch (g_config.CanvasColor) {
+        case 0: bgColor = D2D1::ColorF(0.08f, 0.08f, 0.08f); break;
+        case 1: bgColor = D2D1::ColorF(0.95f, 0.95f, 0.95f); break;
+        case 2: bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f); break;
+        case 3: bgColor = D2D1::ColorF(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB); break;
+        default: break;
+    }
+    return bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f;
+}
+
+float UIRenderer::EstimateRectLuminance(const D2D1_RECT_F& screenRect) const {
+    if (!g_pImageEngine) return -1.0f;
+
+    double weightedLuma = 0.0;
+    double totalWeight = 0.0;
+
+    for (int paneIndex = 0; paneIndex < 2; ++paneIndex) {
+        AdaptiveUiPaneSnapshot pane;
+        if (!GetAdaptiveUiPaneSnapshot(paneIndex, pane) || pane.path.empty()) continue;
+
+        const auto frame = g_pImageEngine->GetCachedImage(pane.path);
+        if (!frame || !frame->IsValid()) continue;
+
+        const D2D1_RECT_F clipped = D2D1::RectF(
+            (std::max)(screenRect.left, pane.viewport.left),
+            (std::max)(screenRect.top, pane.viewport.top),
+            (std::min)(screenRect.right, pane.viewport.right),
+            (std::min)(screenRect.bottom, pane.viewport.bottom));
+        const float overlapArea = (std::max)(0.0f, clipped.right - clipped.left) * (std::max)(0.0f, clipped.bottom - clipped.top);
+        if (overlapArea <= 0.5f) continue;
+
+        weightedLuma += EstimateFrameLuminance(*frame, pane, screenRect) * overlapArea;
+        totalWeight += overlapArea;
+    }
+
+    if (totalWeight <= 0.0) return -1.0f;
+    return static_cast<float>(weightedLuma / totalWeight);
+}
+
+float UIRenderer::EstimateFrameLuminance(const QuickView::RawImageFrame& frame, const AdaptiveUiPaneSnapshot& pane, const D2D1_RECT_F& screenRect) const {
+    const D2D1_SIZE_F visualSize = pane.visualSize;
+    const float viewportW = pane.viewport.right - pane.viewport.left;
+    const float viewportH = pane.viewport.bottom - pane.viewport.top;
+    if (visualSize.width <= 1.0f || visualSize.height <= 1.0f || viewportW <= 1.0f || viewportH <= 1.0f) {
+        return EstimateCanvasLuminance();
+    }
+
+    float fitScale = std::min(viewportW / visualSize.width, viewportH / visualSize.height);
+    if (visualSize.width < 200.0f && visualSize.height < 200.0f && !g_runtime.LockWindowSize && fitScale > 1.0f) {
+        fitScale = 1.0f;
+    } else if (g_runtime.LockWindowSize && !g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+        fitScale = 1.0f;
+    }
+
+    const float totalScale = fitScale * (std::max)(0.02f, pane.zoom);
+    if (totalScale <= 0.0001f) return EstimateCanvasLuminance();
+
+    const float imageLeft = (pane.viewport.left + pane.viewport.right) * 0.5f + pane.panX - visualSize.width * totalScale * 0.5f;
+    const float imageTop = (pane.viewport.top + pane.viewport.bottom) * 0.5f + pane.panY - visualSize.height * totalScale * 0.5f;
+    const float imageRight = imageLeft + visualSize.width * totalScale;
+    const float imageBottom = imageTop + visualSize.height * totalScale;
+
+    const D2D1_RECT_F imageRect = D2D1::RectF(imageLeft, imageTop, imageRight, imageBottom);
+    const D2D1_RECT_F clipped = D2D1::RectF(
+        (std::max)(screenRect.left, imageRect.left),
+        (std::max)(screenRect.top, imageRect.top),
+        (std::min)(screenRect.right, imageRect.right),
+        (std::min)(screenRect.bottom, imageRect.bottom));
+
+    const float rectArea = (std::max)(0.0f, screenRect.right - screenRect.left) * (std::max)(0.0f, screenRect.bottom - screenRect.top);
+    const float overlapArea = (std::max)(0.0f, clipped.right - clipped.left) * (std::max)(0.0f, clipped.bottom - clipped.top);
+    if (overlapArea <= 0.5f || rectArea <= 0.5f) return EstimateCanvasLuminance();
+
+    const float nx0 = (clipped.left - imageLeft) / (visualSize.width * totalScale);
+    const float ny0 = (clipped.top - imageTop) / (visualSize.height * totalScale);
+    const float nx1 = (clipped.right - imageLeft) / (visualSize.width * totalScale);
+    const float ny1 = (clipped.bottom - imageTop) / (visualSize.height * totalScale);
+
+    const int frameW = frame.width;
+    const int frameH = frame.height;
+    if (frameW <= 0 || frameH <= 0) return EstimateCanvasLuminance();
+
+    const int x0 = ClampToInt(nx0 * frameW, 0, frameW - 1);
+    const int y0 = ClampToInt(ny0 * frameH, 0, frameH - 1);
+    const int x1 = ClampToInt(nx1 * frameW, x0 + 1, frameW);
+    const int y1 = ClampToInt(ny1 * frameH, y0 + 1, frameH);
+    if (x1 <= x0 || y1 <= y0) return EstimateCanvasLuminance();
+
+    const int sampleH = y1 - y0;
+    const int stepY = (std::max)(1, sampleH / 12);
+
+    double sum = 0.0;
+    int count = 0;
+
+    if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
+        for (int y = y0; y < y1; y += stepY) {
+            const float* row = reinterpret_cast<const float*>(frame.pixels + static_cast<size_t>(y) * frame.stride);
+            sum += static_cast<double>(ImageLoaderSimd::SumLuminanceFloatRange(row, x0, x1));
+            count += (x1 - x0);
+        }
+    } else {
+        const bool isRgbaOrder = (frame.format == QuickView::PixelFormat::RGBA8888);
+        for (int y = y0; y < y1; y += stepY) {
+            const uint8_t* row = frame.pixels + static_cast<size_t>(y) * frame.stride;
+            sum += static_cast<double>(ImageLoaderSimd::SumLuminance8BitRange(row, x0, x1, isRgbaOrder)) / 255.0;
+            count += (x1 - x0);
+        }
+    }
+
+    if (count <= 0) return EstimateCanvasLuminance();
+
+    const float frameLuma = static_cast<float>(sum / count);
+    const float overlapWeight = (std::clamp)(overlapArea / rectArea, 0.0f, 1.0f);
+    return EstimateCanvasLuminance() * (1.0f - overlapWeight) + frameLuma * overlapWeight;
+}
+
+UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, float* ioBlend) const {
+    if (luminance < 0.0f) {
+        AdaptiveUiPalette palette;
+        if (ioBlend) *ioBlend = 0.0f;
+        return palette;
+    }
+
+    const float targetBlend = luminance >= 0.58f ? 1.0f : 0.0f;
+    const float blend = targetBlend;
+    if (ioBlend) *ioBlend = blend;
+
+    AdaptiveUiPalette palette;
+    palette.foreground = LerpColor(
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f),
+        blend);
+    palette.shadow = LerpColor(
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.92f),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f),
+        blend);
+    palette.hoverFill = LerpColor(
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
+        blend);
+    palette.capsuleFill = LerpColor(
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f),
+        blend);
+    palette.capsuleStroke = LerpColor(
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
+        blend);
+    palette.accent = LerpColor(
+        D2D1::ColorF(0.25f, 0.68f, 1.0f, 0.98f),
+        D2D1::ColorF(0.12f, 0.36f, 0.70f, 0.96f),
+        blend);
+    palette.warning = LerpColor(
+        D2D1::ColorF(1.0f, 0.86f, 0.10f, 1.0f),
+        D2D1::ColorF(0.52f, 0.37f, 0.02f, 0.96f),
+        blend);
+    palette.danger = LerpColor(
+        D2D1::ColorF(1.0f, 0.32f, 0.32f, 1.0f),
+        D2D1::ColorF(0.62f, 0.14f, 0.14f, 0.98f),
+        blend);
+    return palette;
+}
+
+D2D1_COLOR_F UIRenderer::LerpColor(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b, float t) {
+    const float clamped = (std::clamp)(t, 0.0f, 1.0f);
+    return D2D1::ColorF(
+        a.r + (b.r - a.r) * clamped,
+        a.g + (b.g - a.g) * clamped,
+        a.b + (b.b - a.b) * clamped,
+        a.a + (b.a - a.a) * clamped);
 }
 
 void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
@@ -2840,16 +3041,43 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         auto leftMetrics = buildMetrics(leftMeta, rightMeta);
         auto rightMetrics = buildMetrics(rightMeta, leftMeta);
 
-        ComPtr<ID2D1SolidColorBrush> brushShadow, brushText, brushWin;
-        CreateScaledBrush(dc, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.8f), hdrWhiteScale, &brushShadow);
-        CreateScaledBrush(dc, D2D1::ColorF(D2D1::ColorF::White), hdrWhiteScale, &brushText);
-        CreateScaledBrush(dc, D2D1::ColorF(0.2f, 0.9f, 0.4f), hdrWhiteScale, &brushWin);
-
         float y = 16.0f * s;
         float gap = 12.0f * s;
         float centerGap = 20.0f * s;
+        float leftTotalW = 0.0f;
+        for (const auto& m : leftMetrics) leftTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
+        if (leftTotalW > 0.0f) leftTotalW -= gap;
+        float rightTotalW = 0.0f;
+        for (const auto& m : rightMetrics) rightTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
+        if (rightTotalW > 0.0f) rightTotalW -= gap;
 
-        auto DrawMetrics = [&](const std::vector<LiteMetric>& metrics, float startX, bool alignRight) {
+        const D2D1_RECT_F leftRect = D2D1::RectF(
+            splitX - centerGap - leftTotalW,
+            y,
+            splitX - centerGap,
+            y + 24.0f * s);
+        const D2D1_RECT_F rightRect = D2D1::RectF(
+            splitX + centerGap,
+            y,
+            splitX + centerGap + rightTotalW + 56.0f * s,
+            y + 24.0f * s);
+        const AdaptiveUiPalette leftPalette = BuildAdaptivePalette(EstimateRectLuminance(leftRect), nullptr);
+        const AdaptiveUiPalette rightPalette = BuildAdaptivePalette(EstimateRectLuminance(rightRect), nullptr);
+
+        ComPtr<ID2D1SolidColorBrush> leftShadowBrush, leftTextBrush, leftWinBrush;
+        ComPtr<ID2D1SolidColorBrush> rightShadowBrush, rightTextBrush, rightWinBrush, rightRedBrush;
+        CreateScaledBrush(dc, leftPalette.shadow, hdrWhiteScale, &leftShadowBrush);
+        CreateScaledBrush(dc, leftPalette.foreground, hdrWhiteScale, &leftTextBrush);
+        CreateScaledBrush(dc, D2D1::ColorF(0.2f, 0.9f, 0.4f), hdrWhiteScale, &leftWinBrush);
+        CreateScaledBrush(dc, rightPalette.shadow, hdrWhiteScale, &rightShadowBrush);
+        CreateScaledBrush(dc, rightPalette.foreground, hdrWhiteScale, &rightTextBrush);
+        CreateScaledBrush(dc, D2D1::ColorF(0.2f, 0.9f, 0.4f), hdrWhiteScale, &rightWinBrush);
+        CreateScaledBrush(dc, rightPalette.danger, hdrWhiteScale, &rightRedBrush);
+
+        auto DrawMetrics = [&](const std::vector<LiteMetric>& metrics, float startX, bool alignRight,
+                               ID2D1SolidColorBrush* shadowBrush,
+                               ID2D1SolidColorBrush* textBrush,
+                               ID2D1SolidColorBrush* winBrush) {
             float currentX = startX;
             if (alignRight) {
                 // Calculate total width first
@@ -2862,32 +3090,24 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 float tw = MeasureTextWidth(m.val, m_panelFormat.Get());
                 D2D1_RECT_F r = D2D1::RectF(currentX, y, currentX + tw, y + 24.0f * s);
                 D2D1_RECT_F sr = D2D1::RectF(r.left + 1*s, r.top + 1*s, r.right + 1*s, r.bottom + 1*s);
-                ID2D1SolidColorBrush* b = m.isWinner ? brushWin.Get() : brushText.Get();
+                ID2D1SolidColorBrush* b = m.isWinner ? winBrush : textBrush;
                 
-                dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), sr, brushShadow.Get());
-                dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b);
+                DrawTextWithFourWayShadow(dc, m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b, shadowBrush, 1.1f * s);
                 currentX += tw + gap;
             }
         };
 
-        DrawMetrics(leftMetrics, splitX - centerGap, true);
-        DrawMetrics(rightMetrics, splitX + centerGap, false);
+        DrawMetrics(leftMetrics, splitX - centerGap, true, leftShadowBrush.Get(), leftTextBrush.Get(), leftWinBrush.Get());
+        DrawMetrics(rightMetrics, splitX + centerGap, false, rightShadowBrush.Get(), rightTextBrush.Get(), rightWinBrush.Get());
 
         // Draw [+] and [x] buttons
-        float rightTotalW = centerGap;
-        for (const auto& m : rightMetrics) rightTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
-        float buttonsX = splitX + rightTotalW;
+        float buttonsX = splitX + centerGap + rightTotalW;
 
         m_hudToggleLiteRect = D2D1::RectF(buttonsX + 8.0f * s, y, buttonsX + 32.0f * s, y + 24.0f * s);
         m_panelCloseRect = D2D1::RectF(m_hudToggleLiteRect.right + 4.0f * s, y, m_hudToggleLiteRect.right + 28.0f * s, y + 24.0f * s);
 
-        dc->DrawText(L"[+]", 3, m_panelFormat.Get(), D2D1::RectF(m_hudToggleLiteRect.left + 1 * s, m_hudToggleLiteRect.top + 1 * s, m_hudToggleLiteRect.right + 1 * s, m_hudToggleLiteRect.bottom + 1 * s), brushShadow.Get());
-          dc->DrawText(L"[+]", 3, m_panelFormat.Get(), m_hudToggleLiteRect, brushText.Get());
-
-          ComPtr<ID2D1SolidColorBrush> brushRed;
-          CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.3f, 0.3f), hdrWhiteScale, &brushRed);
-        dc->DrawText(L"[x]", 3, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 1 * s, m_panelCloseRect.top + 1 * s, m_panelCloseRect.right + 1 * s, m_panelCloseRect.bottom + 1 * s), brushShadow.Get());
-        dc->DrawText(L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get());
+        DrawTextWithFourWayShadow(dc, L"[+]", 3, m_panelFormat.Get(), m_hudToggleLiteRect, rightTextBrush.Get(), rightShadowBrush.Get(), 1.1f * s);
+        DrawTextWithFourWayShadow(dc, L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, rightRedBrush.Get(), rightShadowBrush.Get(), 1.1f * s);
 
         // Update Hit Rect for the whole Lite HUD line (prevent click-through)
         m_lastHUDRect = D2D1::RectF(0, 0, (float)m_width, y + 24.0f * s);

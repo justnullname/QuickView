@@ -197,6 +197,7 @@ namespace AppStrings {
 
     extern const wchar_t* Settings_Header_PoweredBy;
     extern const wchar_t* Settings_Text_Copyright;
+    extern const wchar_t* Settings_Text_License;
 
     // Tabs
     extern const wchar_t* Settings_Tab_Visuals;

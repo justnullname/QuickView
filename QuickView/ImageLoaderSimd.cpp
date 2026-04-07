@@ -240,6 +240,86 @@ void ComputeHistogramRowImpl(const uint8_t* row, int width,
     }
 }
 
+uint64_t SumLuminance8BitRangeImpl(const uint8_t* row, int x0, int x1, bool isRgbaOrder) {
+    if (!row || x1 <= x0) return 0;
+
+    const hn::ScalableTag<uint8_t> d8;
+    const size_t lanes = hn::Lanes(d8);
+    const int pixelsPerVec = static_cast<int>(lanes / 4);
+    uint64_t total = 0;
+    int x = x0;
+
+    if (pixelsPerVec >= 1) {
+        HWY_ALIGN uint8_t c0Buf[HWY_MAX_LANES_D(hn::ScalableTag<uint8_t>)];
+        HWY_ALIGN uint8_t c1Buf[HWY_MAX_LANES_D(hn::ScalableTag<uint8_t>)];
+        HWY_ALIGN uint8_t c2Buf[HWY_MAX_LANES_D(hn::ScalableTag<uint8_t>)];
+        HWY_ALIGN uint8_t c3Buf[HWY_MAX_LANES_D(hn::ScalableTag<uint8_t>)];
+
+        for (; x + pixelsPerVec <= x1; x += pixelsPerVec) {
+            const uint8_t* ptr = row + static_cast<size_t>(x) * 4;
+            hn::Vec<decltype(d8)> c0, c1, c2, c3;
+            hn::LoadInterleaved4(d8, ptr, c0, c1, c2, c3);
+            hn::Store(c0, d8, c0Buf);
+            hn::Store(c1, d8, c1Buf);
+            hn::Store(c2, d8, c2Buf);
+            hn::Store(c3, d8, c3Buf);
+
+            for (int i = 0; i < pixelsPerVec; ++i) {
+                const uint32_t r = isRgbaOrder ? c0Buf[i] : c2Buf[i];
+                const uint32_t g = c1Buf[i];
+                const uint32_t b = isRgbaOrder ? c2Buf[i] : c0Buf[i];
+                total += (r * 299u + g * 587u + b * 114u + 500u) / 1000u;
+            }
+        }
+    }
+
+    for (; x < x1; ++x) {
+        const uint8_t* px = row + static_cast<size_t>(x) * 4;
+        const uint32_t r = isRgbaOrder ? px[0] : px[2];
+        const uint32_t g = px[1];
+        const uint32_t b = isRgbaOrder ? px[2] : px[0];
+        total += (r * 299u + g * 587u + b * 114u + 500u) / 1000u;
+    }
+
+    return total;
+}
+
+float SumLuminanceFloatRangeImpl(const float* row, int x0, int x1) {
+    if (!row || x1 <= x0) return 0.0f;
+
+    const hn::ScalableTag<float> df;
+    const size_t N = hn::Lanes(df);
+    const size_t pixelsPerIter = N / 4;
+    float total = 0.0f;
+    int x = x0;
+
+    if (pixelsPerIter >= 1) {
+        HWY_ALIGN float maskArr[HWY_MAX_LANES_D(hn::ScalableTag<float>)];
+        for (size_t i = 0; i < N; ++i) {
+            maskArr[i] = (i % 4 == 3) ? 0.0f : 1.0f;
+        }
+        const auto vMask = hn::Load(df, maskArr);
+        const auto vZero = hn::Zero(df);
+        auto vAccum = vZero;
+
+        for (; x + static_cast<int>(pixelsPerIter) <= x1; x += static_cast<int>(pixelsPerIter)) {
+            auto v = hn::LoadU(df, row + static_cast<size_t>(x) * 4);
+            v = hn::Mul(v, vMask);
+            vAccum = hn::Add(vAccum, v);
+        }
+
+        const float partial = hn::ReduceSum(df, vAccum);
+        total += partial;
+    }
+
+    for (; x < x1; ++x) {
+        const float* px = row + static_cast<size_t>(x) * 4;
+        total += (std::max)(0.0f, px[0] * 0.299f + px[1] * 0.587f + px[2] * 0.114f);
+    }
+
+    return total;
+}
+
 // ============================================================================
 // TransformColorMatrix3x3 - 3x3 matrix on R32G32B32A32_FLOAT pixels
 // ============================================================================
@@ -420,6 +500,8 @@ HWY_EXPORT(SwizzleRGBAToBGRAImpl);
 HWY_EXPORT(ResizeBilinearImpl);
 HWY_EXPORT(FindPeakFloatImpl);
 HWY_EXPORT(ComputeHistogramRowImpl);
+HWY_EXPORT(SumLuminance8BitRangeImpl);
+HWY_EXPORT(SumLuminanceFloatRangeImpl);
 HWY_EXPORT(TransformColorMatrix3x3Impl);
 HWY_EXPORT(ToneMapAcesBatchImpl);
 
@@ -449,6 +531,14 @@ void ComputeHistogramRow(const uint8_t* row, int width,
                          uint32_t* histR, uint32_t* histG,
                          uint32_t* histB, uint32_t* histL) {
     HWY_DYNAMIC_DISPATCH(ComputeHistogramRowImpl)(row, width, histR, histG, histB, histL);
+}
+
+uint64_t SumLuminance8BitRange(const uint8_t* row, int x0, int x1, bool isRgbaOrder) {
+    return HWY_DYNAMIC_DISPATCH(SumLuminance8BitRangeImpl)(row, x0, x1, isRgbaOrder);
+}
+
+float SumLuminanceFloatRange(const float* row, int x0, int x1) {
+    return HWY_DYNAMIC_DISPATCH(SumLuminanceFloatRangeImpl)(row, x0, x1);
 }
 
 void TransformColorMatrix3x3(float* pixels, int width, int height,

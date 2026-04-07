@@ -83,6 +83,14 @@ public:
     SettingsOverlay();
     ~SettingsOverlay();
 
+    static constexpr float HUD_WIDTH = 720.0f;
+    static constexpr float HUD_HEIGHT = 560.0f;
+    static constexpr float LABEL_COLUMN_WIDTH = 280.0f;
+    static constexpr float SIDEBAR_WIDTH = 160.0f;
+    static constexpr float ITEM_HEIGHT = 36.0f;
+    static constexpr float CONTROL_INSET_Y = 4.0f;
+    static constexpr float PADDING = 16.0f;
+
     void Init(ID2D1DeviceContext* pRT, HWND hwnd);
     void Render(ID2D1DeviceContext* pRT, float winW, float winH);
     void SetUIScale(float scale);
@@ -154,13 +162,7 @@ private:
     ComPtr<IDWriteTextFormat> m_textFormatItem;
     ComPtr<IDWriteTextFormat> m_textFormatIcon;
 
-    const float SIDEBAR_WIDTH = 150.0f;
-    const float ITEM_HEIGHT = 32.0f;
-    const float PADDING = 16.0f;
-    
-    std::wstring m_debugInfo; 
-    const float HUD_WIDTH = 680.0f;
-    const float HUD_HEIGHT = 560.0f;
+    std::wstring m_debugInfo;
 
     HWND m_hwnd = nullptr; 
     ComPtr<IDWriteTextFormat> m_textFormatSymbol; 

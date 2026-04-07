@@ -268,7 +268,7 @@ static float GetMinWindowWidth() {
     }
 
     if (g_settingsOverlay.IsVisible()) {
-        defaultMinW = std::max(defaultMinW, 680.0f * g_uiScale + 50.0f * g_uiScale);
+        defaultMinW = std::max(defaultMinW, SettingsOverlay::HUD_WIDTH * g_uiScale + 50.0f * g_uiScale);
     }
     if (g_helpOverlay.IsVisible()) {
         defaultMinW = std::max(defaultMinW, 500.0f * g_uiScale + 50.0f * g_uiScale);
@@ -293,7 +293,7 @@ static float GetMinWindowHeight() {
     }
 
     if (g_settingsOverlay.IsVisible()) {
-        defaultMinH = std::max(defaultMinH, 560.0f * g_uiScale + 50.0f * g_uiScale);
+        defaultMinH = std::max(defaultMinH, SettingsOverlay::HUD_HEIGHT * g_uiScale + 50.0f * g_uiScale);
     }
     if (g_helpOverlay.IsVisible()) {
         defaultMinH = std::max(defaultMinH, 600.0f * g_uiScale + 50.0f * g_uiScale);
@@ -1021,6 +1021,51 @@ bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::Ima
     right = g_currentMetadata;
     right.SourcePath = g_imagePath;
     return true;
+}
+
+extern HWND g_mainHwnd;
+static D2D1_SIZE_F GetOrientedSize(const ImageResource& res, int exifOrientation);
+
+bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapshot) {
+    outSnapshot = {};
+    if (!g_mainHwnd) return false;
+
+    if (!IsCompareModeActive()) {
+        if (paneIndex != 0 || !g_imageResource || g_imagePath.empty()) return false;
+        RECT rc{};
+        GetClientRect(g_mainHwnd, &rc);
+        outSnapshot.path = g_imagePath;
+        outSnapshot.viewport = D2D1::RectF(0.0f, 0.0f, (float)rc.right, (float)rc.bottom);
+        outSnapshot.visualSize = GetOrientedSize(g_imageResource, g_viewState.ExifOrientation);
+        outSnapshot.zoom = g_viewState.Zoom;
+        outSnapshot.panX = g_viewState.PanX;
+        outSnapshot.panY = g_viewState.PanY;
+        return outSnapshot.visualSize.width > 0.0f && outSnapshot.visualSize.height > 0.0f;
+    }
+
+    if (paneIndex == 0) {
+        if (!g_compare.left.valid || g_compare.left.path.empty()) return false;
+        outSnapshot.path = g_compare.left.path;
+        outSnapshot.viewport = GetCompareViewport(g_mainHwnd, ComparePane::Left);
+        outSnapshot.visualSize = GetOrientedSize(g_compare.left.resource, g_compare.left.view.ExifOrientation);
+        outSnapshot.zoom = g_compare.left.view.Zoom;
+        outSnapshot.panX = g_compare.left.view.PanX;
+        outSnapshot.panY = g_compare.left.view.PanY;
+        return outSnapshot.visualSize.width > 0.0f && outSnapshot.visualSize.height > 0.0f;
+    }
+
+    if (paneIndex == 1) {
+        if (!g_imageResource || g_imagePath.empty()) return false;
+        outSnapshot.path = g_imagePath;
+        outSnapshot.viewport = GetCompareViewport(g_mainHwnd, ComparePane::Right);
+        outSnapshot.visualSize = GetOrientedSize(g_imageResource, g_viewState.ExifOrientation);
+        outSnapshot.zoom = g_viewState.Zoom;
+        outSnapshot.panX = g_viewState.PanX;
+        outSnapshot.panY = g_viewState.PanY;
+        return outSnapshot.visualSize.width > 0.0f && outSnapshot.visualSize.height > 0.0f;
+    }
+
+    return false;
 }
 
 static bool IsCompareContextLeft() {

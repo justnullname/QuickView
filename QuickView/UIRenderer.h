@@ -71,6 +71,15 @@ struct HitTestResult {
     int rowIndex = -1;     // Index of hit row (for hover tracking)
 };
 
+struct AdaptiveUiPaneSnapshot {
+    std::wstring path;
+    D2D1_RECT_F viewport = {};
+    D2D1_SIZE_F visualSize = {};
+    float zoom = 1.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+};
+
 // ============================================================================
 // UIRenderer Class
 // ============================================================================
@@ -134,6 +143,17 @@ public:
     D2D1_SIZE_F GetRequiredInfoPanelSize() const; // Calculate required dimensions
 
 private:
+    struct AdaptiveUiPalette {
+        D2D1_COLOR_F foreground = D2D1::ColorF(D2D1::ColorF::White);
+        D2D1_COLOR_F shadow = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f);
+        D2D1_COLOR_F hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
+        D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
+        D2D1_COLOR_F capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
+        D2D1_COLOR_F accent = D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F warning = D2D1::ColorF(1.0f, 0.85f, 0.0f, 1.0f);
+        D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
+    };
+
     // 分层渲染方法
     void RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd);
     void RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd);
@@ -170,6 +190,11 @@ private:
     void DrawBorderIndicators(ID2D1DeviceContext* dc);
     void DrawDebugHUD(ID2D1DeviceContext* dc);
     void EnsureTextFormats();
+    float EstimateCanvasLuminance() const;
+    float EstimateRectLuminance(const D2D1_RECT_F& screenRect) const;
+    float EstimateFrameLuminance(const QuickView::RawImageFrame& frame, const AdaptiveUiPaneSnapshot& pane, const D2D1_RECT_F& screenRect) const;
+    AdaptiveUiPalette BuildAdaptivePalette(float luminance, float* ioBlend) const;
+    static D2D1_COLOR_F LerpColor(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b, float t);
     
 public:
     // ===== Text Measurement Helpers =====
@@ -239,6 +264,8 @@ private:
     D2D1_RECT_F m_winMaxRect = {};
     D2D1_RECT_F m_winMinRect = {};
     D2D1_RECT_F m_winPinRect = {};
+    float m_windowControlsAdaptiveBlend = 0.0f;
+    float m_compactInfoAdaptiveBlend = 0.0f;
     
     // 脏标记
     bool m_isStaticDirty = true;

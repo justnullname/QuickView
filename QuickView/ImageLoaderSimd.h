@@ -34,6 +34,15 @@ void ComputeHistogramRow(const uint8_t* row, int width,
                          uint32_t* histR, uint32_t* histG,
                          uint32_t* histB, uint32_t* histL);
 
+/// Sum luminance for a contiguous 8-bit 4-channel pixel span.
+/// Returns the sum of per-pixel luminance in 0..255 space.
+/// `isRgbaOrder=false` means BGRA/BGRX input; `true` means RGBA input.
+uint64_t SumLuminance8BitRange(const uint8_t* row, int x0, int x1, bool isRgbaOrder);
+
+/// Sum luminance for a contiguous float RGBA span.
+/// Returns the sum of per-pixel luminance in 0..1+ space, alpha ignored.
+float SumLuminanceFloatRange(const float* row, int x0, int x1);
+
 /// Apply 3x3 color matrix transformation to R32G32B32A32_FLOAT pixels (in-place).
 /// matrix is row-major float[9]. Alpha channel is preserved.
 void TransformColorMatrix3x3(float* pixels, int width, int height,

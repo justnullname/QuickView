@@ -62,6 +62,7 @@ const wchar_t *Settings_Status_Enabled = nullptr;
 
 const wchar_t *Settings_Header_PoweredBy = nullptr;
 const wchar_t *Settings_Text_Copyright = nullptr;
+const wchar_t *Settings_Text_License = nullptr;
 
 // Context Menu
 const wchar_t *Context_Open = nullptr;
@@ -446,7 +447,9 @@ struct EN {
 
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"Powered by";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname\nLicensed under the GNU GPL v3.0";
+      L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License =
+      L"Licensed under the GNU GPL v3.0";
 
   // Messages
   static constexpr const wchar_t *Message_SaveErrorTitle = L"Error";
@@ -904,17 +907,17 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_SortDescending = L"降序";
   static constexpr const wchar_t *Settings_Label_ConfirmDel = L"删除确认";
   static constexpr const wchar_t *Settings_Label_Portable = L"便携模式";
+  static constexpr const wchar_t *Settings_Text_Copyright = L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License = L"GNU GPL v3.0 许可证";
+  static constexpr const wchar_t *Settings_Label_UIScale = L"界面缩放";
   static constexpr const wchar_t *Settings_Label_SpanDisplays =
       L"跨屏模式 (电视墙)";
-  static constexpr const wchar_t *Settings_Label_UIScale = L"界面缩放";
 
   static constexpr const wchar_t *Settings_Status_RestartRequired = L"需要重启";
   static constexpr const wchar_t *Settings_Status_NoWritePerm = L"无写入权限!";
   static constexpr const wchar_t *Settings_Status_Enabled = L"已启用";
 
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"驱动技术";
-  static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname\n基于 GNU GPL v3.0 协议";
 
   static constexpr const wchar_t *Settings_Tab_Visuals = L"外观";
   static constexpr const wchar_t *Settings_Tab_Controls = L"操作";
@@ -1356,7 +1359,8 @@ struct TW {
   static constexpr const wchar_t *Settings_Status_Enabled = L"已啟用";
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"驅動技術";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname\n基於 GNU GPL v3.0 協議";
+      L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License = L"GNU GPL v3.0 授權";
   static constexpr const wchar_t *Message_SaveErrorTitle = L"錯誤";
   static constexpr const wchar_t *Message_SaveErrorContent =
       L"儲存檔案失敗。檔案是否被佔用?";
@@ -1792,7 +1796,9 @@ struct JA {
   static constexpr const wchar_t *Settings_Status_Enabled = L"有効";
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"Powered by";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname\nGNU GPL v3.0ライセンス";
+      L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License =
+      L"GNU GPL v3.0ライセンス";
   static constexpr const wchar_t *Message_SaveErrorTitle = L"エラー";
   static constexpr const wchar_t *Message_SaveErrorContent =
       L"ファイルの保存に失敗しました。ファイルがロックされていませんか?";
@@ -2260,7 +2266,9 @@ struct RU {
   static constexpr const wchar_t *Settings_Status_Enabled = L"Включено";
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"Работает на";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2026 justnullname\nЛицензия GNU GPL v3.0";
+      L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License =
+      L"Лицензия GNU GPL v3.0";
   static constexpr const wchar_t *Message_SaveErrorTitle = L"Ошибка";
   static constexpr const wchar_t *Message_SaveErrorContent =
       L"Не удалось сохранить файл. Файл заблокирован?";
@@ -2530,9 +2538,9 @@ struct RU {
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Цель рендеринга";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative =
-      L"Относительный колориметрический (точность)";
+      L"Относительный колориметрический";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual =
-      L"Перцептивный (восприятие)";
+      L"Перцептивный";
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates =
       L"Проверить наличие новой версии";
@@ -2757,7 +2765,9 @@ struct DE {
   static constexpr const wchar_t *Settings_Status_Enabled = L"Aktiviert";
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"Powered by";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname\nLizenziert unter GNU GPL v3.0";
+      L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License =
+      L"Lizenziert unter GNU GPL v3.0";
   static constexpr const wchar_t *Message_SaveErrorTitle = L"Fehler";
   static constexpr const wchar_t *Message_SaveErrorContent =
       L"Datei konnte nicht gespeichert werden. Datei gesperrt?";
@@ -3239,7 +3249,9 @@ struct ES {
   static constexpr const wchar_t *Settings_Header_PoweredBy =
       L"Desarrollado con";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname\nLicenciado bajo GNU GPL v3.0";
+      L"Copyright © 2025 - %s Vivor Loong (@justnullname)";
+  static constexpr const wchar_t *Settings_Text_License =
+      L"Licenciado bajo GNU GPL v3.0";
   static constexpr const wchar_t *Message_SaveErrorTitle = L"Error";
   static constexpr const wchar_t *Message_SaveErrorContent =
       L"No se pudo guardar el archivo. ¿Está bloqueado?";
@@ -3823,6 +3835,7 @@ template <typename T> void ApplyT() {
 
   Settings_Header_PoweredBy = T::Settings_Header_PoweredBy;
   Settings_Text_Copyright = T::Settings_Text_Copyright;
+  Settings_Text_License = T::Settings_Text_License;
 
   Settings_Tab_Visuals = T::Settings_Tab_Visuals;
   Settings_Tab_Controls = T::Settings_Tab_Controls;

@@ -764,8 +764,8 @@ struct LinkRects { D2D1_RECT_F github; D2D1_RECT_F issues; D2D1_RECT_F keys; };
 static LinkRects GetLinkButtonRects(const D2D1_RECT_F& itemRect) {
     LinkRects r;
     // 3 Equal Columns with gaps
-    float totalW = itemRect.right - itemRect.left;
-    float gap = 10.0f;
+    float totalW = itemRect.right - itemRect.left - 2.0f; // Small buffer for clipping
+    float gap = 8.0f;
     float btnW = (totalW - 2 * gap) / 3.0f;
     
     float x = itemRect.left;
@@ -1565,7 +1565,7 @@ void SettingsOverlay::BuildMenu() {
     // Comprehensive List
     itemPower.options = { 
         L"libjpeg-turbo", L"libwebp", L"libavif", L"dav1d",
-        L"libjxl", L"libraw", L"Wuffs", L"mimalloc",
+        L"libjxl", L"Highway", L"libraw", L"Wuffs", L"mimalloc",
         L"TinyEXR", L"Direct2D"
     }; 
     tabAbout.items.push_back(itemPower);
@@ -1575,8 +1575,12 @@ void SettingsOverlay::BuildMenu() {
     tabAbout.items.push_back(itemSys);
 
     // 6. Copyright Footer
-    // 6. Copyright Footer
-    SettingsItem itemCopy = { AppStrings::Settings_Text_Copyright, OptionType::CopyrightLabel };
+    std::wstring buildYear = GetBuildDate().substr(0, 4);
+    wchar_t footerBuf[256];
+    swprintf_s(footerBuf, AppStrings::Settings_Text_Copyright, buildYear.c_str());
+    
+    std::wstring copyrightStr = std::wstring(footerBuf) + L"\n" + AppStrings::Settings_Text_License;
+    SettingsItem itemCopy = { copyrightStr, OptionType::CopyrightLabel };
     tabAbout.items.push_back(itemCopy);
 
     m_tabs.push_back(tabAbout);
@@ -1874,68 +1878,95 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 // GitHub
                 {
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.github, 4.0f, 4.0f);
-                     if (m_hoverLinkIndex == 0) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); // Hover Effect
+                     if (m_hoverLinkIndex == 0) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
                      pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f); 
                      
-                     float w = r.github.right - r.github.left; // ~186
-                     // Content: Icon(20) + Gap(5) + Text(~90) = ~115
-                     float contentW = 115.0f;
-                     float startX = r.github.left + (w - contentW) / 2.0f;
+                     float w = r.github.right - r.github.left;
+                     float iconW = 20.0f * s;
+                     float gapW = 8.0f * s;
+                     float textW = 0.0f;
                      
-                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.github.top, startX + 20, r.github.bottom); 
-                     m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); // Icon Center in its box
+                     ComPtr<IDWriteTextLayout> layout;
+                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(AppStrings::Settings_Link_GitHub, (UINT32)wcslen(AppStrings::Settings_Link_GitHub), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
+                         DWRITE_TEXT_METRICS m = {};
+                         layout->GetMetrics(&m);
+                         textW = m.widthIncludingTrailingWhitespace;
+                     }
+                     
+                     float totalW = iconW + gapW + textW;
+                     float startX = r.github.left + (w - totalW) / 2.0f;
+                     
+                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.github.top, startX + iconW, r.github.bottom); 
+                     m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); 
                      m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     pRT->DrawText(L"\xE774", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(L"\xE774", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get());
                      
-                     D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.github.top, r.github.right, r.github.bottom);
-                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(AppStrings::Settings_Link_GitHub, (UINT32)wcslen(AppStrings::Settings_Link_GitHub), m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     D2D1_RECT_F textR = D2D1::RectF(startX + iconW + gapW, r.github.top, r.github.right, r.github.bottom);
+                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawText(AppStrings::Settings_Link_GitHub, (UINT32)wcslen(AppStrings::Settings_Link_GitHub), m_textFormatItem.Get(), textR, m_brushText.Get());
                 }
 
                 // Issues
                 {
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.issues, 4.0f, 4.0f);
-                     if (m_hoverLinkIndex == 1) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); // Hover Effect
+                     if (m_hoverLinkIndex == 1) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
                      pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f); 
                      
                      float w = r.issues.right - r.issues.left;
-                     // Content: Icon(20) + Gap(5) + Text(~100) = ~125
-                     float contentW = 125.0f;
-                     float startX = r.issues.left + (w - contentW) / 2.0f;
+                     float iconW = 20.0f * s;
+                     float gapW = 8.0f * s;
+                     float textW = 0.0f;
                      
-                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.issues.top, startX + 20, r.issues.bottom); 
+                     ComPtr<IDWriteTextLayout> layout;
+                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(AppStrings::Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::Settings_Link_ReportIssue), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
+                         DWRITE_TEXT_METRICS m = {};
+                         layout->GetMetrics(&m);
+                         textW = m.widthIncludingTrailingWhitespace;
+                     }
+                     
+                     float totalW = iconW + gapW + textW;
+                     float startX = r.issues.left + (w - totalW) / 2.0f;
+                     
+                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.issues.top, startX + iconW, r.issues.bottom); 
                      m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); 
                      m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     pRT->DrawText(L"\xE90A", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(L"\xE90A", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get());
                      
-                     D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.issues.top, r.issues.right, r.issues.bottom);
-                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(AppStrings::Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::Settings_Link_ReportIssue), m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     D2D1_RECT_F textR = D2D1::RectF(startX + iconW + gapW, r.issues.top, r.issues.right, r.issues.bottom);
+                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawText(AppStrings::Settings_Link_ReportIssue, (UINT32)wcslen(AppStrings::Settings_Link_ReportIssue), m_textFormatItem.Get(), textR, m_brushText.Get());
                 }
 
                 // Hotkeys
                 {
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.keys, 4.0f, 4.0f);
-                     if (m_hoverLinkIndex == 2) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get()); // Hover Effect
+                     if (m_hoverLinkIndex == 2) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
                      pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f); 
                      
                      float w = r.keys.right - r.keys.left;
-                     // Content: Icon(20) + Gap(5) + Text(~60) = ~85
-                     float contentW = 85.0f;
-                     float startX = r.keys.left + (w - contentW) / 2.0f;
+                     float iconW = 20.0f * s;
+                     float gapW = 8.0f * s;
+                     float textW = 0.0f;
                      
-                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.keys.top, startX + 20, r.keys.bottom); 
+                     std::wstring label = L"Help / Keys";
+                     ComPtr<IDWriteTextLayout> layout;
+                     if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(label.c_str(), (UINT32)label.length(), m_textFormatItem.Get(), 1000.0f, 100.0f, &layout))) {
+                         DWRITE_TEXT_METRICS m = {};
+                         layout->GetMetrics(&m);
+                         textW = m.widthIncludingTrailingWhitespace;
+                     }
+                     
+                     float totalW = iconW + gapW + textW;
+                     float startX = r.keys.left + (w - totalW) / 2.0f;
+                     
+                     D2D1_RECT_F iconR = D2D1::RectF(startX, r.keys.top, startX + iconW, r.keys.bottom); 
                      m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); 
                      m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     // [Fix] Update Icon to Help (\xE897) instead of Keyboard (\xE92E)
-                     pRT->DrawText(L"\xE897", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     pRT->DrawText(L"\xE897", 1, m_textFormatSymbol.Get(), iconR, m_brushText.Get());
                      
-                     D2D1_RECT_F textR = D2D1::RectF(startX + 25, r.keys.top, r.keys.right, r.keys.bottom);
-                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // Fix Vertical Center
-                     pRT->DrawText(L"Help / Keys", 11, m_textFormatItem.Get(), textR, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                     D2D1_RECT_F textR = D2D1::RectF(startX + iconW + gapW, r.keys.top, r.keys.right, r.keys.bottom);
+                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                     pRT->DrawText(label.c_str(), (UINT32)label.length(), m_textFormatItem.Get(), textR, m_brushText.Get());
                 }
                 
                 m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -2021,7 +2052,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      
                      // Draw SIMD part Green
                      std::wstring simdPart = item.label.substr(pos);
-                     D2D1_RECT_F avxRect = D2D1::RectF(contentX + 225.0f * s, sysY, contentX + contentW, sysY + 20.0f * s);
+                     D2D1_RECT_F avxRect = D2D1::RectF(contentX + (LABEL_COLUMN_WIDTH - 75.0f) * s, sysY, contentX + contentW, sysY + 20.0f * s);
                      pRT->DrawText(simdPart.c_str(), (UINT32)simdPart.length(), m_textFormatItem.Get(), avxRect, m_brushSuccess.Get());
                  } else {
                      pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), textRect, m_brushTextDim.Get());
@@ -2066,7 +2097,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             // 2. Normal Item Row
             
             // Label
-            float labelWidth = 270.0f * s; // Balanced with button space
+            float labelWidth = (LABEL_COLUMN_WIDTH - 20.0f) * s; 
             D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + labelWidth, contentY + rowHeight);
             pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), labelRect, m_brushTextDim.Get());
 
@@ -2084,7 +2115,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 }
 
                 float iconX = contentX + textW + 8.0f * s;
-                item.tooltipIconRect = D2D1::RectF(iconX, contentY + 2.0f * s, iconX + 24.0f * s, contentY + 26.0f * s);
+                float iconSize = 24.0f * s;
+                float iconY = contentY + (rowHeight - iconSize) / 2.0f;
+                item.tooltipIconRect = D2D1::RectF(iconX, iconY, iconX + iconSize, iconY + iconSize);
 
                 m_textFormatSymbol->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 m_textFormatSymbol->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -2101,10 +2134,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             }
 
             // Control Area
-            float controlOffset = 280.0f * s; 
+            float controlOffset = LABEL_COLUMN_WIDTH * s; 
             float controlX = contentX + controlOffset;
             float controlW = contentW - controlOffset;
-            float insetY = 5.0f * s;
+            float insetY = CONTROL_INSET_Y * s;
             D2D1_RECT_F controlRect = D2D1::RectF(controlX, contentY + insetY, controlX + controlW, contentY + rowHeight - insetY);
 
             bool isHovered = (&item == m_pHoverItem);
@@ -2156,7 +2189,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      // Button aligned to right side of control area (like other controls)
                      const float btnMinWidth = 80.0f * s;
                      const float btnPadX = 14.0f * s;
-                     const float btnInsetY = 6.0f * s;
+                     const float btnInsetY = CONTROL_INSET_Y * s;
                      const float btnRadius = 4.0f * s;
                      std::wstring btnText = item.buttonText.empty() ? L"Add" : item.buttonText;
 
@@ -2575,7 +2608,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     // 0. Active Combo Logic (Priority)
     if (m_pActiveCombo) {
         const float s = m_uiScale;
-        float controlX = m_pActiveCombo->rect.left + 280.0f * s;
+        float controlX = m_pActiveCombo->rect.left + LABEL_COLUMN_WIDTH * s;
         float controlW = m_pActiveCombo->rect.right - controlX;
         float dropY = m_pActiveCombo->rect.bottom;
         float itemH = ITEM_HEIGHT * s;
@@ -2713,8 +2746,6 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
     if (!m_visible) return SettingsAction::None;
 
-    // NOTE: We need to check if click is inside HUD bounds.
-    // Use cached HUD coordinates from Render
     float s = m_uiScale;
     float hudX = m_hudX;
     float hudY = m_hudY;
@@ -2759,7 +2790,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     // 3. Active Combo Processing
     if (m_pActiveCombo) {
         const float s = m_uiScale;
-        float controlX = m_pActiveCombo->rect.left + 280.0f * s;
+        float controlX = m_pActiveCombo->rect.left + LABEL_COLUMN_WIDTH * s;
         float controlW = m_pActiveCombo->rect.right - controlX;
         float dropY = m_pActiveCombo->rect.bottom;
         float itemH = ITEM_HEIGHT * s;
@@ -2840,7 +2871,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         // Segment
         if (m_pHoverItem->type == OptionType::Segment && m_pHoverItem->pIntVal) {
              const float s = m_uiScale;
-             float controlX = m_pHoverItem->rect.left + 280.0f * s;
+             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * s;
              float controlW = m_pHoverItem->rect.right - controlX;
              
              if (x >= controlX && x <= controlX + controlW) {
@@ -2895,7 +2926,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         // Custom Color Row: Checkbox vs Button
         if (m_pHoverItem->type == OptionType::CustomColorRow) {
              const float s = m_uiScale;
-             float controlX = m_pHoverItem->rect.left + 280.0f * s;
+             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * s;
              // Checkbox Area (left half)
              if (x < controlX + 200.0f) {
                  g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
@@ -2956,7 +2987,7 @@ void SettingsOverlay::DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& r
     float w = rect.right - rect.left;
     float h = rect.bottom - rect.top;
     
-    D2D1_RECT_F boxRect = D2D1::RectF(rect.left, rect.top + 5, rect.right, rect.bottom - 5);
+    D2D1_RECT_F boxRect = rect;
     
     // Background
     pRT->FillRoundedRectangle(D2D1::RoundedRect(boxRect, 4, 4), m_brushControlBg.Get());
@@ -2990,7 +3021,8 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
     if (!m_pActiveCombo) return;
     
     const float s = m_uiScale;
-    float controlX = m_pActiveCombo->rect.left + 280.0f * s;
+    float controlX = m_pActiveCombo->rect.left + LABEL_COLUMN_WIDTH * s;
+
     float controlW = m_pActiveCombo->rect.right - controlX;
     float dropY = m_pActiveCombo->rect.bottom;
     
