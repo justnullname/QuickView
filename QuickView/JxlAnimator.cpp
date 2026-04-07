@@ -117,7 +117,7 @@ public:
         auto& meta = frame->frameMeta;
         meta.index = m_currentIndex++;
         meta.delayMs = currentDelayMs;
-        meta.totalFrames = 0; // Total frames unknown until end in JXL usually
+        meta.totalFrames = m_totalFrames; 
         meta.disposal = FrameDisposalMode::Keep; // Coalesced frames don't need disposal
         meta.isDelta = false;
         meta.rcLeft = 0;
@@ -149,7 +149,7 @@ public:
     }
 
     uint32_t GetTotalFrames() const override { 
-        return 0; // JXL doesn't provide total frames in header natively without full parse
+        return m_totalFrames;
     }
     
     bool IsAnimated() const override { return m_basicInfo.have_animation == JXL_TRUE; }
@@ -189,9 +189,11 @@ private:
                 if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(m_decoder.get(), &m_basicInfo)) return false;
                 if (m_basicInfo.have_animation) {
                     m_animInfo = m_basicInfo.animation;
+                    // Pre-scan for total frames (very fast since we don't decode pixels)
+                    m_totalFrames = ScanTotalFrames();
                 }
                 foundBasicInfo = true;
-                break; // Stop here, rest will be handled by GetNextFrame
+                break; 
             }
         }
         
@@ -204,7 +206,25 @@ private:
     JxlBasicInfo m_basicInfo = {};
     JxlAnimationHeader m_animInfo = {};
     uint32_t m_currentIndex = 0;
+    uint32_t m_totalFrames = 0;
     bool m_isFinished = false;
+    
+    uint32_t ScanTotalFrames() {
+        auto scanDec = JxlDecoderMake(nullptr);
+        if (JXL_DEC_SUCCESS != JxlDecoderSubscribeEvents(scanDec.get(), JXL_DEC_FRAME)) return 0;
+        if (JXL_DEC_SUCCESS != JxlDecoderSetInput(scanDec.get(), m_mappedFile->data(), m_mappedFile->size())) return 0;
+        JxlDecoderCloseInput(scanDec.get());
+
+        uint32_t count = 0;
+        for (;;) {
+            JxlDecoderStatus st = JxlDecoderProcessInput(scanDec.get());
+            if (st == JXL_DEC_FRAME) count++;
+            else if (st == JXL_DEC_SUCCESS) break;
+            else if (st == JXL_DEC_ERROR) break;
+            else if (st == JXL_DEC_NEED_MORE_INPUT) break;
+        }
+        return count;
+    }
 };
 
 std::unique_ptr<IAnimationDecoder> CreateJxlAnimator() {

@@ -722,7 +722,9 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
             float sy = (m_animState.DirtyRcTop - m_animState.ImageHeight / 2.0f) * targetScaleY + cy + panY;
             float ex = (m_animState.DirtyRcRight - m_animState.ImageWidth / 2.0f) * targetScaleX + cx + panX;
             float ey = (m_animState.DirtyRcBottom - m_animState.ImageHeight / 2.0f) * targetScaleY + cy + panY;            
-            D2D1_RECT_F dirtyRect = D2D1::RectF(sx, sy, ex, ey);
+            // [Fix] Slight inset (2px) to ensure visibility at window edges or when zoomed out
+            float inset = 2.0f * s2;
+            D2D1_RECT_F dirtyRect = D2D1::RectF(sx + inset, sy + inset, ex - inset, ey - inset);
             
             // Pulsing alpha (breathing effect)
             float t = (float)(GetTickCount() % 1200) / 1200.0f;

@@ -834,91 +834,7 @@ static bool CopyToClipboard(HWND hwnd, const std::wstring& text) {
     return hMem != nullptr;
 }
 
-// Helper: Format bytes with thousand separators (e.g., 1,138,997 B)
-static std::wstring FormatBytesWithCommas(UINT64 bytes) {
-    std::wstring num = std::to_wstring(bytes);
-    int insertPos = (int)num.length() - 3;
-    while (insertPos > 0) {
-        num.insert(insertPos, L",");
-        insertPos -= 3;
-    }
-    return num + L" B";
-}
 
-static std::wstring FormatBytesShort(UINT64 bytes) {
-    if (bytes == 0) return L"-";
-    const wchar_t* units[] = { L"B", L"KB", L"MB", L"GB", L"TB" };
-    double size = (double)bytes;
-    int unit = 0;
-    while (size >= 1024.0 && unit < 4) {
-        size /= 1024.0;
-        ++unit;
-    }
-    wchar_t buf[64];
-    if (unit == 0) {
-        swprintf_s(buf, L"%llu B", (unsigned long long)bytes);
-    } else if (size < 10.0) {
-        swprintf_s(buf, L"%.2f %s", size, units[unit]);
-    } else if (size < 100.0) {
-        swprintf_s(buf, L"%.1f %s", size, units[unit]);
-    } else {
-        swprintf_s(buf, L"%.0f %s", size, units[unit]);
-    }
-    return buf;
-}
-
-static std::wstring FormatMegaPixels(UINT width, UINT height) {
-    if (width == 0 || height == 0) return L"-";
-    double mp = (double)width * (double)height / 1000000.0;
-    wchar_t buf[64];
-    swprintf_s(buf, L"%.2f MP", mp);
-    return buf;
-}
-
-static std::wstring FormatOptional(const std::wstring& value) {
-    return value.empty() ? L"-" : value;
-}
-
-// Helper: Calculate visible rect in Document Space (without margin)
-static D2D1_RECT_F GetVisibleRect() {
-     float screenW = g_lastSurfaceSize.width > 0 ? g_lastSurfaceSize.width : (float)GetSystemMetrics(SM_CXSCREEN);
-     float screenH = g_lastSurfaceSize.height > 0 ? g_lastSurfaceSize.height : (float)GetSystemMetrics(SM_CYSCREEN);
-
-     D2D1_POINT_2F pMin = {0,0};
-     D2D1_POINT_2F pMax = {screenW, screenH};
-     
-     auto mapPt = [&](D2D1_POINT_2F p) -> D2D1_POINT_2F {
-          // 1. Inverse DComp Zoom/Pan
-          float x = (p.x - g_viewState.PanX) / g_viewState.Zoom;
-          float y = (p.y - g_viewState.PanY) / g_viewState.Zoom;
-          
-          // 2. Inverse D2D Fit/Offset
-          x = (x - g_lastFitOffset.x) / g_lastFitScale;
-          y = (y - g_lastFitOffset.y) / g_lastFitScale;
-          return {x, y};
-     };
-     
-     D2D1_POINT_2F rMin = mapPt(pMin);
-     D2D1_POINT_2F rMax = mapPt(pMax);
-     
-     D2D1_RECT_F rect = D2D1::RectF(rMin.x, rMin.y, rMax.x, rMax.y);
-
-     // [SVG] Convert from Bitmap Space to Document Space
-     if (g_currentMetadata.Format == L"SVG" && g_imageResource) {
-         D2D1_SIZE_F bmpSize = g_imageResource.GetSize();
-         if (bmpSize.width > 0 && g_currentMetadata.Width > 0) {
-             float scaleX = (float)g_currentMetadata.Width / bmpSize.width;
-             float scaleY = (float)g_currentMetadata.Height / bmpSize.height;
-             
-             rect.left *= scaleX;
-             rect.right *= scaleX;
-             rect.top *= scaleY;
-             rect.bottom *= scaleY;
-         }
-     }
-     
-     return rect;
-}
 
 // --- Persistence Helpers ---
 
@@ -1041,17 +957,7 @@ static bool IsCompareContextLeft() {
     return IsCompareModeActive() && g_compare.contextPane == ComparePane::Left;
 }
 
-static const std::wstring& GetCompareContextPath() {
-    return IsCompareContextLeft() ? g_compare.left.path : g_imagePath;
-}
 
-static const CImageLoader::ImageMetadata& GetCompareContextMetadata() {
-    return IsCompareContextLeft() ? g_compare.left.metadata : g_currentMetadata;
-}
-
-static bool HasCompareContextImage() {
-    return IsCompareContextLeft() ? g_compare.left.valid : (bool)g_imageResource;
-}
 
 static float ClampCompareRatio(float value) {
     if (value < 0.001f) return 0.0f;
@@ -1242,71 +1148,7 @@ static bool IsNearCompareDivider(HWND hwnd, const POINT& ptClient, float thresho
     return fabsf((float)ptClient.x - splitX) <= threshold;
 }
 
-static std::wstring BuildCompareInfoMessage(const CImageLoader::ImageMetadata& l, const CImageLoader::ImageMetadata& r) {
-    std::wstring msg;
-    auto appendLine = [&](const std::wstring& line) {
-        msg += line;
-        msg += L"\n";
-    };
-    auto formatFormat = [&](const CImageLoader::ImageMetadata& m) -> std::wstring {
-        if (m.Format.empty()) return L"-";
-        if (m.FormatDetails.empty()) return m.Format;
-        return m.Format + L" (" + m.FormatDetails + L")";
-    };
-    auto formatLoader = [&](const CImageLoader::ImageMetadata& m) -> std::wstring {
-        std::wstring name = FormatOptional(m.LoaderName);
-        if (m.LoadTimeMs > 0) {
-            name += L" (" + std::to_wstring(m.LoadTimeMs) + L" ms)";
-        }
-        return name;
-    };
-    auto betterTag = [&](int cmp) -> std::wstring {
-        if (cmp > 0) return L"L";
-        if (cmp < 0) return L"R";
-        return L"=";
-    };
-    auto hasFileTime = [&](const FILETIME& ft) -> bool {
-        return ft.dwLowDateTime != 0 || ft.dwHighDateTime != 0;
-    };
 
-    const uint64_t lPixels = (uint64_t)l.Width * (uint64_t)l.Height;
-    const uint64_t rPixels = (uint64_t)r.Width * (uint64_t)r.Height;
-    const int resCmp = (lPixels > 0 && rPixels > 0) ? (lPixels > rPixels ? 1 : (lPixels < rPixels ? -1 : 0)) : 0;
-    std::wstring lRes = (l.Width && l.Height)
-        ? (std::to_wstring(l.Width) + L"x" + std::to_wstring(l.Height) + L" (" + FormatMegaPixels(l.Width, l.Height) + L")")
-        : L"-";
-    std::wstring rRes = (r.Width && r.Height)
-        ? (std::to_wstring(r.Width) + L"x" + std::to_wstring(r.Height) + L" (" + FormatMegaPixels(r.Width, r.Height) + L")")
-        : L"-";
-    appendLine(L"Resolution: L " + lRes + L" | R " + rRes + L" | Better: " + betterTag(resCmp));
-
-    const int sizeCmp = (l.FileSize > 0 && r.FileSize > 0) ? (l.FileSize < r.FileSize ? 1 : (l.FileSize > r.FileSize ? -1 : 0)) : 0;
-    std::wstring lSize = (l.FileSize > 0) ? (FormatBytesShort(l.FileSize) + L" (" + FormatBytesWithCommas(l.FileSize) + L")") : L"-";
-    std::wstring rSize = (r.FileSize > 0) ? (FormatBytesShort(r.FileSize) + L" (" + FormatBytesWithCommas(r.FileSize) + L")") : L"-";
-    appendLine(L"File size:  L " + lSize + L" | R " + rSize + L" | Better: " + betterTag(sizeCmp) + L" (smaller)");
-
-    appendLine(L"Format:     L " + formatFormat(l) + L" | R " + formatFormat(r));
-    appendLine(L"ColorSpace: L " + FormatOptional(l.ColorSpace) + L" | R " + FormatOptional(r.ColorSpace));
-
-    int dateCmp = 0;
-    if (hasFileTime(l.LastWriteTime) && hasFileTime(r.LastWriteTime)) {
-        dateCmp = CompareFileTime(&l.LastWriteTime, &r.LastWriteTime);
-    }
-    std::wstring dateTag = (dateCmp == 0) ? L"-" : betterTag(dateCmp);
-    appendLine(L"Date:       L " + FormatOptional(l.Date) + L" | R " + FormatOptional(r.Date) + L" | Newer: " + dateTag);
-
-    const int loadCmp = (l.LoadTimeMs > 0 && r.LoadTimeMs > 0) ? (l.LoadTimeMs < r.LoadTimeMs ? 1 : (l.LoadTimeMs > r.LoadTimeMs ? -1 : 0)) : 0;
-    appendLine(L"Loader:     L " + formatLoader(l) + L" | R " + formatLoader(r) + L" | Faster: " + betterTag(loadCmp));
-
-    std::wstring lExif = l.GetCompactString();
-    std::wstring rExif = r.GetCompactString();
-    if (!lExif.empty() || !rExif.empty()) {
-        appendLine(L"EXIF:       L " + FormatOptional(lExif) + L" | R " + FormatOptional(rExif));
-    }
-
-    if (!msg.empty()) msg.pop_back(); // remove trailing newline
-    return msg;
-}
 
 static void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
                                      const ImageResource& res,
@@ -1907,39 +1749,7 @@ static UINT GetSvgSurfaceSizeLimit() {
     return (std::min)(textureLimit, memoryLimit);
 }
 
-static SvgSurfaceSpec CalculateSvgSurfaceSpec(float viewportW, float viewportH, const ImageResource& res, float zoom) {
-    SvgSurfaceSpec spec{};
-    if (!res.isSvg || res.svgW <= 0.0f || res.svgH <= 0.0f) {
-        return spec;
-    }
 
-    viewportW = std::max(1.0f, viewportW);
-    viewportH = std::max(1.0f, viewportH);
-
-    const float effectiveZoom = std::max(1.0f, zoom);
-    const float superSample = 2.0f;
-
-    spec.RawW = viewportW * effectiveZoom * superSample;
-    spec.RawH = viewportH * effectiveZoom * superSample;
-
-    spec.SurfaceScale = std::min(spec.RawW / res.svgW, spec.RawH / res.svgH);
-
-    const float maxSurfaceSize = (float)GetSvgSurfaceSizeLimit();
-    const float maxScale = std::min(maxSurfaceSize / res.svgW,
-                                    maxSurfaceSize / res.svgH);
-    if (spec.SurfaceScale > maxScale) spec.SurfaceScale = maxScale;
-
-    const float minScale = std::min(viewportW / res.svgW, viewportH / res.svgH);
-    if (spec.SurfaceScale < minScale) spec.SurfaceScale = minScale;
-
-    spec.Width = std::max(1u, static_cast<UINT>(std::lround(res.svgW * spec.SurfaceScale)));
-    spec.Height = std::max(1u, static_cast<UINT>(std::lround(res.svgH * spec.SurfaceScale)));
-
-    spec.FitScale = std::min((float)spec.Width / res.svgW, (float)spec.Height / res.svgH);
-    spec.OffsetX = (spec.Width - res.svgW * spec.FitScale) / 2.0f;
-    spec.OffsetY = (spec.Height - res.svgH * spec.FitScale) / 2.0f;
-    return spec;
-}
 
 static D2D1_MATRIX_3X2_F CombineWithCurrentTransform(ID2D1DeviceContext* ctx, const D2D1_MATRIX_3X2_F& transform) {
     D2D1_MATRIX_3X2_F current = D2D1::Matrix3x2F::Identity();
@@ -2201,8 +2011,12 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
         D2D1_MATRIX_3X2_F transform = BuildSvgViewportTransform((float)winW, (float)winH, res, vs);
         DrawSvgWithViewportTransform(ctx, res, transform);
         
-        g_lastFitScale = std::min((float)winW / std::max(1.0f, vs.VisualSize.width),
-                                  (float)winH / std::max(1.0f, vs.VisualSize.height));
+        float scale = std::min((float)winW / std::max(1.0f, vs.VisualSize.width),
+                               (float)winH / std::max(1.0f, vs.VisualSize.height));
+        if (g_runtime.LockWindowSize && !g_config.UpscaleSmallImagesWhenLocked && scale > 1.0f) {
+            scale = 1.0f;
+        }
+        g_lastFitScale = scale;
         g_lastFitOffset = D2D1::Point2F(((float)winW - vs.VisualSize.width * g_lastFitScale) * 0.5f,
                                         ((float)winH - vs.VisualSize.height * g_lastFitScale) * 0.5f);
         
@@ -2248,6 +2062,11 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
         }
 
         float scale = std::min((float)surfW / scaleCalcW, (float)surfH / scaleCalcH);
+        
+        // [Fix] Enforce small image scaling rules for g_lastFitScale to match UIRenderer projection
+        if (g_runtime.LockWindowSize && !g_config.UpscaleSmallImagesWhenLocked && scale > 1.0f) {
+            scale = 1.0f;
+        }
 
         // Store Metrics (Logical Scale)
         g_lastFitScale = scale;
@@ -4643,9 +4462,8 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     int targetW = currentW;
     int targetH = currentH;
 
-    D2D1_SIZE_F logicSize = GetLogicalImageSize();
-    float imgW = logicSize.width;
-    float imgH = logicSize.height;
+    float imgW = GetLogicalImageSize().width;
+    float imgH = GetLogicalImageSize().height;
     if (imgW <= 0 || imgH <= 0) return;
 
     RECT rcClient; GetClientRect(hwnd, &rcClient);
@@ -5294,51 +5112,6 @@ static void TickSmoothWindowZoom(HWND hwnd) {
 }
 
 // [Fix] Draw Internal Background (Grid/Color) explicitly.
-// Used by OnResize to ensure background is drawn in the same frame as Image Transform.
-static void DrawLocalBackground(ID2D1DeviceContext* context, float widthPixels, float heightPixels) {
-    if (!context) return;
-    
-    // DPI Logic
-    float dpiX, dpiY;
-    context->GetDpi(&dpiX, &dpiY);
-    if (dpiX == 0) dpiX = 96.0f;
-    if (dpiY == 0) dpiY = 96.0f;
-    
-    float logicW = widthPixels * 96.0f / dpiX;
-    float logicH = heightPixels * 96.0f / dpiY;
-    
-    context->SetTransform(D2D1::Matrix3x2F::Identity());
-    
-    D2D1_COLOR_F bgColor = ResolveCanvasColor();
-    context->Clear(bgColor);
-    
-    // Draw checkerboard grid
-    if (g_config.CanvasColor == 2 || g_config.CanvasShowGrid) {
-        float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
-        D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f);
-
-        float hdrWhiteScale = g_compEngine ? (std::max)(1.0f, g_compEngine->GetDisplayColorState().GetSdrWhiteScale()) : 1.0f;
-        overlayColor = D2D1::ColorF(
-            (std::max)(0.0f, overlayColor.r * hdrWhiteScale),
-            (std::max)(0.0f, overlayColor.g * hdrWhiteScale),
-            (std::max)(0.0f, overlayColor.b * hdrWhiteScale),
-            overlayColor.a);
-
-        ComPtr<ID2D1SolidColorBrush> brushOverlay;
-        context->CreateSolidColorBrush(overlayColor, &brushOverlay);
-        
-        const float gridSize = 16.0f;
-        for (float y = 0; y < logicH; y += gridSize) {
-            for (float x = 0; x < logicW; x += gridSize) {
-                int cx = (int)(x / gridSize);
-                int cy = (int)(y / gridSize);
-                if ((cx + cy) % 2 != 0) {
-                   context->FillRectangle(D2D1::RectF(x, y, x + gridSize, y + gridSize), brushOverlay.Get());
-                }
-            }
-        }
-    }
-}
 
 void PerformTransform(HWND hwnd, TransformType type) {
     bool isLeft = IsCompareModeActive() && (g_compare.selectedPane == ComparePane::Left);
@@ -5606,28 +5379,7 @@ static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
 
 // [Phase 0] Lightweight INI read 鈥?only the SingleInstance flag.
 // Called BEFORE COM/D2D/Config initialization.
-static bool ReadSingleInstanceFlag() {
-    // Attempt portable path first (same dir as exe), then AppData.
-    wchar_t exeDir[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
-    wchar_t* sep = wcsrchr(exeDir, L'\\');
-    if (sep) *(sep + 1) = L'\0';
 
-    wchar_t portablePath[MAX_PATH]{};
-    wcscpy_s(portablePath, exeDir);
-    wcscat_s(portablePath, L"QuickView.ini");
-
-    const wchar_t* iniPath = portablePath;
-    if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
-        // Fallback to AppData
-        wchar_t appData[MAX_PATH]{};
-        SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appData);
-        static wchar_t appDataPath[MAX_PATH]{};
-        swprintf_s(appDataPath, L"%s\\QuickView\\QuickView.ini", appData);
-        iniPath = appDataPath;
-    }
-    return GetPrivateProfileIntW(L"General", L"SingleInstance", 1, iniPath) != 0;
-}
 
 // [Phase 0] Master flag 鈥?true if this process runs the pipe server.
 static bool g_isMasterProcess = false;
@@ -7906,7 +7658,7 @@ SKIP_EDGE_NAV:;
             if (IsCompareModeActive()) {
                 ComparePane pane = HitTestComparePane(hwnd, dropPt);
                 if (pane == ComparePane::Left) {
-                    LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd](bool success){
+                    LoadImageIntoCompareLeftSlot(hwnd, path, [](bool success){
                         if (success) {
                             g_compare.activePane = ComparePane::Left;
                             MarkCompareDirty();
@@ -8396,7 +8148,7 @@ SKIP_EDGE_NAV:;
                     EnterCompareMode(hwnd);
                 }
                 if (IsCompareModeActive()) {
-                    LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd](bool success){
+                    LoadImageIntoCompareLeftSlot(hwnd, path, [](bool success){
                         if (success) {
                             g_compare.activePane = ComparePane::Left;
                             MarkCompareDirty();
@@ -8432,7 +8184,7 @@ SKIP_EDGE_NAV:;
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
                 if (GetOpenFileNameW(&ofn)) {
                     if (IsCompareModeActive() && g_compare.contextPane == ComparePane::Left) {
-                        LoadImageIntoCompareLeftSlot(hwnd, szFile, [hwnd](bool success){
+                        LoadImageIntoCompareLeftSlot(hwnd, szFile, [](bool success){
                             if (success) {
                                 g_compare.activePane = ComparePane::Left;
                                 MarkCompareDirty();
@@ -8983,7 +8735,7 @@ SKIP_EDGE_NAV:;
              
              if (!contextPath.empty()) {
                  if (contextLeft) {
-                     LoadImageIntoCompareLeftSlot(hwnd, contextPath, [hwnd](bool success){
+                     LoadImageIntoCompareLeftSlot(hwnd, contextPath, [](bool success){
                          if (success) {
                              g_compare.activePane = ComparePane::Left;
                              MarkCompareDirty();
@@ -10070,16 +9822,7 @@ static bool TryBuildPhase1WicEmbeddedFrame(const std::wstring& path, std::shared
     return CopyWicSourceToRawFrame(thumb.Get(), outFrame);
 }
 
-// With SIIGBF_THUMBNAILONLY the Shell API SIIGBF_THUMBNAILONLY the Shell API never returns icons.
-// This is a defensive-only check for typical Windows icon dimensions.
-static bool IsLikelyShellIconFallback(const std::shared_ptr<QuickView::RawImageFrame>& frame) {
-    if (!frame || !frame->IsValid()) return false;
-    int w = frame->width;
-    int h = frame->height;
-    // Reject standard icon sizes (16/32/48/64/128)
-    if (w == h && (w == 16 || w == 32 || w == 48 || w == 64 || w == 128)) return true;
-    return false;
-}
+
 
 static bool ApplyPhase1PlaceholderFrame(
     HWND hwnd,
@@ -10701,7 +10444,7 @@ void NavigateEdge(HWND hwnd, bool toLast) {
         std::wstring path = toLast ? tempNav.Last() : tempNav.First();
 
         if (!path.empty()) {
-            LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd](bool success){
+            LoadImageIntoCompareLeftSlot(hwnd, path, [](bool success){
                 if (success) {
                     g_compare.activePane = ComparePane::Left;
                     g_compare.contextPane = ComparePane::Left;
@@ -10756,7 +10499,7 @@ void Navigate(HWND hwnd, int direction) {
             : tempNav.Previous();
 
         if (!path.empty()) {
-            LoadImageIntoCompareLeftSlot(hwnd, path, [hwnd, tempNav, direction](bool success){
+            LoadImageIntoCompareLeftSlot(hwnd, path, [](bool success){
                 if (success) {
                     g_compare.activePane = ComparePane::Left;
                     g_compare.contextPane = ComparePane::Left;
@@ -11024,13 +10767,7 @@ void OnPaint(HWND hwnd) {
         }
 
         RECT rect; GetClientRect(hwnd, &rect);
-        // D2D1_SIZE_F size = context->GetSize(); // Replaced by logicW/logicH
-        // CalculateWindowControls(logicW, logicH); // Actually CalculateWindowControls takes size.
-        // But logicW/logicH IS the size in DIPs.
-        D2D1_SIZE_F logicSize = D2D1::SizeF(logicW, logicH);
-        // CalculateWindowControls removed - hit testing now in UIRenderer
-        // DrawWindowControls, OSD, InfoPanel, etc moved to UIRenderer (DComp Surface)
-        // Legacy rendering logic removed. Pure DComp architecture.
+
     }
     
     // Render UI to independent DComp Surface
@@ -11244,7 +10981,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     int finalWinW = 0;
     int finalWinH = 0;
     bool willResizeWindow = false;
-    bool resizeIsScreenLimited = false;
+
 
     RECT bounds = { 0, 0, 0, 0 };
 
@@ -11268,7 +11005,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          bool cappedH = false;
          if (finalWinW > maxW) { finalWinW = maxW; cappedW = true; }
          if (finalWinH > maxH) { finalWinH = maxH; cappedH = true; }
-         resizeIsScreenLimited = cappedW || cappedH;
+ 
          
          if (finalWinW < (int)GetMinWindowWidth()) finalWinW = (int)GetMinWindowWidth();
          if (finalWinH < (int)GetMinWindowWidth()) finalWinH = (int)GetMinWindowWidth();
