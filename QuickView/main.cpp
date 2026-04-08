@@ -6445,6 +6445,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 } else if (isMaximized && !s_wasMaximized) {
                      // Apply Fullscreen Zoom Mode when entering Maximized/Fullscreen
                      ApplyFullScreenZoomMode(hwnd);
+                     // If the new mode resolves to 100% on a larger viewport, the existing
+                     // backing surface may now be undersized and look soft until the next
+                     // interaction-triggered quality upgrade. Promote it immediately.
+                     if (!g_isLoading) {
+                         TryUpgradeBitmapSurface(hwnd);
+                     }
                 }
             s_wasMaximized = isMaximized;
             
@@ -9641,6 +9647,10 @@ void ProcessEngineEvents(HWND hwnd) {
 
                 // Cleanup
                 g_isLoading = false;
+                // Initial fullscreen/maximized auto-fit can raise the desired backing-surface
+                // size without any user interaction. Upgrade immediately so first-open 100%
+                // views are sharp instead of waiting for the wheel/pinch interaction timer.
+                TryUpgradeBitmapSurface(hwnd);
                 KillTimer(hwnd, 995); // Stop UI heartbeat timer
                 
                 // Cursor Update
