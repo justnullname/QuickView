@@ -91,9 +91,11 @@ private:
     HRESULT ResolveSourceColorContext(const QuickView::RawImageFrame& frame,
                                       int effectiveCmsMode,
                                       ID2D1ColorContext** outContext);
-    HRESULT ResolveDestinationColorContext(ID2D1ColorContext** outContext) const;
+    HRESULT ResolveDestinationColorContext(const QuickView::RawImageFrame& frame,
+                                          ID2D1ColorContext** outContext) const;
     HRESULT LoadColorContextForPrimaries(QuickView::ColorPrimaries primaries,
                                          ID2D1ColorContext** outContext) const;
+    bool ShouldUseHdrOutputForFrame(const QuickView::RawImageFrame& frame) const;
 
     HWND m_hwnd = nullptr;
     bool m_isAdvancedColor = false;

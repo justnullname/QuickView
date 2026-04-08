@@ -233,6 +233,20 @@ struct ImageResource {
     }
 };
 
+static DXGI_FORMAT GetImageResourceSurfaceFormat(const ImageResource& resource) {
+    if (!resource.bitmap) {
+        return DXGI_FORMAT_B8G8R8A8_UNORM;
+    }
+
+    const DXGI_FORMAT bitmapFormat = resource.bitmap->GetPixelFormat().format;
+    if (bitmapFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+        bitmapFormat == DXGI_FORMAT_R32G32B32A32_FLOAT) {
+        return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    }
+
+    return DXGI_FORMAT_B8G8R8A8_UNORM;
+}
+
 static ImageResource g_imageResource;
 std::wstring g_imagePath;  // Non-static for extern access from UIRenderer
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
@@ -991,6 +1005,7 @@ void OnResize(HWND hwnd, UINT width, UINT height);
 FireAndForget LoadImageAsync(HWND hwnd, std::wstring path, bool showOSD = true, QuickView::BrowseDirection dir = QuickView::BrowseDirection::IDLE);
 FireAndForget UpdateHistogramAsync(HWND hwnd, std::wstring path);
 FireAndForget UpdateCompareLeftHistogramAsync(HWND hwnd, std::wstring path);
+void RefreshImageDisplay(HWND hwnd);
 void ReloadCurrentImage(HWND hwnd);
 void Navigate(HWND hwnd, int direction);
 void NavigateEdge(HWND hwnd, bool toLast);
@@ -1495,7 +1510,15 @@ static bool RenderCompareComposite(HWND hwnd) {
     const UINT winH = (UINT)(rc.bottom - rc.top);
     if (winW == 0 || winH == 0) return false;
 
-    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(winW, winH, false);
+    DXGI_FORMAT compareSurfaceFormat = GetImageResourceSurfaceFormat(g_imageResource);
+    if (g_compare.left.resource.bitmap) {
+        const DXGI_FORMAT leftFormat = GetImageResourceSurfaceFormat(g_compare.left.resource);
+        if (leftFormat == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+            compareSurfaceFormat = leftFormat;
+        }
+    }
+
+    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(winW, winH, false, 0, 0, false, compareSurfaceFormat);
     if (!ctx) return false;
 
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
@@ -1999,7 +2022,7 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
     VisualState vs = GetVisualState();
     
     // Begin DComp update
-    auto ctx = g_compEngine->BeginPendingUpdate(surfW, surfH);
+    auto ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, false, 0, 0, false, DXGI_FORMAT_B8G8R8A8_UNORM);
     if (!ctx) return false;
     
     // Clear with transparent
@@ -2146,7 +2169,7 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
     // Handle Empty Resource (Clear Surface)
     if (!res) {
         // Just use current window size for clear
-        ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(targetWinW, targetWinH);
+        ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(targetWinW, targetWinH, false, 0, 0, false, DXGI_FORMAT_B8G8R8A8_UNORM);
         if (!ctx) return false;
         ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // Transparent
         g_compEngine->EndPendingUpdate();
@@ -2221,7 +2244,8 @@ static bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade
 
     // [Fix] REMOVE AlignActiveLayer to prevent double-centering conflict with SetPan
     
-    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight, false);
+    const DXGI_FORMAT imageSurfaceFormat = res.isSvg ? DXGI_FORMAT_B8G8R8A8_UNORM : GetImageResourceSurfaceFormat(res);
+    ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(surfW, surfH, isTitan, fullWidth, fullHeight, false, imageSurfaceFormat);
     if (!ctx) return false;
     
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // Transparent to avoid baking background color
@@ -2640,6 +2664,12 @@ static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
     if (changed && HasActiveGainMapImage() && ShouldReloadForHdrDisplayChange(displayHdrHeadroomStops)) {
         ReloadGainMapImagesForDisplayChange(hwnd);
         return;
+    }
+
+    // Re-upload cached frames when the output monitor/profile/HDR state changes.
+    // A repaint alone would keep showing the bitmap baked for the previous display.
+    if (changed && (g_imageResource || (IsCompareModeActive() && g_compare.left.valid))) {
+        RefreshImageDisplay(hwnd);
     }
 
     if (requestFullRepaint || changed) {

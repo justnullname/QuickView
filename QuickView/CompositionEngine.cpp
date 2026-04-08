@@ -22,6 +22,14 @@ CompositionEngine::LayerData& CompositionEngine::GetLayer(UILayer layer) {
     }
 }
 
+static DXGI_FORMAT ResolveImageSurfaceFormat(DXGI_FORMAT requestedFormat) {
+    if (requestedFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+        requestedFormat == DXGI_FORMAT_R32G32B32A32_FLOAT) {
+        return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    }
+    return DXGI_FORMAT_B8G8R8A8_UNORM;
+}
+
 // ============================================================================
 // [Infinity Engine] Cascade Rendering Implementation
 // ============================================================================
@@ -282,7 +290,7 @@ HRESULT CompositionEngine::UpdateVirtualTiles(QuickView::TileManager* tileManage
         // Setup D2D Target
         D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-            D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            D2D1::PixelFormat(pLayer->surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
         );
         
         ComPtr<ID2D1Bitmap1> target;
@@ -542,7 +550,7 @@ bool CompositionEngine::RefreshDisplayColorState(bool forceHdrSimulation) {
 // Ping-Pong Image Rendering
 // ============================================================================
 // [Smart Dispatch] Create surfaces based on size (Standard vs Titan)
-ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height, bool isTitan, UINT fullWidth, UINT fullHeight, bool allowOversizedStandard) {
+ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT height, bool isTitan, UINT fullWidth, UINT fullHeight, bool allowOversizedStandard, DXGI_FORMAT surfaceFormatOverride) {
     if (!m_device || !m_d2dDevice) return nullptr;
 
     // Determine target layer (the hidden one)
@@ -559,6 +567,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
         layer.virtualSurfaces[i].Reset();
     }
     layer.isTitan = false;
+    layer.surfaceFormat = ResolveImageSurfaceFormat(surfaceFormatOverride == DXGI_FORMAT_UNKNOWN ? m_surfaceFormat : surfaceFormatOverride);
     
     HRESULT hr = S_OK;
 
@@ -603,7 +612,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
          
          // Standard Surface for Base
          hr = m_device->CreateSurface(baseAccurateW, baseAccurateH, 
-             m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.baseSurface);
+             layer.surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.baseSurface);
              
          layer.baseVisual->SetContent(layer.baseSurface.Get());
          
@@ -627,7 +636,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
              if (lodH == 0) lodH = 1;
              
              m_device->CreateVirtualSurface(lodW, lodH, 
-                 m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.virtualSurfaces[i]);
+                 layer.surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.virtualSurfaces[i]);
                  
              layer.lodVisuals[i]->SetContent(layer.virtualSurfaces[i].Get());
              
@@ -638,7 +647,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
          }
          
          // Return Base Context
-         return BeginDrawHelper(layer.baseSurface.Get());
+         return BeginDrawHelper(layer.baseSurface.Get(), layer.surfaceFormat);
     } 
     else {
          // --- Standard Mode ---
@@ -648,7 +657,7 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
 
          // Create standard surface
          hr = m_device->CreateSurface(width, height, 
-             m_surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.surface);
+             layer.surfaceFormat, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.surface);
              
          layer.visual->SetContent(layer.surface.Get());
          layer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -658,12 +667,12 @@ ID2D1DeviceContext* CompositionEngine::BeginPendingUpdate(UINT width, UINT heigh
          layer.visual->SetOffsetX(-1.0f * width / 2.0f);
          layer.visual->SetOffsetY(-1.0f * height / 2.0f);
 
-         return BeginDrawHelper(layer.surface.Get());
+         return BeginDrawHelper(layer.surface.Get(), layer.surfaceFormat);
     }
 }
 
 // Helper to extract D2D context from Surface
-ID2D1DeviceContext* CompositionEngine::BeginDrawHelper(IDCompositionSurface* surface) {
+ID2D1DeviceContext* CompositionEngine::BeginDrawHelper(IDCompositionSurface* surface, DXGI_FORMAT surfaceFormat) {
     if (!surface) return nullptr;
     
     POINT offset;
@@ -674,7 +683,7 @@ ID2D1DeviceContext* CompositionEngine::BeginDrawHelper(IDCompositionSurface* sur
     // Create D2D Context
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(m_surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        D2D1::PixelFormat(surfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
     
     if (!m_pendingContext) {

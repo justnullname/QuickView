@@ -491,12 +491,12 @@ HRESULT CRenderEngine::ResolveSourceColorContext(
 }
 
 HRESULT CRenderEngine::ResolveDestinationColorContext(
-    ID2D1ColorContext **outContext) const {
+    const QuickView::RawImageFrame &frame, ID2D1ColorContext **outContext) const {
   if (!outContext)
     return E_INVALIDARG;
   *outContext = nullptr;
 
-  if (m_isAdvancedColor && g_config.IsAdvancedColorEnabled(m_displayColorState.advancedColorSupported)) {
+  if (ShouldUseHdrOutputForFrame(frame)) {
     return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0,
                                             outContext);
   }
@@ -525,6 +525,12 @@ HRESULT CRenderEngine::ResolveDestinationColorContext(
 
   return m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SRGB, nullptr, 0,
                                           outContext);
+}
+
+bool CRenderEngine::ShouldUseHdrOutputForFrame(
+    const QuickView::RawImageFrame &frame) const {
+  return IsHdrLikeFrame(frame) && m_isAdvancedColor &&
+         g_config.IsAdvancedColorEnabled(m_displayColorState.advancedColorActive);
 }
 
 // Helper to standardize D2D1 bitmap properties creation
@@ -720,13 +726,14 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   ComPtr<ID2D1ColorContext> srcContext;
   ComPtr<ID2D1Bitmap1> rawBitmap;
   int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+  const bool useHdrOutput = ShouldUseHdrOutputForFrame(frame);
 
   if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
       BuildLinearScRgbFloatBuffer(frame, linearScRgbPixels, &uploadPixels, &uploadStride);
       ComPtr<ID2D1ColorContext> scRgbContext;
       CreateScRgbColorContext(m_d2dContext.Get(), &scRgbContext);
 
-      if (m_isAdvancedColor && g_config.IsAdvancedColorEnabled(m_displayColorState.advancedColorActive)) {
+      if (useHdrOutput) {
           // Pure HDR Environment (Roll-off)
           const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, m_displayColorState);
           if (m_computeEngine && m_computeEngine->IsAvailable() && toneMapSettings.contentPeakScRgb > (toneMapSettings.displayPeakScRgb > 1.0f ? toneMapSettings.displayPeakScRgb : 1.0f)) {
@@ -855,7 +862,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
     // Find destination context (Monitor or scRGB)
     ComPtr<ID2D1ColorContext> dstContext;
 
-    ResolveDestinationColorContext(&dstContext);
+    ResolveDestinationColorContext(frame, &dstContext);
 
     if (srcContext && dstContext) {
       ComPtr<ID2D1Effect> colorManagementEffect;
@@ -916,6 +923,10 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
         // Render to persistent target managed bitmap
         ComPtr<ID2D1Bitmap1> managedBitmap;
         D2D1_BITMAP_PROPERTIES1 targetProps = props;
+        if (useHdrOutput) {
+          targetProps.pixelFormat.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+          targetProps.pixelFormat.alphaMode = alphaMode;
+        }
         targetProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
         targetProps.colorContext = dstContext.Get(); // Mandatory for correct DrawImage interpretation
         D2D1_SIZE_U targetSize = D2D1::SizeU(static_cast<UINT32>(frame.width), static_cast<UINT32>(frame.height));
