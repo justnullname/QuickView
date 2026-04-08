@@ -1,3 +1,4 @@
+#include "UIRenderer.h"
 #include "pch.h"
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
@@ -553,13 +554,20 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float hudX, flo
     m_toastRect = l.bg; // Store for hit test
     
     // 1. Dimmer
+    extern UIRenderer* g_uiRenderer;
     if (!m_visible) {
-        pRT->FillRectangle(D2D1::RectF(0, 0, m_windowWidth, m_windowHeight), m_brushBg.Get());
+        if (g_uiRenderer) g_uiRenderer->DrawDimmingMask(pRT, 0.4f);
+        else pRT->FillRectangle(D2D1::RectF(0, 0, m_windowWidth, m_windowHeight), m_brushBg.Get());
     }
 
     // 2. Background
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(l.bg, 8.0f, 8.0f), m_brushControlBg.Get()); 
-    pRT->DrawRoundedRectangle(D2D1::RoundedRect(l.bg, 8.0f, 8.0f), m_brushBorder.Get(), 1.0f); 
+    if (g_uiRenderer) {
+        UIRenderer::AdaptiveUiPalette palette = g_uiRenderer->BuildAdaptivePalette(0.5f, nullptr);
+        g_uiRenderer->DrawLuminousGlassPanel(pRT, l.bg, 8.0f, palette, 1.0f, 1.0f);
+    } else {
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(l.bg, 8.0f, 8.0f), m_brushControlBg.Get());
+        pRT->DrawRoundedRectangle(D2D1::RoundedRect(l.bg, 8.0f, 8.0f), m_brushBorder.Get(), 1.0f);
+    }
     
     D2D1_RECT_F titleR = D2D1::RectF(l.bg.left + 20, l.bg.top + 15, l.bg.right - 30, l.bg.top + 45);
     m_textFormatHeader->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);

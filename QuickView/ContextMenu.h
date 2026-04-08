@@ -106,3 +106,9 @@ enum ContextMenuCommand : UINT {
 void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode);
 
 void ShowGalleryContextMenu(HWND hwnd, POINT pt);
+
+// ============================================================
+// Layered Context Menu (Luminous Glass)
+// ============================================================
+void ShowLayeredContextMenu(HWND parentHwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode);
+void InitLayeredContextMenuClass(HINSTANCE hInstance);

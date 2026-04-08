@@ -86,6 +86,25 @@ struct AdaptiveUiPaneSnapshot {
 
 class UIRenderer {
 public:
+    struct AdaptiveUiPalette {
+        D2D1_COLOR_F foreground = D2D1::ColorF(D2D1::ColorF::White);
+        D2D1_COLOR_F glassFill = D2D1::ColorF(30.f/255.f, 30.f/255.f, 30.f/255.f, 0.75f);
+        D2D1_COLOR_F dropShadowColor = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f);
+        D2D1_COLOR_F outerBorder = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
+        D2D1_COLOR_F innerGlow = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f);
+
+        // Legacy/Other status colors
+        D2D1_COLOR_F shadow = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f);
+        D2D1_COLOR_F hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
+        D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
+        D2D1_COLOR_F capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
+        D2D1_COLOR_F accent = D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F warning = D2D1::ColorF(1.0f, 0.85f, 0.0f, 1.0f);
+        D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
+    };
+
+    void DrawDimmingMask(ID2D1DeviceContext* dc, float opacity);
+    void DrawLuminousGlassPanel(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float cornerRadius, const AdaptiveUiPalette& palette, float alphaProgress = 1.0f, float scaleProgress = 1.0f);
     UIRenderer() = default;
     ~UIRenderer() = default;
 
@@ -143,16 +162,7 @@ public:
     D2D1_SIZE_F GetRequiredInfoPanelSize() const; // Calculate required dimensions
 
 private:
-    struct AdaptiveUiPalette {
-        D2D1_COLOR_F foreground = D2D1::ColorF(D2D1::ColorF::White);
-        D2D1_COLOR_F shadow = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f);
-        D2D1_COLOR_F hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
-        D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
-        D2D1_COLOR_F capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
-        D2D1_COLOR_F accent = D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
-        D2D1_COLOR_F warning = D2D1::ColorF(1.0f, 0.85f, 0.0f, 1.0f);
-        D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
-    };
+
 
     // 分层渲染方法
     void RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd);
@@ -171,6 +181,10 @@ private:
     void DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawCompareInfoHUD(ID2D1DeviceContext* dc);
     
+    // ===== Luminous Glass Core =====
+
+
+
     struct TooltipInfo {
         std::wstring description;   // What is this?
         std::wstring highMeaning;   // What if high?
@@ -299,4 +313,9 @@ private:
     ComPtr<IDWriteTextFormat> m_debugFormat;
     ComPtr<IDWriteTextFormat> m_iconFormat;
     ComPtr<IDWriteTextFormat> m_panelFormat;  // For Info Panel text
+
+    // ===== Effects =====
+    ComPtr<ID2D1Effect> m_gaussianBlurEffect;
+    ComPtr<ID2D1Effect> m_shadowEffect;
+    ComPtr<ID2D1Effect> m_compositeEffect;
 };

@@ -819,7 +819,9 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     }
 
     D2D1_RECT_F bgRect = D2D1::RectF(x, y, x + toastW, y + toastH);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, 8.0f * s, 8.0f * s), bgBrush.Get());
+    // Luminous Glass OSD Base
+    AdaptiveUiPalette osdPalette = BuildAdaptivePalette(EstimateRectLuminance(bgRect), nullptr);
+    DrawLuminousGlassPanel(dc, bgRect, 8.0f * s, osdPalette, m_osdOpacity, 1.0f);
     
     if (textLayout && textBrush) {
         D2D1_POINT_2F textOrigin = D2D1::Point2F(x + paddingH, y + paddingV);
@@ -2427,6 +2429,143 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     DrawTextWithFourWayShadow(dc, L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get(), brushShadow.Get(), 1.1f * s);
 }
 
+void UIRenderer::DrawLuminousGlassPanel(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float cornerRadius, const AdaptiveUiPalette& palette, float alphaProgress, float scaleProgress) {
+    if (!dc) return;
+    if (!m_gaussianBlurEffect) {
+        dc->CreateEffect(CLSID_D2D1GaussianBlur, &m_gaussianBlurEffect);
+    }
+    if (!m_shadowEffect) {
+        dc->CreateEffect(CLSID_D2D1Shadow, &m_shadowEffect);
+    }
+    if (!m_compositeEffect) {
+        dc->CreateEffect(CLSID_D2D1Composite, &m_compositeEffect);
+    }
+
+    // Apply scale matrix if needed
+    D2D1_MATRIX_3X2_F oldTransform;
+    dc->GetTransform(&oldTransform);
+
+    if (scaleProgress != 1.0f) {
+        float cx = (rect.left + rect.right) / 2.0f;
+        float cy = (rect.top + rect.bottom) / 2.0f;
+        D2D1_MATRIX_3X2_F scaleMatrix = D2D1::Matrix3x2F::Scale(scaleProgress, scaleProgress, D2D1::Point2F(cx, cy));
+        dc->SetTransform(scaleMatrix * oldTransform);
+    }
+
+    D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(rect, cornerRadius, cornerRadius);
+
+    // 1. Drop Shadow (using D2D Effects)
+    if (m_shadowEffect && palette.dropShadowColor.a > 0.0f) {
+        ComPtr<ID2D1CommandList> shadowCmdList;
+        dc->CreateCommandList(&shadowCmdList);
+
+        ComPtr<ID2D1SolidColorBrush> shadowBrush;
+        dc->CreateSolidColorBrush(palette.dropShadowColor, &shadowBrush);
+
+        // Draw the shape into the command list
+        ComPtr<ID2D1Image> oldTarget;
+        dc->GetTarget(&oldTarget);
+        dc->SetTarget(shadowCmdList.Get());
+        dc->Clear(nullptr);
+        dc->FillRoundedRectangle(roundedRect, shadowBrush.Get());
+        dc->SetTarget(oldTarget.Get());
+
+        shadowCmdList->Close();
+
+        m_shadowEffect->SetInput(0, shadowCmdList.Get());
+        m_shadowEffect->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 15.0f * scaleProgress);
+        m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::ColorF(0, 0, 0, palette.dropShadowColor.a * alphaProgress));
+
+        ComPtr<ID2D1Image> shadowImage;
+        m_shadowEffect->GetOutput(&shadowImage);
+
+        D2D1_POINT_2F offset = D2D1::Point2F(0.0f, 6.0f * scaleProgress);
+        dc->DrawImage(shadowImage.Get(), &offset, nullptr, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_COMPOSITE_MODE_SOURCE_OVER);
+    }
+
+    // 2. Backdrop Blur
+    if (m_gaussianBlurEffect && m_compositeEffect) {
+        // Copy the current render target to a bitmap
+        D2D1_SIZE_U pixelSize = dc->GetPixelSize();
+        D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET,
+            dc->GetPixelFormat()
+        );
+        ComPtr<ID2D1Bitmap1> backdropBitmap;
+        if (SUCCEEDED(dc->CreateBitmap(pixelSize, nullptr, 0, &props, &backdropBitmap))) {
+            D2D1_POINT_2U destPoint = D2D1::Point2U(0, 0);
+            D2D1_RECT_U srcRect = D2D1::RectU(0, 0, pixelSize.width, pixelSize.height);
+            backdropBitmap->CopyFromRenderTarget(&destPoint, dc, &srcRect);
+
+            m_gaussianBlurEffect->SetInput(0, backdropBitmap.Get());
+            m_gaussianBlurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, 15.0f);
+            m_gaussianBlurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+
+            // Create a mask for the blur
+            ComPtr<ID2D1CommandList> maskCmdList;
+            dc->CreateCommandList(&maskCmdList);
+            ComPtr<ID2D1Image> oldTarget;
+            dc->GetTarget(&oldTarget);
+            dc->SetTarget(maskCmdList.Get());
+            dc->Clear(nullptr);
+            ComPtr<ID2D1SolidColorBrush> maskBrush;
+            dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &maskBrush);
+            dc->FillRoundedRectangle(roundedRect, maskBrush.Get());
+            dc->SetTarget(oldTarget.Get());
+            maskCmdList->Close();
+
+            // Composite the blur through the mask
+            m_compositeEffect->SetInputEffect(0, m_gaussianBlurEffect.Get());
+            m_compositeEffect->SetInput(1, maskCmdList.Get());
+            m_compositeEffect->SetValue(D2D1_COMPOSITE_PROP_MODE, D2D1_COMPOSITE_MODE_DESTINATION_IN);
+
+            ComPtr<ID2D1Image> compositeOutput;
+            m_compositeEffect->GetOutput(&compositeOutput);
+            dc->DrawImage(compositeOutput.Get(), nullptr, nullptr, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_COMPOSITE_MODE_SOURCE_OVER);
+        }
+    }
+
+    // 3. Glass Fill
+    ComPtr<ID2D1SolidColorBrush> fillBrush;
+    D2D1_COLOR_F fillCol = palette.glassFill;
+    fillCol.a *= alphaProgress;
+    dc->CreateSolidColorBrush(fillCol, &fillBrush);
+    dc->FillRoundedRectangle(roundedRect, fillBrush.Get());
+
+    // 4. Inner Glow
+    if (palette.innerGlow.a > 0.0f) {
+        ComPtr<ID2D1SolidColorBrush> innerBrush;
+        D2D1_COLOR_F innerCol = palette.innerGlow;
+        innerCol.a *= alphaProgress;
+        dc->CreateSolidColorBrush(innerCol, &innerBrush);
+        D2D1_ROUNDED_RECT innerRect = D2D1::RoundedRect(
+            D2D1::RectF(rect.left + 1.0f, rect.top + 1.0f, rect.right - 1.0f, rect.bottom - 1.0f),
+            std::max(0.0f, cornerRadius - 1.0f), std::max(0.0f, cornerRadius - 1.0f));
+        dc->DrawRoundedRectangle(innerRect, innerBrush.Get(), 1.0f);
+    }
+
+    // 5. Outer Border
+    if (palette.outerBorder.a > 0.0f) {
+        ComPtr<ID2D1SolidColorBrush> borderBrush;
+        D2D1_COLOR_F borderCol = palette.outerBorder;
+        borderCol.a *= alphaProgress;
+        dc->CreateSolidColorBrush(borderCol, &borderBrush);
+        dc->DrawRoundedRectangle(roundedRect, borderBrush.Get(), 1.0f);
+    }
+
+    dc->SetTransform(oldTransform);
+}
+
+void UIRenderer::DrawDimmingMask(ID2D1DeviceContext* dc, float opacity) {
+    if (!dc || opacity <= 0.0f) return;
+    D2D1_SIZE_F rtSize = dc->GetSize();
+    D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, rtSize.width, rtSize.height);
+
+    ComPtr<ID2D1SolidColorBrush> dimBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, opacity), &dimBrush);
+    dc->FillRectangle(fullRect, dimBrush.Get());
+}
+
 float UIRenderer::EstimateCanvasLuminance() const {
     D2D1_COLOR_F bgColor = D2D1::ColorF(0.18f, 0.18f, 0.18f);
     switch (g_config.CanvasColor) {
@@ -2546,49 +2685,59 @@ float UIRenderer::EstimateFrameLuminance(const QuickView::RawImageFrame& frame, 
 }
 
 UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, float* ioBlend) const {
-    if (luminance < 0.0f) {
-        AdaptiveUiPalette palette;
-        if (ioBlend) *ioBlend = 0.0f;
-        return palette;
+    AdaptiveUiPalette palette;
+
+    // Resolve ThemeMode: Auto (0), Dark (1), Light (2)
+    extern AppConfig g_config;
+    int resolvedTheme = g_config.ThemeMode;
+    if (resolvedTheme == 0) {
+        // Query system theme
+        resolvedTheme = IsLightThemeActive() ? 2 : 1;
     }
 
-    const float targetBlend = luminance >= 0.58f ? 1.0f : 0.0f;
-    const float blend = targetBlend;
-    if (ioBlend) *ioBlend = blend;
+    bool isDarkTheme = (resolvedTheme == 1);
 
-    AdaptiveUiPalette palette;
-    palette.foreground = LerpColor(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f),
-        blend);
-    palette.shadow = LerpColor(
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.92f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f),
-        blend);
-    palette.hoverFill = LerpColor(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
-        blend);
-    palette.capsuleFill = LerpColor(
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f),
-        blend);
-    palette.capsuleStroke = LerpColor(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f),
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
-        blend);
-    palette.accent = LerpColor(
-        D2D1::ColorF(0.25f, 0.68f, 1.0f, 0.98f),
-        D2D1::ColorF(0.12f, 0.36f, 0.70f, 0.96f),
-        blend);
-    palette.warning = LerpColor(
-        D2D1::ColorF(1.0f, 0.86f, 0.10f, 1.0f),
-        D2D1::ColorF(0.52f, 0.37f, 0.02f, 0.96f),
-        blend);
-    palette.danger = LerpColor(
-        D2D1::ColorF(1.0f, 0.32f, 0.32f, 1.0f),
-        D2D1::ColorF(0.62f, 0.14f, 0.14f, 0.98f),
-        blend);
+    if (isDarkTheme) {
+        // Dark Mode Base
+        palette.foreground = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+        palette.glassFill  = D2D1::ColorF(30.f/255.f, 30.f/255.f, 30.f/255.f, 0.65f); // TODO: m_settings.glassOpacity
+
+        // Adaptive tweak: If the underlying image is dark, enhance borders and inner glow
+        float contrastBoost = (std::max)(0.0f, 1.0f - (luminance * 2.0f));
+        palette.outerBorder = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f + 0.15f * contrastBoost);
+        palette.dropShadowColor = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f + 0.2f * contrastBoost);
+        palette.innerGlow = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f + 0.05f * contrastBoost);
+
+        // Status Colors
+        palette.shadow = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.92f);
+        palette.hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f);
+        palette.capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
+        palette.capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
+        palette.accent = D2D1::ColorF(0.25f, 0.68f, 1.0f, 0.98f);
+        palette.warning = D2D1::ColorF(1.0f, 0.86f, 0.10f, 1.0f);
+        palette.danger = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
+    } else {
+        // Light Mode Base
+        palette.foreground = D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f);
+        palette.glassFill  = D2D1::ColorF(240.f/255.f, 240.f/255.f, 240.f/255.f, 0.65f); // TODO
+
+        // Adaptive tweak: If the underlying image is light, enhance shadow
+        float contrastBoost = (std::max)(0.0f, (luminance - 0.5f) * 2.0f);
+        palette.outerBorder = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f + 0.1f * contrastBoost);
+        palette.dropShadowColor = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f + 0.15f * contrastBoost);
+        palette.innerGlow = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.6f);
+
+        // Status Colors
+        palette.shadow = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f);
+        palette.hoverFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f);
+        palette.capsuleFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f);
+        palette.capsuleStroke = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f);
+        palette.accent = D2D1::ColorF(0.12f, 0.36f, 0.70f, 0.96f);
+        palette.warning = D2D1::ColorF(0.52f, 0.37f, 0.02f, 0.96f);
+        palette.danger = D2D1::ColorF(0.85f, 0.18f, 0.18f, 1.0f);
+    }
+
+    if (ioBlend) *ioBlend = isDarkTheme ? 0.0f : 1.0f; // Simplified blend
     return palette;
 }
 
@@ -2630,7 +2779,10 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     ComPtr<ID2D1SolidColorBrush> brushBg, brushWhite;
     CreateScaledBrush(dc, D2D1::ColorF(0.0f, 0.0f, 0.0f, g_config.InfoPanelAlpha), hdrWhiteScale, &brushBg);
     CreateScaledBrush(dc, D2D1::ColorF(D2D1::ColorF::White), hdrWhiteScale, &brushWhite);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f * s, 8.0f * s), brushBg.Get());
+
+    // Use DrawLuminousGlassPanel
+    AdaptiveUiPalette panelPalette = BuildAdaptivePalette(EstimateRectLuminance(panelRect), nullptr);
+    DrawLuminousGlassPanel(dc, panelRect, 8.0f * s, panelPalette);
     
     // Buttons
     m_panelCloseRect = D2D1::RectF(startX + width - 20.0f * s, startY + 4.0f * s, startX + width - 4.0f * s, startY + 20.0f * s);
@@ -3283,9 +3435,10 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.85f, 0.0f), hdrWhiteScale, &brushWarn); // Yellow for warnings
     CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.2f, 0.1f), hdrWhiteScale, &brushWinner); // Red winner arrow
 
-    // Top-roll: No top corners rounded
+    // Use DrawLuminousGlassPanel for Compare Info HUD
     D2D1_RECT_F clipRect = D2D1::RectF(panelX, panelY - 10 * s, panelX + panelW, panelY + panelH);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(clipRect, 8.0f * s, 8.0f * s), brushBg.Get());
+    AdaptiveUiPalette hudPalette = BuildAdaptivePalette(EstimateRectLuminance(clipRect), nullptr);
+    DrawLuminousGlassPanel(dc, clipRect, 8.0f * s, hudPalette);
     // [HUD Adjust] Removed blue border
 
     float y = panelY + padding;

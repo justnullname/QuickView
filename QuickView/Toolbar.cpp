@@ -1,3 +1,4 @@
+#include "UIRenderer.h"
 #include "pch.h"
 #include "Toolbar.h"
 #include "AppStrings.h"
@@ -398,7 +399,20 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
     pRT->PushLayer(params, layer.Get());
 
     m_brushBg->SetOpacity(g_config.ToolbarAlpha);
-    pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
+    // Luminous Glass Toolbar Base
+    extern UIRenderer* g_uiRenderer;
+    if (g_uiRenderer) {
+        ComPtr<ID2D1DeviceContext> dc;
+        pRT->QueryInterface(IID_PPV_ARGS(&dc));
+        if (dc) {
+            UIRenderer::AdaptiveUiPalette palette = g_uiRenderer->BuildAdaptivePalette(0.5f, nullptr);
+            g_uiRenderer->DrawLuminousGlassPanel(dc.Get(), D2D1::RectF(m_bgRect.rect.left, m_bgRect.rect.top, m_bgRect.rect.right, m_bgRect.rect.bottom), m_bgRect.radiusX, palette, m_transitionAlpha, 1.0f);
+        } else {
+            pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
+        }
+    } else {
+        pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
+    }
 
     for (const auto &btn : m_buttons) {
       if (btn.rect.right == 0)

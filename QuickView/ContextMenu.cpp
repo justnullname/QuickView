@@ -1,3 +1,4 @@
+#include <windowsx.h>
 #include "pch.h"
 #include "ContextMenu.h"
 #include "AppStrings.h"
@@ -47,7 +48,7 @@ void ApplyContextMenuTheme() {
 // ContextMenu.cpp - Right-click Context Menu Implementation
 // ============================================================
 
-void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode) {
+void ShowContextMenuOld(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode) {
     ApplyContextMenuTheme();
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
@@ -236,4 +237,288 @@ void ShowGalleryContextMenu(HWND hwnd, POINT pt) {
                    pt.x, pt.y, 0, hwnd, nullptr);
 
     DestroyMenu(hMenu);
+}
+
+#include <d2d1_1.h>
+#include <dwrite.h>
+#include <vector>
+#include <string>
+#include <functional>
+#include <algorithm>
+
+struct MenuItem {
+    UINT id;
+    std::wstring text;
+    bool isSeparator;
+    bool isChecked;
+    bool isDisabled;
+    std::vector<MenuItem> subItems;
+};
+
+class LayeredContextMenu {
+private:
+    ID2D1Factory* m_pD2DFactory = nullptr;
+    ID2D1DCRenderTarget* m_pDCRT = nullptr;
+
+public:
+    ~LayeredContextMenu() {
+        if (m_pDCRT) m_m_pDCRT->Release();
+        if (m_pD2DFactory) m_pD2DFactory->Release();
+    }
+
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        LayeredContextMenu* menu = nullptr;
+        if (msg == WM_NCCREATE) {
+            CREATESTRUCT* pCreate = reinterpret_cast<CREATESTRUCT*>(lParam);
+            menu = reinterpret_cast<LayeredContextMenu*>(pCreate->lpCreateParams);
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(menu));
+            menu->m_hwnd = hwnd;
+        } else {
+            menu = reinterpret_cast<LayeredContextMenu*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        }
+
+        if (menu) {
+            return menu->HandleMessage(msg, wParam, lParam);
+        }
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    LayeredContextMenu(HWND parent, POINT pt, std::vector<MenuItem> items)
+        : m_parent(parent), m_items(items), m_pt(pt) {}
+
+    void Show() {
+        HINSTANCE hInstance = GetModuleHandle(nullptr);
+        static bool s_registered = false;
+        if (!s_registered) {
+            WNDCLASS wc = {0};
+            wc.lpfnWndProc = WndProc;
+            wc.hInstance = hInstance;
+            wc.lpszClassName = L"LuminousContextMenu";
+            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            RegisterClass(&wc);
+            s_registered = true;
+        }
+
+        // Calculate menu size
+        m_width = 250;
+        m_height = 20 + m_items.size() * 30; // approx
+
+        HWND hwnd = CreateWindowEx(
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            L"LuminousContextMenu", nullptr,
+            WS_POPUP | WS_VISIBLE,
+            m_pt.x, m_pt.y, m_width, m_height,
+            m_parent, nullptr, hInstance, this
+        );
+
+        Render();
+
+        // Modal loop
+        MSG msg;
+        while (GetMessage(&msg, nullptr, 0, 0)) {
+            bool clickedOutside = false;
+            if (msg.message == WM_LBUTTONDOWN || msg.message == WM_RBUTTONDOWN) {
+                HWND hit = WindowFromPoint(msg.pt);
+                if (hit != m_hwnd) {
+                    clickedOutside = true;
+                }
+            }
+
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+
+            if (clickedOutside || !IsWindow(m_hwnd)) {
+                break;
+            }
+        }
+
+        if (IsWindow(m_hwnd)) {
+            DestroyWindow(m_hwnd);
+        }
+    }
+
+private:
+    HWND m_hwnd = nullptr;
+    HWND m_parent = nullptr;
+    std::vector<MenuItem> m_items;
+    POINT m_pt;
+    int m_width = 0;
+    int m_height = 0;
+    int m_hoverIndex = -1;
+
+    LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
+        switch (msg) {
+            case WM_MOUSEMOVE: {
+                POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                int newHover = (pt.y - 10) / 30;
+                if (newHover < 0 || newHover >= m_items.size() || m_items[newHover].isSeparator || m_items[newHover].isDisabled) {
+                    newHover = -1;
+                }
+                if (newHover != m_hoverIndex) {
+                    m_hoverIndex = newHover;
+                    Render();
+                }
+
+                TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, m_hwnd, 0 };
+                TrackMouseEvent(&tme);
+                return 0;
+            }
+            case WM_MOUSELEAVE:
+                m_hoverIndex = -1;
+                Render();
+                return 0;
+            case WM_LBUTTONUP: {
+                if (m_hoverIndex != -1) {
+                    PostMessage(m_parent, WM_COMMAND, MAKEWPARAM(m_items[m_hoverIndex].id, 0), 0);
+                    DestroyWindow(m_hwnd);
+                }
+                return 0;
+            }
+        }
+        return DefWindowProc(m_hwnd, msg, wParam, lParam);
+    }
+
+    void Render() {
+        HDC hdcScreen = GetDC(nullptr);
+        HDC hdcMem = CreateCompatibleDC(hdcScreen);
+
+        BITMAPINFO bmi = {0};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = m_width;
+        bmi.bmiHeader.biHeight = -m_height; // Top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* bits = nullptr;
+        HBITMAP hBitmap = CreateDIBSection(hdcScreen, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+        memset(bits, 0, m_width * m_height * 4); // Clear to transparent
+
+        // Use Direct2D for Luminous Glass Rendering on the DIB!
+        extern RuntimeConfig g_runtime;
+        if (g_runtime.uiRenderer) {
+            if (!m_pD2DFactory) {
+                D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
+            }
+            if (m_pD2DFactory && !m_pDCRT) {
+                D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+                    D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+                    0, 0, D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE, D2D1_FEATURE_LEVEL_DEFAULT
+                );
+                m_pD2DFactory->CreateDCRenderTarget(&props, &m_pDCRT);
+            }
+            if (m_pDCRT) {
+                RECT rect = {0, 0, m_width, m_height};
+                m_m_pDCRT->BindDC(hdcMem, &rect);
+
+                m_m_pDCRT->BeginDraw();
+                    m_pDCRT->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+                    // Glass Background
+                    ID2D1SolidColorBrush* bgBrush = nullptr;
+                    m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(30.0f/255.0f, 30.0f/255.0f, 30.0f/255.0f, 0.80f), &bgBrush);
+                    D2D1_ROUNDED_RECT rrect = D2D1::RoundedRect(D2D1::RectF(0, 0, m_width, m_height), 8.0f, 8.0f);
+                    if (bgBrush) {
+                        m_pDCRT->FillRoundedRectangle(rrect, bgBrush);
+                        bgBrush->Release();
+                    }
+
+                    // Outer Border
+                    ID2D1SolidColorBrush* borderBrush = nullptr;
+                    m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), &borderBrush);
+                    if (borderBrush) {
+                        m_pDCRT->DrawRoundedRectangle(rrect, borderBrush, 1.0f);
+                        borderBrush->Release();
+                    }
+
+                    // Inner Glow
+                    ID2D1SolidColorBrush* glowBrush = nullptr;
+                    m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f), &glowBrush);
+                    if (glowBrush) {
+                        D2D1_ROUNDED_RECT innerRect = D2D1::RoundedRect(D2D1::RectF(1, 1, m_width - 1, m_height - 1), 7.0f, 7.0f);
+                        m_pDCRT->DrawRoundedRectangle(innerRect, glowBrush, 1.0f);
+                        glowBrush->Release();
+                    }
+
+                    // Hover State
+                    if (m_hoverIndex != -1) {
+                        ID2D1SolidColorBrush* hoverBrush = nullptr;
+                        m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &hoverBrush);
+                        if (hoverBrush) {
+                            int y = 10 + m_hoverIndex * 30;
+                            D2D1_RECT_F hRect = D2D1::RectF(6, y, m_width - 6, y + 30);
+                            m_pDCRT->FillRoundedRectangle(D2D1::RoundedRect(hRect, 4.0f, 4.0f), hoverBrush);
+                            hoverBrush->Release();
+                        }
+                    }
+
+                    m_m_pDCRT->EndDraw();
+            }
+        }
+
+        // Text
+        SetBkMode(hdcMem, TRANSPARENT);
+        SetTextColor(hdcMem, RGB(255, 255, 255));
+        HFONT hFont = CreateFontW(15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+        HFONT hOldFont = (HFONT)SelectObject(hdcMem, hFont);
+
+        for (size_t i = 0; i < m_items.size(); ++i) {
+            const auto& item = m_items[i];
+            int y = 10 + i * 30;
+            if (item.isSeparator) {
+                RECT r = { 10, y + 14, m_width - 10, y + 15 };
+                FillRect(hdcMem, &r, (HBRUSH)GetStockObject(DKGRAY_BRUSH));
+            } else {
+                RECT textRect = { 30, y, m_width - 20, y + 30 };
+                DrawTextW(hdcMem, item.text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+        }
+
+        SelectObject(hdcMem, hOldFont);
+        DeleteObject(hFont);
+
+        BLENDFUNCTION blend = {0};
+        blend.BlendOp = AC_SRC_OVER;
+        blend.SourceConstantAlpha = 255;
+        blend.AlphaFormat = AC_SRC_ALPHA;
+
+        POINT ptSrc = {0, 0};
+        SIZE size = {m_width, m_height};
+        UpdateLayeredWindow(m_hwnd, hdcScreen, &m_pt, &size, hdcMem, &ptSrc, 0, &blend, ULW_ALPHA);
+
+        SelectObject(hdcMem, hOldBitmap);
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(nullptr, hdcScreen);
+    }
+};
+
+void ShowLayeredContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode) {
+    std::vector<MenuItem> items;
+    items.push_back({IDM_OPEN, AppStrings::Context_Open, false, false, false});
+    items.push_back({IDM_OPENWITH_DEFAULT, AppStrings::Context_OpenWith, false, false, !hasImage});
+    items.push_back({IDM_EDIT, AppStrings::Context_Edit, false, false, false});
+    items.push_back({IDM_SHOW_IN_EXPLORER, AppStrings::Context_ShowInExplorer, false, false, false});
+    items.push_back({0, L"", true, false, false});
+    items.push_back({IDM_COPY_IMAGE, AppStrings::Context_CopyImage, false, false, false});
+    items.push_back({IDM_COPY_PATH, AppStrings::Context_CopyPath, false, false, false});
+    items.push_back({0, L"", true, false, false});
+    items.push_back({IDM_ROTATE_CW, AppStrings::Context_RotateCW, false, false, !hasImage});
+    items.push_back({IDM_COMPARE_MODE, AppStrings::Context_CompareMode, false, isCompareMode, false});
+    items.push_back({0, L"", true, false, false});
+    items.push_back({IDM_SETTINGS, AppStrings::Context_Settings, false, false, false});
+    items.push_back({IDM_EXIT, AppStrings::Context_Exit, false, false, false});
+
+    LayeredContextMenu menu(hwnd, pt, items);
+    menu.Show();
+}
+
+void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix, bool isWindowLocked, bool showInfoPanel, bool infoPanelExpanded, bool alwaysOnTop, bool renderRaw, bool isRawFile, bool isFullscreen, bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode) {
+    ShowLayeredContextMenu(hwnd, pt, hasImage, needsExtensionFix, isWindowLocked, showInfoPanel, infoPanelExpanded, alwaysOnTop, renderRaw, isRawFile, isFullscreen, isCrossMonitor, isCompareMode, isPixelArtMode);
+}
+void InitLayeredContextMenuClass(HINSTANCE hInstance) {
+    // Nothing needed, handled lazily in Show()
 }

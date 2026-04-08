@@ -1,3 +1,4 @@
+#include "UIRenderer.h"
 #include "pch.h"
 #include "HelpOverlay.h"
 #include "AppStrings.h"
@@ -196,9 +197,23 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
     m_finalRect = D2D1::RectF(x, y, x + panelW, y + panelH);
 
-    // Panel Bg
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBg.Get());
-    pRT->DrawRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBorder.Get(), 1.0f * s);
+    // Luminous Glass Panel Bg
+    extern UIRenderer* g_uiRenderer;
+    if (g_uiRenderer) {
+        ComPtr<ID2D1DeviceContext> dc;
+        pRT->QueryInterface(IID_PPV_ARGS(&dc));
+        if (dc) {
+            g_uiRenderer->DrawDimmingMask(dc.Get(), 0.4f * m_transitionAlpha);
+            UIRenderer::AdaptiveUiPalette palette = g_uiRenderer->BuildAdaptivePalette(1.0f, nullptr);
+            g_uiRenderer->DrawLuminousGlassPanel(dc.Get(), m_finalRect, 8.0f * s, palette, m_transitionAlpha, m_transitionScale);
+        } else {
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBg.Get());
+            pRT->DrawRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBorder.Get(), 1.0f * s);
+        }
+    } else {
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBg.Get());
+        pRT->DrawRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBorder.Get(), 1.0f * s);
+    }
 
     // Header Title
     pRT->DrawText(L"QuickView Help", 14, m_fmtHeader.Get(), D2D1::RectF(x + 24.0f * s, y + 16.0f * s, x + panelW, y + 60.0f * s), m_brushText.Get());
