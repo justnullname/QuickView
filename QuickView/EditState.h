@@ -303,3 +303,7 @@ void LoadConfig(); // Ensure visible
 bool IsSystemLightTheme();
 bool IsLightThemeActive();
 void ApplyWindowTheme(HWND hwnd);
+
+#include <memory>
+class UIRenderer;
+extern std::unique_ptr<UIRenderer> g_uiRenderer;

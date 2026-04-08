@@ -2431,6 +2431,15 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
 
 void UIRenderer::DrawLuminousGlassPanel(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float cornerRadius, const AdaptiveUiPalette& palette, float alphaProgress, float scaleProgress) {
     if (!dc) return;
+
+    // Check if the device context changed. If so, effects must be recreated since they are bound to the specific context.
+    if (m_lastEffectDc != dc) {
+        m_gaussianBlurEffect.Reset();
+        m_shadowEffect.Reset();
+        m_compositeEffect.Reset();
+        m_lastEffectDc = dc;
+    }
+
     if (!m_gaussianBlurEffect) {
         dc->CreateEffect(CLSID_D2D1GaussianBlur, &m_gaussianBlurEffect);
     }

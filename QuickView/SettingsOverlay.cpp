@@ -1,5 +1,6 @@
-#include "UIRenderer.h"
 #include "pch.h"
+#include "EditState.h"
+#include "UIRenderer.h"
 #include "SettingsOverlay.h"
 #include "HelpOverlay.h"
 #include "AppStrings.h"
@@ -25,7 +26,7 @@
 // Global Accessor from main.cpp
 extern ImageEngine* g_pImageEngine;
 extern AppConfig g_config;
-extern RuntimeConfig g_runtime;
+
 extern std::wstring g_imagePath;
 extern FileNavigator g_navigator;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
@@ -554,7 +555,7 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float hudX, flo
     m_toastRect = l.bg; // Store for hit test
     
     // 1. Dimmer
-    extern UIRenderer* g_uiRenderer;
+
     if (!m_visible) {
         if (g_uiRenderer) g_uiRenderer->DrawDimmingMask(pRT, 0.4f);
         else pRT->FillRectangle(D2D1::RectF(0, 0, m_windowWidth, m_windowHeight), m_brushBg.Get());

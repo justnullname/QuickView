@@ -1,3 +1,4 @@
+#include <d2d1effects.h>
 #pragma once
 #include "pch.h"
 #include "CompositionEngine.h"
@@ -318,4 +319,5 @@ private:
     ComPtr<ID2D1Effect> m_gaussianBlurEffect;
     ComPtr<ID2D1Effect> m_shadowEffect;
     ComPtr<ID2D1Effect> m_compositeEffect;
+    ID2D1DeviceContext* m_lastEffectDc = nullptr;
 };

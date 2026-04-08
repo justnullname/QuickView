@@ -1,5 +1,7 @@
 #include <windowsx.h>
 #include "pch.h"
+#include "EditState.h"
+#include "UIRenderer.h"
 #include "ContextMenu.h"
 #include "AppStrings.h"
 #include "EditState.h"
@@ -9,7 +11,7 @@
 #include <uxtheme.h>
 
 extern AppConfig g_config;
-extern RuntimeConfig g_runtime;
+
 
 namespace {
 enum class PreferredAppMode {
@@ -262,7 +264,7 @@ private:
 
 public:
     ~LayeredContextMenu() {
-        if (m_pDCRT) m_m_pDCRT->Release();
+        if (m_pDCRT) m_pDCRT->Release();
         if (m_pD2DFactory) m_pD2DFactory->Release();
     }
 
@@ -299,9 +301,17 @@ public:
             s_registered = true;
         }
 
-        // Calculate menu size
-        m_width = 250;
-        m_height = 20 + m_items.size() * 30; // approx
+        // Calculate menu size based on Win11 spacing
+        m_width = 280;
+        m_height = 10; // Padding top
+        for (const auto& item : m_items) {
+            if (item.isSeparator) {
+                m_height += 10;
+            } else {
+                m_height += 32;
+            }
+        }
+        m_height += 10; // Padding bottom
 
         HWND hwnd = CreateWindowEx(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -312,14 +322,22 @@ public:
         );
 
         Render();
+        SetCapture(m_hwnd);
+        SetFocus(m_hwnd);
 
         // Modal loop
         MSG msg;
         while (GetMessage(&msg, nullptr, 0, 0)) {
+            // Check if we lost capture (meaning a system dialog or another app took it)
+            if (GetCapture() != m_hwnd) {
+                break;
+            }
+
             bool clickedOutside = false;
             if (msg.message == WM_LBUTTONDOWN || msg.message == WM_RBUTTONDOWN) {
-                HWND hit = WindowFromPoint(msg.pt);
-                if (hit != m_hwnd) {
+                POINT pt = msg.pt;
+                ScreenToClient(m_hwnd, &pt);
+                if (pt.x < 0 || pt.x >= m_width || pt.y < 0 || pt.y >= m_height) {
                     clickedOutside = true;
                 }
             }
@@ -330,6 +348,10 @@ public:
             if (clickedOutside || !IsWindow(m_hwnd)) {
                 break;
             }
+        }
+
+        if (GetCapture() == m_hwnd) {
+            ReleaseCapture();
         }
 
         if (IsWindow(m_hwnd)) {
@@ -350,7 +372,17 @@ private:
         switch (msg) {
             case WM_MOUSEMOVE: {
                 POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-                int newHover = (pt.y - 10) / 30;
+                int newHover = -1;
+                int currentY = 10;
+                for (int i = 0; i < m_items.size(); ++i) {
+                    int h = m_items[i].isSeparator ? 10 : 32;
+                    if (pt.y >= currentY && pt.y < currentY + h) {
+                        newHover = i;
+                        break;
+                    }
+                    currentY += h;
+                }
+
                 if (newHover < 0 || newHover >= m_items.size() || m_items[newHover].isSeparator || m_items[newHover].isDisabled) {
                     newHover = -1;
                 }
@@ -397,8 +429,8 @@ private:
         memset(bits, 0, m_width * m_height * 4); // Clear to transparent
 
         // Use Direct2D for Luminous Glass Rendering on the DIB!
-        extern RuntimeConfig g_runtime;
-        if (g_runtime.uiRenderer) {
+
+        if (g_uiRenderer != nullptr) {
             if (!m_pD2DFactory) {
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
             }
@@ -412,9 +444,9 @@ private:
             }
             if (m_pDCRT) {
                 RECT rect = {0, 0, m_width, m_height};
-                m_m_pDCRT->BindDC(hdcMem, &rect);
+                m_pDCRT->BindDC(hdcMem, &rect);
 
-                m_m_pDCRT->BeginDraw();
+                m_pDCRT->BeginDraw();
                     m_pDCRT->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
                     // Glass Background
@@ -446,39 +478,67 @@ private:
                     // Hover State
                     if (m_hoverIndex != -1) {
                         ID2D1SolidColorBrush* hoverBrush = nullptr;
-                        m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &hoverBrush);
+                        m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f), &hoverBrush);
                         if (hoverBrush) {
-                            int y = 10 + m_hoverIndex * 30;
-                            D2D1_RECT_F hRect = D2D1::RectF(6, y, m_width - 6, y + 30);
-                            m_pDCRT->FillRoundedRectangle(D2D1::RoundedRect(hRect, 4.0f, 4.0f), hoverBrush);
+                            int y = 10;
+                            for (int i = 0; i < m_hoverIndex; ++i) {
+                                y += m_items[i].isSeparator ? 10 : 32;
+                            }
+                            if (!m_items[m_hoverIndex].isSeparator) {
+                                D2D1_RECT_F hRect = D2D1::RectF(4.0f, (float)y + 2.0f, (float)m_width - 4.0f, (float)y + 30.0f);
+                                m_pDCRT->FillRoundedRectangle(D2D1::RoundedRect(hRect, 4.0f, 4.0f), hoverBrush);
+                            }
                             hoverBrush->Release();
                         }
                     }
 
-                    m_m_pDCRT->EndDraw();
+                    // DirectWrite Text & Separators (to preserve alpha channel!)
+                    IDWriteFactory* pDWriteFactory = nullptr;
+                    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&pDWriteFactory));
+                    if (pDWriteFactory) {
+                        IDWriteTextFormat* pTextFormat = nullptr;
+                        pDWriteFactory->CreateTextFormat(
+                            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                            DWRITE_FONT_STRETCH_NORMAL, 13.5f, L"en-us", &pTextFormat
+                        );
+
+                        if (pTextFormat) {
+                            pTextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                            pTextFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+                            ID2D1SolidColorBrush* textBrush = nullptr;
+                            m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &textBrush);
+
+                            ID2D1SolidColorBrush* sepBrush = nullptr;
+                            m_pDCRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), &sepBrush);
+
+                            int curY = 10;
+                            for (size_t i = 0; i < m_items.size(); ++i) {
+                                const auto& item = m_items[i];
+                                if (item.isSeparator) {
+                                    if (sepBrush) {
+                                        m_pDCRT->DrawLine(D2D1::Point2F(10.0f, (float)curY + 5.0f), D2D1::Point2F((float)m_width - 10.0f, (float)curY + 5.0f), sepBrush, 1.0f);
+                                    }
+                                    curY += 10;
+                                } else {
+                                    if (textBrush) {
+                                        D2D1_RECT_F textRect = D2D1::RectF(40.0f, (float)curY, (float)m_width - 20.0f, (float)curY + 32.0f);
+                                        m_pDCRT->DrawTextW(item.text.c_str(), (UINT32)item.text.length(), pTextFormat, textRect, textBrush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                                    }
+                                    curY += 32;
+                                }
+                            }
+
+                            if (textBrush) textBrush->Release();
+                            if (sepBrush) sepBrush->Release();
+                            pTextFormat->Release();
+                        }
+                        pDWriteFactory->Release();
+                    }
+
+                    m_pDCRT->EndDraw();
             }
         }
-
-        // Text
-        SetBkMode(hdcMem, TRANSPARENT);
-        SetTextColor(hdcMem, RGB(255, 255, 255));
-        HFONT hFont = CreateFontW(15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-        HFONT hOldFont = (HFONT)SelectObject(hdcMem, hFont);
-
-        for (size_t i = 0; i < m_items.size(); ++i) {
-            const auto& item = m_items[i];
-            int y = 10 + i * 30;
-            if (item.isSeparator) {
-                RECT r = { 10, y + 14, m_width - 10, y + 15 };
-                FillRect(hdcMem, &r, (HBRUSH)GetStockObject(DKGRAY_BRUSH));
-            } else {
-                RECT textRect = { 30, y, m_width - 20, y + 30 };
-                DrawTextW(hdcMem, item.text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            }
-        }
-
-        SelectObject(hdcMem, hOldFont);
-        DeleteObject(hFont);
 
         BLENDFUNCTION blend = {0};
         blend.BlendOp = AC_SRC_OVER;

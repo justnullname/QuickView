@@ -170,7 +170,7 @@ static std::unique_ptr<CImageLoader> g_imageLoader;
 static std::unique_ptr<ImageEngine> g_imageEngine;
 ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
 static CompositionEngine* g_compEngine = nullptr; // [Fix] Raw pointer to avoid unique_ptr include hell
-static std::unique_ptr<UIRenderer> g_uiRenderer;  // 鐙珛 UI 灞傛覆鏌撳櫒
+std::unique_ptr<UIRenderer> g_uiRenderer;  // 鐙珛 UI 灞傛覆鏌撳櫒
 static InputController g_inputController;  // Quantum Stream: 杈撳叆鐘舵€佹満
 CRenderEngine* g_pRenderEngine = nullptr; // Global raw alias for linker compatibility
 

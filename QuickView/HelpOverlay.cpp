@@ -1,5 +1,6 @@
-#include "UIRenderer.h"
 #include "pch.h"
+#include "EditState.h"
+#include "UIRenderer.h"
 #include "HelpOverlay.h"
 #include "AppStrings.h"
 #include "EditState.h"
@@ -198,14 +199,14 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     m_finalRect = D2D1::RectF(x, y, x + panelW, y + panelH);
 
     // Luminous Glass Panel Bg
-    extern UIRenderer* g_uiRenderer;
+
     if (g_uiRenderer) {
         ComPtr<ID2D1DeviceContext> dc;
         pRT->QueryInterface(IID_PPV_ARGS(&dc));
         if (dc) {
-            g_uiRenderer->DrawDimmingMask(dc.Get(), 0.4f * m_transitionAlpha);
+            g_uiRenderer->DrawDimmingMask(dc.Get(), 0.4f * 1.0f);
             UIRenderer::AdaptiveUiPalette palette = g_uiRenderer->BuildAdaptivePalette(1.0f, nullptr);
-            g_uiRenderer->DrawLuminousGlassPanel(dc.Get(), m_finalRect, 8.0f * s, palette, m_transitionAlpha, m_transitionScale);
+            g_uiRenderer->DrawLuminousGlassPanel(dc.Get(), m_finalRect, 8.0f * s, palette, 1.0f, 1.0f);
         } else {
             pRT->FillRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBg.Get());
             pRT->DrawRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBorder.Get(), 1.0f * s);
