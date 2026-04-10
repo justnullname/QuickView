@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "GeekContextMenu.h"
 #include "EditState.h"
 #include <d2d1_1.h>
@@ -120,14 +120,21 @@ void GeekContextMenu::ShowMenu(HWND parent, int sx, int sy,
     if (x < wa.left) x = wa.left;
     if (y < wa.top) y = wa.top;
 
+    menu->m_targetX = x;
+    menu->m_targetY = y;
+
+    // Start slightly lower for a slide-up animation
     menu->m_hwnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
         CLASS_NAME, nullptr, WS_POPUP,
-        x, y, winSize.cx, winSize.cy,
+        x, y + 10, winSize.cx, winSize.cy,
         nullptr, nullptr, GetModuleHandle(nullptr), menu.get());
 
     if (!menu->m_hwnd) return;
     SetWindowLongPtrW(menu->m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(menu.get()));
+
+    // Make the window fully transparent instantly before it shown
+    SetLayeredWindowAttributes(menu->m_hwnd, 0, 0, LWA_ALPHA);
 
     menu->m_hasAcrylic = menu->ApplyAcrylic();
     MARGINS margins = { -1, -1, -1, -1 };
@@ -171,14 +178,21 @@ void GeekContextMenu::ShowSubmenuPopup(HWND parent, int sx, int sy,
     if (x < wa.left) x = wa.left;
     if (y < wa.top) y = wa.top;
 
+    sub->m_targetX = x;
+    sub->m_targetY = y;
+
+    // Start slightly lower for slide-up
     sub->m_hwnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
         CLASS_NAME, nullptr, WS_POPUP,
-        x, y, winSize.cx, winSize.cy,
+        x, y + 10, winSize.cx, winSize.cy,
         nullptr, nullptr, GetModuleHandle(nullptr), sub.get());
 
     if (!sub->m_hwnd) return;
     SetWindowLongPtrW(sub->m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(sub.get()));
+
+    // Start fully transparent
+    SetLayeredWindowAttributes(sub->m_hwnd, 0, 0, LWA_ALPHA);
 
     sub->m_hasAcrylic = sub->ApplyAcrylic();
     MARGINS margins = { -1, -1, -1, -1 };
@@ -198,11 +212,27 @@ void GeekContextMenu::DismissAll(UINT cmdId) {
     if (cmdId && appHwnd) PostMessage(appHwnd, WM_COMMAND, cmdId, 0);
 }
 
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#define DWMWCP_ROUND 2
+#endif
+
 // ============================================================
-// Window Region (rounded corners via OS-level clipping)
+// Window Region (rounded corners via DWM or OS-level clipping)
 // ============================================================
 void GeekContextMenu::ApplyWindowRegion() {
     if (!m_hwnd) return;
+
+    // Windows 11 native rounded corners correctly clip the acrylic backdrop
+    // and format the drop shadow as a rounded rect instead of a sharp rect.
+    DWORD preference = DWMWCP_ROUND;
+    HRESULT hr = DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+    if (SUCCEEDED(hr)) {
+        // Native apply works. Bypass SetWindowRgn to prevent straight-angle shadow glitch.
+        return;
+    }
+
+    // Fallback for Windows 10
     RECT rc; GetClientRect(m_hwnd, &rc);
     int r = (int)std::ceil(CORNER_R * m_scale);
     HRGN rgn = CreateRoundRectRgn(0, 0, rc.right + 1, rc.bottom + 1, r * 2, r * 2);
@@ -457,15 +487,7 @@ void GeekContextMenu::Paint() {
         if (fb) m_rt->FillRoundedRectangle(rr, fb.Get());
     }
 
-    // Animation scale
-    if (m_animating && m_animT < 1.0f) {
-        auto sz = m_rt->GetSize();
-        float cx = sz.width / 2.0f, cy = sz.height / 2.0f;
-        float scale = 0.95f + 0.05f * m_animT;
-        m_rt->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, D2D1::Point2F(cx, cy)));
-    } else {
-        m_rt->SetTransform(D2D1::Matrix3x2F::Identity());
-    }
+    m_rt->SetTransform(D2D1::Matrix3x2F::Identity());
 
     // Push rounded clip layer — everything rendered inside is clipped to rounded rect
     if (m_clipGeometry && m_clipLayer) {
@@ -825,6 +847,17 @@ void GeekContextMenu::TickAnimation() {
         m_animating = false;
         KillTimer(m_hwnd, TIMER_ANIM);
     }
+    
+    // Smooth transition interpolators
+    // Ease-out curve for alpha and position (deceleration)
+    float easeT = 1.0f - std::pow(1.0f - m_animT, 3.0f);
+    
+    BYTE alpha = (BYTE)(255.0f * easeT);
+    SetLayeredWindowAttributes(m_hwnd, 0, alpha, LWA_ALPHA);
+    
+    int offsetY = (int)(10.0f * (1.0f - easeT));
+    SetWindowPos(m_hwnd, nullptr, m_targetX, m_targetY + offsetY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 

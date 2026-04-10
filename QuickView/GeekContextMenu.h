@@ -211,6 +211,8 @@ private:
     std::chrono::steady_clock::time_point m_animStart;
     bool m_animating = false;
     POINT m_originPt = {};   // Screen position for scale origin
+    int m_targetX = 0;
+    int m_targetY = 0;
 
     // Menu chain
     GeekContextMenu* m_parentMenu = nullptr;
