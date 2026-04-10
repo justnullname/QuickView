@@ -37,6 +37,10 @@ namespace QuickView::UI::GeekGlass {
         
         // Master opacity control, fully hardware accelerated via PushLayer
         float opacity = 1.0f; 
+
+        // Tint Customization
+        int tintProfile = 0; // 0=Auto, 1=Custom
+        D2D1_COLOR_F customTintColor = D2D1::ColorF(0.5f, 0.5f, 0.5f, 0.65f); // Used if tintProfile == 1
     };
 
     // The unified rendering engine for Geek Glass
@@ -56,7 +60,7 @@ namespace QuickView::UI::GeekGlass {
 
     private:
         // Caches brushes based on dimensions to avoid constant recreation overhead
-        void CreateOrUpdateBrushes(ID2D1DeviceContext* pContext, ThemeMode theme, const D2D1_RECT_F& bounds);
+        void CreateOrUpdateBrushes(ID2D1DeviceContext* pContext, const GeekGlassConfig& config);
 
         ComPtr<ID2D1Effect> m_blurEffect;
         ComPtr<ID2D1Effect> m_cropEffect;
@@ -64,9 +68,12 @@ namespace QuickView::UI::GeekGlass {
 
         ComPtr<ID2D1LinearGradientBrush> m_diagonalBrush;
         ComPtr<ID2D1LinearGradientBrush> m_bevelBrush;
+        ComPtr<ID2D1SolidColorBrush> m_baseTintBrush;
 
         // Validation states
         ThemeMode m_currentTheme = ThemeMode::Dark;
+        int m_currentTintProfile = 0;
+        D2D1_COLOR_F m_currentCustomTintColor = {};
         D2D1_RECT_F m_currentBounds = {};
     };
 

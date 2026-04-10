@@ -786,6 +786,8 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                 config.panelBounds = r;
                 config.cornerRadius = 6.0f * s;
                 config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
                 config.blurStandardDeviation = g_config.GlassBlurSigma * s;
                 config.opacity = m_osdOpacity;
                 if (g_config.EnableGeekGlass) {
@@ -856,6 +858,8 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
         config.panelBounds = bgRect;
         config.cornerRadius = 8.0f * s;
         config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
         config.blurStandardDeviation = g_config.GlassBlurSigma * s;
         config.opacity = m_osdOpacity;
         if (g_config.EnableGeekGlass) {
@@ -2678,6 +2682,8 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     glassConfig.panelBounds = panelRect;
     glassConfig.cornerRadius = 8.0f * s;
     glassConfig.enableGeekGlass = g_config.EnableGeekGlass;
+    glassConfig.tintProfile = g_config.GlassTintProfile;
+    glassConfig.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
     glassConfig.blurStandardDeviation = g_config.GlassBlurSigma * s;
     glassConfig.opacity = 0.85f * g_config.InfoPanelAlpha;
     if (g_config.EnableGeekGlass) {
@@ -2807,6 +2813,8 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
             config.panelBounds = D2D1::RectF(arrowCenterX - circleRadius, arrowCenterY - circleRadius, arrowCenterX + circleRadius, arrowCenterY + circleRadius);
             config.cornerRadius = circleRadius;
             config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
             config.blurStandardDeviation = g_config.GlassBlurSigma * s;
             config.opacity = 0.5f;
             if (g_config.EnableGeekGlass) {
@@ -3373,6 +3381,8 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         config.panelBounds = clipRect;
         config.cornerRadius = 8.0f * s;
         config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
         config.blurStandardDeviation = g_config.GlassBlurSigma * s;
         config.opacity = g_config.InfoPanelAlpha;
         if (g_config.EnableGeekGlass) {

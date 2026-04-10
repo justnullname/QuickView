@@ -3702,6 +3702,8 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         config.cornerRadius = 10.0f;
         config.blurStandardDeviation = 24.0f; 
         config.opacity = g_config.SettingsAlpha;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
         config.pBackgroundCommandList = g_uiRenderer->GetBackgroundCommandList();
         config.backgroundTransform = g_compEngine ? g_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
         geekGlass.DrawGeekGlassPanel(context, config);
@@ -4472,6 +4474,10 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"GeekGlass", L"GlassPanelsOpacity", std::to_wstring(g_config.GlassPanelsOpacity).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"GeekGlass", L"GlassModalsOpacity", std::to_wstring(g_config.GlassModalsOpacity).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"GeekGlass", L"GlassVectorStrokeWeightIndex", std::to_wstring(g_config.GlassVectorStrokeWeightIndex).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassTintProfile", std::to_wstring(g_config.GlassTintProfile).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassCustomTintR", std::to_wstring(g_config.GlassCustomTintR).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassCustomTintG", std::to_wstring(g_config.GlassCustomTintG).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassCustomTintB", std::to_wstring(g_config.GlassCustomTintB).c_str(), iniPath.c_str());
 
     // View
     WritePrivateProfileStringW(L"View", L"ThemeMode", std::to_wstring(g_config.ThemeMode).c_str(), iniPath.c_str());
@@ -4633,8 +4639,16 @@ void LoadConfig() {
     g_config.GlassOsdOpacity = (float)_wtof(bufGGO);
     g_config.GlassPanelsOpacity = (float)_wtof(bufGGP);
     g_config.GlassModalsOpacity = (float)_wtof(bufGGM);
-    
     g_config.GlassVectorStrokeWeightIndex = GetPrivateProfileIntW(L"GeekGlass", L"GlassVectorStrokeWeightIndex", 0, iniPath.c_str());
+
+    g_config.GlassTintProfile = GetPrivateProfileIntW(L"GeekGlass", L"GlassTintProfile", 0, iniPath.c_str());
+    wchar_t bufGCTR[32], bufGCTG[32], bufGCTB[32];
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassCustomTintR", L"0.5", bufGCTR, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassCustomTintG", L"0.5", bufGCTG, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassCustomTintB", L"0.5", bufGCTB, 32, iniPath.c_str());
+    g_config.GlassCustomTintR = (float)_wtof(bufGCTR);
+    g_config.GlassCustomTintG = (float)_wtof(bufGCTG);
+    g_config.GlassCustomTintB = (float)_wtof(bufGCTB);
 
     // View
     g_config.CanvasColor = GetPrivateProfileIntW(L"View", L"CanvasColor", 0, iniPath.c_str());

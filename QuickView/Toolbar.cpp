@@ -405,6 +405,8 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         config.panelBounds = m_bgRect.rect;
         config.cornerRadius = m_bgRect.radiusX;
         config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
         config.blurStandardDeviation = g_config.GlassBlurSigma * m_uiScale;
         config.opacity = g_config.ToolbarAlpha; // Fallback to ToolbarAlpha for backward compatibility or use GlassPanelsOpacity
         if (g_config.EnableGeekGlass) {

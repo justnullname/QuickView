@@ -205,6 +205,8 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
         config.panelBounds = m_finalRect;
         config.cornerRadius = 8.0f * s;
         config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.tintProfile = g_config.GlassTintProfile;
+        config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
         config.blurStandardDeviation = g_config.GlassBlurSigma * m_uiScale;
         config.opacity = 0.95f; 
         if (g_config.EnableGeekGlass) {

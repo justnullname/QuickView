@@ -1149,6 +1149,7 @@ void SettingsOverlay::BuildMenu() {
     if (g_config.ThemeMode == 3) {
         // Custom Theme Mode options
         SettingsItem itemAccentColor = { L"全局主色调 (Accent Color)", OptionType::CustomColorRow };
+        itemAccentColor.pFloatVal = &g_config.ThemeCustomAccentR;
         itemAccentColor.onChange = [this]() {
             HWND hwnd = GetActiveWindow();
             static COLORREF acrCustClr[16]; 
@@ -1169,6 +1170,7 @@ void SettingsOverlay::BuildMenu() {
         tabTheme.items.push_back(itemAccentColor);
 
         SettingsItem itemTextColor = { L"字体主色调 (Text Color)", OptionType::CustomColorRow };
+        itemTextColor.pFloatVal = &g_config.ThemeCustomTextR;
         itemTextColor.onChange = [this]() {
             HWND hwnd = GetActiveWindow();
             static COLORREF acrCustClr[16]; 
@@ -1217,6 +1219,35 @@ void SettingsOverlay::BuildMenu() {
     SettingsItem itemStroke = { L"UI 线框粗细", OptionType::Segment, nullptr, nullptr, &g_config.GlassVectorStrokeWeightIndex, nullptr, 0, 0, { L"标准 (1.5px)", L"极细 (1.0px)" } };
     itemStroke.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
     tabTheme.items.push_back(itemStroke);
+
+    // Glass Tint Profile (Base Color)
+    tabTheme.items.push_back({ L"玻璃着色配置 (Glass Tint)", OptionType::Header });
+    SettingsItem itemTintProfile = { L"着色模式", OptionType::Segment, nullptr, nullptr, &g_config.GlassTintProfile, nullptr, 0, 0, { L"自动适配", L"个性自选" } };
+    itemTintProfile.onChange = [this]() { SaveConfig(); this->BuildMenu(); };
+    tabTheme.items.push_back(itemTintProfile);
+
+    if (g_config.GlassTintProfile == 1) {
+        SettingsItem itemTintColor = { L"玻璃底色", OptionType::CustomColorRow };
+        itemTintColor.pFloatVal = &g_config.GlassCustomTintR;
+        itemTintColor.onChange = [this]() {
+            HWND hwnd = GetActiveWindow();
+            static COLORREF acrCustClr[16]; 
+            CHOOSECOLOR cc = { sizeof(CHOOSECOLOR) };
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = acrCustClr;
+            cc.rgbResult = RGB((int)(g_config.GlassCustomTintR * 255.0f), (int)(g_config.GlassCustomTintG * 255.0f), (int)(g_config.GlassCustomTintB * 255.0f));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            
+            if (ChooseColor(&cc)) {
+                g_config.GlassCustomTintR = GetRValue(cc.rgbResult) / 255.0f;
+                g_config.GlassCustomTintG = GetGValue(cc.rgbResult) / 255.0f;
+                g_config.GlassCustomTintB = GetBValue(cc.rgbResult) / 255.0f;
+                SaveConfig();
+                if (m_hwnd) InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+        };
+        tabTheme.items.push_back(itemTintColor);
+    }
 
     // Z-Depth Modals
     tabTheme.items.push_back({ L"专家级透明度矩阵 (Expert Opacity Matrix)", OptionType::Header });
@@ -1946,6 +1977,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             config.panelBounds = hudRect;
             config.cornerRadius = 8.0f;
             config.enableGeekGlass = g_config.EnableGeekGlass;
+            config.tintProfile = g_config.GlassTintProfile;
+            config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, 0.65f);
             config.blurStandardDeviation = g_config.GlassBlurSigma * m_uiScale;
             config.opacity = g_config.SettingsAlpha;
             if (g_config.EnableGeekGlass) {
@@ -2595,21 +2628,37 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 }
                 case OptionType::CustomColorRow: {
                      item.interactRect = controlRect;
-                     // Inline DrawCustomColorRow logic
-                     bool gridOn = g_config.CanvasShowGrid;
-                     D2D1::ColorF color(g_config.CanvasCustomR, g_config.CanvasCustomG, g_config.CanvasCustomB);
                      
-                     // 1. Grid Toggle (Left)
-                     float toggleW = 50.0f;
-                     D2D1_RECT_F toggleRect = D2D1::RectF(controlRect.left, controlRect.top, controlRect.left + toggleW, controlRect.bottom);
-                     DrawToggle(pRT, toggleRect, gridOn, isHovered);
+                     // Determine color source: pFloatVal points to R channel if set, else use canvas colors
+                     bool isCanvasRow = (item.pFloatVal == nullptr);
+                     float cr, cg, cb;
+                     if (item.pFloatVal) {
+                         cr = item.pFloatVal[0];
+                         cg = item.pFloatVal[1];
+                         cb = item.pFloatVal[2];
+                     } else {
+                         cr = g_config.CanvasCustomR;
+                         cg = g_config.CanvasCustomG;
+                         cb = g_config.CanvasCustomB;
+                     }
+                     D2D1::ColorF color(cr, cg, cb);
                      
-                     // Grid Label
-                     D2D1_RECT_F gridLabelRect = D2D1::RectF(controlRect.left + toggleW + 10.0f, controlRect.top, controlRect.left + 200.0f, controlRect.bottom);
-                     pRT->DrawText(L"Show Grid", 9, m_textFormatItem.Get(), gridLabelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
+                     float btnLeft = controlRect.left;
                      
-                     // 2. Color Button (Right)
-                     D2D1_RECT_F btnRect = D2D1::RectF(controlRect.left + 210.0f, controlRect.top, controlRect.right, controlRect.bottom);
+                     if (isCanvasRow) {
+                         // Canvas-specific: Grid Toggle (Left) + Color Button (Right)
+                         bool gridOn = g_config.CanvasShowGrid;
+                         float toggleW = 50.0f;
+                         D2D1_RECT_F toggleRect = D2D1::RectF(controlRect.left, controlRect.top, controlRect.left + toggleW, controlRect.bottom);
+                         DrawToggle(pRT, toggleRect, gridOn, isHovered);
+                         
+                         D2D1_RECT_F gridLabelRect = D2D1::RectF(controlRect.left + toggleW + 10.0f, controlRect.top, controlRect.left + 200.0f, controlRect.bottom);
+                         pRT->DrawText(L"Show Grid", 9, m_textFormatItem.Get(), gridLabelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
+                         btnLeft = controlRect.left + 210.0f;
+                     }
+                     
+                     // Color Swatch Button
+                     D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, controlRect.top, controlRect.right, controlRect.bottom);
                      
                      ComPtr<ID2D1SolidColorBrush> colorBrush;
                      pRT->CreateSolidColorBrush(color, &colorBrush);
@@ -3228,11 +3277,17 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         if (m_pHoverItem->type == OptionType::CustomColorRow) {
              const float s = m_uiScale;
              float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * s;
-             // Checkbox Area (left half)
-             if (x < controlX + 200.0f) {
-                 g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
+             bool isCanvasRow = (m_pHoverItem->pFloatVal == nullptr);
+             
+             if (isCanvasRow) {
+                 // Canvas row: split into grid toggle (left) and color button (right)
+                 if (x < controlX + 200.0f) {
+                     g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
+                 } else {
+                     if (m_pHoverItem->onChange) m_pHoverItem->onChange();
+                 }
              } else {
-                 // Color Button Area (right half)
+                 // Generic color picker: entire area triggers color picker
                  if (m_pHoverItem->onChange) m_pHoverItem->onChange();
              }
              return SettingsAction::RepaintAll;

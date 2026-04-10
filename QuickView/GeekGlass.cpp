@@ -24,53 +24,67 @@ void GeekGlassEngine::ReleaseResources() {
     m_transformEffect.Reset();
     m_diagonalBrush.Reset();
     m_bevelBrush.Reset();
+    m_baseTintBrush.Reset();
 }
 
-void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1DeviceContext* pContext, ThemeMode theme, const D2D1_RECT_F& bounds) {
-    float width = bounds.right - bounds.left;
-    float height = bounds.bottom - bounds.top;
+void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1DeviceContext* pContext, const GeekGlassConfig& config) {
+    float width = config.panelBounds.right - config.panelBounds.left;
+    float height = config.panelBounds.bottom - config.panelBounds.top;
     float currentWidth = m_currentBounds.right - m_currentBounds.left;
     float currentHeight = m_currentBounds.bottom - m_currentBounds.top;
 
     bool sizeChanged = (std::abs(width - currentWidth) > 0.001f) || (std::abs(height - currentHeight) > 0.001f);
-    bool themeChanged = (theme != m_currentTheme);
-    bool needsRebuild = !m_diagonalBrush || !m_bevelBrush || themeChanged || sizeChanged;
+    bool themeChanged = (config.theme != m_currentTheme) || (config.tintProfile != m_currentTintProfile);
+    if (config.tintProfile == 1 && (
+        config.customTintColor.r != m_currentCustomTintColor.r || 
+        config.customTintColor.g != m_currentCustomTintColor.g || 
+        config.customTintColor.b != m_currentCustomTintColor.b)) {
+        themeChanged = true;
+    }
+    bool needsRebuild = !m_diagonalBrush || !m_bevelBrush || !m_baseTintBrush || themeChanged || sizeChanged;
 
     // Check if the brushes need to be rebuilt: only if resized or theme changes
     if (!needsRebuild) {
         // Safety Lock 1: Only translation changed, trivially update proxy points without recreating D2D Stops
-        if (bounds.left != m_currentBounds.left || bounds.top != m_currentBounds.top) {
-             m_diagonalBrush->SetStartPoint(D2D1::Point2F(bounds.left, bounds.top));
-             m_diagonalBrush->SetEndPoint(D2D1::Point2F(bounds.right, bounds.bottom));
+        if (config.panelBounds.left != m_currentBounds.left || config.panelBounds.top != m_currentBounds.top) {
+             m_diagonalBrush->SetStartPoint(D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
+             m_diagonalBrush->SetEndPoint(D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
              
-             m_bevelBrush->SetStartPoint(D2D1::Point2F(bounds.left, bounds.top));
-             m_bevelBrush->SetEndPoint(D2D1::Point2F(bounds.right, bounds.bottom));
+             m_bevelBrush->SetStartPoint(D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
+             m_bevelBrush->SetEndPoint(D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
         }
-        m_currentBounds = bounds;
+        m_currentBounds = config.panelBounds;
         return; 
     }
 
-    m_currentTheme = theme;
-    m_currentBounds = bounds;
+    m_currentTheme = config.theme;
+    m_currentTintProfile = config.tintProfile;
+    m_currentCustomTintColor = config.customTintColor;
+    m_currentBounds = config.panelBounds;
 
-    // --- Diagonal Gradient Filling (Simulating Glass Tint & Light Wrap) ---
-    D2D1_POINT_2F diagStart = D2D1::Point2F(bounds.left, bounds.top);
-    D2D1_POINT_2F diagEnd   = D2D1::Point2F(bounds.right, bounds.bottom);
+    // --- Base Solid Tint (Providing contrast floor) ---
+    if (config.tintProfile == 1) { // Custom
+        pContext->CreateSolidColorBrush(config.customTintColor, &m_baseTintBrush);
+    } else { // Auto
+        if (config.theme == ThemeMode::Dark) {
+            pContext->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.09f, 0.65f), &m_baseTintBrush); // (20, 20, 24, 65%)
+        } else {
+            pContext->CreateSolidColorBrush(D2D1::ColorF(0.94f, 0.94f, 0.96f, 0.65f), &m_baseTintBrush); // (240, 240, 245, 65%)
+        }
+    }
+
+    // --- Diagonal Gradient Filling (Simulating Glass Light Wrap) ---
+    D2D1_POINT_2F diagStart = D2D1::Point2F(config.panelBounds.left, config.panelBounds.top);
+    D2D1_POINT_2F diagEnd   = D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom);
 
     ComPtr<ID2D1GradientStopCollection> pDiagStops;
-    if (theme == ThemeMode::Dark) {
-        D2D1_GRADIENT_STOP stops[] = {
-            { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f) }, // Top-Left: Light reflection 
-            { 1.0f, D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.35f) }  // Bottom-Right: Shadow
-        };
-        pContext->CreateGradientStopCollection(stops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pDiagStops);
-    } else {
-        D2D1_GRADIENT_STOP stops[] = {
-            { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.40f) }, // Top-Left: Bright reflection
-            { 1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f) }  // Bottom-Right: Fade to clear
-        };
-        pContext->CreateGradientStopCollection(stops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pDiagStops);
-    }
+    
+    // Weaken the reflections to 15% max, as the base tint now provides the solid color
+    D2D1_GRADIENT_STOP stops[] = {
+        { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f) }, // Top-Left: Light reflection 
+        { 1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f) }  // Bottom-Right: Fade to clear
+    };
+    pContext->CreateGradientStopCollection(stops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &pDiagStops);
 
     if (pDiagStops) {
         pContext->CreateLinearGradientBrush(
@@ -81,11 +95,11 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1DeviceContext* pContext, ThemeM
     }
 
     // --- 1px Bevel Edge (Simulating 3D physical edge highlights) ---
-    D2D1_POINT_2F bevelStart = D2D1::Point2F(bounds.left, bounds.top);
-    D2D1_POINT_2F bevelEnd   = D2D1::Point2F(bounds.left, bounds.bottom);
+    D2D1_POINT_2F bevelStart = D2D1::Point2F(config.panelBounds.left, config.panelBounds.top);
+    D2D1_POINT_2F bevelEnd   = D2D1::Point2F(config.panelBounds.left, config.panelBounds.bottom);
 
     ComPtr<ID2D1GradientStopCollection> pBevelStops;
-    if (theme == ThemeMode::Dark) {
+    if (config.theme == ThemeMode::Dark) {
         D2D1_GRADIENT_STOP stops[] = {
             { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f) }, // Top edge highlight
             { 0.2f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f) }, // Fast falloff
@@ -167,9 +181,14 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1DeviceContext* pContext, const Gee
     } 
 
     // 4. Update Brushes
-    CreateOrUpdateBrushes(pContext, config.theme, config.panelBounds);
+    CreateOrUpdateBrushes(pContext, config);
 
-    // Render Gradient Fill
+    // Render Base Tint Fill
+    if (m_baseTintBrush) {
+        pContext->FillRoundedRectangle(&roundedRect, m_baseTintBrush.Get());
+    }
+
+    // Render Diagonal Specular Highlight Fill
     if (m_diagonalBrush) {
         pContext->FillRoundedRectangle(&roundedRect, m_diagonalBrush.Get());
     }

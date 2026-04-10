@@ -109,6 +109,12 @@ struct AppConfig {
     float GlassModalsOpacity = 75.0f;      // Modals & Context Menus Level (0-100 %)
     int GlassVectorStrokeWeightIndex = 0;  // 0: Standard (1.5px), 1: Fine (1.0px)
 
+    // --- Geek Glass Tint Customization ---
+    int GlassTintProfile = 0;              // 0=Auto, 1=Custom
+    float GlassCustomTintR = 0.5f;
+    float GlassCustomTintG = 0.5f;
+    float GlassCustomTintB = 0.5f;
+
     int CanvasColor = 2;                // 0=Black, 1=White, 2=Grid, 3=Custom
     float CanvasCustomR = 0.2f;         // Custom color RGB (0.0-1.0)
     float CanvasCustomG = 0.2f;
