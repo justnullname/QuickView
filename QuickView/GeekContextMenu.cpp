@@ -836,6 +836,15 @@ GeekContextMenu* GeekContextMenu::GetRoot() {
 // Animation
 // ============================================================
 void GeekContextMenu::StartAnimation() {
+    // Hard cut: skip animation when UI animations are disabled
+    if (!g_config.GlassUIAnimations) {
+        m_animating = false;
+        m_animT = 1.0f;
+        SetLayeredWindowAttributes(m_hwnd, 0, 255, LWA_ALPHA);
+        SetWindowPos(m_hwnd, nullptr, m_targetX, m_targetY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
     m_animating = true;
     m_animT = 0.0f;
     m_animStart = std::chrono::steady_clock::now();

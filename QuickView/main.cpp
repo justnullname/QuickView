@@ -11290,7 +11290,7 @@ void OnPaint(HWND hwnd) {
             float totalSecs = g_osd.Duration / 1000.0f;
             float progress = (totalSecs > 0) ? (elapsed / totalSecs) : 1.0f;
             float opacity = 1.0f;
-            if (progress > 0.5f) { // Stay solid for 50%, then fade
+            if (g_config.GlassUIAnimations && progress > 0.5f) { // Fade only when animations enabled
                 opacity = 1.0f - (progress - 0.5f) / 0.5f;
             }
             if (opacity > 0) {

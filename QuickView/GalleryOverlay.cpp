@@ -2,8 +2,11 @@
 #include "GalleryOverlay.h"
 #include "ThumbnailManager.h"
 #include "FileNavigator.h"
+#include "EditState.h"
 #include <algorithm>
 #include <cmath>
+
+extern AppConfig g_config;
 
 namespace {
 static D2D1_COLOR_F ScaleUiColor(const D2D1_COLOR_F& color, float hdrWhiteScale) {
@@ -29,7 +32,7 @@ void GalleryOverlay::Open(int currentIndex) {
     if (!m_pNav || m_pNav->Count() == 0) return;
     
     m_isVisible = true;
-    m_opacity = 0.0f; // Start fade in
+    m_opacity = g_config.GlassUIAnimations ? 0.0f : 1.0f; // Hard cut if animations disabled
     m_selectedIndex = currentIndex;
     
     // Reset state for fresh open
@@ -49,7 +52,7 @@ void GalleryOverlay::Close(bool keepSelection) {
 }
 
 void GalleryOverlay::Update(float deltaTime) {
-    if (m_isVisible && m_opacity < 1.0f) {
+    if (m_isVisible && m_opacity < 1.0f && g_config.GlassUIAnimations) {
         m_opacity += deltaTime * 5.0f; // 0.2s fade in
         if (m_opacity > 1.0f) m_opacity = 1.0f;
     }
