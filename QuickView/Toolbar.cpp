@@ -404,8 +404,12 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         QuickView::UI::GeekGlass::GeekGlassConfig config;
         config.panelBounds = m_bgRect.rect;
         config.cornerRadius = m_bgRect.radiusX;
-        config.blurStandardDeviation = 15.0f * m_uiScale;
-        config.opacity = g_config.ToolbarAlpha; 
+        config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.blurStandardDeviation = g_config.GlassBlurSigma * m_uiScale;
+        config.opacity = g_config.ToolbarAlpha; // Fallback to ToolbarAlpha for backward compatibility or use GlassPanelsOpacity
+        if (g_config.EnableGeekGlass) {
+            config.opacity = g_config.GlassPanelsOpacity / 100.0f;
+        } 
         config.pBackgroundCommandList = m_bgCmdList;
         config.backgroundTransform = m_bgTransform;
         
@@ -622,6 +626,14 @@ bool Toolbar::HitTest(float x, float y) {
 void Toolbar::SetVisible(bool visible) { m_targetVisible = visible; }
 
 bool Toolbar::UpdateAnimation() {
+  if (!g_config.GlassUIAnimations) {
+      if (m_targetVisible) {
+          m_opacity = 1.0f;
+      } else {
+          m_opacity = 0.0f;
+      }
+      return false; // Fast cut
+  }
   float speed = 0.34f;
   if (m_targetVisible) {
     if (m_opacity < 1.0f) { m_opacity += speed; if (m_opacity > 1.0f) m_opacity = 1.0f; return true; }

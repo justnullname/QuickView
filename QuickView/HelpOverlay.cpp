@@ -204,8 +204,12 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
         QuickView::UI::GeekGlass::GeekGlassConfig config;
         config.panelBounds = m_finalRect;
         config.cornerRadius = 8.0f * s;
-        config.blurStandardDeviation = 20.0f * m_uiScale;
+        config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.blurStandardDeviation = g_config.GlassBlurSigma * m_uiScale;
         config.opacity = 0.95f; 
+        if (g_config.EnableGeekGlass) {
+            config.opacity = g_config.GlassModalsOpacity / 100.0f;
+        }
         config.pBackgroundCommandList = m_bgCmdList;
         config.backgroundTransform = m_bgTransform;
         

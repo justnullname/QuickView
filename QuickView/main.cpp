@@ -4456,6 +4456,23 @@ void SaveConfig() {
     // Backward compatibility for older builds that only understand Auto/Manual.
     WritePrivateProfileStringW(L"General", L"UIScaleMode", (g_config.UIScalePreset == 0) ? L"0" : L"1", iniPath.c_str());
 
+    // Theme & Geek Glass
+    WritePrivateProfileStringW(L"Theme", L"ThemeMode", std::to_wstring(g_config.ThemeMode).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Theme", L"CustomAccentR", std::to_wstring(g_config.ThemeCustomAccentR).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Theme", L"CustomAccentG", std::to_wstring(g_config.ThemeCustomAccentG).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Theme", L"CustomAccentB", std::to_wstring(g_config.ThemeCustomAccentB).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Theme", L"CustomTextR", std::to_wstring(g_config.ThemeCustomTextR).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Theme", L"CustomTextG", std::to_wstring(g_config.ThemeCustomTextG).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Theme", L"CustomTextB", std::to_wstring(g_config.ThemeCustomTextB).c_str(), iniPath.c_str());
+
+    WritePrivateProfileStringW(L"GeekGlass", L"EnableGeekGlass", g_config.EnableGeekGlass ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassUIAnimations", g_config.GlassUIAnimations ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassBlurSigma", std::to_wstring(g_config.GlassBlurSigma).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassOsdOpacity", std::to_wstring(g_config.GlassOsdOpacity).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassPanelsOpacity", std::to_wstring(g_config.GlassPanelsOpacity).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassModalsOpacity", std::to_wstring(g_config.GlassModalsOpacity).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"GeekGlass", L"GlassVectorStrokeWeightIndex", std::to_wstring(g_config.GlassVectorStrokeWeightIndex).c_str(), iniPath.c_str());
+
     // View
     WritePrivateProfileStringW(L"View", L"ThemeMode", std::to_wstring(g_config.ThemeMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"CanvasColor", std::to_wstring(g_config.CanvasColor).c_str(), iniPath.c_str());
@@ -4581,9 +4598,45 @@ void LoadConfig() {
     if (uiScalePreset < 0 || uiScalePreset > 4) uiScalePreset = 0;
     g_config.UIScalePreset = uiScalePreset;
 
+    // Theme & Geek Glass
+    g_config.ThemeMode = GetPrivateProfileIntW(L"Theme", L"ThemeMode", -1, iniPath.c_str());
+    if (g_config.ThemeMode == -1) {
+        g_config.ThemeMode = GetPrivateProfileIntW(L"View", L"ThemeMode", 0, iniPath.c_str()); // Fallback to old key
+    }
+    if (g_config.ThemeMode < 0 || g_config.ThemeMode > 3) g_config.ThemeMode = 0;
+
+    wchar_t bufTCAR[32], bufTCAG[32], bufTCAB[32];
+    GetPrivateProfileStringW(L"Theme", L"CustomAccentR", L"0.00", bufTCAR, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"Theme", L"CustomAccentG", L"0.47", bufTCAG, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"Theme", L"CustomAccentB", L"0.84", bufTCAB, 32, iniPath.c_str());
+    g_config.ThemeCustomAccentR = (float)_wtof(bufTCAR);
+    g_config.ThemeCustomAccentG = (float)_wtof(bufTCAG);
+    g_config.ThemeCustomAccentB = (float)_wtof(bufTCAB);
+
+    wchar_t bufTCTR[32], bufTCTG[32], bufTCTB[32];
+    GetPrivateProfileStringW(L"Theme", L"CustomTextR", L"1.0", bufTCTR, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"Theme", L"CustomTextG", L"1.0", bufTCTG, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"Theme", L"CustomTextB", L"1.0", bufTCTB, 32, iniPath.c_str());
+    g_config.ThemeCustomTextR = (float)_wtof(bufTCTR);
+    g_config.ThemeCustomTextG = (float)_wtof(bufTCTG);
+    g_config.ThemeCustomTextB = (float)_wtof(bufTCTB);
+
+    g_config.EnableGeekGlass = GetPrivateProfileIntW(L"GeekGlass", L"EnableGeekGlass", 1, iniPath.c_str()) != 0;
+    g_config.GlassUIAnimations = GetPrivateProfileIntW(L"GeekGlass", L"GlassUIAnimations", 1, iniPath.c_str()) != 0;
+    
+    wchar_t bufGGB[32], bufGGO[32], bufGGP[32], bufGGM[32];
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassBlurSigma", L"25.0", bufGGB, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassOsdOpacity", L"15.0", bufGGO, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassPanelsOpacity", L"45.0", bufGGP, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"GeekGlass", L"GlassModalsOpacity", L"75.0", bufGGM, 32, iniPath.c_str());
+    g_config.GlassBlurSigma = (float)_wtof(bufGGB);
+    g_config.GlassOsdOpacity = (float)_wtof(bufGGO);
+    g_config.GlassPanelsOpacity = (float)_wtof(bufGGP);
+    g_config.GlassModalsOpacity = (float)_wtof(bufGGM);
+    
+    g_config.GlassVectorStrokeWeightIndex = GetPrivateProfileIntW(L"GeekGlass", L"GlassVectorStrokeWeightIndex", 0, iniPath.c_str());
+
     // View
-    g_config.ThemeMode = GetPrivateProfileIntW(L"View", L"ThemeMode", 0, iniPath.c_str());
-    if (g_config.ThemeMode < 0 || g_config.ThemeMode > 2) g_config.ThemeMode = 0;
     g_config.CanvasColor = GetPrivateProfileIntW(L"View", L"CanvasColor", 0, iniPath.c_str());
     wchar_t bufR[32], bufG[32], bufB[32];
     GetPrivateProfileStringW(L"View", L"CanvasCustomR", L"0.2", bufR, 32, iniPath.c_str());

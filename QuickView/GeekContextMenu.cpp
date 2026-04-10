@@ -7,6 +7,8 @@
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 
+extern AppConfig g_config;
+
 namespace QuickView::UI::Menu {
 
 // ============================================================
@@ -616,17 +618,19 @@ void GeekContextMenu::RenderItem(const GeekMenuItem& item, int index) {
     if (item.isDanger && item.isEnabled) tb = m_dangerTextBrush.Get();
 
     // Checkmark
+    float strokeW = (g_config.GlassVectorStrokeWeightIndex == 1) ? 1.0f : 1.5f;
+    
     if (item.type == MenuItemType::CheckBox && item.isChecked) {
         D2D1_RECT_F checkR = D2D1::RectF(r.left + ICON_LEFT - 2, r.top + (rh - ICON_SIZE) / 2,
                                            r.left + ICON_LEFT + ICON_SIZE - 2, r.top + (rh + ICON_SIZE) / 2);
-        if (m_accentBrush) Icons::Check(m_rt.Get(), checkR, m_accentBrush.Get(), 1.5f);
+        if (m_accentBrush) Icons::Check(m_rt.Get(), checkR, m_accentBrush.Get(), strokeW);
     }
 
     // Icon
     if (item.iconFn && !(item.type == MenuItemType::CheckBox && item.isChecked)) {
         D2D1_RECT_F iconR = D2D1::RectF(r.left + ICON_LEFT, r.top + (rh - ICON_SIZE) / 2,
                                           r.left + ICON_LEFT + ICON_SIZE, r.top + (rh + ICON_SIZE) / 2);
-        item.iconFn(m_rt.Get(), iconR, tb, 1.0f);
+        item.iconFn(m_rt.Get(), iconR, tb, strokeW);
     }
 
     // Text
@@ -647,7 +651,7 @@ void GeekContextMenu::RenderItem(const GeekMenuItem& item, int index) {
     if (item.type == MenuItemType::Submenu) {
         D2D1_RECT_F chevR = D2D1::RectF(r.right - TEXT_RIGHT - 2, r.top + (rh - 8) / 2,
                                           r.right - TEXT_RIGHT + 6, r.top + (rh + 8) / 2);
-        Icons::Chevron(m_rt.Get(), chevR, m_dimBrush.Get(), 1.0f);
+        Icons::Chevron(m_rt.Get(), chevR, m_dimBrush.Get(), strokeW);
     }
 }
 

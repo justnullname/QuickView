@@ -57,6 +57,51 @@ struct SettingsThemePalette {
 };
 
 SettingsThemePalette GetSettingsThemePalette() {
+    if (g_config.ThemeMode == 3) {
+        D2D1_COLOR_F accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB);
+        D2D1_COLOR_F text = D2D1::ColorF(g_config.ThemeCustomTextR, g_config.ThemeCustomTextG, g_config.ThemeCustomTextB);
+        
+        float textBrightness = (text.r * 299.0f + text.g * 587.0f + text.b * 114.0f) / 1000.0f;
+        bool isLightText = textBrightness > 0.5f;
+
+        D2D1_COLOR_F textDim = text;
+        textDim.a = 0.6f;
+
+        if (isLightText) {
+            return {
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f),
+                text,
+                textDim,
+                accent,
+                D2D1::ColorF(0.25f, 0.25f, 0.25f),
+                D2D1::ColorF(0.3f, 0.3f, 0.3f),
+                D2D1::ColorF(0.1f, 0.8f, 0.1f),
+                D2D1::ColorF(0.8f, 0.1f, 0.1f),
+                D2D1::ColorF(0.08f, 0.08f, 0.10f, g_config.SettingsAlpha),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f),
+                D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
+            };
+        } else {
+            return {
+                D2D1::ColorF(0.94f, 0.96f, 0.99f, 0.52f),
+                text,
+                textDim,
+                accent,
+                D2D1::ColorF(0.92f, 0.94f, 0.97f),
+                D2D1::ColorF(0.80f, 0.84f, 0.89f),
+                D2D1::ColorF(0.11f, 0.62f, 0.23f),
+                D2D1::ColorF(0.79f, 0.19f, 0.16f),
+                D2D1::ColorF(0.985f, 0.99f, 1.0f, g_config.SettingsAlpha),
+                D2D1::ColorF(0.0f, 0.18f, 0.42f, 0.06f),
+                D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
+                D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
+            };
+        }
+    }
+
     if (IsLightThemeActive()) {
         return {
             D2D1::ColorF(0.94f, 0.96f, 0.99f, 0.52f),
@@ -1072,8 +1117,131 @@ void SettingsOverlay::BuildMenu() {
 
     m_tabs.push_back(tabGeneral);
 
+    // --- 2. Theme & Geek Glass (主题) ---
+    SettingsTab tabTheme;
+    tabTheme.name = L"主题"; // "Theme"
+    tabTheme.icon = L"\xE771"; // Personalize icon
+
+    // Base Theme Modes
+    SettingsItem itemThemeMode = {
+        L"界面主题",
+        OptionType::Segment,
+        nullptr,
+        nullptr,
+        &g_config.ThemeMode,
+        nullptr,
+        0,
+        0,
+        { L"自动", L"深色", L"浅色", L"自定义" }
+    };
+    itemThemeMode.onChange = [this]() {
+        if (g_config.ThemeMode < 0 || g_config.ThemeMode > 3) g_config.ThemeMode = 0;
+        SaveConfig();
+        if (m_hwnd) {
+            ApplyWindowTheme(m_hwnd);
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        // Needs a rebuild to show/hide the custom color choosers
+        m_pendingRebuild = true;
+    };
+    tabTheme.items.push_back(itemThemeMode);
+
+    if (g_config.ThemeMode == 3) {
+        // Custom Theme Mode options
+        SettingsItem itemAccentColor = { L"全局主色调 (Accent Color)", OptionType::CustomColorRow };
+        itemAccentColor.onChange = [this]() {
+            HWND hwnd = GetActiveWindow();
+            static COLORREF acrCustClr[16]; 
+            CHOOSECOLOR cc = { sizeof(CHOOSECOLOR) };
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = acrCustClr;
+            cc.rgbResult = RGB((int)(g_config.ThemeCustomAccentR * 255.0f), (int)(g_config.ThemeCustomAccentG * 255.0f), (int)(g_config.ThemeCustomAccentB * 255.0f));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            
+            if (ChooseColor(&cc)) {
+                g_config.ThemeCustomAccentR = GetRValue(cc.rgbResult) / 255.0f;
+                g_config.ThemeCustomAccentG = GetGValue(cc.rgbResult) / 255.0f;
+                g_config.ThemeCustomAccentB = GetBValue(cc.rgbResult) / 255.0f;
+                SaveConfig();
+                if (m_hwnd) InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+        };
+        tabTheme.items.push_back(itemAccentColor);
+
+        SettingsItem itemTextColor = { L"字体主色调 (Text Color)", OptionType::CustomColorRow };
+        itemTextColor.onChange = [this]() {
+            HWND hwnd = GetActiveWindow();
+            static COLORREF acrCustClr[16]; 
+            CHOOSECOLOR cc = { sizeof(CHOOSECOLOR) };
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = acrCustClr;
+            cc.rgbResult = RGB((int)(g_config.ThemeCustomTextR * 255.0f), (int)(g_config.ThemeCustomTextG * 255.0f), (int)(g_config.ThemeCustomTextB * 255.0f));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            
+            if (ChooseColor(&cc)) {
+                g_config.ThemeCustomTextR = GetRValue(cc.rgbResult) / 255.0f;
+                g_config.ThemeCustomTextG = GetGValue(cc.rgbResult) / 255.0f;
+                g_config.ThemeCustomTextB = GetBValue(cc.rgbResult) / 255.0f;
+                SaveConfig();
+                if (m_hwnd) InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+        };
+        tabTheme.items.push_back(itemTextColor);
+    }
     
-    // --- 2. Interface (Visuals) ---
+    // Geek Glass Engine
+    tabTheme.items.push_back({ L"极客玻璃引擎 (GPU 加速)", OptionType::Header });
+    SettingsItem itemEnableGlass = { L"启用极客玻璃特效", OptionType::Toggle, &g_config.EnableGeekGlass };
+    itemEnableGlass.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
+    tabTheme.items.push_back(itemEnableGlass);
+
+    SettingsItem itemAnimations = { L"UI 动画反馈 (关闭即为 0 毫秒硬切)", OptionType::Toggle, &g_config.GlassUIAnimations };
+    itemAnimations.onChange = [this]() { SaveConfig(); };
+    tabTheme.items.push_back(itemAnimations);
+    
+    SettingsItem itemBlur = { L"模糊半径 (Blur Sigma)", OptionType::Slider, nullptr, &g_config.GlassBlurSigma };
+    itemBlur.minVal = 5.0f;
+    itemBlur.maxVal = 40.0f;
+    itemBlur.displayFormat = L"%.0f px";
+    // Defer painting of large blur sigma to minimize GPU jitters as suggested by the user
+    // We update config but avoid force-synchronous heavy redrawing here unless it's on a short timer, or rely on the natural event loop
+    itemBlur.onChange = [this]() { 
+        SaveConfig(); 
+        g_config.GlassBlurSigma = std::max(5.0f, std::min(40.0f, g_config.GlassBlurSigma));
+        if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
+    };
+    tabTheme.items.push_back(itemBlur);
+
+    // Vector Stroke Config
+    tabTheme.items.push_back({ L"矢量细分 (Vector Assets)", OptionType::Header });
+    SettingsItem itemStroke = { L"UI 线框粗细", OptionType::Segment, nullptr, nullptr, &g_config.GlassVectorStrokeWeightIndex, nullptr, 0, 0, { L"标准 (1.5px)", L"极细 (1.0px)" } };
+    itemStroke.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
+    tabTheme.items.push_back(itemStroke);
+
+    // Z-Depth Modals
+    tabTheme.items.push_back({ L"专家级透明度矩阵 (Expert Opacity Matrix)", OptionType::Header });
+    
+    SettingsItem itemOsd = { L"悬浮信息提示 (OSD)", OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
+    itemOsd.minVal = 0.0f; itemOsd.maxVal = 100.0f; itemOsd.displayFormat = L"%.0f %%";
+    itemOsd.tooltipText = L"控制加载转圈、图片切换比率等临时提示信息的透明度";
+    itemOsd.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
+    tabTheme.items.push_back(itemOsd);
+
+    SettingsItem itemPanels = { L"工具面板与底图属性 (Panels)", OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
+    itemPanels.minVal = 0.0f; itemPanels.maxVal = 100.0f; itemPanels.displayFormat = L"%.0f %%";
+    itemPanels.tooltipText = L"控制底部工具栏、侧边 EXIF 属性面板的透明度";
+    itemPanels.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
+    tabTheme.items.push_back(itemPanels);
+
+    SettingsItem itemModals = { L"模态弹框视窗 (Modals)", OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
+    itemModals.minVal = 0.0f; itemModals.maxVal = 100.0f; itemModals.displayFormat = L"%.0f %%";
+    itemModals.tooltipText = L"控制设置界面、关于弹框、以及主区域右键菜单的透明度";
+    itemModals.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
+    tabTheme.items.push_back(itemModals);
+
+    m_tabs.push_back(tabTheme);
+    
+    // --- 3. Interface (Visuals) ---
     SettingsTab tabVisuals;
     tabVisuals.name = AppStrings::Settings_Tab_Visuals;
     tabVisuals.icon = L"\xE790"; 
@@ -1138,26 +1306,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabVisuals.items.push_back(itemUiScale);
 
-    SettingsItem itemThemeMode = {
-        GetThemeSettingLabel(),
-        OptionType::Segment,
-        nullptr,
-        nullptr,
-        &g_config.ThemeMode,
-        nullptr,
-        0,
-        0,
-        { AppStrings::Settings_Option_Auto, GetDarkThemeLabel(), GetLightThemeLabel() }
-    };
-    itemThemeMode.onChange = [this]() {
-        if (g_config.ThemeMode < 0 || g_config.ThemeMode > 2) g_config.ThemeMode = 0;
-        SaveConfig();
-        if (m_hwnd) {
-            ApplyWindowTheme(m_hwnd);
-            InvalidateRect(m_hwnd, nullptr, FALSE);
-        }
-    };
-    tabVisuals.items.push_back(itemThemeMode);
+
     
     // Always on Top with immediate effect
     SettingsItem itemAoT = { AppStrings::Settings_Label_AlwaysOnTop, OptionType::Toggle, &g_config.AlwaysOnTop };
@@ -1796,8 +1945,12 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             QuickView::UI::GeekGlass::GeekGlassConfig config;
             config.panelBounds = hudRect;
             config.cornerRadius = 8.0f;
-            config.blurStandardDeviation = 20.0f * m_uiScale;
+            config.enableGeekGlass = g_config.EnableGeekGlass;
+            config.blurStandardDeviation = g_config.GlassBlurSigma * m_uiScale;
             config.opacity = g_config.SettingsAlpha;
+            if (g_config.EnableGeekGlass) {
+                config.opacity = g_config.GlassModalsOpacity / 100.0f;
+            }
             config.pBackgroundCommandList = m_bgCmdList;
             config.backgroundTransform = m_bgTransform;
             m_geekGlass.DrawGeekGlassPanel(pRT, config);

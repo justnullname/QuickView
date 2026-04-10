@@ -25,6 +25,8 @@ namespace QuickView::UI::GeekGlass {
         RenderTrack track = RenderTrack::TrackA_CommandList;
         ThemeMode theme = ThemeMode::Dark;
         
+        bool enableGeekGlass = true;              // Turn off for high performance
+        
         D2D1_RECT_F panelBounds = {};       // Layout area for the glass panel
         float cornerRadius = 8.0f;          // Radius for the rounded corners
         float blurStandardDeviation = 15.0f;// Blur radius (primarily for Track A)

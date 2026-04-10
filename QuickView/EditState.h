@@ -92,7 +92,23 @@ struct AppConfig {
     int UIScalePreset = 0;               // 0=Auto(DPI), 1=90%, 2=100%, 3=110%, 4=125%
 
     // --- View ---
-    int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light
+    int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light, 3=Custom
+    float ThemeCustomAccentR = 0.00f;   // Custom Accent Color
+    float ThemeCustomAccentG = 0.47f;
+    float ThemeCustomAccentB = 0.84f;
+    float ThemeCustomTextR = 1.0f;      // Custom Text Color
+    float ThemeCustomTextG = 1.0f;
+    float ThemeCustomTextB = 1.0f;
+
+    // --- Geek Glass Pipeline ---
+    bool EnableGeekGlass = true;           // Master switch (fallback to pure colors)
+    bool GlassUIAnimations = true;         // UI animations (0ms hard cut if false)
+    float GlassBlurSigma = 25.0f;          // Blur radius (5.0f to 40.0f)
+    float GlassOsdOpacity = 15.0f;         // OSD Level (0-100 %)
+    float GlassPanelsOpacity = 45.0f;      // Toolbar & Panels Level (0-100 %)
+    float GlassModalsOpacity = 75.0f;      // Modals & Context Menus Level (0-100 %)
+    int GlassVectorStrokeWeightIndex = 0;  // 0: Standard (1.5px), 1: Fine (1.0px)
+
     int CanvasColor = 2;                // 0=Black, 1=White, 2=Grid, 3=Custom
     float CanvasCustomR = 0.2f;         // Custom color RGB (0.0-1.0)
     float CanvasCustomG = 0.2f;

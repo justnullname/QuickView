@@ -785,8 +785,12 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                 QuickView::UI::GeekGlass::GeekGlassConfig config;
                 config.panelBounds = r;
                 config.cornerRadius = 6.0f * s;
-                config.blurStandardDeviation = 16.0f * s;
+                config.enableGeekGlass = g_config.EnableGeekGlass;
+                config.blurStandardDeviation = g_config.GlassBlurSigma * s;
                 config.opacity = m_osdOpacity;
+                if (g_config.EnableGeekGlass) {
+                    config.opacity = g_config.GlassOsdOpacity / 100.0f;
+                }
                 config.pBackgroundCommandList = m_bgCommandList.Get();
                 config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
                 geekGlass.DrawGeekGlassPanel(dc, config);
@@ -851,8 +855,12 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
         QuickView::UI::GeekGlass::GeekGlassConfig config;
         config.panelBounds = bgRect;
         config.cornerRadius = 8.0f * s;
-        config.blurStandardDeviation = 16.0f * s;
+        config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.blurStandardDeviation = g_config.GlassBlurSigma * s;
         config.opacity = m_osdOpacity;
+        if (g_config.EnableGeekGlass) {
+            config.opacity = g_config.GlassOsdOpacity / 100.0f;
+        }
         config.pBackgroundCommandList = m_bgCommandList.Get();
         config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
         geekGlass.DrawGeekGlassPanel(dc, config);
@@ -2669,9 +2677,12 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     QuickView::UI::GeekGlass::GeekGlassConfig glassConfig;
     glassConfig.panelBounds = panelRect;
     glassConfig.cornerRadius = 8.0f * s;
-    glassConfig.blurStandardDeviation = 15.0f * s;
-    glassConfig.theme = QuickView::UI::GeekGlass::ThemeMode::Dark; // Force dark mode for now
-    glassConfig.opacity = 1.0f; // Could hook to g_config.InfoPanelAlpha later
+    glassConfig.enableGeekGlass = g_config.EnableGeekGlass;
+    glassConfig.blurStandardDeviation = g_config.GlassBlurSigma * s;
+    glassConfig.opacity = 0.85f * g_config.InfoPanelAlpha;
+    if (g_config.EnableGeekGlass) {
+        glassConfig.opacity = g_config.GlassPanelsOpacity / 100.0f;
+    }
     glassConfig.pBackgroundCommandList = m_bgCommandList.Get();
     
     if (m_compEngine) {
@@ -2795,8 +2806,12 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
             QuickView::UI::GeekGlass::GeekGlassConfig config;
             config.panelBounds = D2D1::RectF(arrowCenterX - circleRadius, arrowCenterY - circleRadius, arrowCenterX + circleRadius, arrowCenterY + circleRadius);
             config.cornerRadius = circleRadius;
-            config.blurStandardDeviation = 12.0f * s;
+            config.enableGeekGlass = g_config.EnableGeekGlass;
+            config.blurStandardDeviation = g_config.GlassBlurSigma * s;
             config.opacity = 0.5f;
+            if (g_config.EnableGeekGlass) {
+                config.opacity = g_config.GlassPanelsOpacity / 100.0f; // treat arrows as panels
+            }
             config.pBackgroundCommandList = m_bgCommandList.Get();
             config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
             geekGlass.DrawGeekGlassPanel(dc, config);
@@ -3357,8 +3372,12 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         QuickView::UI::GeekGlass::GeekGlassConfig config;
         config.panelBounds = clipRect;
         config.cornerRadius = 8.0f * s;
-        config.blurStandardDeviation = 16.0f * s;
+        config.enableGeekGlass = g_config.EnableGeekGlass;
+        config.blurStandardDeviation = g_config.GlassBlurSigma * s;
         config.opacity = g_config.InfoPanelAlpha;
+        if (g_config.EnableGeekGlass) {
+            config.opacity = g_config.GlassPanelsOpacity / 100.0f;
+        }
         config.pBackgroundCommandList = m_bgCommandList.Get();
         config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
         geekGlass.DrawGeekGlassPanel(dc, config);

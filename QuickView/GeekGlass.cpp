@@ -138,7 +138,7 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1DeviceContext* pContext, const Gee
     pContext->PushLayer(layerParams, nullptr);
 
     // 3. Track execution
-    if (config.track == RenderTrack::TrackA_CommandList && config.pBackgroundCommandList && m_blurEffect && m_cropEffect && m_transformEffect) {
+    if (config.enableGeekGlass && config.track == RenderTrack::TrackA_CommandList && config.pBackgroundCommandList && m_blurEffect && m_cropEffect && m_transformEffect) {
         
         // Feed the command list into transform effect to map DComp coordinates to D2D screen space
         m_transformEffect->SetInput(0, config.pBackgroundCommandList);
