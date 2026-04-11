@@ -1120,12 +1120,12 @@ void SettingsOverlay::BuildMenu() {
 
     // --- 2. Theme & Geek Glass (主题) ---
     SettingsTab tabTheme;
-    tabTheme.name = L"主题"; // "Theme"
+    tabTheme.name = AppStrings::Settings_Tab_Theme;
     tabTheme.icon = L"\xE771"; // Personalize icon
 
     // Base Theme Modes
     SettingsItem itemThemeMode = {
-        L"界面主题",
+        AppStrings::Settings_Label_ThemeMode,
         OptionType::Segment,
         nullptr,
         nullptr,
@@ -1133,7 +1133,7 @@ void SettingsOverlay::BuildMenu() {
         nullptr,
         0,
         0,
-        { L"自动", L"深色", L"浅色", L"自定义" }
+        { AppStrings::Settings_Option_ThemeAuto, AppStrings::Settings_Option_ThemeDark, AppStrings::Settings_Option_ThemeLight, AppStrings::Settings_Option_ThemeCustom }
     };
     itemThemeMode.onChange = [this]() {
         if (g_config.ThemeMode < 0 || g_config.ThemeMode > 3) g_config.ThemeMode = 0;
@@ -1153,13 +1153,13 @@ void SettingsOverlay::BuildMenu() {
     };
     tabTheme.items.push_back(itemThemeMode);
 
-    SettingsItem itemDimmer = { L"背景氛围遮罩 (Global Dimmer)", OptionType::Toggle, &g_config.EnableAmbientDimmer };
-    itemDimmer.tooltipText = L"控制在画廊模式、设置窗口或对话框开启时，是否在后端添加沉浸式阴影遮罩";
+    SettingsItem itemDimmer = { AppStrings::Settings_Label_AmbientDimmer, OptionType::Toggle, &g_config.EnableAmbientDimmer };
+    itemDimmer.tooltipText = AppStrings::Settings_Tooltip_AmbientDimmer;
     tabTheme.items.push_back(itemDimmer);
 
     if (g_config.ThemeMode == 3) {
         // Custom Theme Mode options
-        SettingsItem itemAccentColor = { L"全局主色调 (Accent Color)", OptionType::CustomColorRow };
+        SettingsItem itemAccentColor = { AppStrings::Settings_Label_AccentColor, OptionType::CustomColorRow };
         itemAccentColor.pFloatVal = &g_config.ThemeCustomAccentR;
         itemAccentColor.onChange = [this]() {
             HWND hwnd = GetActiveWindow();
@@ -1180,7 +1180,7 @@ void SettingsOverlay::BuildMenu() {
         };
         tabTheme.items.push_back(itemAccentColor);
 
-        SettingsItem itemTextColor = { L"字体主色调 (Text Color)", OptionType::CustomColorRow };
+        SettingsItem itemTextColor = { AppStrings::Settings_Label_TextColor, OptionType::CustomColorRow };
         itemTextColor.pFloatVal = &g_config.ThemeCustomTextR;
         itemTextColor.onChange = [this]() {
             HWND hwnd = GetActiveWindow();
@@ -1203,25 +1203,25 @@ void SettingsOverlay::BuildMenu() {
     }
     
     // Geek Glass Engine
-    tabTheme.items.push_back({ L"极客玻璃引擎 (GPU 加速)", OptionType::Header });
-    SettingsItem itemEnableGlass = { L"启用极客玻璃特效", OptionType::Toggle, &g_config.EnableGeekGlass };
+    tabTheme.items.push_back({ AppStrings::Settings_Header_GeekGlass, OptionType::Header });
+    SettingsItem itemEnableGlass = { AppStrings::Settings_Label_EnableGeekGlass, OptionType::Toggle, &g_config.EnableGeekGlass };
     itemEnableGlass.onChange = [this]() { 
         SaveConfig(); 
         this->BuildMenu(); // Rebuild to update isDisabled states of dependent sliders
     };
     tabTheme.items.push_back(itemEnableGlass);
 
-    SettingsItem itemAnimations = { L"UI 动画反馈 (关闭即为 0 毫秒硬切)", OptionType::Toggle, &g_config.GlassUIAnimations };
+    SettingsItem itemAnimations = { AppStrings::Settings_Label_GlassUIAnimations, OptionType::Toggle, &g_config.GlassUIAnimations };
     itemAnimations.onChange = [this]() { SaveConfig(); };
     tabTheme.items.push_back(itemAnimations);
     
     // --- Core Material Parameters ---
-    tabTheme.items.push_back({ L"核心材质 (Core Material)", OptionType::Header });
+    tabTheme.items.push_back({ AppStrings::Settings_Header_CoreMaterial, OptionType::Header });
     
     bool glassDisabled = !g_config.EnableGeekGlass;
     static float fZero = 0.0f;
     static float fOne = 1.0f;
-
+ 
     // Auto-switch to Custom lambda (shared by all material sliders)
     auto autoSwitchToCustom = [this]() {
         if (g_config.ThemeMode != 3) {
@@ -1235,7 +1235,7 @@ void SettingsOverlay::BuildMenu() {
         if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
     };
     
-    SettingsItem itemBlur = { L"模糊半径 (Blur Sigma)", OptionType::Slider, nullptr, &g_config.GlassBlurSigma };
+    SettingsItem itemBlur = { AppStrings::Settings_Label_BlurSigma, OptionType::Slider, nullptr, &g_config.GlassBlurSigma };
     itemBlur.minVal = 1.0f;
     itemBlur.maxVal = 40.0f;
     itemBlur.displayFormat = L"%.0f px";
@@ -1243,15 +1243,16 @@ void SettingsOverlay::BuildMenu() {
     if (glassDisabled) {
         itemBlur.isDisabled = true;
         itemBlur.pFloatVal = &fZero;
-        itemBlur.disabledText = L"关闭极客玻璃后该项失效";
+        itemBlur.disabledText = AppStrings::Settings_Status_GlassDisabled;
     }
     tabTheme.items.push_back(itemBlur);
+ 
 
-    SettingsItem itemTintAlpha = { L"玻璃底色深度 (Tint Density)", OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
+    SettingsItem itemTintAlpha = { AppStrings::Settings_Label_TintDensity, OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
     itemTintAlpha.minVal = 0.01f;
     itemTintAlpha.maxVal = 1.0f;
     itemTintAlpha.displayFormat = L"%.0f %%";
-    itemTintAlpha.tooltipText = L"控制玻璃内部颜色的染色深度。建议值 20%-40% 以维持最大穿透力";
+    itemTintAlpha.tooltipText = AppStrings::Settings_Tooltip_TintDensity;
     itemTintAlpha.onChange = autoSwitchToCustom;
     if (glassDisabled) {
         itemTintAlpha.isDisabled = true;
@@ -1259,11 +1260,11 @@ void SettingsOverlay::BuildMenu() {
     }
     tabTheme.items.push_back(itemTintAlpha);
 
-    SettingsItem itemSpecular = { L"高光亮度 (Reflectivity)", OptionType::Slider, nullptr, &g_config.GlassSpecularOpacity };
+    SettingsItem itemSpecular = { AppStrings::Settings_Label_SpecularOpacity, OptionType::Slider, nullptr, &g_config.GlassSpecularOpacity };
     itemSpecular.minVal = 0.0f;
     itemSpecular.maxVal = 0.50f;
     itemSpecular.displayFormat = L"%.0f %%";
-    itemSpecular.tooltipText = L"控制玻璃面板对角线光泽的强度。在纯黑背景下引擎会自动抑制";
+    itemSpecular.tooltipText = AppStrings::Settings_Tooltip_SpecularOpacity;
     itemSpecular.onChange = autoSwitchToCustom;
     if (glassDisabled) {
         itemSpecular.isDisabled = true;
@@ -1272,14 +1273,14 @@ void SettingsOverlay::BuildMenu() {
     tabTheme.items.push_back(itemSpecular);
 
     // Vector Stroke Config
-    tabTheme.items.push_back({ L"矢量细分 (Vector Assets)", OptionType::Header });
-    SettingsItem itemStroke = { L"UI 线框粗细", OptionType::Segment, nullptr, nullptr, &g_config.GlassVectorStrokeWeightIndex, nullptr, 0, 0, { L"标准 (1.5px)", L"极细 (1.0px)" } };
+    tabTheme.items.push_back({ AppStrings::Settings_Header_VectorAssets, OptionType::Header });
+    SettingsItem itemStroke = { AppStrings::Settings_Label_VectorStrokeWeight, OptionType::Segment, nullptr, nullptr, &g_config.GlassVectorStrokeWeightIndex, nullptr, 0, 0, { AppStrings::Settings_Option_StrokeStandard, AppStrings::Settings_Option_StrokeFine } };
     itemStroke.onChange = [this]() { SaveConfig(); if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE); };
     tabTheme.items.push_back(itemStroke);
 
     // Glass Tint Profile (Base Color)
-    tabTheme.items.push_back({ L"玻璃着色配置 (Glass Tint)", OptionType::Header });
-    SettingsItem itemTintProfile = { L"着色模式", OptionType::Segment, nullptr, nullptr, &g_config.GlassTintProfile, nullptr, 0, 0, { L"自动适配", L"个性自选" } };
+    tabTheme.items.push_back({ AppStrings::Settings_Header_GlassTint, OptionType::Header });
+    SettingsItem itemTintProfile = { AppStrings::Settings_Label_TintProfile, OptionType::Segment, nullptr, nullptr, &g_config.GlassTintProfile, nullptr, 0, 0, { AppStrings::Settings_Option_TintAuto, AppStrings::Settings_Option_TintCustom } };
     itemTintProfile.onChange = [this, autoSwitchToCustom]() { 
         autoSwitchToCustom();
         this->BuildMenu(); 
@@ -1287,7 +1288,7 @@ void SettingsOverlay::BuildMenu() {
     tabTheme.items.push_back(itemTintProfile);
 
     if (g_config.GlassTintProfile == 1) {
-        SettingsItem itemTintColor = { L"玻璃底色", OptionType::CustomColorRow };
+        SettingsItem itemTintColor = { AppStrings::Settings_Label_GlassCustomColor, OptionType::CustomColorRow };
         itemTintColor.pFloatVal = &g_config.GlassCustomTintR;
         itemTintColor.onChange = [this, autoSwitchToCustom]() {
             HWND hwnd = GetActiveWindow();
@@ -1309,29 +1310,29 @@ void SettingsOverlay::BuildMenu() {
     }
 
     // Z-Depth Modals
-    tabTheme.items.push_back({ L"专家级玻璃浓度矩阵 (Expert Density Matrix)", OptionType::Header });
+    tabTheme.items.push_back({ AppStrings::Settings_Header_DensityMatrix, OptionType::Header });
     
-    SettingsItem itemOsd = { L"信息提示浓度 (OSD Density)", OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
+    SettingsItem itemOsd = { AppStrings::Settings_Label_OsdDensity, OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
     itemOsd.minVal = 0.0f; itemOsd.maxVal = 100.0f; itemOsd.displayFormat = L"%.0f %%";
-    itemOsd.tooltipText = L"控制加载转圈、图片切换比率等临时提示信息的浓度";
+    itemOsd.tooltipText = AppStrings::Settings_Tooltip_OsdDensity;
     itemOsd.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemOsd);
 
-    SettingsItem itemPanels = { L"工具面板浓度 (Panels Density)", OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
+    SettingsItem itemPanels = { AppStrings::Settings_Label_PanelsDensity, OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
     itemPanels.minVal = 0.0f; itemPanels.maxVal = 100.0f; itemPanels.displayFormat = L"%.0f %%";
-    itemPanels.tooltipText = L"控制底部工具栏、侧边 EXIF 属性面板的浓度";
+    itemPanels.tooltipText = AppStrings::Settings_Tooltip_PanelsDensity;
     itemPanels.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemPanels);
 
-    SettingsItem itemModals = { L"模态视窗浓度 (Modals Density)", OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
+    SettingsItem itemModals = { AppStrings::Settings_Label_ModalsDensity, OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
     itemModals.minVal = 0.0f; itemModals.maxVal = 100.0f; itemModals.displayFormat = L"%.0f %%";
-    itemModals.tooltipText = L"控制设置界面、关于弹框等二级窗口的浓度";
+    itemModals.tooltipText = AppStrings::Settings_Tooltip_ModalsDensity;
     itemModals.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemModals);
 
-    SettingsItem itemMenus = { L"右键菜单浓度 (Menus Density)", OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
+    SettingsItem itemMenus = { AppStrings::Settings_Label_MenusDensity, OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
     itemMenus.minVal = 0.0f; itemMenus.maxVal = 100.0f; itemMenus.displayFormat = L"%.0f %%";
-    itemMenus.tooltipText = L"控制主区域右键菜单的浓度";
+    itemMenus.tooltipText = AppStrings::Settings_Tooltip_MenusDensity;
     itemMenus.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemMenus);
 

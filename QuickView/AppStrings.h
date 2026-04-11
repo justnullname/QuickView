@@ -422,4 +422,45 @@ namespace AppStrings {
     extern const wchar_t* HUD_Label_High;
     extern const wchar_t* HUD_Label_Low;
     extern const wchar_t* HUD_Label_Ref;
+
+    // Geek Glass Settings
+    extern const wchar_t* Settings_Header_GeekGlass;
+    extern const wchar_t* Settings_Label_EnableGeekGlass;
+    extern const wchar_t* Settings_Label_GlassUIAnimations;
+    extern const wchar_t* Settings_Header_CoreMaterial;
+    extern const wchar_t* Settings_Label_BlurSigma;
+    extern const wchar_t* Settings_Status_GlassDisabled;
+    extern const wchar_t* Settings_Label_TintDensity;
+    extern const wchar_t* Settings_Tooltip_TintDensity;
+    extern const wchar_t* Settings_Label_SpecularOpacity;
+    extern const wchar_t* Settings_Tooltip_SpecularOpacity;
+    extern const wchar_t* Settings_Header_VectorAssets;
+    extern const wchar_t* Settings_Label_VectorStrokeWeight;
+    extern const wchar_t* Settings_Option_StrokeStandard;
+    extern const wchar_t* Settings_Option_StrokeFine;
+    extern const wchar_t* Settings_Header_GlassTint;
+    extern const wchar_t* Settings_Label_TintProfile;
+    extern const wchar_t* Settings_Option_TintAuto;
+    extern const wchar_t* Settings_Option_TintCustom;
+    extern const wchar_t* Settings_Label_GlassCustomColor;
+    extern const wchar_t* Settings_Header_DensityMatrix;
+    extern const wchar_t* Settings_Label_OsdDensity;
+    extern const wchar_t* Settings_Tooltip_OsdDensity;
+    extern const wchar_t* Settings_Label_PanelsDensity;
+    extern const wchar_t* Settings_Tooltip_PanelsDensity;
+    extern const wchar_t* Settings_Label_ModalsDensity;
+    extern const wchar_t* Settings_Tooltip_ModalsDensity;
+    extern const wchar_t* Settings_Label_MenusDensity;
+    extern const wchar_t* Settings_Tooltip_MenusDensity;
+ 
+    extern const wchar_t* Settings_Tab_Theme;
+    extern const wchar_t* Settings_Label_ThemeMode;
+    extern const wchar_t* Settings_Option_ThemeAuto;
+    extern const wchar_t* Settings_Option_ThemeDark;
+    extern const wchar_t* Settings_Option_ThemeLight;
+    extern const wchar_t* Settings_Option_ThemeCustom;
+    extern const wchar_t* Settings_Label_AmbientDimmer;
+    extern const wchar_t* Settings_Tooltip_AmbientDimmer;
+    extern const wchar_t* Settings_Label_AccentColor;
+    extern const wchar_t* Settings_Label_TextColor;
 }
