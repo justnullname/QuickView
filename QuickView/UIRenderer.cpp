@@ -2176,14 +2176,14 @@ void UIRenderer::BuildInfoGrid() {
     m_infoGrid = BuildGridRows(g_currentMetadata, g_imagePath, false);
 }
 
-void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width) {
+void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width, const AdaptiveUiPalette& palette) {
     if (m_infoGrid.empty() || !m_panelFormat) return;
     const float s = m_uiScale;
     const float hdrWhiteScale = GetHdrUiWhiteScale(m_compEngine);
     
-    ComPtr<ID2D1SolidColorBrush> brushWhite, brushGray, brushHover;
-    CreateScaledBrush(dc, D2D1::ColorF(D2D1::ColorF::White), hdrWhiteScale, &brushWhite);
-    CreateScaledBrush(dc, D2D1::ColorF(0.6f, 0.6f, 0.65f), hdrWhiteScale, &brushGray);
+    ComPtr<ID2D1SolidColorBrush> brushMain, brushDim, brushHover;
+    CreateScaledBrush(dc, palette.foreground, hdrWhiteScale, &brushMain);
+    CreateScaledBrush(dc, palette.textDim, hdrWhiteScale, &brushDim);
     CreateScaledBrush(dc, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), hdrWhiteScale, &brushHover);
     
     const float iconW = GRID_ICON_WIDTH * s;
@@ -2211,14 +2211,14 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         
         // Icon column
         D2D1_RECT_F iconRect = D2D1::RectF(startX, y, startX + iconW, y + rowH);
-        dc->DrawText(row.icon.c_str(), (UINT32)row.icon.length(), m_panelFormat.Get(), iconRect, brushWhite.Get());
+        dc->DrawText(row.icon.c_str(), (UINT32)row.icon.length(), m_panelFormat.Get(), iconRect, brushMain.Get());
         
-        // Label column (gray)
+        // Label column (theme-aware dim)
         D2D1_RECT_F labelRect = D2D1::RectF(startX + iconW, y, valueColStart, y + rowH);
         const float labelMaxWidth = (labelW > 6.0f * s) ? (labelW - 6.0f * s) : labelW;
         const std::wstring displayLabel = MakeEndEllipsis(labelMaxWidth, row.label);
         const bool labelTruncated = (displayLabel != row.label);
-        dc->DrawText(displayLabel.c_str(), (UINT32)displayLabel.length(), m_panelFormat.Get(), labelRect, brushGray.Get());
+        dc->DrawText(displayLabel.c_str(), (UINT32)displayLabel.length(), m_panelFormat.Get(), labelRect, brushDim.Get());
         
         // Value column - apply truncation
         const float mainW = MeasureTextWidth(row.valueMain) + 4.0f * s;
@@ -2263,12 +2263,12 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         
         // Draw main value
         D2D1_RECT_F valueRect = D2D1::RectF(valueColStart, y, valueColStart + mainMaxWidth, y + rowH);
-        dc->DrawText(row.displayText.c_str(), (UINT32)row.displayText.length(), m_panelFormat.Get(), valueRect, brushWhite.Get());
+        dc->DrawText(row.displayText.c_str(), (UINT32)row.displayText.length(), m_panelFormat.Get(), valueRect, brushMain.Get());
         
-        // Draw sub value (gray)
+        // Draw sub value (theme-aware dim)
         if (!row.valueSub.empty()) {
             D2D1_RECT_F subRect = D2D1::RectF(valueColStart + mainMaxWidth, y, startX + width, y + rowH);
-            dc->DrawText(displaySub.c_str(), (UINT32)displaySub.length(), m_panelFormat.Get(), subRect, brushGray.Get());
+            dc->DrawText(displaySub.c_str(), (UINT32)displaySub.length(), m_panelFormat.Get(), subRect, brushDim.Get());
         }
         
         y += rowH;
@@ -2462,7 +2462,8 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     float totalW = textW + 56.0f * s;
     
     D2D1_RECT_F rect = D2D1::RectF(16.0f * s, 8.0f * s, 16.0f * s + textW, 32.0f * s);
-    const AdaptiveUiPalette palette = BuildAdaptivePalette(EstimateRectLuminance(rect), &m_compactInfoAdaptiveBlend);
+    // [Visual Consistency] Follow UI theme instead of image luma
+    const AdaptiveUiPalette palette = BuildAdaptivePalette(IsLightThemeActive() ? 1.0f : 0.0f, &m_compactInfoAdaptiveBlend);
 
     // Shadow Text
     ComPtr<ID2D1SolidColorBrush> brushShadow, brushText, brushYellow, brushRed;
@@ -2616,6 +2617,10 @@ UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, 
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
         D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f),
         blend);
+    palette.textDim = LerpColor(
+        D2D1::ColorF(0.75f, 0.75f, 0.75f, 1.0f),
+        D2D1::ColorF(0.35f, 0.40f, 0.48f, 1.0f),
+        blend);
     palette.shadow = LerpColor(
         D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.92f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f),
@@ -2702,21 +2707,45 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     }
     
     m_geekGlass.DrawGeekGlassPanel(dc, glassConfig);
+
+    // [Material Boost] Consistency
+    if (g_config.EnableGeekGlass) {
+        float masterOpacity = g_config.GlassPanelsOpacity / 100.0f;
+        ComPtr<ID2D1SolidColorBrush> materialBrush;
+        
+        // Theme-aware Material Filler (Ensures consistency and kills undesired transparency)
+        bool isLight = IsLightThemeActive();
+        D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+        
+        dc->CreateSolidColorBrush(ScaleUiColor(fillerColor, hdrWhiteScale), &materialBrush);
+        if (materialBrush) {
+            materialBrush->SetOpacity(masterOpacity);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(panelRect, 8.0f * s, 8.0f * s), materialBrush.Get());
+        }
+        
+        // Restore High-end Reflexes
+        m_geekGlass.DrawGeekGlassToppings(dc, glassConfig);
+    }
     
+    // [Visual Consistency] Follow UI theme instead of image luma
+    float panelLuma = IsLightThemeActive() ? 1.0f : 0.0f; 
+    float unusedBlend;
+    const AdaptiveUiPalette palette = BuildAdaptivePalette(panelLuma, &unusedBlend);
+
     // Create base brushes
-    ComPtr<ID2D1SolidColorBrush> brushWhite;
-    CreateScaledBrush(dc, D2D1::ColorF(D2D1::ColorF::White), hdrWhiteScale, &brushWhite);
+    ComPtr<ID2D1SolidColorBrush> brushMain;
+    CreateScaledBrush(dc, palette.foreground, hdrWhiteScale, &brushMain);
     
     // Buttons
     m_panelCloseRect = D2D1::RectF(startX + width - 20.0f * s, startY + 4.0f * s, startX + width - 4.0f * s, startY + 20.0f * s);
-    dc->DrawText(L"x", 1, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 4.0f * s, m_panelCloseRect.top, m_panelCloseRect.right, m_panelCloseRect.bottom), brushWhite.Get());
+    dc->DrawText(L"x", 1, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 4.0f * s, m_panelCloseRect.top, m_panelCloseRect.right, m_panelCloseRect.bottom), brushMain.Get());
     
     m_panelToggleRect = D2D1::RectF(startX + width - 40.0f * s, startY + 4.0f * s, startX + width - 24.0f * s, startY + 20.0f * s);
-    dc->DrawText(L"-", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 5.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushWhite.Get());
+    dc->DrawText(L"-", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 5.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushMain.Get());
 
     // Grid
     float gridStartY = startY + 26.0f * s;
-    DrawInfoGrid(dc, startX + padding, gridStartY, width - padding * 2);
+    DrawInfoGrid(dc, startX + padding, gridStartY, width - padding * 2, palette);
     
     // Histogram
     if (!g_currentMetadata.HistR.empty()) {
@@ -2734,17 +2763,17 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
         wchar_t gpsBuf[128];
         swprintf_s(gpsBuf, L"GPS: %.5f, %.5f", g_currentMetadata.Latitude, g_currentMetadata.Longitude);
         m_gpsCoordRect = D2D1::RectF(startX + padding, gpsY, startX + width - padding, gpsY + 18.0f * s);
-        dc->DrawText(gpsBuf, (UINT32)wcslen(gpsBuf), m_panelFormat.Get(), m_gpsCoordRect, brushWhite.Get());
+        dc->DrawText(gpsBuf, (UINT32)wcslen(gpsBuf), m_panelFormat.Get(), m_gpsCoordRect, brushMain.Get());
         
         float line2Y = gpsY + 20.0f * s;
         if (g_currentMetadata.Altitude != 0) {
             wchar_t altBuf[64]; swprintf_s(altBuf, L"Alt: %.1fm", g_currentMetadata.Altitude);
-            dc->DrawText(altBuf, (UINT32)wcslen(altBuf), m_panelFormat.Get(), D2D1::RectF(startX + padding, line2Y, startX + width - 90.0f * s, line2Y + 18.0f * s), brushWhite.Get());
+            dc->DrawText(altBuf, (UINT32)wcslen(altBuf), m_panelFormat.Get(), D2D1::RectF(startX + padding, line2Y, startX + width - 90.0f * s, line2Y + 18.0f * s), brushMain.Get());
         }
         
         m_gpsLinkRect = D2D1::RectF(startX + width - 85.0f * s, line2Y, startX + width - padding, line2Y + 18.0f * s);
         ComPtr<ID2D1SolidColorBrush> brushLink;
-        CreateScaledBrush(dc, D2D1::ColorF(0.4f, 0.7f, 1.0f), hdrWhiteScale, &brushLink);
+        CreateScaledBrush(dc, palette.accent, hdrWhiteScale, &brushLink);
         dc->DrawText(L"OpenMap", 7, m_panelFormat.Get(), m_gpsLinkRect, brushLink.Get());
     }
 }

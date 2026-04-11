@@ -101,8 +101,8 @@ void Toolbar::SetUIScale(float scale) {
 
 void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
   if (!m_brushBg) {
-    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.85f), m_hdrWhiteScale),
-                               &m_brushBg); // Dark background
+    pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale),
+                               &m_brushBg); // Master placeholder
     pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale),
                                &m_brushIcon);
     pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale),
@@ -382,7 +382,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
   CreateResources(pRT);
 
-  m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.85f), m_hdrWhiteScale));
+  m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f), m_hdrWhiteScale));
   m_brushIcon->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
   m_brushIconActive->SetColor(ScaleUiColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale));
   m_brushIconDisabled->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale));
@@ -418,6 +418,22 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         config.backgroundTransform = m_bgTransform;
         
         m_geekGlass.DrawGeekGlassPanel(dc.Get(), config);
+
+        // [Material Boost] Consistency
+        if (g_config.EnableGeekGlass) {
+            float masterOpacity = g_config.GlassPanelsOpacity / 100.0f;
+            
+            // Theme-aware Material Filler
+            bool isLight = IsLightThemeActive();
+            D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+            m_brushBg->SetColor(ScaleUiColor(fillerColor, m_hdrWhiteScale));
+            m_brushBg->SetOpacity(masterOpacity); 
+
+            pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());
+            
+            // Restore High-end Reflexes
+            m_geekGlass.DrawGeekGlassToppings(dc.Get(), config);
+        }
     } else {
         m_brushBg->SetOpacity(g_config.GlassPanelsOpacity / 100.0f);
         pRT->FillRoundedRectangle(m_bgRect, m_brushBg.Get());

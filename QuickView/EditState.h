@@ -124,7 +124,8 @@ struct AppConfig {
     float GlassSpecularOpacity = 0.15f;    // Diagonal highlight intensity (0.0 - 0.5)
     float GlassOsdOpacity = 15.0f;         // OSD Level (0-100 %)
     float GlassPanelsOpacity = 45.0f;      // Toolbar & Panels Level (0-100 %)
-    float GlassModalsOpacity = 75.0f;      // Modals & Context Menus Level (0-100 %)
+    float GlassModalsOpacity = 85.0f;      // Modals & Settings Level (0-100 %)
+    float GlassMenusOpacity = 85.0f;       // Context Menus Level (0-100 %)
     int GlassVectorStrokeWeightIndex = 0;  // 0: Standard (1.5px), 1: Fine (1.0px)
 
     // --- Geek Glass Tint Customization ---
@@ -148,6 +149,7 @@ struct AppConfig {
     int ToolbarInfoDefault = 0;         // 0=Lite, 1=Full (toolbar button default)
     wchar_t CustomLiteTags[256] = L"ISO, Aperture, Shutter, Date"; // Using array for easier serialization or wstring
     bool RoundedCorners = true; // [v3.1.2] Toggle rounded corners
+    bool EnableAmbientDimmer = true;    // [v9.0] Toggle background overlay for modals
     int FullScreenZoomMode = 0;         // 0=Fit, 1=Auto
 
     // --- Window Size Limits ---

@@ -42,7 +42,7 @@ void HelpOverlay::SetUIScale(float scale) {
 
 void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     if (!m_brushBg) {
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.96f), m_hdrWhiteScale), &m_brushBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale), &m_brushBg);
         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushText);
         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushHeader);
         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), m_hdrWhiteScale), &m_brushKey);
@@ -53,7 +53,7 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     }
 
     if (m_brushBg) {
-        m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.96f), m_hdrWhiteScale));
+        m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f), m_hdrWhiteScale));
         m_brushText->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
         m_brushHeader->SetColor(ScaleUiColor(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale));
         m_brushKey->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), m_hdrWhiteScale));
@@ -184,9 +184,11 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     const float rowH = ROW_HEIGHT * s;
 
     // Dimmer
-    ComPtr<ID2D1SolidColorBrush> dimmer;
-    pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.5f), &dimmer);
-    pRT->FillRectangle(D2D1::RectF(0, 0, winW, winH), dimmer.Get());
+    if (g_config.EnableAmbientDimmer) {
+        ComPtr<ID2D1SolidColorBrush> dimmer;
+        pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.5f), &dimmer);
+        pRT->FillRectangle(D2D1::RectF(0, 0, winW, winH), dimmer.Get());
+    }
 
     // Layout
     float x = (winW - panelW) / 2.0f;
@@ -218,7 +220,24 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
         config.backgroundTransform = m_bgTransform;
         
         m_geekGlass.DrawGeekGlassPanel(dc.Get(), config);
+
+        // [Material Boost] Consistency
+        if (g_config.EnableGeekGlass) {
+            float masterOpacity = g_config.GlassModalsOpacity / 100.0f;
+            
+            // Theme-aware Material Filler
+            bool isLight = IsLightThemeActive();
+            D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+            m_brushBg->SetColor(ScaleUiColor(fillerColor, m_hdrWhiteScale));
+            m_brushBg->SetOpacity(masterOpacity); 
+
+            pRT->FillRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBg.Get());
+            
+            // Restore High-end Reflexes
+            m_geekGlass.DrawGeekGlassToppings(dc.Get(), config);
+        }
     } else {
+        m_brushBg->SetOpacity(1.0f);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBg.Get());
     }
     pRT->DrawRoundedRectangle(D2D1::RoundedRect(m_finalRect, 8.0f * s, 8.0f * s), m_brushBorder.Get(), 1.0f * s);

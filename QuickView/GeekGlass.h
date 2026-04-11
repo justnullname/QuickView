@@ -66,6 +66,10 @@ namespace QuickView::UI::GeekGlass {
         // Background Blur + Diagonal Gradient Tint + 1px Physical Highlight Bevel
         void DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlassConfig& config);
 
+        // Specialized: Draws ONLY the glass reflexes (Diagonal highlights + Bevel)
+        // Used for layered UI to restore glassiness on top of material fillers.
+        void DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGlassConfig& config);
+
     private:
         // Caches brushes based on dimensions to avoid constant recreation overhead
         void CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGlassConfig& config);
@@ -78,8 +82,9 @@ namespace QuickView::UI::GeekGlass {
         ComPtr<ID2D1Effect> m_colorMatrixEffect;
 
         ComPtr<ID2D1LinearGradientBrush> m_diagonalBrush;
-        ComPtr<ID2D1LinearGradientBrush> m_bevelBrush;
+        ComPtr<ID2D1SolidColorBrush> m_bevelBrush;
         ComPtr<ID2D1SolidColorBrush> m_baseTintBrush;
+        ComPtr<ID2D1Bitmap> m_noiseBitmap;
 
         // Validation states
         ThemeMode m_currentTheme = ThemeMode::Dark;

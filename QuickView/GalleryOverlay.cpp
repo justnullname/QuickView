@@ -103,17 +103,19 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
     if (!m_isVisible || !m_pThumbMgr || !m_pNav) return;
     
     // Init resources
-    if (!m_brushBg) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.85f), m_hdrWhiteScale), &m_brushBg);
+    if (!m_brushBg) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale), &m_brushBg);
     if (!m_brushSelection) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue), m_hdrWhiteScale), &m_brushSelection); // Accent
     if (!m_brushText) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::White), m_hdrWhiteScale), &m_brushText);
-    m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.85f), m_hdrWhiteScale));
+    m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale));
     m_brushSelection->SetColor(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue), m_hdrWhiteScale));
     m_brushText->SetColor(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::White), m_hdrWhiteScale));
     
-    // Background
-    D2D1_RECT_F screenRect = D2D1::RectF(0, 0, size.width, size.height);
-    m_brushBg->SetOpacity(m_opacity * 0.85f);
-    pDC->FillRectangle(screenRect, m_brushBg.Get());
+    // Background (Controllable Dimmer)
+    if (g_config.EnableAmbientDimmer) {
+        D2D1_RECT_F screenRect = D2D1::RectF(0, 0, size.width, size.height);
+        m_brushBg->SetOpacity(m_opacity);
+        pDC->FillRectangle(screenRect, m_brushBg.Get());
+    }
     
     // Init Text Resources (Lazy)
     if (!m_dwriteFactory) {

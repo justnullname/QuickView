@@ -169,6 +169,7 @@ public:
 private:
     struct AdaptiveUiPalette {
         D2D1_COLOR_F foreground = D2D1::ColorF(D2D1::ColorF::White);
+        D2D1_COLOR_F textDim = D2D1::ColorF(0.6f, 0.6f, 0.65f); // Sync with Settings
         D2D1_COLOR_F shadow = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f);
         D2D1_COLOR_F hoverFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
         D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
@@ -185,7 +186,7 @@ private:
     
     // ===== Info Panel Drawing (Migrated from main.cpp) =====
     void BuildInfoGrid();
-    void DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width);
+    void DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY, float width, const AdaptiveUiPalette& palette);
     void DrawGridTooltip(ID2D1DeviceContext* dc);
     void DrawInfoPanel(ID2D1DeviceContext* dc);
     void DrawCompactInfo(ID2D1DeviceContext* dc);

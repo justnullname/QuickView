@@ -385,8 +385,9 @@ void GeekContextMenu::CreateResources() {
     m_rt->CreateSolidColorBrush(D2D1::ColorF(0.85f, 0.15f, 0.10f, 0.25f), &m_dangerBrush);
     
     // Auxiliary Brushes
-    m_rt->CreateSolidColorBrush(D2D1::ColorF(L ? 0.40f : 0.55f, L ? 0.40f : 0.55f, L ? 0.42f : 0.58f), &m_dimBrush);
-    m_rt->CreateSolidColorBrush(D2D1::ColorF(L ? 0.55f : 0.38f, L ? 0.55f : 0.38f, L ? 0.57f : 0.40f), &m_disabledBrush);
+    // [Adaptive Contrast] Match Settings Palette secondary text standards
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(L ? 0.35f : 0.75f, L ? 0.40f : 0.75f, L ? 0.48f : 0.75f), &m_dimBrush);
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(L ? 0.55f : 0.40f, L ? 0.55f : 0.40f, L ? 0.57f : 0.42f), &m_disabledBrush);
 
     // Separator line
     m_rt->CreateSolidColorBrush(D2D1::ColorF(L ? D2D1::ColorF(0,0,0,0.08f) : D2D1::ColorF(1,1,1,0.06f)), &m_sepBrush);
@@ -882,12 +883,28 @@ void GeekContextMenu::RenderAndUI() {
 
   // 3. Render Geek Glass Panel (Track B: DWM-based blur)
   auto config = QuickView::UI::GeekGlass::GetGlobalThemeConfig();
+  
+  // Independent Transparency Matrix: Separating Menus from Modals/Dialogs
+  config.opacity = g_config.GlassMenusOpacity / 100.0f;
+  
   config.panelBounds =
       D2D1::RectF(0, 0, (float)width / m_scale, (float)height / m_scale);
   config.cornerRadius = CORNER_R;
   config.track = QuickView::UI::GeekGlass::RenderTrack::TrackB_DWM;
 
     m_glassEngine.DrawGeekGlassPanel(m_rt.Get(), config);
+
+    // [Material Booster] Ensure menu responds to transparency matrix solidity
+    // This allows the menu to reach 100% solid material when the slider is at 100.
+    {
+        ComPtr<ID2D1SolidColorBrush> fillerBrush;
+        D2D1_COLOR_F fillerColor = m_isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f) : D2D1::ColorF(0.08f, 0.08f, 0.10f);
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(fillerColor.r, fillerColor.g, fillerColor.b, config.opacity), &fillerBrush);
+        if (fillerBrush) {
+            D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(config.panelBounds, CORNER_R, CORNER_R);
+            m_rt->FillRoundedRectangle(rr, fillerBrush.Get());
+        }
+    }
 
     // 4. Render Menu Content (Syncing detail brushes with master opacity for consistency)
     if (m_capsuleBrush) m_capsuleBrush->SetOpacity(config.opacity);

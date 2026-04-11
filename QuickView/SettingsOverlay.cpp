@@ -599,7 +599,7 @@ void SettingsOverlay::RenderUpdateToast(ID2D1DeviceContext* pRT, float hudX, flo
     m_toastRect = l.bg; // Store for hit test
     
     // 1. Dimmer
-    if (!m_visible) {
+    if (m_showUpdateToast && g_config.EnableAmbientDimmer) {
         pRT->FillRectangle(D2D1::RectF(0, 0, m_windowWidth, m_windowHeight), m_brushBg.Get());
     }
 
@@ -1153,6 +1153,10 @@ void SettingsOverlay::BuildMenu() {
     };
     tabTheme.items.push_back(itemThemeMode);
 
+    SettingsItem itemDimmer = { L"背景氛围遮罩 (Global Dimmer)", OptionType::Toggle, &g_config.EnableAmbientDimmer };
+    itemDimmer.tooltipText = L"控制在画廊模式、设置窗口或对话框开启时，是否在后端添加沉浸式阴影遮罩";
+    tabTheme.items.push_back(itemDimmer);
+
     if (g_config.ThemeMode == 3) {
         // Custom Theme Mode options
         SettingsItem itemAccentColor = { L"全局主色调 (Accent Color)", OptionType::CustomColorRow };
@@ -1243,11 +1247,11 @@ void SettingsOverlay::BuildMenu() {
     }
     tabTheme.items.push_back(itemBlur);
 
-    SettingsItem itemTintAlpha = { L"底色浓度 (Tint Alpha)", OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
+    SettingsItem itemTintAlpha = { L"玻璃底色深度 (Tint Density)", OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
     itemTintAlpha.minVal = 0.05f;
     itemTintAlpha.maxVal = 1.0f;
     itemTintAlpha.displayFormat = L"%.0f %%";
-    itemTintAlpha.tooltipText = L"控制玻璃背景底色的不透明度。最低 5% 以确保文字可读";
+    itemTintAlpha.tooltipText = L"控制玻璃内部颜色的染色深度。建议值 20%-40% 以维持最大穿透力";
     itemTintAlpha.onChange = autoSwitchToCustom;
     if (glassDisabled) {
         itemTintAlpha.isDisabled = true;
@@ -1305,25 +1309,31 @@ void SettingsOverlay::BuildMenu() {
     }
 
     // Z-Depth Modals
-    tabTheme.items.push_back({ L"专家级透明度矩阵 (Expert Opacity Matrix)", OptionType::Header });
+    tabTheme.items.push_back({ L"专家级玻璃浓度矩阵 (Expert Density Matrix)", OptionType::Header });
     
-    SettingsItem itemOsd = { L"悬浮信息提示 (OSD)", OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
+    SettingsItem itemOsd = { L"信息提示浓度 (OSD Density)", OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
     itemOsd.minVal = 0.0f; itemOsd.maxVal = 100.0f; itemOsd.displayFormat = L"%.0f %%";
-    itemOsd.tooltipText = L"控制加载转圈、图片切换比率等临时提示信息的透明度";
+    itemOsd.tooltipText = L"控制加载转圈、图片切换比率等临时提示信息的浓度";
     itemOsd.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemOsd);
 
-    SettingsItem itemPanels = { L"工具面板与底图属性 (Panels)", OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
+    SettingsItem itemPanels = { L"工具面板浓度 (Panels Density)", OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
     itemPanels.minVal = 0.0f; itemPanels.maxVal = 100.0f; itemPanels.displayFormat = L"%.0f %%";
-    itemPanels.tooltipText = L"控制底部工具栏、侧边 EXIF 属性面板的透明度";
+    itemPanels.tooltipText = L"控制底部工具栏、侧边 EXIF 属性面板的浓度";
     itemPanels.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemPanels);
 
-    SettingsItem itemModals = { L"模态弹框视窗 (Modals)", OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
+    SettingsItem itemModals = { L"模态视窗浓度 (Modals Density)", OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
     itemModals.minVal = 0.0f; itemModals.maxVal = 100.0f; itemModals.displayFormat = L"%.0f %%";
-    itemModals.tooltipText = L"控制设置界面、关于弹框、以及主区域右键菜单的透明度";
+    itemModals.tooltipText = L"控制设置界面、关于弹框等二级窗口的浓度";
     itemModals.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemModals);
+
+    SettingsItem itemMenus = { L"右键菜单浓度 (Menus Density)", OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
+    itemMenus.minVal = 0.0f; itemMenus.maxVal = 100.0f; itemMenus.displayFormat = L"%.0f %%";
+    itemMenus.tooltipText = L"控制主区域右键菜单的浓度";
+    itemMenus.onChange = autoSwitchToCustom;
+    tabTheme.items.push_back(itemMenus);
 
     m_tabs.push_back(tabTheme);
     
@@ -1800,7 +1810,7 @@ void SettingsOverlay::BuildMenu() {
          g_runtime.ShowInfoPanel = (g_config.ExifPanelMode != 0);
          g_runtime.InfoPanelExpanded = (g_config.ExifPanelMode == 2);
          g_config.GlassPanelsOpacity = 45.0f;
-         g_config.GlassModalsOpacity = 75.0f;
+         g_config.GlassModalsOpacity = 85.0f;
          
          // 4. Force UI refresh
          // 4. Force UI refresh
@@ -1989,8 +1999,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
     }
 
     // 1. Draw Dimmer (Semi-transparent overlay over entire window)
-    D2D1_RECT_F dimmerRect = D2D1::RectF(0, 0, m_windowWidth, m_windowHeight);
-    pRT->FillRectangle(dimmerRect, m_brushBg.Get()); // 0.4 Alpha Black
+    if (g_config.EnableAmbientDimmer) {
+        D2D1_RECT_F dimmerRect = D2D1::RectF(0, 0, m_windowWidth, m_windowHeight);
+        pRT->FillRectangle(dimmerRect, m_brushBg.Get()); // 0.4 Alpha Black
+    }
 
     // 2. Calculate HUD Panel Position (Centered)
     float hudX = (m_windowWidth - hudW) / 2.0f;
@@ -2012,7 +2024,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             m_geekGlass.InitializeResources(pRT);
             QuickView::UI::GeekGlass::GeekGlassConfig config = QuickView::UI::GeekGlass::GetGlobalThemeConfig();
             config.panelBounds = hudRect;
-            config.cornerRadius = 8.0f;
+            config.cornerRadius = 8.0f * m_uiScale;
             
             // Override with local scale awareness for Settings UI if needed
             config.blurStandardDeviation *= m_uiScale; 
@@ -2020,6 +2032,17 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             config.pBackgroundCommandList = m_bgCmdList;
             config.backgroundTransform = m_bgTransform;
             m_geekGlass.DrawGeekGlassPanel(pRT, config);
+
+            // [Material Booster] Ensure visual parity with Info Panel
+            ComPtr<ID2D1SolidColorBrush> materialBrush;
+            bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
+            D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+            pRT->CreateSolidColorBrush(ScaleUiColor(fillerColor, m_hdrWhiteScale), &materialBrush);
+            
+            if (materialBrush) {
+                materialBrush->SetOpacity(config.opacity); // Use global Modal opacity
+                pRT->FillRoundedRectangle(hudRounded, materialBrush.Get());
+            }
         } else {
             ComPtr<ID2D1SolidColorBrush> brushPanelBg;
             pRT->CreateSolidColorBrush(ScaleUiColor(palette.panelBg, m_hdrWhiteScale), &brushPanelBg);
@@ -2049,21 +2072,58 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         pRT->CreateLayer(nullptr, &pLayer);
         pRT->PushLayer(layerParams, pLayer.Get());
 
-        // Sidebar (Left portion of HUD)
+        // [Right Baseline] Material System
+        // Content area follows masterOpacity directly. 
+        // Sidebar is always 15% more opaque than content to maintain depth.
         D2D1_RECT_F sidebarRect = D2D1::RectF(hudX, hudY, hudX + sidebarW, hudY + hudH);
-        float oldSidebarOp = m_brushControlBg->GetOpacity();
-        m_brushControlBg->SetOpacity(oldSidebarOp * 0.7f); // Increased opacity for better visibility
-        pRT->FillRectangle(sidebarRect, m_brushControlBg.Get());
-        m_brushControlBg->SetOpacity(oldSidebarOp);
+        D2D1_RECT_F contentRect = D2D1::RectF(hudX + sidebarW, hudY, hudX + hudW, hudY + hudH);
+
+        float masterOpacity = g_config.GlassModalsOpacity / 100.0f;
+        float sbAlpha = (std::min)(1.0f, masterOpacity + 0.15f);
+        float ctAlpha = masterOpacity;
+
+        D2D1_COLOR_F solidPanelColor = palette.panelBg;
+        solidPanelColor.a = 1.0f; // Use a solid base for the filler brush
+
+        ComPtr<ID2D1SolidColorBrush> brushFiller;
+        pRT->CreateSolidColorBrush(ScaleUiColor(solidPanelColor, m_hdrWhiteScale), &brushFiller);
+
+        // Draw Sidebar (Heavier)
+        brushFiller->SetOpacity(sbAlpha);
+        pRT->FillRectangle(sidebarRect, brushFiller.Get());
+        
+        // Draw Content Area (Baseline)
+        brushFiller->SetOpacity(ctAlpha);
+        pRT->FillRectangle(contentRect, brushFiller.Get());
+
+        // [Glass Souls Restoration]
+        // Draw the highlights and bevel again on top of the fillers 
+        // to keep it looking like glass instead of a flat mask.
+        if (g_config.EnableGeekGlass) {
+            auto config = QuickView::UI::GeekGlass::GetGlobalThemeConfig();
+            config.panelBounds = hudRect;
+            config.cornerRadius = 8.0f;
+            m_geekGlass.DrawGeekGlassToppings(pRT, config);
+        }
 
         pRT->PopLayer();
 
-        // Sidebar Border (Right edge)
-        pRT->DrawLine(D2D1::Point2F(hudX + sidebarW, hudY), D2D1::Point2F(hudX + sidebarW, hudY + hudH), m_brushTextDim.Get(), 0.5f * s);
+        // --- Sidebar Post-Processing ---
+        
+        // [Visual Hierarchy] Add the darker 'Foundation' layer to the sidebar
+        ComPtr<ID2D1SolidColorBrush> sidebarTint;
+        float sidebarDarken = IsLightThemeActive() ? 0.05f : 0.12f;
+        pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, sidebarDarken), &sidebarTint);
+        pRT->FillRectangle(sidebarRect, sidebarTint.Get());
 
+        // Vertical Separator Line
+        ComPtr<ID2D1SolidColorBrush> sepBrush;
+        pRT->CreateSolidColorBrush(ScaleUiColor(palette.border, m_hdrWhiteScale), &sepBrush);
+        pRT->DrawLine(D2D1::Point2F(sidebarRect.right, hudY), D2D1::Point2F(sidebarRect.right, hudY + hudH), sepBrush.Get(), 1.0f);
+
+        // --- Sidebar Content ---
+        
         // Back Button (Top of Sidebar)
-        // Back Button (Top of Sidebar)
-        // [Fix] Explicitly set alignment to prevent layout shifts (state persists from previous frame)
         m_textFormatIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         m_textFormatIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         
@@ -2076,16 +2136,13 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         D2D1_RECT_F backTextRect = D2D1::RectF(hudX + 55.0f * s, hudY, hudX + sidebarW, hudY + 50.0f * s);
         pRT->DrawText(L"Back", 4, m_textFormatItem.Get(), backTextRect, m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
 
-        // Draw Tabs
+        // Sidebar Tabs Loop
         float tabY = hudY + 50.0f * s;
         for (int i = 0; i < (int)m_tabs.size(); ++i) {
             const auto& tab = m_tabs[i];
-            
             D2D1_RECT_F tabRect = D2D1::RectF(hudX, tabY, hudX + sidebarW, tabY + 40.0f * s);
             
             bool isActive = (i == m_activeTab);
-            
-            // Highlight active
             if (isActive) {
                 pRT->FillRectangle(D2D1::RectF(hudX, tabY + 10.0f * s, hudX + 3.0f * s, tabY + 30.0f * s), m_brushAccent.Get());
                 ComPtr<ID2D1SolidColorBrush> tint;
