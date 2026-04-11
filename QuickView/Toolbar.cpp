@@ -584,7 +584,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         if (tipX < 5.0f * m_uiScale) tipX = 5.0f * m_uiScale;
         D2D1_RECT_F tipRect = D2D1::RectF(tipX, tipY, tipX + tipWidth, tipY + tipHeight);
         ComPtr<ID2D1SolidColorBrush> tipBg;
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f), m_hdrWhiteScale), &tipBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.15f, 0.15f, 0.15f, g_config.GlassPanelsOpacity / 100.0f), m_hdrWhiteScale), &tipBg);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f * m_uiScale, 4.0f * m_uiScale), tipBg.Get());
         pRT->DrawText(tipText, (UINT32)tipLen, tooltipFormat.Get(), tipRect, m_brushIcon.Get());
       }

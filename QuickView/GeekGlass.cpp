@@ -90,12 +90,11 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
     // We use a focused [40% - 60%] band to ensure fixed width.
     // Ratios are fixed [0, 0.15, 1.0, 0.15, 0] so only total opacity changes.
     D2D1_GRADIENT_STOP stops[5];
-    stops[0] = { 0.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f) };
-    stops[1] = { 0.42f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f) }; // Tight shoulder
-    stops[2] = { 0.50f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) }; // Ultra-bright core
-    stops[3] = { 0.58f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f) }; // Tight shoulder
-    stops[4] = { 1.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f) };
-    
+    stops[0] = {0.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f)};
+    stops[1] = {0.48f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.02f)};
+    stops[2] = {0.50f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.40f)};
+    stops[3] = {0.55f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f)};
+    stops[4] = {1.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f)};
     ComPtr<ID2D1GradientStopCollection> pStops;
     pRT->CreateGradientStopCollection(stops, 5, &pStops);
     pRT->CreateLinearGradientBrush(
