@@ -46,9 +46,10 @@ namespace QuickView::UI::GeekGlass {
         // Set by caller (e.g. from EstimateCanvasLuminance). -1.0 = not available.
         float backgroundLuminance = -1.0f;
 
-        // Tint Customization
         int tintProfile = 0; // 0=Auto, 1=Custom
         D2D1_COLOR_F customTintColor = D2D1::ColorF(0.5f, 0.5f, 0.5f, 0.65f); // Used if tintProfile == 1
+
+        float strokeWeight = 1.0f;          // Vector stroke weight (1.0 or 1.5)
     };
 
     // The unified rendering engine for Geek Glass

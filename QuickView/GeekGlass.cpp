@@ -211,7 +211,7 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
     if (m_diagonalBrush) pRT->FillRoundedRectangle(roundedRect, m_diagonalBrush.Get());
 
     // 2. Bevel
-    if (m_bevelBrush) pRT->DrawRoundedRectangle(roundedRect, m_bevelBrush.Get(), 1.0f);
+    if (m_bevelBrush) pRT->DrawRoundedRectangle(roundedRect, m_bevelBrush.Get(), config.strokeWeight);
 
     // 3. Inner Light-Trap (Top-Left 0.5px)
     float trapAlpha = (0.22f + (config.opacity * 0.15f));
@@ -241,6 +241,7 @@ GeekGlassConfig GetGlobalThemeConfig() {
     config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB);
     config.cornerRadius = 8.0f;
     config.track = RenderTrack::TrackA_CommandList;
+    config.strokeWeight = g_config.GetVectorStrokeWeight();
     return config;
 }
 

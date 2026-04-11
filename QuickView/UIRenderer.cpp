@@ -2700,6 +2700,7 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     if (g_config.EnableGeekGlass) {
         glassConfig.opacity = g_config.GlassPanelsOpacity / 100.0f;
     }
+    glassConfig.strokeWeight = g_config.GetVectorStrokeWeight();
     glassConfig.pBackgroundCommandList = m_bgCommandList.Get();
     
     if (m_compEngine) {

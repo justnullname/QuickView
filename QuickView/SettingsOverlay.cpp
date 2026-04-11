@@ -1236,7 +1236,7 @@ void SettingsOverlay::BuildMenu() {
     };
     
     SettingsItem itemBlur = { L"模糊半径 (Blur Sigma)", OptionType::Slider, nullptr, &g_config.GlassBlurSigma };
-    itemBlur.minVal = 5.0f;
+    itemBlur.minVal = 1.0f;
     itemBlur.maxVal = 40.0f;
     itemBlur.displayFormat = L"%.0f px";
     itemBlur.onChange = autoSwitchToCustom;
@@ -1248,7 +1248,7 @@ void SettingsOverlay::BuildMenu() {
     tabTheme.items.push_back(itemBlur);
 
     SettingsItem itemTintAlpha = { L"玻璃底色深度 (Tint Density)", OptionType::Slider, nullptr, &g_config.GlassTintAlpha };
-    itemTintAlpha.minVal = 0.05f;
+    itemTintAlpha.minVal = 0.01f;
     itemTintAlpha.maxVal = 1.0f;
     itemTintAlpha.displayFormat = L"%.0f %%";
     itemTintAlpha.tooltipText = L"控制玻璃内部颜色的染色深度。建议值 20%-40% 以维持最大穿透力";

@@ -414,6 +414,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         if (g_config.EnableGeekGlass) {
             config.opacity = g_config.GlassPanelsOpacity / 100.0f;
         } 
+        config.strokeWeight = g_config.GetVectorStrokeWeight();
         config.pBackgroundCommandList = m_bgCmdList;
         config.backgroundTransform = m_bgTransform;
         

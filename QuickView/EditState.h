@@ -257,9 +257,9 @@ struct AppConfig {
     /// Clamp GlassTintAlpha to safety floor (5% minimum to prevent invisible menus).
     /// </summary>
     void EnforceGlassSafetyLimits() {
-        GlassTintAlpha = (std::max)(0.05f, (std::min)(1.0f, GlassTintAlpha));
+        GlassTintAlpha = (std::max)(0.01f, (std::min)(1.0f, GlassTintAlpha));
         GlassSpecularOpacity = (std::max)(0.0f, (std::min)(0.50f, GlassSpecularOpacity));
-        GlassBlurSigma = (std::max)(5.0f, (std::min)(40.0f, GlassBlurSigma));
+        GlassBlurSigma = (std::max)(1.0f, (std::min)(40.0f, GlassBlurSigma));
     }
 
     /// <summary>
