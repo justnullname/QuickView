@@ -82,6 +82,7 @@ namespace QuickView::UI::GeekGlass {
         ComPtr<ID2D1Effect> m_scaleUpEffect;
         ComPtr<ID2D1Effect> m_colorMatrixEffect;
         ComPtr<ID2D1Effect> m_shadowEffect;
+        ComPtr<ID2D1CommandList> m_shadowMask;
 
         ComPtr<ID2D1LinearGradientBrush> m_diagonalBrush;
         ComPtr<ID2D1LinearGradientBrush> m_borderBrush;

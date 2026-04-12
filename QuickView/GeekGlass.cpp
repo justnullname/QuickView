@@ -157,6 +157,34 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
             D2D1::Point2F(config.panelBounds.left, config.panelBounds.top),
             D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom)),
         pStops.Get(), &m_borderBrush);
+
+    // 5. [GPU Performance Boost] Pre-record Shadow Mask (Off-screen)
+    // We create a temp DC from the parent device to record without affecting the main UI BeginDraw state.
+    ComPtr<ID2D1DeviceContext> pContext;
+    pRT->QueryInterface(IID_PPV_ARGS(&pContext));
+    if (pContext) {
+        ComPtr<ID2D1Device> pDevice;
+        pContext->GetDevice(&pDevice);
+        if (pDevice) {
+            ComPtr<ID2D1DeviceContext> tempDC;
+            pDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &tempDC);
+            if (tempDC) {
+                m_shadowMask.Reset();
+                tempDC->CreateCommandList(&m_shadowMask);
+                tempDC->SetTarget(m_shadowMask.Get());
+                
+                tempDC->BeginDraw();
+                tempDC->Clear(D2D1::ColorF(0, 0, 0, 0));
+                ComPtr<ID2D1SolidColorBrush> maskBrush;
+                tempDC->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1.0f), &maskBrush);
+                
+                D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(config.panelBounds, config.cornerRadius, config.cornerRadius);
+                tempDC->FillRoundedRectangle(roundedRect, maskBrush.Get());
+                tempDC->EndDraw();
+                m_shadowMask->Close();
+            }
+        }
+    }
 }
 
 void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlassConfig& config) {
@@ -171,20 +199,21 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
     ComPtr<ID2D1RoundedRectangleGeometry> roundedGeometry;
     factory->CreateRoundedRectangleGeometry(&roundedRect, &roundedGeometry);
     
-    // 0. Safe Multi-pass Drop Shadow (Replaces unsafe SetTarget logic)
-    if (pContext && config.opacity > 0.1f) {
-        ComPtr<ID2D1SolidColorBrush> shadowBrush;
-        // Use very low alpha spread across 4 passes for a soft "lift" effect
-        float baseAlpha = 0.05f * config.opacity;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, baseAlpha), &shadowBrush);
+    // 0. Hardware Accelerated Drop Shadow (GPU Shadow Mask Branch)
+    if (pContext && m_shadowEffect && m_shadowMask && config.opacity > 0.1f) {
+        // [Performance Optimization] Direct GPU Draw - No Target Switching
+        m_shadowEffect->SetInput(0, m_shadowMask.Get());
         
-        for (int i = 1; i <= 4; i++) {
-            float offset = (float)i * 1.2f;
-            D2D1_ROUNDED_RECT sRect = roundedRect;
-            sRect.rect.left += offset; sRect.rect.top += offset;
-            sRect.rect.right += offset; sRect.rect.bottom += offset;
-            pRT->FillRoundedRectangle(sRect, shadowBrush.Get());
-        }
+        // Scale shadow opacity with master control
+        float shadowMasterAlpha = 0.45f * config.opacity;
+        if (config.theme == ThemeMode::Light) shadowMasterAlpha *= 0.6f; // Softer in light mode
+        m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::ColorF(0, 0, 0, shadowMasterAlpha));
+
+        // Offset (2.0, 3.0) for depth
+        D2D1_MATRIX_3X2_F offset = D2D1::Matrix3x2F::Translation(2.0f, 3.0f);
+        pContext->SetTransform(offset);
+        pContext->DrawImage(m_shadowEffect.Get(), D2D1_INTERPOLATION_MODE_LINEAR);
+        pContext->SetTransform(D2D1::IdentityMatrix());
     }
 
     // Use 1.0 Layer Opacity to allow structural persistence. 
