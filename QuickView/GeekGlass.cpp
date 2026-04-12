@@ -80,21 +80,23 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
     m_currentSpecularOpacity = config.specularOpacity;
     m_currentBounds = config.panelBounds;
 
+    ComPtr<ID2D1GradientStopCollection> pStops;
+    bool isLight = (config.theme == ThemeMode::Light);
+    
     // 1. Base Tint Brush
     if (config.tintProfile == 1) { // Custom
         D2D1_COLOR_F tint = config.customTintColor;
         pRT->CreateSolidColorBrush(tint, &m_baseTintBrush);
     } else { // Auto
-        if (config.theme == ThemeMode::Dark) {
-            pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f), &m_baseTintBrush);
-        } else {
+        if (isLight) {
             pRT->CreateSolidColorBrush(D2D1::ColorF(0.95f, 0.95f, 0.97f), &m_baseTintBrush);
+        } else {
+            pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f), &m_baseTintBrush);
         }
     }
 
     // 2. [Physical Bevel] Dual-tone Inner Edge (Inner Glow + Edge Depth)
     D2D1_GRADIENT_STOP bevelStops[2];
-    bool isLight = (config.theme == ThemeMode::Light);
     float bevelLightAlpha = isLight ? 0.05f : 0.12f;
     float bevelDarkAlpha = isLight ? 0.15f : 0.05f;
 
@@ -110,15 +112,13 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
         pStops.Get(), &m_bevelBrush);
 
     // 3. Specular Jewel Model: 5-stop Focused Refraction
-    // We use a focused [40% - 60%] band to ensure fixed width.
-    // Ratios are fixed [0, 0.15, 1.0, 0.15, 0] so only total opacity changes.
     float peakAlpha = 0.40f;
-
     D2D1_GRADIENT_STOP stops[3];
     stops[0] = {0.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f)};
     stops[1] = {0.25f, D2D1::ColorF(1.0f, 1.0f, 1.0f, peakAlpha)};
     stops[2] = {1.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.00f)};
-    ComPtr<ID2D1GradientStopCollection> pStops;
+
+    pStops.Reset();
     pRT->CreateGradientStopCollection(stops, 3, &pStops);
     float margin = (config.panelBounds.right - config.panelBounds.left) * 0.2f;
 
@@ -129,24 +129,19 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
             D2D1::Point2F(config.panelBounds.right + margin,
                           config.panelBounds.bottom + margin)),
         pStops.Get(), &m_diagonalBrush);
+
     // [Structure Retention Weights]
     float masterOpacity = config.opacity;
     float tintAlpha = masterOpacity * config.tintAlpha;
-    float bevelAlpha = 0.15f + (masterOpacity * 0.25f);
-    
-    // Direct Linear Control for Specular
+    float bevelOpacity = 0.5f + (masterOpacity * 0.5f);
     float specularAlpha = config.specularOpacity * (0.4f + masterOpacity * 0.6f);
 
     if (m_baseTintBrush) m_baseTintBrush->SetOpacity(tintAlpha);
-    if (m_bevelBrush) {
-        bool isLight = (config.theme == ThemeMode::Light);
-        m_bevelBrush->SetColor(D2D1::ColorF(isLight ? 0.0f : 1.0f, isLight ? 0.0f : 1.0f, isLight ? 0.0f : 1.0f, bevelAlpha));
-    }
+    if (m_bevelBrush) m_bevelBrush->SetOpacity(bevelOpacity);
     if (m_diagonalBrush) m_diagonalBrush->SetOpacity(specularAlpha);
 
     // 4. [Geek Scheme] Gradient Border Brush (135-degree logic)
     D2D1_GRADIENT_STOP borderStops[3];
-    bool isLight = (config.theme == ThemeMode::Light);
     float glowR = isLight ? 0.0f : 1.0f;
     float glowG = isLight ? 0.0f : 1.0f;
     float glowB = isLight ? 0.0f : 1.0f;
