@@ -488,7 +488,7 @@ void UIRenderer::EnsureTextFormats() {
         m_dwriteFactory->CreateTextFormat(
             L"Consolas", nullptr,
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            12.0f * s, L"en-us", &m_debugFormat
+            12.0f, L"en-us", &m_debugFormat
         );
         if (m_debugFormat) {
             m_debugFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -1322,7 +1322,7 @@ void UIRenderer::DrawAnimationScrubber(ID2D1DeviceContext* dc, HWND hwnd) {
     }
     
     // ======== 3. Frame Counter Text (right of buttons) ========
-    if (m_debugFormat) {
+    if (m_panelFormat) {
         wchar_t txt[96];
         if (m_animState.InspectorMode) {
             const wchar_t* dispName = L"Keep";
@@ -1336,7 +1336,7 @@ void UIRenderer::DrawAnimationScrubber(ID2D1DeviceContext* dc, HWND hwnd) {
         }
         
         ComPtr<IDWriteTextLayout> layout;
-        m_dwriteFactory->CreateTextLayout(txt, (UINT32)wcslen(txt), m_debugFormat.Get(), 250.0f, 30.0f, &layout);
+        m_dwriteFactory->CreateTextLayout(txt, (UINT32)wcslen(txt), m_panelFormat.Get(), 250.0f, 30.0f, &layout);
         if (layout) {
             DWRITE_TEXT_METRICS tm; layout->GetMetrics(&tm);
             float textX = btnStartX + totalBtnW + pillPad + 8.0f * s;
@@ -2652,7 +2652,7 @@ void UIRenderer::DrawCompareHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect, 
     dc->DrawLine(D2D1::Point2F(rect.left, bottom), D2D1::Point2F(rect.right, bottom), gridBrush.Get(), 1.0f * m_uiScale);
 
     // Draw Legend
-    if (m_debugFormat) {
+    if (m_panelFormat) {
         ComPtr<ID2D1SolidColorBrush> leftBrush, rightBrush;
         CreateScaledBrush(dc, leftColor, hdrWhiteScale, &leftBrush);
         CreateScaledBrush(dc, rightColor, hdrWhiteScale, &rightBrush);
@@ -2660,16 +2660,16 @@ void UIRenderer::DrawCompareHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect, 
         float legendY = bottom + 2.0f * m_uiScale;
         float center = rect.left + (rect.right - rect.left) / 2.0f;
 
-        m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        dc->DrawText(L"Left Histogram \x25A0", 16, m_debugFormat.Get(),
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        dc->DrawText(L"Left Histogram \x25A0", 16, m_panelFormat.Get(),
                      D2D1::RectF(rect.left, legendY, center - 10.0f * m_uiScale, legendY + 14.0f * m_uiScale), leftBrush.Get());
 
-        m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        dc->DrawText(L"\x25A0 Right Histogram", 17, m_debugFormat.Get(),
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        dc->DrawText(L"\x25A0 Right Histogram", 17, m_panelFormat.Get(),
                      D2D1::RectF(center + 10.0f * m_uiScale, legendY, rect.right, legendY + 14.0f * m_uiScale), rightBrush.Get());
 
         // Reset Alignment
-        m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 }
 
@@ -3391,7 +3391,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     if (!GetCompareInfoSnapshot(leftMeta, rightMeta)) return;
 
     EnsureTextFormats();
-    if (!m_panelFormat || !m_debugFormat) return;
+    if (!m_panelFormat) return;
 
     const float s = m_uiScale;
 
@@ -3573,7 +3573,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     std::wstring rightTag = GetQualityTag(rightMeta, rightColor);
 
 	    EnsureTextFormats();
-	    if (!m_panelFormat || !m_debugFormat) return;
+	    if (!m_panelFormat) return;
 	
 	    // --- Dynamic Height Calculation ---
 	    std::vector<std::wstring> labels;
@@ -3629,10 +3629,10 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 			    for (const auto& r : rightRows) if (r.label == L"Size") { rightSizeRow = &r; break; }
 			    std::wstring leftSizeText = GetHudRowText(leftSizeRow);
 			    std::wstring rightSizeText = GetHudRowText(rightSizeRow);
-			    float sizeArrowReserve = MeasureTextWidth(L" ↑", m_debugFormat.Get()) + 4.0f * s;
+			    float sizeArrowReserve = MeasureTextWidth(L" ↑", m_panelFormat.Get()) + 4.0f * s;
 			    float sizeSafetyPadding = 6.0f * s;
-			    if (!leftSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(leftSizeText, m_debugFormat.Get()) + sizeArrowReserve + sizeSafetyPadding);
-			    if (!rightSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(rightSizeText, m_debugFormat.Get()) + sizeArrowReserve + sizeSafetyPadding);
+			    if (!leftSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(leftSizeText, m_panelFormat.Get()) + sizeArrowReserve + sizeSafetyPadding);
+			    if (!rightSizeText.empty()) desiredValW = (std::max)(desiredValW, MeasureTextWidth(rightSizeText, m_panelFormat.Get()) + sizeArrowReserve + sizeSafetyPadding);
 
 		    const float minPanelW = 400.0f * s;
 		    const float maxPanelW = m_width - 20.0f * s;
@@ -3882,9 +3882,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 		                    originalVal = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
 		                }
 
-		                float arrowWidth = winnerMark.empty() ? 0.0f : MeasureTextWidth(winnerMark, m_debugFormat.Get());
+		                float arrowWidth = winnerMark.empty() ? 0.0f : MeasureTextWidth(winnerMark, m_panelFormat.Get());
 		                float textMaxW = winnerMark.empty() ? w : (std::max)(0.0f, w - arrowWidth - 2.0f * s);
-		                std::wstring val = MakeMiddleEllipsis(textMaxW, originalVal, m_debugFormat.Get());
+		                std::wstring val = MakeMiddleEllipsis(textMaxW, originalVal, m_panelFormat.Get());
 		                
 	                D2D1_RECT_F rect = D2D1::RectF(x, y, x + w, y + rowH);
 	                
@@ -3936,7 +3936,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     }
     
     // Reset alignment
-    m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     
     // Draw Compare Histogram
     if (hasHistogram) {
