@@ -19,9 +19,14 @@ void GeekGlassEngine::InitializeResources(ID2D1RenderTarget* pRT) {
     pContext->CreateEffect(CLSID_D2D1Scale, &m_scaleDownEffect);
     pContext->CreateEffect(CLSID_D2D1Scale, &m_scaleUpEffect);
     pContext->CreateEffect(CLSID_D2D1ColorMatrix, &m_colorMatrixEffect);
+    pContext->CreateEffect(CLSID_D2D1Shadow, &m_shadowEffect);
 
     if (m_blurEffect) {
         m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+    }
+    if (m_shadowEffect) {
+        m_shadowEffect->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 12.0f);
+        m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::ColorF(0, 0, 0, 0.45f));
     }
 }
 
@@ -32,6 +37,7 @@ void GeekGlassEngine::ReleaseResources() {
     m_scaleDownEffect.Reset();
     m_scaleUpEffect.Reset();
     m_colorMatrixEffect.Reset();
+    m_shadowEffect.Reset();
     m_diagonalBrush.Reset();
     m_borderBrush.Reset();
     m_bevelBrush.Reset();
@@ -86,8 +92,22 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
         }
     }
 
-    // 2. Bevel Brush (Solid Physical Baseline)
-    pRT->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1), &m_bevelBrush);
+    // 2. [Physical Bevel] Dual-tone Inner Edge (Inner Glow + Edge Depth)
+    D2D1_GRADIENT_STOP bevelStops[2];
+    bool isLight = (config.theme == ThemeMode::Light);
+    float bevelLightAlpha = isLight ? 0.05f : 0.12f;
+    float bevelDarkAlpha = isLight ? 0.15f : 0.05f;
+
+    bevelStops[0] = { 0.00f, D2D1::ColorF(isLight ? 0.0f : 1.0f, isLight ? 0.0f : 1.0f, isLight ? 0.0f : 1.0f, bevelLightAlpha) };
+    bevelStops[1] = { 1.00f, D2D1::ColorF(isLight ? 1.0f : 0.0f, isLight ? 1.0f : 0.0f, isLight ? 1.0f : 0.0f, bevelDarkAlpha) };
+
+    pStops.Reset();
+    pRT->CreateGradientStopCollection(bevelStops, 2, &pStops);
+    pRT->CreateLinearGradientBrush(
+        D2D1::LinearGradientBrushProperties(
+            D2D1::Point2F(config.panelBounds.left, config.panelBounds.top),
+            D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom)),
+        pStops.Get(), &m_bevelBrush);
 
     // 3. Specular Jewel Model: 5-stop Focused Refraction
     // We use a focused [40% - 60%] band to ensure fixed width.
@@ -155,6 +175,39 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
     pRT->GetFactory(&factory);
     ComPtr<ID2D1RoundedRectangleGeometry> roundedGeometry;
     factory->CreateRoundedRectangleGeometry(&roundedRect, &roundedGeometry);
+    
+    // 0. Draw Drop Shadow (Outside layer clipping)
+    if (pContext && m_shadowEffect && config.opacity > 0.1f) {
+        ComPtr<ID2D1Image> originalTarget;
+        pContext->GetTarget(&originalTarget);
+
+        // Create an Alpha mask of the panel shape
+        ComPtr<ID2D1CommandList> shadowMask;
+        pContext->CreateCommandList(&shadowMask);
+        pContext->SetTarget(shadowMask.Get());
+        pContext->BeginDraw();
+        pContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+        ComPtr<ID2D1SolidColorBrush> blackBrush;
+        pContext->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1.0f), &blackBrush);
+        pContext->FillRoundedRectangle(roundedRect, blackBrush.Get());
+        pContext->EndDraw();
+        shadowMask->Close();
+        
+        // Restore target BEFORE applying effect to avoid recursive target errors
+        pContext->SetTarget(originalTarget.Get());
+
+        // Apply Shadow Effect
+        m_shadowEffect->SetInput(0, shadowMask.Get());
+        if (config.opacity < 1.0f) {
+             m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::ColorF(0, 0, 0, 0.45f * config.opacity));
+        }
+
+        // Apply slight offset (Bottom-Right)
+        D2D1_MATRIX_3X2_F offset = D2D1::Matrix3x2F::Translation(2.0f, 3.0f);
+        pContext->SetTransform(offset);
+        pContext->DrawImage(m_shadowEffect.Get());
+        pContext->SetTransform(D2D1::IdentityMatrix());
+    }
 
     // Use 1.0 Layer Opacity to allow structural persistence. 
     // We pass roundedGeometry to ensure the blur is perfectly clipped to the rounded corners.
@@ -247,6 +300,20 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
         // Already in ADD if possible, but let's ensure it's explicitly set
         if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
         pRT->DrawRoundedRectangle(roundedRect, m_borderBrush.Get(), config.strokeWeight);
+    }
+
+    // 3. [Structural Depth] Inner Bevel (Micro-refraction)
+    if (m_bevelBrush) {
+        // Soft SourceOver for the bevel to ensure physical material feel
+        if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+        
+        // Draw slightly inside the main border
+        D2D1_ROUNDED_RECT innerRect = roundedRect;
+        float inset = 0.5f;
+        innerRect.rect.left += inset; innerRect.rect.top += inset;
+        innerRect.rect.right -= inset; innerRect.rect.bottom -= inset;
+        
+        pRT->DrawRoundedRectangle(innerRect, m_bevelBrush.Get(), 0.5f);
     }
 
     // Final Restore
