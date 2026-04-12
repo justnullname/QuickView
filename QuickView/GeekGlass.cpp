@@ -9,6 +9,7 @@ namespace QuickView::UI::GeekGlass {
 
 void GeekGlassEngine::InitializeResources(ID2D1RenderTarget* pRT) {
     if (!pRT) return;
+    if (config.opacity <= 0.005f) return;
     
     ComPtr<ID2D1DeviceContext> pContext;
     if (FAILED(pRT->QueryInterface(IID_PPV_ARGS(&pContext)))) return;
@@ -68,10 +69,10 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
         (std::abs(height - (m_currentBounds.bottom - m_currentBounds.top)) >
          0.001f);
 
-    bool needsRebuild = !m_diagonalBrush || !m_bevelBrush || !m_baseTintBrush ||
-                        themeChanged || materialChanged || sizeChanged;
+    bool needsRebuildBrushes = !m_diagonalBrush || !m_bevelBrush || !m_baseTintBrush ||
+                               themeChanged || materialChanged;
 
-    if (!needsRebuild) {
+    if (!needsRebuildBrushes) {
       // Just update points if moving
       m_diagonalBrush->SetStartPoint(
           D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
@@ -83,8 +84,13 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
           D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
 
       m_currentBounds = config.panelBounds;
-      return; 
+
+      // If ONLY size changed, we still need to rebuild the shadow mask command list
+      // but we can skip brush rebuilding.
+      if (!sizeChanged) return;
     }
+
+    if (needsRebuildBrushes) {
 
     m_currentTheme = config.theme;
     m_currentTintProfile = config.tintProfile;
@@ -172,6 +178,8 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
             D2D1::Point2F(config.panelBounds.left, config.panelBounds.top),
             D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom)),
         pStops.Get(), &m_borderBrush);
+    }
+
 
     // 5. [GPU Performance Boost] Pre-record Shadow Mask (Off-screen)
     // Recorded only if shadow is enabled to save GPU cycles on static panels.
@@ -213,6 +221,7 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
 
 void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlassConfig& config) {
     if (!pRT) return;
+    if (config.opacity <= 0.005f) return;
 
     ComPtr<ID2D1DeviceContext> pContext;
     pRT->QueryInterface(IID_PPV_ARGS(&pContext));
@@ -267,12 +276,17 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
         float downscale = 0.25f; 
         
         // --- Stability Optimization: Input Padding ---
-        // We slightly expand the sampling area to prevent unblurred background 
-        // from leaking into the glass panel during rapid scaling/motion.
+        // Shift Blur to Screen Space: Crop -> ScaleDown -> Blur -> ColorMatrix -> ScaleUp
         m_transformEffect->SetInput(0, config.pBackgroundCommandList);
         m_transformEffect->SetValue(D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, config.backgroundTransform);
 
-        m_scaleDownEffect->SetInputEffect(0, m_transformEffect.Get());
+        // Add a 2.0px 'Safety Buffer' to the crop to handle sub-pixel alignment issues during zoom
+        D2D1_VECTOR_4F crop = { config.panelBounds.left - 2.0f, config.panelBounds.top - 2.0f,
+                                config.panelBounds.right + 2.0f, config.panelBounds.bottom + 2.0f };
+        m_cropEffect->SetInputEffect(0, m_transformEffect.Get());
+        m_cropEffect->SetValue(D2D1_CROP_PROP_RECT, crop);
+
+        m_scaleDownEffect->SetInputEffect(0, m_cropEffect.Get());
         m_scaleDownEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(downscale, downscale));
 
         m_blurEffect->SetInputEffect(0, m_scaleDownEffect.Get());
@@ -294,13 +308,7 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
         m_scaleUpEffect->SetInputEffect(0, m_colorMatrixEffect.Get());
         m_scaleUpEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(1.0f/downscale, 1.0f/downscale));
 
-        m_cropEffect->SetInputEffect(0, m_scaleUpEffect.Get());
-        
-        // Add a 2.0px 'Safety Buffer' to the crop to handle sub-pixel alignment issues during zoom
-        D2D1_VECTOR_4F crop = { config.panelBounds.left, config.panelBounds.top, config.panelBounds.right, config.panelBounds.bottom };
-        m_cropEffect->SetValue(D2D1_CROP_PROP_RECT, crop);
-
-        pContext->DrawImage(m_cropEffect.Get());
+        pContext->DrawImage(m_scaleUpEffect.Get());
 
         // Nano-Grain (Micro-Texture)
         ComPtr<ID2D1SolidColorBrush> grain;
@@ -341,7 +349,6 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
     }
 
     // 2. [Geek Upgrade] Gradient Border with Additive Blending
-    if (m_borderBrush) {
         // Already in ADD if possible, but let's ensure it's explicitly set
         if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
         pRT->DrawRoundedRectangle(roundedRect, m_borderBrush.Get(), config.strokeWeight);
