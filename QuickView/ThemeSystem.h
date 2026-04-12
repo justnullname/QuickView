@@ -5,7 +5,7 @@
 namespace QuickView::UI::ThemeSystem {
 
     /// <summary>
-    /// Exports current theme settings to a .qvtheme file (INI).
+    /// Exports current theme settings to a .qvtheme file (JSON).
     /// </summary>
     bool ExportTheme(HWND hwnd, const AppConfig& config);
 

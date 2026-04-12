@@ -9,7 +9,6 @@ namespace QuickView::UI::GeekGlass {
 
 void GeekGlassEngine::InitializeResources(ID2D1RenderTarget* pRT) {
     if (!pRT) return;
-    if (config.opacity <= 0.005f) return;
     
     ComPtr<ID2D1DeviceContext> pContext;
     if (FAILED(pRT->QueryInterface(IID_PPV_ARGS(&pContext)))) return;
@@ -178,8 +177,8 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
             D2D1::Point2F(config.panelBounds.left, config.panelBounds.top),
             D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom)),
         pStops.Get(), &m_borderBrush);
-    }
 
+    }
 
     // 5. [GPU Performance Boost] Pre-record Shadow Mask (Off-screen)
     // Recorded only if shadow is enabled to save GPU cycles on static panels.
@@ -276,6 +275,8 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
         float downscale = 0.25f; 
         
         // --- Stability Optimization: Input Padding ---
+        // We slightly expand the sampling area to prevent unblurred background
+        // from leaking into the glass panel during rapid scaling/motion.
         // Shift Blur to Screen Space: Crop -> ScaleDown -> Blur -> ColorMatrix -> ScaleUp
         m_transformEffect->SetInput(0, config.pBackgroundCommandList);
         m_transformEffect->SetValue(D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, config.backgroundTransform);
@@ -349,8 +350,8 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
     }
 
     // 2. [Geek Upgrade] Gradient Border with Additive Blending
+    if (m_borderBrush) {
         // Already in ADD if possible, but let's ensure it's explicitly set
-        if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
         pRT->DrawRoundedRectangle(roundedRect, m_borderBrush.Get(), config.strokeWeight);
     }
 
