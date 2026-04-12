@@ -8,9 +8,8 @@
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shlwapi.lib")
 
+extern void SaveConfig(); // Defined in main.cpp
 namespace QuickView::UI::ThemeSystem {
-
-    extern void SaveConfig(); // Defined in main.cpp
 
     static std::wstring ShowFileDialog(HWND hwnd, bool isSave) {
         wchar_t szFile[MAX_PATH] = { 0 };
@@ -148,7 +147,7 @@ namespace QuickView::UI::ThemeSystem {
         get_color("canvas_custom", config.CanvasCustomR, config.CanvasCustomG, config.CanvasCustomB);
 
         config.EnforceGlassSafetyLimits();
-        SaveConfig(); // Persist to QuickView.ini as requested
+        ::SaveConfig(); // Persist to QuickView.ini as requested
         return true;
     }
 }

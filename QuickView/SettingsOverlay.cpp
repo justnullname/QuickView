@@ -1362,27 +1362,21 @@ void SettingsOverlay::BuildMenu() {
     tabTheme.items.push_back(itemMenus);
 
     // Theme Management
-    tabTheme.items.push_back({ AppStrings::Settings_Header_ThemeManagement, OptionType::Header });
-
-    SettingsItem itemExport = { AppStrings::Settings_Action_ExportTheme, OptionType::ActionButton };
-    itemExport.buttonText = AppStrings::Settings_Action_ExportTheme;
-    itemExport.onChange = [this]() {
-        if (QuickView::UI::ThemeSystem::ExportTheme(m_hwnd, g_config)) {
-             SetItemStatus(AppStrings::Settings_Action_ExportTheme, AppStrings::Settings_Action_Done, D2D1::ColorF(D2D1::ColorF::Lime));
-        }
-    };
-    tabTheme.items.push_back(itemExport);
-
-    SettingsItem itemImport = { AppStrings::Settings_Action_ImportTheme, OptionType::ActionButton };
-    itemImport.buttonText = AppStrings::Settings_Action_ImportTheme;
-    itemImport.onChange = [this]() {
+    SettingsItem itemThemeManage = { AppStrings::Settings_Header_ThemeManagement, OptionType::DualActionButton };
+    itemThemeManage.buttonText = AppStrings::Settings_Action_ImportTheme;
+    itemThemeManage.buttonText2 = AppStrings::Settings_Action_ExportTheme;
+    itemThemeManage.onChange = [this]() {
         if (QuickView::UI::ThemeSystem::ImportTheme(m_hwnd, g_config)) {
-             SetItemStatus(AppStrings::Settings_Action_ImportTheme, AppStrings::Settings_Action_Done, D2D1::ColorF(D2D1::ColorF::Lime));
              g_runtime.SyncFrom(g_config);
              this->RebuildMenu(); 
         }
     };
-    tabTheme.items.push_back(itemImport);
+    itemThemeManage.onChange2 = [this]() {
+        if (QuickView::UI::ThemeSystem::ExportTheme(m_hwnd, g_config)) {
+             // Maybe show a success status?
+        }
+    };
+    tabTheme.items.push_back(itemThemeManage);
 
     m_tabs.push_back(tabTheme);
     
@@ -2762,8 +2756,47 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                      break;
-                }
-                case OptionType::CustomColorRow: {
+                 }
+                 case OptionType::DualActionButton: {
+                      const float btnPadX = 14.0f * s;
+                      const float btnInsetY = CONTROL_INSET_Y * s;
+                      const float btnRadius = 4.0f * s;
+                      const float gap = 8.0f * s;
+
+                      auto drawBtn = [&](const std::wstring& text, D2D1_RECT_F& outRect, bool hovered) {
+                          float textW = 0.0f;
+                          ComPtr<IDWriteTextLayout> layout;
+                          if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(text.c_str(), (UINT32)text.length(), m_textFormatItem.Get(), 500.0f*s, 100.0f*s, &layout))) {
+                              DWRITE_TEXT_METRICS m = {};
+                              layout->GetMetrics(&m);
+                              textW = ceilf(m.widthIncludingTrailingWhitespace);
+                          }
+                          float w = std::max(64.0f * s, textW + btnPadX * 2.0f);
+                          float x_anchor = outRect.left;
+                          outRect = D2D1::RectF(x_anchor - w, contentY + btnInsetY, x_anchor, contentY + rowHeight - btnInsetY);
+
+                          ComPtr<ID2D1SolidColorBrush> brush;
+                          if (hovered) {
+                              pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.08f, 0.45f, 0.85f), m_hdrWhiteScale), &brush);
+                          } else {
+                              pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.47f, 0.84f), m_hdrWhiteScale), &brush);
+                          }
+                          pRT->FillRoundedRectangle(D2D1::RoundedRect(outRect, btnRadius, btnRadius), brush.Get());
+                          
+                          m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                          pRT->DrawText(text.c_str(), (UINT32)text.length(), m_textFormatItem.Get(), outRect, m_brushText.Get());
+                          m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                      };
+
+                      float anchorX = controlX + controlW;
+                      item.interactRect2 = D2D1::RectF(anchorX, 0, 0, 0);
+                      drawBtn(item.buttonText2, item.interactRect2, item.isHovered2);
+
+                      item.interactRect = D2D1::RectF(item.interactRect2.left - gap, 0, 0, 0);
+                      drawBtn(item.buttonText, item.interactRect, item.isHovered);
+                      break;
+                 }
+                 case OptionType::CustomColorRow: {
                      item.interactRect = controlRect;
                      
                      // Determine color source: pFloatVal points to R channel if set, else use canvas colors
@@ -3178,16 +3211,18 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                     }
                 }
 
-                if (x >= item.interactRect.left && x <= item.interactRect.right &&
-                    y >= item.interactRect.top && y <= item.interactRect.bottom) {
-                
-                // If ComboBox is Active, do NOT verify hover on other items effectively?
-                // Actually, if we want to click outside to close, we should allow hover?
-                // Standard UI: Hover works in background, but click closes popup. 
-                // Let's proceed normal hover logic.
-                
-                m_pHoverItem = &item;
-                
+                bool inR1 = (x >= item.interactRect.left && x <= item.interactRect.right &&
+                           y >= item.interactRect.top && y <= item.interactRect.bottom);
+                bool inR2 = (x >= item.interactRect2.left && x <= item.interactRect2.right &&
+                           y >= item.interactRect2.top && y <= item.interactRect2.bottom);
+
+                if (inR1 || inR2) {
+                    m_pHoverItem = &item;
+                    item.isHovered = inR1;
+                    item.isHovered2 = inR2;
+
+                    if (inR1 || inR2) ::SetCursor(::LoadCursor(NULL, IDC_HAND));
+
                     // Sub-item Hit Testing
                     if (item.type == OptionType::AboutLinks) {
                         LinkRects r = GetLinkButtonRects(item.rect);
@@ -3195,13 +3230,13 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         else if (x >= r.issues.left && x <= r.issues.right && y >= r.issues.top && y <= r.issues.bottom) m_hoverLinkIndex = 1;
                         else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) m_hoverLinkIndex = 2;
 
-
                         if (m_hoverLinkIndex != -1) ::SetCursor(::LoadCursor(NULL, IDC_HAND));
                     }
                     
-                    if (!m_pHoverTooltipItem) { // Only break if we didn't also find a tooltip this frame
-                        break;
-                    }
+                    if (!m_pHoverTooltipItem) break;
+                } else {
+                    item.isHovered = false;
+                    item.isHovered2 = false;
                 }
             }
         }
@@ -3393,6 +3428,19 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
             if (m_pHoverItem->onChange) m_pHoverItem->onChange();
             m_pHoverItem->isActivated = true; // Mark as activated for visual feedback
+            return SettingsAction::RepaintAll;
+        }
+        if (m_pHoverItem->type == OptionType::DualActionButton) {
+            if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
+            
+            // Primary Button
+            if (x >= m_pHoverItem->interactRect.left && x <= m_pHoverItem->interactRect.right) {
+                if (m_pHoverItem->onChange) m_pHoverItem->onChange();
+            }
+            // Secondary Button
+            else if (x >= m_pHoverItem->interactRect2.left && x <= m_pHoverItem->interactRect2.right) {
+                if (m_pHoverItem->onChange2) m_pHoverItem->onChange2();
+            }
             return SettingsAction::RepaintAll;
         }
         // About: Update Button

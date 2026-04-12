@@ -26,6 +26,7 @@ enum class OptionType {
     Segment,
     ComboBox, 
     ActionButton,
+    DualActionButton,
     CustomColorRow, 
     Input,
     Header, 
@@ -53,10 +54,13 @@ struct SettingsItem {
     std::wstring displayFormat;        
     
     std::function<void()> onChange;
+    std::function<void()> onChange2; 
 
     D2D1_RECT_F rect; 
     D2D1_RECT_F interactRect = {0};
+    D2D1_RECT_F interactRect2 = {0}; 
     bool isHovered = false;
+    bool isHovered2 = false; 
     
     bool isDisabled = false;
     std::wstring disabledText; 
@@ -64,6 +68,7 @@ struct SettingsItem {
     D2D1_RECT_F tooltipIconRect = {0};
     
     std::wstring buttonText = L"Select";  
+    std::wstring buttonText2 = L"";       
     std::wstring buttonActivatedText;     
     bool isActivated = false;             
     bool isDestructive = false;           
