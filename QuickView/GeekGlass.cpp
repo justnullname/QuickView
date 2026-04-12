@@ -49,28 +49,41 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
     float height = config.panelBounds.bottom - config.panelBounds.top;
     
     bool themeChanged = (config.theme != m_currentTheme) || (config.tintProfile != m_currentTintProfile);
-    bool materialChanged = (std::abs(config.tintAlpha - m_currentTintAlpha) > 0.001f) ||
-                           (std::abs(config.specularOpacity - m_currentSpecularOpacity) > 0.001f);
-    
+    bool materialChanged =
+        (std::abs(config.tintAlpha - m_currentTintAlpha) > 0.001f) ||
+        (std::abs(config.specularOpacity - m_currentSpecularOpacity) >
+         0.001f) ||
+        (std::abs(config.shadowOpacity - m_currentShadowOpacity) > 0.001f);
+
     if (config.tintProfile == 1 && (
         config.customTintColor.r != m_currentCustomTintColor.r || 
         config.customTintColor.g != m_currentCustomTintColor.g || 
         config.customTintColor.b != m_currentCustomTintColor.b)) {
         themeChanged = true;
     }
-    
-    bool needsRebuild = !m_diagonalBrush || !m_bevelBrush || !m_baseTintBrush || themeChanged || materialChanged;
+
+    bool sizeChanged =
+        (std::abs(width - (m_currentBounds.right - m_currentBounds.left)) >
+         0.001f) ||
+        (std::abs(height - (m_currentBounds.bottom - m_currentBounds.top)) >
+         0.001f);
+
+    bool needsRebuild = !m_diagonalBrush || !m_bevelBrush || !m_baseTintBrush ||
+                        themeChanged || materialChanged || sizeChanged;
 
     if (!needsRebuild) {
-        // Just update points if moving
-        if (config.panelBounds.left != m_currentBounds.left || config.panelBounds.top != m_currentBounds.top) {
-             m_diagonalBrush->SetStartPoint(D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
-             m_diagonalBrush->SetEndPoint(D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
-             m_borderBrush->SetStartPoint(D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
-             m_borderBrush->SetEndPoint(D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
-        }
-        m_currentBounds = config.panelBounds;
-        return; 
+      // Just update points if moving
+      m_diagonalBrush->SetStartPoint(
+          D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
+      m_diagonalBrush->SetEndPoint(
+          D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
+      m_borderBrush->SetStartPoint(
+          D2D1::Point2F(config.panelBounds.left, config.panelBounds.top));
+      m_borderBrush->SetEndPoint(
+          D2D1::Point2F(config.panelBounds.right, config.panelBounds.bottom));
+
+      m_currentBounds = config.panelBounds;
+      return; 
     }
 
     m_currentTheme = config.theme;
@@ -78,6 +91,7 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
     m_currentCustomTintColor = config.customTintColor;
     m_currentTintAlpha = config.tintAlpha;
     m_currentSpecularOpacity = config.specularOpacity;
+    m_currentShadowOpacity = config.shadowOpacity;
     m_currentBounds = config.panelBounds;
 
     ComPtr<ID2D1GradientStopCollection> pStops;
@@ -146,7 +160,8 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
     float glowG = isLight ? 0.0f : 1.0f;
     float glowB = isLight ? 0.0f : 1.0f;
 
-    borderStops[0] = { 0.00f, D2D1::ColorF(glowR, glowG, glowB, 0.40f) }; // Top-Left: Light-catcher
+    borderStops[0] = {0.00f, D2D1::ColorF(glowR, glowG, glowB,
+                                          0.30f)}; // Top-Left: Light-catcher
     borderStops[1] = { 0.50f, D2D1::ColorF(glowR, glowG, glowB, 0.15f) }; // Middle: Transition
     borderStops[2] = { 1.00f, D2D1::ColorF(glowR, glowG, glowB, 0.05f) }; // Bottom-Right: Backlight fade
     
@@ -159,31 +174,40 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
         pStops.Get(), &m_borderBrush);
 
     // 5. [GPU Performance Boost] Pre-record Shadow Mask (Off-screen)
-    // We create a temp DC from the parent device to record without affecting the main UI BeginDraw state.
+    // Recorded only if shadow is enabled to save GPU cycles on static panels.
     ComPtr<ID2D1DeviceContext> pContext;
     pRT->QueryInterface(IID_PPV_ARGS(&pContext));
-    if (pContext) {
-        ComPtr<ID2D1Device> pDevice;
-        pContext->GetDevice(&pDevice);
-        if (pDevice) {
-            ComPtr<ID2D1DeviceContext> tempDC;
-            pDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &tempDC);
-            if (tempDC) {
-                m_shadowMask.Reset();
-                tempDC->CreateCommandList(&m_shadowMask);
-                tempDC->SetTarget(m_shadowMask.Get());
-                
-                tempDC->BeginDraw();
-                tempDC->Clear(D2D1::ColorF(0, 0, 0, 0));
-                ComPtr<ID2D1SolidColorBrush> maskBrush;
-                tempDC->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1.0f), &maskBrush);
-                
-                D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(config.panelBounds, config.cornerRadius, config.cornerRadius);
-                tempDC->FillRoundedRectangle(roundedRect, maskBrush.Get());
-                tempDC->EndDraw();
-                m_shadowMask->Close();
-            }
+    if (pContext && config.shadowOpacity > 0.005f) {
+      ComPtr<ID2D1Device> pDevice;
+      pContext->GetDevice(&pDevice);
+      if (pDevice) {
+        ComPtr<ID2D1DeviceContext> tempDC;
+        pDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &tempDC);
+        if (tempDC) {
+          float dpiX, dpiY;
+          pContext->GetDpi(&dpiX, &dpiY);
+          tempDC->SetDpi(dpiX, dpiY);
+
+          m_shadowMask.Reset();
+          tempDC->CreateCommandList(&m_shadowMask);
+          tempDC->SetTarget(m_shadowMask.Get());
+
+          tempDC->BeginDraw();
+          tempDC->Clear(D2D1::ColorF(0, 0, 0, 0));
+          ComPtr<ID2D1SolidColorBrush> maskBrush;
+          tempDC->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1.0f),
+                                        &maskBrush);
+
+          // Record in local space (0, 0, width, height) for maximum performance
+          // and stability
+          D2D1_ROUNDED_RECT localRect =
+              D2D1::RoundedRect(D2D1::RectF(0, 0, width, height),
+                                config.cornerRadius, config.cornerRadius);
+          tempDC->FillRoundedRectangle(localRect, maskBrush.Get());
+          tempDC->EndDraw();
+          m_shadowMask->Close();
         }
+      }
     }
 }
 
@@ -198,22 +222,31 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
     pRT->GetFactory(&factory);
     ComPtr<ID2D1RoundedRectangleGeometry> roundedGeometry;
     factory->CreateRoundedRectangleGeometry(&roundedRect, &roundedGeometry);
-    
-    // 0. Hardware Accelerated Drop Shadow (GPU Shadow Mask Branch)
-    if (pContext && m_shadowEffect && m_shadowMask && config.opacity > 0.1f) {
-        // [Performance Optimization] Direct GPU Draw - No Target Switching
-        m_shadowEffect->SetInput(0, m_shadowMask.Get());
-        
-        // Scale shadow opacity with master control
-        float shadowMasterAlpha = config.shadowOpacity * config.opacity;
-        if (config.theme == ThemeMode::Light) shadowMasterAlpha *= 0.6f; // Softer in light mode
-        m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::ColorF(0, 0, 0, shadowMasterAlpha));
 
-        // Offset (2.0, 3.0) for depth
-        D2D1_MATRIX_3X2_F offset = D2D1::Matrix3x2F::Translation(2.0f, 3.0f);
-        pContext->SetTransform(offset);
-        pContext->DrawImage(m_shadowEffect.Get(), D2D1_INTERPOLATION_MODE_LINEAR);
-        pContext->SetTransform(D2D1::IdentityMatrix());
+    // 0. Update Brushes and Shadow Mask first to ensure coordinate parity
+    CreateOrUpdateBrushes(pRT, config);
+
+    // 1. Hardware Accelerated Drop Shadow (GPU Shadow Mask Branch)
+    // Only drawn for Track A (internal compositing). Track B (DWM windows) uses
+    // OS-native shadows.
+    if (pContext && m_shadowEffect && m_shadowMask &&
+        config.track == RenderTrack::TrackA_CommandList &&
+        config.opacity > 0.15f && config.shadowOpacity > 0.005f) {
+      // [Performance Optimization] Direct GPU Draw
+      m_shadowEffect->SetInput(0, m_shadowMask.Get());
+
+      // Scale shadow opacity with master control
+      float shadowMasterAlpha = config.shadowOpacity * config.opacity;
+      if (config.theme == ThemeMode::Light)
+        shadowMasterAlpha *= 0.6f;
+      m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR,
+                               D2D1::ColorF(0, 0, 0, shadowMasterAlpha));
+
+      // Offset (2.0, 3.0) for depth, drawing relative to the panel start
+      D2D1_POINT_2F shadowPos = D2D1::Point2F(config.panelBounds.left + 2.0f,
+                                              config.panelBounds.top + 3.0f);
+      pContext->DrawImage(m_shadowEffect.Get(), shadowPos,
+                          D2D1_INTERPOLATION_MODE_LINEAR);
     }
 
     // Use 1.0 Layer Opacity to allow structural persistence. 
@@ -278,7 +311,6 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
         }
     }
 
-    CreateOrUpdateBrushes(pRT, config);
     if (m_baseTintBrush) pRT->FillRoundedRectangle(roundedRect, m_baseTintBrush.Get());
 
     DrawGeekGlassToppings(pRT, config);

@@ -97,6 +97,7 @@ namespace QuickView::UI::GeekGlass {
         D2D1_COLOR_F m_currentCustomTintColor = {};
         float m_currentTintAlpha = 0.65f;
         float m_currentSpecularOpacity = 0.15f;
+        float m_currentShadowOpacity = 0.45f;
         D2D1_RECT_F m_currentBounds = {};
     };
     

@@ -392,7 +392,6 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
   ComPtr<ID2D1Layer> layer;
   if (SUCCEEDED(pRT->CreateLayer(&layer))) {
     D2D1_LAYER_PARAMETERS params = D2D1::LayerParameters();
-    params.contentBounds = m_bgRect.rect;
     params.opacity = m_opacity;
 
     pRT->PushLayer(params, layer.Get());
