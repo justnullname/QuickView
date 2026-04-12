@@ -2372,6 +2372,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Tooltip_TintDensity = L"ガラスのベースカラーの深さを制御します。";
   static constexpr const wchar_t *Settings_Label_SpecularOpacity = L"光沢";
   static constexpr const wchar_t *Settings_Tooltip_SpecularOpacity = L"ガラスパネルの光沢強度を制御します。";
+  static constexpr const wchar_t *Settings_Label_ShadowIntensity = L"シャドウ強度";
+  static constexpr const wchar_t *Settings_Tooltip_ShadowIntensity = L"影の強度を調整します。";
   static constexpr const wchar_t *Settings_Header_VectorAssets = L"エッジ";
   static constexpr const wchar_t *Settings_Label_VectorStrokeWeight = L"線幅";
   static constexpr const wchar_t *Settings_Option_StrokeStandard = L"標準 (1.5px)";
@@ -2913,6 +2915,8 @@ struct RU {
   static constexpr const wchar_t *Settings_Tooltip_TintDensity = L"Управляет глубиной базового цвета стекла.";
   static constexpr const wchar_t *Settings_Label_SpecularOpacity = L"Блеск";
   static constexpr const wchar_t *Settings_Tooltip_SpecularOpacity = L"Управляет интенсивностью зеркальных бликов.";
+  static constexpr const wchar_t *Settings_Label_ShadowIntensity = L"Тень";
+  static constexpr const wchar_t *Settings_Tooltip_ShadowIntensity = L"Интенсивность тени.";
   static constexpr const wchar_t *Settings_Header_VectorAssets = L"Грани";
   static constexpr const wchar_t *Settings_Label_VectorStrokeWeight = L"Толщина линий";
   static constexpr const wchar_t *Settings_Option_StrokeStandard = L"Стандарт (1.5px)";
@@ -3971,6 +3975,8 @@ struct ES {
   static constexpr const wchar_t *Settings_Tooltip_TintDensity = L"Profundidad del color.";
   static constexpr const wchar_t *Settings_Label_SpecularOpacity = L"Brillo";
   static constexpr const wchar_t *Settings_Tooltip_SpecularOpacity = L"Intensidad del brillo.";
+  static constexpr const wchar_t *Settings_Label_ShadowIntensity = L"Sombra";
+  static constexpr const wchar_t *Settings_Tooltip_ShadowIntensity = L"Intensidad de sombra.";
   static constexpr const wchar_t *Settings_Header_VectorAssets = L"Bordes";
   static constexpr const wchar_t *Settings_Label_VectorStrokeWeight = L"Grosor de línea";
   static constexpr const wchar_t *Settings_Option_StrokeStandard = L"Estándar (1.5px)";
