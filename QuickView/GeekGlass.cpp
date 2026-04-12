@@ -171,37 +171,20 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
     ComPtr<ID2D1RoundedRectangleGeometry> roundedGeometry;
     factory->CreateRoundedRectangleGeometry(&roundedRect, &roundedGeometry);
     
-    // 0. Draw Drop Shadow (Outside layer clipping)
-    if (pContext && m_shadowEffect && config.opacity > 0.1f) {
-        ComPtr<ID2D1Image> originalTarget;
-        pContext->GetTarget(&originalTarget);
-
-        // Create an Alpha mask of the panel shape
-        ComPtr<ID2D1CommandList> shadowMask;
-        pContext->CreateCommandList(&shadowMask);
-        pContext->SetTarget(shadowMask.Get());
-        pContext->BeginDraw();
-        pContext->Clear(D2D1::ColorF(0, 0, 0, 0));
-        ComPtr<ID2D1SolidColorBrush> blackBrush;
-        pContext->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1.0f), &blackBrush);
-        pContext->FillRoundedRectangle(roundedRect, blackBrush.Get());
-        pContext->EndDraw();
-        shadowMask->Close();
+    // 0. Safe Multi-pass Drop Shadow (Replaces unsafe SetTarget logic)
+    if (pContext && config.opacity > 0.1f) {
+        ComPtr<ID2D1SolidColorBrush> shadowBrush;
+        // Use very low alpha spread across 4 passes for a soft "lift" effect
+        float baseAlpha = 0.05f * config.opacity;
+        pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, baseAlpha), &shadowBrush);
         
-        // Restore target BEFORE applying effect to avoid recursive target errors
-        pContext->SetTarget(originalTarget.Get());
-
-        // Apply Shadow Effect
-        m_shadowEffect->SetInput(0, shadowMask.Get());
-        if (config.opacity < 1.0f) {
-             m_shadowEffect->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::ColorF(0, 0, 0, 0.45f * config.opacity));
+        for (int i = 1; i <= 4; i++) {
+            float offset = (float)i * 1.2f;
+            D2D1_ROUNDED_RECT sRect = roundedRect;
+            sRect.rect.left += offset; sRect.rect.top += offset;
+            sRect.rect.right += offset; sRect.rect.bottom += offset;
+            pRT->FillRoundedRectangle(sRect, shadowBrush.Get());
         }
-
-        // Apply slight offset (Bottom-Right)
-        D2D1_MATRIX_3X2_F offset = D2D1::Matrix3x2F::Translation(2.0f, 3.0f);
-        pContext->SetTransform(offset);
-        pContext->DrawImage(m_shadowEffect.Get());
-        pContext->SetTransform(D2D1::IdentityMatrix());
     }
 
     // Use 1.0 Layer Opacity to allow structural persistence. 
