@@ -42,24 +42,40 @@ void HelpOverlay::SetUIScale(float scale) {
 
 void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
     if (!m_brushBg) {
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale), &m_brushBg);
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushText);
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale), &m_brushHeader);
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), m_hdrWhiteScale), &m_brushKey);
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), m_hdrWhiteScale), &m_brushBorder);
+        bool isLight = IsLightThemeActive();
+        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+        D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+        D2D1_COLOR_F headClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F keyClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.7f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f);
+        D2D1_COLOR_F bordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+
+        pRT->CreateSolidColorBrush(ScaleUiColor(bgClr, m_hdrWhiteScale), &m_brushBg);
+        pRT->CreateSolidColorBrush(ScaleUiColor(txtClr, m_hdrWhiteScale), &m_brushText);
+        pRT->CreateSolidColorBrush(ScaleUiColor(headClr, m_hdrWhiteScale), &m_brushHeader);
+        pRT->CreateSolidColorBrush(ScaleUiColor(keyClr, m_hdrWhiteScale), &m_brushKey);
+        pRT->CreateSolidColorBrush(ScaleUiColor(bordClr, m_hdrWhiteScale), &m_brushBorder);
         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale), &m_brushScrollBg);
         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale), &m_brushScrollThumb);
         pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(1.0f, 0.2f, 0.2f, 0.8f), m_hdrWhiteScale), &m_brushCloseBg);
     }
 
     if (m_brushBg) {
-        m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f), m_hdrWhiteScale));
-        m_brushText->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
-        m_brushHeader->SetColor(ScaleUiColor(D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale));
-        m_brushKey->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f), m_hdrWhiteScale));
-        m_brushBorder->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), m_hdrWhiteScale));
-        m_brushScrollBg->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale));
-        m_brushScrollThumb->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale));
+        bool isLight = IsLightThemeActive();
+        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+        D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+        D2D1_COLOR_F headClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f) : D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F keyClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.7f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.7f);
+        D2D1_COLOR_F bordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+        D2D1_COLOR_F scrlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f);
+        D2D1_COLOR_F scrlTh = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f);
+
+        m_brushBg->SetColor(ScaleUiColor(bgClr, m_hdrWhiteScale));
+        m_brushText->SetColor(ScaleUiColor(txtClr, m_hdrWhiteScale));
+        m_brushHeader->SetColor(ScaleUiColor(headClr, m_hdrWhiteScale));
+        m_brushKey->SetColor(ScaleUiColor(keyClr, m_hdrWhiteScale));
+        m_brushBorder->SetColor(ScaleUiColor(bordClr, m_hdrWhiteScale));
+        m_brushScrollBg->SetColor(ScaleUiColor(scrlBg, m_hdrWhiteScale));
+        m_brushScrollThumb->SetColor(ScaleUiColor(scrlTh, m_hdrWhiteScale));
         m_brushCloseBg->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 0.2f, 0.2f, 0.8f), m_hdrWhiteScale));
     }
 
@@ -185,8 +201,10 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
 
     // Dimmer
     if (g_config.EnableAmbientDimmer) {
+        bool isLight = IsLightThemeActive();
+        D2D1_COLOR_F dimmerClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 0.4f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f);
         ComPtr<ID2D1SolidColorBrush> dimmer;
-        pRT->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.5f), &dimmer);
+        pRT->CreateSolidColorBrush(dimmerClr, &dimmer);
         pRT->FillRectangle(D2D1::RectF(0, 0, winW, winH), dimmer.Get());
     }
 

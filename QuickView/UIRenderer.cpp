@@ -757,7 +757,17 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     // Background brushes
     ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
     dc->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f * m_osdOpacity), hdrWhiteScale), &bgBrush);
-    D2D1_COLOR_F textColor = ScaleUiColor(m_osdColor, hdrWhiteScale);
+    
+    // [Fix] Theme-aware OSD Text: Automatically flip White text to Dark Grey in Light Mode
+    D2D1_COLOR_F finalOsdColor = m_osdColor;
+    if (IsLightThemeActive()) {
+        float luminance = m_osdColor.r * 0.299f + m_osdColor.g * 0.587f + m_osdColor.b * 0.114f;
+        if (luminance > 0.6f) { // If original is light (like the default White)
+            finalOsdColor = D2D1::ColorF(0.12f, 0.12f, 0.12f, 1.0f);
+        }
+    }
+    
+    D2D1_COLOR_F textColor = ScaleUiColor(finalOsdColor, hdrWhiteScale);
     textColor.a *= m_osdOpacity;
     dc->CreateSolidColorBrush(textColor, &textBrush);
 
@@ -784,6 +794,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                 auto& geekGlass = GetGlassEngine(key);
                 geekGlass.InitializeResources(dc);
                 QuickView::UI::GeekGlass::GeekGlassConfig config;
+                config.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
                 config.panelBounds = r;
                 config.cornerRadius = 6.0f * s;
                 config.enableGeekGlass = g_config.EnableGeekGlass;
@@ -792,13 +803,21 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                 config.tintAlpha = g_config.GlassTintAlpha;
                 config.specularOpacity = g_config.GlassSpecularOpacity;
                 config.blurStandardDeviation = g_config.GlassBlurSigma * s;
+                float concentration = (g_config.GlassOsdOpacity / 100.0f);
                 config.opacity = m_osdOpacity;
+                if (g_config.EnableGeekGlass) {
+                    // Balancing: As concentration increases, reduce refraction opacity to let booster show through
+                    // 100% OSD Density -> 0.3 Glass Opacity (Subtle texture) + 1.0 Booster (Solid color)
+                    config.opacity *= (0.7f - 0.4f * concentration);
+                }
                 
                 if (g_config.EnableGeekGlass) {
-                    // Material Booster Layer
+                    // Material Booster Layer (Theme-Aware and Full Range)
                     ComPtr<ID2D1SolidColorBrush> boosterBrush;
-                    float baseAlpha = 0.45f * (g_config.GlassOsdOpacity / 100.0f);
-                    D2D1_COLOR_F boosterColor = ScaleUiColor(D2D1::ColorF(0.04f, 0.04f, 0.04f, baseAlpha), hdrWhiteScale);
+                    bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
+                    D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.04f, 0.04f, 0.04f, 1.0f);
+                    float baseAlpha = (g_config.GlassOsdOpacity / 100.0f);
+                    D2D1_COLOR_F boosterColor = ScaleUiColor(D2D1::ColorF(fillerBase.r, fillerBase.g, fillerBase.b, baseAlpha), hdrWhiteScale);
                     dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
                     dc->FillRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s), boosterBrush.Get());
                     
@@ -866,6 +885,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
         auto& geekGlass = GetGlassEngine("OSD_0");
         geekGlass.InitializeResources(dc);
         QuickView::UI::GeekGlass::GeekGlassConfig config;
+        config.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
         config.panelBounds = bgRect;
         config.cornerRadius = 8.0f * s;
         config.enableGeekGlass = g_config.EnableGeekGlass;
@@ -874,12 +894,20 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
         config.tintAlpha = g_config.GlassTintAlpha;
         config.specularOpacity = g_config.GlassSpecularOpacity;
         config.blurStandardDeviation = g_config.GlassBlurSigma * s;
+        float concentration = (g_config.GlassOsdOpacity / 100.0f);
         config.opacity = m_osdOpacity;
+        if (g_config.EnableGeekGlass) {
+            // Balancing logic for main OSD path
+            config.opacity *= (0.7f - 0.4f * concentration);
+        }
 
         if (g_config.EnableGeekGlass) {
+            // Material Booster Layer (Theme-Aware and Full Range)
             ComPtr<ID2D1SolidColorBrush> boosterBrush;
-            float baseAlpha = 0.45f * (g_config.GlassOsdOpacity / 100.0f);
-            D2D1_COLOR_F boosterColor = ScaleUiColor(D2D1::ColorF(0.04f, 0.04f, 0.04f, baseAlpha), hdrWhiteScale);
+            bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
+            D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.04f, 0.04f, 0.04f, 1.0f);
+            float baseAlpha = (g_config.GlassOsdOpacity / 100.0f);
+            D2D1_COLOR_F boosterColor = ScaleUiColor(D2D1::ColorF(fillerBase.r, fillerBase.g, fillerBase.b, baseAlpha), hdrWhiteScale);
             dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
             dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, 8.0f * s, 8.0f * s), boosterBrush.Get());
 
@@ -2202,7 +2230,7 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
     ComPtr<ID2D1SolidColorBrush> brushMain, brushDim, brushHover;
     CreateScaledBrush(dc, palette.foreground, hdrWhiteScale, &brushMain);
     CreateScaledBrush(dc, palette.textDim, hdrWhiteScale, &brushDim);
-    CreateScaledBrush(dc, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), hdrWhiteScale, &brushHover);
+    CreateScaledBrush(dc, palette.hoverFill, hdrWhiteScale, &brushHover);
     
     const float iconW = GRID_ICON_WIDTH * s;
     const float labelW = GRID_LABEL_WIDTH * s;
@@ -2637,11 +2665,11 @@ UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, 
         blend);
     palette.textDim = LerpColor(
         D2D1::ColorF(0.75f, 0.75f, 0.75f, 1.0f),
-        D2D1::ColorF(0.35f, 0.40f, 0.48f, 1.0f),
+        D2D1::ColorF(0.20f, 0.22f, 0.25f, 1.0f), // [Fix] Darker secondary text for Light Mode
         blend);
     palette.shadow = LerpColor(
         D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.92f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f),
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f), // [Fix] Subtle dark shadow instead of glow for Light Mode
         blend);
     palette.hoverFill = LerpColor(
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
@@ -2658,6 +2686,10 @@ UIRenderer::AdaptiveUiPalette UIRenderer::BuildAdaptivePalette(float luminance, 
     palette.accent = LerpColor(
         D2D1::ColorF(0.25f, 0.68f, 1.0f, 0.98f),
         D2D1::ColorF(0.12f, 0.36f, 0.70f, 0.96f),
+        blend);
+    palette.success = LerpColor(
+        D2D1::ColorF(0.20f, 0.90f, 0.40f, 1.00f),
+        D2D1::ColorF(0.02f, 0.45f, 0.15f, 0.98f),
         blend);
     palette.warning = LerpColor(
         D2D1::ColorF(1.0f, 0.86f, 0.10f, 1.0f),
@@ -2864,6 +2896,7 @@ void UIRenderer::DrawNavIndicators(ID2D1DeviceContext* dc) {
             auto& geekGlass = GetGlassEngine(key);
             geekGlass.InitializeResources(dc);
             QuickView::UI::GeekGlass::GeekGlassConfig config;
+            config.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
             config.panelBounds = D2D1::RectF(arrowCenterX - circleRadius, arrowCenterY - circleRadius, arrowCenterX + circleRadius, arrowCenterY + circleRadius);
             config.cornerRadius = circleRadius;
             config.enableGeekGlass = g_config.EnableGeekGlass;
@@ -3418,17 +3451,19 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     m_lastHUDRect = panelRect; // Store for hit test
 
     // Adaptive background palette for the whole HUD
-    const AdaptiveUiPalette basePalette = BuildAdaptivePalette(EstimateRectLuminance(panelRect), nullptr);
+    // [Visual Consistency] HUD should follow UI theme instead of underlying image luma
+    float hudLuma = IsLightThemeActive() ? 1.0f : 0.0f;
+    const AdaptiveUiPalette basePalette = BuildAdaptivePalette(hudLuma, nullptr);
 
     ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder, brushText, brushLabel, brushGood, brushBad, brushWarn, brushWinner;
     CreateScaledBrush(dc, D2D1::ColorF(0.005f, 0.005f, 0.008f, g_config.GlassPanelsOpacity / 100.0f), hdrWhiteScale, &brushBg); // [HUD Adjust] Apply User Alpha
     CreateScaledBrush(dc, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.6f), hdrWhiteScale, &brushBorder);
     CreateScaledBrush(dc, basePalette.foreground, hdrWhiteScale, &brushText);
     CreateScaledBrush(dc, basePalette.textDim, hdrWhiteScale, &brushLabel);
-    CreateScaledBrush(dc, D2D1::ColorF(0.2f, 0.9f, 0.4f), hdrWhiteScale, &brushGood);
-    CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.3f, 0.2f), hdrWhiteScale, &brushBad);
-    CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.85f, 0.0f), hdrWhiteScale, &brushWarn);
-    CreateScaledBrush(dc, D2D1::ColorF(1.0f, 0.2f, 0.1f), hdrWhiteScale, &brushWinner);
+    CreateScaledBrush(dc, basePalette.success, hdrWhiteScale, &brushGood);
+    CreateScaledBrush(dc, basePalette.danger, hdrWhiteScale, &brushBad);
+    CreateScaledBrush(dc, basePalette.warning, hdrWhiteScale, &brushWarn);
+    CreateScaledBrush(dc, basePalette.success, hdrWhiteScale, &brushWinner);
 
     // Top-roll: No top corners rounded
     D2D1_RECT_F clipRect = D2D1::RectF(panelX, panelY - 10 * s, panelX + panelW, panelY + panelH);
@@ -3549,23 +3584,17 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 }
             }
 
-            // Draw Label + Icon (Icon vertically aligned by pre-padding)
+            // Draw Label + Icon
             std::wstring icon = lRow ? lRow->icon : (rRow ? rRow->icon : L"");
-            m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             
-            // Draw Icon separately for better vertical control if needed, 
-            // but for now, we just ensure the label slot is clean
-            float iconSize = 18.0f * s;
+            // [Layout Fix] Re-sync with DrawInfoGrid: Use Segoe UI (panelFormat) for icons to avoid box glyphs
+            float iconSize = 20.0f * s;
             D2D1_RECT_F iconRect = D2D1::RectF(labelX, y, labelX + iconSize, y + rowH);
-            D2D1_RECT_F nameRect = D2D1::RectF(labelX + iconSize - 4.0f*s, y, labelX + labelW, y + rowH);
+            D2D1_RECT_F nameRect = D2D1::RectF(labelX + iconSize, y, labelX + labelW, y + rowH);
             
-            ComPtr<ID2D1SolidColorBrush> iconBrush;
-            CreateScaledBrush(dc, basePalette.textDim, hdrWhiteScale, &iconBrush); // Ensure icon is also secondary
-
-            dc->DrawText(icon.c_str(), (UINT32)icon.length(), m_iconFormat.Get(), iconRect, iconBrush.Get());
+            // Use brushText (basePalette.foreground) for icons, and m_panelFormat for better fallback support
+            dc->DrawText(icon.c_str(), (UINT32)icon.length(), m_panelFormat.Get(), iconRect, brushText.Get());
             dc->DrawText(label.c_str(), (UINT32)label.length(), m_panelFormat.Get(), nameRect, brushLabel.Get());
-            
-            m_debugFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 
             // Draw Values
 	            auto DrawValue = [&](const InfoRow* row, float x, float w, bool isLeft) {

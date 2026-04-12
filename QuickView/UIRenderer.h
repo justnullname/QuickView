@@ -175,6 +175,7 @@ private:
         D2D1_COLOR_F capsuleFill = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f);
         D2D1_COLOR_F capsuleStroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
         D2D1_COLOR_F accent = D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f);
+        D2D1_COLOR_F success = D2D1::ColorF(0.2f, 0.9f, 0.4f, 1.0f);
         D2D1_COLOR_F warning = D2D1::ColorF(1.0f, 0.85f, 0.0f, 1.0f);
         D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
     };

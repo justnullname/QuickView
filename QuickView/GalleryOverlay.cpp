@@ -103,13 +103,22 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
     if (!m_isVisible || !m_pThumbMgr || !m_pNav) return;
     
     // Init resources
+    bool isLight = IsLightThemeActive();
     if (!m_brushBg) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale), &m_brushBg);
     if (!m_brushSelection) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue), m_hdrWhiteScale), &m_brushSelection); // Accent
     if (!m_brushText) pDC->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::White), m_hdrWhiteScale), &m_brushText);
-    m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f), m_hdrWhiteScale));
-    m_brushSelection->SetColor(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue), m_hdrWhiteScale));
-    m_brushText->SetColor(ScaleUiColor(D2D1::ColorF(D2D1::ColorF::White), m_hdrWhiteScale));
-    
+
+    D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 0.4f)
+                                 : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f);
+    D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f)
+                                  : D2D1::ColorF(D2D1::ColorF::White);
+    D2D1_COLOR_F accClr = isLight ? D2D1::ColorF(0.0f, 0.45f, 0.9f, 1.0f)
+                                  : D2D1::ColorF(D2D1::ColorF::DodgerBlue);
+
+    m_brushBg->SetColor(ScaleUiColor(bgClr, m_hdrWhiteScale));
+    m_brushSelection->SetColor(ScaleUiColor(accClr, m_hdrWhiteScale));
+    m_brushText->SetColor(ScaleUiColor(txtClr, m_hdrWhiteScale));
+
     // Background (Controllable Dimmer)
     if (g_config.EnableAmbientDimmer) {
         D2D1_RECT_F screenRect = D2D1::RectF(0, 0, size.width, size.height);
@@ -224,7 +233,12 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
                 pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, src);
             } else {
                 // Placeholder (Gray Box) call QueueRequest
-                D2D1_COLOR_F color = ScaleUiColor(D2D1::ColorF(0.2f, 0.2f, 0.2f, m_opacity), m_hdrWhiteScale);
+                D2D1_COLOR_F phBase =
+                    isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f)
+                            : D2D1::ColorF(0.2f, 0.2f, 0.2f, 1.0f);
+                D2D1_COLOR_F color = ScaleUiColor(phBase, m_hdrWhiteScale);
+                color.a *= m_opacity;
+
                 ComPtr<ID2D1SolidColorBrush> phBrush;
                 pDC->CreateSolidColorBrush(color, &phBrush);
                 if (phBrush) pDC->FillRectangle(cellRect, phBrush.Get());

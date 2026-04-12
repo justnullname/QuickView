@@ -280,7 +280,13 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
 
         // [Jewelry-grade Saturation Boost]
         float sat = 1.35f; float r = 0.2126f; float g = 0.7152f; float b = 0.0722f;
-        D2D1_MATRIX_5X4_F satM = D2D1::Matrix5x4F(r*(1-sat)+sat, r*(1-sat), r*(1-sat), 0, g*(1-sat), g*(1-sat)+sat, g*(1-sat), 0, b*(1-sat), b*(1-sat), b*(1-sat)+sat, 0, 0, 0, 0, 1, 0, 0, 0, 0);
+        D2D1_MATRIX_5X4_F satM = D2D1::Matrix5x4F(
+            r*(1-sat)+sat, r*(1-sat), r*(1-sat), 0, 
+            g*(1-sat), g*(1-sat)+sat, g*(1-sat), 0, 
+            b*(1-sat), b*(1-sat), b*(1-sat)+sat, 0, 
+            0, 0, 0, config.opacity, // [Fix] Respect master opacity slider
+            0, 0, 0, 0
+        );
         
         m_colorMatrixEffect->SetInputEffect(0, m_blurEffect.Get());
         m_colorMatrixEffect->SetValue(D2D1_COLORMATRIX_PROP_COLOR_MATRIX, satM);

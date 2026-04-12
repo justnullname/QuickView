@@ -1225,6 +1225,18 @@ void SettingsOverlay::BuildMenu() {
     // Auto-switch to Custom lambda (shared by all material sliders)
     auto autoSwitchToCustom = [this]() {
         if (g_config.ThemeMode != 3) {
+            // [UX Fix] If moving from a fixed preset (Dark/Light), capture its current tint 
+            // into custom slots to prevent the UI from jumping to Dark base (system default)
+            // when ThemeMode becomes 3 (Custom).
+            if (g_config.GlassTintProfile == 0) {
+                bool currentlyLight = IsLightThemeActive();
+                auto& base = currentlyLight ? PRESET_LIGHT : PRESET_DARK;
+                g_config.GlassCustomTintR = base.tintColor.r;
+                g_config.GlassCustomTintG = base.tintColor.g;
+                g_config.GlassCustomTintB = base.tintColor.b;
+                g_config.GlassTintProfile = 1; // Lock the current visual base
+            }
+            
             g_config.ThemeMode = 3;
             // Defer layout change (adding new rows) until mouse release if currently dragging
             if (!m_pActiveSlider) m_pendingRebuild = true;
@@ -1814,16 +1826,14 @@ void SettingsOverlay::BuildMenu() {
          std::wstring appDataDir = std::wstring(appDataPath) + L"\\QuickView";
          
          DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
-         DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
-         
-         // 2. Reset In-Memory Config
+         DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());         // 2. Reset In-Memory Config
          g_config = AppConfig(); 
          
-         // 3. Reset Runtime
-         g_runtime.ShowInfoPanel = (g_config.ExifPanelMode != 0);
-         g_runtime.InfoPanelExpanded = (g_config.ExifPanelMode == 2);
-         g_config.GlassPanelsOpacity = 45.0f;
-         g_config.GlassModalsOpacity = 85.0f;
+         // 3. Sync Runtime & Refresh UI
+         g_runtime.SyncFrom(g_config);
+         this->BuildMenu(); 
+         this->m_needsLayoutRebuild = true;
+         if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
          
          // 4. Force UI refresh
          // 4. Force UI refresh

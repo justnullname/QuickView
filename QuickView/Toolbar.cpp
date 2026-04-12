@@ -382,12 +382,13 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
 
   CreateResources(pRT);
 
-  m_brushBg->SetColor(ScaleUiColor(D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f), m_hdrWhiteScale));
-  m_brushIcon->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), m_hdrWhiteScale));
+  bool isLight = IsLightThemeActive();
+  m_brushBg->SetColor(ScaleUiColor(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f), m_hdrWhiteScale));
+  m_brushIcon->SetColor(ScaleUiColor(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White), m_hdrWhiteScale));
   m_brushIconActive->SetColor(ScaleUiColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f), m_hdrWhiteScale));
-  m_brushIconDisabled->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale));
+  m_brushIconDisabled->SetColor(ScaleUiColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.3f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), m_hdrWhiteScale));
   m_brushWarning->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f), m_hdrWhiteScale));
-  m_brushHover->SetColor(ScaleUiColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale));
+  m_brushHover->SetColor(ScaleUiColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f), m_hdrWhiteScale));
 
   ComPtr<ID2D1Layer> layer;
   if (SUCCEEDED(pRT->CreateLayer(&layer))) {
@@ -583,7 +584,8 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         if (tipX < 5.0f * m_uiScale) tipX = 5.0f * m_uiScale;
         D2D1_RECT_F tipRect = D2D1::RectF(tipX, tipY, tipX + tipWidth, tipY + tipHeight);
         ComPtr<ID2D1SolidColorBrush> tipBg;
-        pRT->CreateSolidColorBrush(ScaleUiColor(D2D1::ColorF(0.15f, 0.15f, 0.15f, g_config.GlassPanelsOpacity / 100.0f), m_hdrWhiteScale), &tipBg);
+        D2D1_COLOR_F tipBgBase = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(0.15f, 0.15f, 0.15f, 0.95f);
+        pRT->CreateSolidColorBrush(ScaleUiColor(tipBgBase, m_hdrWhiteScale), &tipBg);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(tipRect, 4.0f * m_uiScale, 4.0f * m_uiScale), tipBg.Get());
         pRT->DrawText(tipText, (UINT32)tipLen, tooltipFormat.Get(), tipRect, m_brushIcon.Get());
       }

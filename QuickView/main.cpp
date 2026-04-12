@@ -3697,7 +3697,9 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     
     // Overlay (background dimming)
     ComPtr<ID2D1SolidColorBrush> pOverlayBrush;
-    context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f)), &pOverlayBrush); // Slightly clearer overlay
+    bool isLight = IsLightThemeActive();
+    D2D1_COLOR_F dimmerClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 0.4f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f);
+    context->CreateSolidColorBrush(scaleUiColor(dimmerClr), &pOverlayBrush);
     context->FillRectangle(D2D1::RectF(0, 0, size.width, size.height), pOverlayBrush.Get());
     
     // Box Background (Geek Glass or Fallback)
@@ -3718,21 +3720,22 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         config.backgroundTransform = g_compEngine ? g_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
         geekGlass.DrawGeekGlassPanel(context, config);
 
-        // [Material Boost] Consistency for Dialog
+        // [Material Boost] Consistency for Dialog Density
         float masterOpacity = g_config.GlassModalsOpacity / 100.0f;
         ComPtr<ID2D1SolidColorBrush> materialBrush;
-        bool isLight = IsLightThemeActive();
         D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
         context->CreateSolidColorBrush(scaleUiColor(fillerColor), &materialBrush);
         if (materialBrush) {
             materialBrush->SetOpacity(masterOpacity);
             context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f, 10.0f), materialBrush.Get());
         }
-        // Restore High-end Reflexes
+
         geekGlass.DrawGeekGlassToppings(context, config);
     } else {
         ComPtr<ID2D1SolidColorBrush> pBgBrush;
-        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.18f, 0.18f, 0.18f, g_config.GlassModalsOpacity / 100.0f)), &pBgBrush);
+        bool isLight = IsLightThemeActive();
+        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.18f, 1.0f);
+        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(bgClr.r, bgClr.g, bgClr.b, g_config.GlassModalsOpacity / 100.0f)), &pBgBrush);
         context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f, 10.0f), pBgBrush.Get());
     }
     
@@ -3763,8 +3766,13 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         }
     }
     
-    ComPtr<ID2D1SolidColorBrush> pWhite;
-    context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(D2D1::ColorF::White)), &pWhite);
+    // Theme-aware Text Brushes
+    D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    D2D1_COLOR_F txtDimClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+
+    ComPtr<ID2D1SolidColorBrush> pTextBrush, pGrayTextBrush;
+    context->CreateSolidColorBrush(scaleUiColor(txtClr), &pTextBrush);
+    context->CreateSolidColorBrush(scaleUiColor(txtDimClr), &pGrayTextBrush);
     
     // Title (truncate to show end of filename with extension, single line)
     // [Fix] Use robust visual truncation instead of hardcoded char limit
@@ -3777,7 +3785,7 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     float titleTop = layout.Box.top + 18;
     float titleBottom = layout.Box.top + 48;
     context->DrawText(displayTitle.c_str(), (UINT32)displayTitle.length(), fmtTitle.Get(), 
-        D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         
     // Message (below title with proper spacing)
     float msgTop = titleBottom + 8;
@@ -3786,17 +3794,19 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
     if (g_dialog.HasInput) msgBottom = layout.Input.top - 10.0f;
     
     context->DrawText(g_dialog.Message.c_str(), (UINT32)g_dialog.Message.length(), fmtBody.Get(), 
-        D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     
     // [Input Mode] Draw Input Field Background
     if (g_dialog.HasInput) {
         ComPtr<ID2D1SolidColorBrush> pInputBg;
-        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.12f, 0.12f, 0.12f)), &pInputBg);
+        D2D1_COLOR_F inputBgClr = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.12f, 0.12f, 0.12f, 1.0f);
+        context->CreateSolidColorBrush(scaleUiColor(inputBgClr), &pInputBg);
         context->FillRoundedRectangle(D2D1::RoundedRect(layout.Input, 6.0f, 6.0f), pInputBg.Get());
         
         // Border
         ComPtr<ID2D1SolidColorBrush> pInputBorder;
-        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.35f, 0.35f, 0.35f)), &pInputBorder);
+        D2D1_COLOR_F inputBordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(0.35f, 0.35f, 0.35f, 1.0f);
+        context->CreateSolidColorBrush(scaleUiColor(inputBordClr), &pInputBorder);
         D2D1_RECT_F borderRect = layout.Input;
         context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, 6.0f, 6.0f), pInputBorder.Get(), 1.0f);
         
@@ -3815,12 +3825,12 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         
     // Checkbox
     if (g_dialog.HasCheckbox) {
-        context->DrawRectangle(layout.Checkbox, pWhite.Get(), 1.0f);
+        context->DrawRectangle(layout.Checkbox, pTextBrush.Get(), 1.0f);
         if (g_dialog.IsChecked) {
              context->FillRectangle(D2D1::RectF(layout.Checkbox.left+4, layout.Checkbox.top+4, layout.Checkbox.right-4, layout.Checkbox.bottom-4), pBorderBrush.Get());
         }
         context->DrawText(g_dialog.CheckboxText.c_str(), (UINT32)g_dialog.CheckboxText.length(), fmtBtn.Get(), 
-            D2D1::RectF(layout.Checkbox.right + 10, layout.Checkbox.top, layout.Box.right - 30, layout.Checkbox.bottom + 5), pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            D2D1::RectF(layout.Checkbox.right + 10, layout.Checkbox.top, layout.Box.right - 30, layout.Checkbox.bottom + 5), pTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
     
     // Buttons
@@ -3828,18 +3838,26 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
         if (i >= layout.Buttons.size()) break;
         D2D1_RECT_F btnRect = layout.Buttons[i];
         
-        if (i == g_dialog.SelectedButtonIndex) {
+        bool isSelected = (i == g_dialog.SelectedButtonIndex);
+        if (isSelected) {
             context->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f, 4.0f), pBorderBrush.Get());
         } else {
-             ComPtr<ID2D1SolidColorBrush> pGray;
-             context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(0.25f, 0.25f, 0.25f)), &pGray);
-             context->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f, 4.0f), pGray.Get());
+             ComPtr<ID2D1SolidColorBrush> pBtnBgBrush;
+             D2D1_COLOR_F btnBgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.1f) : D2D1::ColorF(0.25f, 0.25f, 0.25f, 1.0f);
+             context->CreateSolidColorBrush(scaleUiColor(btnBgClr), &pBtnBgBrush);
+             context->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f, 4.0f), pBtnBgBrush.Get());
         }
         
         std::wstring& text = g_dialog.Buttons[i].Text;
-        // Adjust rect slightly for better visual centering (baseline offset)
         D2D1_RECT_F textRect = D2D1::RectF(btnRect.left, btnRect.top - 2, btnRect.right, btnRect.bottom - 2);
-        context->DrawText(text.c_str(), (UINT32)text.length(), fmtBtnCenter.Get(), textRect, pWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        
+        // Button text is ALWAYS white if selected (on Blue), or theme-aware if not
+        ID2D1SolidColorBrush* finalBtnTextBrush = isSelected ? pGrayTextBrush.Get() : pTextBrush.Get(); // Wait, selected bg is pBorderBrush (Accent)
+        // If selected, use White text for better contrast on Accent Blue.
+        ComPtr<ID2D1SolidColorBrush> whiteBrush;
+        context->CreateSolidColorBrush(scaleUiColor(D2D1::ColorF(D2D1::ColorF::White)), &whiteBrush);
+        
+        context->DrawText(text.c_str(), (UINT32)text.length(), fmtBtnCenter.Get(), textRect, isSelected ? whiteBrush.Get() : pTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
     }
 }
 
@@ -3851,10 +3869,18 @@ void DrawDialog(ID2D1DeviceContext* context, const RECT& clientRect) {
 LRESULT CALLBACK InputHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_CTLCOLOREDIT) {
         HDC hdc = (HDC)wParam;
-        SetTextColor(hdc, RGB(255, 255, 255));
-        SetBkColor(hdc, RGB(30, 30, 30)); // Match D2D Dialog BG
-        static HBRUSH hBrush = CreateSolidBrush(RGB(30, 30, 30));
-        return (LRESULT)hBrush;
+        bool isLight = IsLightThemeActive();
+        if (isLight) {
+            SetTextColor(hdc, RGB(30, 30, 30));
+            SetBkColor(hdc, RGB(255, 255, 255));
+            static HBRUSH hBrushLight = CreateSolidBrush(RGB(255, 255, 255));
+            return (LRESULT)hBrushLight;
+        } else {
+            SetTextColor(hdc, RGB(255, 255, 255));
+            SetBkColor(hdc, RGB(30, 30, 30)); // Match D2D Dialog BG
+            static HBRUSH hBrushDark = CreateSolidBrush(RGB(30, 30, 30));
+            return (LRESULT)hBrushDark;
+        }
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
@@ -4411,8 +4437,13 @@ bool IsSystemLightTheme() {
 
 bool IsLightThemeActive() {
     switch (g_config.ThemeMode) {
-        case 1: return false;
-        case 2: return true;
+        case 1: return false; // Dark
+        case 2: return true;  // Light
+        case 3: // Custom
+        {
+            float luma = g_config.GlassCustomTintR * 0.299f + g_config.GlassCustomTintG * 0.587f + g_config.GlassCustomTintB * 0.114f;
+            return luma > 0.5f; // If custom base is bright, use Light UI style
+        }
         default: return IsSystemLightTheme();
     }
 }

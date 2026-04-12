@@ -80,17 +80,22 @@ enum class ColorSpaceMode {
 // Theme Preset System — Preset-Driven Glass Material Configuration
 // ============================================================================
 struct ThemePreset {
-    D2D1_COLOR_F tintColor;     // Base glass tint color (RGB, alpha ignored here)
-    float tintAlpha;            // Tint layer opacity (replaces hardcoded 0.65f/0.45f)
+    D2D1_COLOR_F tintColor;     // Base glass tint color
+    D2D1_COLOR_F textColor;     // Primary UI text color
+    D2D1_COLOR_F accentColor;    // Theme accent color
+    float tintAlpha;            // Tint layer opacity
     float blurSigma;            // Blur radius in pixels
     float specularOpacity;      // Diagonal highlight intensity (0.0 - 1.0)
     float shadowOpacity;        // Drop shadow intensity (0.0 - 1.0)
-    float masterOpacity;        // Overall panel opacity percentage (0 - 100)
+    float osdOpacity;           // OSD Level (0-100)
+    float panelsOpacity;        // Panels Level (0-100)
+    float modalsOpacity;        // Modals Level (0-100)
+    float menusOpacity;         // Menus Level (0-100)
 };
 
-// Built-in presets (immutable reference values)
-inline constexpr ThemePreset PRESET_DARK  = { {0.06f, 0.06f, 0.08f, 1.0f}, 0.65f, 25.0f, 0.15f, 0.45f, 85.0f };
-inline constexpr ThemePreset PRESET_LIGHT = { {0.95f, 0.95f, 0.95f, 1.0f}, 0.45f, 15.0f, 0.05f, 0.25f, 45.0f };
+// Built-in presets (Synchronized defaults: Blur 3px, Tint 65%, Spec 15%, Shadow 45%)
+inline constexpr ThemePreset PRESET_DARK  = { {0.06f, 0.06f, 0.08f, 1.0f}, {0.92f, 0.92f, 0.95f, 1.0f}, {0.0f, 0.6f, 1.0f, 1.0f},  0.65f, 3.0f, 0.15f, 0.45f, 15.0f, 45.0f, 55.0f, 15.0f };
+inline constexpr ThemePreset PRESET_LIGHT = { {0.95f, 0.95f, 0.95f, 1.0f}, {0.1f, 0.1f, 0.12f, 1.0f},  {0.0f, 0.45f, 0.9f, 1.0f}, 0.65f, 3.0f, 0.15f, 0.45f,  8.0f, 40.0f, 40.0f, 15.0f };
 
 /// <summary>
 /// Application configuration (for future settings menu)
@@ -120,14 +125,14 @@ struct AppConfig {
     // --- Geek Glass Pipeline ---
     bool EnableGeekGlass = true;           // Master switch (fallback to pure colors)
     bool GlassUIAnimations = true;         // UI animations (0ms hard cut if false)
-    float GlassBlurSigma = 25.0f;          // Blur radius (5.0f to 40.0f)
+    float GlassBlurSigma = 3.0f;           // Blur radius (5.0f to 40.0f)
     float GlassTintAlpha = 0.65f;          // Tint layer opacity (0.05 - 1.0, floor at 5% for safety)
     float GlassSpecularOpacity = 0.15f;    // Diagonal highlight intensity (0.0 - 0.5)
     float GlassShadowOpacity = 0.45f;      // Drop shadow intensity (0.0 - 1.0)
     float GlassOsdOpacity = 15.0f;         // OSD Level (0-100 %)
     float GlassPanelsOpacity = 45.0f;      // Toolbar & Panels Level (0-100 %)
-    float GlassModalsOpacity = 85.0f;      // Modals & Settings Level (0-100 %)
-    float GlassMenusOpacity = 85.0f;       // Context Menus Level (0-100 %)
+    float GlassModalsOpacity = 55.0f;      // Modals & Settings Level (0-100 %)
+    float GlassMenusOpacity = 15.0f;       // Context Menus Level (0-100 %)
     int GlassVectorStrokeWeightIndex = 0;  // 0: Standard (1.5px), 1: Fine (1.0px)
 
     // --- Geek Glass Tint Customization ---
@@ -247,13 +252,42 @@ struct AppConfig {
         GlassTintAlpha = preset.tintAlpha;
         GlassSpecularOpacity = preset.specularOpacity;
         GlassShadowOpacity = preset.shadowOpacity;
-        GlassModalsOpacity = preset.masterOpacity;
+        GlassOsdOpacity = preset.osdOpacity;
+        GlassPanelsOpacity = preset.panelsOpacity;
+        GlassModalsOpacity = preset.modalsOpacity;
+        GlassMenusOpacity = preset.menusOpacity;
         
+        // Synchronize Custom Theme slots to follow the preset
+        // This ensures a seamless transition when the user later switches to ThemeMode 3 (Custom)
+        ThemeCustomAccentR = preset.accentColor.r;
+        ThemeCustomAccentG = preset.accentColor.g;
+        ThemeCustomAccentB = preset.accentColor.b;
+        ThemeCustomTextR = preset.textColor.r;
+        ThemeCustomTextG = preset.textColor.g;
+        ThemeCustomTextB = preset.textColor.b;
+
         // Force reset the tint profile to Auto when applying a preset
         GlassTintProfile = 0;
         GlassCustomTintR = preset.tintColor.r;
         GlassCustomTintG = preset.tintColor.g;
         GlassCustomTintB = preset.tintColor.b;
+    }
+
+    /// <summary>
+    /// Capture current preset colors into custom slots without affecting other material parameters.
+    /// Used when transitioning to 'Custom' mode to ensure a seamless visual base.
+    /// </summary>
+    void CaptureThemeColors(bool isLight) {
+        const auto& p = isLight ? PRESET_LIGHT : PRESET_DARK;
+        ThemeCustomAccentR = p.accentColor.r;
+        ThemeCustomAccentG = p.accentColor.g;
+        ThemeCustomAccentB = p.accentColor.b;
+        ThemeCustomTextR = p.textColor.r;
+        ThemeCustomTextG = p.textColor.g;
+        ThemeCustomTextB = p.textColor.b;
+        GlassCustomTintR = p.tintColor.r;
+        GlassCustomTintG = p.tintColor.g;
+        GlassCustomTintB = p.tintColor.b;
     }
 
     /// <summary>
