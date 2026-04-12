@@ -1797,6 +1797,14 @@ static void EnterCompareMode(HWND hwnd) {
     g_viewState.EdgeHoverLeft = 0;
     g_viewState.EdgeHoverRight = 0;
 
+    // [v10.0] Seamless Info Transition: Sync Normal Info state to Compare HUD
+    if (g_runtime.ShowInfoPanel) {
+        g_runtime.ShowInfoPanel = false;
+        g_runtime.ShowCompareInfo = true;
+        g_runtime.CompareHudMode = g_runtime.InfoPanelExpanded ? 1 : 0;
+        AdjustWindowForOverlay(hwnd, true); // Restore image layout as Normal info closes
+    }
+
     g_toolbar.SetCompareMode(true);
     g_toolbar.SetCompareSyncStates(g_compare.syncZoom, g_compare.syncPan);
     g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
@@ -1825,13 +1833,20 @@ static void ExitCompareMode(HWND hwnd) {
     g_compare.activePane = ComparePane::Right;
     g_compare.selectedPane = ComparePane::Right;
     g_compare.dirty = false;
-    g_runtime.ShowCompareInfo = false;
 
     g_viewState.CompareActive = false;
     g_viewState.CompareSplitRatio = 0.5f;
     g_viewState.EdgeHoverLeft = 0;
     g_viewState.EdgeHoverRight = 0;
     g_viewState.EdgeHoverState = 0;
+
+    // [v10.0] Seamless Info Transition: Restore Compare HUD state to Normal Info
+    if (g_runtime.ShowCompareInfo) {
+        g_runtime.ShowCompareInfo = false;
+        g_runtime.ShowInfoPanel = true;
+        g_runtime.InfoPanelExpanded = (g_runtime.CompareHudMode > 0);
+        AdjustWindowForOverlay(hwnd, false); // Space out for Normal info as it opens
+    }
 
     g_toolbar.SetCompareMode(false);
     RECT rc{};
