@@ -62,14 +62,8 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
         themeChanged = true;
     }
 
-    bool sizeChanged =
-        (std::abs(width - (m_currentBounds.right - m_currentBounds.left)) >
-         0.001f) ||
-        (std::abs(height - (m_currentBounds.bottom - m_currentBounds.top)) >
-         0.001f);
-
     bool needsRebuild = !m_diagonalBrush || !m_bevelBrush || !m_baseTintBrush ||
-                        themeChanged || materialChanged || sizeChanged;
+                        themeChanged || materialChanged;
 
     if (!needsRebuild) {
       // Just update points if moving
@@ -212,7 +206,7 @@ void GeekGlassEngine::CreateOrUpdateBrushes(ID2D1RenderTarget* pRT, const GeekGl
 }
 
 void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlassConfig& config) {
-    if (!pRT) return;
+    if (!pRT || !config.enableGeekGlass || config.opacity <= 0.005f) return;
 
     ComPtr<ID2D1DeviceContext> pContext;
     pRT->QueryInterface(IID_PPV_ARGS(&pContext));
@@ -249,15 +243,6 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
                           D2D1_INTERPOLATION_MODE_LINEAR);
     }
 
-    // Use 1.0 Layer Opacity to allow structural persistence. 
-    // We pass roundedGeometry to ensure the blur is perfectly clipped to the rounded corners.
-    D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
-        config.panelBounds, roundedGeometry.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-        D2D1::IdentityMatrix(), 1.0f, nullptr, D2D1_LAYER_OPTIONS_NONE
-    );
-
-    pRT->PushLayer(layerParams, nullptr);
-
     if (pContext && config.enableGeekGlass && config.track == RenderTrack::TrackA_CommandList && 
         config.pBackgroundCommandList && m_blurEffect && m_cropEffect) {
         
@@ -272,11 +257,18 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
         m_transformEffect->SetInput(0, config.pBackgroundCommandList);
         m_transformEffect->SetValue(D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, config.backgroundTransform);
 
-        m_scaleDownEffect->SetInputEffect(0, m_transformEffect.Get());
+        // Phase 2 Optimization: Crop to screen space *first* before blurring to prevent blurring the entire multi-megapixel background image.
+        // Add a safety buffer to the crop to handle sub-pixel alignment issues and blur bleed.
+        float bleed = effectiveSigma * 3.0f;
+        D2D1_VECTOR_4F crop = { config.panelBounds.left - bleed, config.panelBounds.top - bleed, config.panelBounds.right + bleed, config.panelBounds.bottom + bleed };
+        m_cropEffect->SetInputEffect(0, m_transformEffect.Get());
+        m_cropEffect->SetValue(D2D1_CROP_PROP_RECT, crop);
+
+        m_scaleDownEffect->SetInputEffect(0, m_cropEffect.Get());
         m_scaleDownEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(downscale, downscale));
 
         m_blurEffect->SetInputEffect(0, m_scaleDownEffect.Get());
-        m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, effectiveSigma * downscale);
+        m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, effectiveSigma * downscale); // Absolute radius in screen-space
 
         // [Jewelry-grade Saturation Boost]
         float sat = 1.35f; float r = 0.2126f; float g = 0.7152f; float b = 0.0722f;
@@ -294,13 +286,27 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
         m_scaleUpEffect->SetInputEffect(0, m_colorMatrixEffect.Get());
         m_scaleUpEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(1.0f/downscale, 1.0f/downscale));
 
-        m_cropEffect->SetInputEffect(0, m_scaleUpEffect.Get());
+        // Zero-Allocation Clipping Optimization: Instead of PushLayer, we render the final effect via an ImageBrush
+        ComPtr<ID2D1Image> pFinalImage;
+        m_scaleUpEffect->GetOutput(&pFinalImage);
+        ComPtr<ID2D1ImageBrush> pImageBrush;
         
-        // Add a 2.0px 'Safety Buffer' to the crop to handle sub-pixel alignment issues during zoom
-        D2D1_VECTOR_4F crop = { config.panelBounds.left, config.panelBounds.top, config.panelBounds.right, config.panelBounds.bottom };
-        m_cropEffect->SetValue(D2D1_CROP_PROP_RECT, crop);
+        D2D1_IMAGE_BRUSH_PROPERTIES imageBrushProps = D2D1::ImageBrushProperties(
+            config.panelBounds,
+            D2D1_EXTEND_MODE_CLAMP,
+            D2D1_EXTEND_MODE_CLAMP,
+            D2D1_INTERPOLATION_MODE_LINEAR
+        );
 
-        pContext->DrawImage(m_cropEffect.Get());
+        // Compensate for ImageBrush mapping sourceRect top-left to (0,0)
+        D2D1_BRUSH_PROPERTIES brushProps = D2D1::BrushProperties(
+            1.0f,
+            D2D1::Matrix3x2F::Translation(config.panelBounds.left, config.panelBounds.top)
+        );
+
+        if (pContext && SUCCEEDED(pContext->CreateImageBrush(pFinalImage.Get(), &imageBrushProps, &brushProps, &pImageBrush))) {
+            pRT->FillRoundedRectangle(roundedRect, pImageBrush.Get());
+        }
 
         // Nano-Grain (Micro-Texture)
         ComPtr<ID2D1SolidColorBrush> grain;
@@ -320,11 +326,10 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
     if (m_baseTintBrush) pRT->FillRoundedRectangle(roundedRect, m_baseTintBrush.Get());
 
     DrawGeekGlassToppings(pRT, config);
-    pRT->PopLayer();
 }
 
 void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGlassConfig& config) {
-    if (!config.enableGeekGlass) return;
+    if (!pRT || !config.enableGeekGlass || config.opacity <= 0.005f) return;
     CreateOrUpdateBrushes(pRT, config);
 
     D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(config.panelBounds, config.cornerRadius, config.cornerRadius);
@@ -333,24 +338,28 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
     D2D1_PRIMITIVE_BLEND oldBlend = D2D1_PRIMITIVE_BLEND_SOURCE_OVER;
     if (pContext) oldBlend = pContext->GetPrimitiveBlend();
 
+    // State-folding: Group all Additive primitives together
+    if (pContext && (m_diagonalBrush || m_borderBrush)) {
+        pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
+    }
+
     // 1. Specular (Primary Surface Gradient)
     if (m_diagonalBrush) {
-        if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
         pRT->FillRoundedRectangle(roundedRect, m_diagonalBrush.Get());
-        // Reset immediately for safety or keep for next element if it's also additive
     }
 
     // 2. [Geek Upgrade] Gradient Border with Additive Blending
     if (m_borderBrush) {
-        // Already in ADD if possible, but let's ensure it's explicitly set
-        if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
         pRT->DrawRoundedRectangle(roundedRect, m_borderBrush.Get(), config.strokeWeight);
+    }
+
+    // State-folding: Transition to SOURCE_OVER
+    if (pContext && m_bevelBrush) {
+        pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
     }
 
     // 3. [Structural Depth] Inner Bevel (Micro-refraction)
     if (m_bevelBrush) {
-        // Soft SourceOver for the bevel to ensure physical material feel
-        if (pContext) pContext->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
         
         // Draw slightly inside the main border
         D2D1_ROUNDED_RECT innerRect = roundedRect;
