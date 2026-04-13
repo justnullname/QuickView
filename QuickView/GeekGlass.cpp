@@ -266,6 +266,9 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
 
         m_scaleDownEffect->SetInputEffect(0, m_cropEffect.Get());
         m_scaleDownEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(downscale, downscale));
+        // [Optimization] Use NEAREST_NEIGHBOR for downscaling to save bandwidth. 
+        // Subsequent Gaussian Blur targets high-frequency noise, making LINEAR interpolation redundant.
+        m_scaleDownEffect->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE, D2D1_SCALE_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
 
         m_blurEffect->SetInputEffect(0, m_scaleDownEffect.Get());
         m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, effectiveSigma * downscale); // Absolute radius in screen-space
@@ -285,6 +288,7 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
 
         m_scaleUpEffect->SetInputEffect(0, m_colorMatrixEffect.Get());
         m_scaleUpEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(1.0f/downscale, 1.0f/downscale));
+        m_scaleUpEffect->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE, D2D1_SCALE_INTERPOLATION_MODE_LINEAR);
 
         // Zero-Allocation Clipping Optimization: Instead of PushLayer, we render the final effect via an ImageBrush
         ComPtr<ID2D1Image> pFinalImage;
