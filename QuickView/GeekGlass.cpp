@@ -298,7 +298,13 @@ void GeekGlassEngine::DrawGeekGlassPanel(ID2D1RenderTarget* pRT, const GeekGlass
             D2D1_INTERPOLATION_MODE_LINEAR
         );
 
-        if (pContext && SUCCEEDED(pContext->CreateImageBrush(pFinalImage.Get(), &imageBrushProps, nullptr, &pImageBrush))) {
+        // Compensate for ImageBrush mapping sourceRect top-left to (0,0)
+        D2D1_BRUSH_PROPERTIES brushProps = D2D1::BrushProperties(
+            1.0f,
+            D2D1::Matrix3x2F::Translation(config.panelBounds.left, config.panelBounds.top)
+        );
+
+        if (pContext && SUCCEEDED(pContext->CreateImageBrush(pFinalImage.Get(), &imageBrushProps, &brushProps, &pImageBrush))) {
             pRT->FillRoundedRectangle(roundedRect, pImageBrush.Get());
         }
 
