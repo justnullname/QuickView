@@ -3814,7 +3814,9 @@ static void ClearDialogCenter() {
 }
 
 static void EnsureWindowSizeForDialog(HWND hwnd) {
-    AdjustWindowForOverlay(hwnd, false);
+    if (!IsCompareModeActive()) {
+        AdjustWindowForOverlay(hwnd, false);
+    }
 }
 
 DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std::wstring& messageContent, 
@@ -3903,7 +3905,9 @@ DialogResult ShowQuickViewDialog(HWND hwnd, const std::wstring& title, const std
     }
     
     RequestRepaint(PaintLayer::Dynamic);
-    AdjustWindowForOverlay(hwnd, true);
+    if (!IsCompareModeActive()) {
+        AdjustWindowForOverlay(hwnd, true);
+    }
     return g_dialog.FinalResult;
 }
 
@@ -4008,7 +4012,9 @@ std::wstring ShowQuickViewInputDialog(HWND hwnd, const std::wstring& title, cons
     
     DestroyDialogInput();
     RequestRepaint(PaintLayer::Dynamic);
-    AdjustWindowForOverlay(hwnd, true);
+    if (!IsCompareModeActive()) {
+        AdjustWindowForOverlay(hwnd, true);
+    }
     
     if (g_dialog.FinalResult == DialogResult::Yes) {
         return g_dialog.InputText;
@@ -8848,11 +8854,15 @@ SKIP_EDGE_NAV:;
                         g_navigator.Initialize(newPath); // Update navigator list explicitly
                         
                         // Reload image from new path
+                        g_preservedViewState = g_viewState;
+                        g_preserveViewStateOnNextLoad = true;
                         LoadImageAsync(hwnd, newPath); 
                         
                         g_osd.Show(hwnd, L"Renamed", false);
                     } else {
                         // Failed, reload original
+                        g_preservedViewState = g_viewState;
+                        g_preserveViewStateOnNextLoad = true;
                         LoadImageAsync(hwnd, g_imagePath); 
                         g_osd.Show(hwnd, L"Rename Failed", true);
                     }
@@ -9331,9 +9341,13 @@ SKIP_EDGE_NAV:;
                             ReleaseImageResources();
                             if (MoveFileW(contextPath.c_str(), newPath.c_str())) {
                                 g_imagePath = newPath;
+                                g_preservedViewState = g_viewState;
+                                g_preserveViewStateOnNextLoad = true;
                                 LoadImageAsync(hwnd, newPath);
                                 g_osd.Show(hwnd, L"Extension Fixed", false);
                             } else {
+                                g_preservedViewState = g_viewState;
+                                g_preserveViewStateOnNextLoad = true;
                                 LoadImageAsync(hwnd, g_imagePath); // Reload old
                                 g_osd.Show(hwnd, std::wstring(L"Rename Failed"), true);
                             }
@@ -10603,9 +10617,11 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
 // [v3.1] Global Quality Level (0=Default/Bilinear, 1=Bicubic, 2=Nearest)
     // [v5.5 Fix] Reset global metadata to prevent stale data merging
     // Crucial for the Race Fix in FullReady to work correctly!
-    g_currentMetadata = {};
-    g_runtime.ShowHdrDetailsExpanded = false;
-    g_currentMetadata.IsFullMetadataLoaded = false;
+    if (!g_preserveViewStateOnNextLoad) {
+        g_currentMetadata = {};
+        g_runtime.ShowHdrDetailsExpanded = false;
+        g_currentMetadata.IsFullMetadataLoaded = false;
+    }
 
     // Phase 1: zero-latency placeholder chain
     // Cancel stale heavy work BEFORE Phase 1 to free CPU for placeholder rendering.
@@ -10865,7 +10881,9 @@ void NavigateEdge(HWND hwnd, bool toLast) {
             g_compare.activePane = ComparePane::Right;
             g_compare.contextPane = ComparePane::Right;
             g_compare.selectedPane = ComparePane::Right;
-           g_viewState.Reset();
+            if (!g_preserveViewStateOnNextLoad) {
+                g_viewState.Reset();
+            }
             QuickView::BrowseDirection browseDir = toLast
                 ? QuickView::BrowseDirection::FORWARD
                 : QuickView::BrowseDirection::BACKWARD;
@@ -10925,7 +10943,9 @@ void Navigate(HWND hwnd, int direction) {
             g_compare.contextPane = ComparePane::Right;
             g_compare.selectedPane = ComparePane::Right;
             g_editState.Reset();
-            g_viewState.Reset();
+            if (!g_preserveViewStateOnNextLoad) {
+                g_viewState.Reset();
+            }
             QuickView::BrowseDirection browseDir = (direction > 0)
                 ? QuickView::BrowseDirection::FORWARD
                 : QuickView::BrowseDirection::BACKWARD;
