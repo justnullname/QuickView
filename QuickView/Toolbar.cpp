@@ -235,6 +235,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 
   auto isVisibleButton = [&](const ToolbarButton &btn) {
     if (m_animMode) {
+      if (btn.id == ToolbarButtonID::AnimDirtyRect) return g_config.ShowDirtyRectButton;
       if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::LockSize) return true;
       if (isAnimButton(btn.id)) return true;
       if (isAlwaysVisible(btn.id)) return true;
@@ -349,7 +350,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         stepInserted = true;
       }
       
-      if (m_animMode && btn.id == ToolbarButtonID::AnimDirtyRect &&
+      if (m_animMode && btn.id == ToolbarButtonID::AnimNextFrame &&
           !speedInserted) {
         cx -= gap; // Backtrack standard gap
         const float speedGap = 2.0f * m_uiScale;

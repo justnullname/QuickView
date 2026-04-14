@@ -280,6 +280,10 @@ const wchar_t *Settings_Tooltip_AdvancedColor = nullptr;
 const wchar_t *Settings_Tooltip_HdrToneMapping = nullptr;
 const wchar_t *Settings_Tooltip_ZoomAuto = nullptr;
 
+const wchar_t *Settings_Header_Professional = nullptr;
+const wchar_t *Settings_Label_ShowDirtyRect = nullptr;
+const wchar_t *Settings_Tooltip_ShowDirtyRect = nullptr;
+
 const wchar_t *Settings_Action_CheckUpdates = nullptr;
 const wchar_t *Settings_Action_ViewUpdate = nullptr;
 const wchar_t *Settings_Status_Checking = nullptr;
@@ -984,6 +988,9 @@ struct EN {
   static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Enable 16-bit floating-point rendering pipeline (scRGB).\nWhen enabled, perfectly renders photo highlights on HDR-capable displays by breaking the SDR limit.\nDisabling it forces mapping to SDR output.\nNote: Enabling increases VRAM usage.";
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR to SDR Tone Mapping strategy:\nDetermines how HDR images are displayed on SDR monitors.\nPerceptual: Preserves highlight details by smoothly compressing the luminance curve (softer look).\nColorimetric: Strict luminance mapping; highlights exceeding the monitor limit are clipped.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.";
+  static constexpr const wchar_t *Settings_Header_Professional = L"Professional Tools";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Show Dirty Rect button in animation mode";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"Show the dirty rectangle debug button in animation mode to visualize update regions.";
 };
 
 // ----------------------------------------------------------------
@@ -1491,6 +1498,9 @@ struct CN {
   static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"启用 16-bit 浮点渲染管线 (scRGB)。\n开启后，在支持 HDR 的显示器上能突破 SDR 亮度限制，完美呈现照片高光。\n关闭将强制降级映射至 SDR 输出。\n注意：开启会增加显存占用。";
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR 至 SDR 降级策略 (Tone Mapping)：\n当 HDR 图片在 SDR 显示器上显示时的映射方式。\n感知模式：保留高光细节，平滑压缩亮度曲线，观感柔和。\n色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自动：图片小于屏幕尺寸时 100% 缩放，图片大于屏幕尺寸时适应屏幕尺寸缩放。";
+  static constexpr const wchar_t *Settings_Header_Professional = L"专业工具";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"动画模式下显示脏矩形按钮";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"在动画播放时显示用于调试刷新区域的脏矩形工具按钮。";
 };
 
 // ----------------------------------------------------------------
@@ -1981,6 +1991,10 @@ struct TW {
   static constexpr const wchar_t *Settings_Header_ThemeManagement = L"匯入匯出 (.qvtheme)";
   static constexpr const wchar_t *Settings_Action_ExportTheme = L"匯出";
   static constexpr const wchar_t *Settings_Action_ImportTheme = L"匯入";
+  static constexpr const wchar_t *Settings_Header_Professional = L"專業工具";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"動畫模式下顯示髒矩形按鈕";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect =
+      L"在動畫模式工具欄顯示髒矩形調試按鈕，用於觀察局部刷新區域。";
 };
 
 // ----------------------------------------------------------------
@@ -2501,6 +2515,10 @@ struct JA {
   static constexpr const wchar_t *Settings_Header_ThemeManagement = L"テーマエンジン";
   static constexpr const wchar_t *Settings_Action_ExportTheme = L"エクスポート";
   static constexpr const wchar_t *Settings_Action_ImportTheme = L"インポート";
+  static constexpr const wchar_t *Settings_Header_Professional = L"プロ向けツール";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"アニメーションモードで脏矩形ボタンを表示";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect =
+      L"アニメーションモードのツールバーにダーティレクタングル（更新領域）のデバッグボタンを表示します。";
 };
 
 // ----------------------------------------------------------------
@@ -3060,6 +3078,10 @@ struct RU {
   static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Включить 16-битный конвейер рендеринга с плавающей запятой (scRGB).\nПри включении идеально отображает яркие участки фотографий на HDR-дисплеях, снимая ограничение SDR.\nОтключение принудительно отображает изображение в SDR.\nВнимание: Включение увеличивает использование видеопамяти.";
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"Стратегия тональной компрессии HDR в SDR:\nОпределяет, как HDR-изображения отображаются на SDR-мониторах.\nПерцептивная: Сохраняет детали в светах за счет плавного сжатия кривой яркости (более мягкий вид).\nКолориметрическая: Строгое отображение яркости; светлые участки, превышающие предел монитора, обрезаются.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.";
+  static constexpr const wchar_t *Settings_Header_Professional = L"Профессиональные инструменты";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Показывать кнопку грязного прямоугольника в режиме анимации";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect =
+      L"Показывать кнопку отладки грязных прямоугольников на панели инструментов анимации.";
 };
 
 // ----------------------------------------------------------------
@@ -3600,6 +3622,10 @@ struct DE {
   static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"16-Bit-Gleitkomma-Rendering-Pipeline (scRGB) aktivieren.\nWenn aktiviert, werden die Lichter von Fotos auf HDR-fähigen Displays perfekt gerendert, indem das SDR-Limit überschritten wird.\nDeaktivieren erzwingt die Zuordnung zur SDR-Ausgabe.\nHinweis: Aktivieren erhöht die VRAM-Nutzung.";
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR zu SDR Tonzuordnungsstrategie:\nLegt fest, wie HDR-Bilder auf SDR-Monitoren angezeigt werden.\nPerzeptiv: Erhält Highlight-Details durch sanfte Komprimierung der Luminanzkurve (weicherer Look).\nFarbmetrisch: Strikte Luminanzzuordnung; Highlights, die das Monitorlimit überschreiten, werden abgeschnitten.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100 % Skalierung, wenn das Bild kleiner als der Bildschirm ist, und an den Bildschirm anpassen, wenn es größer ist.";
+  static constexpr const wchar_t *Settings_Header_Professional = L"Profi-Werkzeuge";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Schaltfläche \"Dirty Rect\" im Animationsmodus anzeigen";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect =
+      L"Debug-Schaltfläche für Dirty Rects in der Animations-Symbolleiste anzeigen.";
 };
 
 // ----------------------------------------------------------------
@@ -4154,6 +4180,10 @@ struct ES {
   static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Habilitar el pipeline de renderizado de punto flotante de 16 bits (scRGB).\nCuando se habilita, renderiza perfectamente las luces de las fotos en pantallas compatibles con HDR rompiendo el límite SDR.\nDeshabilitarlo fuerza el mapeo a salida SDR.\nNota: Habilitarlo aumenta el uso de VRAM.";
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"Estrategia de mapeo de tonos (Tone Mapping) de HDR a SDR:\nDetermina cómo se muestran las imágenes HDR en monitores SDR.\nPerceptual: Preserva los detalles de las luces comprimiendo suavemente la curva de luminancia (aspecto más suave).\nColorimétrico: Mapeo de luminancia estricto; las luces que exceden el límite del monitor se recortan.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Automático: Escala al 100% cuando la imagen es más pequeña que la pantalla, se ajusta a la pantalla cuando es más grande.";
+  static constexpr const wchar_t *Settings_Header_Professional = L"Herramientas profesionales";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Mostrar el botón de rectángulo sucio en el modo de animación";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect =
+      L"Mostrar botón de depuración de Dirty Rect en la barra de herramientas de animación.";
 };
 
 // ----------------------------------------------------------------
@@ -4300,6 +4330,10 @@ template <typename T> void ApplyT() {
   Toolbar_Tooltip_AnimNext = T::Toolbar_Tooltip_AnimNext;
   Toolbar_Tooltip_AnimDirtyOn = T::Toolbar_Tooltip_AnimDirtyOn;
   Toolbar_Tooltip_AnimDirtyOff = T::Toolbar_Tooltip_AnimDirtyOff;
+
+  Settings_Header_Professional = T::Settings_Header_Professional;
+  Settings_Label_ShowDirtyRect = T::Settings_Label_ShowDirtyRect;
+  Settings_Tooltip_ShowDirtyRect = T::Settings_Tooltip_ShowDirtyRect;
 
 
   OSD_Copied = T::OSD_Copied;

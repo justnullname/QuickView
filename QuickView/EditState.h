@@ -214,6 +214,7 @@ struct AppConfig {
     std::wstring CustomSoftProofProfile; // Path to user-selected ICC file for soft proofing
     std::wstring CustomEditorPath;       // Path to user-selected custom image editor executable
     bool EnableDebugFeatures = false; // Master switch for Debug HUD & Metrics (Zero Overhead when false)
+    bool ShowDirtyRectButton = false; // [v3.5] Toggle visibility of the dirty rect debug button in animation mode
     
     // --- Save Options --- (Functional options removed, fully automated/smart)
 

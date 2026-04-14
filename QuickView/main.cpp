@@ -4424,6 +4424,7 @@ void SaveConfig() {
     // Advanced / Debug
     WritePrivateProfileStringW(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Advanced", L"PrefetchGear", std::to_wstring((int)g_config.PrefetchGear).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Advanced", L"ShowDirtyRectButton", g_config.ShowDirtyRectButton ? L"1" : L"0", iniPath.c_str());
     
     // Internal / Navigation
     WritePrivateProfileStringW(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt ? L"1" : L"0", iniPath.c_str());
@@ -4647,6 +4648,7 @@ void LoadConfig() {
     // Advanced / Debug
     g_config.EnableDebugFeatures = GetPrivateProfileIntW(L"Advanced", L"EnableDebugFeatures", 0, iniPath.c_str()) != 0;
     g_config.PrefetchGear = GetPrivateProfileIntW(L"Advanced", L"PrefetchGear", 1, iniPath.c_str());
+    g_config.ShowDirtyRectButton = GetPrivateProfileIntW(L"Advanced", L"ShowDirtyRectButton", 0, iniPath.c_str()) != 0;
     
     // Internal
     g_config.ShowSavePrompt = GetPrivateProfileIntW(L"General", L"ShowSavePrompt", 1, iniPath.c_str()) != 0;
@@ -8221,11 +8223,6 @@ SKIP_EDGE_NAV:;
             }
             break;
         case VK_SHIFT:
-            if (g_imageResource.animator && !ctrl && !alt) {
-                g_showAnimDirtyRect = !g_showAnimDirtyRect;
-                g_osd.Show(hwnd, g_showAnimDirtyRect ? L"[Animation] Dirty Rect: ON" : L"[Animation] Dirty Rect: OFF", true);
-                RequestRepaint(PaintLayer::Dynamic);
-            }
             break;
         case VK_PRIOR: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break; // Page Up
         case VK_NEXT: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break; // Page Down

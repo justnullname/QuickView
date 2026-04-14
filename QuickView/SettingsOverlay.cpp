@@ -1571,6 +1571,13 @@ void SettingsOverlay::BuildMenu() {
         }
     };
     tabVisuals.items.push_back(itemFsZoom);
+ 
+    // Professional Tools
+    tabVisuals.items.push_back({ AppStrings::Settings_Header_Professional, OptionType::Header });
+    SettingsItem itemShowDirtyRect = { AppStrings::Settings_Label_ShowDirtyRect, OptionType::Toggle, &g_config.ShowDirtyRectButton };
+    itemShowDirtyRect.tooltipText = AppStrings::Settings_Tooltip_ShowDirtyRect;
+    itemShowDirtyRect.onChange = [this]() { SaveConfig(); };
+    tabVisuals.items.push_back(itemShowDirtyRect);
 
 
 
@@ -1881,6 +1888,7 @@ void SettingsOverlay::BuildMenu() {
          // 5. Visual Feedback - Deferred to Render()
     };
     tabAdvanced.items.push_back(itemReset);
+
 
     m_tabs.push_back(tabAdvanced);
 
