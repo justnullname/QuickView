@@ -1721,7 +1721,8 @@ HRESULT CImageLoader::LoadTileFromMemory(
 // Decodes entire image from memory to BGRA pixels (heap-allocated).
 // Used by HeavyLanePool::FullDecodeAndCacheLOD for non-JPEG formats.
 HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
-                                            QuickView::RawImageFrame* outFrame) {
+                                           QuickView::RawImageFrame* outFrame,
+                                           CancelPredicate checkCancel) {
     if (!data || size < 4 || !outFrame) return E_INVALIDARG;
 
     std::wstring fmt = DetectFormatFromContent(data, size);
@@ -1776,7 +1777,15 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
         JxlDecoder* dec = JxlDecoderCreate(NULL);
         if (!dec) return E_OUTOFMEMORY;
 
-        void* runner = CImageLoader::GetJxlRunner();
+        // [Fix Bug #85] Avoid global runner contention/corruption in fallback paths.
+        size_t runnerThreads = std::thread::hardware_concurrency();
+        if (runnerThreads == 0) runnerThreads = 4;
+        
+        // [Optimization] Limit parallel threads for JXL to avoid system-wide contention
+        // during rapid scrolling. 16 is plenty for even 100MP images.
+        if (runnerThreads > 16) runnerThreads = 16;
+
+        void* runner = JxlThreadParallelRunnerCreate(NULL, runnerThreads);
         if (!runner) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
         JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
 
@@ -1795,6 +1804,11 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
         HRESULT hr = E_FAIL;
 
         for (;;) {
+            if (checkCancel && checkCancel()) {
+                hr = E_ABORT;
+                break;
+            }
+
             JxlDecoderStatus st = JxlDecoderProcessInput(dec);
             if (st == JXL_DEC_ERROR) break;
             if (st == JXL_DEC_SUCCESS) { hr = S_OK; break; }
@@ -1814,19 +1828,23 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
             else if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
                 if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &pixFmt, &outBufSize)) break;
 
-                // [Fix JXL Titan] Memory safety: check available RAM before attempting massive allocation.
-                // Without this, _aligned_malloc(4.8GB) for a 40000x30000 image causes ACCESS_VIOLATION
-                // in the subprocess, which then cascades into infinite retry loops.
+                // [Fix Bug #137] Loosen memory wall. 
+                // We rely on _aligned_malloc returning nullptr if allocation fails.
+                // For massive images (e.g. 1.2Gpx JXL), 4.5GB is a hard requirement.
+                // OS VMM can handle over-committing via pagefile.
                 {
                     MEMORYSTATUSEX ms = { sizeof(ms) };
                     if (GlobalMemoryStatusEx(&ms)) {
-                        if (outBufSize > (ms.ullAvailPhys * 6 / 10)) { // > 60% of available RAM
-                            wchar_t dbg[192];
-                            swprintf_s(dbg, L"[P15] JXL decode aborted: need %zu MB but only %llu MB available\n",
-                                       outBufSize / (1024*1024), ms.ullAvailPhys / (1024*1024));
-                            OutputDebugStringW(dbg);
-                            JxlDecoderDestroy(dec);
-                            return E_OUTOFMEMORY;
+                        // Only abort if we are truly hitting system-wide exhaustion (85% committed)
+                        // instead of just checking a relative percentage of physical RAM.
+                        if (outBufSize > ms.ullAvailPageFile && outBufSize > (ms.ullAvailPhys * 9 / 10)) {
+                             wchar_t dbg[192];
+                             swprintf_s(dbg, L"[P15] JXL heap decode aborted (CRITICAL): need %zu MB, only %llu MB pagefile available\n",
+                                        outBufSize / (1024*1024), ms.ullAvailPageFile / (1024*1024));
+                             OutputDebugStringW(dbg);
+                             JxlDecoderDestroy(dec);
+                             JxlThreadParallelRunnerDestroy(runner);
+                             return E_OUTOFMEMORY;
                         }
                     }
                 }
@@ -1844,9 +1862,14 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
                 break;
             }
         }
-
         JxlDecoderDestroy(dec);
+        JxlThreadParallelRunnerDestroy(runner);
 
+        if (FAILED(hr)) {
+            wchar_t failLog[128];
+            swprintf_s(failLog, L"[JXL] FullDecodeFromMemory failed: hr=0x%08X\n", (uint32_t)hr);
+            OutputDebugStringW(failLog);
+        }
         if (FAILED(hr) || !outBuf) {
             if (outBuf) _aligned_free(outBuf);
             OutputDebugStringW(L"[P15] JXL decode failed\n");
@@ -1889,7 +1912,8 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
 HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
                                        uint8_t* mmfBuf, size_t mmfBufSize,
                                        int* outW, int* outH, int* outStride,
-                                       std::function<void()> dcReadyCallback) {
+                                       std::function<void()> dcReadyCallback,
+                                       CancelPredicate checkCancel) {
     if (!data || size < 4 || !mmfBuf || !outW || !outH || !outStride) return E_INVALIDARG;
 
     std::wstring fmt = DetectFormatFromContent(data, size);
@@ -1912,6 +1936,10 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         // causes JXL_DEC_ERROR on subsequent decodes.
         size_t runnerThreads = std::thread::hardware_concurrency();
         if (runnerThreads == 0) runnerThreads = 4;
+
+        // [Optimization] Cap warmup/direct threads
+        if (runnerThreads > 16) runnerThreads = 16;
+
         void* runner = JxlThreadParallelRunnerCreate(NULL, runnerThreads);
         if (!runner) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
         JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner);
@@ -1935,6 +1963,11 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         HRESULT hr = E_FAIL;
 
         for (;;) {
+            if (checkCancel && checkCancel()) {
+                hr = E_ABORT;
+                break;
+            }
+
             JxlDecoderStatus st = JxlDecoderProcessInput(dec);
             if (st == JXL_DEC_ERROR) break;
             if (st == JXL_DEC_SUCCESS) { hr = S_OK; break; }
@@ -5780,8 +5813,10 @@ namespace QuickView {
                         // [Fix] Prevent massive memory allocation stalls (e.g. 4.8GB for 1.2 GigaPixel JXL)
                         // This prevents the OS from thrashing the page file for 15 seconds before crashing.
                         if (ctx.allowFakeBase && bufferSize > 1024ULL * 1024ULL * 1024ULL) { // 1 GB limit
-                            OutputDebugStringW(L"[JXL_DC] No 1:8 found and image too large. Faking 1x1 base layer for Region Decoder.\n");
-                            // We fake a 1x1 transparent pixel to satisfy the pipeline and unlock Titan Mode.
+                            OutputDebugStringW(L"[JXL_DC] Image too large for base layer. Faking transparent stub but PRESERVING original dimensions for Titan Mode.\n");
+                            // We fake a 1x1 transparent pixel to satisfy the pipeline,
+                            // BUT we return the TRUE image dimensions to out results.
+                            // This ensures the Tile Engine correctly calculates regions.
                             pixels = ctx.allocator(4); // 1 pixel
                             if (!pixels) { JxlDecoderDestroy(dec); return E_OUTOFMEMORY; }
                             
@@ -5790,15 +5825,15 @@ namespace QuickView {
                             JxlDecoderDestroy(dec);
                             
                             result.pixels = pixels;
-                            result.width = 1;
-                            result.height = 1;
-                            result.stride = 4;
+                            result.width = info.xsize;   // [Fix Bug #137]
+                            result.height = info.ysize;  // [Fix Bug #137]
+                            result.stride = info.xsize * 4;
                             result.format = PixelFormat::BGRA8888;
                             result.success = true;
                             
                             result.metadata.FormatDetails = L"JXL";
                             if (info.have_animation) result.metadata.FormatDetails += L" [Anim]";
-                            result.metadata.LoaderName = L"libjxl (Fake Base)"; 
+                            result.metadata.LoaderName = L"libjxl (Stub Base)"; 
                             
                             return S_OK;
                         }

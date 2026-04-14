@@ -280,7 +280,8 @@ public:
   // fallback. Output: heap-allocated BGRA buffer in outFrame (caller owns via
   // memoryDeleter).
   static HRESULT FullDecodeFromMemory(const uint8_t *data, size_t size,
-                                      QuickView::RawImageFrame *outFrame);
+                                      QuickView::RawImageFrame *outFrame,
+                                      CancelPredicate checkCancel = nullptr);
 
   // [Direct-to-MMF] Decode directly into caller-provided buffer (MMF view).
   // Zero heap allocation for pixel data — libjxl/Wuffs write directly into MMF.
@@ -292,7 +293,8 @@ public:
   static HRESULT
   FullDecodeToMMF(const uint8_t *data, size_t size, uint8_t *mmfBuf,
                   size_t mmfBufSize, int *outW, int *outH, int *outStride,
-                  std::function<void()> dcReadyCallback = nullptr);
+                  std::function<void()> dcReadyCallback = nullptr,
+                  CancelPredicate checkCancel = nullptr);
 
   // ============================================================================
   // [Direct D2D] Zero-Copy Loading API

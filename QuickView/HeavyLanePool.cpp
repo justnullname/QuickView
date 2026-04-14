@@ -1945,7 +1945,25 @@ bool HeavyLanePool::ShouldWarmupMasterBacking() const {
 void HeavyLanePool::StopMasterWarmup() {
     if (m_masterWarmupThread.joinable()) {
         m_masterWarmupThread.request_stop();
-        m_masterWarmupThread.join();
+        
+        // [Fix Bug #85] NO SYNC JOIN HERE! 
+        // Synchronous join() blocks the main dispatcher/UI thread during rapid scrolling.
+        // Instead, we move the thread ownership into a TrashBag and let GC handle it.
+        TrashBag bag;
+        bag.warmupThread = std::move(m_masterWarmupThread);
+        
+        // [Safety Fix] Move the backing store associated with this thread into the trash bag.
+        // This ensures the MMF view remains mapped until the thread is joined in the GC thread.
+        {
+            std::lock_guard lock(m_masterBackingMutex);
+            // If the backing store belongs to the image we are stopping, or is incomplete (imageId=0)
+            if (m_masterBacking.view && 
+                (m_masterBacking.imageId == m_masterWarmupImageId.load() || m_masterBacking.imageId == 0)) {
+                bag.backing = std::move(m_masterBacking);
+                m_masterBacking = {}; // Ensure m_masterBacking is clear
+            }
+        }
+        EnqueueTrash(std::move(bag));
     }
     m_masterWarmupImageId.store(0, std::memory_order_release);
     m_masterWarmupReady.store(false, std::memory_order_release);
@@ -1968,6 +1986,11 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
     const uint32_t warmupGen = m_generationID.load(std::memory_order_acquire);
 
     m_masterWarmupThread = std::jthread([this, path, imageId, mmf, warmupGen](std::stop_token st) {
+        // [Refix Bug #85] IO Throttling
+        // Warmup tasks (especially massive JXL decodes) MUST respect concurrency limits.
+        // Without this, rapid scrolling launches N parallel decodes that swamp the system.
+        ScopedIOSlot ioSlot(m_ioSemaphore, true /* shouldAcquire */);
+        
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 
         if (st.stop_requested()) return;
@@ -2023,8 +2046,10 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
             // Note: FullDecodeToMMF subscribes to FRAME_PROGRESSION for diagnostic logging,
             // but does NOT flush or swizzle at DC stage (causes data race with libjxl's
             // continued AC writes). Full decode completes, then swizzle once.
+            // [Fix] pass cancellation check to FullDecodeToMMF
             hr = CImageLoader::FullDecodeToMMF(mmf->data(), mmf->size(), mmfView, mmfSize,
-                                               &decW, &decH, &decStride);
+                                               &decW, &decH, &decStride, nullptr,
+                                               [&st]() { return st.stop_requested(); });
 
             if (st.stop_requested() || m_generationID.load(std::memory_order_acquire) != warmupGen) return;
 
@@ -2071,7 +2096,9 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                 this->QueueResult(std::move(ev));
             };
 
-            hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame);
+            // [Fix] pass cancellation check to FullDecodeFromMemory
+            hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame,
+                                                    [&st]() { return st.stop_requested(); });
             if ((FAILED(hr) || !fullFrame.IsValid()) && !st.stop_requested()) {
                 auto cancelPred = [&]() {
                     return st.stop_requested() ||
@@ -2154,11 +2181,37 @@ void HeavyLanePool::GCThreadFunc(std::stop_token st) {
 }
 
 void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
+    size_t pendingCount = 0;
     {
         std::lock_guard lock(m_gcMutex);
         m_gcQueue.push_back(std::move(bag));
+        pendingCount = m_gcQueue.size();
     }
     m_gcCv.notify_one();
+
+    // [Fix Bug #85] Proactive Resource Recovery
+    // If trash is accumulating faster than the BELOW_NORMAL GC thread can handle (e.g. rapid scrolling),
+    // we MUST force a partial cleanup in the current thread to prevent MMF handle exhaustion.
+    // [Optimization] Also trigger if physical memory is extremely low.
+    bool pressure = false;
+    MEMORYSTATUSEX ms = { sizeof(ms) };
+    if (GlobalMemoryStatusEx(&ms)) {
+        if (ms.ullAvailPhys < ms.ullTotalPhys / 10) pressure = true; // < 10% RAM left
+    }
+
+    if (pendingCount > 8 || (pressure && pendingCount > 0)) {
+        std::vector<TrashBag> localBatch;
+        {
+            std::lock_guard lock(m_gcMutex);
+            if (m_gcQueue.size() > (pressure ? 0 : 8)) {
+                localBatch.swap(m_gcQueue);
+            }
+        }
+        if (!localBatch.empty()) {
+            OutputDebugStringW(L"[GC] CRITICAL: Trash backlog exceeded threshold. Performing synchronous recovery.\n");
+            localBatch.clear(); // RAII destruction of MMFs and Threads happens HERE.
+        }
+    }
 }
 
 void HeavyLanePool::ResetMasterBackingStore() {

@@ -5650,12 +5650,15 @@ static bool TryReadPositiveIntArg(int argc, LPWSTR* argv, const wchar_t* name, i
 
 
 // [Fix JXL Titan] SEH-safe wrapper for FullDecodeFromMemory.
-// Must be in a separate function with NO C++ objects that have destructors (C2712 constraint).
-// Catches ACCESS_VIOLATION from huge JXL decodes (e.g. 4.8GB alloc for 40000x30000)
-// so the subprocess returns E_OUTOFMEMORY instead of crashing with 0xc0000005.
+// Wrapper function to handle the default std::function constructor (avoid C2712)
+static HRESULT InternalFullDecodeWrapper(const uint8_t* data, size_t size, QuickView::RawImageFrame* outFrame) {
+    return CImageLoader::FullDecodeFromMemory(data, size, outFrame);
+}
+
+// Function with NO C++ objects that have destructors (C2712 constraint).
 static HRESULT SafeFullDecodeFromMemory(const uint8_t* data, size_t size, QuickView::RawImageFrame* outFrame) {
     __try {
-        return CImageLoader::FullDecodeFromMemory(data, size, outFrame);
+        return InternalFullDecodeWrapper(data, size, outFrame);
     } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
                ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         OutputDebugStringW(L"[Phase4] SEH: ACCESS_VIOLATION in FullDecodeFromMemory (caught)\n");
