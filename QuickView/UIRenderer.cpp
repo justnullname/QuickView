@@ -987,7 +987,8 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
     // [Fix] g_isLoading is the authoritative "load in progress" flag from main thread.
     // It bypasses telemetry conditions which can be stale (e.g. Phase 1 skeleton sets
     // baseLayerReady=true before Phase 2 resets it, leaving no OnPaint trigger between).
-    bool decodingActive = hasTileProgressGap || baseLoading || (g_isLoading && !tilePipelineActive) || g_isLeftPaneDecoding;
+    bool decodingActive = hasTileProgressGap || baseLoading || (g_isLoading && !tilePipelineActive) || 
+                          g_isLeftPaneDecoding || m_telemetry.masterWarmupActive;
     
     // [Fix] Only show decode progress bar for Titan images as per user requirement.
     // However, if we are actively full-decoding on the main/background thread (g_isLeftPaneDecoding),

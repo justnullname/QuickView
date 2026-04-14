@@ -180,20 +180,23 @@ void HeavyLanePool::ResetBenchState() {
     }
     {
         std::lock_guard lock(m_masterBackingMutex);
-        if (m_masterBacking.isPooled) {
-            // [Instant Reuse] Return to pool immediately so the next BuildMasterBackingStoreEmpty call (nanoseconds later)
-            // can pick it up without waiting for the GC thread.
+        // [Fix Race Condition] libjxl's runner threads may still be writing to backing.view.
+        // We MUST NOT return it to the pool immediately if the thread is still active.
+        bool threadActive = m_masterWarmupThread.joinable();
+
+        if (m_masterBacking.isPooled && !threadActive) {
+            // [Instant Reuse] Only safe to return to pool if no thread is writing to it.
             RelinquishToPool(std::move(m_masterBacking));
         } else {
+            // If thread is active, we MUST move the store to the TrashBag so the GC 
+            // thread joins the worker BEFORE unmapping/deleting the file.
             bag.backing = std::move(m_masterBacking);
         }
     }
-    // [Fix] Move warmup thread INTO the TrashBag so GC joins it BEFORE
-    // destroying the MMF backing. libjxl's runner threads may still be
-    // writing to backing.view — must wait for them to finish.
-    // std::jthread destructor auto-calls request_stop() + join().
+
+    // [Fix] Move warmup thread INTO the TrashBag so GC joins it
     if (m_masterWarmupThread.joinable()) {
-        m_masterWarmupThread.request_stop();   // Signal decode to abort (checked between stages)
+        m_masterWarmupThread.request_stop();   // Signal decode to abort
         bag.warmupThread = std::move(m_masterWarmupThread);
     }
     m_masterWarmupImageId.store(0, std::memory_order_release);
@@ -1821,6 +1824,8 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     stats.cancelCount = m_cancelCount.load();
     stats.lastDecodeTimeMs = m_lastDecodeTimeMs.load();
     stats.lastDecodeId = m_lastDecodeId.load();
+    // [Fix] Only report as active if it's actually running and not finished
+    stats.masterWarmupActive = m_masterWarmupThread.joinable() && !m_masterWarmupReady.load();
     stats.activeTileJobs = m_activeTileJobs.load();
     
     for (const auto& w : m_workers) {
@@ -1839,8 +1844,6 @@ HeavyLanePool::PoolStats HeavyLanePool::GetStats() const {
     
     return stats;
 }
-
-
 
 void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, int* outCount, ImageID currentId) const {
     if (!outBuffer || !outCount) return;
@@ -1884,7 +1887,9 @@ void HeavyLanePool::GetWorkerSnapshots(WorkerSnapshot* outBuffer, int capacity, 
 
 bool HeavyLanePool::IsIdle() const {
     std::lock_guard lock(m_poolMutex);
-    return m_busyCount.load() == 0 && m_pendingJobs.empty();
+    // [Fix] Background warmup is only "busy" if it's joinable AND not yet ready.
+    bool warmingUp = m_masterWarmupThread.joinable() && !m_masterWarmupReady.load();
+    return m_busyCount.load() == 0 && m_pendingJobs.empty() && !warmingUp;
 }
 
 // ============================================================================
@@ -1992,6 +1997,12 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
     const uint32_t warmupGen = m_generationID.load(std::memory_order_acquire);
 
     m_masterWarmupThread = std::jthread([this, path, imageId, mmf, warmupGen](std::stop_token st) {
+        // [Fix] Ensure the UI marquee stops even if we exit early (failure/stop)
+        struct Finalizer {
+            std::atomic<bool>* ready;
+            ~Finalizer() { ready->store(true, std::memory_order_release); }
+        } finalizer{ &m_masterWarmupReady };
+
         // [Refix Bug #85] IO Throttling
         // Warmup tasks (especially massive JXL decodes) MUST respect concurrency limits.
         // Without this, rapid scrolling launches N parallel decodes that swamp the system.

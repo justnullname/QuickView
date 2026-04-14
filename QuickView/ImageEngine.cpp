@@ -849,6 +849,7 @@ ImageEngine::TelemetrySnapshot ImageEngine::GetTelemetry() const {
     s.heavyCancellations = poolStats.cancelCount;
     s.heavyPendingJobs = poolStats.pendingJobs;
     s.activeTileJobs = poolStats.activeTileJobs;
+    s.masterWarmupActive = poolStats.masterWarmupActive;
 
     s.heavyBusyWorkers = 0;
     for (int i = 0; i < s.heavyWorkerCount; ++i) {

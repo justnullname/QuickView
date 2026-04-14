@@ -105,6 +105,7 @@ public:
         int cancelCount;       // Total cancellations
         double lastDecodeTimeMs; // Last successful decode duration
         ImageID lastDecodeId;    // Match against current to avoid stale data
+        bool masterWarmupActive; // [Titan] True if background MMF filling is currently running
     };
     PoolStats GetStats() const;
     

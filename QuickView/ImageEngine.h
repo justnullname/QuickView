@@ -195,6 +195,7 @@ public:
         int heavyPendingJobs = 0;
         int activeTileJobs = 0;
         bool baseLayerReady = false; // First non-tile frame for current image has been delivered
+        bool masterWarmupActive = false; // [Titan] Master MMF backing is still filling
         
         // Zone A2: Legacy DComp
         bool layerImg = false;

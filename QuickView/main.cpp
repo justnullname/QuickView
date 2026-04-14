@@ -10570,6 +10570,7 @@ static void EnqueuePhase2NavigationTask(
 void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::BrowseDirection dir) {
 
     if (!g_imageEngine || path.empty()) return;
+    g_isLoading = true; // [Fix] Start loading state machine
 
     // [Phase 3] Increment token FIRST (deprecated, kept for backward compatibility)
     uint64_t myToken = ++g_currentNavToken;
