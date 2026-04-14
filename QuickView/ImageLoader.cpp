@@ -4492,7 +4492,6 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
     else if (detectedFmt == L"JXL") {
         HRESULT hr = LoadJXL(filePath, ppBitmap);
         if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"libjxl"; return S_OK; }
-        else { if (pLoaderName) *pLoaderName = L"libjxl (Failed)"; }
     }
     else if (detectedFmt == L"GIF") {
         HRESULT hr = LoadGifWuffs(filePath, ppBitmap, checkCancel);
@@ -7072,12 +7071,11 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                         } else {
                             OutputDebugStringW(L"[Anim] GetNextFrame() returned null or no pixels\n");
                         }
-                    } else {
-                        OutputDebugStringW(L"[Anim] IsAnimated() returned false, falling through to static decode\n");
-                    }
-                } else {
-                    OutputDebugStringW(L"[Anim] Initialize() FAILED, falling through to static decode\n");
+                    // OutputDebugStringW(L"[Anim] IsAnimated() returned false, falling through to static decode\n");
                 }
+            } else {
+                // OutputDebugStringW(L"[Anim] Initialize() FAILED, falling through to static decode\n");
+            }
             } else {
                 OutputDebugStringW(L"[Anim] MappedFile invalid for animation\n");
             }

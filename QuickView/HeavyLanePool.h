@@ -383,6 +383,8 @@ private:
         int stride = 0;
         ImageID imageId = 0;
         std::wstring tempPath;
+        bool isPooled = false; // [MMF Pool] If true, this store belongs to the persistent reserve pool
+
         
         // [Phase 5] Rule of 5: explicit move semantics to prevent double-free of HANDLEs
         MasterBackingStore() = default;
@@ -432,6 +434,16 @@ private:
     // This prevents ResetBenchState from releasing the MMF while tile workers are reading it.
     bool AcquireMasterBackingView(ImageID imageId, const uint8_t** outPixels, int* outW, int* outH, int* outStride,
                                    std::unique_lock<std::mutex>& outLock);
+
+    // [MMF Pool] Infrastructure
+    std::mutex m_mmfPoolMutex;
+    std::vector<MasterBackingStore> m_reservePool;
+    static constexpr size_t kMasterBackingPoolLimit = 5ULL * 1024 * 1024 * 1024; // 5GB buffer per slot
+    static constexpr size_t kMasterPoolCapacity = 2; // Keep at most 2 heavyweight buffers
+    static constexpr size_t kTitanPromotionThreshold = 100ULL * 1024 * 1024; // >100MB required to trigger pooling
+
+    void RelinquishToPool(MasterBackingStore&& store);
+
 
     // [Phase-2] Background warmup for heavy non-ROI formats (PNG/TIFF/AVIF/HEIC).
     // Builds master MMF backing store right after image open to avoid first tile hard stall.

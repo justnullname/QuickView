@@ -1358,11 +1358,11 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     // [v9.4] Smart Skip: If single image > Cache Cap, skip prefetch
     // This prevents "Eco Mode OOM" where a single 90MP image (350MB) 
     // forces overflow despite the 128MB limit.
-    if (pri != QuickView::Priority::Critical && m_prefetchPolicy.maxCacheMemory > 0) {
+    // [Titan Fix] If Titan mode is enabled, massive images go to MMF pool (Zero-Copy),
+    // so they DON'T consume the same heap cache. We should allow prefetch to MMF!
+    if (pri != QuickView::Priority::Critical && m_prefetchPolicy.maxCacheMemory > 0 && !IsTitanModeEnabled()) {
          uint64_t predictedSize = (uint64_t)info.width * info.height * 4;
          // Allow a 10% margin just in case, but strictly reject if it consumes > 90% of ENTIRE cache
-         // Actually, user agreed to > 80% rule or Strict Cap.
-         // Let's use Strict Cap to be safe for Eco Mode.
          if (predictedSize > m_prefetchPolicy.maxCacheMemory) {
               wchar_t skipBuf[256];
               swprintf_s(skipBuf, L"[ImageEngine] Smart Skip: %s (%.1f MB) > Cache Cap (%.1f MB) -> Skipped\n", 

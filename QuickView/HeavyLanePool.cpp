@@ -7,6 +7,7 @@
 #include <turbojpeg.h>
 #include <filesystem>
 #include <chrono>
+#include <winioctl.h>
 
 
 using namespace QuickView;
@@ -179,8 +180,13 @@ void HeavyLanePool::ResetBenchState() {
     }
     {
         std::lock_guard lock(m_masterBackingMutex);
-        bag.backing = std::move(m_masterBacking);
-        // m_masterBacking is now empty shells thanks to Rule-of-5
+        if (m_masterBacking.isPooled) {
+            // [Instant Reuse] Return to pool immediately so the next BuildMasterBackingStoreEmpty call (nanoseconds later)
+            // can pick it up without waiting for the GC thread.
+            RelinquishToPool(std::move(m_masterBacking));
+        } else {
+            bag.backing = std::move(m_masterBacking);
+        }
     }
     // [Fix] Move warmup thread INTO the TrashBag so GC joins it BEFORE
     // destroying the MMF backing. libjxl's runner threads may still be
@@ -2163,9 +2169,15 @@ void HeavyLanePool::GCThreadFunc(std::stop_token st) {
             auto t0 = std::chrono::high_resolution_clock::now();
             int count = (int)localBatch.size();
             
-            // Destruction happens here: MasterBackingStore RAII handles UnmapViewOfFile,
+            // [MMF Pool] Recovery logic: Relinquish pooled stores instead of deleting them
+            for (auto& bag : localBatch) {
+                if (bag.backing.isPooled) {
+                    RelinquishToPool(std::move(bag.backing));
+                }
+            }
+
+            // Destruction happens here: Remaining MasterBackingStore RAII handles UnmapViewOfFile,
             // CloseHandle, DeleteFileW. LODCache shared_ptr releases pixel buffers.
-            // MappedFile shared_ptr releases source file mapping.
             localBatch.clear();
             
             auto t1 = std::chrono::high_resolution_clock::now();
@@ -2209,6 +2221,11 @@ void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
         }
         if (!localBatch.empty()) {
             OutputDebugStringW(L"[GC] CRITICAL: Trash backlog exceeded threshold. Performing synchronous recovery.\n");
+            for (auto& bag : localBatch) {
+                if (bag.backing.isPooled) {
+                    RelinquishToPool(std::move(bag.backing));
+                }
+            }
             localBatch.clear(); // RAII destruction of MMFs and Threads happens HERE.
         }
     }
@@ -2216,9 +2233,31 @@ void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
 
 void HeavyLanePool::ResetMasterBackingStore() {
     std::lock_guard lock(m_masterBackingMutex);
-    // [Phase 5] MasterBackingStore has RAII destructor.
-    // Move-assign empty instance triggers cleanup of old resources.
-    m_masterBacking = MasterBackingStore{};
+    if (m_masterBacking.hFile != INVALID_HANDLE_VALUE) {
+        // [MMF Pool] Relinquish to pool if possible, otherwise RAII handles cleanup
+        RelinquishToPool(std::move(m_masterBacking));
+    }
+    // m_masterBacking was moved, it's now in empty state
+}
+
+void HeavyLanePool::RelinquishToPool(MasterBackingStore&& store) {
+    if (!store.isPooled || store.hFile == INVALID_HANDLE_VALUE) {
+        // Not a pooled object, let RAII naturally destroy (handle/delete)
+        return;
+    }
+
+    // [Safety] DO NOT UnmapViewOfFile here. 
+    // m_masterWarmupThread (libjxl runner) might still be writing to this view 
+    // even after we've signaled it to stop. Unmapping would cause a crash (0xc0000005).
+    // Keeping it mapped is safe and makes reuse faster.
+    
+    std::lock_guard lock(m_mmfPoolMutex);
+    if (m_reservePool.size() < kMasterPoolCapacity) {
+        m_reservePool.push_back(std::move(store));
+        OutputDebugStringW(L"[MMFPool] Store returned to reserve pool (View kept mapped).\n");
+    } else {
+        OutputDebugStringW(L"[MMFPool] Reserve pool full, destroying store.\n");
+    }
 }
 
 HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId) {
@@ -2281,7 +2320,8 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
         uint8_t* dstRow = view + (size_t)y * (size_t)stride;
         memcpy(dstRow, srcRow, (size_t)stride);
     }
-    FlushViewOfFile(view, totalBytes);
+    // [Optimization] FlushViewOfFile(view, totalBytes) REMOVED.
+    // Let the OS Lazy Writer handle disk persistence in the background to maximize write throughput.
 
     {
         std::lock_guard lock(m_masterBackingMutex);
@@ -2321,80 +2361,118 @@ bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** ou
 HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int stride, ImageID imageId) {
     if (width <= 0 || height <= 0 || stride <= 0) return E_INVALIDARG;
 
-    size_t totalBytes = (size_t)stride * (size_t)height;
-    if (totalBytes == 0) return E_FAIL;
-
+    // [Optimization] Return previous buffer to pool FIRST, ensuring we can grab it back in Step 0
     ResetMasterBackingStore();
+
+    size_t requiredBytes = (size_t)stride * (size_t)height;
+    if (requiredBytes == 0) return E_FAIL;
+
+    // [MMF Pool] Step 0: Try to grab from pool if it's a heavyweight request
+    bool usePool = (requiredBytes > kTitanPromotionThreshold);
+    if (usePool) {
+        std::lock_guard lock(m_mmfPoolMutex);
+        if (!m_reservePool.empty()) {
+            m_masterBacking = std::move(m_reservePool.back());
+            m_reservePool.pop_back();
+
+            if (m_masterBacking.sizeBytes >= requiredBytes) {
+                m_masterBacking.width = width;
+                m_masterBacking.height = height;
+                m_masterBacking.stride = stride;
+                m_masterBacking.imageId = 0; // Sentinel: NOT ready for reading
+
+                // [Optimization] If it's already mapped, reuse it!
+                if (!m_masterBacking.view) {
+                    m_masterBacking.view = static_cast<uint8_t*>(MapViewOfFile(
+                        m_masterBacking.hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, requiredBytes));
+                }
+
+                if (m_masterBacking.view) {
+                    // [Optimization] Only clear the ACTIVE area needed for the current image.
+                    // Do NOT clear the entire 5GB buffer to save ~100-300ms of CPU time.
+                    ZeroMemory(m_masterBacking.view, requiredBytes);
+                    
+                    wchar_t msg[128];
+                    swprintf_s(msg, L"[MMFPool] REUSE Blackboard SUCCESS (View=%p, Size=%zu MB, CachedView=%s)\n", 
+                               m_masterBacking.view, requiredBytes / (1024*1024), 
+                               m_masterBacking.view ? L"YES" : L"NO");
+                    OutputDebugStringW(msg);
+                    return S_OK;
+                }
+            }
+            // If mapping failed or too small, let destruction happen via m_masterBacking assignment below
+        }
+    }
 
     wchar_t tempDir[MAX_PATH] = {};
     if (GetTempPathW(MAX_PATH, tempDir) == 0) return HRESULT_FROM_WIN32(GetLastError());
-
     wchar_t tempPath[MAX_PATH] = {};
     GUID guid;
     CoCreateGuid(&guid);
-    swprintf_s(tempPath, L"%sQuickView_master_%lu_%08lX%04X%04X.bgra",
-        tempDir, GetCurrentProcessId(),
-        guid.Data1, guid.Data2, guid.Data3);
+    swprintf_s(tempPath, L"%sQuickView_TitanPool_%lu_%08lX.bgra", tempDir, GetCurrentProcessId(), guid.Data1);
 
-    // FILE_ATTRIBUTE_TEMPORARY: hint to VMM to keep pages in RAM when possible
-    // FILE_FLAG_RANDOM_ACCESS: we will SIMD-downsample from random positions later
-    HANDLE hFile = CreateFileW(
-        tempPath,
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ,
-        nullptr,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_RANDOM_ACCESS,
-        nullptr);
+    // [Reef #2] FILE_FLAG_DELETE_ON_CLOSE: Auto-delete on crash/exit
+    DWORD flags = FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_DELETE_ON_CLOSE;
+    HANDLE hFile = CreateFileW(tempPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, flags, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
 
+    size_t allocationSize = usePool ? kMasterBackingPoolLimit : requiredBytes;
+    
+    // [Optimization] Step 1: Mark as Sparse File to make creation instantaneous
+    DWORD dwTemp = 0;
+    if (!DeviceIoControl(hFile, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &dwTemp, NULL)) {
+        // Fallback to normal if sparse fails for some reason (e.g. non-NTFS)
+        OutputDebugStringW(L"[MMFPool] WARNING: FSCTL_SET_SPARSE failed.\n");
+    }
+
+    // Step 2: Set file size (instantaneous on sparse files)
     LARGE_INTEGER liSize;
-    liSize.QuadPart = static_cast<LONGLONG>(totalBytes);
+    liSize.QuadPart = static_cast<LONGLONG>(allocationSize);
     if (!SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) || !SetEndOfFile(hFile)) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
         CloseHandle(hFile);
-        DeleteFileW(tempPath);
         return hr;
     }
+    
+    // SE_MANAGE_VOLUME_NAME / SetFileValidData logic removed (Simplified)
+    OutputDebugStringW(L"[MMFPool] Sparse Allocation initialized.\n");
 
     HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
     if (!hMap) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
         CloseHandle(hFile);
-        DeleteFileW(tempPath);
         return hr;
     }
 
-    uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, totalBytes));
+    // Map the view. For pooled objects, we map the FULL capacity (e.g. 5GB) 
+    // once to ensure stable VAS and avoid remapping.
+    size_t mapSize = usePool ? kMasterBackingPoolLimit : requiredBytes;
+    uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, mapSize));
     if (!view) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hMap);
-        CloseHandle(hFile);
-        DeleteFileW(tempPath);
+        CloseHandle(hMap); CloseHandle(hFile);
         return hr;
     }
+    // [Optimization] Only clear the ACTIVE area. Sparse files handle the rest.
+    ZeroMemory(view, requiredBytes);
 
-    // Store WITHOUT filling pixels — caller will write directly via FullDecodeToMMF.
-    // CRITICAL: imageId is set to 0 (sentinel) — NOT the real imageId.
-    // This prevents AcquireMasterBackingView from returning an EMPTY MMF
-    // as a valid Master Cache before FullDecodeToMMF has completed.
-    // The real imageId is set by EnsureMasterWarmup after decode finishes.
     {
         std::lock_guard lock(m_masterBackingMutex);
         m_masterBacking.hFile = hFile;
         m_masterBacking.hMap = hMap;
         m_masterBacking.view = view;
-        m_masterBacking.sizeBytes = totalBytes;
+        m_masterBacking.sizeBytes = allocationSize;
         m_masterBacking.width = width;
         m_masterBacking.height = height;
         m_masterBacking.stride = stride;
-        m_masterBacking.imageId = 0;  // Sentinel: NOT ready for reading
+        m_masterBacking.imageId = 0; // Sentinel
         m_masterBacking.tempPath = tempPath;
+        m_masterBacking.isPooled = usePool;
     }
 
-    wchar_t dbg[192];
-    swprintf_s(dbg, L"[MMF] Empty backing store created: %dx%d (%zu MB) → %s\n",
-               width, height, totalBytes / (1024*1024), tempPath);
+    wchar_t dbg[256];
+    swprintf_s(dbg, L"[MMFPool] Global Master created: %s, Capacity=%zu MB, Initial=%dx%d\n", 
+               usePool ? L"POOLED" : L"DYNAMIC", allocationSize / (1024*1024), width, height);
     OutputDebugStringW(dbg);
     return S_OK;
 }
