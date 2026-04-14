@@ -1425,12 +1425,19 @@ static bool RenderCompareComposite(HWND hwnd) {
     ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(winW, winH, false, 0, 0, false, compareSurfaceFormat);
     if (!ctx) return false;
 
+    // [Fix] Capture initial transform (e.g. DComp Atlas offset) to avoid Double Translation
+    D2D1_MATRIX_3X2_F origTransform;
+    ctx->GetTransform(&origTransform);
+
     // [Geek Glass] Capture Compare results for UI backgrounds
     ComPtr<ID2D1CommandList> cmdList;
     ctx->CreateCommandList(&cmdList);
     ComPtr<ID2D1Image> origTarget;
     ctx->GetTarget(&origTarget);
+
+    // Set recording target and reset transform to Identity for 'clean' command list
     ctx->SetTarget(cmdList.Get());
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
     const CompareView rightView = GetRightCompareView();
@@ -1513,6 +1520,7 @@ static bool RenderCompareComposite(HWND hwnd) {
 
     cmdList->Close();
     ctx->SetTarget(origTarget.Get());
+    ctx->SetTransform(origTransform); // Restore offset transform
     ctx->DrawImage(cmdList.Get());
 
     if (g_uiRenderer) {
