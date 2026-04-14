@@ -795,8 +795,14 @@ bool GetCurrentPixelArtState(HWND hwnd) {
     if (winW <= 0 || winH <= 0) return false;
 
     float fitScale = std::min(winW / imgW, winH / imgH);
-    if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg) {
-        if (fitScale > 1.0f) fitScale = 1.0f;
+    if (g_runtime.LockWindowSize) {
+        if (!g_config.UpscaleSmallImagesWhenLocked && fitScale > 1.0f) {
+            fitScale = 1.0f;
+        }
+    } else {
+        if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg && fitScale > 1.0f) {
+            fitScale = 1.0f;
+        }
     }
 
     float totalScale = fitScale * g_viewState.Zoom;
