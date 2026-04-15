@@ -13,11 +13,11 @@ namespace QuickView::Logging {
 }
 
 // 定义日志级别映射
-#define QV_LOG_LEVEL_CRITICAL    TRACELOGGING_LEVEL_CRITICAL
-#define QV_LOG_LEVEL_ERROR       TRACELOGGING_LEVEL_ERROR
-#define QV_LOG_LEVEL_WARNING     TRACELOGGING_LEVEL_WARNING
-#define QV_LOG_LEVEL_INFO        TRACELOGGING_LEVEL_INFO
-#define QV_LOG_LEVEL_VERBOSE     TRACELOGGING_LEVEL_VERBOSE
+#define QV_LOG_LEVEL_CRITICAL    1
+#define QV_LOG_LEVEL_ERROR       2
+#define QV_LOG_LEVEL_WARNING     3
+#define QV_LOG_LEVEL_INFO        4
+#define QV_LOG_LEVEL_VERBOSE     5
 
 // 核心宏：极致性能路径，利用模板和 C++23 静态特性
 #define QV_LOG(level, name, ...) \

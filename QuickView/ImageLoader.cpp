@@ -4065,7 +4065,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     avifResult result = avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size());
     if (result != AVIF_RESULT_OK) {
         QV_LOG(QV_LOG_LEVEL_INFO, "LoadAVIFSetIOMemory",
-                TraceLoggingWideString(avifResultToString(result), "failed"));
+                TraceLoggingString(avifResultToString(result), "failed"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -4074,7 +4074,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     result = avifDecoderParse(decoder);
     if (result != AVIF_RESULT_OK) {
         QV_LOG(QV_LOG_LEVEL_INFO, "LoadAVIFParse",
-                TraceLoggingWideString(avifResultToString(result), "failed"),
+                TraceLoggingString(avifResultToString(result), "failed"),
                 TraceLoggingString(decoder->diag.error, "Diag"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
@@ -4084,7 +4084,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     result = avifDecoderNextImage(decoder);
     if (result != AVIF_RESULT_OK) {
         QV_LOG(QV_LOG_LEVEL_INFO, "LoadAVIFNextImage",
-                TraceLoggingWideString(avifResultToString(result), "failed"));
+                TraceLoggingString(avifResultToString(result), "failed"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -4130,7 +4130,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
 
     if (result != AVIF_RESULT_OK) {
         QV_LOG(QV_LOG_LEVEL_INFO, "LoadAVIFYUVToRGB",
-                TraceLoggingWideString(avifResultToString(result), "failed"));
+                TraceLoggingString(avifResultToString(result), "failed"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -6265,9 +6265,10 @@ namespace QuickView {
                     if (unpackResult == LIBRAW_SUCCESS) {
                         libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb();
                         
-                        swprintf_s(dbg, L"[RawCodec] thumb=%p, type=%d, size=%d\n", 
-                                   thumb, thumb ? thumb->type : -1, thumb ? thumb->data_size : 0);
-                        QV_LOG_INFO(dbg);
+                        QV_LOG(QV_LOG_LEVEL_INFO, "RawCodec",
+                                TraceLoggingPointer(thumb, "thumb"),
+                                TraceLoggingValue(thumb ? (int)thumb->type : -1, "type"),
+                                TraceLoggingValue(thumb ? thumb->data_size : 0, "size"));
                         
                         if (thumb) {
                             if (thumb->type == LIBRAW_IMAGE_JPEG) {

@@ -42,8 +42,8 @@ ImageEngine::ImageEngine(CImageLoader* loader)
 
     // Debug output
     QV_LOG(QV_LOG_LEVEL_INFO, "ImageEngineN1",
-            TraceLoggingString(m_engineConfig.GetTierName(), "Tier"),
-            TraceLoggingString(m_pool.GetConfig().GetModeName(), "Arena"),
+            TraceLoggingWideString(m_engineConfig.GetTierName(), "Tier"),
+            TraceLoggingWideString(m_pool.GetConfig().GetModeName(), "Arena"),
             TraceLoggingValue(m_engineConfig.maxHeavyWorkers, "MaxWorkers"));
 }
 
@@ -324,7 +324,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 TraceLoggingValue(info.height, "Arg2"),
                 TraceLoggingValue((double)(info.width * info.height) / 1000000.0, "Arg3"),
                 TraceLoggingWideString(info.format.c_str(), "Format"),
-                TraceLoggingString(typeName, "Type"));
+                TraceLoggingWideString(typeName, "Type"));
     }
     
     // Update State for UI
