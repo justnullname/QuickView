@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "QuickViewETW.h"
 #include "CompositionEngine.h"
 #include <dxgi1_6.h>
 #include "TileManager.h"
@@ -537,7 +538,7 @@ bool CompositionEngine::RefreshDisplayColorState(bool forceHdrSimulation) {
     m_surfaceFormat = m_isAdvancedColor ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
 
     if (m_isAdvancedColor) {
-        OutputDebugStringW(L"[HDR] Advanced color active on current monitor. Using FP16 scRGB composition surfaces.\n");
+        QV_LOG_INFO(L"[HDR] Advanced color active on current monitor. Using FP16 scRGB composition surfaces.\n");
     }
 
     return changed;

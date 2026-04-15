@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "QuickViewETW.h"
 #include "ComputeEngine.h"
 #include <d3dcompiler.h>
 #include <algorithm>
@@ -291,7 +292,7 @@ HRESULT ComputeEngine::CompileShaders() {
     // 1. Format Convert
     HRESULT hr = D3DCompile(HLSL_FormatConvert, strlen(HLSL_FormatConvert), nullptr, nullptr, nullptr, "CSMain", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
     if (FAILED(hr)) {
-        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        if (errorBlob) QV_LOG(QV_LOG_LEVEL_ERROR, "ShaderError", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Error"));
         return hr;
     }
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csFormatConvert);
@@ -308,7 +309,7 @@ HRESULT ComputeEngine::CompileShaders() {
     blob.Reset(); errorBlob.Reset();
     hr = D3DCompile(HLSL_ToneMapHdrToSdr, strlen(HLSL_ToneMapHdrToSdr), nullptr, nullptr, nullptr, "CSToneMap", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
     if (FAILED(hr)) {
-        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        if (errorBlob) QV_LOG(QV_LOG_LEVEL_ERROR, "ShaderError", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Error"));
         return hr;
     }
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csToneMapHdrToSdr);
@@ -318,7 +319,7 @@ HRESULT ComputeEngine::CompileShaders() {
     blob.Reset(); errorBlob.Reset();
     hr = D3DCompile(HLSL_ToneMapHdrToHdr, strlen(HLSL_ToneMapHdrToHdr), nullptr, nullptr, nullptr, "CSToneMapHDR", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
     if (FAILED(hr)) {
-        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        if (errorBlob) QV_LOG(QV_LOG_LEVEL_ERROR, "ShaderError", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Error"));
         return hr;
     }
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csToneMapHdrToHdr);
@@ -328,7 +329,7 @@ HRESULT ComputeEngine::CompileShaders() {
     blob.Reset(); errorBlob.Reset();
     hr = D3DCompile(HLSL_ComposeGainMap, strlen(HLSL_ComposeGainMap), nullptr, nullptr, nullptr, "CSComposeGainMap", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
     if (FAILED(hr)) {
-        if (errorBlob) OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+        if (errorBlob) QV_LOG(QV_LOG_LEVEL_ERROR, "ShaderError", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Error"));
         return hr;
     }
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csComposeGainMap);
@@ -653,11 +654,11 @@ HRESULT ComputeEngine::ComposeGainMap(
     ID3D11Texture2D** outTexture)
 {
     if (!m_valid || !sdrPixels || !gainPixels || !outTexture) {
-        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.\n");
+        QV_LOG_INFO(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.\n");
         return E_INVALIDARG;
     }
     if (sdrW <= 0 || sdrH <= 0 || gainW <= 0 || gainH <= 0) {
-        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.\n");
+        QV_LOG_INFO(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.\n");
         return E_INVALIDARG;
     }
 
@@ -665,7 +666,7 @@ HRESULT ComputeEngine::ComposeGainMap(
     wchar_t logBuf[256];
     swprintf_s(logBuf, L"[ComputeEngine] Compose: SDR %dx%d, Gain %dx%d, Headroom %.2f, MaxGain %.2f\n",
         sdrW, sdrH, gainW, gainH, payload.targetHeadroom, payload.gainMapMax[0]);
-    OutputDebugStringW(logBuf);
+    QV_LOG_INFO(logBuf);
 
     // 1. Upload SDR base layer (Can be BGRA8 or R32G32B32A32_FLOAT)
     D3D11_TEXTURE2D_DESC sdrDesc = {};

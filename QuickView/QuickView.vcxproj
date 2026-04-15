@@ -218,6 +218,7 @@
   <!-- Header Files -->
   <ItemGroup>
     <ClInclude Include="pch.h" />
+    <ClInclude Include="QuickViewETW.h" />
     <ClInclude Include="GeekGlass.h" />
     <ClInclude Include="GeekContextMenu.h" />
     <ClInclude Include="GeekIconLibrary.h" />
@@ -279,6 +280,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="QuickViewETW.cpp" />
     <ClCompile Include="ContextMenu.cpp" />
     <ClCompile Include="GalleryOverlay.cpp" />
     <ClCompile Include="ThumbnailManager.cpp" />

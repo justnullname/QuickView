@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "QuickViewETW.h"
 #include "TinyExrLoader.h"
 #include <algorithm>
 #include "StbLoader.h" // For ZlibDecode
@@ -64,13 +65,13 @@ namespace TinyExrLoader {
 
          if (ret != TINYEXR_SUCCESS) {
             if (err) {
-                OutputDebugStringA("TinyEXR Error: ");
-                OutputDebugStringA(err);
-                OutputDebugStringA("\n");
+                QV_LOG(QV_LOG_LEVEL_ERROR, "TinyEXRError", TraceLoggingString("TinyEXR Error: ", "Message"));
+                QV_LOG(QV_LOG_LEVEL_ERROR, "TinyEXRError", TraceLoggingString(err, "Message"));
+                QV_LOG(QV_LOG_LEVEL_ERROR, "TinyEXRError", TraceLoggingString("\n", "Message"));
                 MessageBoxA(nullptr, err, "TinyEXR Error", MB_OK | MB_ICONERROR);
                 ::FreeEXRErrorMessage(err); 
             } else {
-                 OutputDebugStringA("TinyEXR Error: Unknown error (ret code check needed)\n");
+                 QV_LOG(QV_LOG_LEVEL_ERROR, "TinyEXRError", TraceLoggingString("TinyEXR Error: Unknown error (ret code check needed)\n", "Message"));
             }
             return false;
         }

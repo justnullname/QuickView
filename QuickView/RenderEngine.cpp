@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "QuickViewETW.h"
 #include <initguid.h>
 #include <map>
 #include <mutex>
@@ -302,7 +303,7 @@ HRESULT CRenderEngine::Initialize(HWND hwnd) {
   m_computeEngine = std::make_unique<QuickView::ComputeEngine>();
   hr = m_computeEngine->Initialize(m_d3dDevice.Get());
   if (FAILED(hr)) {
-    OutputDebugStringA("Warning: Failed to initialize ComputeEngine.\n");
+    QV_LOG(QV_LOG_LEVEL_WARNING, "RenderEngine", TraceLoggingString("Warning: Failed to initialize ComputeEngine.\n", "Message"));
   }
 
   return S_OK;
@@ -648,7 +649,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
           wchar_t dbg[256];
           swprintf_s(dbg, L"[RenderEngine] GPU Bake Triggered (UltraHDR). Target Headroom: %.2f stops.\n", payload.targetHeadroom);
-          OutputDebugStringW(dbg);
+          QV_LOG_INFO(dbg);
 
           ComPtr<ID3D11Texture2D> pBaked;
           HRESULT hrBake = m_computeEngine->ComposeGainMap(
@@ -695,7 +696,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   wchar_t dbgUpload[256];
   swprintf_s(dbgUpload, L"[RenderEngine] Upload: %dx%d, Format=%d, BlendOp=%d, AdvColor=%d\n",
       (int)frame.width, (int)frame.height, (int)frame.format, (int)frame.blendOp, (int)m_isAdvancedColor);
-  OutputDebugStringW(dbgUpload);
+  QV_LOG_INFO(dbgUpload);
 
   switch (frame.format) {
   case QuickView::PixelFormat::BGRA8888:
