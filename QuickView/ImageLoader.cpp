@@ -2506,7 +2506,6 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
     }
 
     if (FAILED(hr) || !tempBuf || !planReady) {
-        wchar_t errObj[256];
         QV_LOG(QV_LOG_LEVEL_INFO, "JXL_ROIFailure",
                 TraceLoggingValue(hr, "hr0x"),
                 TraceLoggingPointer(tempBuf, "tempBuf"),
@@ -5040,7 +5039,6 @@ namespace QuickView {
                     for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {
                         // [UltraHDR Diagnostic]
                         if (marker->marker == JPEG_APP0 + 1 || marker->marker == JPEG_APP0 + 2) {
-                            wchar_t logBuf[256];
                             swprintf_s(logBuf, L"[UltraHDR] Found Marker APP%d (0x%02X), Len=%d, Data[0..3]=%02X %02X %02X %02X\n",
                                 marker->marker - JPEG_APP0, marker->marker, (int)marker->data_length,
                                 marker->data_length > 0 ? marker->data[0] : 0,
@@ -11236,7 +11234,6 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     // Apply ID Replacements
                     if (!replacements.empty()) {
                         MultiReplace(svgContent, replacements);
-                        wchar_t msg[128];
                         QV_LOG(QV_LOG_LEVEL_INFO, "SVGSanitized",
                                 TraceLoggingValue((int)replacements.size(), "Sanitized"));
                     }
@@ -11461,7 +11458,6 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     }
                     
                     if (inlinedCount > 0) {
-                         wchar_t msg[128];
                          QV_LOG(QV_LOG_LEVEL_INFO, "SVGInlined",
                                  TraceLoggingValue(inlinedCount, "Inlined"));
                     }

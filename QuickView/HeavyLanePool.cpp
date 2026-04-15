@@ -314,7 +314,6 @@ void HeavyLanePool::ApplyBaselineConcurrency(double decodeMPS, int srcWidth, int
             memoryLimitThreads = (perThreadMemory > 0) ? (int)(usableRAM / perThreadMemory) : 2;
             memoryLimitThreads = std::max(memoryLimitThreads, 2); // Floor: at least 2
             
-            wchar_t memBuf[256];
             QV_LOG(QV_LOG_LEVEL_INFO, "HeavyPoolMemory",
                     TraceLoggingValue((double)availableRAM / (1024.0 * 1024 * 1024), "Memory"),
                     TraceLoggingValue((double)perThreadMemory / (1024.0 * 1024 * 1024), "avail"),
@@ -1420,7 +1419,6 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         uint64_t prev = s_lastStrategyLogMs.load(std::memory_order_relaxed);
                         if (nowMs - prev > 500 &&
                             s_lastStrategyLogMs.compare_exchange_strong(prev, nowMs, std::memory_order_relaxed)) {
-                            wchar_t strat[256];
                             QV_LOG(QV_LOG_LEVEL_INFO, "HeavyPoolStrategy",
                                     TraceLoggingWideString(QuickView::TitanFormatToString(m_titanFormat.load()), "fmt"),
                                     TraceLoggingValue(job.tileCoord.lod, "lod"),
@@ -1597,7 +1595,6 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
           self.isCopyOnly = isCopyOnly;
 
           // Diagnostic: Result
-          wchar_t resultLog[256];
           const wchar_t* opMode = (job.type == JobType::Tile)
               ? (isCopyOnly ? L"COPY" : L"DECODE")
               : L"DECODE";
@@ -2095,7 +2092,6 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                 std::lock_guard lock(m_lodCacheMutex);
                 m_masterLOD0Cache = {};
 
-                wchar_t ok[192];
                 QV_LOG(QV_LOG_LEVEL_INFO, "MMFMaster",
                         TraceLoggingValue(decW, "ready"),
                         TraceLoggingValue(decH, "Arg1"),
@@ -2150,7 +2146,6 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                 std::lock_guard lock(m_lodCacheMutex);
                 m_masterLOD0Cache = {};
 
-                wchar_t ok[192];
                 QV_LOG(QV_LOG_LEVEL_INFO, "HeavyPoolMaster",
                         TraceLoggingValue(fullFrame.width, "fallback"),
                         TraceLoggingValue(fullFrame.height, "Arg1"),
@@ -2417,7 +2412,6 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
                     // Do NOT clear the entire 5GB buffer to save ~100-300ms of CPU time.
                     ZeroMemory(m_masterBacking.view, requiredBytes);
                     
-                    wchar_t msg[128];
                     QV_LOG(QV_LOG_LEVEL_INFO, "MMFPoolREUSE",
                             TraceLoggingPointer(m_masterBacking.view, "View"),
                             TraceLoggingValue(requiredBytes / (1024*1024), "Size"),
