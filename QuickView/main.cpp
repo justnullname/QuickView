@@ -2579,7 +2579,9 @@ static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
 
     const bool changed = g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
     g_compEngine->SetAdvancedColorEnabled(g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorSupported));
-    const float displayHdrHeadroomStops = GetCurrentDisplayHdrHeadroomStops();
+    const float rawHeadroom = GetCurrentDisplayHdrHeadroomStops();
+    const float displayHdrHeadroomStops = g_compEngine->IsAdvancedColor() ? 
+        (rawHeadroom < 0.1f ? -1.0f : rawHeadroom) : 0.0f;
     if (g_renderEngine) {
         g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
         g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());

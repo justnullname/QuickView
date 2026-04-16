@@ -13,6 +13,7 @@
 #include "EditState.h" // For g_runtime
 #include "TileMemoryManager.h" // [Titan]
 // [Deep Cancel] Use low-level libjpeg API for scanline cancellation
+extern struct AppConfig g_config;
 #include <stdio.h> // jpeglib needs stdio
 #include <setjmp.h> // For error handling
 #define HAVE_BOOLEAN // Prevent conflict with Windows boolean
@@ -602,6 +603,70 @@ bool ShouldProbeAnimatedBufferCodec(const std::wstring& fmt) {
     return fmt == L"WebP" || fmt == L"GIF" || fmt == L"PNG" || fmt == L"AVIF" || fmt == L"JXL";
 }
 
+bool PrefersSdrTarget(const QuickView::Codec::DecodeContext& ctx) {
+    return ctx.targetHdrHeadroomStops >= 0.0f && ctx.targetHdrHeadroomStops <= 0.01f;
+}
+
+HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext& ctx,
+                                 QuickView::Codec::DecodeResult& result) {
+    using namespace QuickView;
+
+    if (result.format != PixelFormat::R32G32B32A32_FLOAT || !result.pixels ||
+        result.width <= 0 || result.height <= 0) {
+        return S_FALSE;
+    }
+    if (!PrefersSdrTarget(ctx)) {
+        return S_FALSE;
+    }
+
+    const int dstStride = CalculateSIMDAlignedStride(result.width, 4);
+    const size_t dstSize = static_cast<size_t>(dstStride) * static_cast<size_t>(result.height);
+    uint8_t* dstPixels = ctx.allocator(dstSize);
+    if (!dstPixels) return E_OUTOFMEMORY;
+
+    // SDR targets do not need to carry float HDR buffers through cache and upload.
+    // Collapsing once at decode time is much cheaper than re-tonemapping every navigation.
+    constexpr float kSdrExposure = 1.0f;
+    const bool useClip = (g_config.HdrToneMappingMode == 1) || (!result.metadata.hdrMetadata.isHdr);
+    if (useClip) { // 1 = Colorimetric (Clip) or Non-HDR SDR
+        ImageLoaderSimd::ToneMapClipBatch(
+            reinterpret_cast<const float*>(result.pixels),
+            result.stride,
+            dstPixels,
+            dstStride,
+            result.width,
+            result.height,
+            kSdrExposure);
+    } else { // 0 = ACES
+        ImageLoaderSimd::ToneMapAcesBatch(
+            reinterpret_cast<const float*>(result.pixels),
+            result.stride,
+            dstPixels,
+            dstStride,
+            result.width,
+            result.height,
+            kSdrExposure);
+    }
+
+    if (ctx.freeFunc) {
+        ctx.freeFunc(result.pixels);
+    }
+
+    result.pixels = dstPixels;
+    result.stride = dstStride;
+    result.format = PixelFormat::BGRA8888;
+    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+    result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+    result.metadata.colorInfo.nominalBitDepth = 8;
+    if (result.metadata.FormatDetails.find(L"SDR Target") == std::wstring::npos) {
+        if (!result.metadata.FormatDetails.empty()) {
+            result.metadata.FormatDetails += L" / ";
+        }
+        result.metadata.FormatDetails += L"SDR Target";
+    }
+    return S_OK;
+}
+
 void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult& result,
                              QuickView::RawImageFrame* outFrame,
                              QuantumArena* arena) {
@@ -629,6 +694,8 @@ HRESULT LoadBufferUnified(const uint8_t* mappedData,
     if (fmt == L"AVIF") {
         HRESULT hr = AVIF::Load(mappedData, mappedSize, ctx, result);
         if (SUCCEEDED(hr)) {
+            HRESULT collapseHr = CollapseFloatResultToSdr(ctx, result);
+            if (FAILED(collapseHr)) return collapseHr;
             result.metadata.LoaderName = L"libavif (Unified)";
             return S_OK;
         }
@@ -663,6 +730,8 @@ HRESULT LoadBufferUnified(const uint8_t* mappedData,
         HRESULT hr = JXL::Load(mappedData, mappedSize, ctx, result);
         if (hr == E_OUTOFMEMORY || hr == E_ABORT) return hr;
         if (SUCCEEDED(hr)) {
+            HRESULT collapseHr = CollapseFloatResultToSdr(ctx, result);
+            if (FAILED(collapseHr)) return collapseHr;
             result.metadata.LoaderName = L"libjxl (Unified)";
             return S_OK;
         }
@@ -727,6 +796,8 @@ HRESULT LoadBufferUnified(const uint8_t* mappedData,
     } else if (fmt == L"EXR") {
         HRESULT hr = TinyEXR::Load(mappedData, mappedSize, ctx, result);
         if (SUCCEEDED(hr)) {
+            HRESULT collapseHr = CollapseFloatResultToSdr(ctx, result);
+            if (FAILED(collapseHr)) return collapseHr;
             return S_OK;
         }
     } else if (fmt == L"PSD") {
@@ -759,6 +830,8 @@ HRESULT LoadBufferUnified(const uint8_t* mappedData,
     } else if (fmt == L"HDR") {
         HRESULT hr = Stb::LoadHdr(mappedData, mappedSize, ctx, result);
         if (SUCCEEDED(hr)) {
+            HRESULT collapseHr = CollapseFloatResultToSdr(ctx, result);
+            if (FAILED(collapseHr)) return collapseHr;
             return S_OK;
         }
     } else if (fmt == L"PIC" || fmt == L"PCX") {
@@ -779,7 +852,8 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
                                             class QuantumArena* arena,
                                             int targetWidth, int targetHeight,
                                             std::wstring* pLoaderName,
-                                            ImageMetadata* pMetadata) 
+                                            ImageMetadata* pMetadata,
+                                            float targetHdrHeadroomStops) 
 {
     if (!data || !size || !outFrame) return E_INVALIDARG;
 
@@ -5766,12 +5840,12 @@ namespace QuickView {
                          if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &encodedColor)) {
                              transfer = MapJxlTransferFunction(encodedColor.transfer_function);
                              primaries = MapJxlPrimaries(encodedColor.primaries);
-                             useFloatOutput =
-                                 !ctx.forcePreview &&
-                                 (transfer == QuickView::TransferFunction::Linear ||
-                                  transfer == QuickView::TransferFunction::PQ ||
-                                  transfer == QuickView::TransferFunction::HLG ||
-                                  info.bits_per_sample > 8);
+                            useFloatOutput =
+                                !ctx.forcePreview &&
+                                (transfer == QuickView::TransferFunction::Linear ||
+                                 transfer == QuickView::TransferFunction::PQ ||
+                                 transfer == QuickView::TransferFunction::HLG ||
+                                 info.bits_per_sample > 8);
 
                              if (ctx.pMetadata) {
                                  ctx.pMetadata->colorInfo.transfer = transfer;
@@ -6098,14 +6172,15 @@ namespace QuickView {
                     }
                 }
 
-                const QuickView::TransferFunction transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
-                const QuickView::ColorPrimaries primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
-                const bool useFloatOutput =
-                    decoder->image->gainMap != nullptr ||
-                    transfer == QuickView::TransferFunction::Linear ||
-                    transfer == QuickView::TransferFunction::PQ ||
-                    transfer == QuickView::TransferFunction::HLG ||
-                    decoder->image->depth > 8;
+        const QuickView::TransferFunction transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
+        const QuickView::ColorPrimaries primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
+        const bool preferSdrTarget = PrefersSdrTarget(ctx);
+        const bool useFloatOutput =
+                    (decoder->image->gainMap != nullptr ||
+                     transfer == QuickView::TransferFunction::Linear ||
+                     transfer == QuickView::TransferFunction::PQ ||
+                     transfer == QuickView::TransferFunction::HLG ||
+                     decoder->image->depth > 8);
 
                 if (useFloatOutput) {
                     if (decoder->image->gainMap) {
@@ -7043,7 +7118,7 @@ namespace QuickView {
                 if (FAILED(factory->CreateFormatConverter(&converter))) return E_FAIL;
 
                 WICPixelFormatGUID targetFmt = GUID_WICPixelFormat32bppPBGRA;
-                if (isHighBitDepth) {
+                if (isHighBitDepth && !PrefersSdrTarget(ctx)) {
                     targetFmt = GUID_WICPixelFormat128bppRGBAFloat; 
                     result.format = PixelFormat::R32G32B32A32_FLOAT;
                 } else {
@@ -7071,7 +7146,7 @@ namespace QuickView {
                 result.metadata.Width = w;
                 result.metadata.Height = h;
                 
-                if (isHighBitDepth) {
+                if (isHighBitDepth && !PrefersSdrTarget(ctx)) {
                     result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinearScRgb;
                     result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
                     result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
@@ -7090,6 +7165,12 @@ namespace QuickView {
                     result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
                     result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
                     result.metadata.colorInfo.nominalBitDepth = 8;
+                    if (isHighBitDepth && result.metadata.FormatDetails.find(L"SDR Target") == std::wstring::npos) {
+                        if (!result.metadata.FormatDetails.empty()) {
+                            result.metadata.FormatDetails += L" / ";
+                        }
+                        result.metadata.FormatDetails += L"SDR Target";
+                    }
                 }
                 return S_OK;
             }
@@ -11773,12 +11854,12 @@ static float DecodePqToLinearScRgb(float value) {
 static float DecodeHlgToLinear(float value) {
     value = (std::clamp)(value, 0.0f, 1.0f);
     if (value <= 0.5f) {
-        return (value * value) / 3.0f;
+        return ((value * value) / 3.0f) * 12.5f;
     }
     static constexpr float a = 0.17883277f;
     static constexpr float b = 0.28466892f;
     static constexpr float c = 0.55991073f;
-    return (expf((value - c) / a) + b) / 12.0f;
+    return (((expf((value - c) / a) + b) / 12.0f) * 12.5f);
 }
 
 static float DecodeSrgbToLinear(float value) {
