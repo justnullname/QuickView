@@ -199,7 +199,13 @@ private:
             }
         }
         
-        return foundBasicInfo && (m_basicInfo.have_animation == JXL_TRUE);
+        // [BUGFIX] Many single-frame JXLs have the animation flag set but only contain 1 frame.
+        // We enforce totalFrames > 1 to truly consider it an animation and avoid animating a static image.
+        if (foundBasicInfo && m_basicInfo.have_animation && m_totalFrames > 1) {
+            return true;
+        }
+        
+        return false;
     }
 
     std::shared_ptr<QuickView::MappedFile> m_mappedFile;

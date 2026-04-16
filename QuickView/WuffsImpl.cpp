@@ -591,7 +591,58 @@ public:
         if (wuffs_base__status__is_ok(&status)) {
             status = wuffs_gif__decoder__decode_image_config(&m_gifDec, &m_ic, &m_src);
             if (wuffs_base__status__is_ok(&status)) {
-                m_isGif = true;
+                // [BUGFIX] Verify actual animated GIF via Application Extension or multiple Image Descriptors
+                bool hasAnim = false;
+                const uint8_t* p = data;
+                size_t offset = 13; // Header (6) + LSD (7)
+                if (size > 13) {
+                    uint8_t lsd_packed = p[10];
+                    if (lsd_packed & 0x80) { // Global Color Table Flag
+                        offset += 3 * (2 << (lsd_packed & 0x07));
+                    }
+                    int image_count = 0;
+                    while (offset < size) {
+                        uint8_t block_type = p[offset++];
+                        if (block_type == 0x3B) { // Trailer
+                            break;
+                        } else if (block_type == 0x2C) { // Image Descriptor
+                            image_count++;
+                            if (image_count > 1) {
+                                hasAnim = true;
+                                break;
+                            }
+                            if (offset + 9 > size) break;
+                            uint8_t id_packed = p[offset + 8];
+                            offset += 9;
+                            if (id_packed & 0x80) { // Local Color Table Flag
+                                offset += 3 * (2 << (id_packed & 0x07));
+                            }
+                            if (offset >= size) break;
+                            offset++; // LZW minimum code size
+                            while (offset < size) {
+                                uint8_t sub_len = p[offset++];
+                                if (sub_len == 0) break;
+                                offset += sub_len;
+                            }
+                        } else if (block_type == 0x21) { // Extension
+                            if (offset >= size) break;
+                            offset++; // Skip ext_type
+                            // Skip extension sub-blocks
+                            while (offset < size) {
+                                uint8_t sub_len = p[offset++];
+                                if (sub_len == 0) break;
+                                offset += sub_len;
+                            }
+                        } else {
+                            break; // Unknown block, stop
+                        }
+                    }
+                }
+                if (hasAnim) {
+                    m_isGif = true;
+                } else {
+                    return false; // Fallback to static GIF fast-path
+                }
             }
         }
         
@@ -604,7 +655,27 @@ public:
             if (wuffs_base__status__is_ok(&status)) {
                 status = wuffs_png__decoder__decode_image_config(&m_pngDec, &m_ic, &m_src);
                 if (wuffs_base__status__is_ok(&status)) {
-                    m_isPng = true;
+                    // [BUGFIX] Verify actual APNG via acTL chunk presence before IDAT
+                    bool hasAcTL = false;
+                    const uint8_t* p = data;
+                    size_t offset = 8; // Skip PNG signature
+                    while (offset + 12 <= size) {
+                        uint32_t chunk_len = (p[offset] << 24) | (p[offset + 1] << 16) | (p[offset + 2] << 8) | p[offset + 3];
+                        uint32_t chunk_type = (p[offset + 4] << 24) | (p[offset + 5] << 16) | (p[offset + 6] << 8) | p[offset + 7];
+                        
+                        if (chunk_type == 0x6163544C) { // 'acTL'
+                            hasAcTL = true;
+                            break;
+                        } else if (chunk_type == 0x49444154 || chunk_type == 0x49454E44) { // 'IDAT' or 'IEND'
+                            break;
+                        }
+                        offset += 12 + chunk_len;
+                    }
+                    if (hasAcTL) {
+                        m_isPng = true;
+                    } else {
+                        return false; // Fallback to static PNG fast-path
+                    }
                 } else {
                     return false;
                 }
