@@ -443,6 +443,18 @@ namespace QuickView {
             return ReadFileToVector(filePath, buffer);
         }
 
+        // Forward declarations for integrated unified decoders
+        namespace Wuffs {
+            static HRESULT LoadPNG(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result);
+            static HRESULT LoadNetPBM(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result);
+        }
+        namespace WebP {
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result);
+        }
+        namespace JXL {
+            static HRESULT Load(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result);
+        }
+
     } // namespace Codec
 } // namespace QuickView
 
@@ -723,6 +735,78 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         return S_OK;
     }
     
+    // 3. New Unified High-Performance Dispatch for MMF paths
+    {
+        // Set up context
+        DecodeContext ctx;
+        ctx.allocator = [&](size_t s) -> uint8_t* { 
+            if (arena) return static_cast<uint8_t*>(arena->Allocate(s, 64)); 
+            return static_cast<uint8_t*>(_aligned_malloc(s, 64)); 
+        };
+        ctx.freeFunc = [&](uint8_t* p) { 
+            // _aligned_free handled by deleters below
+        };
+        ctx.targetWidth = targetWidth;
+        ctx.targetHeight = targetHeight;
+        ctx.pLoaderName = pLoaderName;
+        ctx.pMetadata = pMetadata;
+        ctx.isTitanMode = true; // explicitly for MMF paths
+        
+        DecodeResult result;
+        HRESULT hrUnified = E_NOTIMPL;
+
+        if (fmt == L"PNG") hrUnified = Wuffs::LoadPNG(data, size, ctx, result);
+        else if (fmt == L"WebP") hrUnified = QuickView::Codec::WebP::Load(data, size, ctx, result);
+        else if (fmt == L"PNM") hrUnified = Wuffs::LoadNetPBM(data, size, ctx, result);
+        else if (fmt == L"JXL") {
+            // [JXL DC] Stage 1 scaled decoding via DC preview
+            if (targetWidth > 0 || targetHeight > 0) {
+                CImageLoader::ThumbData tmp;
+                HRESULT dcHr = CImageLoader::LoadThumbJXL_DC(data, size, &tmp, pMetadata, false, false);
+                if (dcHr == E_ABORT) return E_ABORT;
+                if (SUCCEEDED(dcHr) && tmp.isValid) {
+                    result.width = tmp.width;
+                    result.height = tmp.height;
+                    result.stride = tmp.stride;
+                    // JXL DC preview gives RGBA pixels; we need space for it
+                    size_t bufSize = (size_t)tmp.stride * tmp.height;
+                    result.pixels = ctx.allocator(bufSize);
+                    if (result.pixels) {
+                        memcpy(result.pixels, tmp.pixels.data(), bufSize);
+                        result.metadata.LoaderName = tmp.loaderName;
+                        hrUnified = S_OK;
+                    } else hrUnified = E_OUTOFMEMORY;
+                } else {
+                    hrUnified = JXL::Load(data, size, ctx, result);
+                }
+            } else {
+                hrUnified = JXL::Load(data, size, ctx, result);
+            }
+        }
+
+        if (hrUnified == E_OUTOFMEMORY || hrUnified == E_ABORT) return hrUnified;
+        
+        if (SUCCEEDED(hrUnified) && result.pixels) {
+            outFrame->pixels = result.pixels;
+            outFrame->width = result.width;
+            outFrame->height = result.height;
+            outFrame->stride = result.stride;
+            outFrame->format = result.format;
+            if (arena && arena->Owns(result.pixels)) { outFrame->memoryDeleter = nullptr; }
+            else { outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); }; }
+            
+            if (pMetadata && result.width > 0) {
+                pMetadata->Width = result.width; 
+                pMetadata->Height = result.height;
+                pMetadata->Format = fmt;
+            }
+            if (pLoaderName && !result.metadata.LoaderName.empty()) {
+                *pLoaderName = result.metadata.LoaderName;
+            }
+            return S_OK;
+        }
+    }
+
 WIC_FALLBACK:
     // For other formats (WIC), we need a Stream.
     // Create IStream from Memory

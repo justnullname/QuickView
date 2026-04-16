@@ -659,9 +659,14 @@ std::vector<EngineEvent> ImageEngine::PollState() {
         // [v9.2] Fix: Clean up pending paths on Error too (Fixes Blue Light Forever)
         if (e.type == EventType::LoadError) {
              // [HEIC] Special handling for missing codec: Trigger install prompt on UI thread
-             if (CImageLoader::ImageMetadata::IsWicCodecMissing(e.hr)) {
+             // [v10.5 Fix] Only trigger for formats that actually depend on the HEVC/AV1 extensions
+             std::wstring formatUpper = e.metadata.Format;
+             std::transform(formatUpper.begin(), formatUpper.end(), formatUpper.begin(), ::towupper);
+             bool isHevcDependent = (formatUpper == L"HEIC" || formatUpper == L"HEIF" || formatUpper == L"AVIF");
+             
+             if (isHevcDependent && CImageLoader::ImageMetadata::IsWicCodecMissing(e.hr)) {
                   wchar_t dbg[128];
-                  swprintf_s(dbg, L"[ImageEngine] Detected missing HEVC codec: 0x%08X. Prompting user.\n", (uint32_t)e.hr);
+                  swprintf_s(dbg, L"[ImageEngine] Detected missing HEVC codec: 0x%08X for format %s. Prompting user.\n", (uint32_t)e.hr, formatUpper.c_str());
                   OutputDebugStringW(dbg);
                   PostMessage(m_hwnd, WM_APP + 99, 0, 0);
              }

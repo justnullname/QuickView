@@ -1281,7 +1281,15 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                   this->QueueResult(std::move(ev));
               };
 
-              if (job.mmf && job.mmf->IsValid() && m_titanFormat.load() == QuickView::TitanFormat::JPEG) {
+              const auto fmt = m_titanFormat.load();
+              bool supportsMmfDecode = (fmt == QuickView::TitanFormat::JPEG || 
+                                        fmt == QuickView::TitanFormat::PNG || 
+                                        fmt == QuickView::TitanFormat::JXL || 
+                                        fmt == QuickView::TitanFormat::WEBP ||
+                                        fmt == QuickView::TitanFormat::PNM ||
+                                        fmt == QuickView::TitanFormat::Unknown); // Unknown for other dynamic ones
+                                        
+              if (job.mmf && job.mmf->IsValid() && supportsMmfDecode) {
                    hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
                    if (FAILED(hr)) {
                        // Fallback to file if MMF fails (shouldn't happen if valid)

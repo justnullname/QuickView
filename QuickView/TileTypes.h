@@ -192,6 +192,7 @@ namespace QuickView {
         BMP,
         TGA,
         GIF,
+        PNM,
         Other
     };
 
@@ -205,6 +206,7 @@ namespace QuickView {
         if (fmt == L"BMP")  return TitanFormat::BMP;
         if (fmt == L"TGA")  return TitanFormat::TGA;
         if (fmt == L"GIF")  return TitanFormat::GIF;
+        if (fmt == L"PNM")  return TitanFormat::PNM;
         return TitanFormat::Other;
     }
 
@@ -219,6 +221,7 @@ namespace QuickView {
             case TitanFormat::BMP:  return L"BMP";
             case TitanFormat::TGA:  return L"TGA";
             case TitanFormat::GIF:  return L"GIF";
+            case TitanFormat::PNM:  return L"PNM";
             default: return L"Other";
         }
     }
