@@ -626,6 +626,9 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                 m_isViewingScaledImage = true;
                 m_stage1Time = std::chrono::steady_clock::now();
 
+                // [v9.0] Startup Delay Check (Added to support Titan mode)
+                CheckStartupDelay();
+
                 // [JXL Serial] Trigger Stage 2 IMMEDIATELY for JXL (No 300ms wait)
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
                      OutputDebugStringW(L"[PollState] JXL Preview Ready -> Triggering Heavy Immediate\n");
