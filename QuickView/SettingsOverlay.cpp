@@ -1708,6 +1708,19 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemHdrToneMapping);
 
+    SettingsItem itemHdrPeak = { AppStrings::Settings_Label_HdrPeakNitsOverride, OptionType::Slider, nullptr, &g_config.HdrPeakNitsOverride };
+    itemHdrPeak.tooltipText = AppStrings::Settings_Tooltip_HdrPeakNitsOverride;
+    itemHdrPeak.minVal = 0.0f;
+    itemHdrPeak.maxVal = 2000.0f;
+    itemHdrPeak.onChange = []() {
+        // [Performance Fix] Do not call RefreshImageDisplay here (which unnecessarily re-uploads raw frames to GPU).
+        // A lightweight standard Image frame repaint instantly refreshes Tone Map settings locally.
+        // SaveConfig() is debounced and handled by OnLButtonUp when dragging finishes.
+        extern void RequestRepaint(QuickView::PaintLayer layer);
+        RequestRepaint(QuickView::PaintLayer::Image);
+    };
+    tabImage.items.push_back(itemHdrPeak);
+
     SettingsItem itemCmsFallback = { AppStrings::Settings_Label_CmsFallback, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsDefaultFallback), nullptr, 0, 0, {AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3, AppStrings::Settings_Option_CmsAdobeRGB, AppStrings::Settings_Option_CmsProPhoto} };
     itemCmsFallback.onChange = []() {
         SaveConfig();
@@ -3557,6 +3570,12 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 SettingsAction SettingsOverlay::OnLButtonUp(float x, float y) {
     if (m_pActiveSlider) {
         m_pActiveSlider = nullptr;
+        
+        // [Performance Fix] Sliders generate 60+ onChange events per second during dragging.
+        // We debounce the massive disk I/O of saving the .ini config by only committing on drag release.
+        extern void SaveConfig();
+        SaveConfig();
+        
         // If we deferred a layout change (e.g. switching to Custom mode), do it now after release
         if (m_needsLayoutRebuild) {
             m_needsLayoutRebuild = false;

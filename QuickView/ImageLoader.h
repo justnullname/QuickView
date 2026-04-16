@@ -332,7 +332,8 @@ public:
                                 class QuantumArena *arena = nullptr,
                                 int targetWidth = 0, int targetHeight = 0,
                                 std::wstring *pLoaderName = nullptr,
-                                ImageMetadata *pMetadata = nullptr);
+                                ImageMetadata *pMetadata = nullptr,
+                                float targetHdrHeadroomStops = -1.0f);
 
   // ============================================================================
   // [Titan Engine] Region Decoding API

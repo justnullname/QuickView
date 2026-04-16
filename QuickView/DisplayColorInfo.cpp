@@ -2,6 +2,12 @@
 #include "DisplayColorInfo.h"
 
 #include <vector>
+#include <windows.graphics.display.interop.h>
+#include <windows.graphics.display.h>
+#include <wrl/client.h>
+#include <wrl/wrappers/corewrappers.h>
+
+#pragma comment(lib, "runtimeobject.lib")
 
 namespace QuickView {
 
@@ -28,6 +34,52 @@ HMONITOR GetWindowCenterMonitor(HWND hwnd) {
         windowRect.top + (windowRect.bottom - windowRect.top) / 2
     };
     return MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+}
+
+// Interop helper to fetch true OS-calibrated HDR characteristics via classic COM/WRL (avoids C++/WinRT overhead).
+bool QueryAdvancedColorInfoWinRT(HMONITOR hMon, float& outMaxLuminance, float& outSdrWhiteLevel) {
+    using namespace ABI::Windows::Graphics::Display;
+    using namespace Microsoft::WRL;
+    using namespace Microsoft::WRL::Wrappers;
+
+    // Defensively ensure WinRT/COM is initialized for this thread.
+    // If it's already initialized (e.g. Main UI thread STA), RoInitialize returns S_FALSE or RPC_E_CHANGED_MODE.
+    // We only uninitialize if we were the ones to successfully initialize it (S_OK/S_FALSE).
+    struct RoInitWrapper {
+        HRESULT hrInit;
+        RoInitWrapper() { hrInit = RoInitialize(RO_INIT_MULTITHREADED); }
+        ~RoInitWrapper() { if (SUCCEEDED(hrInit)) RoUninitialize(); }
+    } roInit;
+
+    ComPtr<IDisplayInformationStaticsInterop> interop;
+    HRESULT hr = RoGetActivationFactory(
+        HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayInformation).Get(),
+        IID_PPV_ARGS(&interop)
+    );
+    if (FAILED(hr) || !interop) return false;
+
+    ComPtr<IDisplayInformation> displayInfo;
+    hr = interop->GetForMonitor(hMon, IID_PPV_ARGS(&displayInfo));
+    if (FAILED(hr) || !displayInfo) return false;
+
+    ComPtr<IDisplayInformation5> displayInfo5;
+    if (SUCCEEDED(displayInfo.As(&displayInfo5))) {
+        ComPtr<IAdvancedColorInfo> advancedColor;
+        if (SUCCEEDED(displayInfo5->GetAdvancedColorInfo(&advancedColor)) && advancedColor) {
+            float maxLuminance = 0.0f;
+            float sdrWhite = 0.0f;
+            
+            // Windows typically scales raw EDID based on user calibration / slider 
+            if (SUCCEEDED(advancedColor->get_MaxLuminanceInNits(&maxLuminance)) && maxLuminance > 0.0f) {
+                outMaxLuminance = maxLuminance;
+                if (SUCCEEDED(advancedColor->get_SdrWhiteLevelInNits(&sdrWhite)) && sdrWhite > 0.0f) {
+                    outSdrWhiteLevel = sdrWhite;
+                }
+                return true; 
+            }
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -120,7 +172,23 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
                 }
             }
 
-            stateOut->sdrWhiteLevelNits = QuerySdrWhiteLevelNits(stateOut->gdiDeviceName);
+            // [Root Cause Fix] DXGI often reports uncalibrated, conservative HDR peaks directly from the monitor's physical EDID (e.g. 266 nits). 
+            // We use the WinRT AdvancedColorInfo API to fetch the accurate, OS-calibrated luminance which respects SDR sliders and ICC profiles.
+            float winrtMaxNits = 0.0f;
+            float winrtSdrWhite = 0.0f;
+            if (QueryAdvancedColorInfoWinRT(monitor, winrtMaxNits, winrtSdrWhite)) {
+                // If WinRT explicitly says we have a valid peak, trust it unconditionally 
+                if (winrtMaxNits > 0.0f) {
+                    stateOut->maxLuminanceNits = winrtMaxNits;
+                }
+                if (winrtSdrWhite > 0.0f) {
+                    stateOut->sdrWhiteLevelNits = winrtSdrWhite;
+                }
+            } else {
+                // Graceful fallback to legacy CCD path for SDR white level if WinRT fails
+                stateOut->sdrWhiteLevelNits = QuerySdrWhiteLevelNits(stateOut->gdiDeviceName);
+            }
+
             return true;
         }
     }

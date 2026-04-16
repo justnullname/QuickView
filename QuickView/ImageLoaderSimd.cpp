@@ -542,6 +542,28 @@ void ToneMapAcesBatchImpl(const float* src, int srcStride,
     }
 }
 
+void ToneMapClipBatchImpl(const float* src, int srcStride,
+                          uint8_t* dst, int dstStride,
+                          int width, int height, float exposure) {
+    for (int y = 0; y < height; ++y) {
+        const float* srcRow = reinterpret_cast<const float*>(
+            reinterpret_cast<const uint8_t*>(src) + static_cast<size_t>(y) * srcStride);
+        uint8_t* dstRow = dst + static_cast<size_t>(y) * dstStride;
+
+        for (int x = 0; x < width; ++x) {
+            const float r = srcRow[x * 4 + 0] * exposure;
+            const float g = srcRow[x * 4 + 1] * exposure;
+            const float b = srcRow[x * 4 + 2] * exposure;
+            const float a = std::clamp(srcRow[x * 4 + 3], 0.0f, 1.0f);
+
+            dstRow[x * 4 + 0] = LinearToSdr8(b * a); // B
+            dstRow[x * 4 + 1] = LinearToSdr8(g * a); // G
+            dstRow[x * 4 + 2] = LinearToSdr8(r * a); // R
+            dstRow[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+        }
+    }
+}
+
 // ============================================================================
 // ResizeBilinear - BGRA bilinear interpolation
 // ============================================================================
@@ -652,6 +674,7 @@ HWY_EXPORT(SumLuminance8BitRangeImpl);
 HWY_EXPORT(SumLuminanceFloatRangeImpl);
 HWY_EXPORT(TransformColorMatrix3x3Impl);
 HWY_EXPORT(ToneMapAcesBatchImpl);
+HWY_EXPORT(ToneMapClipBatchImpl);
 
 // ============================================================================
 // Public API: thin wrappers that call the best-available target
@@ -711,6 +734,13 @@ void ToneMapAcesBatch(const float* src, int srcStride,
                       uint8_t* dst, int dstStride,
                       int width, int height, float exposure) {
     HWY_DYNAMIC_DISPATCH(ToneMapAcesBatchImpl)(src, srcStride, dst, dstStride,
+                                                width, height, exposure);
+}
+
+void ToneMapClipBatch(const float* src, int srcStride,
+                      uint8_t* dst, int dstStride,
+                      int width, int height, float exposure) {
+    HWY_DYNAMIC_DISPATCH(ToneMapClipBatchImpl)(src, srcStride, dst, dstStride,
                                                 width, height, exposure);
 }
 

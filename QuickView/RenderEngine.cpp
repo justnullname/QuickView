@@ -187,8 +187,16 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
 
   const float paperWhiteScRgb =
       (displayState.GetSdrWhiteScale() > 1.0f ? displayState.GetSdrWhiteScale() : 1.0f);
-  const float peakNits =
+  float peakNits =
       (displayState.maxLuminanceNits > displayState.sdrWhiteLevelNits ? displayState.maxLuminanceNits : displayState.sdrWhiteLevelNits);
+      
+  if (g_config.HdrPeakNitsOverride > 0.0f) {
+      peakNits = g_config.HdrPeakNitsOverride;
+  } else if (displayState.advancedColorActive && peakNits < 400.0f) {
+      // Workaround for broken DXGI MaxLuminance EDID blocks on some laptops (e.g. reporting 266 nits on HDR1000 displays).
+      peakNits = 1000.0f;
+  }
+      
   const float displayPeakScRgb = (peakNits / 80.0f > 1.0f ? peakNits / 80.0f : 1.0f);
 
   float contentPeakScRgb = 1.0f;

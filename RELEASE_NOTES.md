@@ -24,5 +24,6 @@ Designed for artists and performance enthusiasts.
 - **Sharp Initial Scaling (#127)**: Fixed a bug where 1080p images could appear slightly blurry on native 1080p monitors.
 - **Right-Click Drag Zoom (#132, #129)**: Introduced professional vertical drag zooming by holding the Right Mouse Button.
 - **Natural Metadata**: Improved EXIF parsing performance and accuracy for modern camera brands.
+- **HDR Peak Brightness Override**: Added manual slider in Settings to overcome overly conservative system-reported display brightness, restoring proper highlights on problematic monitors.
 
 ---

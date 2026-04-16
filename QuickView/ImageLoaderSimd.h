@@ -70,6 +70,12 @@ void ToneMapAcesBatch(const float* src, int srcStride,
                       uint8_t* dst, int dstStride,
                       int width, int height, float exposure);
 
+/// Batch Colorimetric tone-map (simple clip) from linear float RGBA to BGRA8 with exposure scaling.
+/// src: R32G32B32A32_FLOAT, dst: BGRA8888
+void ToneMapClipBatch(const float* src, int srcStride,
+                      uint8_t* dst, int dstStride,
+                      int width, int height, float exposure);
+
 // ============================================================================
 // Runtime introspection
 // ============================================================================

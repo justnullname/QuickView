@@ -406,6 +406,7 @@ private:
 
     void CheckStartupDelay(); // [v9.0] Enable prefetch after 500ms
     std::atomic<bool> m_startupPrefetchAllowed{false}; // [v9.0] Strict Startup Delay
+    std::atomic<bool> m_startupPrefetchTimerArmed{false}; // Prevent duplicate delayed UpdateView-style wakeups
 
     // [Fix] Manual Event Queue for Cache Hits (and other internal events)
     std::vector<EngineEvent> m_manualEventQueue;

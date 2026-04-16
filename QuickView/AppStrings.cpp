@@ -241,6 +241,9 @@ const wchar_t *Settings_Label_AutoRotate = nullptr;
 const wchar_t *Settings_Label_CMS = nullptr;
 const wchar_t *Settings_Label_AdvancedColor = nullptr;
 const wchar_t *Settings_Label_HdrToneMapping = nullptr;
+const wchar_t *Settings_Tooltip_HdrToneMapping = nullptr;
+const wchar_t *Settings_Label_HdrPeakNitsOverride = nullptr;
+const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = nullptr;
 const wchar_t *Settings_Option_HdrPerceptual = nullptr;
 const wchar_t *Settings_Option_HdrColorimetric = nullptr;
 const wchar_t *Settings_Label_CmsFallback = nullptr;
@@ -278,7 +281,6 @@ const wchar_t *Settings_Option_CmsIntentPerceptual = nullptr;
 const wchar_t *Settings_Tooltip_CMS = nullptr;
 const wchar_t *Settings_Tooltip_CmsIntent = nullptr;
 const wchar_t *Settings_Tooltip_AdvancedColor = nullptr;
-const wchar_t *Settings_Tooltip_HdrToneMapping = nullptr;
 const wchar_t *Settings_Tooltip_ZoomAuto = nullptr;
 
 const wchar_t *Settings_Header_Professional = nullptr;
@@ -808,6 +810,8 @@ struct EN {
   static constexpr const wchar_t *Settings_Label_CMS = L"Color Management";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Advanced Color (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR Tone Mapping";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"HDR Peak Brightness (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Set to 0 to use system detected brightness.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimetric";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Untagged Image Fallback";
@@ -1192,6 +1196,8 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_CMS = L"色彩管理 (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高级色彩与 HDR (scRGB)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR 色调映射";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"HDR 峰值亮度 (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"设为 0 表示通过系统自动检测亮度.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"无配置图片的默认回退";
@@ -1781,6 +1787,8 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_CMS = L"色彩管理 (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高級色彩與 HDR (scRGB)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR 色調映射";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"HDR 峰值亮度 (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"設為 0 表示通過系統自動檢測亮度.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"無配置圖片的預設回退";
@@ -2304,6 +2312,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_CMS = L"カラー管理 (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"高度な色とHDR (scRGB)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR トーンマッピング";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"HDR ピーク輝度 (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"システム検出輝度を使用する場合は0に設定します。";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"知覚的";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"測色";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"プロファイルなし画像のフォールバック";
@@ -2903,6 +2913,8 @@ struct RU {
       L"Управление цветом (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Расширенный цвет (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"Тональная компрессия HDR";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"Пиковая яркость HDR (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Установите 0 для системной яркости.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Перцептивная";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Колориметрическая";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Запасной профиль без тегов";
@@ -3461,6 +3473,8 @@ struct DE {
   static constexpr const wchar_t *Settings_Label_CMS = L"Farbmanagement (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Erweiterte Farbe (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"HDR-Tonzuordnung";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"HDR Spitzenhelligkeit (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Auf 0 setzen, um erkannte Helligkeit zu verwenden.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perzeptiv";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Farbmetrisch";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Fallback für Bilder ohne Tags";
@@ -4019,6 +4033,8 @@ struct ES {
       L"Gestión de color (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Color avanzado (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"Mapeo de tonos HDR";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"Brillo Máximo HDR (Nits)";
+  static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Ajustar en 0 para usar el brillo detectado por el sistema.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimétrico";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Perfil alternativo sin etiquetas";
@@ -4498,6 +4514,9 @@ template <typename T> void ApplyT() {
   Settings_Label_CMS = T::Settings_Label_CMS;
   Settings_Label_AdvancedColor = T::Settings_Label_AdvancedColor;
   Settings_Label_HdrToneMapping = T::Settings_Label_HdrToneMapping;
+  Settings_Tooltip_HdrToneMapping = T::Settings_Tooltip_HdrToneMapping;
+  Settings_Label_HdrPeakNitsOverride = T::Settings_Label_HdrPeakNitsOverride;
+  Settings_Tooltip_HdrPeakNitsOverride = T::Settings_Tooltip_HdrPeakNitsOverride;
   Settings_Option_HdrPerceptual = T::Settings_Option_HdrPerceptual;
   Settings_Option_HdrColorimetric = T::Settings_Option_HdrColorimetric;
   Settings_Label_CmsFallback = T::Settings_Label_CmsFallback;
@@ -4535,7 +4554,6 @@ template <typename T> void ApplyT() {
   Settings_Tooltip_CMS = T::Settings_Tooltip_CMS;
   Settings_Tooltip_CmsIntent = T::Settings_Tooltip_CmsIntent;
   Settings_Tooltip_AdvancedColor = T::Settings_Tooltip_AdvancedColor;
-  Settings_Tooltip_HdrToneMapping = T::Settings_Tooltip_HdrToneMapping;
   Settings_Tooltip_ZoomAuto = T::Settings_Tooltip_ZoomAuto;
 
   Settings_Action_CheckUpdates = T::Settings_Action_CheckUpdates;
@@ -4700,4 +4718,3 @@ void SetLanguage(Language lang) {
   }
 }
 } // namespace AppStrings
-

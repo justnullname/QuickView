@@ -524,6 +524,20 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
 
     std::lock_guard lock(m_poolMutex);
     
+    // Non-Titan: full decode only (JPEG upgrade path removed). Titan: scaled base layer.
+    bool isFull = !m_isTitanMode;
+
+    // [Dedup] Prevent redundant decoding jobs in the pending queue
+    if (!m_isTitanMode) {
+        for (const auto& existing : m_pendingJobs) {
+            if (existing.type == JobType::Standard && existing.imageId == imageId) {
+                // If the generation is old, we could update it. But simple dedup is fine.
+                // Just return if we already have it pending.
+                return;
+            }
+        }
+    }
+
     JobInfo job;
     job.type = JobType::Standard;
     job.path = path;
@@ -531,8 +545,7 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     job.submitTime = std::chrono::steady_clock::now();
     job.mmf = mmf;
     job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
-    // Non-Titan: full decode only (JPEG upgrade path removed). Titan: scaled base layer.
-    job.isFullDecode = !m_isTitanMode;
+    job.isFullDecode = isFull;
     job.priority = 200; 
     job.genID = m_generationID.load(); // [Smart Pull] Stamp Generation
     

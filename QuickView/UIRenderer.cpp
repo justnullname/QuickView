@@ -2242,7 +2242,17 @@ namespace {
 
     static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState) {
         const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
-        const float peak = displayState.maxLuminanceNits > 0.0f ? displayState.maxLuminanceNits : sdrWhite;
+        float peak = displayState.maxLuminanceNits > 0.0f ? displayState.maxLuminanceNits : sdrWhite;
+        
+        std::wstring peakSuffix = L"";
+        if (g_config.HdrPeakNitsOverride > 0.0f) {
+            peak = g_config.HdrPeakNitsOverride;
+            peakSuffix = L" (Override)";
+        } else if (displayState.advancedColorActive && peak < 400.0f) {
+            peak = 1000.0f;
+            peakSuffix = L" (EDID Fix)";
+        }
+        
         const float full = displayState.maxFullFrameLuminanceNits > 0.0f ? displayState.maxFullFrameLuminanceNits : sdrWhite;
         
         std::wstring label = FormatHdrRatio(peak / sdrWhite);

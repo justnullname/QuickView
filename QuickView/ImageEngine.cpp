@@ -1431,8 +1431,10 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
     // Re-decoding through FastLane on re-navigation is cheap for small animated files.
     if (frame->animator) return;
     
-    // 1. Calculate size (RGBA: W * H * 4)
-    size_t newSize = (size_t)frame->width * frame->height * 4;
+    // 1. Calculate true backing-store size.
+    // Float HDR frames are 16 Bpp, not 4 Bpp, so width*height*4 badly underestimates
+    // both cache pressure and the cost of prefetch deep copies.
+    size_t newSize = frame->GetBufferSize();
     
     std::lock_guard lock(m_cacheMutex);
     
@@ -1680,37 +1682,20 @@ void ImageEngine::RequestFullMetadata() {
 
 // [v9.0] Strict Startup Delay
 void ImageEngine::CheckStartupDelay() {
-    // Only run if not yet allowed
+    // Only arm once until the delayed prefetch wakeup has fired.
     if (m_startupPrefetchAllowed) return;
+    if (m_startupPrefetchTimerArmed.exchange(true)) return;
 
     // Launch detached thread to wait 500ms
     std::thread([this]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         m_startupPrefetchAllowed = true;
-        
-        // Trigger prefetch pump
-        // Note: UpdateView requires direction, but we can just poke the engine to retry
-        // Since UpdateView stores state, we might need a way to re-trigger.
-        // Actually, ScheduleJob called by UpdateView failed due to flag.
-        // We need to re-invoke UpdateView with current state.
-        
-        // However, safely calling UpdateView from this thread requires ensuring it doesn't race.
-        // UpdateView is generally safe.
-        // Better: Queue a dummy event to wake up Main Loop which calls UpdateView? 
-        // Or just let the next interaction handle it?
-        // User requirement: "Startup -> 500ms -> Start Prefetch". Automatic.
-        
-        // Let's rely on the main thread to notice? No, main thread is idle.
-        // We must push an event or callback.
-        // Simple hack: Re-call UpdateView with current state.
-        int idx = m_currentViewIndex.load();
-        int dirInt = m_lastDirectionInt.load();
-        QuickView::BrowseDirection dir = (dirInt == 1) ? QuickView::BrowseDirection::FORWARD : 
-                              (dirInt == -1) ? QuickView::BrowseDirection::BACKWARD : QuickView::BrowseDirection::IDLE;
-        
-        if (idx >= 0) {
-            UpdateView(idx, dir);
-        }
+        m_startupPrefetchTimerArmed = false;
+
+        // Only wake the serial prefetch pump. Re-entering UpdateView here creates
+        // duplicate "[ImageEngine] UpdateView" logs and can re-schedule neighbor work
+        // as if the user navigated again.
+        PumpPrefetch();
     }).detach();
 }
 
