@@ -2563,42 +2563,46 @@ struct RU {
       L"Доступ запрещён - файл используется или только для чтения";
   static constexpr const wchar_t *OSD_NotPerfect =
       L"Преобразование неидеально (оптимизация краёв)";
-  static constexpr const wchar_t *OSD_SpanOn = L"Video Wall: ON";
-  static constexpr const wchar_t *OSD_SpanOff = L"Video Wall: OFF";
-  static constexpr const wchar_t *Action_RotateCW =
-      L"Повернуть на 90\x00B0 по часовой";
-  static constexpr const wchar_t *Action_RotateCCW =
-      L"Повернуть на 90\x00B0 против часовой";
+  static constexpr const wchar_t *OSD_SpanOn = L"Видеостена: ВКЛ";
+  static constexpr const wchar_t *OSD_SpanOff = L"Видеостена: ВЫКЛ";
+
+  static constexpr const wchar_t *Action_RotateCW = L"Повернуть на 90\x00B0 по часовой";
+  static constexpr const wchar_t *Action_RotateCCW = L"Повернуть на 90\x00B0 против часовой";
   static constexpr const wchar_t *Action_Rotate180 = L"Повернуть на 180\x00B0";
   static constexpr const wchar_t *Action_FlipH = L"Отразить по горизонтали";
   static constexpr const wchar_t *Action_FlipV = L"Отразить по вертикали";
+
   static constexpr const wchar_t *Dialog_SaveTitle = L"Сохранить изменения?";
   static constexpr const wchar_t *Dialog_SaveContent =
       L"Изображение было изменено. Сохранить изменения?";
   static constexpr const wchar_t *Dialog_ButtonSave = L"Сохранить";
   static constexpr const wchar_t *Dialog_ButtonSaveAs = L"Сохранить как...";
   static constexpr const wchar_t *Dialog_ButtonDiscard = L"Отменить";
+  
   static constexpr const wchar_t *Checkbox_AlwaysSaveLossless =
       L"Всегда сохранять без потерь";
   static constexpr const wchar_t *Checkbox_AlwaysSaveEdgeAdapted =
       L"Всегда сохранять с оптимизацией краёв";
   static constexpr const wchar_t *Checkbox_AlwaysSaveLossy =
       L"Всегда сохранять перекодированное";
+  
   static constexpr const wchar_t *OSD_HEICCodecMissing =
-      L"Невозможно декодировать HEIC - установите расширение HEVC";
-  static constexpr const wchar_t *Dialog_HEICTitle =
-      L"Невозможно декодировать HEIC";
+      L"Невозможно декодировать HEIC, установите расширение HEVC";
+  static constexpr const wchar_t *Dialog_HEICTitle = L"Невозможно декодировать HEIC";
   static constexpr const wchar_t *Dialog_HEICContent =
       L"В системе отсутствует расширение HEVC.\\nQuickView использует "
       L"аппаратное ускорение для лучшей производительности.";
   static constexpr const wchar_t *Dialog_HEICGetExtension =
       L"Получить расширение (бесплатно)";
   static constexpr const wchar_t *Dialog_Cancel = L"Отмена";
+
   static constexpr const wchar_t *Settings_Tab_General = L"Общие";
   static constexpr const wchar_t *Settings_Tab_About = L"О программе";
+  
   static constexpr const wchar_t *Settings_Group_Foundation = L"Основные";
   static constexpr const wchar_t *Settings_Group_Startup = L"Запуск";
   static constexpr const wchar_t *Settings_Group_Habits = L"Предпочтения";
+  
   static constexpr const wchar_t *Settings_Label_Language = L"Язык";
   static constexpr const wchar_t *Settings_Label_SingleInstance =
       L"Один экземпляр";
@@ -2607,41 +2611,41 @@ struct RU {
   static constexpr const wchar_t *Settings_Label_NavLoopMode = L"Циклическая навигация";
   static constexpr const wchar_t *Settings_Label_SortOrder = L"Порядок сортировки";
   static constexpr const wchar_t *Settings_Label_SortDescending = L"По убыванию";
-  static constexpr const wchar_t *Settings_Label_ConfirmDel =
-      L"Подтверждение удаления";
-  static constexpr const wchar_t *Settings_Label_Portable =
-      L"Портативный режим";
+  static constexpr const wchar_t *Settings_Label_ConfirmDel = L"Подтверждение удаления";
+  static constexpr const wchar_t *Settings_Label_Portable = L"Портативный режим";
   static constexpr const wchar_t *Settings_Label_SpanDisplays =
       L"Распределять по мониторам (видеостена)";
-  static constexpr const wchar_t *Settings_Label_UIScale =
-      L"Масштаб интерфейса";
+  static constexpr const wchar_t *Settings_Label_UIScale = L"Масштаб интерфейса";
+
   static constexpr const wchar_t *Settings_Status_RestartRequired =
       L"Требуется перезапуск";
   static constexpr const wchar_t *Settings_Status_NoWritePerm =
       L"Нет прав на запись!";
   static constexpr const wchar_t *Settings_Status_Enabled = L"Включено";
+  
   static constexpr const wchar_t *Settings_Header_PoweredBy = L"Работает на";
   static constexpr const wchar_t *Settings_Text_Copyright =
-      L"Copyright (c) 2025 justnullname";
+      L"Copyright (c) 2026 justnullname";
   static constexpr const wchar_t *Settings_Text_License =
       L"Лицензировано под GNU GPL v3.0";
+
+  // Messages
   static constexpr const wchar_t *Message_SaveErrorTitle = L"Ошибка";
   static constexpr const wchar_t *Message_SaveErrorContent =
       L"Не удалось сохранить файл. Файл заблокирован?";
+
+  // Toolbar Tooltips
   static constexpr const wchar_t *Toolbar_Tooltip_Prev = L"Предыдущее (Влево)";
   static constexpr const wchar_t *Toolbar_Tooltip_Next = L"Следующее (Вправо)";
   static constexpr const wchar_t *Toolbar_Tooltip_RotateL =
       L"Повернуть влево (Shift+R)";
-  static constexpr const wchar_t *Toolbar_Tooltip_RotateR =
-      L"Повернуть вправо (R)";
+  static constexpr const wchar_t *Toolbar_Tooltip_RotateR = L"Повернуть вправо (R)";
   static constexpr const wchar_t *Toolbar_Tooltip_FlipH =
       L"Отразить по горизонтали (H)";
   static constexpr const wchar_t *Toolbar_Tooltip_Lock = L"Заблокировать окно";
-  static constexpr const wchar_t *Toolbar_Tooltip_Unlock =
-      L"Разблокировать окно";
+  static constexpr const wchar_t *Toolbar_Tooltip_Unlock = L"Разблокировать окно";
   static constexpr const wchar_t *Toolbar_Tooltip_Gallery = L"Галерея (T)";
-  static constexpr const wchar_t *Toolbar_Tooltip_Info =
-      L"Информационная панель";
+  static constexpr const wchar_t *Toolbar_Tooltip_Info = L"Информационная панель";
   static constexpr const wchar_t *Toolbar_Tooltip_RawPreview =
       L"RAW: Предпросмотр (нажмите для полного)";
   static constexpr const wchar_t *Toolbar_Tooltip_RawFull =
@@ -2651,16 +2655,14 @@ struct RU {
   static constexpr const wchar_t *Toolbar_Tooltip_Pin = L"Закрепить панель";
   static constexpr const wchar_t *Toolbar_Tooltip_Unpin = L"Открепить панель";
   static constexpr const wchar_t *Toolbar_Tooltip_NormalMode = L"Обычный режим";
-  static constexpr const wchar_t *Toolbar_Tooltip_CompareMode =
-      L"Режим сравнения";
+  static constexpr const wchar_t *Toolbar_Tooltip_CompareMode = L"Режим сравнения";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareOpen =
       L"Открыть новое изображение в выделении";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareSwap =
       L"Поменять местами";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareLayout =
       L"Переключить макет";
-  static constexpr const wchar_t *Toolbar_Tooltip_CompareInfo =
-      L"Информация о сравнении";
+  static constexpr const wchar_t *Toolbar_Tooltip_CompareInfo = L"Информация о сравнении";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareDelete =
       L"Удалить выбранное изображение";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareZoomIn =
@@ -2675,20 +2677,20 @@ struct RU {
       L"Синхр. панорамирования: ДА";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareSyncPanOff =
       L"Синхр. панорамирования: НЕТ";
-  static constexpr const wchar_t *Toolbar_Tooltip_CompareExit =
-      L"Выйти из сравнения";
+  static constexpr const wchar_t *Toolbar_Tooltip_CompareExit = L"Выйти из сравнения";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimPlay = L"Воспроизвести анимацию";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimPause = L"Приостановить анимацию";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimPrev = L"Предыдущий кадр";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimNext = L"Следующий кадр";
-  static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Отладка Dirty Rect: ВКЛ";
-  static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Отладка Dirty Rect: ВЫКЛ";
+  static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Отладка вид. обл.: ДА";
+  static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Отладка вид. обл.: НЕТ";
 
+
+  // OSD
   static constexpr const wchar_t *OSD_Copied = L"Скопировано!";
   static constexpr const wchar_t *OSD_CoordinatesCopied =
       L"Координаты скопированы!";
-  static constexpr const wchar_t *OSD_FilePathCopied =
-      L"Путь к файлу скопирован!";
+  static constexpr const wchar_t *OSD_FilePathCopied = L"Путь к файлу скопирован!";
   static constexpr const wchar_t *OSD_Zoom100 = L"Масштаб: 100%";
   static constexpr const wchar_t *OSD_ZoomFit = L"Масштаб: По размеру экрана";
   static constexpr const wchar_t *OSD_PrintInstruction =
@@ -2711,43 +2713,38 @@ struct RU {
   static constexpr const wchar_t *OSD_HD = L"HD";
   static constexpr const wchar_t *OSD_ZoomPrefix = L"Масштаб: ";
   static constexpr const wchar_t *OSD_AnimPlaying = L"Воспроизведение";
-  static constexpr const wchar_t *OSD_AnimPaused = L"Пауза (Alt+Влево/Вправо для покадрового просмотра)";
-  static constexpr const wchar_t *OSD_AnimDirtyOn = L"Dirty Rect: ВКЛ";
-  static constexpr const wchar_t *OSD_AnimDirtyOff = L"Dirty Rect: ВЫКЛ";
+  static constexpr const wchar_t *OSD_AnimPaused = L"Пауза (Alt+Влево/Вправо - покадровый просмотр)";
+  static constexpr const wchar_t *OSD_AnimDirtyOn = L"Видимая область: ДА";
+  static constexpr const wchar_t *OSD_AnimDirtyOff = L"Видимая область: НЕТ";
 
+
+  // Context Menu
   static constexpr const wchar_t *Context_Open = L"Открыть...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"Открыть с помощью...";
   static constexpr const wchar_t *Context_Edit = L"Изменить\tE";
-  static constexpr const wchar_t *Context_ShowInExplorer =
-      L"Показать в Проводнике";
+  static constexpr const wchar_t *Context_ShowInExplorer = L"Показать в Проводнике";
   static constexpr const wchar_t *Context_OpenFolder = L"Открыть папку";
-  static constexpr const wchar_t *Context_CopyImage =
-      L"Скопировать изображение\tCtrl+C";
-  static constexpr const wchar_t *Context_CopyPath =
-      L"Скопировать путь\tCtrl+Alt+C";
+  static constexpr const wchar_t *Context_CopyImage = L"Скопировать изображение\tCtrl+C";
+  static constexpr const wchar_t *Context_CopyPath = L"Скопировать путь\tCtrl+Alt+C";
   static constexpr const wchar_t *Context_Print = L"Печать\tCtrl+P";
-  static constexpr const wchar_t *Context_RotateCW =
-      L"Повернуть на 90\x00B0 по часовой\tR";
+  static constexpr const wchar_t *Context_RotateCW = L"Повернуть на 90\x00B0 вправо\tR";
   static constexpr const wchar_t *Context_RotateCCW =
-      L"Повернуть на 90\x00B0 против часовой\tShift+R";
+      L"Повернуть на 90\x00B0 влево\tShift+R";
   static constexpr const wchar_t *Context_FlipH = L"Отразить по горизонтали\tH";
   static constexpr const wchar_t *Context_FlipV = L"Отразить по вертикали\tV";
   static constexpr const wchar_t *Context_Transform = L"Преобразовать";
   static constexpr const wchar_t *Context_ActualSize =
       L"Настоящий размер (100%)\t1 / Z";
-  static constexpr const wchar_t *Context_FitToScreen =
-      L"По размеру экрана\t0 / F";
+  static constexpr const wchar_t *Context_FitToScreen = L"По размеру экрана\t0 / F";
   static constexpr const wchar_t *Context_ZoomIn = L"Увеличить\t+ / Ctrl +";
   static constexpr const wchar_t *Context_ZoomOut = L"Уменьшить\t- / Ctrl -";
-  static constexpr const wchar_t *Context_LockWindow =
-      L"Заблокировать размер окна";
+  static constexpr const wchar_t *Context_LockWindow = L"Заблокировать окно";
   static constexpr const wchar_t *Context_AlwaysOnTop =
       L"Поверх всех окон\tCtrl+T";
   static constexpr const wchar_t *Context_HUDGallery = L"HUD-галерея\tT";
   static constexpr const wchar_t *Context_LiteInfoPanel =
       L"Краткая панель информации\tTab";
-  static constexpr const wchar_t *Context_FullInfoPanel =
-      L"Полная панель информации\tI";
+  static constexpr const wchar_t *Context_FullInfoPanel = L"Полная панель информации\tI";
   static constexpr const wchar_t *Context_RenderRAW = L"Рендеринг RAW";
   static constexpr const wchar_t *Context_PixelArtMode = L"Режим пиксель-арта";
   static constexpr const wchar_t *Context_ColorSpace = L"Цветовое пространство";
@@ -2758,11 +2755,9 @@ struct RU {
   static constexpr const wchar_t *Context_WallpaperFill = L"Заполнение";
   static constexpr const wchar_t *Context_WallpaperFit = L"По размеру";
   static constexpr const wchar_t *Context_WallpaperTile = L"Замостить";
-  static constexpr const wchar_t *Context_SetAsWallpaper =
-      L"Сделать обоями";
+  static constexpr const wchar_t *Context_SetAsWallpaper = L"Сделать обоями";
   static constexpr const wchar_t *Context_Rename = L"Переименовать\tF2";
-  static constexpr const wchar_t *Context_FixExtension =
-      L"Исправить расширение";
+  static constexpr const wchar_t *Context_FixExtension = L"Исправить расширение";
   static constexpr const wchar_t *Context_Delete = L"Удалить\tDel";
   static constexpr const wchar_t *Context_SortBy = L"Сортировка";
   static constexpr const wchar_t *Context_NavOrder = L"Порядок навигации";
@@ -2776,14 +2771,15 @@ struct RU {
   static constexpr const wchar_t *Context_GalleryOpenNewWindow =
       L"Открыть в новом окне";
   static constexpr const wchar_t *Context_Exit = L"Выход\tMButton/Esc";
+
   static constexpr const wchar_t *Settings_Tab_Visuals = L"Интерфейс";
   static constexpr const wchar_t *Settings_Tab_Controls = L"Управление";
   static constexpr const wchar_t *Settings_Tab_Image = L"Картинка";
   static constexpr const wchar_t *Settings_Tab_Advanced = L"Ещё";
+  
   static constexpr const wchar_t *Settings_Header_Backdrop = L"Фон";
   static constexpr const wchar_t *Settings_Header_Window = L"Окно";
-  static constexpr const wchar_t *Settings_Header_WindowLock =
-      L"Блокировка окна";
+  static constexpr const wchar_t *Settings_Header_WindowLock = L"Блокировка окна";
   static constexpr const wchar_t *Settings_Header_Panel = L"Панель";
   static constexpr const wchar_t *Settings_Header_Mouse = L"Мышь";
   static constexpr const wchar_t *Settings_Header_Edge = L"Край";
@@ -2791,65 +2787,86 @@ struct RU {
   static constexpr const wchar_t *Settings_Header_Prompts = L"Запросы";
   static constexpr const wchar_t *Settings_Header_System = L"Система";
   static constexpr const wchar_t *Settings_Header_Features = L"Функции";
-  static constexpr const wchar_t *Settings_Header_Performance =
-      L"Производительность";
-  static constexpr const wchar_t *Settings_Header_Transparency =
-      L"Прозрачность";
+  static constexpr const wchar_t *Settings_Header_Performance = L"Производительность";
+  static constexpr const wchar_t *Settings_Header_Transparency = L"Прозрачность";
 
   // Geek Glass Settings (Fallback to English)
-  static constexpr const wchar_t *Settings_Header_GeekGlass = L"Движок стекла (GPU)";
-  static constexpr const wchar_t *Settings_Label_EnableGeekGlass = L"Эффекты стекла";
-  static constexpr const wchar_t *Settings_Label_GlassUIAnimations = L"Анимации";
-  static constexpr const wchar_t *Settings_Header_CoreMaterial = L"Материал";
+  static constexpr const wchar_t *Settings_Header_GeekGlass =
+      L"Стеклянный движок (ГП)";
+  static constexpr const wchar_t *Settings_Label_EnableGeekGlass =
+      L"Эффекты стекла";
+  static constexpr const wchar_t *Settings_Label_GlassUIAnimations =
+      L"Анимации";
+  static constexpr const wchar_t *Settings_Header_CoreMaterial =
+      L"Материал";
   static constexpr const wchar_t *Settings_Label_BlurSigma = L"Радиус размытия";
-  static constexpr const wchar_t *Settings_Status_GlassDisabled = L"Glass Disabled (System)";
+  static constexpr const wchar_t *Settings_Status_GlassDisabled =
+      L"Стекло отключено (система)";
   static constexpr const wchar_t *Settings_Label_TintDensity = L"Плотность";
-  static constexpr const wchar_t *Settings_Tooltip_TintDensity = L"Общая интенсивность цвета эффекта стекла.";
+  static constexpr const wchar_t *Settings_Tooltip_TintDensity =
+      L"Общая интенсивность цвета эффекта стекла.";
   static constexpr const wchar_t *Settings_Label_SpecularOpacity = L"Блики";
-  static constexpr const wchar_t *Settings_Tooltip_SpecularOpacity = L"Яркость диагональных световых бликов.";
-  static constexpr const wchar_t *Settings_Label_ShadowIntensity = L"Тени";
-  static constexpr const wchar_t *Settings_Tooltip_ShadowIntensity = L"Сила теней окружающего затенения.";
-  static constexpr const wchar_t *Settings_Header_VectorAssets = L"Vector Rendering";
-  static constexpr const wchar_t *Settings_Label_VectorStrokeWeight = L"Icon Stroke weight";
-  static constexpr const wchar_t *Settings_Option_StrokeStandard = L"Standard (1.5px)";
-  static constexpr const wchar_t *Settings_Option_StrokeFine = L"Fine (1.0px)";
-  static constexpr const wchar_t *Settings_Header_GlassTint = L"Tint Profile";
-  static constexpr const wchar_t *Settings_Label_TintProfile = L"Color logic";
-  static constexpr const wchar_t *Settings_Option_TintAuto = L"Auto (Adaptive)";
-  static constexpr const wchar_t *Settings_Option_TintCustom = L"Custom Color";
-  static constexpr const wchar_t *Settings_Label_GlassCustomColor = L"Manual Tint";
-  static constexpr const wchar_t *Settings_Header_DensityMatrix = L"Control Surface Density (%)";
-  static constexpr const wchar_t *Settings_Label_OsdDensity = L"OSD & HUD";
-  static constexpr const wchar_t *Settings_Tooltip_OsdDensity = L"Transparency for small floating overlays.";
-  static constexpr const wchar_t *Settings_Label_PanelsDensity = L"Toolbar & Sidebars";
-  static constexpr const wchar_t *Settings_Tooltip_PanelsDensity = L"Transparency for persistent control panels.";
-  static constexpr const wchar_t *Settings_Label_ModalsDensity = L"Dialogs & Settings";
-  static constexpr const wchar_t *Settings_Tooltip_ModalsDensity = L"Transparency for centered popups.";
-  static constexpr const wchar_t *Settings_Label_MenusDensity = L"Menus";
-  static constexpr const wchar_t *Settings_Tooltip_MenusDensity = L"Transparency for right-click context menus.";
+  static constexpr const wchar_t *Settings_Tooltip_SpecularOpacity =
+      L"Яркость диагональных световых бликов.";
+  static constexpr const wchar_t *Settings_Label_ShadowIntensity =
+      L"Тени";
+  static constexpr const wchar_t *Settings_Tooltip_ShadowIntensity =
+      L"Сила теней окружающего затенения.";
+  static constexpr const wchar_t *Settings_Header_VectorAssets =
+      L"Векторный рендеринг";
+  static constexpr const wchar_t *Settings_Label_VectorStrokeWeight =
+      L"Обводка значков";
+  static constexpr const wchar_t *Settings_Option_StrokeStandard =
+      L"Стандартная (1.5 пкс)";
+  static constexpr const wchar_t *Settings_Option_StrokeFine = L"Тонкая ine (1.0 пкс)";
+  static constexpr const wchar_t *Settings_Header_GlassTint = L"Профиль оттенка";
+  static constexpr const wchar_t *Settings_Label_TintProfile = L"Цветовая логика";
+  static constexpr const wchar_t *Settings_Option_TintAuto = L"Авто (адаптивно)";
+  static constexpr const wchar_t *Settings_Option_TintCustom = L"Свой цвет";
+  static constexpr const wchar_t *Settings_Label_GlassCustomColor =
+      L"Оттенок вручную";
+  static constexpr const wchar_t *Settings_Header_DensityMatrix =
+      L"Плотность контрольной поверхности (%)";
+  static constexpr const wchar_t *Settings_Label_OsdDensity = L"OSD и HUD";
+  static constexpr const wchar_t *Settings_Tooltip_OsdDensity =
+      L"Прозрачность для небольших плавающих наложений.";
+  static constexpr const wchar_t *Settings_Label_PanelsDensity =
+      L"Панель инструментов и боковые панели";
+  static constexpr const wchar_t *Settings_Tooltip_PanelsDensity =
+      L"Прозрачность для постоянных панелей управления.";
+  static constexpr const wchar_t *Settings_Label_ModalsDensity =
+      L"Диалоги и настройки";
+  static constexpr const wchar_t *Settings_Tooltip_ModalsDensity =
+      L"Прозрачность центрированных всплывающих окон.";
+  static constexpr const wchar_t *Settings_Label_MenusDensity = L"Меню";
+  static constexpr const wchar_t *Settings_Tooltip_MenusDensity =
+      L"Transparency for right-click context menus.";
 
-  static constexpr const wchar_t *Settings_Tab_Theme = L"Theme";
-  static constexpr const wchar_t *Settings_Label_ThemeMode = L"Preset";
-  static constexpr const wchar_t *Settings_Option_ThemeAuto = L"Система";
-  static constexpr const wchar_t *Settings_Option_ThemeDark = L"Темная";
+  static constexpr const wchar_t *Settings_Tab_Theme = L"Тема";
+  static constexpr const wchar_t *Settings_Label_ThemeMode = L"Пресет";
+  static constexpr const wchar_t *Settings_Option_ThemeAuto = L"Авто";
+  static constexpr const wchar_t *Settings_Option_ThemeDark = L"Тёмная";
   static constexpr const wchar_t *Settings_Option_ThemeLight = L"Светлая";
   static constexpr const wchar_t *Settings_Option_ThemeCustom = L"Дизайн";
-  static constexpr const wchar_t *Settings_Label_AmbientDimmer = L"Затемнение (Dimmer)";
-  static constexpr const wchar_t *Settings_Tooltip_AmbientDimmer = L"Dim the background when a modal or settings window is open.";
+  static constexpr const wchar_t *Settings_Label_AmbientDimmer =
+      L"Затемнение (диммер)";
+  static constexpr const wchar_t *Settings_Tooltip_AmbientDimmer =
+      L"Затемнять фон, когда открыто модальное окно или окно настроек.";
   static constexpr const wchar_t *Settings_Label_AccentColor = L"Акцентный цвет";
   static constexpr const wchar_t *Settings_Label_TextColor = L"Цвет текста";
-  static constexpr const wchar_t *Settings_Header_ThemeManagement = L"Темы";
+  static constexpr const wchar_t *Settings_Header_ThemeManagement =
+      L"Темы";
   static constexpr const wchar_t *Settings_Action_ExportTheme = L"Экспорт";
   static constexpr const wchar_t *Settings_Action_ImportTheme = L"Импорт";
+
   static constexpr const wchar_t *Settings_Label_CanvasColor = L"Цвет холста";
   static constexpr const wchar_t *Settings_Label_Overlay = L"Наложение";
-  static constexpr const wchar_t *Settings_Label_ShowGrid = L"Показывать сетку";
+  static constexpr const wchar_t *Settings_Label_ShowGrid =
+      L"Показывать сетку";
   static constexpr const wchar_t *Settings_Label_CrossFade =
       L"Плавный переход между изображениями";
-  static constexpr const wchar_t *Settings_Label_AlwaysOnTop =
-      L"Поверх всех окон";
-  static constexpr const wchar_t *Settings_Label_LockWindow =
-      L"Заблокировать размер окна";
+  static constexpr const wchar_t *Settings_Label_AlwaysOnTop = L"Поверх всех окон";
+  static constexpr const wchar_t *Settings_Label_LockWindow = L"Заблокировать окно";
   static constexpr const wchar_t *Settings_Label_AutoHideTitle =
       L"Автоскрытие заголовка";
   static constexpr const wchar_t *Settings_Label_RoundedCorners =
@@ -2863,26 +2880,23 @@ struct RU {
   static constexpr const wchar_t *Settings_Label_ShowBorderIndicator =
       L"Показывать индикаторы границ";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
-      L"Сохранять размер окна при навигации";
+      L"Не менять размер окна при навигации";
   static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
       L"Запоминать последний размер окна";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"Адаптировать мелкие изображения";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
       L"Плавное масштабирование окна (ГП)";
-  static constexpr const wchar_t *Settings_Label_ExifMode =
-      L"Режим панели EXIF";
+  static constexpr const wchar_t *Settings_Label_ExifMode = L"Режим панели EXIF";
   static constexpr const wchar_t *Settings_Label_ToolbarInfoDefault =
       L"Информация в панели по умолчанию";
   static constexpr const wchar_t *Settings_Label_OpenFullScreenMode =
       L"Полноэкранный режим при открытии";
   static constexpr const wchar_t *Settings_Label_FullScreenZoomMode =
       L"Масштаб в полноэкранном режиме";
-  static constexpr const wchar_t *Settings_Option_FitScreen =
-      L"Вписывать";
+  static constexpr const wchar_t *Settings_Option_FitScreen = L"Вписывать";
   static constexpr const wchar_t *Settings_Option_AutoFit = L"Авто";
-  static constexpr const wchar_t *Settings_Label_InvertWheel =
-      L"Инвертировать действие колеса";
+  static constexpr const wchar_t *Settings_Label_InvertWheel = L"Инвертировать действие колеса";
   static constexpr const wchar_t *Settings_Label_ZoomSnapDamping =
       L"Задержка привязки зума (100%)";
   static constexpr const wchar_t *Settings_Label_MouseAnchorZoom =
@@ -2891,16 +2905,12 @@ struct RU {
       L"Масштаб правой кнопкой мыши";
   static constexpr const wchar_t *Settings_Label_InvertButtons =
       L"Инвертировать действие боковых кнопок";
-  static constexpr const wchar_t *Settings_Label_ZoomModeIn =
-      L"Увеличить";
+  static constexpr const wchar_t *Settings_Label_ZoomModeIn = L"Увеличить";
   static constexpr const wchar_t *Settings_Label_ZoomModeOut =
       L"Уменьшить";
-  static constexpr const wchar_t *Settings_Label_LeftDrag =
-      L"Перетаскивание левой кнопкой";
-  static constexpr const wchar_t *Settings_Label_MiddleDrag =
-      L"Перетаскивание средней кнопкой";
-  static constexpr const wchar_t *Settings_Label_MiddleClick =
-      L"Щелчок средней кнопкой";
+  static constexpr const wchar_t *Settings_Label_LeftDrag = L"Перетаскивание левой кнопкой";
+  static constexpr const wchar_t *Settings_Label_MiddleDrag = L"Перетаскивание средней кнопкой";
+  static constexpr const wchar_t *Settings_Label_MiddleClick = L"Щелчок средней кнопкой";
   static constexpr const wchar_t *Settings_Label_EdgeNavClick =
       L"Навигация при щелчке по краям";
   static constexpr const wchar_t *Settings_Label_DisableEdgeNavInCompare =
@@ -2909,11 +2919,10 @@ struct RU {
       L"Индикатор навигации";
   static constexpr const wchar_t *Settings_Label_AutoRotate =
       L"Автоповорот (EXIF)";
-  static constexpr const wchar_t *Settings_Label_CMS =
-      L"Управление цветом (CMS)";
+  static constexpr const wchar_t *Settings_Label_CMS = L"Управление цветом (CMS)";
   static constexpr const wchar_t *Settings_Label_AdvancedColor = L"Расширенный цвет (HDR)";
   static constexpr const wchar_t *Settings_Label_HdrToneMapping = L"Тональная компрессия HDR";
-  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"Пиковая яркость HDR (Nits)";
+  static constexpr const wchar_t *Settings_Label_HdrPeakNitsOverride = L"Пиковая яркость HDR (ниты)";
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Установите 0 для системной яркости.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Перцептивная";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Колориметрическая";
@@ -2923,28 +2932,23 @@ struct RU {
   static constexpr const wchar_t *Context_SoftProofProfile = L"Профиль цветопробы";
   static constexpr const wchar_t *Context_SoftProofCustom = L"Свой...";
   static constexpr const wchar_t *Settings_Value_ComingSoon = L"Скоро";
-  static constexpr const wchar_t *Settings_Label_ForceRaw =
-      L"Принудительное декодирование RAW";
+  static constexpr const wchar_t *Settings_Label_ForceRaw = L"Принудительное декодирование RAW";
   static constexpr const wchar_t *Settings_Label_AddToOpenWith =
       L"Добавить в 'Открыть с помощью'";
   static constexpr const wchar_t *Settings_Label_CustomEditor = L"Пользовательский редактор";
   static constexpr const wchar_t *Context_SelectEditor = L"Выбрать редактор";
-  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"Не удалось запустить редактор. Пожалуйста, настройте его снова.";
+  static constexpr const wchar_t *OSD_EditorLaunchFailed = L"Не удалось запустить редактор. Настройте его снова.";
   static constexpr const wchar_t *Settings_Action_Add = L"Добавить";
   static constexpr const wchar_t *Settings_Action_Added = L"Добавлено";
   static constexpr const wchar_t *Settings_Status_DisabledInPortable =
       L"Отключено в портативном режиме";
   static constexpr const wchar_t *Settings_Label_DebugHUD =
       L"Включить отладочный HUD (F12)";
-  static constexpr const wchar_t *Settings_Label_Prefetch =
-      L"Система предзагрузки";
-  static constexpr const wchar_t *Settings_Label_InfoPanelAlpha =
-      L"Панель информации";
-  static constexpr const wchar_t *Settings_Label_ToolbarAlpha =
-      L"Панель инструментов";
+  static constexpr const wchar_t *Settings_Label_Prefetch = L"Система предзагрузки";
+  static constexpr const wchar_t *Settings_Label_InfoPanelAlpha = L"Панель информации";
+  static constexpr const wchar_t *Settings_Label_ToolbarAlpha = L"Панель инструментов";
   static constexpr const wchar_t *Settings_Label_SettingsAlpha = L"Настройки";
-  static constexpr const wchar_t *Settings_Label_Reset =
-      L"Сбросить все настройки";
+  static constexpr const wchar_t *Settings_Label_Reset = L"Сбросить все настройки";
   static constexpr const wchar_t *Settings_Action_Restore = L"Восстановить";
   static constexpr const wchar_t *Settings_Action_Done = L"Готово";
 
@@ -2962,15 +2966,12 @@ struct RU {
 
   static constexpr const wchar_t *Settings_Action_CheckUpdates =
       L"Проверить наличие новой версии";
-  static constexpr const wchar_t *Settings_Action_ViewUpdate =
-      L"Посмотреть обновление";
+  static constexpr const wchar_t *Settings_Action_ViewUpdate = L"Посмотреть обновление";
   static constexpr const wchar_t *Settings_Status_Checking = L"Проверка...";
-  static constexpr const wchar_t *Settings_Status_UpToDate =
-      L"Актуальная версия";
+  static constexpr const wchar_t *Settings_Status_UpToDate = L"Актуальная версия";
   static constexpr const wchar_t *Settings_Link_GitHub = L"Репозиторий GitHub";
-  static constexpr const wchar_t *Settings_Link_ReportIssue =
-      L"Сообщить о проблеме";
-  static constexpr const wchar_t *Settings_Link_Hotkeys = L"Горячие клавиши";
+  static constexpr const wchar_t *Settings_Link_ReportIssue = L"Сообщить о проблеме";
+  static constexpr const wchar_t *Settings_Link_Hotkeys = L"Горячие клавиши (F1)";
   static constexpr const wchar_t *Settings_Label_Version = L"Версия";
   static constexpr const wchar_t *Settings_Label_Build = L"Сборка";
 
@@ -2988,6 +2989,7 @@ struct RU {
       L"в Windows должен быть более быстрый и чистый просмотрщик. Если вам "
       L"нравится эта программа, пожалуйста, поставьте звезду на "
       L"GitHub или расскажите о QuickView другу.";
+
   static constexpr const wchar_t *Settings_Option_Black = L"Чёрный";
   static constexpr const wchar_t *Settings_Option_White = L"Белый";
   static constexpr const wchar_t *Settings_Option_Grid = L"Сетка";
@@ -3008,11 +3010,10 @@ struct RU {
   static constexpr const wchar_t *Settings_Option_SortAuto = L"Авто (Проводник)";
   static constexpr const wchar_t *Settings_Option_SortName = L"Имя";
   static constexpr const wchar_t *Settings_Option_SortModified = L"Дата изменения";
-  static constexpr const wchar_t *Settings_Option_SortDateTaken = L"Дата съемки (EXIF)";
+  static constexpr const wchar_t *Settings_Option_SortDateTaken = L"Дата съёмки (EXIF)";
   static constexpr const wchar_t *Settings_Option_SortSize = L"Размер";
   static constexpr const wchar_t *Settings_Option_SortType = L"Тип";
   static constexpr const wchar_t *Settings_Option_NavLoop = L"Цикл в папке";
-  static constexpr const wchar_t *Settings_Option_NavStop = L"Остановка в конце";
   static constexpr const wchar_t *Settings_Option_NavThrough = L"Через вложенные папки";
 
   static constexpr const wchar_t *Settings_Option_Linear =
@@ -3029,8 +3030,7 @@ struct RU {
 
   static constexpr const wchar_t *Help_Header_Shortcuts = L"Горячие клавиши";
   static constexpr const wchar_t *Help_Header_Mouse = L"Мышь";
-  static constexpr const wchar_t *Help_Item_NextPrev =
-      L"След./пред. изображение";
+  static constexpr const wchar_t *Help_Item_NextPrev = L"След./пред. изображение";
   static constexpr const wchar_t *Help_Item_Zoom = L"Масштабирование";
   static constexpr const wchar_t *Help_Item_Pan = L"Панорамирование";
   static constexpr const wchar_t *Help_Item_Rotate = L"Поворот";
@@ -3040,7 +3040,6 @@ struct RU {
   static constexpr const wchar_t *Help_Item_Close = L"Закрыть";
   static constexpr const wchar_t *Help_Item_Compare = L"Режим сравнения";
   static constexpr const wchar_t *Help_Item_FirstLast = L"Первое/последнее изображение";
-
   static constexpr const wchar_t *Help_Mouse_Left = L"Левая кнопка";
   static constexpr const wchar_t *Help_Mouse_Middle = L"Средняя кнопка";
   static constexpr const wchar_t *Help_Mouse_Wheel = L"Колёсико";
@@ -3048,8 +3047,7 @@ struct RU {
   static constexpr const wchar_t *Help_Mouse_RightVerticalDrag =
       L"Вертикальное перетаскивание правой кнопкой";
   static constexpr const wchar_t *Help_Action_MoveWindow =
-      L"Перемещение окна / Выход из полноэкранного режима / Выход из "
-      L"максимизированного";
+      L"Перемещение окна / Выход из полноэкранного режима / Выход из максимизированного";
   static constexpr const wchar_t *Help_Action_PanImage = L"Панорамирование";
   static constexpr const wchar_t *Help_Action_ContextMenu = L"Контекстное меню";
   static constexpr const wchar_t *Help_Action_NextPrev = L"След./Пред.";
@@ -3061,23 +3059,23 @@ struct RU {
 
   static constexpr const wchar_t *Help_Header_Tips = L"Советы и термины";
   static constexpr const wchar_t *Help_Tip_ContextScope =
-      L"* Горячие клавиши и контекстное меню действуют только на текущий "
-      L"процесс. Настройки не изменяются.";
+      L"* Горячие клавиши и контекстное меню действуют только на текущий процесс. Настройки не изменяются.";
   static constexpr const wchar_t *Help_Tip_Rotation =
-      L"Поворот: при оптимизации краёв происходит их небольшая обрезка, чтобы они вписались в границы блока "
+      L"Поворот: При оптимизации краёв они слегка обрезаются, чтобы вписать в границы блока "
       L"(без потерь). В режиме с потерями выполняется полное перекодирование изображения.";
   static constexpr const wchar_t *Help_Tip_VideoWall =
       L"Видеостена (Ctrl+F11): Распределение картинки по всем мониторам. Если кнопка закрытия скрыта, "
       L"для выхода дважды щёлкните мышью.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Дизайнерский режим: Закрепление окна, изменение размера/блокировка, Масштабирование/панорамирование "
+      L"Дизайнерский режим: Закрепление окна, изменение размера/блокировка, масштабирование/панорамирование "
       L"изображения для получения детальной информации. Перетащите окно в нужное положение.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"Кнопка RAW: По умолчанию QuickView показывает встроенную картинку предпросмотра. Нажмите "
       L"для полного декодирования (может выглядеть по-другому из-за параметров рендеринга).";
   static constexpr const wchar_t *Help_Tip_JpegQ =
-      L"Качество JPEG: Расчётное значение качества (реверс-инжиниринг). Может слегка "
-      L"отличаться от настройки сохранения из-за различий в алгоритме.";
+      L"Качество JPEG: Расчётное значение качества. Может слегка "
+      L"отличаться от настройки сохранения из-за различий в алгоритме "
+      L"(например, Photoshop 100% \u2248 98%).";
 
   static constexpr const wchar_t *HUD_Group_Physical = L"ФИЗИЧЕСКИЕ АТРИБУТЫ";
   static constexpr const wchar_t *HUD_Group_Scientific = L"НАУЧНОЕ КАЧЕСТВО";
@@ -3107,15 +3105,14 @@ struct RU {
   static constexpr const wchar_t *HUD_Label_High = L"Высокая: ";
   static constexpr const wchar_t *HUD_Label_Low = L"Низкая: ";
   static constexpr const wchar_t *HUD_Label_Ref = L"Эталон: ";
-  static constexpr const wchar_t *Settings_Tooltip_CMS = L"Включить систему управления цветом (CMS).\nПри включении применяется высокоточное преобразование цветового пространства через GPU для восстановления истинных цветов.\nОтключение снижает нагрузку на GPU, но может привести к перенасыщению цветов на дисплеях с широким цветовым охватом.";
-  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"Метод преобразования цветового пространства (Rendering Intent).\nПерцептивная: Сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительная колориметрическая: Сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для UI и иконок).";
-  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Включить 16-битный конвейер рендеринга с плавающей запятой (scRGB).\nПри включении идеально отображает яркие участки фотографий на HDR-дисплеях, снимая ограничение SDR.\nОтключение принудительно отображает изображение в SDR.\nВнимание: Включение увеличивает использование видеопамяти.";
-  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"Стратегия тональной компрессии HDR в SDR:\nОпределяет, как HDR-изображения отображаются на SDR-мониторах.\nПерцептивная: Сохраняет детали в светах за счет плавного сжатия кривой яркости (более мягкий вид).\nКолориметрическая: Строгое отображение яркости; светлые участки, превышающие предел монитора, обрезаются.";
+  static constexpr const wchar_t *Settings_Tooltip_CMS = L"Использовать систему управления цветом (CMS).\nЕсли включено, применяется высокоточное преобразование цветового пространства через ГП для восстановления истинных цветов.\nЕсли отключено, снижается нагрузка на ГП, но возможно перенасыщение цветов на дисплеях с широким цветовым охватом.";
+  static constexpr const wchar_t *Settings_Tooltip_CmsIntent = L"Метод преобразования цветового пространства (Rendering Intent).\nПерцептивная сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительная колориметрическая сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для интерфейса и значков).";
+  static constexpr const wchar_t *Settings_Tooltip_AdvancedColor = L"Использовать 16-разрядный конвейер рендеринга с плавающей запятой (scRGB).\nЕсли включено, идеально отображаются яркие участки фотографий на HDR-дисплеях, не ограничиваясь SDR.\nЕсли отключено, изображение принудительно отображается в SDR.\n* При включении увеличивается потребление видеопамяти.";
+  static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"Стратегия тональной компрессии HDR в SDR:\nОпределяет, как HDR-изображения отображаются на SDR-мониторах.\nПерцептивная сохраняет детали в светах за счёт плавного сжатия кривой яркости (более мягкий вид).\nКолориметрическая строго отображает яркость, светлые участки, превышающие предел монитора, обрезаются.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Профессиональные инструменты";
-  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Показывать кнопку грязного прямоугольника в режиме анимации";
-  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect =
-      L"Показывать кнопку отладки грязных прямоугольников на панели инструментов анимации.";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Показывать кнопку отображаемой области в режиме анимации";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"Показывать кнопку отладки отображаемой области на панели инструментов анимации для отображения обновляемых участков.";
 };
 
 // ----------------------------------------------------------------
