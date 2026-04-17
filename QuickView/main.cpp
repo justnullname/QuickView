@@ -5933,10 +5933,46 @@ static void ForceForegroundWindow(HWND hwnd) {
     }
 }
 
+// [Self-Update] Cleanup logic for renamed old executable
+static void TryCleanupOldVersion(int argc, LPWSTR* argv) {
+    int oldPid = 0;
+    if (TryReadPositiveIntArg(argc, argv, L"--cleanup-pid", &oldPid)) {
+        // 1. Get current executable path to find the ".old" backup
+        wchar_t currentExe[MAX_PATH];
+        GetModuleFileNameW(NULL, currentExe, MAX_PATH);
+        std::wstring oldExe = std::wstring(currentExe) + L".old";
+
+        // 2. Open handle to the old process to wait for its termination
+        HANDLE hOldProcess = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)oldPid);
+        if (hOldProcess) {
+            // 3. Wait up to 2 seconds for the old process to fully exit and release file locks
+            DWORD waitResult = WaitForSingleObject(hOldProcess, 2000);
+            CloseHandle(hOldProcess);
+
+            if (waitResult == WAIT_OBJECT_0) {
+                // 4. Old process is dead. Kill the ghost file immediately.
+                DeleteFileW(oldExe.c_str());
+            }
+        } else {
+            // If OpenProcess failed, the old process likely died instantly. Try delete anyway.
+            DeleteFileW(oldExe.c_str());
+        }
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
-    // === Priority 0: Tool subprocess dispatch (must be first) ===
+    // === Priority 0: CMD Parsing & Subprocess dispatch ===
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+    // [Self-Update] Perform deterministic cleanup of the previous version if requested
+    if (argv && argc > 1) {
+        TryCleanupOldVersion(argc, argv);
+    }
+
     int toolExitCode = 0;
     if (TryRunToolProcessFromCommandLine(&toolExitCode)) {
+        if (argv) LocalFree(argv);
         return toolExitCode;
     }
 

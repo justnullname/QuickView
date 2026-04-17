@@ -409,33 +409,41 @@ void UpdateManager::OnUserLater() {
 
 void UpdateManager::HandleExit() {
     if (IsUpdatePending() && !m_tempPath.empty() && m_status == UpdateStatus::ReadyToInstall) {
-        // Generate UpdateScript.bat
-        wchar_t batPath[MAX_PATH];
-        GetTempPathW(MAX_PATH, batPath);
-        std::wstring batFile = std::wstring(batPath) + L"QuickView_Update.bat";
-        
-        // Current EXE path
+        // [Modern Self-Update Logic: "The Great Swap"]
+        // 1. Get current executable path and PID
         wchar_t currentExe[MAX_PATH];
         GetModuleFileNameW(NULL, currentExe, MAX_PATH);
-        
-        std::wofstream bat(batFile);
-        bat << L"@echo off" << std::endl;
-        bat << L":loop_del" << std::endl;
-        bat << L"timeout /t 1 /nobreak > NUL" << std::endl;
-        bat << L"del \"" << currentExe << L"\"" << std::endl;
-        bat << L"if exist \"" << currentExe << L"\" goto loop_del" << std::endl;
-        
-        bat << L":loop_move" << std::endl;
-        bat << L"move /Y \"" << m_tempPath << L"\" \"" << currentExe << L"\"" << std::endl;
-        bat << L"if not exist \"" << currentExe << L"\" goto loop_move" << std::endl;
-        
-        if (m_shouldRestartNow) {
-            bat << L"start \"\" \"" << currentExe << L"\"" << std::endl;
+        DWORD currentPid = GetCurrentProcessId();
+
+        // 2. Prepare the ".old" path
+        std::wstring oldExe = std::wstring(currentExe) + L".old";
+
+        // 3. Rename current running EXE to .old (permitted on Windows)
+        // This releases the 'QuickView.exe' name for the new file.
+        if (MoveFileExW(currentExe, oldExe.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            // 4. Move the new update file to the original EXE path
+            // [CRITICAL FIX] Added MOVEFILE_COPY_ALLOWED to support cross-volume updates 
+            // (e.g., from C:\Temp to E:\AppDir).
+            if (MoveFileExW(m_tempPath.c_str(), currentExe, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+                // 5. Build command line with cleanup instructions for the new process
+                std::wstring cmdLine = L"\"" + std::wstring(currentExe) + L"\" --cleanup-pid " + std::to_wstring(currentPid);
+
+                STARTUPINFOW si = { sizeof(si) };
+                PROCESS_INFORMATION pi = { 0 };
+
+                // 6. Spawn the NEW process
+                if (CreateProcessW(NULL, const_cast<LPWSTR>(cmdLine.c_str()), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                    CloseHandle(pi.hProcess);
+                    CloseHandle(pi.hThread);
+                } else {
+                    // Fail-safe: If new process failed to start, try to restore (best effort)
+                }
+            } else {
+                // [ROLLBACK] If moving the new update failed, restore the original EXE from .old
+                MoveFileExW(oldExe.c_str(), currentExe, MOVEFILE_REPLACE_EXISTING);
+            }
         }
-        bat << L"del \"%~f0\"" << std::endl; // Self delete
-        bat.close();
-        
-        // Execute Bat (Hidden)
-        ShellExecuteW(NULL, L"open", batFile.c_str(), NULL, NULL, SW_HIDE);
     }
 }
+
+
