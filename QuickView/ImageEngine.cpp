@@ -626,8 +626,7 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                 m_isViewingScaledImage = true;
                 m_stage1Time = std::chrono::steady_clock::now();
 
-                // [v9.0] Startup Delay Check (Added to support Titan mode)
-                CheckStartupDelay();
+
 
                 // [JXL Serial] Trigger Stage 2 IMMEDIATELY for JXL (No 300ms wait)
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
@@ -641,8 +640,7 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                 m_isViewingScaledImage = false; // Final reached
                 m_stage2Requested = false;      // Reset request flag (job done)
                 
-                // [v9.0] Startup Delay Check
-                CheckStartupDelay();
+
 
                 // [JXL Scene C] FastLane Aborted (Modular?) -> Trigger Heavy Immediately
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
@@ -726,6 +724,34 @@ std::vector<EngineEvent> ImageEngine::PollState() {
              RequestFullDecode(m_currentNavPath, m_currentImageId.load());
              m_stage2Requested = true;
              m_pendingJxlHeavyId = 0; // Consumed
+        }
+    }
+    // [v9.0] Startup Idle Detection: Enable prefetch after 500ms of continuous system idle
+    if (!m_startupPrefetchAllowed) {
+        if (IsIdle()) {
+            if (!m_startupIdleTracking) {
+                m_startupIdleTracking = true;
+                m_startupIdleBegin = std::chrono::steady_clock::now();
+
+                // Schedule a deferred wakeup so PollState re-enters after 500ms
+                // to check the idle duration (message loop won't fire without events)
+                if (!m_startupWakeupPending.exchange(true)) {
+                    std::thread([this]() {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                        m_startupWakeupPending = false;
+                        QueueEvent(EngineEvent{}); // Wake PollState
+                    }).detach();
+                }
+            } else {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - m_startupIdleBegin).count();
+                if (elapsed >= 500) {
+                    m_startupPrefetchAllowed = true;
+                    OutputDebugStringW(L"[ImageEngine] Startup idle threshold reached (500ms). Prefetch enabled.\n");
+                }
+            }
+        } else {
+            m_startupIdleTracking = false; // Reset: system is still busy
         }
     }
 
@@ -1680,24 +1706,7 @@ void ImageEngine::RequestFullMetadata() {
     }).detach();
 }
 
-// [v9.0] Strict Startup Delay
-void ImageEngine::CheckStartupDelay() {
-    // Only arm once until the delayed prefetch wakeup has fired.
-    if (m_startupPrefetchAllowed) return;
-    if (m_startupPrefetchTimerArmed.exchange(true)) return;
 
-    // Launch detached thread to wait 500ms
-    std::thread([this]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        m_startupPrefetchAllowed = true;
-        m_startupPrefetchTimerArmed = false;
-
-        // Only wake the serial prefetch pump. Re-entering UpdateView here creates
-        // duplicate "[ImageEngine] UpdateView" logs and can re-schedule neighbor work
-        // as if the user navigated again.
-        PumpPrefetch();
-    }).detach();
-}
 
 // [v9.1] Serial Prefetch Pump
 void ImageEngine::PumpPrefetch() {

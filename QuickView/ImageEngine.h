@@ -404,9 +404,10 @@ private:
     void ScheduleJob(int index, QuickView::Priority priority);
     void PruneQueue(int currentIndex, QuickView::BrowseDirection dir);
 
-    void CheckStartupDelay(); // [v9.0] Enable prefetch after 500ms
     std::atomic<bool> m_startupPrefetchAllowed{false}; // [v9.0] Strict Startup Delay
-    std::atomic<bool> m_startupPrefetchTimerArmed{false}; // Prevent duplicate delayed UpdateView-style wakeups
+    bool m_startupIdleTracking{false}; // [v9.0] Whether we are tracking continuous idle
+    std::chrono::steady_clock::time_point m_startupIdleBegin{}; // [v9.0] When continuous idle started
+    std::atomic<bool> m_startupWakeupPending{false}; // [v9.0] Prevent duplicate wakeup threads
 
     // [Fix] Manual Event Queue for Cache Hits (and other internal events)
     std::vector<EngineEvent> m_manualEventQueue;
