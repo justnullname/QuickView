@@ -200,7 +200,7 @@ namespace QuickView {
         if (fmt == L"JPEG") return TitanFormat::JPEG;
         if (fmt == L"PNG")  return TitanFormat::PNG;
         if (fmt == L"JXL")  return TitanFormat::JXL;
-        if (fmt == L"WEBP") return TitanFormat::WEBP;
+        if (fmt == L"WEBP" || fmt == L"WebP") return TitanFormat::WEBP;
         if (fmt == L"AVIF") return TitanFormat::AVIF;
         if (fmt == L"TIFF") return TitanFormat::TIFF;
         if (fmt == L"BMP")  return TitanFormat::BMP;
@@ -237,7 +237,6 @@ namespace QuickView {
             case TitanFormat::TGA:
             case TitanFormat::GIF:
             case TitanFormat::PNM:
-            case TitanFormat::Other:
                 return true;
             default:
                 return false;

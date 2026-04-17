@@ -856,9 +856,16 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
                                             float targetHdrHeadroomStops) 
 {
     if (!data || !size || !outFrame) return E_INVALIDARG;
+    (void)targetHdrHeadroomStops;
 
     // 1. Detect Format
     std::wstring fmt = DetectFormatFromContent(data, size);
+    if (fmt != L"JPEG" && !IsUnifiedBufferCodec(fmt)) {
+        // Keep this entrypoint limited to codecs with a real in-memory/native decoder path.
+        // Path-bound formats (RAW/HEIC/TIFF/SVG/etc.) must fall back to the file loader
+        // so they preserve the exact historical behavior and metadata extraction stack.
+        return E_NOTIMPL;
+    }
 
     // 2. TurboJPEG Fast Path
     if (fmt == L"JPEG") {
@@ -896,10 +903,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         int height = tj3Get(handle, TJPARAM_JPEGHEIGHT);
 
         // [CMS Fix] If the JPEG is CMYK, TurboJPEG's TJPF_BGRA is naive.
-        // Fall back to WIC which now uses IWICColorTransform for high-fidelity CMS.
+        // Fall back to the file-path loader so the historical WIC/CMS path is preserved.
         int colorspace = tj3Get(handle, TJPARAM_COLORSPACE);
         if (colorspace == TJCS_CMYK || colorspace == TJCS_YCCK) {
-             goto WIC_FALLBACK;
+             return E_NOTIMPL;
         }
 
         // [Metadata] Populate Original Dimensions BEFORE Scaling
@@ -1022,7 +1029,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
             if (arena) return static_cast<uint8_t*>(arena->Allocate(s, 64)); 
             return static_cast<uint8_t*>(_aligned_malloc(s, 64)); 
         };
-        ctx.freeFunc = [&](uint8_t* p) { 
+        ctx.freeFunc = [&](uint8_t*) { 
             // _aligned_free handled by deleters below
         };
         ctx.targetWidth = targetWidth;
@@ -1051,124 +1058,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         }
     }
 
-WIC_FALLBACK:
-    // For other formats (WIC), we need a Stream.
-    // Create IStream from Memory
-    ComPtr<IStream> stream = SHCreateMemStream(data, (UINT)size);
-    if (!stream) return E_FAIL;
-    
-    // Use WIC
-    if (pLoaderName) *pLoaderName = L"WIC (MMF)";
-    
-    // Create Decoder
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (!m_wicFactory) return E_FAIL;
-    
-    HRESULT hr = m_wicFactory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
-    if (FAILED(hr)) return hr;
-    
-    ComPtr<IWICBitmapFrameDecode> frame;
-    hr = decoder->GetFrame(0, &frame);
-    if (FAILED(hr)) return hr;
-
-    UINT origW, origH;
-    frame->GetSize(&origW, &origH);
-
-    // [Metadata] Populate Original Dimensions BEFORE Scaling
-    if (pMetadata) {
-        pMetadata->Width = (uint32_t)origW;
-        pMetadata->Height = (uint32_t)origH;
-        pMetadata->FileSize = (uint64_t)size;
-        pMetadata->Format = fmt + L" (MMF)";
-    }
-
-    // Use WIC Scaler if target size is specified
-    ComPtr<IWICBitmapSource> sourceWithScaler;
-    
-    if (targetWidth > 0 || targetHeight > 0) {
-        // Calculate factor
-        double scale = std::min((double)targetWidth / origW, (double)targetHeight / origH);
-        if (scale < 1.0) {
-            UINT newW = (UINT)(origW * scale);
-            UINT newH = (UINT)(origH * scale);
-            if (newW < 1) newW = 1; 
-            if (newH < 1) newH = 1;
-            
-            ComPtr<IWICBitmapScaler> scaler;
-            if (SUCCEEDED(m_wicFactory->CreateBitmapScaler(&scaler))) {
-                if (SUCCEEDED(scaler->Initialize(frame.Get(), newW, newH, WICBitmapInterpolationModeFant))) {
-                    sourceWithScaler = scaler;
-                }
-            }
-        }
-    }
-    
-    // Fallback if no scaler
-    ComPtr<IWICBitmapSource> finalSource = sourceWithScaler ? sourceWithScaler : frame;
-    
-    // 3. Convert to BitmapSource (Format)
-    ComPtr<IWICBitmapSource> sourceConverted;
-    WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, finalSource.Get(), &sourceConverted);
-    if (!sourceConverted) sourceConverted = finalSource;
-
-    // 4. [CMS] Extract ICC Profile
-    UINT count = 0;
-    if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
-        std::vector<ComPtr<IWICColorContext>> contexts(count);
-        std::vector<IWICColorContext*> rawContexts(count);
-        for (UINT i = 0; i < count; i++) {
-            m_wicFactory->CreateColorContext(&contexts[i]);
-            rawContexts[i] = contexts[i].Get();
-        }
-
-        UINT actual = 0;
-        if (SUCCEEDED(frame->GetColorContexts(count, rawContexts.data(), &actual))) {
-            for (UINT i = 0; i < actual; i++) {
-                WICColorContextType type;
-                contexts[i]->GetType(&type);
-                if (type == WICColorContextProfile) {
-                    UINT cbProfile = 0;
-                    contexts[i]->GetProfileBytes(0, nullptr, &cbProfile);
-                    if (cbProfile > 0) {
-                        outFrame->iccProfile.resize(cbProfile);
-                        if (FAILED(contexts[i]->GetProfileBytes(cbProfile, outFrame->iccProfile.data(), &cbProfile))) {
-                            outFrame->iccProfile.clear();
-                        } else {
-                            break; // Got it
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 5. Build Final Frame
-    UINT w, h;
-    sourceConverted->GetSize(&w, &h);
-    outFrame->width = w;
-    outFrame->height = h;
-    outFrame->stride = QuickView::CalculateAlignedStride(w, 4);
-    outFrame->format = PixelFormat::BGRA8888;
-    outFrame->formatDetails = L"WIC Cache";
-    
-    if (pMetadata) {
-        pMetadata->Width = (uint32_t)origW;
-        pMetadata->Height = (uint32_t)origH;
-    }
-    
-    size_t bufSize = outFrame->GetBufferSize();
-    if (arena) {
-        outFrame->pixels = (uint8_t*)arena->Allocate(bufSize, 64);
-        outFrame->memoryDeleter = nullptr; 
-    } else {
-        outFrame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
-        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
-    }
-    
-    if (!outFrame->pixels) return E_OUTOFMEMORY;
-    
-    hr = sourceConverted->CopyPixels(nullptr, outFrame->stride, (UINT)bufSize, outFrame->pixels);
-    return hr;
+    return E_NOTIMPL;
 }
 
 // [v9.2] Redesigned Format Detection: Extension-First for RAW
@@ -7206,7 +7096,7 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
 
     // --- Buffer Based Codecs ---
     // [v6.7] Expanded: Include ALL integrated specialized formats
-    bool isBufferCodec = IsUnifiedBufferCodec(fmt) || fmt == L"HEIC" || fmt == L"SVG";
+    bool isBufferCodec = IsUnifiedBufferCodec(fmt) || fmt == L"HEIC";
     
     if (isBufferCodec) {
         QuickView::MappedFile mapping(filePath);
