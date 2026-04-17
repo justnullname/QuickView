@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.2.2] - Emergency Fix Release
+**Release Date**: 2026-04-17
+
+### ⚡ Performance
+- **Animation Fast-Path (#145)**: Implemented high-performance zero-copy scanning for APNG (acTL chunk) and GIF (multi-frame descriptors) to ensure static images bypass animation loops.
+- **Titan Stability Optimization**: Implemented `ImageID` active-locking in `HeavyLanePool` to prevent prefetch tasks from triggering destructive resource resets.
+- **Pipeline Consolidation**: Unified decoding paths into `LoadBufferUnified`, eliminating redundant memory allocations.
+
+### 🐛 Bug Fixes
+- **Security & AV (#149)**: Resolved Microsoft Defender false positives by refactoring registration logic with O(1) INI-based validation and idle-deferred registry I/O.
+- **Titan UI Regression**: Fixed an issue where the context menu appeared empty when the prefetch system was active for large images.
+- **WebP Animation Fix**: Resolved a regression where heavy animated WebP files (MMF path) failed to initialize the animator.
+- **Startup Deadlock**: Fixed a race condition in `ImageEngine` that could cause hangs when starting the application with a massive image.
+- **Prefetch Trigger**: Replaced legacy fixed timers with a robust 500ms continuous idle detection mechanism for smoother transitions.
+
 ## [5.2.1] - The Animation & Personalization Update
 **Release Date**: 2026-04-15
 
