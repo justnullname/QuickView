@@ -191,7 +191,7 @@ const wchar_t* GetLightThemeLabel() {
 }
 
 
-static std::wstring GetAppVersion() {
+std::wstring SettingsOverlay::GetAppVersion() {
     wchar_t fileName[MAX_PATH];
     GetModuleFileNameW(NULL, fileName, MAX_PATH);
     DWORD dummy;
@@ -302,43 +302,55 @@ static std::wstring ReadRegisteredExePath() {
     return result;
 }
 
+// Helper to check if registry value already match to avoid redundant writes (AV protection)
+static bool IsRegistryValueMatch(HKEY hRoot, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& expected) {
+    HKEY hKey;
+    if (RegOpenKeyExW(hRoot, subKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS) return false;
+    
+    wchar_t data[MAX_PATH];
+    DWORD dataSize = sizeof(data);
+    DWORD type = 0;
+    bool match = false;
+    if (RegQueryValueExW(hKey, valueName, NULL, &type, (BYTE*)data, &dataSize) == ERROR_SUCCESS) {
+        if (type == REG_SZ) {
+            match = (expected == data);
+        }
+    }
+    RegCloseKey(hKey);
+    return match;
+}
+
+static LONG SafeRegSetString(HKEY hRoot, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& value) {
+    if (IsRegistryValueMatch(hRoot, subKey, valueName, value)) return ERROR_SUCCESS;
+    
+    HKEY hKey;
+    LONG r = RegCreateKeyExW(hRoot, subKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (r == ERROR_SUCCESS) {
+        r = RegSetValueExW(hKey, valueName, 0, REG_SZ, (BYTE*)value.c_str(), (DWORD)(value.size() + 1) * 2);
+        RegCloseKey(hKey);
+    }
+    return r;
+}
+
 // Register file associations (silent, no MessageBox)
 bool SettingsOverlay::RegisterAssociations() {
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    
+    std::wstring exePathStr = exePath;
+
     HKEY hKey;
     LONG r;
     
     // 1. Register ProgID command
-    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\QuickView.Image\\shell\\open\\command",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" \"%1\"";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
-        RegCloseKey(hKey);
-    }
+    std::wstring cmd = L"\"" + exePathStr + L"\" \"%1\"";
+    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\shell\\open\\command", NULL, cmd);
     
     // 2. Register DefaultIcon
-    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\QuickView.Image\\DefaultIcon",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        std::wstring icon = std::wstring(exePath) + L",0";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
-        RegCloseKey(hKey);
-    }
+    std::wstring icon = exePathStr + L",0";
+    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image\\DefaultIcon", NULL, icon);
     
     // 3. Register FriendlyTypeName
-    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\QuickView.Image",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        std::wstring name = L"QuickView Image Viewer";
-        RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)name.c_str(), (DWORD)(name.size()+1)*2);
-        RegCloseKey(hKey);
-    }
+    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\QuickView.Image", L"FriendlyTypeName", L"QuickView Image Viewer");
     
     // 4. Register specific ProgIDs and OpenWith
     const wchar_t* exts[] = {
@@ -368,24 +380,15 @@ bool SettingsOverlay::RegisterAssociations() {
         desc += L" File";
 
         // Create ProgID Key
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            RegSetValueExW(hKey, L"FriendlyTypeName", 0, REG_SZ, (BYTE*)desc.c_str(), (DWORD)(desc.size()+1)*2);
-            RegCloseKey(hKey);
-        }
+        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId).c_str(), L"FriendlyTypeName", desc);
         
         // Command
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" \"%1\"";
-            RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
-            RegCloseKey(hKey);
-        }
+        std::wstring cmd = L"\"" + exePathStr + L"\" \"%1\"";
+        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\shell\\open\\command").c_str(), NULL, cmd);
         
         // Icon
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            std::wstring icon = std::wstring(exePath) + L",0";
-            RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)icon.c_str(), (DWORD)(icon.size()+1)*2);
-            RegCloseKey(hKey);
-        }
+        std::wstring icon = exePathStr + L",0";
+        SafeRegSetString(HKEY_CURRENT_USER, (L"Software\\Classes\\" + progId + L"\\DefaultIcon").c_str(), NULL, icon);
 
         // Add to OpenWithProgids
         std::wstring keyPath = L"Software\\Classes\\" + extStr + L"\\OpenWithProgids";
@@ -397,40 +400,37 @@ bool SettingsOverlay::RegisterAssociations() {
         }
     }
     
-    // 5. Register in Applications for proper display name
-    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\Applications\\QuickView.exe",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        std::wstring friendlyName = L"QuickView";
-        RegSetValueExW(hKey, L"FriendlyAppName", 0, REG_SZ, (BYTE*)friendlyName.c_str(), (DWORD)(friendlyName.size()+1)*2);
-        RegCloseKey(hKey);
-    }
-
+    // 5. Register in Applications
+    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe", L"FriendlyAppName", L"QuickView");
     
-    // 5b. Register SupportedTypes (Critical for "Open With" visibility)
+    // 5b. Register SupportedTypes
     if (RegCreateKeyExW(HKEY_CURRENT_USER, 
         L"Software\\Classes\\Applications\\QuickView.exe\\SupportedTypes",
         0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         
         for (const auto& ext : exts) {
-            // Use Empty String ("") instead of NULL for safety
-            RegSetValueExW(hKey, ext, 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
+            // [Small AV Optimization] Only write if not already there
+            DWORD type;
+            if (RegQueryValueExW(hKey, ext, NULL, &type, NULL, NULL) != ERROR_SUCCESS) {
+                RegSetValueExW(hKey, ext, 0, REG_SZ, (const BYTE*)L"", sizeof(wchar_t));
+            }
         }
         RegCloseKey(hKey);
     }
 
-    r = RegCreateKeyExW(HKEY_CURRENT_USER, 
-        L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command",
-        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-    if (r == ERROR_SUCCESS) {
-        std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" \"%1\"";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (BYTE*)cmd.c_str(), (DWORD)(cmd.size()+1)*2);
-        RegCloseKey(hKey);
-    }
+    std::wstring applicationsCmd = L"\"" + exePathStr + L"\" \"%1\"";
+    SafeRegSetString(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe\\shell\\open\\command", NULL, applicationsCmd);
     
     // 6. Refresh Shell
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+
+    // [The Golden Path] Persistence Update
+    g_config.LastRegisteredVersion = SettingsOverlay::GetAppVersion();
+    g_config.LastRegisteredPath = exePathStr;
+    
+    extern void SaveConfig();
+    SaveConfig();
+
     return true;
 }
 
@@ -441,6 +441,12 @@ void SettingsOverlay::UnregisterAssociations() {
     
     // Delete Applications entry
     RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\QuickView.exe");
+
+    // Clear Golden Path persistence to avoid false skips if user re-installs later
+    g_config.LastRegisteredVersion.clear();
+    g_config.LastRegisteredPath.clear();
+    extern void SaveConfig();
+    SaveConfig();
     
     // Delete per-extension ProgIDs and OpenWithProgids entries
     const wchar_t* exts[] = {
@@ -1773,7 +1779,7 @@ void SettingsOverlay::BuildMenu() {
         itemFileAssoc.isDisabled = true;
         itemFileAssoc.disabledText = AppStrings::Settings_Status_DisabledInPortable;
     } else {
-        itemFileAssoc.onChange = []() {
+        itemFileAssoc.onChange = [this]() {
             SettingsOverlay::RegisterAssociations();
         };
     }

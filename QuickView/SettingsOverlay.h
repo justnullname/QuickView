@@ -127,6 +127,7 @@ public:
     static bool RegisterAssociations();
     static void UnregisterAssociations(); 
     static bool IsRegistrationNeeded();
+    static std::wstring GetAppVersion();
 
 private:
     void CreateResources(ID2D1DeviceContext* pRT);

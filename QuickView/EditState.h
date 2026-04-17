@@ -219,6 +219,8 @@ struct AppConfig {
     bool ShowDirtyRectButton = false; // [v3.5] Toggle visibility of the dirty rect debug button in animation mode
     
     // --- Save Options --- (Functional options removed, fully automated/smart)
+    std::wstring LastRegisteredVersion;
+    std::wstring LastRegisteredPath;
 
 
     // Existing / Internal (Defaults for Runtime)

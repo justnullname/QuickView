@@ -317,6 +317,8 @@ static int g_animInspectorFrame = -1; // -1 means playing normally
 static bool g_showAnimDirtyRect = false; // [v10.5] Dirty rect debug overlay
 #define IDT_ANIMATION 105
 OSDState g_osd; // Removed static, explicitly Global
+bool g_pendingRegistryCheck = false;
+static const UINT_PTR TIMER_ID_REGISTRY_CHECK = 993;
 
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
 static DialogState g_dialog;
@@ -4542,6 +4544,10 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"General", L"NavLoop", g_config.NavLoop ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"NavTraverse", g_config.NavTraverse ? L"1" : L"0", iniPath.c_str());
 
+    // Registry / Associations persistence
+    WritePrivateProfileStringW(L"Registry", L"RegVer", g_config.LastRegisteredVersion.c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Registry", L"RegPath", g_config.LastRegisteredPath.c_str(), iniPath.c_str());
+
     // Legacy cleanup
     WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str());
@@ -4770,6 +4776,13 @@ void LoadConfig() {
     // Internal
     g_config.ShowSavePrompt = GetPrivateProfileIntW(L"General", L"ShowSavePrompt", 1, iniPath.c_str()) != 0;
     g_config.AutoSaveOnSwitch = GetPrivateProfileIntW(L"General", L"AutoSaveOnSwitch", 0, iniPath.c_str()) != 0;
+
+    // Registry persistence
+    wchar_t bufVer[64], bufPath[MAX_PATH];
+    GetPrivateProfileStringW(L"Registry", L"RegVer", L"", bufVer, 64, iniPath.c_str());
+    GetPrivateProfileStringW(L"Registry", L"RegPath", L"", bufPath, MAX_PATH, iniPath.c_str());
+    g_config.LastRegisteredVersion = bufVer;
+    g_config.LastRegisteredPath = bufPath;
 }
 
 
@@ -6004,11 +6017,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     LoadConfig();
     AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
 
-    
-    // Smart Lazy Registration: Check and self-repair file associations
-    // Skip in Portable Mode to avoid registry writes
-    if (!g_config.PortableMode && SettingsOverlay::IsRegistrationNeeded()) {
-        SettingsOverlay::RegisterAssociations();
+    // [The Golden Path] Smart Lazy Registration: Check and self-repair file associations
+    // Bypass logic: Skip if Portable Mode OR if already registered for this version and path.
+    if (!g_config.PortableMode) {
+        std::wstring currentVer = SettingsOverlay::GetAppVersion();
+        
+        wchar_t currentExePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, currentExePath, MAX_PATH);
+        std::wstring currentPath = currentExePath;
+
+        const bool versionMatch = (currentVer == g_config.LastRegisteredVersion);
+        const bool pathMatch = (_wcsicmp(currentPath.c_str(), g_config.LastRegisteredPath.c_str()) == 0);
+        const bool needsCheck = !versionMatch || !pathMatch;
+
+        // [The Golden Path] Optimization:
+        // If version/path changed, we defer the heavy IO check/repair until the window is idle (delay 500ms).
+        if (needsCheck) {
+            g_pendingRegistryCheck = true;
+        }
     }
     
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -6277,6 +6303,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
     }
     case WM_CREATE: {
+        // [Startup Optimization] Defer heavy registry maintenance to idle time (1000ms)
+        if (g_pendingRegistryCheck) {
+            SetTimer(hwnd, TIMER_ID_REGISTRY_CHECK, 1000, nullptr);
+        }
+
         MARGINS margins = { 0, 0, 0, 1 }; 
         DwmExtendFrameIntoClientArea(hwnd, &margins); 
         ApplyWindowTheme(hwnd);
@@ -6421,6 +6452,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_TIMER: {
+        // [Startup Optimization] Handle deferred registry check
+        if (wParam == TIMER_ID_REGISTRY_CHECK) {
+            KillTimer(hwnd, TIMER_ID_REGISTRY_CHECK);
+            g_pendingRegistryCheck = false;
+            
+            if (!g_config.PortableMode) {
+                std::wstring currentVer = SettingsOverlay::GetAppVersion();
+                wchar_t exePath[MAX_PATH];
+                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+                std::wstring currentPath = exePath;
+
+                if (SettingsOverlay::IsRegistrationNeeded()) {
+                    SettingsOverlay::RegisterAssociations(); // Internally updates INI and saves
+                } else {
+                    // Sync INI state to enable true O(1) skip on next startup
+                    g_config.LastRegisteredVersion = currentVer;
+                    g_config.LastRegisteredPath = currentPath;
+                    SaveConfig();
+                }
+            }
+            return 0;
+        }
+
         static const UINT_PTR OSD_TIMER_ID = 994;
         
         if (wParam == IDT_ANIMATION) {
