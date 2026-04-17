@@ -203,7 +203,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          // [Scientific 2.0] Enable Titan Mode - pool handles dynamic concurrency via Scout phase.
          // SetTitanMode(true) resets scout state, sets initial concurrency to 2, 
          // and after measuring 2 tiles, adjusts to optimal thread count based on MP/s.
-         m_heavyPool->SetTitanMode(true, info.width, info.height, fmtUpper);
+         m_heavyPool->SetTitanMode(true, info.width, info.height, fmtUpper, imageId);
          m_heavyPool->SetUseThreadLocalHandle(true);
          m_enablePadding = true;
 
@@ -216,7 +216,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          }
          
          // [Fix] Deactivate Titan Mode (Elastic)
-         m_heavyPool->SetTitanMode(false);
+         m_heavyPool->SetTitanMode(false, 0, 0, L"", 0);
          m_enablePadding = true; 
     }
 
@@ -1395,6 +1395,28 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
     // forces overflow despite the 128MB limit.
     // [Titan Fix] If Titan mode is enabled, massive images go to MMF pool (Zero-Copy),
     // so they DON'T consume the same heap cache. We should allow prefetch to MMF!
+    std::wstring fmtUpper = info.format;
+    std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::toupper);
+    const bool isTitanFormat =
+        (fmtUpper == L"JPEG" || fmtUpper == L"JPG" ||
+         fmtUpper == L"WEBP" || fmtUpper == L"PNG" ||
+         fmtUpper == L"JXL" || fmtUpper == L"TIF" ||
+         fmtUpper == L"TIFF" || fmtUpper == L"AVIF");
+    const bool isTitanCandidate =
+        isTitanFormat &&
+        ((info.width > 8192 || info.height > 8192) ||
+         ((uint64_t)info.width * (uint64_t)info.height > 50000000ULL) ||
+         ((info.width <= 0 || info.height <= 0) && fileSize >= (32ull * 1024ull * 1024ull)));
+
+    if (pri != QuickView::Priority::Critical && isTitanCandidate) {
+        wchar_t skipBuf[256];
+        swprintf_s(skipBuf,
+            L"[ImageEngine] Titan prefetch skipped: %s\n",
+            path.substr(path.find_last_of(L"\\/") + 1).c_str());
+        OutputDebugStringW(skipBuf);
+        return;
+    }
+
     if (pri != QuickView::Priority::Critical && m_prefetchPolicy.maxCacheMemory > 0 && !IsTitanModeEnabled()) {
          uint64_t predictedSize = (uint64_t)info.width * info.height * 4;
          // Allow a 10% margin just in case, but strictly reject if it consumes > 90% of ENTIRE cache

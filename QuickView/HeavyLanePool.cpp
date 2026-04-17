@@ -93,11 +93,12 @@ void HeavyLanePool::UpdateIOLimit(int newLimit) {
     OutputDebugStringW(buf);
 }
 
-void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::wstring& format) {
-    m_isTitanMode = enabled;
+void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::wstring& format, ImageID activeId) {
+    m_isTitanMode.store(enabled, std::memory_order_relaxed);
+    m_activeTitanImageId.store(activeId, std::memory_order_relaxed);
     m_titanSrcW = srcW;
     m_titanSrcH = srcH;
-    m_titanFormat.store(QuickView::ParseTitanFormat(format));
+    m_titanFormat.store(QuickView::ParseTitanFormat(format), std::memory_order_relaxed);
     if (enabled) {
         // Titan image switch must always clear per-image decode state.
         // Baseline cache hit is concurrency-only optimization and must not
@@ -518,8 +519,9 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     m_baselineIsSSD = isSSD;
 
     // [Phase-2] Start background master warmup for giant non-ROI formats.
-    // Triggered on open, independent from on-demand tile decode.
-    if (m_isTitanMode) {
+    // [Revision 2] Trigger ONLY for the active image. Prefetch jobs (ID mismatch) 
+    // are prohibited from destroying current Titan resources.
+    if (m_isTitanMode.load(std::memory_order_relaxed) && imageId == m_activeTitanImageId.load(std::memory_order_relaxed)) {
         EnsureMasterWarmup(path, imageId, mmf);
     }
 
@@ -2059,6 +2061,11 @@ void HeavyLanePool::StopMasterWarmup() {
 void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId, std::shared_ptr<QuickView::MappedFile> mmf) {
     if (!ShouldWarmupMasterBacking()) return;
     if (!mmf || !mmf->IsValid()) return;
+
+    // [Revision 2] Strictly reject warmup for non-active images (Prefetch safety)
+    if (imageId != m_activeTitanImageId.load(std::memory_order_relaxed)) {
+        return;
+    }
 
     // Already warming up this image.
     if (m_masterWarmupThread.joinable() &&

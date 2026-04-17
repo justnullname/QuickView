@@ -54,8 +54,8 @@ public:
     // [Titan Mode] Persistence Control
     // Enabled: Threads act as persistent pull-workers (no shrinking)
     // Disabled: Threads act as elastic hot-spares (auto-shrink)
-    void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0, const std::wstring& format = L"");
-    bool IsTitanMode() const { return m_isTitanMode.load(); }
+    void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0, const std::wstring& format = L"", ImageID activeId = 0);
+    bool IsTitanMode() const { return m_isTitanMode.load(std::memory_order_relaxed); }
     void SetTargetHdrHeadroomStops(float stops) { m_targetHdrHeadroomStops.store(stops, std::memory_order_relaxed); }
     void Flush(); // Clears queue and increments GenID
     
@@ -165,6 +165,7 @@ private:
     
     // [Titan] Mode Flag & IO Control
     std::atomic<bool> m_isTitanMode = false;
+    std::atomic<ImageID> m_activeTitanImageId{ 0 }; // [Revision 2] Only this ID can trigger Titan warmup
     std::atomic<float> m_targetHdrHeadroomStops{ -1.0f };
     int m_titanSrcW = 0, m_titanSrcH = 0; // Source image dimensions (set in SetTitanMode)
     std::atomic<QuickView::TitanFormat> m_titanFormat{QuickView::TitanFormat::Unknown}; // [P15] Thread-safe format enum
