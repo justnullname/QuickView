@@ -4,6 +4,7 @@
 #include "ImageLoaderSimd.h"
 #include "TileManager.h"
 #include "ToolProcessProtocol.h"
+#include "AnimationDecoder.h"
 #include <turbojpeg.h>
 #include <filesystem>
 #include <chrono>
@@ -1298,13 +1299,71 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               bool supportsMmfDecode = QuickView::SupportsTitanMemoryDecode(fmt);
                                         
               if (job.mmf && job.mmf->IsValid() && supportsMmfDecode) {
-                   hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
-                   if (FAILED(hr)) {
-                       // Fallback to file if MMF fails (shouldn't happen if valid)
-                       hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
-                   } else {
-                       // MMF Decode Success -> Trigger Touch-Up Prefetch!
-                       TriggerPrefetch(job.mmf);
+                   // [Fix] Animation probe for MMF path: animated files need an Animator
+                   // lifecycle that LoadToFrameFromMemory cannot provide.
+                   // This mirrors the ShouldProbeAnimatedBufferCodec pattern in LoadImageUnified.
+                   // NOTE: m_titanFormat is unreliable for non-Titan jobs (defaults to Other),
+                   // so we detect format directly from MMF magic bytes.
+                   bool animResolved = false;
+                   {
+                       const uint8_t* d = job.mmf->data();
+                       size_t sz = job.mmf->size();
+                       std::unique_ptr<IAnimationDecoder> animDecoder;
+
+                       // Magic-byte format detection (mirrors DetectFormatFromContent)
+                       if (sz >= 12 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WEBP", 4) == 0)
+                           animDecoder = CreateWebPAnimator();
+                       else if (sz >= 6 && (memcmp(d, "GIF87a", 6) == 0 || memcmp(d, "GIF89a", 6) == 0))
+                           animDecoder = CreateWuffsAnimator();
+                       else if (sz >= 8 && d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G')
+                           animDecoder = CreateWuffsAnimator();
+                       else if (sz >= 2 && d[0] == 0xFF && d[1] == 0x0A)
+                           animDecoder = CreateJxlAnimator(); // JXL naked codestream
+                       else if (sz >= 12 && d[0] == 0 && d[1] == 0 && d[2] == 0 && d[3] == 0x0C &&
+                                d[4] == 'J' && d[5] == 'X' && d[6] == 'L' && d[7] == ' ')
+                           animDecoder = CreateJxlAnimator(); // JXL ISOBMFF container
+                       else if (sz >= 12 && memcmp(d + 4, "ftypavif", 8) == 0)
+                           animDecoder = CreateAvifAnimator(); // AVIF container
+
+                       if (animDecoder && animDecoder->Initialize(job.mmf, PixelFormat::BGRA8888)) {
+                           if (animDecoder->IsAnimated()) {
+                               auto firstFrame = animDecoder->GetNextFrame();
+                               if (firstFrame && firstFrame->pixels) {
+                                   // Steal first frame data (manual field copy preserves onAuxLayerReady)
+                                   rawFrame.pixels = firstFrame->pixels;
+                                   rawFrame.width = firstFrame->width;
+                                   rawFrame.height = firstFrame->height;
+                                   rawFrame.stride = firstFrame->stride;
+                                   rawFrame.format = firstFrame->format;
+                                   rawFrame.quality = firstFrame->quality;
+                                   rawFrame.frameMeta = firstFrame->frameMeta;
+                                   rawFrame.memoryDeleter = std::move(firstFrame->memoryDeleter);
+                                   firstFrame->pixels = nullptr; // Transfer ownership
+
+                                   // Attach animator for subsequent frame pumping by ImageEngine
+                                   rawFrame.animator = std::move(animDecoder);
+
+                                   meta.Width = rawFrame.width;
+                                   meta.Height = rawFrame.height;
+
+                                   hr = S_OK;
+                                   animResolved = true;
+                                   loaderName = L"Animator (MMF)";
+                                   OutputDebugStringW(L"[HeavyPool] Animation probe: hijacked to Animator path\n");
+                               }
+                           }
+                       }
+                   }
+
+                   if (!animResolved) {
+                       hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
+                       if (FAILED(hr)) {
+                           // Fallback to file if MMF decode fails
+                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
+                       } else {
+                           // MMF Decode Success -> Trigger Touch-Up Prefetch!
+                           TriggerPrefetch(job.mmf);
+                       }
                    }
               } else {
                    hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
