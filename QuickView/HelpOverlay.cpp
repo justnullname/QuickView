@@ -97,7 +97,8 @@ void HelpOverlay::RebuildList() {
     m_items.push_back({ false, L"Home / End", AppStrings::Help_Item_FirstLast });
     bool wheelPrimaryNavigate = (g_config.WheelActionMode == 1);
     m_items.push_back({ false, AppStrings::Help_Mouse_Wheel, wheelPrimaryNavigate ? AppStrings::Help_Action_NextPrev : AppStrings::Help_Action_Zoom });
-    m_items.push_back({ false, L"Ctrl + Scroll", wheelPrimaryNavigate ? AppStrings::Help_Action_Zoom : AppStrings::Help_Action_NextPrev });
+    m_items.push_back({ false, L"Ctrl + Scroll", AppStrings::Help_Action_LockWindowZoom });
+    m_items.push_back({ false, L"Alt + Scroll", AppStrings::Help_Action_AdjustZoomSpeed });
     m_items.push_back({ false, AppStrings::Help_Mouse_RightVerticalDrag, AppStrings::Help_Action_Zoom });
     m_items.push_back({ false, AppStrings::Help_Mouse_Right, AppStrings::Help_Action_ContextMenu });
     m_items.push_back({ false, AppStrings::Settings_Label_LeftDrag, AppStrings::Help_Action_MoveWindow });
