@@ -961,9 +961,8 @@ struct EN {
       L"RAW: Shows embedded preview by default for speed. Click the RAW button "
       L"to fully decode (colors may vary).";
   static constexpr const wchar_t *Help_Tip_JpegQ =
-      L"JPEG Quality: Estimated Q-value. May differ slightly from save "
-      L"settings due to encoder variance (e.g. PS 100% \u2248 98%), which is "
-      L"normal.";
+      L"JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary "
+      L"slightly from save settings due to encoder variance, which is normal.";
 
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
@@ -999,8 +998,8 @@ struct EN {
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR to SDR Tone Mapping strategy:\nDetermines how HDR images are displayed on SDR monitors.\nPerceptual: Preserves highlight details by smoothly compressing the luminance curve (softer look).\nColorimetric: Strict luminance mapping; highlights exceeding the monitor limit are clipped.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Professional Tools";
-  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Show Dirty Rect button in animation mode";
-  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"Show the dirty rectangle debug button in animation mode to visualize update regions.";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Show update regions button in animation mode";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.";
 };
 
 // ----------------------------------------------------------------
@@ -1466,9 +1465,8 @@ struct CN {
       L"RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW "
       L"按钮可进行完整解码(色彩可能不同)。";
   static constexpr const wchar_t *Help_Tip_JpegQ =
-      L"JPEG 质量：基于算法估算的 Q "
-      L"值。因编码器差异，可能与保存数值有微小偏差(如 PS 100% \u2248 "
-      L"98%)，属正常现象。";
+      L"JPEG 质量：基于算法估算的质量值 (例如 Photoshop 100% ≈ 98%)。因"
+      L"编码器差异，测算结果可能与保存时的设置略有偏差，属正常现象。";
 
   static constexpr const wchar_t *Help_Item_Compare = L"对比模式";
   static constexpr const wchar_t *Help_Item_FirstLast =
@@ -1515,8 +1513,8 @@ struct CN {
   static constexpr const wchar_t *Settings_Tooltip_HdrToneMapping = L"HDR 至 SDR 降级策略 (Tone Mapping)：\n当 HDR 图片在 SDR 显示器上显示时的映射方式。\n感知模式：保留高光细节，平滑压缩亮度曲线，观感柔和。\n色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自动：图片小于屏幕尺寸时 100% 缩放，图片大于屏幕尺寸时适应屏幕尺寸缩放。";
   static constexpr const wchar_t *Settings_Header_Professional = L"专业工具";
-  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"动画模式下显示脏矩形按钮";
-  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"在动画播放时显示用于调试刷新区域的脏矩形工具按钮。";
+  static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"动画模式下显示重绘区域预览按钮";
+  static constexpr const wchar_t *Settings_Tooltip_ShowDirtyRect = L"在播放动画时显示用于调试重绘区域的工具按钮，以便可视化哪些部分正在更新。";
 };
 
 // ----------------------------------------------------------------
