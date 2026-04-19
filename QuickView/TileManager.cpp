@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "QuickViewETW.h"
+#include "DebugMetrics.h"
 #include "TileManager.h"
 #include "SystemInfo.h"
 #include <algorithm>
@@ -34,7 +36,7 @@ namespace QuickView {
         
         wchar_t log[128];
         swprintf_s(log, L"[TileManager] Aggressive Caching Enabled. Budget: %llu MB (%d tiles)\n", budget / (1024*1024), m_maxTiles);
-        OutputDebugStringW(log);
+        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(log, "Message"));
     }
 
     TileManager::~TileManager() {
@@ -133,7 +135,7 @@ namespace QuickView {
                 swprintf_s(skipBuf,
                     L"[TileManager] Skip trigger: zoom=%.4f base=%.4f img=%dx%d\n",
                     zoom, basePreviewRatio, imageW, imageH);
-                OutputDebugStringW(skipBuf);
+                QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(skipBuf, "Message"));
             }
             // Not in tile mode: clear viewport progress source so UI doesn't show stale progress.
             m_viewportTilesActive = false;
@@ -196,7 +198,7 @@ namespace QuickView {
             wchar_t buf[256];
             swprintf_s(buf, L"[TileManager] Update: LOD=%d Viewport=[%d, %d, %d, %d] Grid=[%d,%d] to [%d,%d]\n", 
                 lod, viewport.x, viewport.y, viewport.w, viewport.h, startX, startY, endX, endY);
-            OutputDebugStringW(buf);
+            QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(buf, "Message"));
         }
 
         std::vector<TileKey> missing;

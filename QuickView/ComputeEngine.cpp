@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "QuickViewETW.h"
+#include "DebugMetrics.h"
 #include "ComputeEngine.h"
 #include <d3dcompiler.h>
 #include <algorithm>
@@ -653,11 +655,11 @@ HRESULT ComputeEngine::ComposeGainMap(
     ID3D11Texture2D** outTexture)
 {
     if (!m_valid || !sdrPixels || !gainPixels || !outTexture) {
-        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.\n");
+        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.", "Message"));
         return E_INVALIDARG;
     }
     if (sdrW <= 0 || sdrH <= 0 || gainW <= 0 || gainH <= 0) {
-        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.\n");
+        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.", "Message"));
         return E_INVALIDARG;
     }
 
@@ -665,7 +667,7 @@ HRESULT ComputeEngine::ComposeGainMap(
     wchar_t logBuf[256];
     swprintf_s(logBuf, L"[ComputeEngine] Compose: SDR %dx%d, Gain %dx%d, Headroom %.2f, MaxGain %.2f\n",
         sdrW, sdrH, gainW, gainH, payload.targetHeadroom, payload.gainMapMax[0]);
-    OutputDebugStringW(logBuf);
+    QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(logBuf, "Message"));
 
     // 1. Upload SDR base layer (Can be BGRA8 or R32G32B32A32_FLOAT)
     D3D11_TEXTURE2D_DESC sdrDesc = {};

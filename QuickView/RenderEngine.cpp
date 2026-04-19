@@ -5,6 +5,8 @@
 #include <vector>
 #include <algorithm>
 #include "RenderEngine.h"
+#include "QuickViewETW.h"
+#include "DebugMetrics.h"
 #include "EditState.h"
 #include "ImageTypes.h" // [Direct D2D] RawImageFrame
 #include "ImageLoaderSimd.h"
@@ -656,7 +658,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
           wchar_t dbg[256];
           swprintf_s(dbg, L"[RenderEngine] GPU Bake Triggered (UltraHDR). Target Headroom: %.2f stops.\n", payload.targetHeadroom);
-          OutputDebugStringW(dbg);
+          QV_LOG("RenderEngine_Log", TraceLoggingWideString(dbg, "Message"));
 
           ComPtr<ID3D11Texture2D> pBaked;
           HRESULT hrBake = m_computeEngine->ComposeGainMap(
@@ -703,7 +705,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   wchar_t dbgUpload[256];
   swprintf_s(dbgUpload, L"[RenderEngine] Upload: %dx%d, Format=%d, BlendOp=%d, AdvColor=%d\n",
       (int)frame.width, (int)frame.height, (int)frame.format, (int)frame.blendOp, (int)m_isAdvancedColor);
-  OutputDebugStringW(dbgUpload);
+  QV_LOG("RenderEngine_Log", TraceLoggingWideString(dbgUpload, "Message"));
 
   switch (frame.format) {
   case QuickView::PixelFormat::BGRA8888:
