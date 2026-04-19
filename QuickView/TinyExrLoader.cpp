@@ -19,6 +19,9 @@
 #define TINYEXR_IMPLEMENTATION
 #include "../third_party/tinyexr/tinyexr.h"
 
+#include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "TinyExrLoader";
+
 namespace TinyExrLoader {
 
     bool LoadEXR(const char* filename, 
@@ -33,7 +36,7 @@ namespace TinyExrLoader {
         
         if (ret != TINYEXR_SUCCESS) {
             if (err) {
-                // Log?
+                QV_LOG("Loader_EXR_Error", TraceLoggingString(err, "Message"));
                 ::FreeEXRErrorMessage(err); // Must free err
             }
             return false;
@@ -64,13 +67,10 @@ namespace TinyExrLoader {
 
          if (ret != TINYEXR_SUCCESS) {
             if (err) {
-                OutputDebugStringA("TinyEXR Error: ");
-                OutputDebugStringA(err);
-                OutputDebugStringA("\n");
-                MessageBoxA(nullptr, err, "TinyEXR Error", MB_OK | MB_ICONERROR);
+                QV_LOG("Loader_EXR_Error", TraceLoggingString(err, "Message"));
                 ::FreeEXRErrorMessage(err); 
             } else {
-                 OutputDebugStringA("TinyEXR Error: Unknown error (ret code check needed)\n");
+                 QV_LOG("Loader_EXR_Error", TraceLoggingString("Unknown error", "Message"));
             }
             return false;
         }

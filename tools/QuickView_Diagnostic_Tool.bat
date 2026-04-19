@@ -85,15 +85,15 @@ if not exist "QuickView_Debug.etl" (
     goto START_MENU
 )
 
-:: Use PowerShell to parse TraceLogging metadata correctly and export to a clean CSV
-echo Parsing structured events (this may take a moment)...
-powershell -Command "Get-WinEvent -Path 'QuickView_Debug.etl' -Oldest | Select-Object TimeCreated, Id, @{Name='Module';Expression={$_.Properties[0].Value}}, @{Name='Action';Expression={$_.Properties[1].Value}}, Message | Export-Csv -Path 'QuickView_Review.csv' -NoTypeInformation -Encoding utf8"
+:: Use Windows built-in tracerpt to convert ETL to CSV text format
+tracerpt QuickView_Debug.etl -o QuickView_Review.csv -of CSV -y >nul 2>&1
 
 echo.
 echo Conversion complete! 
 echo File saved as: QuickView_Review.csv
 echo.
 echo Opening file for your review...
-start "" "QuickView_Review.csv"
+:: Automatically open the text file with Notepad
+start notepad QuickView_Review.csv
 pause
 goto START_MENU

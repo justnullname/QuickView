@@ -741,7 +741,7 @@ std::vector<EngineEvent> ImageEngine::PollState() {
                     std::chrono::steady_clock::now() - m_startupIdleBegin).count();
                 if (elapsed >= 500) {
                     m_startupPrefetchAllowed = true;
-                    OutputDebugStringW(L"[ImageEngine] Startup idle threshold reached (500ms). Prefetch enabled.\n");
+                    QV_LOG("Startup_Idle", TraceLoggingString("PrefetchEnabled", "Action"), TraceLoggingInt32(500, "ThresholdMs"));
                 }
             }
         } else {
@@ -1172,6 +1172,7 @@ void ImageEngine::FastLane::QueueWorker() {
                     if (rawFrame.auxLayer) safeFrame->auxLayer = rawFrame.auxLayer->Clone();
                     
                     // [v10.5] Animation Decoder propagation
+                    QV_LOG("Anim_Probe", TraceLoggingString("Hijacked to Animator", "Action"));
                     safeFrame->animator = rawFrame.animator;
                     safeFrame->frameMeta = rawFrame.frameMeta;
                 }
@@ -1255,7 +1256,7 @@ void ImageEngine::FastLane::QueueWorker() {
         } catch (const std::exception& ex) {
             m_isWorking = false; // [HUD V4] Safety reset
             QV_LOG("FastLane_Error", TraceLoggingString("CriticalException", "Action"));
-            OutputDebugStringA(ex.what());
+            QV_LOG("Engine_Exception", TraceLoggingString(ex.what(), "Error"));
         } catch (...) {
             QV_LOG("FastLane_Error", TraceLoggingString("UnknownException", "Action"));
         }
@@ -1399,11 +1400,7 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
          ((info.width <= 0 || info.height <= 0) && fileSize >= (32ull * 1024ull * 1024ull)));
 
     if (pri != QuickView::Priority::Critical && isTitanCandidate) {
-        wchar_t skipBuf[256];
-        swprintf_s(skipBuf,
-            L"[ImageEngine] Titan prefetch skipped: %s\n",
-            path.substr(path.find_last_of(L"\\/") + 1).c_str());
-        OutputDebugStringW(skipBuf);
+        QV_LOG("Engine_Trace", TraceLoggingString("NonTitan Skip", "Action"));
         return;
     }
 

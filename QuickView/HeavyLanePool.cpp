@@ -1358,7 +1358,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                                    hr = S_OK;
                                    animResolved = true;
                                    loaderName = L"Animator (MMF)";
-                                   OutputDebugStringW(L"[HeavyPool] Animation probe: hijacked to Animator path\n");
+                                   QV_LOG("Anim_Probe", TraceLoggingString("Hijacked to Animator", "Action"));
                                }
                            }
                        }

@@ -313,7 +313,7 @@ HRESULT CRenderEngine::Initialize(HWND hwnd) {
   m_computeEngine = std::make_unique<QuickView::ComputeEngine>();
   hr = m_computeEngine->Initialize(m_d3dDevice.Get());
   if (FAILED(hr)) {
-    OutputDebugStringA("Warning: Failed to initialize ComputeEngine.\n");
+    QV_LOG("Init_Warning", TraceLoggingString("Failed to initialize ComputeEngine", "Action"));
   }
 
   return S_OK;
@@ -603,20 +603,6 @@ HRESULT CRenderEngine::CreateBitmapFromWIC(IWICBitmapSource *wicBitmap,
       srcToUse, &props, reinterpret_cast<ID2D1Bitmap1 **>(d2dBitmap));
 
   return hr;
-}
-
-HRESULT CRenderEngine::CreateBitmapFromMemory(const void *data, UINT width,
-                                              UINT height, UINT stride,
-                                              ID2D1Bitmap **ppBitmap) {
-  if (!m_d2dContext)
-    return E_POINTER;
-
-  // Assume BGRX (32bpp) as standard
-  D2D1_BITMAP_PROPERTIES1 props = GetDefaultBitmapProps();
-
-  return m_d2dContext->CreateBitmap(
-      D2D1::SizeU(width, height), data, stride, &props,
-      reinterpret_cast<ID2D1Bitmap1 **>(ppBitmap));
 }
 
 HRESULT
