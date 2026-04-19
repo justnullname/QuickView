@@ -5729,7 +5729,7 @@ namespace QuickView {
                              transfer = MapJxlTransferFunction(encodedColor.transfer_function);
                              primaries = MapJxlPrimaries(encodedColor.primaries);
                             useFloatOutput =
-                                !ctx.forcePreview &&
+                                !ctx.forcePreview && !PrefersSdrTarget(ctx) &&
                                 (transfer == QuickView::TransferFunction::Linear ||
                                  transfer == QuickView::TransferFunction::PQ ||
                                  transfer == QuickView::TransferFunction::HLG ||
@@ -6063,7 +6063,7 @@ namespace QuickView {
         const QuickView::TransferFunction transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
         const QuickView::ColorPrimaries primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
         const bool preferSdrTarget = PrefersSdrTarget(ctx);
-        const bool useFloatOutput =
+        const bool useFloatOutput = !preferSdrTarget &&
                     (decoder->image->gainMap != nullptr ||
                      transfer == QuickView::TransferFunction::Linear ||
                      transfer == QuickView::TransferFunction::PQ ||
@@ -7019,7 +7019,7 @@ namespace QuickView {
 
                 UINT w, h;
                 frame->GetSize(&w, &h);
-                int bpp = isHighBitDepth ? 16 : 4;
+                int bpp = (isHighBitDepth && !PrefersSdrTarget(ctx)) ? 16 : 4;
                 int stride = CalculateSIMDAlignedStride(w, bpp);
                 size_t bufSize = (size_t)stride * h;
                 uint8_t* pixels = ctx.allocator(bufSize);

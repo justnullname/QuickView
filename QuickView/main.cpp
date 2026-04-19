@@ -2584,8 +2584,8 @@ static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
     const bool changed = g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
     g_compEngine->SetAdvancedColorEnabled(g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorSupported));
     const float rawHeadroom = GetCurrentDisplayHdrHeadroomStops();
-    const float displayHdrHeadroomStops = g_compEngine->IsAdvancedColor() ? 
-        (rawHeadroom < 0.1f ? -1.0f : rawHeadroom) : 0.0f;
+    const float displayHdrHeadroomStops = (g_config.AdvancedColorMode != 0) ?
+        (g_compEngine->IsAdvancedColor() ? (rawHeadroom < 0.1f ? -1.0f : rawHeadroom) : -1.0f) : 0.0f;
     if (g_renderEngine) {
         g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
         g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());
@@ -2628,6 +2628,9 @@ static float GetCurrentDisplayHdrHeadroomStops() {
 }
 
 static float GetDisplayHdrHeadroomStopsForPane(HWND hwnd, ComparePane pane) {
+    if (g_config.AdvancedColorMode == 0) return 0.0f;
+    if (g_compEngine && !g_compEngine->IsAdvancedColor()) return -1.0f;
+
     QuickView::DisplayColorState paneState = {};
     if (GetDisplayColorStateForPane(hwnd, pane, &paneState)) {
         return paneState.GetHdrHeadroomStops();
