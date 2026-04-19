@@ -2624,16 +2624,16 @@ static float GetCurrentDisplayHdrHeadroomStops() {
     if (IsCompareModeActive()) {
         return GetDisplayHdrHeadroomStopsForPane(g_mainHwnd, ComparePane::Right);
     }
-    return g_compEngine->GetDisplayColorState().GetHdrHeadroomStops();
+    return g_compEngine->GetDisplayColorState().GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
 }
 
 static float GetDisplayHdrHeadroomStopsForPane(HWND hwnd, ComparePane pane) {
     QuickView::DisplayColorState paneState = {};
     if (GetDisplayColorStateForPane(hwnd, pane, &paneState)) {
-        return paneState.GetHdrHeadroomStops();
+        return paneState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
     }
     if (g_compEngine) {
-        return g_compEngine->GetDisplayColorState().GetHdrHeadroomStops();
+        return g_compEngine->GetDisplayColorState().GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
     }
     return -1.0f;
 }

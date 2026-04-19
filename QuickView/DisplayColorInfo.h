@@ -100,17 +100,8 @@ struct DisplayColorState {
         return sdrWhiteLevelNits / baseWhite;
     }
 
-    float GetHdrHeadroomStops() const {
-        if (!advancedColorActive || maxLuminanceNits <= 0.0f || sdrWhiteLevelNits <= 0.0f) {
-            return 0.0f;
-        }
-
-        const float ratio = maxLuminanceNits / sdrWhiteLevelNits;
-        if (!(ratio > 1.0f)) {
-            return 0.0f;
-        }
-        return log2f(ratio);
-    }
+    float GetEffectivePeakNits(float peakNitsOverride = 0.0f) const;
+    float GetHdrHeadroomStops(float peakNitsOverride = 0.0f) const;
 
     bool ShouldUseScRgbPipeline() const {
         return advancedColorActive;

@@ -2236,17 +2236,15 @@ namespace {
 
     static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState) {
         const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
-        float peak = displayState.maxLuminanceNits > 0.0f ? displayState.maxLuminanceNits : sdrWhite;
         
         std::wstring peakSuffix = L"";
         if (g_config.HdrPeakNitsOverride > 0.0f) {
-            peak = g_config.HdrPeakNitsOverride;
             peakSuffix = L" (Override)";
-        } else if (displayState.advancedColorActive && peak < 400.0f) {
-            peak = 1000.0f;
+        } else if (displayState.advancedColorActive && (displayState.maxLuminanceNits > 0.0f ? displayState.maxLuminanceNits : sdrWhite) < 400.0f) {
             peakSuffix = L" (EDID Fix)";
         }
         
+        const float peak = displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride);
         const float full = displayState.maxFullFrameLuminanceNits > 0.0f ? displayState.maxFullFrameLuminanceNits : sdrWhite;
         
         std::wstring label = FormatHdrRatio(peak / sdrWhite);
@@ -2288,7 +2286,7 @@ namespace {
         if (!hdr.hasGainMap) return L"";
         const float baseStops = hdr.gainMapBaseHeadroom;
         const float altStops = hdr.gainMapAlternateHeadroom;
-        const float currentStops = hdr.gainMapAppliedHeadroom > 0.0f ? hdr.gainMapAppliedHeadroom : displayState.GetHdrHeadroomStops();
+        const float currentStops = hdr.gainMapAppliedHeadroom > 0.0f ? hdr.gainMapAppliedHeadroom : displayState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
         float weight = 0.0f;
         if (altStops > baseStops + 0.001f) {
             weight = (currentStops - baseStops) / (altStops - baseStops);

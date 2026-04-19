@@ -1,5 +1,11 @@
 #include "pch.h"
 #include "DisplayColorInfo.h"
+#include "EditState.h"
+#include "QuickViewETW.h"
+#include <icm.h>
+#include <cstdlib>
+
+static constexpr const char* CURRENT_MODULE = "DisplayColorInfo";
 
 #include <vector>
 #include <windows.graphics.display.interop.h>
@@ -8,6 +14,7 @@
 #include <wrl/wrappers/corewrappers.h>
 
 #pragma comment(lib, "runtimeobject.lib")
+#pragma comment(lib, "mscms.lib")
 
 namespace QuickView {
 
@@ -79,10 +86,94 @@ bool QueryAdvancedColorInfoWinRT(HMONITOR hMon, float& outMaxLuminance, float& o
             }
         }
     }
+
     return false;
 }
 
+float QueryIccPeakLuminance(const std::wstring& gdiDeviceName) {
+    if (gdiDeviceName.empty()) return 0.0f;
+
+    HDC hdcMon = CreateDCW(L"DISPLAY", gdiDeviceName.c_str(), NULL, NULL);
+    if (!hdcMon) return 0.0f;
+
+    DWORD dwLen = 0;
+    GetICMProfileW(hdcMon, &dwLen, NULL);
+    if (dwLen == 0) {
+        DeleteDC(hdcMon);
+        return 0.0f;
+    }
+
+    std::wstring profilePath(dwLen, L'\0');
+    if (!GetICMProfileW(hdcMon, &dwLen, profilePath.data())) {
+        DeleteDC(hdcMon);
+        return 0.0f;
+    }
+    DeleteDC(hdcMon);
+
+    profilePath.resize(wcsnlen(profilePath.c_str(), dwLen));
+
+    PROFILE profile = {};
+    profile.dwType = PROFILE_FILENAME;
+    profile.pProfileData = const_cast<void*>(static_cast<const void*>(profilePath.c_str()));
+    profile.cbDataSize = static_cast<DWORD>(profilePath.size() * sizeof(wchar_t));
+
+    HPROFILE hProfile = OpenColorProfileW(&profile, PROFILE_READ, FILE_SHARE_READ, OPEN_EXISTING);
+    if (!hProfile) return 0.0f;
+
+    DWORD tagSize = 0;
+    BOOL bReference = FALSE;
+    BOOL bHasTag = GetColorProfileElement(hProfile, 'lumi', 0, &tagSize, nullptr, &bReference);
+    float peakNits = 0.0f;
+    if (bHasTag && tagSize >= 20) {
+        std::vector<BYTE> buffer(tagSize);
+        if (GetColorProfileElement(hProfile, 'lumi', 0, &tagSize, buffer.data(), nullptr)) {
+            int32_t yFixed = *reinterpret_cast<int32_t*>(buffer.data() + 12);
+            yFixed = _byteswap_ulong(yFixed);
+            peakNits = static_cast<float>(yFixed) / 65536.0f;
+        }
+    }
+    CloseColorProfile(hProfile);
+    return peakNits;
+}
+
 } // namespace
+
+
+
+float DisplayColorState::GetEffectivePeakNits(float peakNitsOverride) const {
+    float peak = (maxLuminanceNits > sdrWhiteLevelNits) ? maxLuminanceNits : sdrWhiteLevelNits;
+    const char* source = "HardwareDetection";
+
+    if (peakNitsOverride > 0.0f) {
+        peak = peakNitsOverride;
+        source = "Level0_Override";
+    }
+    else if (advancedColorActive && peak < 400.0f) {
+        peak = 1000.0f;
+        source = "SafetyFallback_1000";
+    }
+
+    QV_LOG("EffectivePeakLuminance",
+        TraceLoggingFloat32(peak, "PeakNits"),
+        TraceLoggingString(source, "Source")
+    );
+
+    return peak;
+}
+
+float DisplayColorState::GetHdrHeadroomStops(float peakNitsOverride) const {
+    if ((!advancedColorActive && peakNitsOverride <= 0.0f) || sdrWhiteLevelNits <= 0.0f) {
+        return 0.0f;
+    }
+
+    const float peak = GetEffectivePeakNits(peakNitsOverride);
+    const float ratio = peak / sdrWhiteLevelNits;
+    if (!(ratio > 1.0f)) {
+        return 0.0f;
+    }
+    return log2f(ratio);
+}
+
 
 bool DisplayColorInfo::Refresh(HWND hwnd, bool forceHdrSimulation) {
     HMONITOR monitor = GetWindowCenterMonitor(hwnd);
@@ -97,14 +188,12 @@ bool DisplayColorInfo::Refresh(HWND hwnd, bool forceHdrSimulation) {
         nextState.advancedColorSupported = true;
         nextState.colorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
 
-        // Provide enough headroom for testing without totally crushing the image on a real SDR display.
-        // A max luminance of 2x the SDR white level gives exactly 1.0 stop of HDR headroom.
-        if (nextState.maxLuminanceNits <= nextState.sdrWhiteLevelNits) {
-            nextState.maxLuminanceNits = nextState.sdrWhiteLevelNits * 2.0f;
-        }
-        if (nextState.maxFullFrameLuminanceNits <= nextState.sdrWhiteLevelNits) {
-            nextState.maxFullFrameLuminanceNits = nextState.sdrWhiteLevelNits * 2.0f;
-        }
+        // Use the manual override from settings if available, otherwise default to a 400 nit simulation.
+        extern AppConfig g_config;
+        float simulatedPeak = g_config.HdrPeakNitsOverride > 0.0f ? g_config.HdrPeakNitsOverride : (nextState.sdrWhiteLevelNits * 5.0f);
+        
+        nextState.maxLuminanceNits = simulatedPeak;
+        nextState.maxFullFrameLuminanceNits = simulatedPeak;
     }
 
     const bool changed =
@@ -172,20 +261,36 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
                 }
             }
 
-            // [Root Cause Fix] DXGI often reports uncalibrated, conservative HDR peaks directly from the monitor's physical EDID (e.g. 266 nits). 
-            // We use the WinRT AdvancedColorInfo API to fetch the accurate, OS-calibrated luminance which respects SDR sliders and ICC profiles.
+            // [Logging] Capture Level 3 detection (Raw DXGI/EDID)
+            float dxgiPeak = stateOut->maxLuminanceNits;
+
+            // Get accurate Peak Luminance and SDR white via a multi-tier fallback pipeline.
             float winrtMaxNits = 0.0f;
             float winrtSdrWhite = 0.0f;
-            if (QueryAdvancedColorInfoWinRT(monitor, winrtMaxNits, winrtSdrWhite)) {
-                // If WinRT explicitly says we have a valid peak, trust it unconditionally 
-                if (winrtMaxNits > 0.0f) {
-                    stateOut->maxLuminanceNits = winrtMaxNits;
-                }
-                if (winrtSdrWhite > 0.0f) {
-                    stateOut->sdrWhiteLevelNits = winrtSdrWhite;
-                }
+            const bool hasWinRT = QueryAdvancedColorInfoWinRT(monitor, winrtMaxNits, winrtSdrWhite);
+
+            // Tier 1: ICC Profile (Highest precision)
+            float iccPeakNits = QueryIccPeakLuminance(stateOut->gdiDeviceName);
+            
+            // Log the multi-tier detection results via ETW
+            QV_LOG("HardwareLuminancePipeline",
+                TraceLoggingFloat32(iccPeakNits, "Level1_ICC"),
+                TraceLoggingFloat32(winrtMaxNits, "Level2_WinRT"),
+                TraceLoggingFloat32(dxgiPeak, "Level3_DXGI")
+            );
+
+            if (iccPeakNits > 0.0f) {
+                stateOut->maxLuminanceNits = iccPeakNits;
+            }
+            // Tier 2: OS Advanced Color Info
+            else if (hasWinRT && winrtMaxNits > 0.0f) {
+                stateOut->maxLuminanceNits = winrtMaxNits;
+            }
+            // Tier 3: DXGI desc1.MaxLuminance (already set)
+
+            if (hasWinRT && winrtSdrWhite > 0.0f) {
+                stateOut->sdrWhiteLevelNits = winrtSdrWhite;
             } else {
-                // Graceful fallback to legacy CCD path for SDR white level if WinRT fails
                 stateOut->sdrWhiteLevelNits = QuerySdrWhiteLevelNits(stateOut->gdiDeviceName);
             }
 

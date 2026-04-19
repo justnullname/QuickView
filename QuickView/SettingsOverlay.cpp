@@ -1719,11 +1719,12 @@ void SettingsOverlay::BuildMenu() {
     itemHdrPeak.minVal = 0.0f;
     itemHdrPeak.maxVal = 2000.0f;
     itemHdrPeak.onChange = []() {
-        // [Performance Fix] Do not call RefreshImageDisplay here (which unnecessarily re-uploads raw frames to GPU).
-        // A lightweight standard Image frame repaint instantly refreshes Tone Map settings locally.
-        // SaveConfig() is debounced and handled by OnLButtonUp when dragging finishes.
-        extern void RequestRepaint(QuickView::PaintLayer layer);
-        RequestRepaint(QuickView::PaintLayer::Image);
+        // [Bug Fix] Tone Mapping parameters are baked into the rawBitmap by ComputeEngine.
+        // A simple repaint does not re-apply the parameters. We must trigger a lightweight
+        // re-upload of the cached CPU frame to re-run the Compute Shader.
+        extern void RefreshImageDisplay(HWND hwnd);
+        extern HWND g_mainHwnd;
+        RefreshImageDisplay(g_mainHwnd);
     };
     tabImage.items.push_back(itemHdrPeak);
 

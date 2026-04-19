@@ -190,15 +190,7 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
 
   const float paperWhiteScRgb =
       (displayState.GetSdrWhiteScale() > 1.0f ? displayState.GetSdrWhiteScale() : 1.0f);
-  float peakNits =
-      (displayState.maxLuminanceNits > displayState.sdrWhiteLevelNits ? displayState.maxLuminanceNits : displayState.sdrWhiteLevelNits);
-      
-  if (g_config.HdrPeakNitsOverride > 0.0f) {
-      peakNits = g_config.HdrPeakNitsOverride;
-  } else if (displayState.advancedColorActive && peakNits < 400.0f) {
-      // Workaround for broken DXGI MaxLuminance EDID blocks on some laptops (e.g. reporting 266 nits on HDR1000 displays).
-      peakNits = 1000.0f;
-  }
+  float peakNits = displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride);
       
   const float displayPeakScRgb = (peakNits / 80.0f > 1.0f ? peakNits / 80.0f : 1.0f);
 
@@ -628,13 +620,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   {
       switch (frame.blendOp) {
       case QuickView::GpuBlendOp::UltraHdrGainMap: {
-          // Fill target headroom from current display state
           QuickView::GpuShaderPayload payload = frame.shaderPayload;
-          if (m_isAdvancedColor && g_config.IsAdvancedColorEnabled(m_displayColorState.advancedColorActive)) {
-              payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops();
-          } else {
-              payload.targetHeadroom = 0.0f; // SDR: no gain applied
-          }
+          // Calculate target headroom using the global override to allow simulation on SDR screens.
+          payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
 
           // Only trigger GPU Bake if we actually need to apply HDR gain (Headroom > 0).
           // For SDR displays, we fall back to the standard base-layer rendering
@@ -647,16 +635,51 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               TraceLoggingString("UltraHDR Triggered", "Action"),
               TraceLoggingFloat32(payload.targetHeadroom, "TargetHeadroom"));
 
+          // [Optimization] Check Cache to avoid re-uploading pixels during slider drag
+          bool useCachedTextures = (m_bakeCache.lastBasePixels == frame.pixels && 
+                                    m_bakeCache.lastAuxPixels == frame.auxLayer->pixels &&
+                                    m_bakeCache.lastBaseW == frame.width &&
+                                    m_bakeCache.lastBaseH == frame.height &&
+                                    m_bakeCache.baseTexture != nullptr &&
+                                    m_bakeCache.auxTexture != nullptr);
+
+          if (useCachedTextures && fabsf(m_bakeCache.lastHeadroom - payload.targetHeadroom) < 0.001f && m_bakeCache.bakedBitmap) {
+              m_bakeCache.bakedBitmap.CopyTo(outBitmap);
+              return S_OK;
+          }
+
           ComPtr<ID3D11Texture2D> pBaked;
-          HRESULT hrBake = m_computeEngine->ComposeGainMap(
-              frame.pixels, frame.width, frame.height, frame.stride,
-              frame.format,
-              frame.auxLayer->pixels,
-              frame.auxLayer->width, frame.auxLayer->height,
-              frame.auxLayer->stride,
-              payload, &pBaked);
+          HRESULT hrBake = S_OK;
+
+          if (useCachedTextures) {
+              // Only re-run the shader with new headroom
+              hrBake = m_computeEngine->ComposeGainMap(
+                  m_bakeCache.baseTexture.Get(),
+                  m_bakeCache.auxTexture.Get(),
+                  payload, &pBaked);
+          } else {
+              // Full Upload + Bake
+              hrBake = m_computeEngine->ComposeGainMap(
+                  frame.pixels, frame.width, frame.height, frame.stride,
+                  frame.format,
+                  frame.auxLayer->pixels,
+                  frame.auxLayer->width, frame.auxLayer->height,
+                  frame.auxLayer->stride,
+                  payload, &pBaked,
+                  &m_bakeCache.baseTexture, &m_bakeCache.auxTexture);
+              
+              if (SUCCEEDED(hrBake)) {
+                  m_bakeCache.lastBasePixels = frame.pixels;
+                  m_bakeCache.lastAuxPixels = frame.auxLayer->pixels;
+                  m_bakeCache.lastBaseW = frame.width;
+                  m_bakeCache.lastBaseH = frame.height;
+                  m_bakeCache.lastAuxW = frame.auxLayer->width;
+                  m_bakeCache.lastAuxH = frame.auxLayer->height;
+              }
+          }
 
           if (SUCCEEDED(hrBake)) {
+              m_bakeCache.lastHeadroom = payload.targetHeadroom;
               ComPtr<IDXGISurface> dxgiSurface;
               if (SUCCEEDED(pBaked.As(&dxgiSurface))) {
                   D2D1_BITMAP_PROPERTIES1 hdrProps = {};
@@ -670,9 +693,15 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                       hdrProps.colorContext = scRgbContext.Get();
                   }
                   
-                  return m_d2dContext->CreateBitmapFromDxgiSurface(
-                      dxgiSurface.Get(), &hdrProps,
-                      reinterpret_cast<ID2D1Bitmap1**>(outBitmap));
+                  ComPtr<ID2D1Bitmap1> result;
+                  HRESULT hrResult = m_d2dContext->CreateBitmapFromDxgiSurface(
+                      dxgiSurface.Get(), &hdrProps, &result);
+                  
+                  if (SUCCEEDED(hrResult)) {
+                      m_bakeCache.bakedBitmap = result;
+                      result.CopyTo(outBitmap);
+                      return S_OK;
+                  }
               }
           }
           break;
