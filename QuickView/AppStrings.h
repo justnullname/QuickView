@@ -265,6 +265,11 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_ZoomSnapDamping; // New
     extern const wchar_t* Settings_Label_MouseAnchorZoom;
     extern const wchar_t* Settings_Label_RightButtonDragZoom;
+    extern const wchar_t* Settings_Label_WheelZoomSpeed;
+    extern const wchar_t* Settings_Label_RightDragZoomSpeed;
+    extern const wchar_t* OSD_WheelZoomSpeed;
+    extern const wchar_t* Help_Action_AdjustZoomSpeed;
+    extern const wchar_t* Help_Action_LockWindowZoom;
     extern const wchar_t* Settings_Label_InvertButtons;
     extern const wchar_t* Settings_Label_ZoomModeIn;
     extern const wchar_t* Settings_Label_ZoomModeOut;

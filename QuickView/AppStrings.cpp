@@ -228,6 +228,11 @@ const wchar_t *Settings_Label_InvertWheel = nullptr;
 const wchar_t *Settings_Label_ZoomSnapDamping = nullptr; // New
 const wchar_t *Settings_Label_MouseAnchorZoom = nullptr;
 const wchar_t *Settings_Label_RightButtonDragZoom = nullptr;
+const wchar_t *Settings_Label_WheelZoomSpeed = nullptr;
+const wchar_t *Settings_Label_RightDragZoomSpeed = nullptr;
+const wchar_t *OSD_WheelZoomSpeed = nullptr;
+const wchar_t *Help_Action_AdjustZoomSpeed = nullptr;
+const wchar_t *Help_Action_LockWindowZoom = nullptr;
 const wchar_t *Settings_Label_InvertButtons = nullptr;
 const wchar_t *Settings_Label_ZoomModeIn = nullptr;
 const wchar_t *Settings_Label_ZoomModeOut = nullptr;
@@ -791,6 +796,11 @@ struct EN {
       L"Mouse-Anchored Window Zoom";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"Right Button Drag Zoom";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"Wheel Zoom Speed";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"Right Drag Zoom Speed";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"Zoom Speed: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"Adjust Zoom Speed";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"Temporarily Lock Window Zoom";
   static constexpr const wchar_t *Settings_Label_InvertButtons =
       L"Invert Side Buttons";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn = L"Zoom Mode (In)";
@@ -1181,6 +1191,11 @@ struct CN {
       L"窗口缩放以鼠标为中线";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"右键拖动缩放";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"滚轮缩放速度";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"右键拖拽缩放速度";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"缩放速度: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"调节缩放速度";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"临时锁定窗口缩放";
   static constexpr const wchar_t *Settings_Label_InvertButtons = L"反转侧键";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn = L"放大插值算法";
   static constexpr const wchar_t *Settings_Label_ZoomModeOut = L"缩小插值算法";
@@ -1770,6 +1785,11 @@ struct TW {
       L"視窗縮放以滑鼠為中線";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"右鍵拖曳縮放";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"滾輪縮放速度";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"右鍵拖曳縮放速度";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"縮放速度: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"調節縮放速度";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"臨時鎖定視窗縮放";
   static constexpr const wchar_t *Settings_Label_InvertButtons = L"反轉側鍵";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn = L"放大插值演算法";
   static constexpr const wchar_t *Settings_Label_ZoomModeOut =
@@ -2290,6 +2310,11 @@ struct JA {
       L"マウス中心でウィンドウを拡大";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"右ドラッグでズーム";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"ホイールズーム速度";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"右ドラッグズーム速度";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"ズーム速度: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"ズーム速度を調整";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"ウィンドウのズームを一時的にロック";
   static constexpr const wchar_t *Settings_Label_InvertButtons =
       L"サイドボタン反転";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn =
@@ -2901,6 +2926,11 @@ struct RU {
       L"Масштабировать окно от позиции мыши";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"Масштаб правой кнопкой мыши";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"Скорость зума колесиком";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"Скорость зума правой кнопкой";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"Скорость зума: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"Настроить скорость зума";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"Временно заблокировать масштаб окна";
   static constexpr const wchar_t *Settings_Label_InvertButtons =
       L"Инвертировать действие боковых кнопок";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn = L"Увеличить";
@@ -3448,6 +3478,11 @@ struct DE {
       L"Fensterzoom am Mauszeiger ausrichten";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"Zoom mit Rechtsziehen";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"Mausrad-Zoomgeschwindigkeit";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"Rechtszieh-Zoomgeschwindigkeit";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"Zoomgeschwindigkeit: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"Zoomgeschwindigkeit anpassen";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"Fensterzoom vorübergehend sperren";
   static constexpr const wchar_t *Settings_Label_InvertButtons =
       L"Seitentasten invertieren";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn =
@@ -4005,6 +4040,11 @@ struct ES {
       L"Zoom de ventana anclado al raton";
   static constexpr const wchar_t *Settings_Label_RightButtonDragZoom =
       L"Zoom con arrastre derecho";
+  static constexpr const wchar_t *Settings_Label_WheelZoomSpeed = L"Velocidad de zoom con rueda";
+  static constexpr const wchar_t *Settings_Label_RightDragZoomSpeed = L"Velocidad de zoom con arrastre derecho";
+  static constexpr const wchar_t *OSD_WheelZoomSpeed = L"Velocidad de zoom: ";
+  static constexpr const wchar_t *Help_Action_AdjustZoomSpeed = L"Ajustar velocidad de zoom";
+  static constexpr const wchar_t *Help_Action_LockWindowZoom = L"Bloquear temporalmente el zoom de la ventana";
   static constexpr const wchar_t *Settings_Label_InvertButtons =
       L"Invertir botones laterales";
   static constexpr const wchar_t *Settings_Label_ZoomModeIn =
@@ -4496,6 +4536,11 @@ template <typename T> void ApplyT() {
   Settings_Label_ZoomSnapDamping = T::Settings_Label_ZoomSnapDamping;
   Settings_Label_MouseAnchorZoom = T::Settings_Label_MouseAnchorZoom;
   Settings_Label_RightButtonDragZoom = T::Settings_Label_RightButtonDragZoom;
+  Settings_Label_WheelZoomSpeed = T::Settings_Label_WheelZoomSpeed;
+  Settings_Label_RightDragZoomSpeed = T::Settings_Label_RightDragZoomSpeed;
+  OSD_WheelZoomSpeed = T::OSD_WheelZoomSpeed;
+  Help_Action_AdjustZoomSpeed = T::Help_Action_AdjustZoomSpeed;
+  Help_Action_LockWindowZoom = T::Help_Action_LockWindowZoom;
   Settings_Label_InvertButtons = T::Settings_Label_InvertButtons;
   Settings_Label_ZoomModeIn = T::Settings_Label_ZoomModeIn;
   Settings_Label_ZoomModeOut = T::Settings_Label_ZoomModeOut;

@@ -192,6 +192,8 @@ struct AppConfig {
     bool EnableZoomSnapDamping = true;
     bool MouseAnchoredWindowZoom = false; // Expand window toward the mouse position during zoom
     bool RightButtonDragZoom = true;      // Hold right button and drag vertically to zoom
+    float WheelZoomSpeed = 10.0f;         // 5.0f to 50.0f (percentage)
+    float RightDragZoomSpeed = 1.0f;      // 0.1f to 3.0f (multiplier)
     MouseAction LeftDragAction = MouseAction::WindowDrag;
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;

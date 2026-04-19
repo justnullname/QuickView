@@ -1108,13 +1108,14 @@ static bool g_hasRightDragZoomStartViews = false;
 static D2D1_SIZE_F GetOrientedSize(const ImageResource& res, int exifOrientation);
 
 static float ComputeZoomStep(float wheelDelta) {
-    const float unit = (wheelDelta >= 0.0f) ? 1.1f : (1.0f / 1.1f);
+    float factor = 1.0f + (g_config.WheelZoomSpeed / 100.0f);
+    const float unit = (wheelDelta >= 0.0f) ? factor : (1.0f / factor);
     const float count = (std::max)(1.0f, fabsf(wheelDelta));
     return powf(unit, count);
 }
 
 static float ComputeZoomMultiplier(float delta, bool fineInterval) {
-    float step = fineInterval ? 0.01f : 0.1f;
+    float step = fineInterval ? 0.01f : (g_config.WheelZoomSpeed / 100.0f);
     if (delta > 0.0f) return 1.0f + step * delta;
     return 1.0f / (1.0f + step * fabsf(delta));
 }
@@ -3460,10 +3461,10 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
     }
 
     // 5. Calculate Zoom Factor
-    // Mouse: Delta is usually +/- 1.0 (after div 120). Factor 1.1 (= 10%)
+    // Mouse: Delta is usually +/- 1.0 (after div 120). Factor WheelZoomSpeed (default 10%)
     // Keyboard: Delta is +/- 1.0. 
     // Fine Interval (Ctrl): 1%
-    float step = isFineInterval ? 0.01f : 0.1f;
+    float step = isFineInterval ? 0.01f : (g_config.WheelZoomSpeed / 100.0f);
     
     // Support non-integer delta (e.g. precision touchpad)
     // Formula: Scale * (1 + step * delta) 
@@ -4514,6 +4515,8 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"EnableZoomSnapDamping", g_config.EnableZoomSnapDamping ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"MouseAnchoredWindowZoom", g_config.MouseAnchoredWindowZoom ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"RightButtonDragZoom", g_config.RightButtonDragZoom ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"WheelZoomSpeed", std::to_wstring(g_config.WheelZoomSpeed).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"RightDragZoomSpeed", std::to_wstring(g_config.RightDragZoomSpeed).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"LeftDragAction", std::to_wstring((int)g_config.LeftDragAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"MiddleDragAction", std::to_wstring((int)g_config.MiddleDragAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"MiddleClickAction", std::to_wstring((int)g_config.MiddleClickAction).c_str(), iniPath.c_str());
@@ -4715,7 +4718,6 @@ void LoadConfig() {
     g_config.ExifPanelMode = GetPrivateProfileIntW(L"View", L"ExifPanelMode", 0, iniPath.c_str());
     g_config.ToolbarInfoDefault = GetPrivateProfileIntW(L"View", L"ToolbarInfoDefault", 0, iniPath.c_str());
     
-    wchar_t buf[32];
     // Redundant Alphas Removed (Unified to Geek Glass)
     g_config.NavIndicator = GetPrivateProfileIntW(L"View", L"NavIndicator", 0, iniPath.c_str());
     g_config.EnableCrossMonitor = GetPrivateProfileIntW(L"View", L"EnableCrossMonitor", 0, iniPath.c_str()) != 0;
@@ -4735,6 +4737,11 @@ void LoadConfig() {
     g_config.EnableZoomSnapDamping = GetPrivateProfileIntW(L"Controls", L"EnableZoomSnapDamping", 1, iniPath.c_str()) != 0;
     g_config.MouseAnchoredWindowZoom = GetPrivateProfileIntW(L"Controls", L"MouseAnchoredWindowZoom", 0, iniPath.c_str()) != 0;
     g_config.RightButtonDragZoom = GetPrivateProfileIntW(L"Controls", L"RightButtonDragZoom", 1, iniPath.c_str()) != 0;
+    wchar_t buf[64];
+    GetPrivateProfileStringW(L"Controls", L"WheelZoomSpeed", L"10.0", buf, 64, iniPath.c_str());
+    g_config.WheelZoomSpeed = std::clamp((float)_wtof(buf), 5.0f, 50.0f);
+    GetPrivateProfileStringW(L"Controls", L"RightDragZoomSpeed", L"1.0", buf, 64, iniPath.c_str());
+    g_config.RightDragZoomSpeed = std::clamp((float)_wtof(buf), 0.1f, 3.0f);
     g_config.LeftDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"LeftDragAction", (int)MouseAction::WindowDrag, iniPath.c_str());
     g_config.MiddleDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleDragAction", (int)MouseAction::PanImage, iniPath.c_str());
     g_config.MiddleClickAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleClickAction", (int)MouseAction::ExitApp, iniPath.c_str());
@@ -7071,7 +7078,7 @@ SKIP_EDGE_NAV:;
                  POINT cursorPos{};
                  GetCursorPos(&cursorPos);
                  const float totalDy = (float)(cursorPos.y - g_viewState.RightDragZoomStartScreenPos.y);
-                 const float dragSteps = -totalDy / (48.0f * (std::max)(0.75f, g_uiScale));
+                 const float dragSteps = (-totalDy * g_config.RightDragZoomSpeed) / (48.0f * (std::max)(0.75f, g_uiScale));
                  float multiplier = 1.0f;
                  if (dragSteps > 0.0f) multiplier = 1.0f + 0.1f * dragSteps;
                  else if (dragSteps < 0.0f) multiplier = 1.0f / (1.0f + 0.1f * fabsf(dragSteps));
@@ -7088,7 +7095,7 @@ SKIP_EDGE_NAV:;
                  POINT cursorPos{};
                  GetCursorPos(&cursorPos);
                  const float totalDy = (float)(cursorPos.y - g_viewState.RightDragZoomStartScreenPos.y);
-                 const float dragSteps = -totalDy / (kPixelsPerStep * (std::max)(0.75f, g_uiScale));
+                 const float dragSteps = (-totalDy * g_config.RightDragZoomSpeed) / (kPixelsPerStep * (std::max)(0.75f, g_uiScale));
                  if (fabsf(dragSteps) > 0.0001f) {
                      g_viewState.IsInteracting = true;
                      SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -8241,6 +8248,18 @@ SKIP_EDGE_NAV:;
         if (g_config.InvertWheel) delta = -delta;
 
         bool isCtrl = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0;
+        bool isAlt = (GET_KEYSTATE_WPARAM(wParam) & MK_ALT) != 0;
+
+        if (isAlt) {
+            g_config.WheelZoomSpeed += (delta > 0) ? 5.0f : -5.0f;
+            g_config.WheelZoomSpeed = std::max(5.0f, std::min(50.0f, g_config.WheelZoomSpeed));
+            SaveConfig();
+            wchar_t speedBuf[64];
+            swprintf_s(speedBuf, L"%s%.0f%%", AppStrings::OSD_WheelZoomSpeed, g_config.WheelZoomSpeed);
+            g_osd.Show(hwnd, speedBuf, false);
+            return 0;
+        }
+
         bool wheelPrimaryNavigate = (g_config.WheelActionMode == 1);
         bool shouldNavigate = wheelPrimaryNavigate ? !isCtrl : isCtrl;
 
@@ -8283,7 +8302,7 @@ SKIP_EDGE_NAV:;
 
         // Use Centralized Helper
         POINT mousePt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        PerformSmartZoom(hwnd, newTotalScale, &mousePt, false, true);
+        PerformSmartZoom(hwnd, newTotalScale, &mousePt, isCtrl, true);
         RequestRepaint(PaintLayer::Dynamic);
 
              
