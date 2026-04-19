@@ -100,12 +100,23 @@ struct DisplayColorState {
         return sdrWhiteLevelNits / baseWhite;
     }
 
-    float GetHdrHeadroomStops() const {
-        if (!advancedColorActive || maxLuminanceNits <= 0.0f || sdrWhiteLevelNits <= 0.0f) {
+    float GetEffectivePeakNits(float peakNitsOverride = 0.0f) const {
+        float peak = (maxLuminanceNits > sdrWhiteLevelNits) ? maxLuminanceNits : sdrWhiteLevelNits;
+        if (peakNitsOverride > 0.0f) {
+            peak = peakNitsOverride;
+        } else if (advancedColorActive && peak < 400.0f) {
+            peak = 1000.0f;
+        }
+        return peak;
+    }
+
+    float GetHdrHeadroomStops(float peakNitsOverride = 0.0f) const {
+        if (!advancedColorActive || sdrWhiteLevelNits <= 0.0f) {
             return 0.0f;
         }
 
-        const float ratio = maxLuminanceNits / sdrWhiteLevelNits;
+        const float peak = GetEffectivePeakNits(peakNitsOverride);
+        const float ratio = peak / sdrWhiteLevelNits;
         if (!(ratio > 1.0f)) {
             return 0.0f;
         }
