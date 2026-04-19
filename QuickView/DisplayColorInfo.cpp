@@ -1,8 +1,11 @@
 #include "pch.h"
 #include "DisplayColorInfo.h"
 #include "EditState.h"
+#include "QuickViewETW.h"
 #include <icm.h>
 #include <cstdlib>
+
+static constexpr const char* CURRENT_MODULE = "DisplayColorInfo";
 
 #include <vector>
 #include <windows.graphics.display.interop.h>
@@ -136,6 +139,42 @@ float QueryIccPeakLuminance(const std::wstring& gdiDeviceName) {
 } // namespace
 
 
+
+float DisplayColorState::GetEffectivePeakNits(float peakNitsOverride) const {
+    float peak = (maxLuminanceNits > sdrWhiteLevelNits) ? maxLuminanceNits : sdrWhiteLevelNits;
+    const char* source = "HardwareDetection";
+
+    if (peakNitsOverride > 0.0f) {
+        peak = peakNitsOverride;
+        source = "Level0_Override";
+    }
+    else if (advancedColorActive && peak < 400.0f) {
+        peak = 1000.0f;
+        source = "SafetyFallback_1000";
+    }
+
+    QV_LOG("EffectivePeakLuminance",
+        TraceLoggingFloat32(peak, "PeakNits"),
+        TraceLoggingString(source, "Source")
+    );
+
+    return peak;
+}
+
+float DisplayColorState::GetHdrHeadroomStops(float peakNitsOverride) const {
+    if ((!advancedColorActive && peakNitsOverride <= 0.0f) || sdrWhiteLevelNits <= 0.0f) {
+        return 0.0f;
+    }
+
+    const float peak = GetEffectivePeakNits(peakNitsOverride);
+    const float ratio = peak / sdrWhiteLevelNits;
+    if (!(ratio > 1.0f)) {
+        return 0.0f;
+    }
+    return log2f(ratio);
+}
+
+
 bool DisplayColorInfo::Refresh(HWND hwnd, bool forceHdrSimulation) {
     HMONITOR monitor = GetWindowCenterMonitor(hwnd);
     DisplayColorState nextState = {};
@@ -233,14 +272,12 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
             // Tier 1: ICC Profile (Highest precision)
             float iccPeakNits = QueryIccPeakLuminance(stateOut->gdiDeviceName);
             
-            // Log the multi-tier detection results for verification
-            wchar_t logDetection[512];
-            swprintf_s(logDetection, L"[DisplayColorInfo] Hardware Luminance Pipeline:\n"
-                                     L"  - Level 1 (ICC):   %.1f nits\n"
-                                     L"  - Level 2 (WinRT): %.1f nits\n"
-                                     L"  - Level 3 (DXGI):  %.1f nits\n",
-                                     iccPeakNits, winrtMaxNits, dxgiPeak);
-            OutputDebugStringW(logDetection);
+            // Log the multi-tier detection results via ETW
+            QV_LOG("HardwareLuminancePipeline",
+                TraceLoggingFloat32(iccPeakNits, "Level1_ICC"),
+                TraceLoggingFloat32(winrtMaxNits, "Level2_WinRT"),
+                TraceLoggingFloat32(dxgiPeak, "Level3_DXGI")
+            );
 
             if (iccPeakNits > 0.0f) {
                 stateOut->maxLuminanceNits = iccPeakNits;

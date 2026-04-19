@@ -100,37 +100,8 @@ struct DisplayColorState {
         return sdrWhiteLevelNits / baseWhite;
     }
 
-    float GetEffectivePeakNits(float peakNitsOverride = 0.0f) const {
-        float peak = (maxLuminanceNits > sdrWhiteLevelNits) ? maxLuminanceNits : sdrWhiteLevelNits;
-        const wchar_t* source = L"Hardware Detection";
-
-        if (peakNitsOverride > 0.0f) {
-            peak = peakNitsOverride;
-            source = L"Level 0 (Manual Override)";
-        } else if (advancedColorActive && peak < 400.0f) {
-            peak = 1000.0f;
-            source = L"Safety Fallback (1000 nits)";
-        }
-
-        wchar_t logBuf[256];
-        swprintf_s(logBuf, L"[DisplayColorInfo] Effective Peak: %.1f nits (Source: %ls)\n", peak, source);
-        OutputDebugStringW(logBuf);
-
-        return peak;
-    }
-
-    float GetHdrHeadroomStops(float peakNitsOverride = 0.0f) const {
-        if ((!advancedColorActive && peakNitsOverride <= 0.0f) || sdrWhiteLevelNits <= 0.0f) {
-            return 0.0f;
-        }
-
-        const float peak = GetEffectivePeakNits(peakNitsOverride);
-        const float ratio = peak / sdrWhiteLevelNits;
-        if (!(ratio > 1.0f)) {
-            return 0.0f;
-        }
-        return log2f(ratio);
-    }
+    float GetEffectivePeakNits(float peakNitsOverride = 0.0f) const;
+    float GetHdrHeadroomStops(float peakNitsOverride = 0.0f) const;
 
     bool ShouldUseScRgbPipeline() const {
         return advancedColorActive;
