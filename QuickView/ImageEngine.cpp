@@ -96,13 +96,13 @@ void ImageEngine::SetTargetHdrHeadroomStops(float stops) {
 }
 
 // Request full resolution decode for current image (used by JXL serial pipeline)
-void ImageEngine::RequestFullDecode(
+void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     // Node B: Decoding Complete / Request Full Decode
     QV_LOG("ImageEngine_FullDecode",
         TraceLoggingInt32(g_debugMetrics.lastUploadChannel.load(), "LastUploadChannel"),
         TraceLoggingInt32(g_debugMetrics.rawFrameUploadCount.load(), "RawUploadCount")
     );
-const std::wstring& path, ImageID imageId) {
+
     if (path.empty()) return;
     if (!m_heavyPool) return;
     

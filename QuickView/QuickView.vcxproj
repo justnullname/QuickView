@@ -253,6 +253,7 @@
     <ClInclude Include="ProcessRouter.h" />
     <ClInclude Include="ThemeSystem.h" />
     <ClInclude Include="AnimationDecoder.h" />
+    <ClInclude Include="QuickViewETW.h" />
   </ItemGroup>
   <!-- Source Files -->
   <ItemGroup>
@@ -307,6 +308,7 @@
     <ClCompile Include="WebPAnimator.cpp" />
     <ClCompile Include="AvifAnimator.cpp" />
     <ClCompile Include="JxlAnimator.cpp" />
+    <ClCompile Include="QuickViewETW.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="QuickView.rc" />
