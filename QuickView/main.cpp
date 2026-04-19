@@ -5975,7 +5975,6 @@ static void TryCleanupOldVersion(int argc, LPWSTR* argv) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
-    EtwScope etwScope;
     // === Priority 0: CMD Parsing & Subprocess dispatch ===
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -5991,33 +5990,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
         return toolExitCode;
     }
 
+    // Load config (Must happen before ETW because logs check g_config)
+    LoadConfig();
+    AppStrings::Init();
+    AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+
+    // Now safe to start ETW
+    EtwScope etwScope;
+
     // === Priority 1: Viewer-child bypass (spawned by Master, skip routing) ===
     const bool isViewerChild = QuickView::ProcessRouter::IsViewerChild();
 
     // === Priority 2: Chrome-level process routing ===
-    // Happens BEFORE any COM / D2D / Config initialization.
-    // ALWAYS route through Master, regardless of SingleInstance setting.
-    // SingleInstance only affects whether Master replaces current image or spawns a child.
+    // Happens BEFORE any COM / D2D initialization.
     if (!isViewerChild) {
         auto routeResult = QuickView::ProcessRouter::TryRoute(true);
         if (routeResult == QuickView::ProcessRouter::RouteResult::RoutedToMaster) {
+            if (argv) LocalFree(argv);
             return 0; // Router exits in < 5ms
         }
         g_isMasterProcess = (routeResult == QuickView::ProcessRouter::RouteResult::BecameMaster);
     }
-
-    // [Highway] SIMD dispatch is handled by Google Highway at runtime.
-    // No CPU feature gate needed — graceful fallback to SSE4/scalar.
-    
-    AppStrings::Init();
-
-    // DPI mode is controlled by the embedded application manifest.
-    // Keeping this out of runtime code avoids forcing a DPI-aware mode that
-    // can shrink the current pixel-based UI on 4K/HiDPI systems.
-    
-    // Load config (full load for all settings)
-    LoadConfig();
-    AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
 
     // [The Golden Path] Smart Lazy Registration: Check and self-repair file associations
     // Bypass logic: Skip if Portable Mode OR if already registered for this version and path.
