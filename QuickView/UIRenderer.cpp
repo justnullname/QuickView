@@ -1449,14 +1449,8 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
         dc->FillRectangle(rect, borderBrush.Get());
     }
     if (drawBottom) {
-        // Exclude bottom edge if toolbar is pinned or hovered to avoid overlap issues
-        bool showBottom = true;
-        if (g_toolbar.IsVisible() || g_config.LockBottomToolbar) showBottom = false;
-
-        if (showBottom) {
-            D2D1_RECT_F rect = D2D1::RectF(0.0f, winH - thickness, winW, winH);
-            dc->FillRectangle(rect, borderBrush.Get());
-        }
+        D2D1_RECT_F rect = D2D1::RectF(0.0f, winH - thickness, winW, winH);
+        dc->FillRectangle(rect, borderBrush.Get());
     }
 }
 
