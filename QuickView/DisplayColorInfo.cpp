@@ -222,21 +222,34 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
                 }
             }
 
+            // [Logging] Capture Level 3 detection (Raw DXGI/EDID)
+            float dxgiPeak = stateOut->maxLuminanceNits;
+
             // Get accurate Peak Luminance and SDR white via a multi-tier fallback pipeline.
             float winrtMaxNits = 0.0f;
             float winrtSdrWhite = 0.0f;
             const bool hasWinRT = QueryAdvancedColorInfoWinRT(monitor, winrtMaxNits, winrtSdrWhite);
 
-            // Tier 1: ICC Profile (Highest precision, user-calibrated via Windows HDR Calibration app)
+            // Tier 1: ICC Profile (Highest precision)
             float iccPeakNits = QueryIccPeakLuminance(stateOut->gdiDeviceName);
+            
+            // Log the multi-tier detection results for verification
+            wchar_t logDetection[512];
+            swprintf_s(logDetection, L"[DisplayColorInfo] Hardware Luminance Pipeline:\n"
+                                     L"  - Level 1 (ICC):   %.1f nits\n"
+                                     L"  - Level 2 (WinRT): %.1f nits\n"
+                                     L"  - Level 3 (DXGI):  %.1f nits\n",
+                                     iccPeakNits, winrtMaxNits, dxgiPeak);
+            OutputDebugStringW(logDetection);
+
             if (iccPeakNits > 0.0f) {
                 stateOut->maxLuminanceNits = iccPeakNits;
             }
-            // Tier 2: OS Advanced Color Info (Respects system scale but may occasionally falter)
+            // Tier 2: OS Advanced Color Info
             else if (hasWinRT && winrtMaxNits > 0.0f) {
                 stateOut->maxLuminanceNits = winrtMaxNits;
             }
-            // Tier 3: DXGI desc1.MaxLuminance (Raw EDID, already populated above).
+            // Tier 3: DXGI desc1.MaxLuminance (already set)
 
             if (hasWinRT && winrtSdrWhite > 0.0f) {
                 stateOut->sdrWhiteLevelNits = winrtSdrWhite;

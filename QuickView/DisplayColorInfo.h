@@ -102,11 +102,20 @@ struct DisplayColorState {
 
     float GetEffectivePeakNits(float peakNitsOverride = 0.0f) const {
         float peak = (maxLuminanceNits > sdrWhiteLevelNits) ? maxLuminanceNits : sdrWhiteLevelNits;
+        const wchar_t* source = L"Hardware Detection";
+
         if (peakNitsOverride > 0.0f) {
             peak = peakNitsOverride;
+            source = L"Level 0 (Manual Override)";
         } else if (advancedColorActive && peak < 400.0f) {
             peak = 1000.0f;
+            source = L"Safety Fallback (1000 nits)";
         }
+
+        wchar_t logBuf[256];
+        swprintf_s(logBuf, L"[DisplayColorInfo] Effective Peak: %.1f nits (Source: %ls)\n", peak, source);
+        OutputDebugStringW(logBuf);
+
         return peak;
     }
 
