@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "Main";
 #include "CoroutineTypes.h"
 #include "CompositionEngine.h"
 #include "QuickView.h"
@@ -5775,7 +5776,7 @@ static HRESULT SafeFullDecodeFromMemory(const uint8_t* data, size_t size, QuickV
         return InternalFullDecodeWrapper(data, size, outFrame);
     } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
                ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[Phase4] SEH: ACCESS_VIOLATION in FullDecodeFromMemory (caught)", "Message"));
+        QV_LOG("Main_SEH", TraceLoggingString("AccessViolation FullDecodeFromMemory", "Action"));
         return E_OUTOFMEMORY;
     }
 }
@@ -6481,7 +6482,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             auto nextFrame = g_imageResource.animator->GetNextFrame();
             if (!nextFrame || !nextFrame->pixels) {
                 // EOF: Loop back to frame 0
-                QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[Anim] EOF reached, looping to frame 0", "Message"));
+                QV_LOG("Anim_Playback", TraceLoggingString("EOF Looping", "Action"));
                 nextFrame = g_imageResource.animator->SeekToFrame(0);
             }
             
@@ -6504,10 +6505,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     RenderImageToDComp(hwnd, g_imageResource, true);
                     RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic); 
                 } else {
-                    QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[Anim] UploadRawFrameToGPU FAILED", "Message"));
+                    QV_LOG("Anim_Playback", TraceLoggingString("UploadFailed", "Action"));
                 }
             } else {
-                QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[Anim] SeekToFrame(0) also returned null, stopping", "Message"));
+                QV_LOG("Anim_Playback", TraceLoggingString("SeekNull Stopping", "Action"));
                 KillTimer(hwnd, IDT_ANIMATION);
             }
             return 0;
@@ -8347,13 +8348,13 @@ SKIP_EDGE_NAV:;
                 case '3': g_slowMotionMode = !g_slowMotionMode; handled = true; break;
                 case '4': 
                     g_showTileGrid = !g_showTileGrid; 
-                    QV_LOG("Main_Log", TraceLoggingWideString(g_showTileGrid ? L"Tile Grid: ON" : L"Tile Grid: OFF", "Message"));
+                    QV_LOG("Main_DebugToggle", TraceLoggingBool(g_showTileGrid, "TileGrid"));
                     if (g_uiRenderer) g_uiRenderer->SetTileGridVisible(g_showTileGrid);
                     handled = true; 
                     break;
                 case '5':
                     g_runtime.ForceHdrSimulation = !g_runtime.ForceHdrSimulation;
-                    QV_LOG("Main_Log", TraceLoggingWideString(g_runtime.ForceHdrSimulation ? L"Force HDR Sim: ON" : L"Force HDR Sim: OFF", "Message"));
+                    QV_LOG("Main_DebugToggle", TraceLoggingBool(g_runtime.ForceHdrSimulation, "ForceHDR"));
                     handled = true;
                     // Re-evaluate display color state to trigger FP16/8-bit UNORM surface swap in CompositionEngine
                     RefreshDisplayColorPipeline(hwnd, false);
@@ -10279,9 +10280,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 // This ensures the HDR effect appears as soon as the auxiliary layer is ready.
                 RefreshImageDisplay(hwnd);
 
-                wchar_t debugBuf[256];
-                swprintf_s(debugBuf, L"[Main] AuxLayerReady: Gain Map applied via Auto-Gate and GPU Bake triggered\n");
-                QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(debugBuf, "Message"));
+                QV_LOG("Main_AuxLayer", TraceLoggingString("GainMapApplied GpuBake", "Action"));
             }
         }
         break;
@@ -10290,10 +10289,11 @@ void ProcessEngineEvents(HWND hwnd) {
         if (evt.imageId == g_currentImageId.load() && evt.tileCoord.has_value() && evt.rawFrame) {
             
             // [Debug] Log Tile Arrival
-            wchar_t debugBuf[256];
-            swprintf_s(debugBuf, L"[Main] TileReady: LOD=%d (%d,%d) ID=%llu\n", 
-                evt.tileCoord->lod, evt.tileCoord->col, evt.tileCoord->row, evt.imageId);
-            QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(debugBuf, "Message"));
+            QV_LOG("Main_TileReady",
+                TraceLoggingInt32(evt.tileCoord->lod, "LOD"),
+                TraceLoggingInt32(evt.tileCoord->col, "Col"),
+                TraceLoggingInt32(evt.tileCoord->row, "Row"),
+                TraceLoggingUInt64(evt.imageId, "ImageID"));
 
             if (g_imageEngine) {
                 // [Infinity Engine] TileManager already updated by ImageEngine::PollState
@@ -10301,10 +10301,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 needsRepaint = true;
             }
         } else {
-             wchar_t debugBuf[256];
-             swprintf_s(debugBuf, L"[Main] TileReady IGNORED: MatchID=%d HasCoord=%d HasFrame=%d\n", 
-                (evt.imageId == g_currentImageId.load()), evt.tileCoord.has_value(), (bool)evt.rawFrame);
-             QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(debugBuf, "Message"));
+             QV_LOG("Main_TileReady",
+                 TraceLoggingString("Ignored", "Action"),
+                 TraceLoggingBool(evt.imageId == g_currentImageId.load(), "MatchID"),
+                 TraceLoggingBool(evt.tileCoord.has_value(), "HasCoord"),
+                 TraceLoggingBool((bool)evt.rawFrame, "HasFrame"));
         }
         break;
 
@@ -10579,7 +10580,7 @@ static void PrimePhase1Placeholder(HWND hwnd, const std::wstring& path, ImageID 
     {
         bool isTitan = g_isNavigatingToTitan;
         if (!isTitan) {
-            QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[Phase1] Non-Titan: Skip Phase 1 completely.", "Message"));
+            QV_LOG("Phase1_Route", TraceLoggingString("NonTitan Skip", "Action"));
             // [Fix] Do not apply skeleton. Leave current image intact for visual continuity.
             // Do not update metadata early to avoid DComp scaling artifacts on the old layer.
             return; // No Shell/WIC extraction and NO skeleton for non-Titan images
@@ -10713,19 +10714,17 @@ static FireAndForget RunPhase2DispatchLoop() {
         if (task.imageId != g_currentImageId.load() ||
             task.navToken != g_currentNavToken.load() ||
             g_imagePath != task.path) {
-            QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[Phase2] QueueDispatch skipped stale task.", "Message"));
+            QV_LOG("Phase2_Dispatch", TraceLoggingString("StaleSkipped", "Action"));
             g_isPhase2Debouncing.store(false, std::memory_order_release);
             co_await ResumeBackground{};
             continue;
         }
 
-        wchar_t dbg[256];
-        swprintf_s(dbg,
-            L"[Phase2] QueueDispatch: id=%llu age=%llums idx=%d\n",
-            static_cast<unsigned long long>(task.imageId),
-            static_cast<unsigned long long>(GetTickCount64() - task.enqueueTick),
-            task.navigatorIndex);
-        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("Phase2_Dispatch",
+            TraceLoggingString("Dispatched", "Action"),
+            TraceLoggingUInt64((uint64_t)task.imageId, "ImageID"),
+            TraceLoggingUInt64((uint64_t)(GetTickCount64() - task.enqueueTick), "AgeMs"),
+            TraceLoggingInt32(task.navigatorIndex, "Index"));
 
         DispatchNavigationToEngine(
             task.path,
@@ -10776,23 +10775,16 @@ static void EnqueuePhase2NavigationTask(
 
     if (dropped) {
         g_phase2DroppedNavTasks.fetch_add(1);
-        wchar_t dropBuf[256];
-        swprintf_s(dropBuf,
-            L"[Phase2] QueueDrop: oldId=%llu oldSerial=%llu totalDropped=%llu\n",
-            static_cast<unsigned long long>(droppedId),
-            static_cast<unsigned long long>(droppedSerial),
-            static_cast<unsigned long long>(g_phase2DroppedNavTasks.load()));
-        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(dropBuf, "Message"));
+        QV_LOG("Phase2_Queue",
+            TraceLoggingString("Dropped", "Action"),
+            TraceLoggingUInt64((uint64_t)droppedId, "DroppedID"),
+            TraceLoggingUInt64(g_phase2DroppedNavTasks.load(), "TotalDropped"));
     }
 
-    wchar_t pushBuf[256];
-    swprintf_s(pushBuf,
-        L"[Phase2] QueuePush: id=%llu serial=%llu debounce=%lums idx=%d\n",
-        static_cast<unsigned long long>(imageId),
-        static_cast<unsigned long long>(g_phase2NavSerial.load()),
-        static_cast<unsigned long>(kPhase2DebounceWindowMs),
-        navigatorIndex);
-    QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(pushBuf, "Message"));
+    QV_LOG("Phase2_Queue",
+        TraceLoggingString("Pushed", "Action"),
+        TraceLoggingUInt64((uint64_t)imageId, "ImageID"),
+        TraceLoggingInt32(navigatorIndex, "Index"));
 
     g_isPhase2Debouncing.store(true, std::memory_order_release);
 
@@ -11391,18 +11383,13 @@ void OnPaint(HWND hwnd) {
                   // decodes that starve the Base Layer threads.
                   if (!g_isLoading && (imageChanged || dispatchChanged || forceReseed || vp.x != lastVP.x || vp.y != lastVP.y || vp.w != lastVP.w || vp.h != lastVP.h || absoluteZoom != lastAbsZoom)) {
                       if (imageChanged || dispatchChanged || forceReseed) {
-                          wchar_t tileDbg[320];
-                          swprintf_s(tileDbg,
-                              L"[Main] Titan schedule seed: id=%llu fmt=%s loader=%s meta=%dx%d previewW=%.1f baseRatio=%.4f zoom=%.4f\n",
-                             curTileImageId,
-                             titanMeta.Format.c_str(),
-                             titanMeta.LoaderName.c_str(),
-                             titanMeta.Width,
-                             titanMeta.Height,
-                             previewW,
-                             baseRatio,
-                             absoluteZoom);
-                         QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(tileDbg, "Message"));
+                         QV_LOG("Main_TitanSeed",
+                             TraceLoggingUInt64(curTileImageId, "ImageID"),
+                             TraceLoggingInt32(titanMeta.Width, "MetaW"),
+                             TraceLoggingInt32(titanMeta.Height, "MetaH"),
+                             TraceLoggingFloat32((float)previewW, "PreviewW"),
+                             TraceLoggingFloat32((float)baseRatio, "BaseRatio"),
+                             TraceLoggingFloat32((float)absoluteZoom, "Zoom"));
                      }
                      g_imageEngine->UpdateTileViewport(vp, absoluteZoom, titanMeta.Width, titanMeta.Height, baseRatio, 0.0f, 0.0f);
                      lastVP = vp;

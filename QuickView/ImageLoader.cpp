@@ -9,6 +9,7 @@
 
 #include "ImageLoader.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "ImageLoader";
 #include "DebugMetrics.h"
 #include "AnimationDecoder.h"
 #include "MemoryArena.h" // [Fix] Include for QuantumArena definition
@@ -201,9 +202,9 @@ static void FindHeifGainMapManual(const uint8_t* data, size_t size, uint64_t* ou
     if (auxlCount == 0) return;
 
     {
-        wchar_t dbg[128];
-        swprintf_s(dbg, L"[Scanner] Found %d auxl candidates (infe=%u)\n", auxlCount, infeItemID);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("Scanner_AuxlCandidates",
+            TraceLoggingInt32(auxlCount, "AuxlCount"),
+            TraceLoggingUInt32(infeItemID, "InfeItemID"));
     }
 
     // iloc resolver: returns offset+length for a given itemID
@@ -287,10 +288,10 @@ static void FindHeifGainMapManual(const uint8_t* data, size_t size, uint64_t* ou
         *outOffset = bestOff;
         *outLength = bestLen;
         if (outBestID) *outBestID = bestID;
-        wchar_t sdbg[256];
-        swprintf_s(sdbg, L"[Scanner] SOLVED! ItemID %u -> Offset %llu, Length %llu. PitmOff=%u PitmSize=%u\n", 
-                   bestID, bestOff, bestLen, outPitmOffset ? *outPitmOffset : 0, outPitmSize ? *outPitmSize : 0);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(sdbg, "Message"));
+        QV_LOG("Scanner_Solved",
+            TraceLoggingUInt32(bestID, "ItemID"),
+            TraceLoggingUInt64(bestOff, "Offset"),
+            TraceLoggingUInt64(bestLen, "Length"));
     }
 }
 
@@ -335,7 +336,7 @@ static void ProbeHdrMetadataNative(LPCWSTR filePath, QuickView::HdrStaticMetadat
             // Default headroom: 1.5 stops (Apple standard when no explicit tag found)
             if (pHdr->gainMapAlternateHeadroom <= 0.0f)
                 pHdr->gainMapAlternateHeadroom = 1.5f;
-            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[Metadata] Apple HDR Gain Map detected.", "Message"));
+            QV_LOG("Metadata_HDR", TraceLoggingString("AppleGainMap Detected", "Action"));
             break;
         }
     }
@@ -352,7 +353,7 @@ void* CImageLoader::GetJxlRunner() {
         size_t threads = std::thread::hardware_concurrency();
         if (threads == 0) threads = 4;
         s_jxlRunner = JxlThreadParallelRunnerCreate(NULL, threads);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL] Global ThreadRunner created", "Message"));
+        QV_LOG("JXL_ThreadRunner", TraceLoggingString("Created", "Action"));
     }
     return s_jxlRunner;
 }
@@ -362,7 +363,7 @@ void CImageLoader::ReleaseJxlRunner() {
     if (s_jxlRunner) {
         JxlThreadParallelRunnerDestroy(s_jxlRunner);
         s_jxlRunner = nullptr;
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL] Global ThreadRunner destroyed", "Message"));
+        QV_LOG("JXL_ThreadRunner", TraceLoggingString("Destroyed", "Action"));
     }
 }
 
@@ -1895,7 +1896,7 @@ static HRESULT SafeLoadJpegRegion(
         return LoadJpegRegion_V3(data, size, rect, scale, out, tileManager, arena, explicitTargetW, explicitTargetH);
     }
     __except (GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[ImageLoader] CRITICAL: ReadFile fault (Network lost?)", "Message"));
+        QV_LOG("Loader_SEH", TraceLoggingString("ReadFile Fault", "Action"));
         return HRESULT_FROM_WIN32(ERROR_READ_FAULT);
     }
 }
@@ -1930,7 +1931,7 @@ HRESULT CImageLoader::LoadTileFromMemory(
         return LoadJpegRegion_V3(sourceData, sourceSize, region, scale, outFrame, tileManager, nullptr /*arena*/, targetWidth, targetHeight);
     } 
     __except (GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[ImageLoader] CRITICAL: ReadFile fault during Tile Decode", "Message"));
+        QV_LOG("Loader_SEH", TraceLoggingString("TileDecode ReadFault", "Action"));
         return HRESULT_FROM_WIN32(ERROR_READ_FAULT);
     }
 }
@@ -1947,7 +1948,7 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
 
     std::wstring fmt = DetectFormatFromContent(data, size);
     if (!IsUnifiedBufferCodec(fmt)) {
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[P15] FullDecodeFromMemory: unsupported format", "Message"));
+        QV_LOG("Loader_Decode", TraceLoggingString("UnsupportedFormat", "Action"));
         return E_NOTIMPL;
     }
 
@@ -2061,10 +2062,10 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
                 if (JXL_DEC_SUCCESS != JxlDecoderImageOutBufferSize(dec, &pixFmt, &needed)) break;
 
                 if (needed > mmfBufSize) {
-                    wchar_t dbg[192];
-                    swprintf_s(dbg, L"[MMF] JXL needs %zu MB but MMF is %zu MB\n",
-                               needed / (1024*1024), mmfBufSize / (1024*1024));
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+                    QV_LOG("MMF_Decode",
+                        TraceLoggingString("JXL OOM", "Action"),
+                        TraceLoggingUInt64(needed / (1024*1024), "NeededMB"),
+                        TraceLoggingUInt64(mmfBufSize / (1024*1024), "MmfMB"));
                     JxlDecoderDestroy(dec);
                     JxlThreadParallelRunnerDestroy(runner);
                     return E_OUTOFMEMORY;
@@ -2087,10 +2088,11 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
                 // The safe path: let the full decode complete, swizzle once at the end.
                 size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
 
-                wchar_t dbg[192];
-                swprintf_s(dbg, L"[MMF] JXL FRAME_PROGRESSION: ratio=%zu, image=%ux%u (logged only, no flush)\n",
-                           ratio, info.xsize, info.ysize);
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+                QV_LOG("MMF_Decode",
+                    TraceLoggingString("JXL FrameProgression", "Action"),
+                    TraceLoggingUInt64(ratio, "Ratio"),
+                    TraceLoggingUInt32(info.xsize, "Width"),
+                    TraceLoggingUInt32(info.ysize, "Height"));
                 // Continue decode loop for full quality
             }
             else if (st == JXL_DEC_FULL_IMAGE) {
@@ -2103,7 +2105,7 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         JxlThreadParallelRunnerDestroy(runner);
 
         if (FAILED(hr) || !bufferSet) {
-            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[MMF] JXL decode to MMF failed", "Message"));
+            QV_LOG("MMF_Decode", TraceLoggingString("JXL Failed", "Action"));
             return FAILED(hr) ? hr : E_FAIL;
         }
 
@@ -2115,9 +2117,10 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         *outH = (int)info.ysize;
         *outStride = (int)(info.xsize * 4);
 
-        wchar_t dbg[128];
-        swprintf_s(dbg, L"[MMF] JXL decoded direct-to-MMF OK (%ux%u)\n", info.xsize, info.ysize);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("MMF_Decode",
+            TraceLoggingString("JXL DirectToMMF OK", "Action"),
+            TraceLoggingUInt32(info.xsize, "Width"),
+            TraceLoggingUInt32(info.ysize, "Height"));
         return S_OK;
     }
 
@@ -2134,7 +2137,7 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         };
 
         if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, nullptr) || !allocOK) {
-            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[MMF] Wuffs PNG decode to MMF failed", "Message"));
+            QV_LOG("MMF_Decode", TraceLoggingString("PNG Failed", "Action"));
             return E_FAIL;
         }
 
@@ -2142,9 +2145,10 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         *outH = (int)h;
         *outStride = (int)((size_t)w * 4);
 
-        wchar_t dbg[128];
-        swprintf_s(dbg, L"[MMF] PNG decoded direct-to-MMF OK (%ux%u)\n", w, h);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("MMF_Decode",
+            TraceLoggingString("PNG DirectToMMF OK", "Action"),
+            TraceLoggingUInt32(w, "Width"),
+            TraceLoggingUInt32(h, "Height"));
         return S_OK;
     }
 
@@ -2158,10 +2162,10 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
 
     size_t needed = (size_t)heapFrame.stride * (size_t)heapFrame.height;
     if (needed > mmfBufSize) {
-        wchar_t dbg[192];
-        swprintf_s(dbg, L"[MMF] Fallback: need %zu MB but MMF is %zu MB\n",
-                   needed / (1024*1024), mmfBufSize / (1024*1024));
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("MMF_Decode",
+            TraceLoggingString("Fallback OOM", "Action"),
+            TraceLoggingUInt64(needed / (1024*1024), "NeededMB"),
+            TraceLoggingUInt64(mmfBufSize / (1024*1024), "MmfMB"));
         return E_OUTOFMEMORY;
     }
 
@@ -2171,10 +2175,10 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
     *outH = heapFrame.height;
     *outStride = heapFrame.stride;
 
-    wchar_t dbg[128];
-    swprintf_s(dbg, L"[MMF] %ls decoded via fallback+copy OK (%dx%d)\n",
-               fmt.c_str(), heapFrame.width, heapFrame.height);
-    QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+    QV_LOG("MMF_Decode",
+        TraceLoggingString("FallbackCopy OK", "Action"),
+        TraceLoggingInt32(heapFrame.width, "Width"),
+        TraceLoggingInt32(heapFrame.height, "Height"));
     return S_OK;
 }
 
@@ -2514,14 +2518,14 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
 
         JxlDecoderStatus st = JxlDecoderProcessInput(dec);
         if (st == JXL_DEC_ERROR) {
-             QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_ROI] Decoder Error during ProcessInput", "Message"));
+             QV_LOG("JXL_ROI", TraceLoggingString("DecoderError ProcessInput", "Action"));
              break;
         }
         if (st == JXL_DEC_SUCCESS) { hr = S_OK; break; }
 
         if (st == JXL_DEC_BASIC_INFO) {
             if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(dec, &info)) {
-                 QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_ROI] Failed to get Basic Info", "Message"));
+                 QV_LOG("JXL_ROI", TraceLoggingString("GetBasicInfo Failed", "Action"));
                  break;
             }
 
@@ -2538,7 +2542,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
 
             if (!BuildRegionScalePlan(srcRect, (int)info.xsize, (int)info.ysize, scale,
                                       explicitTargetW, explicitTargetH, &plan)) {
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_ROI] Failed to Build Region Scale Plan", "Message"));
+                QV_LOG("JXL_ROI", TraceLoggingString("BuildRegionScalePlan Failed", "Action"));
                 hr = E_FAIL;
                 break;
             }
@@ -2565,7 +2569,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             ctx.cropH = plan.cropH;
 
             if (JXL_DEC_SUCCESS != JxlDecoderSetImageOutCallback(dec, &pixFmt, JxlCropCallback, &ctx)) {
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_ROI] Failed to Set Image Out Callback", "Message"));
+                QV_LOG("JXL_ROI", TraceLoggingString("SetImageOutCallback Failed", "Action"));
                 hr = E_FAIL; break;
             }
         }
@@ -2574,15 +2578,16 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             break;
         }
         else if (st == JXL_DEC_NEED_MORE_INPUT) {
-            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_ROI] Need more input but input is closed!", "Message"));
+            QV_LOG("JXL_ROI", TraceLoggingString("NeedMoreInput InputClosed", "Action"));
             break;
         }
     }
 
     if (FAILED(hr) || !tempBuf || !planReady) {
-        wchar_t errObj[256];
-        swprintf_s(errObj, L"[JXL_ROI] Failure Exit: hr=0x%08X, tempBuf=%p, planReady=%d\n", hr, tempBuf, planReady);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(errObj, "Message"));
+        QV_LOG("JXL_ROI",
+            TraceLoggingString("FailureExit", "Action"),
+            TraceLoggingUInt32((uint32_t)hr, "HR"),
+            TraceLoggingBool(planReady, "PlanReady"));
         if (tempBuf && (!arena || !arena->Owns(tempBuf))) _aligned_free(tempBuf);
         return hr == S_OK ? E_FAIL : hr;
     }
@@ -4136,8 +4141,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     // Set Memory Source
     avifResult result = avifDecoderSetIOMemory(decoder, avifBuf.data(), avifBuf.size());
     if (result != AVIF_RESULT_OK) {
-        wchar_t buf[128]; swprintf_s(buf, L"[LoadAVIF] SetIOMemory failed: %hs\n", avifResultToString(result));
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("AVIF_Decode", TraceLoggingString("SetIOMemory Failed", "Action"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -4145,9 +4149,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     // Parse
     result = avifDecoderParse(decoder);
     if (result != AVIF_RESULT_OK) {
-        wchar_t buf[256]; 
-        swprintf_s(buf, L"[LoadAVIF] Parse failed: %hs | Diag: %hs\n", avifResultToString(result), decoder->diag.error);
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("AVIF_Decode", TraceLoggingString("Parse Failed", "Action"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -4155,8 +4157,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     // Next Image (Frame 0)
     result = avifDecoderNextImage(decoder);
     if (result != AVIF_RESULT_OK) {
-        wchar_t buf[128]; swprintf_s(buf, L"[LoadAVIF] NextImage failed: %hs\n", avifResultToString(result));
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("AVIF_Decode", TraceLoggingString("NextImage Failed", "Action"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -4201,8 +4202,7 @@ HRESULT CImageLoader::LoadAVIF(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     pLock.Reset(); // Unlock
 
     if (result != AVIF_RESULT_OK) {
-        wchar_t buf[128]; swprintf_s(buf, L"[LoadAVIF] YUVToRGB failed: %hs\n", avifResultToString(result));
-        QV_LOG("ImageLoader_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("AVIF_Decode", TraceLoggingString("YUVToRGB Failed", "Action"));
         avifDecoderDestroy(decoder);
         return E_FAIL;
     }
@@ -4992,13 +4992,14 @@ namespace QuickView {
                         // Found an SOI. 
                         *outData = buf + i;
                         *outSize = bufSize - i;
-                        wchar_t logBuf[128];
-                        swprintf_s(logBuf, L"[UltraHDR] Found potential second JPEG SOI at offset %zu, size %zu\n", i, *outSize);
-                        QV_LOG("ImageLoader_Log", TraceLoggingWideString(logBuf, "Message"));
+                        QV_LOG("UltraHDR_Scan",
+                            TraceLoggingString("SecondSOI Found", "Action"),
+                            TraceLoggingUInt64(i, "Offset"),
+                            TraceLoggingUInt64(*outSize, "Size"));
                         return true;
                     }
                 }
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[UltraHDR] Second JPEG SOI NOT found in MPF scan.", "Message"));
+                QV_LOG("UltraHDR_Scan", TraceLoggingString("SecondSOI NotFound", "Action"));
                 return false;
             }
 
@@ -5011,7 +5012,7 @@ namespace QuickView {
                 struct jpeg_error_mgr jerr;
                 cinfo.err = jpeg_std_error(&jerr);
                 jerr.error_exit = [](j_common_ptr ci) {
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[UltraHDR] Gain Map JPEG decode fatal error.", "Message"));
+                    QV_LOG("UltraHDR_Decode", TraceLoggingString("GainMap FatalError", "Action"));
                     longjmp(*static_cast<jmp_buf*>(ci->client_data), 1);
                 };
 
@@ -5025,7 +5026,7 @@ namespace QuickView {
                 jpeg_create_decompress(&cinfo);
                 jpeg_mem_src(&cinfo, data, (unsigned long)size);
                 if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[UltraHDR] Gain Map JPEG read_header failed.", "Message"));
+                    QV_LOG("UltraHDR_Decode", TraceLoggingString("ReadHeader Failed", "Action"));
                     jpeg_destroy_decompress(&cinfo);
                     return nullptr;
                 }
@@ -5112,14 +5113,9 @@ namespace QuickView {
                     for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker; marker = marker->next) {
                         // [UltraHDR Diagnostic]
                         if (marker->marker == JPEG_APP0 + 1 || marker->marker == JPEG_APP0 + 2) {
-                            wchar_t logBuf[256];
-                            swprintf_s(logBuf, L"[UltraHDR] Found Marker APP%d (0x%02X), Len=%d, Data[0..3]=%02X %02X %02X %02X\n",
-                                marker->marker - JPEG_APP0, marker->marker, (int)marker->data_length,
-                                marker->data_length > 0 ? marker->data[0] : 0,
-                                marker->data_length > 1 ? marker->data[1] : 0,
-                                marker->data_length > 2 ? marker->data[2] : 0,
-                                marker->data_length > 3 ? marker->data[3] : 0);
-                            QV_LOG("ImageLoader_Log", TraceLoggingWideString(logBuf, "Message"));
+                            QV_LOG("UltraHDR_Marker",
+                                TraceLoggingInt32(marker->marker - JPEG_APP0, "AppN"),
+                                TraceLoggingInt32((int)marker->data_length, "Len"));
                         }
 
                         // [UltraHDR Phase 1] Parse XMP while marker_list is alive
@@ -5142,9 +5138,9 @@ namespace QuickView {
                                     ultraHdrPayload.sdrWidth = (uint32_t)cinfo.image_width;
                                     ultraHdrPayload.sdrHeight = (uint32_t)cinfo.image_height;
                                     ultraHdrPayloadParsed = true;
-                                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[UltraHDR] XMP Gain Map parameters found and parsed (Early stage).", "Message"));
+                                    QV_LOG("UltraHDR_XMP", TraceLoggingString("Parsed OK", "Action"));
                                 } else {
-                                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[UltraHDR] APP1 XMP found but ParseXmpToPayload failed.", "Message"));
+                                    QV_LOG("UltraHDR_XMP", TraceLoggingString("ParseFailed", "Action"));
                                 }
                             }
                         }
@@ -5158,9 +5154,9 @@ namespace QuickView {
                     }
                     
                     {
-                        wchar_t logBuf[128];
-                        swprintf_s(logBuf, L"[Loader] JPEG Markers Check: Found %d ICC segments. Total size: %zu\n", iccNumMarkers, iccTotalSize);
-                        QV_LOG("ImageLoader_Log", TraceLoggingWideString(logBuf, "Message"));
+                        QV_LOG("Loader_JPEG",
+                            TraceLoggingInt32(iccNumMarkers, "IccSegments"),
+                            TraceLoggingUInt64(iccTotalSize, "IccTotalSize"));
                     }
                     
                     if (iccNumMarkers > 0) {
@@ -5387,7 +5383,7 @@ namespace QuickView {
                     size_t gainJpegSize = 0;
                     if (ultraHdrPayloadParsed &&
                         UltraHdr::FindMpfSecondImage(pBuf, bufSize, &gainJpegData, &gainJpegSize)) {
-                        QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[UltraHDR] MPF Secondary Image (Gain Map) found.", "Message"));
+                        QV_LOG("UltraHDR_Scan", TraceLoggingString("MPF GainMap Found", "Action"));
                         auto auxLayer = UltraHdr::DecodeGainMapJpeg(gainJpegData, gainJpegSize, ctx);
                         if (auxLayer) {
                             result.blendOp = GpuBlendOp::UltraHdrGainMap;
@@ -5884,7 +5880,7 @@ namespace QuickView {
                         // [Fix] Prevent massive memory allocation stalls (e.g. 4.8GB for 1.2 GigaPixel JXL)
                         // This prevents the OS from thrashing the page file for 15 seconds before crashing.
                         if (ctx.allowFakeBase && bufferSize > 1024ULL * 1024ULL * 1024ULL) { // 1 GB limit
-                            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_DC] Image too large for base layer. Faking transparent stub but PRESERVING original dimensions for Titan Mode.", "Message"));
+                            QV_LOG("JXL_DC", TraceLoggingString("TooLarge FakeStub", "Action"));
                             // We fake a 1x1 transparent pixel to satisfy the pipeline,
                             // BUT we return the TRUE image dimensions to out results.
                             // This ensures the Tile Engine correctly calculates regions.
@@ -6280,7 +6276,7 @@ namespace QuickView {
                 LibRaw RawProcessor;
 
                 // Debug: Entry point
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[RawCodec] Entering RawCodec::Load", "Message"));
+                QV_LOG("RawCodec_Load", TraceLoggingString("Enter", "Action"));
 
                 // [v9.3] Use wide-char path directly on Windows (fixes -100009 error)
                 // LibRaw on Windows supports open_file(const wchar_t*) overload
@@ -6298,12 +6294,12 @@ namespace QuickView {
                 int openResult = RawProcessor.open_file(pathUtf8.c_str());
 #endif
                 if (openResult != LIBRAW_SUCCESS) {
-                    wchar_t dbg[128];
-                    swprintf_s(dbg, L"[RawCodec] open_file FAILED: %d\n", openResult);
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+                    QV_LOG("RawCodec_Load",
+                        TraceLoggingString("OpenFailed", "Action"),
+                        TraceLoggingInt32(openResult, "Result"));
                     return E_FAIL;
                 }
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[RawCodec] open_file OK", "Message"));
+                QV_LOG("RawCodec_Load", TraceLoggingString("OpenOK", "Action"));
 
                 // [v10.1] Capture RAW orientation early
                 int flip = RawProcessor.imgdata.sizes.flip;
@@ -6333,16 +6329,18 @@ namespace QuickView {
                     int unpackResult = RawProcessor.unpack_thumb();
                     
                     // Debug logging
-                    wchar_t dbg[256];
-                    swprintf_s(dbg, L"[RawCodec] unpack_thumb: %d\n", unpackResult);
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+                    QV_LOG("RawCodec_Load",
+                        TraceLoggingString("UnpackThumb", "Action"),
+                        TraceLoggingInt32(unpackResult, "Result"));
                     
                     if (unpackResult == LIBRAW_SUCCESS) {
                         libraw_processed_image_t* thumb = RawProcessor.dcraw_make_mem_thumb();
                         
-                        swprintf_s(dbg, L"[RawCodec] thumb=%p, type=%d, size=%d\n", 
-                                   thumb, thumb ? thumb->type : -1, thumb ? thumb->data_size : 0);
-                        QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+                        QV_LOG("RawCodec_Load",
+                            TraceLoggingString("ThumbInfo", "Action"),
+                            TraceLoggingBool(thumb != nullptr, "HasThumb"),
+                            TraceLoggingInt32(thumb ? thumb->type : -1, "Type"),
+                            TraceLoggingInt32(thumb ? thumb->data_size : 0, "Size"));
                         
                         if (thumb) {
                             if (thumb->type == LIBRAW_IMAGE_JPEG) {
@@ -6354,10 +6352,10 @@ namespace QuickView {
                                     result.metadata.LoaderName = L"LibRaw (Preview)";
                                     // We keep the ExifOrientation from JPEG::Load or the one we captured above
                                     if (result.metadata.ExifOrientation <= 1) result.metadata.ExifOrientation = exifOrientation;
-                                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[RawCodec] Preview JPEG decoded OK", "Message"));
+                                    QV_LOG("RawCodec_Load", TraceLoggingString("PreviewJPEG OK", "Action"));
                                     return S_OK;
                                 }
-                                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[RawCodec] Preview JPEG decode FAILED", "Message"));
+                                QV_LOG("RawCodec_Load", TraceLoggingString("PreviewJPEG Failed", "Action"));
                             }
                             else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
                                 // RGB Bitmap
@@ -7139,18 +7137,18 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                             result.frameMeta = firstFrame->frameMeta;
                             result.animator = std::move(animator);
                             result.metadata.LoaderName = fmt == L"WebP" ? L"WebPAnimator" : (fmt == L"AVIF" ? L"AvifAnimator" : (fmt == L"JXL" ? L"JxlAnimator" : L"WuffsAnimator"));
-                            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[Anim] Animation hijack SUCCESS", "Message"));
+                            QV_LOG("Anim_Loader", TraceLoggingString("Hijack Success", "Action"));
                             return S_OK;
                         } else {
-                            QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[Anim] GetNextFrame() returned null or no pixels", "Message"));
+                            QV_LOG("Anim_Loader", TraceLoggingString("GetNextFrame Null", "Action"));
                         }
-                    // QV_LOG("Anim_Log", TraceLoggingWideString(L"[Anim] IsAnimated() returned false, falling through to static decode", "Message"));
+                    // QV_LOG("Anim_Loader", TraceLoggingString("NotAnimated", "Action"));
                 }
             } else {
-                // QV_LOG("Anim_Log", TraceLoggingWideString(L"[Anim] Initialize() FAILED, falling through to static decode", "Message"));
+                // QV_LOG("Anim_Loader", TraceLoggingString("InitializeFailed", "Action"));
             }
             } else {
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[Anim] MappedFile invalid for animation", "Message"));
+                QV_LOG("Anim_Loader", TraceLoggingString("MappedFile Invalid", "Action"));
             }
         }
         
@@ -9107,12 +9105,12 @@ static bool TryReadMetadataNative(LPCWSTR filePath, CImageLoader::ImageMetadata*
                         JxlBasicInfo info = {};
                         if (JXL_DEC_SUCCESS == JxlDecoderGetBasicInfo(dec, &info)) {
                              // Debug logging
-                             wchar_t buf[128];
-                             swprintf_s(buf, L"[JXL] BasicInfo: %ux%u, Bits=%u, Exp=%u, Alpha=%u, P3=%u\n", 
-                                 info.xsize, info.ysize, info.bits_per_sample, 
-                                 info.exponent_bits_per_sample, info.num_extra_channels, 
-                                 info.uses_original_profile);
-                             QV_LOG("ImageLoader_Log", TraceLoggingWideString(buf, "Message"));
+                             QV_LOG("JXL_Metadata",
+                                 TraceLoggingUInt32(info.xsize, "Width"),
+                                 TraceLoggingUInt32(info.ysize, "Height"),
+                                 TraceLoggingUInt32(info.bits_per_sample, "Bits"),
+                                 TraceLoggingUInt32(info.num_extra_channels, "ExtraChannels"),
+                                 TraceLoggingBool(info.uses_original_profile, "UsesOrigProfile"));
                              pMetadata->Width = info.xsize;
                              pMetadata->Height = info.ysize;
                              
@@ -9928,13 +9926,12 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
 
             // [Diagnostic] Log encoding mode to help debug DC detection failures
             {
-                wchar_t diagBuf[256];
-                swprintf_s(diagBuf, L"[JXL_DC] BasicInfo: %ux%u, %d-bit, uses_original_profile=%d (Modular=%s), have_preview=%d\n",
-                    info.xsize, info.ysize, info.bits_per_sample,
-                    info.uses_original_profile,
-                    info.uses_original_profile ? L"YES→No DC Layer" : L"NO→VarDCT→DC possible",
-                    info.have_preview);
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(diagBuf, "Message"));
+                QV_LOG("JXL_DC",
+                    TraceLoggingUInt32(info.xsize, "Width"),
+                    TraceLoggingUInt32(info.ysize, "Height"),
+                    TraceLoggingUInt32(info.bits_per_sample, "Bits"),
+                    TraceLoggingBool(info.uses_original_profile, "Modular"),
+                    TraceLoggingBool(info.have_preview, "HavePreview"));
             }
         }
         else if (status == JXL_DEC_FRAME_PROGRESSION) {
@@ -10024,10 +10021,10 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
                             return cleanup(E_FAIL);
                         }
 
-                        wchar_t dbg[160];
-                        swprintf_s(dbg, L"[JXL_DC] Using Preview fallback: %ux%u (no 1:8 DC)\n",
-                                   info.preview.xsize, info.preview.ysize);
-                        QV_LOG("ImageLoader_Log", TraceLoggingWideString(dbg, "Message"));
+                        QV_LOG("JXL_DC",
+                            TraceLoggingString("PreviewFallback", "Action"),
+                            TraceLoggingUInt32(info.preview.xsize, "PreviewW"),
+                            TraceLoggingUInt32(info.preview.ysize, "PreviewH"));
                         continue;
                     }
                 }
@@ -10040,11 +10037,13 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
             //   2. Non-progressive lossy encoding → No progressive passes at all
             //   3. Progressive but ratio not in [4,16] range
             {
-                wchar_t diagBuf[256];
-                swprintf_s(diagBuf, L"[JXL_DC] No 1:8 DC. isProgressive=%d, uses_original_profile=%d, have_preview=%d, image=%ux%u\n",
-                    isProgressive ? 1 : 0, info.uses_original_profile, info.have_preview,
-                    info.xsize, info.ysize);
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(diagBuf, "Message"));
+                QV_LOG("JXL_DC",
+                    TraceLoggingString("No18DC", "Action"),
+                    TraceLoggingBool(isProgressive, "Progressive"),
+                    TraceLoggingBool(info.uses_original_profile, "Modular"),
+                    TraceLoggingBool(info.have_preview, "HavePreview"),
+                    TraceLoggingUInt32(info.xsize, "Width"),
+                    TraceLoggingUInt32(info.ysize, "Height"));
             }
             
             bool isSmallEnough = ((uint64_t)info.xsize * info.ysize) < 2000000; // 2MP
@@ -10071,7 +10070,7 @@ HRESULT CImageLoader::LoadThumbJXL_DC(const uint8_t* pFile, size_t fileSize, Thu
              } else if (allowFakeBase) {
                   // Too large for FastLane full decode or too massive for HeavyLane CPU decoding.
                   // We fake a 1x1 transparent pixel to satisfy the pipeline and unlock Titan Mode.
-                  QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[JXL_DC] No 1:8 found and image too large. Faking 1x1 base layer for Region Decoder.", "Message"));
+                  QV_LOG("JXL_DC", TraceLoggingString("FakeBase LargeImage", "Action"));
                   
                   try {
                       pData->pixels.assign(4, 0); // 1 pixel, 4 channels (RGBA), all 0 (transparent)
@@ -11165,12 +11164,12 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     // Apply ID Replacements
                     if (!replacements.empty()) {
                         MultiReplace(svgContent, replacements);
-                        wchar_t msg[128];
-                        swprintf_s(msg, L"[SVG] Sanitized %d Unsafe IDs.\n", (int)replacements.size());
-                        QV_LOG("ImageLoader_Log", TraceLoggingWideString(msg, "Message"));
+                        QV_LOG("SVG_Sanitize",
+                            TraceLoggingString("IDsSanitized", "Action"),
+                            TraceLoggingInt32((int)replacements.size(), "Count"));
                     }
                 } catch (...) {
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[SVG] ID Sanitizer Pattern Failure", "Message"));
+                    QV_LOG("SVG_Sanitize", TraceLoggingString("IDPattern Failure", "Action"));
                 }
 
                 // =========================================================
@@ -11390,12 +11389,12 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     }
                     
                     if (inlinedCount > 0) {
-                         wchar_t msg[128];
-                         swprintf_s(msg, L"[SVG] Inlined %d Styles (Fixed Black Silhouette).\n", inlinedCount);
-                         QV_LOG("ImageLoader_Log", TraceLoggingWideString(msg, "Message"));
+                         QV_LOG("SVG_Style",
+                             TraceLoggingString("Inlined", "Action"),
+                             TraceLoggingInt32(inlinedCount, "Count"));
                     }
                 } catch (...) {
-                    QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[SVG] Style Inliner Failure", "Message"));
+                    QV_LOG("SVG_Style", TraceLoggingString("InlinerFailure", "Action"));
                 }
                 
                 // Commit changes
@@ -11432,7 +11431,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     }
                 }
             } catch (...) {
-                QV_LOG("ImageLoader_Log", TraceLoggingWideString(L"[SVG] Dimension parse failed, using default", "Message"));
+                QV_LOG("SVG_Parse", TraceLoggingString("DimensionFailed Default", "Action"));
             }
             
             if (svgW <= 0) svgW = 512;

@@ -101,7 +101,8 @@ jpegview-static-post2024-vs2019-x64/
 * .ps1
 *.bat
 *.py
-
+*.etl
+*.csv
 
 .agent/
 
@@ -112,5 +113,7 @@ QuickView/vcpkg_installed/
 compile_commands.json
 .cache/
 
+# tools
+!tools/QuickView_Diagnostic_Tool.bat
 
 

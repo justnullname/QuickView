@@ -24,9 +24,13 @@ struct EtwScope {
 // Short-circuits completely if EnableDebugFeatures is false or the provider isn't listening.
 extern AppConfig g_config;
 
+// Every .cpp file that uses QV_LOG must define:
+//   static constexpr const char* CURRENT_MODULE = "ModuleName";
+// The macro auto-injects it as a structured "Module" field for WPA grouping.
 #define QV_LOG(EventName, ...) \
     do { \
         if (g_config.EnableDebugFeatures && TraceLoggingProviderEnabled(g_hQuickViewProvider, 0, 0)) { \
-            TraceLoggingWrite(g_hQuickViewProvider, EventName, __VA_ARGS__); \
+            TraceLoggingWrite(g_hQuickViewProvider, EventName, \
+                TraceLoggingString(CURRENT_MODULE, "Module"), __VA_ARGS__); \
         } \
     } while(0)

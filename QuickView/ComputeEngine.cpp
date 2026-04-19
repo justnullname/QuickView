@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "ComputeEngine";
 #include "DebugMetrics.h"
 #include "ComputeEngine.h"
 #include <d3dcompiler.h>
@@ -655,19 +656,23 @@ HRESULT ComputeEngine::ComposeGainMap(
     ID3D11Texture2D** outTexture)
 {
     if (!m_valid || !sdrPixels || !gainPixels || !outTexture) {
-        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.", "Message"));
+        QV_LOG("Compute_GainMap", TraceLoggingString("InvalidArgs", "Action"));
         return E_INVALIDARG;
     }
     if (sdrW <= 0 || sdrH <= 0 || gainW <= 0 || gainH <= 0) {
-        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.", "Message"));
+        QV_LOG("Compute_GainMap", TraceLoggingString("InvalidDimensions", "Action"));
         return E_INVALIDARG;
     }
 
     // [Diagnostic] Log composition start
-    wchar_t logBuf[256];
-    swprintf_s(logBuf, L"[ComputeEngine] Compose: SDR %dx%d, Gain %dx%d, Headroom %.2f, MaxGain %.2f\n",
-        sdrW, sdrH, gainW, gainH, payload.targetHeadroom, payload.gainMapMax[0]);
-    QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(logBuf, "Message"));
+    QV_LOG("Compute_GainMap",
+        TraceLoggingString("Compose Start", "Action"),
+        TraceLoggingInt32(sdrW, "SdrW"),
+        TraceLoggingInt32(sdrH, "SdrH"),
+        TraceLoggingInt32(gainW, "GainW"),
+        TraceLoggingInt32(gainH, "GainH"),
+        TraceLoggingFloat32(payload.targetHeadroom, "Headroom"),
+        TraceLoggingFloat32(payload.gainMapMax[0], "MaxGain"));
 
     // 1. Upload SDR base layer (Can be BGRA8 or R32G32B32A32_FLOAT)
     D3D11_TEXTURE2D_DESC sdrDesc = {};

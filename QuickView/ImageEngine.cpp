@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ImageEngine.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "ImageEngine";
 #include "DebugMetrics.h"
 #include "FileNavigator.h"
 #include "HeavyLanePool.h"  // [N+1] Include pool implementation
@@ -42,12 +43,8 @@ ImageEngine::ImageEngine(CImageLoader* loader)
     m_tileManager = std::make_shared<QuickView::TileManager>();
 
     // Debug output
-    wchar_t buf[256];
-    swprintf_s(buf, L"[ImageEngine] N+1 Pool: Tier=%s (Arena: %s), MaxWorkers=%d\n",
-        m_engineConfig.GetTierName(), 
-        m_pool.GetConfig().GetModeName(),
-        m_engineConfig.maxHeavyWorkers);
-    QV_LOG("ImageEngine_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Engine_Init",
+        TraceLoggingInt32(m_engineConfig.maxHeavyWorkers, "MaxWorkers"));
 }
 
 ImageEngine::~ImageEngine() {
@@ -108,7 +105,7 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     
     // Only proceed if this is still the current image
     if (imageId != m_currentImageId.load()) {
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FullDecode] RequestFullDecode cancelled - image changed", "Message"));
+        QV_LOG("Engine_FullDecode", TraceLoggingString("Cancelled ImageChanged", "Action"));
         return;
     }
     
@@ -116,7 +113,7 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     // The Base Layer is already loaded (Scaled). We do NOT want a Full Decode 
     // because it causes OOM/Seconds-long stall and logic issue.
     if (m_mmf && m_mmf->IsValid()) {
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FullDecode] RequestFullDecode skipped - Titan Mode Active (Tiles Handle Detail)", "Message"));
+        QV_LOG("Engine_FullDecode", TraceLoggingString("Skipped TitanActive", "Action"));
         return;
     }
 
@@ -126,9 +123,9 @@ void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId) {
     // It's safe to pass m_mmf (member) here.
     m_heavyPool->SubmitFullDecode(path, imageId, m_mmf);
     
-    wchar_t buf[256];
-    swprintf_s(buf, L"[FullDecode] Full decode requested: ImageID=%zu\n", imageId);
-    QV_LOG("ImageEngine_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Engine_FullDecode",
+        TraceLoggingString("Requested", "Action"),
+        TraceLoggingUInt64((uint64_t)imageId, "ImageID"));
 }
 
 // [Phase 2] Dispatcher Implementation
@@ -202,11 +199,11 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
          m_mmf = primaryMMF;
          
          m_tileManager->InvalidateAll(); // Reset generation
-         wchar_t debugBuf[256];
-         swprintf_s(debugBuf, L"[Dispatch] Titan Mode ENABLED (%dx%d, %s) MMF=%s\n", 
-             info.width, info.height, fmtUpper.c_str(), 
-             (m_mmf && m_mmf->IsValid()) ? L"OK" : L"FAIL");
-         QV_LOG("ImageEngine_Log", TraceLoggingWideString(debugBuf, "Message"));
+         QV_LOG("Dispatch_Titan",
+             TraceLoggingString("Enabled", "Action"),
+             TraceLoggingInt32(info.width, "Width"),
+             TraceLoggingInt32(info.height, "Height"),
+             TraceLoggingBool(m_mmf && m_mmf->IsValid(), "MMF_OK"));
          
          // [Scientific 2.0] Enable Titan Mode - pool handles dynamic concurrency via Scout phase.
          // SetTitanMode(true) resets scout state, sets initial concurrency to 2, 
@@ -255,12 +252,13 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 const int cacheH = frameUsable ? cachedFrame->height : 0;
                 InvalidateCache(path);
                 cachedFrame.reset();
-                wchar_t dbg[256];
-                swprintf_s(dbg,
-                    L"[Dispatch] JXL cache bypass: frame=%dx%d meta=%dx%d titan=%d\n",
-                    cacheW, cacheH,
-                    info.width, info.height, enableTitan ? 1 : 0);
-                QV_LOG("ImageEngine_Log", TraceLoggingWideString(dbg, "Message"));
+                QV_LOG("Dispatch_JXLCache",
+                    TraceLoggingString("Bypass", "Action"),
+                    TraceLoggingInt32(cacheW, "CacheW"),
+                    TraceLoggingInt32(cacheH, "CacheH"),
+                    TraceLoggingInt32(info.width, "MetaW"),
+                    TraceLoggingInt32(info.height, "MetaH"),
+                    TraceLoggingBool(enableTitan, "Titan"));
             }
         }
 
@@ -323,17 +321,10 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
     
     // [DEBUG] Log
     {
-        wchar_t buf[512];
-        const wchar_t* typeName = L"Invalid";
-        if (info.type == CImageLoader::ImageType::TypeA_Sprint) typeName = L"TypeA_Sprint";
-        else if (info.type == CImageLoader::ImageType::TypeB_Heavy) typeName = L"TypeB_Heavy";
-        swprintf_s(buf, L"[Dispatch] %s: %dx%d (%.1f MP), Format=%s, Type=%s\n",
-            path.substr(path.find_last_of(L"\\/") + 1).c_str(),
-            info.width, info.height,
-            (double)(info.width * info.height) / 1000000.0,
-            info.format.c_str(),
-            typeName);
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("Dispatch_Route",
+            TraceLoggingInt32(info.width, "Width"),
+            TraceLoggingInt32(info.height, "Height"),
+            TraceLoggingFloat64((double)(info.width * info.height) / 1000000.0, "Megapixels"));
     }
     
     // Update State for UI
@@ -352,7 +343,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         // IDCT 1/8 scaling produces ~3-8MP preview (sufficient for 4K screens).
         // Tiles are triggered by main.cpp OnPaint only when zoom > basePreviewRatio.
 
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] Titan Active: Routing Base Layer to Heavy Lane", "Message"));
+        QV_LOG("Dispatch_Route", TraceLoggingString("Titan HeavyLane", "Action"));
     }
     
     // 2. Recursive RAW Check
@@ -376,7 +367,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 // Threshold: 2.5 MP (Conservative)
                 // If embedded preview is huge, it will block FastLane. Force Heavy Lane.
                 if (embPixels > 2500000) { 
-                    QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] RAW Embedded Preview TOO LARGE -> Force Heavy Lane", "Message"));
+                    QV_LOG("Dispatch_Route", TraceLoggingString("RAW EmbeddedPreview TooLarge", "Action"));
                     // Override Classification: Treat as Heavy
                     info.type = CImageLoader::ImageType::TypeB_Heavy; 
                 }
@@ -406,7 +397,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                  useHeavy = false;
              } else {
                 // [v7.2 Fix] Large WebP -> Force Heavy Direct (non-Titan is full decode).
-                 QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> WebP Large: Heavy Direct", "Message"));
+                 QV_LOG("Dispatch_Route", TraceLoggingString("WebP Large HeavyDirect", "Action"));
                  m_heavyPool->Submit(path, imageId, primaryMMF);
                  return; 
              }
@@ -421,7 +412,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         std::transform(fmtLower.begin(), fmtLower.end(), fmtLower.begin(), ::towlower);
         
         if (fmtLower == L"webp") {
-             QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> WebP Heavy: Heavy Direct", "Message"));
+             QV_LOG("Dispatch_Route", TraceLoggingString("WebP Heavy HeavyDirect", "Action"));
              m_heavyPool->Submit(path, imageId, primaryMMF); // Base Layer Scaled
              return;
         }
@@ -443,7 +434,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                        ((uint64_t)info.width * info.height < 2000000);
         
         if (isSmall) {
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> JXL Small: FastLane Direct Full", "Message"));
+            QV_LOG("Dispatch_Route", TraceLoggingString("JXL Small FastLane", "Action"));
             // FastLane will use target=0 if detected as small
             m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
         } 
@@ -451,7 +442,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             if (enableTitan) {
                 // [v8.5] Hard Dispatch: Large JXL (>2MP or >3MB)
                 // Skip FastLane entirely. HeavyLane handles everything (Deep Cancel Relay).
-                QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> JXL Titan: Heavy Direct (Skip FastLane)", "Message"));
+                QV_LOG("Dispatch_Route", TraceLoggingString("JXL Titan HeavyDirect", "Action"));
                 
                 // [Fix] Stage 2 Trigger explicitly needs these to be set for the pending heavy decode
                 m_pendingJxlHeavyPath = path;
@@ -461,7 +452,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
             } else {
                 // [v3.2.5 Restore] 普通非Titan大型大图，像旧版一样直接跑 FullDecode
                 // 免去 300ms 延迟，速度最快，并天然由解码端展示自带预览图！
-                QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> JXL Large: Heavy SubmitFullDecode (Skip FastLane)", "Message"));
+                QV_LOG("Dispatch_Route", TraceLoggingString("JXL Large HeavyFullDecode", "Action"));
                 m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF);
             }
         }
@@ -510,14 +501,10 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
         }
 
         if (isSmall) {
-            wchar_t dbgBuf[128];
-            swprintf_s(dbgBuf, L"[Dispatch] -> %s Small (<30ms): FastLane\n", info.format.c_str());
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(dbgBuf, "Message"));
+            QV_LOG("Dispatch_Route", TraceLoggingString("FormatSmall FastLane", "Action"));
             m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
         } else {
-            wchar_t dbgBuf[128];
-            swprintf_s(dbgBuf, L"[Dispatch] -> %s Large: Heavy Lane\n", info.format.c_str());
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(dbgBuf, "Message"));
+            QV_LOG("Dispatch_Route", TraceLoggingString("FormatLarge HeavyLane", "Action"));
             m_heavyPool->Submit(path, imageId, primaryMMF);
         }
         return;
@@ -525,14 +512,14 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
 
     // 7. Standard Routing
     if (useHeavy) {
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> Heavy Lane", "Message"));
+        QV_LOG("Dispatch_Route", TraceLoggingString("HeavyLane", "Action"));
         m_heavyPool->Submit(path, imageId, primaryMMF);
     }
     if (useFastLane) {
         // Avoid parallel duplicate work if Heavy is already taking it?
         // Logic: TypeA -> FastLane only. TypeB -> Heavy only.
         // Unknown type -> Parallel (Both).
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[Dispatch] -> FastLane", "Message"));
+        QV_LOG("Dispatch_Route", TraceLoggingString("FastLane", "Action"));
         m_fastLane.Push(path, imageId, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
     }
 }
@@ -638,7 +625,7 @@ std::vector<EngineEvent> ImageEngine::PollState() {
 
                 // [JXL Serial] Trigger Stage 2 IMMEDIATELY for JXL (No 300ms wait)
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
-                     QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[PollState] JXL Preview Ready -> Triggering Heavy Immediate", "Message"));
+                     QV_LOG("PollState_Route", TraceLoggingString("JXL PreviewReady HeavyImmediate", "Action"));
                      RequestFullDecode(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
                      m_stage2Requested = true; 
                      m_pendingJxlHeavyId = 0; 
@@ -652,7 +639,7 @@ std::vector<EngineEvent> ImageEngine::PollState() {
 
                 // [JXL Scene C] FastLane Aborted (Modular?) -> Trigger Heavy Immediately
                 if (m_pendingJxlHeavyId == e.imageId && m_pendingJxlHeavyId != 0) {
-                     QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[PollState] FastLane Failed (Modular?) -> Triggering Heavy Immediate", "Message"));
+                     QV_LOG("PollState_Route", TraceLoggingString("FastLane Failed HeavyImmediate", "Action"));
                      RequestFullDecode(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
                      m_stage2Requested = true; // Mark as requested
                      m_pendingJxlHeavyId = 0;  // Consumed
@@ -671,9 +658,8 @@ std::vector<EngineEvent> ImageEngine::PollState() {
              bool isHevcDependent = (formatUpper == L"HEIC" || formatUpper == L"HEIF" || formatUpper == L"AVIF");
              
              if (isHevcDependent && CImageLoader::ImageMetadata::IsWicCodecMissing(e.hr)) {
-                  wchar_t dbg[128];
-                  swprintf_s(dbg, L"[ImageEngine] Detected missing HEVC codec: 0x%08X for format %s. Prompting user.\n", (uint32_t)e.hr, formatUpper.c_str());
-                  QV_LOG("ImageEngine_Log", TraceLoggingWideString(dbg, "Message"));
+                  QV_LOG("Engine_CodecMissing",
+                      TraceLoggingUInt32((uint32_t)e.hr, "HR"));
                   PostMessage(m_hwnd, WM_APP + 99, 0, 0);
              }
              std::lock_guard lock(m_pendingMutex);
@@ -1023,10 +1009,8 @@ void ImageEngine::FastLane::Push(const std::wstring& path, ImageID id, float tar
     
     // [DEBUG] Log Push notification
     {
-        wchar_t buf[512];
-        swprintf_s(buf, L"[FastLane] Push: %s (queue size=%d)\n",
-            path.substr(path.find_last_of(L"\\/") + 1).c_str(), (int)m_queue.size());
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("FastLane_Push",
+            TraceLoggingInt32((int)m_queue.size(), "QueueSize"));
     }
 
     // [Phase 10] Reset timer logic
@@ -1066,7 +1050,7 @@ int ImageEngine::FastLane::GetResultsSize() const {
 }
 
 void ImageEngine::FastLane::QueueWorker() {
-    QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FastLane] Worker Thread Started", "Message"));
+    QV_LOG("FastLane_Lifecycle", TraceLoggingString("WorkerStarted", "Action"));
 
     while (!m_stopSignal) {
         FastLaneCommand cmd;
@@ -1089,8 +1073,7 @@ void ImageEngine::FastLane::QueueWorker() {
             
             m_isWorking = true; // [HUD V4] Active
             
-            std::wstring debugMsg = L"[FastLane] Processing: " + cmd.path.substr(cmd.path.find_last_of(L"\\/") + 1) + L"\n";
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(debugMsg.c_str(), "Message"));
+            QV_LOG("FastLane_Process", TraceLoggingString("Start", "Action"));
 
             // --- Work Stage (Unified RawImageFrame Architecture) ---
             auto start = std::chrono::high_resolution_clock::now();
@@ -1235,8 +1218,8 @@ void ImageEngine::FastLane::QueueWorker() {
                 // Signal main thread
                 m_parent->QueueEvent(EngineEvent{}); // Dummy event, just for notification
                 
-                if (isClear) QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FastLane] Output: FullReady (Final)", "Message"));
-                else { wchar_t buf[128]; swprintf_s(buf, L"[FastLane] Output: PreviewReady (Blurry) - targetW=%d, rawW=%d\n", targetW, rawFrame.width); QV_LOG("ImageEngine_Log", TraceLoggingWideString(buf, "Message")); }
+                if (isClear) QV_LOG("FastLane_Output", TraceLoggingString("FullReady", "Action"));
+                else QV_LOG("FastLane_Output", TraceLoggingString("PreviewReady", "Action"), TraceLoggingInt32(targetW, "TargetW"), TraceLoggingInt32(rawFrame.width, "RawW"));
                 
                 // [v3.1] If Fast Pass produced clear image, cancel Heavy Lane
                 if (isClear) {
@@ -1271,14 +1254,13 @@ void ImageEngine::FastLane::QueueWorker() {
 
         } catch (const std::exception& ex) {
             m_isWorking = false; // [HUD V4] Safety reset
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FastLane] CRITICAL EXCEPTION in QueueWorker: ", "Message"));
+            QV_LOG("FastLane_Error", TraceLoggingString("CriticalException", "Action"));
             OutputDebugStringA(ex.what());
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"", "Message"));
         } catch (...) {
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FastLane] CRITICAL UNKNOWN EXCEPTION in QueueWorker", "Message"));
+            QV_LOG("FastLane_Error", TraceLoggingString("UnknownException", "Action"));
         }
     }
-    QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[FastLane] Worker Thread Exiting", "Message"));
+    QV_LOG("FastLane_Lifecycle", TraceLoggingString("WorkerExiting", "Action"));
 }
 
 void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
@@ -1287,7 +1269,7 @@ void ImageEngine::SetPrefetchPolicy(const PrefetchPolicy& policy) {
 
 void ImageEngine::TriggerPendingJxlHeavy() {
     if (!m_pendingJxlHeavyPath.empty() && m_pendingJxlHeavyId != 0) {
-        QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[JXL Sequential] FastLane done, triggering Heavy", "Message"));
+        QV_LOG("PollState_Route", TraceLoggingString("JXL Sequential TriggerHeavy", "Action"));
         m_heavyPool->Submit(m_pendingJxlHeavyPath, m_pendingJxlHeavyId);
         m_pendingJxlHeavyPath.clear();
         m_pendingJxlHeavyId = 0;
@@ -1320,9 +1302,9 @@ void ImageEngine::UpdateView(int currentIndex, QuickView::BrowseDirection dir) {
                  (dir == QuickView::BrowseDirection::BACKWARD) ? -1 : 0;
     m_lastDirectionInt.store(dirInt);
     
-    wchar_t buf[128];
-    swprintf_s(buf, L"[ImageEngine] UpdateView: Idx=%d Dir=%d\n", currentIndex, dirInt);
-    QV_LOG("ImageEngine_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Engine_UpdateView",
+        TraceLoggingInt32(currentIndex, "Index"),
+        TraceLoggingInt32(dirInt, "Direction"));
     
     // 1. Prune: Cancel old tasks not in visible range
     PruneQueue(currentIndex, dir);
@@ -1429,12 +1411,10 @@ void ImageEngine::ScheduleJob(int index, QuickView::Priority pri) {
          uint64_t predictedSize = (uint64_t)info.width * info.height * 4;
          // Allow a 10% margin just in case, but strictly reject if it consumes > 90% of ENTIRE cache
          if (predictedSize > m_prefetchPolicy.maxCacheMemory) {
-              wchar_t skipBuf[256];
-              swprintf_s(skipBuf, L"[ImageEngine] Smart Skip: %s (%.1f MB) > Cache Cap (%.1f MB) -> Skipped\n", 
-                  path.substr(path.find_last_of(L"\\/") + 1).c_str(), 
-                  predictedSize / 1048576.0, 
-                  m_prefetchPolicy.maxCacheMemory / 1048576.0);
-              QV_LOG("ImageEngine_Log", TraceLoggingWideString(skipBuf, "Message"));
+              QV_LOG("Prefetch_Skip",
+                  TraceLoggingString("OverCacheCap", "Action"),
+                  TraceLoggingFloat64(predictedSize / 1048576.0, "PredictedMB"),
+                  TraceLoggingFloat64(m_prefetchPolicy.maxCacheMemory / 1048576.0, "CacheCapMB"));
               return;
          }
     }
@@ -1698,7 +1678,7 @@ void ImageEngine::RequestFullMetadata() {
                      tempLoader.Initialize(pFactory.Get());
                      factoryOk = true;
                  } else {
-                     QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[ImageEngine] Failed to create WIC Factory for async metadata!", "Message"));
+                     QV_LOG("Engine_AsyncMeta", TraceLoggingString("WIC Factory Failed", "Action"));
                  }
             }
             
@@ -1728,7 +1708,7 @@ void ImageEngine::RequestFullMetadata() {
             if (SUCCEEDED(hr)) CoUninitialize();
             
         } catch (...) {
-            QV_LOG("ImageEngine_Log", TraceLoggingWideString(L"[ImageEngine] Critical Exception in Async Metadata Thread!", "Message"));
+            QV_LOG("Engine_AsyncMeta", TraceLoggingString("CriticalException", "Action"));
         }
         
         // Destructor of 'cleaner' runs here, removing ID from pending set.

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "HeavyLanePool.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "HeavyLanePool";
 #include "DebugMetrics.h"
 #include "ImageEngine.h"
 #include "ImageLoaderSimd.h"
@@ -90,9 +91,9 @@ void HeavyLanePool::UpdateIOLimit(int newLimit) {
     }
     m_ioLimit.store(newLimit, std::memory_order_relaxed);
     
-    wchar_t buf[128];
-    swprintf_s(buf, L"[HeavyPool] IO Limit set to %d (SSD=%s)\n", (int)m_ioLimit, newLimit > 2 ? L"Yes" : L"No");
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Pool_IOLimit",
+        TraceLoggingInt32((int)m_ioLimit, "IOLimit"),
+        TraceLoggingBool(newLimit > 2, "IsSSD"));
 }
 
 void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::wstring& format, ImageID activeId) {
@@ -119,10 +120,11 @@ void HeavyLanePool::SetTitanMode(bool enabled, int srcW, int srcH, const std::ws
                 // Re-apply memory-aware concurrency (RAM may have changed)
                 ApplyBaselineConcurrency(it->second.mps, srcW, srcH, it->second.isProgressive);
                 
-                wchar_t buf[256];
-                swprintf_s(buf, L"[HeavyPool] Baseline CACHE HIT: %.2f MP/s → %d threads (%dx%d)\n",
-                    it->second.mps, m_concurrencyLimit.load(), srcW, srcH);
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+                QV_LOG("Baseline_CacheHit",
+                    TraceLoggingFloat64(it->second.mps, "MPS"),
+                    TraceLoggingInt32(m_concurrencyLimit.load(), "Threads"),
+                    TraceLoggingInt32(srcW, "SrcWidth"),
+                    TraceLoggingInt32(srcH, "SrcHeight"));
                 
                 TryExpand();
                 return;
@@ -150,9 +152,8 @@ void HeavyLanePool::SetConcurrencyLimit(int limit) {
     TryExpand(); 
     m_poolCv.notify_all();
     
-    wchar_t buf[128];
-    swprintf_s(buf, L"[HeavyPool] Concurrency Limit set to %d\n", limit);
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Pool_ConcurrencyLimit",
+        TraceLoggingInt32(limit, "Limit"));
 }
 
 void HeavyLanePool::SetUseThreadLocalHandle(bool use) {
@@ -214,7 +215,9 @@ void HeavyLanePool::ResetBenchState() {
     m_lodCacheFailCount.store(0); // [B4] Reset fail counter on new image
 
     // IO type is set during Submit() via UpdateIOLimit
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[HeavyPool] Baseline state RESET (Phase 5 Async GC). Phase: PENDING (2 threads).", "Message"));
+    QV_LOG("Baseline_Reset",
+        TraceLoggingString("Phase5 Async GC", "Action"),
+        TraceLoggingInt32(2, "InitialThreads"));
 }
 
 // [Baseline Benchmark] Record performance from base layer decode
@@ -225,11 +228,13 @@ void HeavyLanePool::RecordBaselineSample(double outPixels, double decodeMs, int 
     double decodeMPS = (outPixels / 1000000.0) / (decodeMs / 1000.0);
     m_baselineMPS = decodeMPS;
     
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] Baseline: %.2f MP/s (%.1f MP in %.0f ms, Src=%dx%d, %s)\n",
-        decodeMPS, outPixels / 1000000.0, decodeMs, srcWidth, srcHeight,
-        isProgressiveJPEG ? L"Progressive" : L"Baseline");
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Baseline_Sample",
+        TraceLoggingFloat64(decodeMPS, "MPS"),
+        TraceLoggingFloat64(outPixels / 1000000.0, "Megapixels"),
+        TraceLoggingFloat64(decodeMs, "DecodeMs"),
+        TraceLoggingInt32(srcWidth, "SrcWidth"),
+        TraceLoggingInt32(srcHeight, "SrcHeight"),
+        TraceLoggingBool(isProgressiveJPEG, "IsProgressive"));
     
     ApplyBaselineConcurrency(decodeMPS, srcWidth, srcHeight, isProgressiveJPEG);
 }
@@ -315,12 +320,12 @@ void HeavyLanePool::ApplyBaselineConcurrency(double decodeMPS, int srcWidth, int
             memoryLimitThreads = (perThreadMemory > 0) ? (int)(usableRAM / perThreadMemory) : 2;
             memoryLimitThreads = std::max(memoryLimitThreads, 2); // Floor: at least 2
             
-            wchar_t memBuf[256];
-            swprintf_s(memBuf, L"[HeavyPool] Memory: %.1f GB avail, %.1f GB/thread (%dx%d) → max %d threads\n",
-                (double)availableRAM / (1024.0 * 1024 * 1024),
-                (double)perThreadMemory / (1024.0 * 1024 * 1024),
-                srcWidth, srcHeight, memoryLimitThreads);
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(memBuf, "Message"));
+            QV_LOG("Pool_MemoryBudget",
+                TraceLoggingFloat64((double)availableRAM / (1024.0 * 1024 * 1024), "AvailGB"),
+                TraceLoggingFloat64((double)perThreadMemory / (1024.0 * 1024 * 1024), "PerThreadGB"),
+                TraceLoggingInt32(srcWidth, "SrcWidth"),
+                TraceLoggingInt32(srcHeight, "SrcHeight"),
+                TraceLoggingInt32(memoryLimitThreads, "MaxThreads"));
         }
     }
     
@@ -337,10 +342,10 @@ void HeavyLanePool::ApplyBaselineConcurrency(double decodeMPS, int srcWidth, int
     // Start at full capacity immediately — Regulator will throttle DOWN if needed.
     int initialLimit = bestThreads;
     
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] Baseline Result: %.2f MP/s → Cap %d threads. Starting at %d via Regulator.\n",
-        decodeMPS, bestThreads, initialLimit);
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Baseline_Result",
+        TraceLoggingFloat64(decodeMPS, "MPS"),
+        TraceLoggingInt32(bestThreads, "CapThreads"),
+        TraceLoggingInt32(initialLimit, "InitialLimit"));
     
     m_benchPhase = BenchPhase::DECIDED;
     SetConcurrencyLimit(initialLimit);
@@ -395,10 +400,10 @@ void HeavyLanePool::UpdateConcurrency(int decodeMs, std::chrono::steady_clock::t
                 m_regulator.avgLatency = 0;
                 m_regulator.sampleCount = 0;
                 
-                wchar_t buf[256];
-                swprintf_s(buf, L"[HeavyPool] Regulator: Latency High (%.0fms). Throttle DOWN to %d\n", 
-                    oldLatency, newLimit);
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+                QV_LOG("Regulator_Adjust",
+                    TraceLoggingString("ThrottleDown", "Action"),
+                    TraceLoggingFloat64(oldLatency, "LatencyMs"),
+                    TraceLoggingInt32(newLimit, "NewLimit"));
             }
         }
     } else if (m_regulator.avgLatency < kLowLatencyThreshold) {
@@ -418,10 +423,10 @@ void HeavyLanePool::UpdateConcurrency(int decodeMs, std::chrono::steady_clock::t
                 m_regulator.avgLatency = 0;
                 m_regulator.sampleCount = 0;
                 
-                wchar_t buf[256];
-                swprintf_s(buf, L"[HeavyPool] Regulator: Latency Low (%.0fms). Throttle UP to %d\n", 
-                    oldLatency, newLimit);
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+                QV_LOG("Regulator_Adjust",
+                    TraceLoggingString("ThrottleUp", "Action"),
+                    TraceLoggingFloat64(oldLatency, "LatencyMs"),
+                    TraceLoggingInt32(newLimit, "NewLimit"));
             }
         }
     } else {
@@ -785,18 +790,18 @@ void HeavyLanePool::ResumeDeferredJobs(ImageID imageId, int lod) {
         m_activeTileJobs.fetch_add((int)toResume.size());
         m_poolCv.notify_all();
         
-        wchar_t buf[256];
-        swprintf_s(buf, L"[HeavyPool] Phase 4.1: Resumed %zu deferred tiles for LOD=%d\n", toResume.size(), lod);
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("Pool_ResumeDeferred",
+            TraceLoggingUInt64((uint64_t)toResume.size(), "Count"),
+            TraceLoggingInt32(lod, "LOD"));
     }
 }
 
 void HeavyLanePool::WorkerLoop(int workerId, std::stop_token st) {
     Worker& self = m_workers[workerId];
     
-    wchar_t buf[128];
-    swprintf_s(buf, L"[HeavyPool] Worker %d started\n", workerId);
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("Worker_Lifecycle",
+        TraceLoggingString("Started", "Action"),
+        TraceLoggingInt32(workerId, "WorkerId"));
     
     while (!st.stop_requested()) {
         JobInfo job;
@@ -1223,7 +1228,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                    bool warmupResolved = false;
 
                    if (expectsMasterCache && m_masterWarmupImageId.load(std::memory_order_acquire) == job.imageId) {
-                        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Standard Job Waiting for Master Warmup...", "Message"));
+                        QV_LOG("Worker_Route", TraceLoggingString("Phase4 WaitMasterWarmup", "Action"));
                         std::unique_lock<std::mutex> waitLock(m_lodCacheMutex);
                         while (!m_masterWarmupReady.load(std::memory_order_acquire)) {
                             if (cancelPred()) {
@@ -1264,13 +1269,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                                 loaderName = L"MasterWarmup(MMF)";
                                 hr = S_OK;
                                 warmupResolved = true;
-                                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Standard Job resolved via Master Warmup", "Message"));
+                                QV_LOG("Worker_Route", TraceLoggingString("Phase4 ResolvedViaMasterWarmup", "Action"));
                             }
                         }
                    }
 
                    if (!warmupResolved) {
-                       QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase3] Titan Base Layer -> DecodeWorker subprocess", "Message"));
+                        QV_LOG("Worker_Route", TraceLoggingString("Phase3 TitanBaseLayer DecodeWorker", "Action"));
                        hr = LaunchDecodeWorker(self, job, targetW, targetH, rawFrame, meta, cancelPred);
                        if (SUCCEEDED(hr)) {
                            loaderName = L"DecodeWorker";
@@ -1401,7 +1406,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        // This would cause the auto-regulator to maliciously throttle the pool to < 3 threads, 
                        // crippling our N+1 Native Region Decoding. We simulate 100 MP/s to unlock full core usage!
                         if (loaderName.contains(L"Fake Base")) {
-                           QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[HeavyPool] Base Layer is Fake. Simulating 100.0 MP/s baseline to unlock Titan tiles.", "Message"));
+                            QV_LOG("Baseline_FakeBase", TraceLoggingString("FakeBaseSimulate100MPS", "Action"));
                            RecordBaselineSample(10000000.0, 100.0, srcWidth, srcHeight, isProgressiveJPEG);
                        } else {
                            RecordBaselineSample(outPixels, (double)benchMs, srcWidth, srcHeight, isProgressiveJPEG);
@@ -1413,7 +1418,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        if (m_titanFormat.load() == QuickView::TitanFormat::JXL) {
                             if (loaderName.contains(L"Prog DC")) {
                                m_isProgressiveJXL = true;
-                               QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[HeavyPool] Detected Progressive JXL. Enabling native Region Decoding!", "Message"));
+                                QV_LOG("Pool_FormatDetect", TraceLoggingString("ProgressiveJXL NativeRegion", "Action"));
                            } else {
                                m_isProgressiveJXL = false;
                            }
@@ -1424,7 +1429,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                     // [Fix] If Base Layer decode aborted (e.g. Gigapixel JXL too massive for CPU),
                     // MUST unlock concurrency so Native Region Decoding can blast through tiles!
                     // We simulate a fast decode (100MP/s) to unlock ~14 threads.
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[HeavyPool] Base Layer failed. Simulating 100MP/s baseline to unlock Titan tiles.", "Message"));
+                     QV_LOG("Baseline_FakeBase", TraceLoggingString("BaseFailedSimulate100MPS", "Action"));
                     RecordBaselineSample(10000000.0, 100.0, 10000, 10000, false);
                 }
          }
@@ -1433,10 +1438,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                // [Diagnostic] Trace missing tile (4,0)
                if (job.tileCoord.col == 4 && job.tileCoord.row == 0 && job.tileCoord.lod == 3) {
                    float scale = 1.0f / (float)(1 << job.tileCoord.lod);
-                   wchar_t diag[256];
-                   swprintf_s(diag, L"[HeavyPool] DIAGNOSTIC: Decoding Tile (4,0) LOD=%d. Region: x=%d y=%d w=%d h=%d Scale=%.4f\n", 
-                       job.tileCoord.lod, job.region.srcRect.x, job.region.srcRect.y, job.region.srcRect.w, job.region.srcRect.h, scale);
-                   QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(diag, "Message"));
+                   QV_LOG("Tile_Diagnostic",
+                       TraceLoggingInt32(job.tileCoord.lod, "LOD"),
+                       TraceLoggingInt32(job.region.srcRect.x, "RegionX"),
+                       TraceLoggingInt32(job.region.srcRect.y, "RegionY"),
+                       TraceLoggingInt32(job.region.srcRect.w, "RegionW"),
+                       TraceLoggingInt32(job.region.srcRect.h, "RegionH"),
+                       TraceLoggingFloat32(scale, "Scale"));
                }
                
                {
@@ -1495,19 +1503,14 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                         uint64_t prev = s_lastStrategyLogMs.load(std::memory_order_relaxed);
                         if (nowMs - prev > 500 &&
                             s_lastStrategyLogMs.compare_exchange_strong(prev, nowMs, std::memory_order_relaxed)) {
-                            wchar_t strat[256];
-                            swprintf_s(
-                                strat,
-                                L"[HeavyPool] Strategy: fmt=%s lod=%d single=%s nativeROI=%s mandatory=%s webpOnce=%s jpgProgOnce=%s progressiveJXL=%s\n",
-                                QuickView::TitanFormatToString(m_titanFormat.load()),
-                                job.tileCoord.lod,
-                                wantsSingleDecode ? L"Y" : L"N",
-                                hasNativeRegionDecoder ? L"Y" : L"N",
-                                isSingleDecodeMandatory ? L"Y" : L"N",
-                                webpSingleDecode ? L"Y" : L"N",
-                                jpegProgressiveSingleDecode ? L"Y" : L"N",
-                                m_isProgressiveJXL ? L"Y" : L"N");
-                            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(strat, "Message"));
+                            QV_LOG("Tile_Strategy",
+                                TraceLoggingInt32(job.tileCoord.lod, "LOD"),
+                                TraceLoggingBool(wantsSingleDecode, "SingleDecode"),
+                                TraceLoggingBool(hasNativeRegionDecoder, "NativeROI"),
+                                TraceLoggingBool(isSingleDecodeMandatory, "Mandatory"),
+                                TraceLoggingBool(webpSingleDecode, "WebpOnce"),
+                                TraceLoggingBool(jpegProgressiveSingleDecode, "JpgProgOnce"),
+                                TraceLoggingBool(m_isProgressiveJXL, "ProgressiveJXL"));
                         }
                     }
 
@@ -1674,14 +1677,15 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
           }
           self.isCopyOnly = isCopyOnly;
 
-          // Diagnostic: Result
-          wchar_t resultLog[256];
-          const wchar_t* opMode = (job.type == JobType::Tile)
-              ? (isCopyOnly ? L"COPY" : L"DECODE")
-              : L"DECODE";
-          swprintf_s(resultLog, L"[HeavyPool] Worker %d: %s %s in %d ms (Wait: %lld ms, Concurrency: %d, Mode: %s, Loader: %s, hr=0x%08X)\n", 
-              workerId, SUCCEEDED(hr) ? L"DONE" : L"FAIL", (job.type == JobType::Tile ? L"Tile" : L"Std"), (int)decodeMs, waitMs, activeWorkers, opMode, loaderName.c_str(), (uint32_t)hr);
-          QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(resultLog, "Message"));
+          QV_LOG("Worker_Result",
+              TraceLoggingInt32(workerId, "WorkerId"),
+              TraceLoggingBool(SUCCEEDED(hr), "Success"),
+              TraceLoggingString(job.type == JobType::Tile ? "Tile" : "Std", "JobType"),
+              TraceLoggingInt32((int)decodeMs, "DecodeMs"),
+              TraceLoggingInt64((int64_t)waitMs, "WaitMs"),
+              TraceLoggingInt32(activeWorkers, "Concurrency"),
+              TraceLoggingString(isCopyOnly ? "COPY" : "DECODE", "Mode"),
+              TraceLoggingUInt32((uint32_t)hr, "HR"));
           
 
         
@@ -1800,11 +1804,11 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 
                 evt.rawFrame = safeFrame;
                 
-                // [Diagnostic] Trace Standard Job Output
-                wchar_t buf[256];
-                swprintf_s(buf, L"[HeavyPool] Standard Job Done: W=%d H=%d Stride=%d Buffer=%zu Pixels=%p\n", 
-                    safeFrame->width, safeFrame->height, safeFrame->stride, bufferSize, safeFrame->pixels);
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+                QV_LOG("Worker_StdJobDone",
+                    TraceLoggingInt32(safeFrame->width, "Width"),
+                    TraceLoggingInt32(safeFrame->height, "Height"),
+                    TraceLoggingInt32(safeFrame->stride, "Stride"),
+                    TraceLoggingUInt64((uint64_t)bufferSize, "BufferSize"));
             }
 
             // [Fix] Compute histogram for HeavyLane results
@@ -1824,11 +1828,11 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                     auto key = QuickView::TileKey::From(job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod);
                     tm->OnTileCancelled(key); // Reset to Empty -> Retry next frame
                     
-                    // Log failure
-                    wchar_t failLog[128];
-                    swprintf_s(failLog, L"[HeavyPool] Failed/Invalid Tile: (%d,%d) LOD=%d. HR=0x%X\n", 
-                        job.tileCoord.col, job.tileCoord.row, job.tileCoord.lod, hr);
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(failLog, "Message"));
+                    QV_LOG("Tile_Failed",
+                        TraceLoggingInt32(job.tileCoord.col, "Col"),
+                        TraceLoggingInt32(job.tileCoord.row, "Row"),
+                        TraceLoggingInt32(job.tileCoord.lod, "LOD"),
+                        TraceLoggingUInt32((uint32_t)hr, "HR"));
                 }
             } else {
                 // [HEIC Fix] Explicitly notify Engine of Standard Load Failures
@@ -1996,7 +2000,7 @@ void HeavyLanePool::WaitForTileJobs() {
     int active = m_activeTileJobs.load();
     if (active == 0) return;
 
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[HeavyPool] WaitForTileJobs: Waiting for workers to finish...", "Message"));
+    QV_LOG("Pool_Lifecycle", TraceLoggingString("WaitForTileJobs Start", "Action"));
     
     // Spin-wait with timeout (to prevent total freeze if bug)
     auto start = std::chrono::steady_clock::now();
@@ -2005,7 +2009,7 @@ void HeavyLanePool::WaitForTileJobs() {
         
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() > 5000) {
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[HeavyPool] WaitForTileJobs: TIMEOUT! Forced continue. (Possible Leak)", "Message"));
+            QV_LOG("Pool_Lifecycle", TraceLoggingString("WaitForTileJobs TIMEOUT", "Action"));
             break;
         }
     }
@@ -2114,16 +2118,16 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
         int imgStride = imgW * 4; // BGRA packed
 
         if (imgW <= 0 || imgH <= 0) {
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[MMF] Warmup aborted: unknown image dimensions", "Message"));
+            QV_LOG("MMF_Warmup", TraceLoggingString("Aborted UnknownDimensions", "Action"));
             return;
         }
 
         // [Direct-to-MMF] Step 2: Pre-create empty MMF file
         HRESULT hr = BuildMasterBackingStoreEmpty(imgW, imgH, imgStride, imageId);
         if (FAILED(hr)) {
-            wchar_t fail[192];
-            swprintf_s(fail, L"[MMF] Warmup: BuildMasterBackingStoreEmpty failed: hr=0x%X\n", hr);
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(fail, "Message"));
+            QV_LOG("MMF_Warmup",
+                TraceLoggingString("BuildEmpty Failed", "Action"),
+                TraceLoggingUInt32((uint32_t)hr, "HR"));
             // Fallback to old heap-based path
             goto fallback_heap;
         }
@@ -2169,9 +2173,10 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                 std::lock_guard lock(m_lodCacheMutex);
                 m_masterLOD0Cache = {};
 
-                wchar_t ok[192];
-                swprintf_s(ok, L"[MMF] Master warmup direct-to-MMF ready: %dx%d (%s)\n", decW, decH, QuickView::TitanFormatToString(m_titanFormat.load()));
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(ok, "Message"));
+                QV_LOG("MMF_Warmup",
+                    TraceLoggingString("DirectToMMF Ready", "Action"),
+                    TraceLoggingInt32(decW, "Width"),
+                    TraceLoggingInt32(decH, "Height"));
 
                 m_masterWarmupReady.store(true, std::memory_order_release);
                 m_lodCacheCond.notify_all();
@@ -2182,7 +2187,7 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
     fallback_heap:
         // Fallback: old heap-based FullDecodeFromMemory + BuildMasterBackingStore (memcpy)
         {
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[MMF] Direct-to-MMF failed, fallback to heap decode", "Message"));
+            QV_LOG("MMF_Warmup", TraceLoggingString("DirectToMMF Failed HeapFallback", "Action"));
             ResetMasterBackingStore(); // Clean up any partial empty MMF
 
             QuickView::RawImageFrame fullFrame;
@@ -2211,9 +2216,9 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
             if (st.stop_requested()) return;
             if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
             if (FAILED(hr) || !fullFrame.IsValid()) {
-                wchar_t fail[192];
-                swprintf_s(fail, L"[HeavyPool] Master warmup failed: hr=0x%X (%s)\n", hr, QuickView::TitanFormatToString(m_titanFormat.load()));
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(fail, "Message"));
+                QV_LOG("MMF_Warmup",
+                    TraceLoggingString("HeapFallback Failed", "Action"),
+                    TraceLoggingUInt32((uint32_t)hr, "HR"));
                 return;
             }
 
@@ -2222,16 +2227,17 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
                 std::lock_guard lock(m_lodCacheMutex);
                 m_masterLOD0Cache = {};
 
-                wchar_t ok[192];
-                swprintf_s(ok, L"[HeavyPool] Master warmup ready (heap fallback): %dx%d (%s)\n", fullFrame.width, fullFrame.height, QuickView::TitanFormatToString(m_titanFormat.load()));
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(ok, "Message"));
+                QV_LOG("MMF_Warmup",
+                    TraceLoggingString("HeapFallback Ready", "Action"),
+                    TraceLoggingInt32(fullFrame.width, "Width"),
+                    TraceLoggingInt32(fullFrame.height, "Height"));
 
                 m_masterWarmupReady.store(true, std::memory_order_release);
                 m_lodCacheCond.notify_all();
             } else {
-                wchar_t fail[192];
-                swprintf_s(fail, L"[HeavyPool] Master warmup MMF build failed: hr=0x%X (%s)\n", hr, QuickView::TitanFormatToString(m_titanFormat.load()));
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(fail, "Message"));
+                QV_LOG("MMF_Warmup",
+                    TraceLoggingString("MMF Build Failed", "Action"),
+                    TraceLoggingUInt32((uint32_t)hr, "HR"));
             }
         }
     });
@@ -2244,7 +2250,7 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
 void HeavyLanePool::GCThreadFunc(std::stop_token st) {
     // [Phase 5] Set low priority so GC never starves decode threads
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[GC] Garbage Collector thread started (BELOW_NORMAL priority)", "Message"));
+    QV_LOG("GC_Lifecycle", TraceLoggingString("Started BelowNormal", "Action"));
     
     std::vector<TrashBag> localBatch; // Double-buffer: swap under lock, destroy outside lock
     
@@ -2278,13 +2284,14 @@ void HeavyLanePool::GCThreadFunc(std::stop_token st) {
             auto t1 = std::chrono::high_resolution_clock::now();
             int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
             
-            wchar_t buf[128];
-            swprintf_s(buf, L"[GC] Collected %d bags in %d ms\n", count, ms);
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+            
+            QV_LOG("GC_Collect",
+                TraceLoggingInt32(count, "BagCount"),
+                TraceLoggingInt32(ms, "DurationMs"));
         }
     }
     
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[GC] Garbage Collector thread exiting", "Message"));
+    QV_LOG("GC_Lifecycle", TraceLoggingString("Exiting", "Action"));
 }
 
 void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
@@ -2315,7 +2322,7 @@ void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
             }
         }
         if (!localBatch.empty()) {
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[GC] CRITICAL: Trash backlog exceeded threshold. Performing synchronous recovery.", "Message"));
+            QV_LOG("GC_Lifecycle", TraceLoggingString("CRITICAL TrashBacklog SyncRecovery", "Action"));
             for (auto& bag : localBatch) {
                 if (bag.backing.isPooled) {
                     RelinquishToPool(std::move(bag.backing));
@@ -2349,9 +2356,9 @@ void HeavyLanePool::RelinquishToPool(MasterBackingStore&& store) {
     std::lock_guard lock(m_mmfPoolMutex);
     if (m_reservePool.size() < kMasterPoolCapacity) {
         m_reservePool.push_back(std::move(store));
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[MMFPool] Store returned to reserve pool (View kept mapped).", "Message"));
+        QV_LOG("MMFPool_Route", TraceLoggingString("ReturnedToReserve", "Action"));
     } else {
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[MMFPool] Reserve pool full, destroying store.", "Message"));
+        QV_LOG("MMFPool_Route", TraceLoggingString("ReserveFullDestroying", "Action"));
     }
 }
 
@@ -2487,11 +2494,9 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
                     // Do NOT clear the entire 5GB buffer to save ~100-300ms of CPU time.
                     ZeroMemory(m_masterBacking.view, requiredBytes);
                     
-                    wchar_t msg[128];
-                    swprintf_s(msg, L"[MMFPool] REUSE Blackboard SUCCESS (View=%p, Size=%zu MB, CachedView=%s)\n", 
-                               m_masterBacking.view, requiredBytes / (1024*1024), 
-                               m_masterBacking.view ? L"YES" : L"NO");
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(msg, "Message"));
+                    QV_LOG("MMFPool_Reuse",
+                        TraceLoggingString("BlackboardSuccess", "Action"),
+                        TraceLoggingUInt64(requiredBytes / (1024*1024), "SizeMB"));
                     return S_OK;
                 }
             }
@@ -2517,7 +2522,7 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
     DWORD dwTemp = 0;
     if (!DeviceIoControl(hFile, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &dwTemp, NULL)) {
         // Fallback to normal if sparse fails for some reason (e.g. non-NTFS)
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[MMFPool] WARNING: FSCTL_SET_SPARSE failed.", "Message"));
+        QV_LOG("MMFPool_Route", TraceLoggingString("FSCTL_SET_SPARSE Failed", "Action"));
     }
 
     // Step 2: Set file size (instantaneous on sparse files)
@@ -2530,7 +2535,7 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
     }
     
     // SE_MANAGE_VOLUME_NAME / SetFileValidData logic removed (Simplified)
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[MMFPool] Sparse Allocation initialized.", "Message"));
+    QV_LOG("MMFPool_Route", TraceLoggingString("SparseAllocationInit", "Action"));
 
     HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
     if (!hMap) {
@@ -2565,10 +2570,11 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
         m_masterBacking.isPooled = usePool;
     }
 
-    wchar_t dbg[256];
-    swprintf_s(dbg, L"[MMFPool] Global Master created: %s, Capacity=%zu MB, Initial=%dx%d\n", 
-               usePool ? L"POOLED" : L"DYNAMIC", allocationSize / (1024*1024), width, height);
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+    QV_LOG("MMFPool_Create",
+        TraceLoggingBool(usePool, "IsPooled"),
+        TraceLoggingUInt64(allocationSize / (1024*1024), "CapacityMB"),
+        TraceLoggingInt32(width, "Width"),
+        TraceLoggingInt32(height, "Height"));
     return S_OK;
 }
 
@@ -2641,15 +2647,11 @@ bool HeavyLanePool::ShouldUseSingleDecode(int lod) const {
         if (lod != expected || lastLoggedLOD.compare_exchange_strong(expected, lod)) {
             lastLogTime.store(nowMs, std::memory_order_relaxed);
             lastLoggedLOD.store(lod, std::memory_order_relaxed);
-            wchar_t buf[256];
-            if (!fits) {
-                swprintf_s(buf, L"[HeavyPool] P14: LOD=%d fmt=%s SKIPPED (peak=%zu MB, avail=%zu MB)\n",
-                    lod, QuickView::TitanFormatToString(singleFmt), peakBytes / (1024*1024), (size_t)(available / (1024*1024)));
-            } else {
-                swprintf_s(buf, L"[HeavyPool] P14: LOD=%d fmt=%s OK (output=%zu MB, peak=%zu MB, avail=%zu MB)\n",
-                    lod, QuickView::TitanFormatToString(singleFmt), outputBytes / (1024*1024), peakBytes / (1024*1024), (size_t)(available / (1024*1024)));
-            }
-            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+            QV_LOG("P14_MemoryCheck",
+                TraceLoggingInt32(lod, "LOD"),
+                TraceLoggingBool(fits, "Fits"),
+                TraceLoggingUInt64(peakBytes / (1024*1024), "PeakMB"),
+                TraceLoggingUInt64((size_t)(available / (1024*1024)), "AvailMB"));
         }
     }
     
@@ -2677,11 +2679,11 @@ bool HeavyLanePool::ShouldUseSingleDecodeForWebP(int lod) const {
     uint64_t prev = s_lastLogMs.load(std::memory_order_relaxed);
     if (nowMs - prev > 1000 &&
         s_lastLogMs.compare_exchange_strong(prev, nowMs, std::memory_order_relaxed)) {
-        wchar_t buf[256];
-        swprintf_s(buf,
-            L"[HeavyPool] WebP SingleDecode Guard: LOD=%d req=%.1fMB avail=%.1fMB limit=%.1fMB -> %s\n",
-            lod, requiredRamMB, availableRamMB, availableRamMB * 0.40, canSingleDecode ? L"Y" : L"N");
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("WebP_SingleDecodeGuard",
+            TraceLoggingInt32(lod, "LOD"),
+            TraceLoggingFloat64(requiredRamMB, "RequiredMB"),
+            TraceLoggingFloat64(availableRamMB, "AvailableMB"),
+            TraceLoggingBool(canSingleDecode, "CanSingleDecode"));
     }
 
     return canSingleDecode;
@@ -2775,7 +2777,7 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
         WaitForSingleObject(worker.activeWorkerProcess, 500);
         CloseHandle(worker.activeWorkerProcess);
         worker.activeWorkerProcess = nullptr;
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Killed lingering old DecodeWorker", "Message"));
+        QV_LOG("DecodeWorker_Lifecycle", TraceLoggingString("KilledLingeringOld", "Action"));
     }
 
     STARTUPINFOW si{};
@@ -2800,7 +2802,7 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
 
     // [Phase 4.1] Double check cancel immediately AFTER creating process
     if (checkCancel && checkCancel()) {
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4.1] Instantly killed new DecodeWorker due to cancel", "Message"));
+        QV_LOG("DecodeWorker_Lifecycle", TraceLoggingString("InstantKilledNewDueToCancel", "Action"));
         TerminateProcess(pi.hProcess, static_cast<UINT>(E_ABORT));
         // We let the wait loop handle cleanup
     }
@@ -2814,10 +2816,10 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     worker.activeWorkerProcess = pi.hProcess;
 
     {
-        wchar_t dbg[256];
-        swprintf_s(dbg, L"[Phase4] DecodeWorker launched: PID=%lu target=%dx%d\n",
-                   pi.dwProcessId, targetW, targetH);
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("DecodeWorker_Launch",
+            TraceLoggingUInt32(pi.dwProcessId, "PID"),
+            TraceLoggingInt32(targetW, "TargetW"),
+            TraceLoggingInt32(targetH, "TargetH"));
     }
 
     // Poll loop: 15ms intervals, check for cancellation
@@ -2829,7 +2831,7 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
 
         if (waitRes == WAIT_TIMEOUT) {
             if (checkCancel && checkCancel()) {
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase3] DecodeWorker KILLED by cancel", "Message"));
+                QV_LOG("DecodeWorker_Lifecycle", TraceLoggingString("KilledByCancel", "Action"));
                 TerminateProcess(pi.hProcess, static_cast<UINT>(E_ABORT));
                 WaitForSingleObject(pi.hProcess, 1000);
                 waitHr = E_ABORT;
@@ -2906,10 +2908,12 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     outMeta.Height = static_cast<int>(header->originalHeight);
 
     {
-        wchar_t dbg[256];
-        swprintf_s(dbg, L"[Phase4] DecodeWorker OK (ZeroCopy): %dx%d stride=%d exif=%d\n",
-                   outFrame.width, outFrame.height, outFrame.stride, header->exifOrientation);
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+        QV_LOG("DecodeWorker_Result",
+            TraceLoggingString("ZeroCopy OK", "Action"),
+            TraceLoggingInt32(outFrame.width, "Width"),
+            TraceLoggingInt32(outFrame.height, "Height"),
+            TraceLoggingInt32(outFrame.stride, "Stride"),
+            TraceLoggingInt32((int)header->exifOrientation, "ExifOrientation"));
     }
 
     return S_OK;
@@ -2956,10 +2960,12 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
         m_lodCache = {};
     }
     
-    wchar_t buf[256];
-    swprintf_s(buf, L"[HeavyPool] P14: Full decode LOD=%d (scale=%.4f, src=%dx%d)...\n",
-        lod, scale, m_titanSrcW, m_titanSrcH);
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("P14_FullDecode",
+        TraceLoggingString("Start", "Action"),
+        TraceLoggingInt32(lod, "LOD"),
+        TraceLoggingFloat32(scale, "Scale"),
+        TraceLoggingInt32(m_titanSrcW, "SrcW"),
+        TraceLoggingInt32(m_titanSrcH, "SrcH"));
     
     auto t0 = std::chrono::high_resolution_clock::now();
     
@@ -3021,9 +3027,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
                     hr = S_OK;
                     
-                    wchar_t dbg[128];
-                    swprintf_s(dbg, L"[P15] Master built + Instant software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+                    QV_LOG("P15_MasterRoute",
+                        TraceLoggingString("InstantDownscale", "Action"),
+                        TraceLoggingInt32(targetW, "Width"),
+                        TraceLoggingInt32(targetH, "Height"),
+                        TraceLoggingInt32(lod, "LOD"));
                 }
             } else {
                 if (masterFromRam) {
@@ -3035,7 +3043,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.format = QuickView::PixelFormat::BGRA8888;
                     fullFrame.memoryDeleter = [masterPixels](uint8_t* p) mutable { masterPixels.reset(); };
                     hr = S_OK;
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[P15] Master built + Instant Zero-Copy for LOD 0", "Message"));
+                    QV_LOG("P15_MasterRoute", TraceLoggingString("ZeroCopy LOD0 RAM", "Action"));
                 } else {
                     // MMF-backed cache: keep stable ownership by copying out for this one request.
                     size_t dstSize = dstStride * targetH;
@@ -3055,7 +3063,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.format = QuickView::PixelFormat::BGRA8888;
                         fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
                         hr = S_OK;
-                        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[P15] Master MMF + Copy-out for LOD 0", "Message"));
+                        QV_LOG("P15_MasterRoute", TraceLoggingString("MMF CopyOut LOD0", "Action"));
                     }
                 }
             }
@@ -3069,7 +3077,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             
             if (expectsMasterCache && m_masterWarmupImageId.load(std::memory_order_acquire) == job.imageId) {
                 // Warmup is building the Master Cache — wait for it
-                QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Waiting for Master Warmup (Direct-to-MMF) instead of launching subprocess...", "Message"));
+                QV_LOG("Worker_Route", TraceLoggingString("Phase4 WaitMasterWarmup DirectToMMF", "Action"));
                 
                 std::unique_lock<std::mutex> waitLock(m_lodCacheMutex);
                 while (!m_masterWarmupReady.load(std::memory_order_acquire)) {
@@ -3081,7 +3089,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     
                     // Check if image changed while waiting
                     if (m_masterWarmupImageId.load(std::memory_order_acquire) != job.imageId) {
-                        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Warmup image changed while waiting, aborting", "Message"));
+                        QV_LOG("Worker_Route", TraceLoggingString("Phase4 WarmupImageChanged Aborting", "Action"));
                         guard.countFailure = false;
                         return E_ABORT;
                     }
@@ -3117,14 +3125,16 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
                         hr = S_OK;
                         
-                        wchar_t dbg[128];
-                        swprintf_s(dbg, L"[P15] Master built + Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
-                        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+                        QV_LOG("P15_MasterRoute",
+                            TraceLoggingString("SoftwareDownscale", "Action"),
+                            TraceLoggingInt32(targetW, "Width"),
+                            TraceLoggingInt32(targetH, "Height"),
+                            TraceLoggingInt32(lod, "LOD"));
                     } else {
                         hr = E_OUTOFMEMORY;
                     }
                 } else {
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Warmup completed but no Master Cache available — fallback to subprocess", "Message"));
+                    QV_LOG("Worker_Route", TraceLoggingString("Phase4 NoMasterCache FallbackSubprocess", "Action"));
                     hr = E_FAIL; // Will fall through to subprocess below
                 }
                 if (SUCCEEDED(hr)) warmupResolved = true;
@@ -3140,7 +3150,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 if (!expectsMasterCache) {
                     reqW = targetW;
                     reqH = targetH;
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Skipping Master cache construction. Requesting LOD size directly from DecodeWorker.", "Message"));
+                    QV_LOG("Worker_Route", TraceLoggingString("Phase4 SkipMasterCache DirectLOD DecodeWorker", "Action"));
                 }
 
                 CImageLoader::ImageMetadata lodMeta;
@@ -3168,7 +3178,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops);
                 if (SUCCEEDED(hr)) {
                     loader = L"WIC(LOD-Fallback)";
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Inline WIC fallback succeeded", "Message"));
+                    QV_LOG("Worker_Route", TraceLoggingString("Phase4 InlineWIC FallbackSuccess", "Action"));
                 }
             }
             
@@ -3196,7 +3206,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     if (shouldBuildBacking) {
                         if (SUCCEEDED(BuildMasterBackingStore(frameSharedPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId))) {
                             backedByMmf = true;
-                            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[Phase4] Master cache persisted to MMF backing store", "Message"));
+                            QV_LOG("Worker_Route", TraceLoggingString("Phase4 MasterCache PersistedToMMF", "Action"));
                         }
                     }
                     
@@ -3233,9 +3243,11 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                             fullFrame.stride = (int)dstStride;
                             fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
                             
-                            wchar_t dbg[128];
-                            swprintf_s(dbg, L"[P15] Master built + Software downscale → %dx%d (LOD=%d)\n", targetW, targetH, lod);
-                            QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+                            QV_LOG("P15_MasterRoute",
+                                TraceLoggingString("SoftwareDownscale", "Action"),
+                                TraceLoggingInt32(targetW, "Width"),
+                                TraceLoggingInt32(targetH, "Height"),
+                                TraceLoggingInt32(lod, "LOD"));
                         }
                     } else {
                         fullFrame.pixels = frameSharedPtr.get();
@@ -3244,7 +3256,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.stride = (int)dstStride;
                         fullFrame.memoryDeleter = [frameSharedPtr](uint8_t* p) mutable { frameSharedPtr.reset(); };
                         
-                        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(L"[P15] Master built + Zero-Copy for LOD 0", "Message"));
+                        QV_LOG("P15_MasterRoute", TraceLoggingString("ZeroCopy LOD0", "Action"));
                     }
                 } else {
                     // [Direct LOD] Bypassed Master Cache. Subprocess already returned exact LOD target size.
@@ -3254,9 +3266,10 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.stride = fullFrame.stride;
                     fullFrame.memoryDeleter = [frameSharedPtr](uint8_t* p) mutable { frameSharedPtr.reset(); };
                     
-                    wchar_t dbg[128];
-                    swprintf_s(dbg, L"[Phase4] Subprocess rendered directly to LOD size: %dx%d. Applied instantly.\n", fullFrame.width, fullFrame.height);
-                    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(dbg, "Message"));
+                    QV_LOG("DecodeWorker_Result",
+                        TraceLoggingString("DirectLOD Applied", "Action"),
+                        TraceLoggingInt32(fullFrame.width, "Width"),
+                        TraceLoggingInt32(fullFrame.height, "Height"));
                 }
             }
         }
@@ -3268,8 +3281,9 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
     }
     
     if (FAILED(hr) || !fullFrame.IsValid()) {
-        swprintf_s(buf, L"[HeavyPool] P14: Full decode FAILED (hr=0x%X)\n", hr);
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("P14_FullDecode",
+            TraceLoggingString("FAILED", "Action"),
+            TraceLoggingUInt32((uint32_t)hr, "HR"));
         return hr;
     }
 
@@ -3279,19 +3293,24 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
     const int expectedW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
     const int expectedH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
     if (fullFrame.width + 1 < expectedW || fullFrame.height + 1 < expectedH) {
-        swprintf_s(buf,
-            L"[HeavyPool] P14: Full decode INVALID size %dx%d (< expected %dx%d). Rejecting cache.\n",
-            fullFrame.width, fullFrame.height, expectedW, expectedH);
-        QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+        QV_LOG("P14_FullDecode",
+            TraceLoggingString("INVALID Size", "Action"),
+            TraceLoggingInt32(fullFrame.width, "ActualW"),
+            TraceLoggingInt32(fullFrame.height, "ActualH"),
+            TraceLoggingInt32(expectedW, "ExpectedW"),
+            TraceLoggingInt32(expectedH, "ExpectedH"));
         return E_FAIL;
     }
     
     auto t1 = std::chrono::high_resolution_clock::now();
     int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     
-    swprintf_s(buf, L"[HeavyPool] P14: Full decode DONE in %d ms → %dx%d (%zu MB cached)\n",
-        decodeMs, fullFrame.width, fullFrame.height, fullFrame.GetBufferSize() / (1024*1024));
-    QV_LOG("HeavyLanePool_Log", TraceLoggingWideString(buf, "Message"));
+    QV_LOG("P14_FullDecode",
+        TraceLoggingString("DONE", "Action"),
+        TraceLoggingInt32(decodeMs, "DurationMs"),
+        TraceLoggingInt32(fullFrame.width, "Width"),
+        TraceLoggingInt32(fullFrame.height, "Height"),
+        TraceLoggingUInt64(fullFrame.GetBufferSize() / (1024*1024), "CachedMB"));
     
     // Cache the full decoded buffer
     {

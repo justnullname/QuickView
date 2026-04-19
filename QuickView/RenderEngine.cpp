@@ -6,6 +6,7 @@
 #include <algorithm>
 #include "RenderEngine.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "RenderEngine";
 #include "DebugMetrics.h"
 #include "EditState.h"
 #include "ImageTypes.h" // [Direct D2D] RawImageFrame
@@ -656,9 +657,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               break; 
           }
 
-          wchar_t dbg[256];
-          swprintf_s(dbg, L"[RenderEngine] GPU Bake Triggered (UltraHDR). Target Headroom: %.2f stops.\n", payload.targetHeadroom);
-          QV_LOG("RenderEngine_Log", TraceLoggingWideString(dbg, "Message"));
+          QV_LOG("Render_GpuBake",
+              TraceLoggingString("UltraHDR Triggered", "Action"),
+              TraceLoggingFloat32(payload.targetHeadroom, "TargetHeadroom"));
 
           ComPtr<ID3D11Texture2D> pBaked;
           HRESULT hrBake = m_computeEngine->ComposeGainMap(
@@ -702,10 +703,12 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   UINT uploadStride = static_cast<UINT>(frame.stride);
   std::vector<uint8_t> linearScRgbPixels;
 
-  wchar_t dbgUpload[256];
-  swprintf_s(dbgUpload, L"[RenderEngine] Upload: %dx%d, Format=%d, BlendOp=%d, AdvColor=%d\n",
-      (int)frame.width, (int)frame.height, (int)frame.format, (int)frame.blendOp, (int)m_isAdvancedColor);
-  QV_LOG("RenderEngine_Log", TraceLoggingWideString(dbgUpload, "Message"));
+  QV_LOG("Render_Upload",
+      TraceLoggingInt32((int)frame.width, "Width"),
+      TraceLoggingInt32((int)frame.height, "Height"),
+      TraceLoggingInt32((int)frame.format, "Format"),
+      TraceLoggingInt32((int)frame.blendOp, "BlendOp"),
+      TraceLoggingBool(m_isAdvancedColor, "AdvColor"));
 
   switch (frame.format) {
   case QuickView::PixelFormat::BGRA8888:

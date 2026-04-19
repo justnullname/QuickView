@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "QuickViewETW.h"
+static constexpr const char* CURRENT_MODULE = "TileManager";
 #include "DebugMetrics.h"
 #include "TileManager.h"
 #include "SystemInfo.h"
@@ -34,9 +35,9 @@ namespace QuickView {
         // 1 Tile = 1048576 bytes
         m_maxTiles = (int)(budget / (1024 * 1024));
         
-        wchar_t log[128];
-        swprintf_s(log, L"[TileManager] Aggressive Caching Enabled. Budget: %llu MB (%d tiles)\n", budget / (1024*1024), m_maxTiles);
-        QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(log, "Message"));
+        QV_LOG("TileMgr_Init",
+            TraceLoggingUInt64(budget / (1024*1024), "BudgetMB"),
+            TraceLoggingInt32(m_maxTiles, "MaxTiles"));
     }
 
     TileManager::~TileManager() {
@@ -131,11 +132,11 @@ namespace QuickView {
             uint64_t nowSkip = GetTickCount64();
             if (nowSkip - lastSkipLog > 500) {
                 lastSkipLog = nowSkip;
-                wchar_t skipBuf[256];
-                swprintf_s(skipBuf,
-                    L"[TileManager] Skip trigger: zoom=%.4f base=%.4f img=%dx%d\n",
-                    zoom, basePreviewRatio, imageW, imageH);
-                QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(skipBuf, "Message"));
+                QV_LOG("TileMgr_Skip",
+                    TraceLoggingFloat32(zoom, "Zoom"),
+                    TraceLoggingFloat32(basePreviewRatio, "BaseRatio"),
+                    TraceLoggingInt32(imageW, "ImageW"),
+                    TraceLoggingInt32(imageH, "ImageH"));
             }
             // Not in tile mode: clear viewport progress source so UI doesn't show stale progress.
             m_viewportTilesActive = false;
@@ -195,10 +196,16 @@ namespace QuickView {
         uint64_t now = GetTickCount64();
         if (now - lastLog > 2000) {
             lastLog = now;
-            wchar_t buf[256];
-            swprintf_s(buf, L"[TileManager] Update: LOD=%d Viewport=[%d, %d, %d, %d] Grid=[%d,%d] to [%d,%d]\n", 
-                lod, viewport.x, viewport.y, viewport.w, viewport.h, startX, startY, endX, endY);
-            QV_LOG("QuickView_GlobalLog", TraceLoggingWideString(buf, "Message"));
+            QV_LOG("TileMgr_Update",
+                TraceLoggingInt32(lod, "LOD"),
+                TraceLoggingInt32(viewport.x, "VpX"),
+                TraceLoggingInt32(viewport.y, "VpY"),
+                TraceLoggingInt32(viewport.w, "VpW"),
+                TraceLoggingInt32(viewport.h, "VpH"),
+                TraceLoggingInt32(startX, "GridStartX"),
+                TraceLoggingInt32(startY, "GridStartY"),
+                TraceLoggingInt32(endX, "GridEndX"),
+                TraceLoggingInt32(endY, "GridEndY"));
         }
 
         std::vector<TileKey> missing;
