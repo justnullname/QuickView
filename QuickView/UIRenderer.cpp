@@ -2290,7 +2290,6 @@ namespace {
     static std::wstring BuildGainBlendWeightLabel(const QuickView::HdrStaticMetadata& hdr,
                                                   const QuickView::DisplayColorState& displayState) {
         if (!hdr.hasGainMap) return L"";
-        extern AppConfig g_config;
         const float baseStops = hdr.gainMapBaseHeadroom;
         const float altStops = hdr.gainMapAlternateHeadroom;
         const float currentStops = hdr.gainMapAppliedHeadroom > 0.0f ? hdr.gainMapAppliedHeadroom : displayState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);

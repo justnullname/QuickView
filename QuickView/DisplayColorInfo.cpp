@@ -10,6 +10,7 @@
 #include <wrl/wrappers/corewrappers.h>
 
 #pragma comment(lib, "runtimeobject.lib")
+#pragma comment(lib, "mscms.lib")
 
 namespace QuickView {
 
@@ -116,7 +117,8 @@ float QueryIccPeakLuminance(const std::wstring& gdiDeviceName) {
     if (!hProfile) return 0.0f;
 
     DWORD tagSize = 0;
-    BOOL bHasTag = GetColorProfileElementSize(hProfile, 'lumi', &tagSize);
+    BOOL bReference = FALSE;
+    BOOL bHasTag = GetColorProfileElement(hProfile, 'lumi', 0, &tagSize, nullptr, &bReference);
     float peakNits = 0.0f;
     if (bHasTag && tagSize >= 20) {
         std::vector<BYTE> buffer(tagSize);
