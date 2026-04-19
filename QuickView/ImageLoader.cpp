@@ -5369,7 +5369,7 @@ namespace QuickView {
                 // [Ultra HDR] Phase 2: Extract MPF Gain Map (uses pBuf which
                 // is still alive — it's the original file buffer)
                 // ============================================================
-                if (hasUltraHdr) {
+                if (hasUltraHdr && !PrefersSdrTarget(ctx)) {
                     result.metadata.hdrMetadata.hasGainMap = true;
                     result.metadata.hdrMetadata.isValid = true;
                     result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::SRGB;
@@ -6021,7 +6021,9 @@ namespace QuickView {
                 avifDecoder* decoder = avifDecoderCreate();
                 if (!decoder) return E_OUTOFMEMORY;
 
-                decoder->imageContentToDecode |= AVIF_IMAGE_CONTENT_GAIN_MAP;
+                if (!PrefersSdrTarget(ctx)) {
+                    decoder->imageContentToDecode |= AVIF_IMAGE_CONTENT_GAIN_MAP;
+                }
 
                 decoder->strictFlags = AVIF_STRICT_DISABLED;
                 const unsigned int threads = std::thread::hardware_concurrency();
@@ -7156,7 +7158,7 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
             HRESULT hr = WIC_HEIC::Load(filePath, ctx, result, m_wicFactory.Get());
             if (SUCCEEDED(hr)) {
                 // [v10.3] Async Gain Map Decode for HEIC
-                if (result.metadata.hdrMetadata.hasGainMap && ctx.onAuxLayerReady) {
+                if (result.metadata.hdrMetadata.hasGainMap && ctx.onAuxLayerReady && !PrefersSdrTarget(ctx)) {
                     // Copy necessary data to pass to thread
                     std::vector<uint8_t> threadData(mappedData, mappedData + mappedSize);
                     float headroom = result.metadata.hdrMetadata.gainMapAlternateHeadroom;

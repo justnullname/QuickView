@@ -137,8 +137,14 @@ float QueryIccPeakLuminance(const std::wstring& gdiDeviceName) {
 }
 
 } // namespace
+    
+static float s_cachedHardwarePeakNits = -1.0f;
+static float s_cachedSdrWhiteLevel = -1.0f;
 
-
+void DisplayColorInfo::InvalidateHardwareCache() {
+    s_cachedHardwarePeakNits = -1.0f;
+    s_cachedSdrWhiteLevel = -1.0f;
+}
 
 float DisplayColorState::GetEffectivePeakNits(float peakNitsOverride) const {
     float peak = (maxLuminanceNits > sdrWhiteLevelNits) ? maxLuminanceNits : sdrWhiteLevelNits;
@@ -264,6 +270,12 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
             // [Logging] Capture Level 3 detection (Raw DXGI/EDID)
             float dxgiPeak = stateOut->maxLuminanceNits;
 
+            if (s_cachedHardwarePeakNits > 0.0f) {
+                stateOut->maxLuminanceNits = s_cachedHardwarePeakNits;
+                stateOut->sdrWhiteLevelNits = s_cachedSdrWhiteLevel;
+                return true;
+            }
+
             // Get accurate Peak Luminance and SDR white via a multi-tier fallback pipeline.
             float winrtMaxNits = 0.0f;
             float winrtSdrWhite = 0.0f;
@@ -293,6 +305,9 @@ bool DisplayColorInfo::QueryForMonitor(HMONITOR monitor, DisplayColorState* stat
             } else {
                 stateOut->sdrWhiteLevelNits = QuerySdrWhiteLevelNits(stateOut->gdiDeviceName);
             }
+            
+            s_cachedHardwarePeakNits = stateOut->maxLuminanceNits;
+            s_cachedSdrWhiteLevel = stateOut->sdrWhiteLevelNits;
 
             return true;
         }

@@ -112,6 +112,7 @@ class DisplayColorInfo {
 public:
     bool Refresh(HWND hwnd, bool forceHdrSimulation = false);
     static bool QueryMonitorState(HMONITOR monitor, DisplayColorState* stateOut);
+    static void InvalidateHardwareCache();
     const DisplayColorState& GetState() const { return m_state; }
 
 private:

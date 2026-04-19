@@ -6362,6 +6362,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         if (hMon != s_lastCmsMonitor) {
             s_lastCmsMonitor = hMon;
+            QuickView::DisplayColorInfo::InvalidateHardwareCache();
             RefreshDisplayColorPipeline(hwnd, false);
             // Trigger CMS update (All managed modes now depend on the current monitor profile)
             extern AppConfig g_config;
@@ -6376,11 +6377,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_DISPLAYCHANGE: {
         // [CMS] System/Monitor profile changed
+        QuickView::DisplayColorInfo::InvalidateHardwareCache();
         RefreshDisplayColorPipeline(hwnd, true);
         break;
     }
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED: {
+        QuickView::DisplayColorInfo::InvalidateHardwareCache();
         if (g_config.ThemeMode == 0) {
             ApplyWindowTheme(hwnd);
             RequestRepaint(PaintLayer::All);
@@ -6801,6 +6804,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // wParam: LOWORD = new X DPI, HIWORD = new Y DPI
         // lParam: pointer to RECT with suggested new window size/position
         const UINT newDpiX = LOWORD(wParam);
+        QuickView::DisplayColorInfo::InvalidateHardwareCache();
         RefreshWindowDpi(hwnd, newDpiX);
 
         RECT* pNewRect = (RECT*)lParam;
