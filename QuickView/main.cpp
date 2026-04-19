@@ -4716,7 +4716,6 @@ void LoadConfig() {
     g_config.ExifPanelMode = GetPrivateProfileIntW(L"View", L"ExifPanelMode", 0, iniPath.c_str());
     g_config.ToolbarInfoDefault = GetPrivateProfileIntW(L"View", L"ToolbarInfoDefault", 0, iniPath.c_str());
     
-    wchar_t buf[32];
     // Redundant Alphas Removed (Unified to Geek Glass)
     g_config.NavIndicator = GetPrivateProfileIntW(L"View", L"NavIndicator", 0, iniPath.c_str());
     g_config.EnableCrossMonitor = GetPrivateProfileIntW(L"View", L"EnableCrossMonitor", 0, iniPath.c_str()) != 0;
@@ -4738,9 +4737,9 @@ void LoadConfig() {
     g_config.RightButtonDragZoom = GetPrivateProfileIntW(L"Controls", L"RightButtonDragZoom", 1, iniPath.c_str()) != 0;
     wchar_t buf[64];
     GetPrivateProfileStringW(L"Controls", L"WheelZoomSpeed", L"10.0", buf, 64, iniPath.c_str());
-    g_config.WheelZoomSpeed = std::max(5.0f, std::min(50.0f, (float)_wtof(buf)));
+    g_config.WheelZoomSpeed = std::clamp((float)_wtof(buf), 5.0f, 50.0f);
     GetPrivateProfileStringW(L"Controls", L"RightDragZoomSpeed", L"1.0", buf, 64, iniPath.c_str());
-    g_config.RightDragZoomSpeed = std::max(0.1f, std::min(3.0f, (float)_wtof(buf)));
+    g_config.RightDragZoomSpeed = std::clamp((float)_wtof(buf), 0.1f, 3.0f);
     g_config.LeftDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"LeftDragAction", (int)MouseAction::WindowDrag, iniPath.c_str());
     g_config.MiddleDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleDragAction", (int)MouseAction::PanImage, iniPath.c_str());
     g_config.MiddleClickAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleClickAction", (int)MouseAction::ExitApp, iniPath.c_str());

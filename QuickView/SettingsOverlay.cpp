@@ -1600,8 +1600,8 @@ void SettingsOverlay::BuildMenu() {
     tabControl.items.push_back({ AppStrings::Settings_Label_ZoomSnapDamping, OptionType::Toggle, &g_config.EnableZoomSnapDamping });
     tabControl.items.push_back({ AppStrings::Settings_Label_MouseAnchorZoom, OptionType::Toggle, &g_config.MouseAnchoredWindowZoom });
     tabControl.items.push_back({ AppStrings::Settings_Label_RightButtonDragZoom, OptionType::Toggle, &g_config.RightButtonDragZoom });
-    tabControl.items.push_back({ AppStrings::Settings_Label_RightDragZoomSpeed, OptionType::Slider, nullptr, nullptr, nullptr, nullptr, 0.1f, 3.0f, {}, &g_config.RightDragZoomSpeed, L"%.1fx" });
-    tabControl.items.push_back({ AppStrings::Settings_Label_WheelZoomSpeed, OptionType::Slider, nullptr, nullptr, nullptr, nullptr, 5.0f, 50.0f, {}, &g_config.WheelZoomSpeed, L"%.0f%%" });
+    tabControl.items.push_back({ AppStrings::Settings_Label_RightDragZoomSpeed, OptionType::Slider, nullptr, &g_config.RightDragZoomSpeed, nullptr, nullptr, 0.1f, 3.0f, {}, L"%.1fx" });
+    tabControl.items.push_back({ AppStrings::Settings_Label_WheelZoomSpeed, OptionType::Slider, nullptr, &g_config.WheelZoomSpeed, nullptr, nullptr, 5.0f, 50.0f, {}, L"%.0f%%" });
     tabControl.items.push_back({ AppStrings::Settings_Label_InvertButtons, OptionType::Toggle, &g_config.InvertXButton });
     
     // Left Drag: {Window=0, Pan=1} -> {WindowDrag=1, PanImage=2}
