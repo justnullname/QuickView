@@ -111,7 +111,7 @@ struct DisplayColorState {
     }
 
     float GetHdrHeadroomStops(float peakNitsOverride = 0.0f) const {
-        if (!advancedColorActive || sdrWhiteLevelNits <= 0.0f) {
+        if ((!advancedColorActive && peakNitsOverride <= 0.0f) || sdrWhiteLevelNits <= 0.0f) {
             return 0.0f;
         }
 

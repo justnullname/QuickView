@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "DisplayColorInfo.h"
+#include "EditState.h"
 #include <icm.h>
 #include <cstdlib>
 
@@ -148,14 +149,12 @@ bool DisplayColorInfo::Refresh(HWND hwnd, bool forceHdrSimulation) {
         nextState.advancedColorSupported = true;
         nextState.colorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
 
-        // Provide enough headroom for testing without totally crushing the image on a real SDR display.
-        // A max luminance of 2x the SDR white level gives exactly 1.0 stop of HDR headroom.
-        if (nextState.maxLuminanceNits <= nextState.sdrWhiteLevelNits) {
-            nextState.maxLuminanceNits = nextState.sdrWhiteLevelNits * 2.0f;
-        }
-        if (nextState.maxFullFrameLuminanceNits <= nextState.sdrWhiteLevelNits) {
-            nextState.maxFullFrameLuminanceNits = nextState.sdrWhiteLevelNits * 2.0f;
-        }
+        // Use the manual override from settings if available, otherwise default to a 400 nit simulation.
+        extern AppConfig g_config;
+        float simulatedPeak = g_config.HdrPeakNitsOverride > 0.0f ? g_config.HdrPeakNitsOverride : (nextState.sdrWhiteLevelNits * 5.0f);
+        
+        nextState.maxLuminanceNits = simulatedPeak;
+        nextState.maxFullFrameLuminanceNits = simulatedPeak;
     }
 
     const bool changed =

@@ -86,6 +86,14 @@ public:
         PixelFormat sdrFormat,
         const uint8_t* gainPixels, int gainW, int gainH, int gainStride,
         const GpuShaderPayload& payload,
+        ID3D11Texture2D** outTexture,
+        ID3D11Texture2D** outSdrTex = nullptr,
+        ID3D11Texture2D** outGainTex = nullptr);
+
+    HRESULT ComposeGainMap(
+        ID3D11Texture2D* sdrTex,
+        ID3D11Texture2D* gainTex,
+        const GpuShaderPayload& payload,
         ID3D11Texture2D** outTexture);
 
     /// <summary>

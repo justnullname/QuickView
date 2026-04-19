@@ -110,6 +110,27 @@ private:
     ComPtr<ID2D1Device> m_d2dDevice;
     ComPtr<ID2D1DeviceContext> m_d2dContext; // Kept for resource creation (bitmaps), not bound to target
 
+    // GPU Bake Cache (to avoid re-uploading base/aux pixels during slider drag)
+    struct BakeCache {
+        const void* lastBasePixels = nullptr;
+        const void* lastAuxPixels = nullptr;
+        UINT lastBaseW = 0, lastBaseH = 0;
+        UINT lastAuxW = 0, lastAuxH = 0;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> baseTexture;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> auxTexture;
+        Microsoft::WRL::ComPtr<ID2D1Bitmap1> bakedBitmap;
+        float lastHeadroom = -1.0f;
+
+        void Reset() {
+            lastBasePixels = nullptr;
+            lastAuxPixels = nullptr;
+            baseTexture.Reset();
+            auxTexture.Reset();
+            bakedBitmap.Reset();
+            lastHeadroom = -1.0f;
+        }
+    } m_bakeCache;
+
     // DirectWrite resources
     ComPtr<IDWriteFactory> m_dwriteFactory;
 

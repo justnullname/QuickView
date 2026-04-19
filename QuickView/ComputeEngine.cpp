@@ -650,24 +650,15 @@ HRESULT ComputeEngine::ComposeGainMap(
     PixelFormat sdrFormat,
     const uint8_t* gainPixels, int gainW, int gainH, int gainStride,
     const GpuShaderPayload& payload,
-    ID3D11Texture2D** outTexture)
+    ID3D11Texture2D** outTexture,
+    ID3D11Texture2D** outSdrTex,
+    ID3D11Texture2D** outGainTex)
 {
     if (!m_valid || !sdrPixels || !gainPixels || !outTexture) {
-        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid arguments or engine state.\n");
-        return E_INVALIDARG;
-    }
-    if (sdrW <= 0 || sdrH <= 0 || gainW <= 0 || gainH <= 0) {
-        OutputDebugStringW(L"[ComputeEngine] ComposeGainMap: Invalid dimensions.\n");
         return E_INVALIDARG;
     }
 
-    // [Diagnostic] Log composition start
-    wchar_t logBuf[256];
-    swprintf_s(logBuf, L"[ComputeEngine] Compose: SDR %dx%d, Gain %dx%d, Headroom %.2f, MaxGain %.2f\n",
-        sdrW, sdrH, gainW, gainH, payload.targetHeadroom, payload.gainMapMax[0]);
-    OutputDebugStringW(logBuf);
-
-    // 1. Upload SDR base layer (Can be BGRA8 or R32G32B32A32_FLOAT)
+    // 1. Upload SDR base layer
     D3D11_TEXTURE2D_DESC sdrDesc = {};
     sdrDesc.Width = (UINT)sdrW;
     sdrDesc.Height = (UINT)sdrH;
@@ -686,7 +677,7 @@ HRESULT ComputeEngine::ComposeGainMap(
     HRESULT hr = m_d3dDevice->CreateTexture2D(&sdrDesc, &sdrData, &pSdr);
     if (FAILED(hr)) return hr;
 
-    // 2. Upload Gain Map (R8 grayscale immutable texture)
+    // 2. Upload Gain Map
     D3D11_TEXTURE2D_DESC gainDesc = {};
     gainDesc.Width = (UINT)gainW;
     gainDesc.Height = (UINT)gainH;
@@ -705,43 +696,52 @@ HRESULT ComputeEngine::ComposeGainMap(
     hr = m_d3dDevice->CreateTexture2D(&gainDesc, &gainData, &pGain);
     if (FAILED(hr)) return hr;
 
-    // 3. Create FP16 output texture (R16G16B16A16_FLOAT)
-    D3D11_TEXTURE2D_DESC dstDesc = {};
-    dstDesc.Width = (UINT)sdrW;
-    dstDesc.Height = (UINT)sdrH;
-    dstDesc.MipLevels = 1;
-    dstDesc.ArraySize = 1;
+    // Capture uploaded textures if requested
+    if (outSdrTex) pSdr.CopyTo(outSdrTex);
+    if (outGainTex) pGain.CopyTo(outGainTex);
+
+    return ComposeGainMap(pSdr.Get(), pGain.Get(), payload, outTexture);
+}
+
+HRESULT ComputeEngine::ComposeGainMap(
+    ID3D11Texture2D* sdrTex,
+    ID3D11Texture2D* gainTex,
+    const GpuShaderPayload& payload,
+    ID3D11Texture2D** outTexture)
+{
+    if (!m_valid || !sdrTex || !gainTex || !outTexture) return E_INVALIDARG;
+
+    D3D11_TEXTURE2D_DESC sdrDesc;
+    sdrTex->GetDesc(&sdrDesc);
+
+    // 1. Create FP16 output texture
+    D3D11_TEXTURE2D_DESC dstDesc = sdrDesc;
     dstDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    dstDesc.SampleDesc.Count = 1;
     dstDesc.Usage = D3D11_USAGE_DEFAULT;
     dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
 
     ComPtr<ID3D11Texture2D> pDst;
-    hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
     if (FAILED(hr)) return hr;
 
-    // 4. Create views
+    // 2. Create views
     ComPtr<ID3D11ShaderResourceView> pSdrSRV, pGainSRV;
     ComPtr<ID3D11UnorderedAccessView> pDstUAV;
-    hr = m_d3dDevice->CreateShaderResourceView(pSdr.Get(), nullptr, &pSdrSRV);
-    if (FAILED(hr)) return hr;
-    hr = m_d3dDevice->CreateShaderResourceView(pGain.Get(), nullptr, &pGainSRV);
-    if (FAILED(hr)) return hr;
-    hr = m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pDstUAV);
-    if (FAILED(hr)) return hr;
+    m_d3dDevice->CreateShaderResourceView(sdrTex, nullptr, &pSdrSRV);
+    m_d3dDevice->CreateShaderResourceView(gainTex, nullptr, &pGainSRV);
+    m_d3dDevice->CreateUnorderedAccessView(pDst.Get(), nullptr, &pDstUAV);
 
-    // 5. Upload constant buffer
+    // 3. Upload constant buffer
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    hr = m_d3dContext->Map(m_gainMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return hr;
-    
-    GpuShaderPayload safePayload = payload;
-    safePayload._pad6 = (sdrFormat == PixelFormat::R32G32B32A32_FLOAT) ? 1 : 0;
-    
-    memcpy(mapped.pData, &safePayload, sizeof(GpuShaderPayload));
-    m_d3dContext->Unmap(m_gainMapConstantBuffer.Get(), 0);
+    if (SUCCEEDED(m_d3dContext->Map(m_gainMapConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        GpuShaderPayload safePayload = payload;
+        // The shader expects _pad6 to indicate if the source is float (1) or 8-bit (0)
+        safePayload._pad6 = (sdrDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 1 : 0;
+        memcpy(mapped.pData, &safePayload, sizeof(GpuShaderPayload));
+        m_d3dContext->Unmap(m_gainMapConstantBuffer.Get(), 0);
+    }
 
-    // 6. Dispatch compute shader
+    // 4. Dispatch
     m_d3dContext->CSSetShader(m_csComposeGainMap.Get(), nullptr, 0);
     ID3D11ShaderResourceView* srvs[] = { pSdrSRV.Get(), pGainSRV.Get() };
     m_d3dContext->CSSetShaderResources(0, 2, srvs);
@@ -752,20 +752,17 @@ HRESULT ComputeEngine::ComposeGainMap(
     ID3D11SamplerState* samplers[] = { m_linearSampler.Get() };
     m_d3dContext->CSSetSamplers(0, 1, samplers);
 
-    m_d3dContext->Dispatch(((UINT)sdrW + 7) / 8, ((UINT)sdrH + 7) / 8, 1);
+    m_d3dContext->Dispatch((sdrDesc.Width + 7) / 8, (sdrDesc.Height + 7) / 8, 1);
 
-    // 7. Cleanup GPU state
+    // 5. Cleanup
     ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
     m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
     ID3D11ShaderResourceView* nullSRVs[] = { nullptr, nullptr };
     m_d3dContext->CSSetShaderResources(0, 2, nullSRVs);
-    ID3D11Buffer* nullCB[] = { nullptr };
-    m_d3dContext->CSSetConstantBuffers(0, 1, nullCB);
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullptr);
     m_d3dContext->CSSetShader(nullptr, nullptr, 0);
 
-    // [v10.5] Force submission to GPU before passing DXGI surface to D2D
     m_d3dContext->Flush();
-
     *outTexture = pDst.Detach();
     return S_OK;
 }
