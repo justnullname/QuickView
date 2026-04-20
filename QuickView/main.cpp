@@ -2542,12 +2542,7 @@ static bool ExecuteWindowControlButton(HWND hwnd, int buttonIndex) {
     }
 }
 
-
-// Unified Repaint Request System - 缁熶竴閲嶇粯璇锋眰绯荤粺
-
-// 鎵€鏈夐噸缁樿姹傞兘閫氳繃 RequestRepaint() 缁熶竴鍏ュ彛
-// 涓ョ鐩存帴璋冪敤 InvalidateRect锛屽繀椤讳娇鐢ㄦ绯荤粺
-
+// Unified Repaint Request System
 
 using QuickView::PaintLayer;
 using QuickView::HasLayer;
@@ -2555,29 +2550,35 @@ using QuickView::HasLayer;
 // Global window handle for RequestRepaint (set in wWinMain)
 HWND g_mainHwnd = nullptr;
 
-// 锟?缁熶竴閲嶇粯璇锋眰鍏ュ彛 - 鎵€鏈夊湴鏂瑰彧璋冭繖涓嚱锟?
 void RequestRepaint(PaintLayer layer) {
-    // 1. 璁剧疆瀵瑰簲灞傜殑鑴忔爣锟?
-    if (g_uiRenderer) {
-        if (HasLayer(layer, PaintLayer::Static))  { g_uiRenderer->MarkStaticDirty();  g_debugMetrics.dirtyTriggerStatic = 5; }
-        if (HasLayer(layer, PaintLayer::Dynamic)) { g_uiRenderer->MarkDynamicDirty(); g_debugMetrics.dirtyTriggerDynamic = 5; }
-        if (HasLayer(layer, PaintLayer::Gallery)) { g_uiRenderer->MarkGalleryDirty(); g_debugMetrics.dirtyTriggerGallery = 5; }
-        if (HasLayer(layer, PaintLayer::Image))   { 
-            g_isImageDirty = true; 
-            // Ping-Pong Logic: If Active is A(0), we paint to B. If Active is B(1), we paint to A.
-            if (g_compEngine && g_compEngine->GetActiveLayerIndex() == 0) {
-                g_debugMetrics.dirtyTriggerImageB = 5; // Target B
-            } else {
-                g_debugMetrics.dirtyTriggerImageA = 5; // Target A
-            }
-        } // Set real dirty flag
+  if (g_uiRenderer) {
+    if (HasLayer(layer, PaintLayer::Static)) {
+      g_uiRenderer->MarkStaticDirty();
+      g_debugMetrics.dirtyTriggerStatic = 5;
     }
-    
-    // 2. 瑙﹀彂 Windows 娑堟伅寰幆鍞ら啋 WM_PAINT
-    // 锟?DComp 鏋舵瀯涓嬶紝杩欏彧鏄敜锟?OnPaint锛屽疄闄呯敾浠€涔堢敱鑴忔爣璁板喅锟?
-    if (g_mainHwnd) {
-        ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
+    if (HasLayer(layer, PaintLayer::Dynamic)) {
+      g_uiRenderer->MarkDynamicDirty();
+      g_debugMetrics.dirtyTriggerDynamic = 5;
     }
+    if (HasLayer(layer, PaintLayer::Gallery)) {
+      g_uiRenderer->MarkGalleryDirty();
+      g_debugMetrics.dirtyTriggerGallery = 5;
+    }
+    if (HasLayer(layer, PaintLayer::Image)) {
+      g_isImageDirty = true;
+      // Ping-Pong Logic: If Active is A(0), we paint to B. If Active is B(1),
+      // we paint to A.
+      if (g_compEngine && g_compEngine->GetActiveLayerIndex() == 0) {
+        g_debugMetrics.dirtyTriggerImageB = 5; // Target B
+      } else {
+        g_debugMetrics.dirtyTriggerImageA = 5; // Target A
+      }
+    } // Set real dirty flag
+  }
+
+  if (g_mainHwnd) {
+    ::InvalidateRect(g_mainHwnd, nullptr, FALSE);
+  }
 }
 
 static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
@@ -5351,6 +5352,46 @@ void RefreshImageDisplay(HWND hwnd) {
         void ReloadCurrentImage(HWND hwnd);
         ReloadCurrentImage(hwnd);
     }
+}
+
+// [HDR Override] Lightweight refresh for HdrPeakNitsOverride slider changes.
+// Unlike RefreshDisplayColorPipeline, this avoids expensive surface resize,
+// DComp sync, and gain map file reloads. The bake cache in UploadRawFrameToGPU
+// handles headroom changes efficiently by reusing cached GPU textures and only
+// re-running the Compute Shader.
+void RefreshHdrOverrideSettings(HWND hwnd) {
+  if (!g_compEngine)
+    return;
+
+  // Sync display color state (in simulation mode, Refresh() reads the latest
+  // g_config.HdrPeakNitsOverride and updates maxLuminanceNits accordingly).
+  g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
+
+  // Propagate updated state to the rendering engine so that
+  // BuildToneMapSettings and gain map targetHeadroom calculations use the fresh
+  // display color state.
+  if (g_renderEngine) {
+    g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
+    g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());
+  }
+
+  // Update headroom for future image decodes (e.g. gain map weight
+  // calculation).
+  if (g_imageEngine) {
+    const float rawHeadroom =
+        g_compEngine->GetDisplayColorState().GetHdrHeadroomStops(
+            g_config.HdrPeakNitsOverride);
+    const float displayHdrHeadroomStops =
+        (g_config.AdvancedColorMode != 0)
+            ? (g_compEngine->IsAdvancedColor()
+                   ? (rawHeadroom < 0.1f ? -1.0f : rawHeadroom)
+                   : -1.0f)
+            : 0.0f;
+    g_imageEngine->SetTargetHdrHeadroomStops(displayHdrHeadroomStops);
+  }
+
+  // Re-upload cached frames with updated tone-mapping/headroom parameters.
+  RefreshImageDisplay(hwnd);
 }
 
 void ReloadCurrentImage(HWND hwnd) {

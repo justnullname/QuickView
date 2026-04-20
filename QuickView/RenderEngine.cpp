@@ -632,8 +632,11 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           }
 
           QV_LOG("Render_GpuBake",
-              TraceLoggingString("UltraHDR Triggered", "Action"),
-              TraceLoggingFloat32(payload.targetHeadroom, "TargetHeadroom"));
+              TraceLoggingString("UltraHDR GainMap Composition", "Action"),
+              TraceLoggingFloat32(g_config.HdrPeakNitsOverride, "HdrPeakNitsOverride"),
+              TraceLoggingFloat32(m_displayColorState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride), "EffectivePeakNits"),
+              TraceLoggingFloat32(payload.targetHeadroom, "TargetHeadroom"),
+              TraceLoggingBool(m_displayColorState.advancedColorActive, "AdvancedColorActive"));
 
           // [Optimization] Check Cache to avoid re-uploading pixels during slider drag
           bool useCachedTextures = (m_bakeCache.lastBasePixels == frame.pixels && 
@@ -764,7 +767,22 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
       if (useHdrOutput) {
           // Pure HDR Environment (Roll-off)
           const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, m_displayColorState);
+
+          QV_LOG("Render_ToneMapDecision",
+              TraceLoggingString("HDR Output Path", "Path"),
+              TraceLoggingFloat32(g_config.HdrPeakNitsOverride, "HdrPeakNitsOverride"),
+              TraceLoggingFloat32(m_displayColorState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride), "EffectivePeakNits"),
+              TraceLoggingFloat32(toneMapSettings.displayPeakScRgb, "DisplayPeakScRgb"),
+              TraceLoggingFloat32(toneMapSettings.contentPeakScRgb, "ContentPeakScRgb"),
+              TraceLoggingFloat32(toneMapSettings.paperWhiteScRgb, "PaperWhiteScRgb"),
+              TraceLoggingFloat32(toneMapSettings.exposure, "Exposure"),
+              TraceLoggingInt32(toneMapSettings.toneMappingMode, "ToneMappingMode"));
+
           if (m_computeEngine && m_computeEngine->IsAvailable() && toneMapSettings.contentPeakScRgb > (toneMapSettings.displayPeakScRgb > 1.0f ? toneMapSettings.displayPeakScRgb : 1.0f)) {
+              QV_LOG("Render_ToneMapDecision",
+                  TraceLoggingString("ToneMapHdrToHdr ACTIVE", "Shader"),
+                  TraceLoggingFloat32(toneMapSettings.displayPeakScRgb, "DisplayPeak"),
+                  TraceLoggingFloat32(toneMapSettings.contentPeakScRgb, "ContentPeak"));
               ComPtr<ID3D11Texture2D> pTex;
               if (SUCCEEDED(m_computeEngine->ToneMapHdrToHdr(
                       uploadPixels, static_cast<int>(frame.width),
@@ -796,6 +814,12 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               ComPtr<ID3D11Texture2D> pTex;
               const QuickView::ToneMapSettings toneMapSettings =
                   BuildToneMapSettings(frame, m_displayColorState);
+              QV_LOG("Render_ToneMapDecision",
+                  TraceLoggingString("SDR Output Path - ToneMapHdrToSdr", "Path"),
+                  TraceLoggingFloat32(g_config.HdrPeakNitsOverride, "HdrPeakNitsOverride"),
+                  TraceLoggingFloat32(toneMapSettings.displayPeakScRgb, "DisplayPeakScRgb"),
+                  TraceLoggingFloat32(toneMapSettings.contentPeakScRgb, "ContentPeakScRgb"),
+                  TraceLoggingFloat32(toneMapSettings.exposure, "Exposure"));
               if (SUCCEEDED(m_computeEngine->ToneMapHdrToSdr(
                       uploadPixels, static_cast<int>(frame.width),
                       static_cast<int>(frame.height), static_cast<int>(uploadStride),

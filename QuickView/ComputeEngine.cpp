@@ -91,20 +91,21 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
     color.a = saturate(color.a);
 
     float paperWhite = max(PaperWhiteScRgb, 1.0);
-    float sceneScale = Exposure * paperWhite;
-    float3 mapped = color.rgb * sceneScale;
+    float displayPeak = max(DisplayPeakScRgb, paperWhite);
 
     if (ToneMappingMode == 1) {
-        // Colorimetric Mode: Hard clip at displayPeak/paperWhite
-        mapped = clamp(color.rgb / paperWhite, 0.0, 1.0);
+        // Colorimetric Mode: Hard clip at display peak (normalized to [0,1])
+        float3 mapped = clamp(color.rgb / displayPeak, 0.0, 1.0);
+        float3 encoded = LinearToSrgb(mapped) * color.a;
+        DstTex[id.xy] = float4(encoded.r, encoded.g, encoded.b, color.a);
     } else {
-        // Perceptual Mode: Scale by Exposure*PaperWhite and apply ACES
-        mapped = ToneMapAces(mapped);
+        // Perceptual Mode: Normalize scene by display peak, then apply ACES filmic curve.
+        // Higher display peak → smaller scale → darker output → more highlight preservation.
+        float sceneScale = Exposure * (paperWhite / displayPeak);
+        float3 mapped = ToneMapAces(color.rgb * sceneScale);
+        float3 encoded = LinearToSrgb(mapped) * color.a;
+        DstTex[id.xy] = float4(encoded.r, encoded.g, encoded.b, color.a);
     }
-
-    float3 encoded = LinearToSrgb(mapped) * color.a;
-
-    DstTex[id.xy] = float4(encoded.r, encoded.g, encoded.b, color.a);
 }
 )";
 

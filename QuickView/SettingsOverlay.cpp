@@ -1735,13 +1735,15 @@ void SettingsOverlay::BuildMenu() {
     itemHdrPeak.tooltipText = AppStrings::Settings_Tooltip_HdrPeakNitsOverride;
     itemHdrPeak.minVal = 0.0f;
     itemHdrPeak.maxVal = 2000.0f;
+    itemHdrPeak.displayFormat = L"%.0f nits";
     itemHdrPeak.onChange = []() {
-        // [Bug Fix] Tone Mapping parameters are baked into the rawBitmap by ComputeEngine.
-        // A simple repaint does not re-apply the parameters. We must trigger a lightweight
-        // re-upload of the cached CPU frame to re-run the Compute Shader.
-        extern void RefreshImageDisplay(HWND hwnd);
+        // [HDR Override] Use the dedicated lightweight refresh that syncs the display color
+        // state and re-uploads cached frames without triggering surface resizes or gain map
+        // file reloads. The bake cache handles headroom changes efficiently via GPU re-composition.
+        extern void RefreshHdrOverrideSettings(HWND hwnd);
         extern HWND g_mainHwnd;
-        RefreshImageDisplay(g_mainHwnd);
+        RefreshHdrOverrideSettings(g_mainHwnd);
+        SaveConfig();
     };
     tabImage.items.push_back(itemHdrPeak);
 
