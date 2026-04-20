@@ -953,7 +953,7 @@ struct EN {
   static constexpr const wchar_t *Help_Action_NextPrev = L"Next/Prev Image";
   static constexpr const wchar_t *Help_Action_Zoom = L"Zoom";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"Smart Zoom (100% / Fit)";
+      L"Smart Zoom (100% / Fit / Restore)";
   static constexpr const wchar_t *Help_Desc_Copy = L"Copy Image";
   static constexpr const wchar_t *Help_Desc_Edit = L"Edit";
 
@@ -1323,7 +1323,7 @@ struct CN {
   static constexpr const wchar_t *Help_Action_NextPrev = L"切换图片";
   static constexpr const wchar_t *Help_Action_Zoom = L"缩放";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"智能缩放 (100% / 适应窗口)";
+      L"智能缩放 (100% / 适应窗口 / 恢复)";
 
   // Context Menu
   static constexpr const wchar_t *Context_Open = L"打开...\tCtrl+O";
@@ -1934,7 +1934,7 @@ struct TW {
   static constexpr const wchar_t *Help_Action_NextPrev = L"切換圖片";
   static constexpr const wchar_t *Help_Action_Zoom = L"縮放";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"智能縮放 (100% / 適應窗口)";
+      L"智能縮放 (100% / 適應窗口 / 恢復)";
   static constexpr const wchar_t *Help_Desc_Copy = L"復制圖像";
   static constexpr const wchar_t *Help_Desc_Edit = L"編輯";
 
@@ -2458,7 +2458,7 @@ struct JA {
   static constexpr const wchar_t *Help_Action_NextPrev = L"次/前の画像";
   static constexpr const wchar_t *Help_Action_Zoom = L"ズーム";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"スマートズーム (100% / ウィンドウに合わせる)";
+      L"スマートズーム (100% / ウィンドウに合わせる / 復元)";
   static constexpr const wchar_t *Help_Desc_Copy = L"Copy Image";
   static constexpr const wchar_t *Help_Desc_Edit = L"Edit";
 
@@ -3087,7 +3087,7 @@ struct RU {
   static constexpr const wchar_t *Help_Action_NextPrev = L"След./Пред.";
   static constexpr const wchar_t *Help_Action_Zoom = L"Масштаб";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"Умный масштаб (100% / По размеру)";
+      L"Умный масштаб (100% / По размеру / Восстановить)";
   static constexpr const wchar_t *Help_Desc_Copy = L"Скопировать изображение";
   static constexpr const wchar_t *Help_Desc_Edit = L"Изменить";
 
@@ -3629,7 +3629,7 @@ struct DE {
   static constexpr const wchar_t *Help_Action_NextPrev = L"Weiter/Zurück";
   static constexpr const wchar_t *Help_Action_Zoom = L"Zoom";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"Smart-Zoom (100% / Anpassen)";
+      L"Smart-Zoom (100% / Anpassen / Wiederherstellen)";
   static constexpr const wchar_t *Help_Desc_Copy = L"Copy Image";
   static constexpr const wchar_t *Help_Desc_Edit = L"Edit";
 
@@ -4200,7 +4200,7 @@ struct ES {
   static constexpr const wchar_t *Help_Action_NextPrev = L"Sig./Ant.";
   static constexpr const wchar_t *Help_Action_Zoom = L"Zoom";
   static constexpr const wchar_t *Help_Action_SmartZoom =
-      L"Zoom inteligente (100% / Ajustar)";
+      L"Zoom inteligente (100% / Ajustar / Restaurar)";
   static constexpr const wchar_t *Help_Desc_Copy = L"Copy Image";
   static constexpr const wchar_t *Help_Desc_Edit = L"Edit";
 

@@ -3235,6 +3235,46 @@ static void ToggleCompareHUD(HWND hwnd, int targetMode) {
 
 static RECT s_restoredWindowRect = { 0 };
 
+static float GetCurrentRealScale(HWND hwnd) {
+    if (!g_imageResource) return 1.0f;
+    D2D1_SIZE_F effSize = GetVisualImageSize();
+    float imgW = effSize.width;
+    float imgH = effSize.height;
+    if (imgW <= 0 || imgH <= 0) return 1.0f;
+
+    float originalW = imgW;
+    float originalH = imgH;
+    if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
+        originalW = (float)g_currentMetadata.Width;
+        originalH = (float)g_currentMetadata.Height;
+        bool manualSwap = (g_editState.TotalRotation % 180 != 0);
+        if (manualSwap) std::swap(originalW, originalH);
+    }
+
+    RECT rcClient; GetClientRect(hwnd, &rcClient);
+    float winW = (float)(rcClient.right - rcClient.left);
+    float winH = (float)(rcClient.bottom - rcClient.top);
+
+    float fitScale = (std::min)(winW / imgW, winH / imgH);
+    float totalScale = fitScale * g_viewState.Zoom;
+    return totalScale * (imgW / originalW); // Real pixel scale
+}
+
+static void PerformRestoreWindow(HWND hwnd) {
+    if (s_restoredWindowRect.right > s_restoredWindowRect.left && !IsZoomed(hwnd) && !g_isFullScreen) {
+        int rW = s_restoredWindowRect.right - s_restoredWindowRect.left;
+        int rH = s_restoredWindowRect.bottom - s_restoredWindowRect.top;
+        SetWindowPos(hwnd, nullptr, s_restoredWindowRect.left, s_restoredWindowRect.top, rW, rH, SWP_NOZORDER | SWP_NOACTIVATE);
+        g_viewState.Zoom = 1.0f;
+        g_viewState.PanX = 0;
+        g_viewState.PanY = 0;
+        g_osd.Show(hwnd, AppStrings::OSD_Restored, false, false, D2D1::ColorF(D2D1::ColorF::White));
+        RequestRepaint(PaintLayer::All);
+
+        s_restoredWindowRect = { 0 };
+    }
+}
+
 // Inlined Logic to avoid dependency on local lambdas
 static void PerformCompareZoom100(HWND hwnd) {
     if (!IsCompareModeActive()) return;
@@ -5111,6 +5151,7 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
 }
 
 void AdjustWindowToImage(HWND hwnd) {
+    s_restoredWindowRect = { 0 }; // Clear restored rect so new image sets new initial size
     if (!g_imageResource) return;
     if (g_runtime.LockWindowSize) return;  // Don't auto-resize when locked
     if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
@@ -6279,6 +6320,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SetCursor(LoadCursor(nullptr, IDC_WAIT));
             return TRUE;
         }
+        // Edge Nav Cursor: Only for Cursor mode (NavIndicator == 1)
+        if (g_config.EdgeNavClick && g_config.NavIndicator == 1) {
+            if (!g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !g_dialog.IsVisible) {
+                bool hoverEdge = false;
+                if (IsCompareModeActive()) {
+                    hoverEdge = (g_viewState.EdgeHoverLeft != 0) || (g_viewState.EdgeHoverRight != 0);
+                } else {
+                    hoverEdge = (g_viewState.EdgeHoverState != 0);
+                }
+                if (hoverEdge) {
+                    SetCursor(LoadCursor(nullptr, IDC_HAND));
+                    return TRUE;
+                }
+            }
+        }
+        
+        if (g_viewState.IsDragging) {
+          SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+          return TRUE;
+        }
 
         // Default Client Cursor - Coordinate with WM_MOUSEMOVE to prevent Win10 flicker
         if (LOWORD(lParam) == HTCLIENT) {
@@ -6340,6 +6401,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_EXITSIZEMOVE: {
+        s_restoredWindowRect = { 0 }; // Clear restored rect so new size is treated as initial
         // Interactive resize/move ended - sync composition state immediately
         if (g_compEngine && g_compEngine->IsInitialized()) {
             RECT rc; GetClientRect(hwnd, &rc);
@@ -7338,28 +7400,7 @@ SKIP_EDGE_NAV:;
         }
 
         if (g_imageResource) {
-            // [Bug #19] Smart 3-Way Toggle for Large Images
-            D2D1_SIZE_F effSize = GetVisualImageSize();
-            float imgW = effSize.width;
-            float imgH = effSize.height;
-            
-            float originalW = imgW;
-            float originalH = imgH;
-            if (g_currentMetadata.Width > 0 && g_currentMetadata.Height > 0) {
-                originalW = (float)g_currentMetadata.Width;
-                originalH = (float)g_currentMetadata.Height;
-                bool manualSwap = (g_editState.TotalRotation % 180 != 0);
-                if (manualSwap) std::swap(originalW, originalH);
-            }
-
-            RECT rcClient; GetClientRect(hwnd, &rcClient);
-            float winW = (float)(rcClient.right - rcClient.left);
-            float winH = (float)(rcClient.bottom - rcClient.top);
-            
-            float fitScale = std::min(winW / imgW, winH / imgH);
-            float totalScale = fitScale * g_viewState.Zoom;
-            float currentRealScale = totalScale * (imgW / originalW); // Real pixel scale
-            
+            float currentRealScale = GetCurrentRealScale(hwnd);
             bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.05f);
 
             HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -7371,41 +7412,33 @@ SKIP_EDGE_NAV:;
             int winWidth = rcWin.right - rcWin.left;
             int winHeight = rcWin.bottom - rcWin.top;
 
-            bool isWindowMaximizedOrFull = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || IsZoomed(hwnd) || g_isFullScreen;
-            
-            // Is it a large image? (Original size is close to or larger than screen)
-            bool isLargeImage = (originalW >= maxW - 100 || originalH >= maxH - 100);
+            bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
+            bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || isMaximizedOrFullscreen;
 
-            if (isLargeImage) {
+            if (isMaximizedOrFullscreen) {
+                // In fullscreen/maximized, ONLY toggle between 100% and Fit. No restoring window size.
                 if (is100Percent) {
-                    // State 3 -> State 1 (or State 2 if in fixed mode): At 100%.
-                    if (isWindowMaximizedOrFull) {
-                        PerformZoomFit(hwnd); // Dual-mode for maximized/fullscreen
-                    } else if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
-                        int rW = s_restoredWindowRect.right - s_restoredWindowRect.left;
-                        int rH = s_restoredWindowRect.bottom - s_restoredWindowRect.top;
-                        SetWindowPos(hwnd, nullptr, s_restoredWindowRect.left, s_restoredWindowRect.top, rW, rH, SWP_NOZORDER | SWP_NOACTIVATE);
-                        g_viewState.Zoom = 1.0f; // Let D2D fit it inside
-                        g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
-                        RequestRepaint(PaintLayer::All);
-                    } else {
-                        // Fallback: 85% tight wrap (perfectly hugs the image without empty margins)
-                        PerformZoomFit(hwnd, 0.85f);
-                    }
-                } else if (isWindowMaximizedOrFull) {
-                    // State 2 -> State 3: Fit Screen but not 100% -> Go 100%
-                    PerformZoom100(hwnd);
+                    PerformZoomFit(hwnd);
                 } else {
-                    // State 1 -> State 2: Initial Size -> Fit Screen
-                    GetWindowRect(hwnd, &s_restoredWindowRect);
-                    PerformZoomFit(hwnd, 1.0f); 
+                    PerformZoom100(hwnd);
                 }
             } else {
-                // Small image: simple 2-state toggle (100% <-> Fit)
+                // Windowed mode 3-state toggle: Initial Size (Restore) -> Fit -> 100% -> Initial Size...
                 if (is100Percent) {
-                    PerformZoomFit(hwnd, 1.0f);
-                } else {
+                    // Current is 100%. Next should be Restore (or Fit if no restore point).
+                    if (s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                        PerformRestoreWindow(hwnd);
+                    } else {
+                        GetWindowRect(hwnd, &s_restoredWindowRect);
+                        PerformZoomFit(hwnd, 1.0f);
+                    }
+                } else if (isFitWindow) {
+                    // Current is Fit. Next should be 100%.
                     PerformZoom100(hwnd);
+                } else {
+                    // Current is Initial Size. Next should be Fit.
+                    if (s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoomFit(hwnd, 1.0f);
                 }
             }
         }
@@ -7491,6 +7524,7 @@ SKIP_EDGE_NAV:;
                 SetCapture(hwnd);
                 g_viewState.IsDragging = true;
                 g_viewState.IsInteracting = true;
+                SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
             } else {
                 g_viewState.IsDragging = false;
             }
@@ -7905,6 +7939,7 @@ SKIP_EDGE_NAV:;
                 g_viewState.IsDragging = true;
                 g_viewState.IsInteracting = true;  // Start interaction mode
                 g_viewState.LastMousePos = pt;
+                SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
             }
         }
         return 0;
@@ -8670,15 +8705,48 @@ SKIP_EDGE_NAV:;
         case 'V': PerformTransform(hwnd, TransformType::FlipVertical); break;
         
         // Zoom
-        case '1': case 'Z': case VK_NUMPAD1: // 100% Original size
-            if (IsCompareModeActive()) PerformCompareZoom100(hwnd);
-            else PerformZoom100(hwnd);
+        case '1': case 'Z': case VK_NUMPAD1: { // 100% Original size
+            if (IsCompareModeActive()) {
+                PerformCompareZoom100(hwnd);
+            } else if (g_imageResource) {
+                float currentRealScale = GetCurrentRealScale(hwnd);
+                bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.05f);
+                bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
+
+                if (is100Percent && !isMaximizedOrFullscreen && s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                    PerformRestoreWindow(hwnd);
+                } else {
+                    if (!isMaximizedOrFullscreen && s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoom100(hwnd);
+                }
+            }
             break;
+        }
             
-        case '0': case 'F': case VK_NUMPAD0: // Fit to Screen (Best Fit)
-            if (IsCompareModeActive()) PerformCompareZoomFit(hwnd);
-            else PerformZoomFit(hwnd);
+        case '0': case 'F': case VK_NUMPAD0: { // Fit to Screen (Best Fit)
+            if (IsCompareModeActive()) {
+                PerformCompareZoomFit(hwnd);
+            } else if (g_imageResource) {
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = { sizeof(mi) }; GetMonitorInfoW(hMon, &mi);
+                int maxW = mi.rcWork.right - mi.rcWork.left;
+                int maxH = mi.rcWork.bottom - mi.rcWork.top;
+                RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                int winWidth = rcWin.right - rcWin.left;
+                int winHeight = rcWin.bottom - rcWin.top;
+
+                bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
+                bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || isMaximizedOrFullscreen;
+
+                if (isFitWindow && !isMaximizedOrFullscreen && s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                    PerformRestoreWindow(hwnd);
+                } else {
+                    if (!isMaximizedOrFullscreen && s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoomFit(hwnd);
+                }
+            }
             break;
+        }
 
         case VK_ADD: case VK_OEM_PLUS: // Zoom In
         case VK_SUBTRACT: case VK_OEM_MINUS: { // Zoom Out
