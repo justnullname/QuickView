@@ -231,6 +231,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Tooltip_LockWindow;
     extern const wchar_t* Settings_Label_AutoHideTitle;
     extern const wchar_t* Settings_Label_RoundedCorners; // [v3.1.2]
+    extern const wchar_t* Settings_Tooltip_RoundedCorners;
     extern const wchar_t* Settings_Label_LockToolbar;
     extern const wchar_t* Settings_Label_WindowMinSize;
     extern const wchar_t* Settings_Label_WindowMaxSizePercent;

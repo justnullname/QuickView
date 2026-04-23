@@ -213,6 +213,7 @@ const wchar_t *Settings_Label_LockWindow = nullptr;
 const wchar_t *Settings_Tooltip_LockWindow = nullptr;
 const wchar_t *Settings_Label_AutoHideTitle = nullptr;
 const wchar_t *Settings_Label_RoundedCorners = nullptr;
+const wchar_t *Settings_Tooltip_RoundedCorners = nullptr;
 const wchar_t *Settings_Label_LockToolbar = nullptr;
 const wchar_t *Settings_Label_WindowMinSize = nullptr;
 const wchar_t *Settings_Label_WindowMaxSizePercent = nullptr;
@@ -773,6 +774,7 @@ struct EN {
       L"Auto-Hide Title Bar";
   static constexpr const wchar_t *Settings_Label_RoundedCorners =
       L"Rounded Corners";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"Controls window and context menu rounded corners. Requires Windows 11.";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"Lock Bottom Toolbar";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -1172,6 +1174,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_AutoHideTitle =
       L"自动隐藏标题栏";
   static constexpr const wchar_t *Settings_Label_RoundedCorners = L"圆角窗口";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"控制主窗口及右键菜单圆角，仅支持Windows 11。";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"锁定底部工具栏";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -1772,6 +1775,7 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_AutoHideTitle =
       L"自動隱藏標題列";
   static constexpr const wchar_t *Settings_Label_RoundedCorners = L"圓角視窗";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"控制主視窗及右鍵選單圓角，僅支援Windows 11。";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"鎖定底部工具列";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -2304,6 +2308,7 @@ struct JA {
       L"タイトルバー自動非表示";
   static constexpr const wchar_t *Settings_Label_RoundedCorners =
       L"角丸ウィンドウ";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"ウィンドウとコンテキストメニューの角丸を制御します。Windows 11のみをサポートします。";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"下部ツールバー固定";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -2926,6 +2931,7 @@ struct RU {
       L"Автоскрытие заголовка";
   static constexpr const wchar_t *Settings_Label_RoundedCorners =
       L"Скруглённые углы";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"Controls window and context menu rounded corners. Requires Windows 11.";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"Закрепить нижнюю панель";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -3482,6 +3488,7 @@ struct DE {
       L"Titelleiste automatisch ausblenden";
   static constexpr const wchar_t *Settings_Label_RoundedCorners =
       L"Abgerundete Ecken";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"Controls window and context menu rounded corners. Requires Windows 11.";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"Untere Symbolleiste sperren";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -4051,6 +4058,7 @@ struct ES {
       L"Ocultar barra de título";
   static constexpr const wchar_t *Settings_Label_RoundedCorners =
       L"Esquinas Redondeadas";
+  static constexpr const wchar_t *Settings_Tooltip_RoundedCorners = L"Controls window and context menu rounded corners. Requires Windows 11.";
   static constexpr const wchar_t *Settings_Label_LockToolbar =
       L"Bloquear barra inferior";
   static constexpr const wchar_t *Settings_Label_WindowMinSize =
@@ -4565,6 +4573,7 @@ template <typename T> void ApplyT() {
   Settings_Tooltip_LockWindow = T::Settings_Tooltip_LockWindow;
   Settings_Label_AutoHideTitle = T::Settings_Label_AutoHideTitle;
   Settings_Label_RoundedCorners = T::Settings_Label_RoundedCorners;
+  Settings_Tooltip_RoundedCorners = T::Settings_Tooltip_RoundedCorners;
   Settings_Label_LockToolbar = T::Settings_Label_LockToolbar;
   Settings_Label_WindowMinSize = T::Settings_Label_WindowMinSize;
   Settings_Label_WindowMaxSizePercent = T::Settings_Label_WindowMaxSizePercent;
