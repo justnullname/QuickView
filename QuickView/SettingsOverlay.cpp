@@ -238,6 +238,30 @@ std::wstring SettingsOverlay::GetRealWindowsVersion() {
     return L"Windows (Unknown)"; 
 }
 
+
+static bool IsWindows11() {
+    static int cache = -1;
+    if (cache != -1) return cache == 1;
+
+    HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+    if (hMod) {
+        typedef LONG (WINAPI *RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+        RtlGetVersionPtr fx = (RtlGetVersionPtr)GetProcAddress(hMod, "RtlGetVersion");
+        if (fx) {
+            RTL_OSVERSIONINFOW rovi = { 0 };
+            rovi.dwOSVersionInfoSize = sizeof(rovi);
+            if (fx(&rovi) == 0) {
+                if (rovi.dwMajorVersion == 10 && rovi.dwBuildNumber >= 22000) {
+                    cache = 1;
+                    return true;
+                }
+            }
+        }
+    }
+    cache = 0;
+    return false;
+}
+
 std::wstring GetSystemInfo() {
     // 1. OS Version (Real)
     // We can't easily call non-static member GetRealWindowsVersion without instance.
@@ -1393,6 +1417,20 @@ void SettingsOverlay::BuildMenu() {
     itemMenus.onChange = autoSwitchToCustom;
     tabTheme.items.push_back(itemMenus);
 
+    // Rounded Corners
+    SettingsItem itemRounded = { AppStrings::Settings_Label_RoundedCorners, OptionType::Toggle, &g_config.RoundedCorners };
+    itemRounded.onChange = []() {
+        bool enable = g_config.RoundedCorners;
+        DWM_WINDOW_CORNER_PREFERENCE preference = enable ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(GetActiveWindow(), DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+        SaveConfig();
+    };
+    itemRounded.tooltipText = AppStrings::Settings_Tooltip_RoundedCorners;
+    if (!IsWindows11()) {
+        itemRounded.isDisabled = true;
+    }
+    tabTheme.items.push_back(itemRounded);
+
     // Theme Management
     SettingsItem itemThemeManage = { AppStrings::Settings_Header_ThemeManagement, OptionType::DualActionButton };
     itemThemeManage.buttonText = AppStrings::Settings_Action_ImportTheme;
@@ -1487,15 +1525,6 @@ void SettingsOverlay::BuildMenu() {
     };
     tabVisuals.items.push_back(itemAoT);
     
-    // Rounded Corners
-    SettingsItem itemRounded = { AppStrings::Settings_Label_RoundedCorners, OptionType::Toggle, &g_config.RoundedCorners };
-    itemRounded.onChange = []() {
-        bool enable = g_config.RoundedCorners;
-        DWM_WINDOW_CORNER_PREFERENCE preference = enable ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
-        DwmSetWindowAttribute(GetActiveWindow(), DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
-        SaveConfig();
-    };
-    tabVisuals.items.push_back(itemRounded);
 
     SettingsItem itemLockWindow = { AppStrings::Settings_Label_LockWindow, OptionType::Toggle, &g_config.LockWindowSize };
     itemLockWindow.onChange = []() {

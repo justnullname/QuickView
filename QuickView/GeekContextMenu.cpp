@@ -233,7 +233,7 @@ void GeekContextMenu::ApplyWindowRegion() {
 
     // Win11: DWM natively rounds corners and clips the acrylic backdrop.
     // Win10: API not available — straight corners (no fallback needed).
-    DWORD preference = DWMWCP_ROUND;
+    DWORD preference = g_config.RoundedCorners ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
     DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
 }
 
