@@ -2054,6 +2054,9 @@ void SettingsOverlay::SetVisible(bool visible) {
         RebuildMenu(); // Ensure strings are up-to-date
         m_opacity = 0.0f;
         
+        // Hide toolbar when settings pop up
+        g_toolbar.SetVisible(false);
+        
         // Auto-Resize if window is too small
         if (m_hwnd) {
              extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);

@@ -5088,7 +5088,14 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     }
 
     if (!isClosed) {
-        // Opening overlay: expand window if too small for the overlay's minimum size
+        // [Fix] Automatically save current state before expanding for any overlay.
+        // This is crucial for dialogs and other components that call this function
+        // directly without calling SaveOverlayWindowState externally.
+        if (!g_savedState.isValid) {
+            SaveOverlayWindowState(hwnd);
+        }
+
+        // Opening overlay: expand window if too small for the overlay's minimum size.
         if (currentW < minW || currentH < minH) {
             targetW = std::max(currentW, minW);
             targetH = std::max(currentH, minH);
@@ -5096,38 +5103,21 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
             return; // Already large enough
         }
     } else {
-        // Closing overlay: shrink window back to fit image or original state
-        if (hasImage && !g_runtime.LockWindowSize) {
-            int targetClientW = static_cast<int>(std::round(imgW * absoluteZoom));
-            int targetClientH = static_cast<int>(std::round(imgH * absoluteZoom));
-
-            targetW = targetClientW + borderW;
-            targetH = targetClientH + borderH;
-
-            const RECT bounds = GetWindowExpansionBounds(hwnd);
-            float maxSizePercent = g_config.WindowMaxSizePercent / 100.0f;
-            const int maxWinW = (int)((bounds.right - bounds.left) * maxSizePercent);
-            const int maxWinH = (int)((bounds.bottom - bounds.top) * maxSizePercent);
-
-            if (targetW > maxWinW || targetH > maxWinH) {
-                float ratio = std::min((float)maxWinW / targetW, (float)maxWinH / targetH);
-                targetW = (int)(targetW * ratio);
-                targetH = (int)(targetH * ratio);
-            }
-
-            if (targetW < minW) targetW = minW; 
-            if (targetH < minH) targetH = minH;
-        } else if (g_savedState.isValid) {
-            targetW = g_savedState.windowRect.right - g_savedState.windowRect.left;
-            targetH = g_savedState.windowRect.bottom - g_savedState.windowRect.top;
+        // Closing overlay: Restore the exact previous window state (position, size, zoom).
+        // This bypasses any auto-fitting logic (like the 80% screen limit) to preserve
+        // the user's manual layout and zoom levels.
+        if (g_savedState.isValid) {
+            RestoreOverlayWindowState(hwnd);
+            return;
         } else {
-            return; 
-        }
-        
-        if (targetW == currentW && targetH == currentH) {
-            g_savedState.isValid = false;
+            // Fallback if somehow no state was saved: attempt to fit image normally
+            if (g_imageResource) AdjustWindowToImage(hwnd);
             return;
         }
+    }
+
+    if (targetW == currentW && targetH == currentH) {
+        return;
     }
 
     // Center-anchored window positioning (unified for all cases)
@@ -5151,18 +5141,22 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     SetWindowPos(hwnd, nullptr, newX, newY, targetW, targetH,
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
 
-    // Recalculate zoom only when an image is loaded
+    // Recalculate zoom only when opening an overlay to keep image pixels constant.
+    // When closing, we either restored the original zoom from g_savedState 
+    // or called AdjustWindowToImage which handles its own scaling.
     if (hasImage) {
         float finalClientW = (float)(targetW - borderW);
         float finalClientH = (float)(targetH - borderH);
 
-        float newBaseFit = std::min(finalClientW / imgW, finalClientH / imgH);
-        if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg) {
-            if (newBaseFit > 1.0f) newBaseFit = 1.0f;
-        }
+        if (!isClosed) {
+            float newBaseFit = std::min(finalClientW / imgW, finalClientH / imgH);
+            if (imgW < 200.0f && imgH < 200.0f && !g_imageResource.isSvg) {
+                if (newBaseFit > 1.0f) newBaseFit = 1.0f;
+            }
 
-        if (newBaseFit > 0.0001f) {
-            g_viewState.Zoom = absoluteZoom / newBaseFit;
+            if (newBaseFit > 0.0001f) {
+                g_viewState.Zoom = absoluteZoom / newBaseFit;
+            }
         }
 
         SyncDCompState(hwnd, finalClientW, finalClientH);
@@ -5170,14 +5164,16 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     }
 
     g_programmaticResize = false;
-    if (isClosed) g_savedState.isValid = false;
 }
 
 void AdjustWindowToImage(HWND hwnd) {
     s_restoredWindowRect = { 0 }; // Clear restored rect so new image sets new initial size
     if (!g_imageResource) return;
     if (g_runtime.LockWindowSize && g_config.KeepWindowSizeOnNav) return;  // Don't auto-resize when locked and requested to keep size
-    if (g_settingsOverlay.IsVisible()) return; // Don't resize if Settings is open (prevents jitter)
+    
+    // Note: Removed early return for g_settingsOverlay.IsVisible() because GetMinWindowWidth() 
+    // now correctly handles overlay minimums. This allows the window to resize to fit larger 
+    // images even when Settings is open, while still respecting minimum UI bounds.
     if (g_isFullScreen || IsZoomed(hwnd)) return; // [Fix] Don't resize if in Fullscreen or Maximized mode
 
     // [Fix] Use Centralized First-Principles Dimension Logic
@@ -7132,8 +7128,15 @@ SKIP_EDGE_NAV:;
           bool inZone = (pt.y > winH - zoneHeight) || g_toolbar.HitTest((float)pt.x, (float)pt.y);
           
           static DWORD s_hideRequestTime = 0;
+          bool anyOverlayOpen = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible();
           
-          if (inZone || g_toolbar.IsPinned() || g_isDraggingAnimSeek) {
+          if (anyOverlayOpen) {
+              if (g_toolbar.IsVisible()) {
+                  g_toolbar.SetVisible(false);
+                  RequestRepaint(PaintLayer::Static);
+              }
+              s_hideRequestTime = 0;
+          } else if (inZone || g_toolbar.IsPinned() || g_isDraggingAnimSeek) {
               if (!g_toolbar.IsVisible()) {  // Only repaint if state actually changes
                   g_toolbar.SetVisible(true);
                   SetTimer(hwnd, 997, 16, nullptr);  // Start animation timer immediately
@@ -7739,14 +7742,12 @@ SKIP_EDGE_NAV:;
         
         if (g_helpOverlay.IsVisible()) {
             g_helpOverlay.OnLButtonDown((float)pt.x, (float)pt.y);
-            RequestRepaint(PaintLayer::Static); // Force repaint to ensure close immediately
+            RequestRepaint(PaintLayer::Static);
+            return 0;
         }
         
         // Check if Settings closed itself (e.g. Back button or Help transition)
         if (wasSettingsVisible && !g_settingsOverlay.IsVisible()) {
-             if (!g_helpOverlay.IsVisible()) {
-                 AdjustWindowForOverlay(hwnd, true);
-             }
              RequestRepaint(PaintLayer::Static);
              return 0;
         }
@@ -8575,8 +8576,7 @@ SKIP_EDGE_NAV:;
         // Settings handling
         if (g_settingsOverlay.IsVisible()) {
             if (wParam == VK_ESCAPE) {
-                g_settingsOverlay.Toggle(); // Close
-                AdjustWindowForOverlay(hwnd, true);
+                g_settingsOverlay.Toggle(); // Close (which handles window restore)
                 RequestRepaint(PaintLayer::Static);
                 return 0;
             }
@@ -8585,8 +8585,7 @@ SKIP_EDGE_NAV:;
         // Help handling
         if (g_helpOverlay.IsVisible()) {
             if (wParam == VK_ESCAPE) {
-                g_helpOverlay.SetVisible(false);
-                AdjustWindowForOverlay(hwnd, true);
+                g_helpOverlay.SetVisible(false); // Handles window restore
                 RequestRepaint(PaintLayer::Static);
                 return 0;
             }
@@ -8697,7 +8696,6 @@ SKIP_EDGE_NAV:;
         case VK_F1: {
              if (!g_helpOverlay.IsVisible()) SaveOverlayWindowState(hwnd);
              g_helpOverlay.Toggle();
-             AdjustWindowForOverlay(hwnd, !g_helpOverlay.IsVisible());
              RequestRepaint(PaintLayer::Static);
              return 0;
         }
@@ -9852,9 +9850,6 @@ SKIP_EDGE_NAV:;
             } else {
                 SaveOverlayWindowState(hwnd);
                 g_settingsOverlay.Toggle(); // Open
-                if (g_settingsOverlay.IsVisible()) {
-                    AdjustWindowForOverlay(hwnd, false);
-                }
             }
             RequestRepaint(PaintLayer::Static);
             break;
@@ -11013,17 +11008,17 @@ void StartNavigation(HWND hwnd, std::wstring path, bool showOSD, QuickView::Brow
     if (g_imagePath != path) {
         g_runtime.ForceRawDecode = g_config.ForceRawDecode;
         
-        // [Fix] Window Lock Persistence: Reset Lock state to User Preference on navigation.
-        // This ensures that an "Auto-Lock" (from small image zoom) doesn't trap subsequent large images.
-        // [v10.5 Fix] Only reset if it was an auto-lock or if KeepWindowSizeOnNav is false and we aren't manually locked.
-        // Also ensure toolbar UI is synced with g_runtime.LockWindowSize to prevent state mismatch.
-        if (g_isAutoLocked || (!g_config.KeepWindowSizeOnNav && !g_runtime.LockWindowSize)) {
+        // [Fix] Reverted to preserve manual LockWindowSize during navigation.
+        // Auto-resizing is now handled strictly inside AdjustWindowToImage via 
+        // the (g_runtime.LockWindowSize && g_config.KeepWindowSizeOnNav) check.
+        if (g_isAutoLocked) {
             g_runtime.LockWindowSize = g_config.LockWindowSize;
             g_isAutoLocked = false;
-        } else if (g_config.KeepWindowSizeOnNav) {
-            // If KeepWindowSizeOnNav is true, we keep the current runtime lock state
-            g_isAutoLocked = false; 
         }
+
+        // [Fix] If we have a saved overlay state, it is now invalid because the image changed.
+        // We want the window to adapt to the NEW image when the overlay closes.
+        g_savedState.isValid = false;
 
         g_toolbar.SetLockState(g_runtime.LockWindowSize);
 
