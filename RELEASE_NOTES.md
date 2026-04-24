@@ -1,16 +1,18 @@
 # QuickView v5.3.0 - Vector UI & Interaction Update
-**Release Date**: 2026-04-23
+**Release Date**: 2026-04-24
 
-QuickView v5.3.0 focuses on improving UI consistency and refining user interaction based on community feedback.
+QuickView v5.3.0 focuses on improving UI consistency, refining user interaction, and ensuring a clean system footprint.
 
 ### 🎨 Vectorized UI Icons
 We have migrated the remaining UI icons to the **GeekIcon** vector engine.
 - **Improved Consistency**: Icons are now rendered using Direct2D paths, ensuring they look the same across different Windows versions and DPI settings.
 - **Font Dependency Removed**: The application no longer relies on specific icon fonts for its core interface.
 
-### 🛠 Windows Integration (#168)
-- **Default Photo Viewer**: You can now register QuickView as a supported viewer in Windows "Default Apps" settings.
-- **Portable Mode Refinement**: Updated the UI and logic for portable mode to better handle registry cleanup and configuration storage.
+### 🛠 Windows Integration & Cleanup
+- **Deep Uninstallation**: Added a new `--uninstall` flag for comprehensive registry (HKCU) and application data cleanup. 
+- **Improved Installer**: The Inno Setup installer now automatically purges legacy `.old` files and the AppData folder upon removal, ensuring a zero-footprint uninstallation.
+- **WinGet Automation**: Optimized the submission pipeline to use standard installers, resolving previous validation issues and improving accessibility via `winget install QuickView`.
+- **Default Photo Viewer**: Enhanced support for Windows 11 "Default Apps" settings via full Capability registration.
 
 ### 🎥 Interaction & Animation
 - **Frame Counter (#167)**: Added a basic frame index display to the animation progress bar for GIF and WebP files.
