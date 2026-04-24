@@ -22,7 +22,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive # Recursively fetch submodules like vcpkg
-          fetch-depth: 0        # Fetch all history for all tags and branches (Required for vcpkg versioning)
+
+      - name: Install Visual Studio 2026 (v145)
+        shell: pwsh
+        run: |
+          # Install VS 2026 Build Tools with C++ Desktop workload
+          choco install visualstudio2026-workload-nativedesktop --package-parameters "--includeRecommended --includeOptional --passive --locale en-US"
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -36,8 +41,8 @@ jobs:
       - name: Build Project
         shell: pwsh
         run: |
-          # Build Release configuration (Overriding toolset to v143 for GitHub runner compatibility)
-          msbuild QuickView\QuickView.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:PlatformToolset=v143 /m
+          # Build Release configuration using project's native v145 toolset
+          msbuild QuickView\QuickView.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} /m
 
       - name: Prepare Portable Version
         shell: pwsh
