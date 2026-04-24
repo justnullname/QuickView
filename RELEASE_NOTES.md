@@ -1,24 +1,28 @@
-# QuickView v5.2.2 - Emergency Stability Fix
-**Release Date**: 2026-04-17
+# QuickView v5.3.0 - Vector UI & Interaction Update
+**Release Date**: 2026-04-23
 
-QuickView v5.2.2 is an emergency maintenance release focusing on performance reliability, security software compatibility, and Titan engine stability.
+QuickView v5.3.0 focuses on improving UI consistency and refining user interaction based on community feedback.
 
-### 🛡️ Security & Compatibility (#149)
-We have completely refactored our self-registration and update-checking mechanism to eliminate false positives in Microsoft Defender and other AV software.
-- **Idempotent Registration**: QuickView now uses an O(1) INI-based check to verify registration status at startup, bypassing redundant registry operations.
-- **Idle Maintenance**: Heavy registry updates are now deferred to a background task that only triggers when the system is truly idle.
+### 🎨 Vectorized UI Icons
+We have migrated the remaining UI icons to the **GeekIcon** vector engine.
+- **Improved Consistency**: Icons are now rendered using Direct2D paths, ensuring they look the same across different Windows versions and DPI settings.
+- **Font Dependency Removed**: The application no longer relies on specific icon fonts for its core interface.
 
-### ⚡ Performance Optimization (#145)
-- **Animation Fast-Scan**: Restored high-performance static viewing for PNG, GIF, and JXL by implementing a "magic-byte" pre-scanner that identifies static files before they enter the animation engine, avoiding unnecessary CPU overhead.
-- **Unified Decoding Pipeline**: Consolidated various decoding paths into a robust `LoadBufferUnified` model, improving memory management for massive images.
+### 🛠 Windows Integration (#168)
+- **Default Photo Viewer**: You can now register QuickView as a supported viewer in Windows "Default Apps" settings.
+- **Portable Mode Refinement**: Updated the UI and logic for portable mode to better handle registry cleanup and configuration storage.
 
-### 🚀 Titan Engine Stability
-- **Context Menu Fix**: Resolved a regression where the context menu could appear empty when prefetching massive images in Titan mode.
-- **MMF Animation Probe**: Fixed an issue where large animated WebP files (MMF-based) would occasionally fail to play correctly.
-- **Idle-Based Prefetch Trigger**: Replaced fixed startup timers with a robust 500ms continuous idle detection system, ensuring prefetch tasks don't compete with the initial image load.
+### 🎥 Interaction & Animation
+- **Frame Counter (#167)**: Added a basic frame index display to the animation progress bar for GIF and WebP files.
+- **Hand Cursor Panning (#160)**: Added a hand cursor when dragging images that are larger than the window.
+- **Thumb Wheel Support (#156)**: Added support for vertical/horizontal mouse thumb wheels.
+- **Zoom Cycle**: Refined the zoom hotkey/double-click behavior to cycle through common scaling modes.
 
-### 🛠 Other Fixes
-- **Startup Resilience**: Fixed a rare race condition and deadlock when opening massive files as the very first action after installation.
-- **HDR Accuracy**: Improved peak luminance detection and tone mapping for monitors with incomplete WinRT Advanced Color reporting.
+### 🌈 HDR & Color (Experimental)
+- **Luminance Handling (#131)**: We have adjusted how peak luminance is detected on HDR monitors by prioritizing system-level reports. **Note**: This is an initial attempt to address "washed out" colors, and we are still evaluating its effectiveness across different hardware.
 
----
+### 🤝 Acknowledgments
+A special thank you to the users who helped test this release:
+- **@bananakid**, **@PYCHBI**, **@lrbin50**, **@1kari-s**, **@Battler624**, and **@toxieainc** for their bug reports, technical insights, and for sharing HDR testing resources.
+
+We appreciate your continued support in helping us refine QuickView.

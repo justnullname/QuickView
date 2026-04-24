@@ -1,5 +1,50 @@
 # Changelog
 
+## [5.3.0] - The Vector & Interaction Evolution
+**Release Date**: 2026-04-23
+
+### ✨ Features
+- **Full UI Vectorization**: Migrated all UI icons (Toolbar, Context Menu, Window Controls) to the high-performance **GeekIcon** vector engine. Removed all legacy font dependencies for pixel-perfect, hardware-accelerated rendering.
+- **Windows Integration (#168)**: Added native support for registering QuickView as a default photo viewer in Windows Settings.
+- **Animation UX (#167)**:
+  - Added **Animated Frame Counter** to the playback scrubber (e.g., "5 / 20").
+  - Refined scrubber as a modern "capsule" style.
+  - Improved toolbar auto-hide logic with precision hit-testing.
+- **Interaction Refinement**:
+  - **Hand Cursor Panning (#160)**: Added hand cursor support for intuitive image dragging.
+  - **Thumb Wheel Support (#156)**: Full support for horizontal and vertical mouse thumb wheels.
+  - **3-State Zoom Cycle**: Refined double-click and zoom hotkeys (Fit -> 100% -> Restore).
+  - **Edge Navigation Hand Cursor (#144)**: Improved visual feedback for edge navigation.
+- **WinGet Submission (#130)**: Added automated CI workflow for WinGet package management.
+
+### 🎨 Visuals & Theme
+- **Unified Rounded Corners**: Centralized "Rounded Corners" toggle in the Theme tab, now applied to both the main window and context menus.
+- **OSD Shadow Sync (#144)**: Synchronized OSD shadow intensity with global theme settings and fixed visual glitches when disabled.
+- **Portable Mode UI (#168)**: Improved clarity for portable mode settings and cleanup behavior.
+
+### ⚡ Performance & HDR
+- **HDR Peak Luminance Handling (#131)**: Initial implementation to prioritize WinRT/DXGI hardware detection over ICC metadata to address "washed out" colors on some HDR monitors (Experimental).
+- **SDR Tone-Mapping**: Updated shaders for color rendering on non-HDR displays.
+
+### 🐛 Bug Fixes
+- **Ghost Image Cleanup**: Resolved residual thumbnail artifacts during Titan mode transitions.
+- **Window Lock Stability**: Fixed Z-order and expansion logic conflicts during image navigation.
+- **HiDPI Polish**: Fixed cursor flickering and layout artifacts on high-resolution displays.
+- **Overlay Expansion (#142)**: Unified overlay window resizing logic for empty states.
+
+
+
+
+## [5.2.3] - Unified Memory Decoding
+**Release Date**: 2026-04-17
+
+### 🛠 Improvements
+- **Unified Decoding Pipeline**: Refactored `ImageLoader` to enforce native buffer codec checks, eliminating redundant WIC fallbacks.
+- **Format Support**: Added case-insensitive WebP detection for the Titan engine.
+- **CMYK Fidelity**: Improved high-fidelity CMS handling for CMYK JPEGs by routing them to the specialized file path loader.
+- **Cleanup**: Resolved compiler warnings in memory loading lambdas and tightened `TileTypes` definitions.
+
+
 ## [5.2.2] - Emergency Fix Release
 **Release Date**: 2026-04-17
 

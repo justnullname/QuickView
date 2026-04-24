@@ -1,0 +1,103 @@
+name: QuickView Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build-and-release:
+    name: Build & Pack (${{ matrix.platform }})
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        # Build for both x64 and ARM64
+        platform: [x64, ARM64]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive # Recursively fetch submodules like vcpkg
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          cd third_party/vcpkg
+          ./bootstrap-vcpkg.bat
+
+      - name: Build Project
+        shell: pwsh
+        run: |
+          # Build Release configuration
+          msbuild QuickView\QuickView.sln /p:Configuration=Release /p:Platform=${{ matrix.platform }} /m
+
+      - name: Prepare Portable Version
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.platform }}".ToLower()
+          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "latest" }
+          
+          # Create unified release directory structure for .iss script
+          New-Item -ItemType Directory -Force "Release/$arch"
+          
+          # Copy exe based on vcxproj output path
+          # Note: ARM64 output path is bin\ARM64\Release\ in vcxproj
+          $exePath = "QuickView\bin\${{ matrix.platform }}\Release\QuickView.exe"
+          if (Test-Path $exePath) {
+              Copy-Item $exePath "Release/$arch/QuickView.exe"
+          } else {
+              Write-Error "Could not find executable at $exePath"
+              exit 1
+          }
+
+          # Pack portable version Zip (Uppercase X64/ARM64)
+          $archUpper = if ("${{ matrix.platform }}" -eq "x64") { "X64" } else { "ARM64" }
+          $zipName = "QuickView_${tag}_${archUpper}.zip"
+          Compress-Archive -Path "Release/$arch/QuickView.exe" -DestinationPath "Release/$zipName" -Force
+          echo "ZIP_PATH=Release/$zipName" >> $env:GITHUB_ENV
+
+      - name: Build Inno Setup Installer
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.platform }}".ToLower()
+          $archUpper = if ("${{ matrix.platform }}" -eq "x64") { "X64" } else { "ARM64" }
+          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "v2.1.0" }
+          $version = $tag.TrimStart('v')
+          
+          # Invoke ISCC to compile installer, injecting version and arch parameters
+          # Pass OutputName to include version and correct arch suffix
+          $outputName = "QuickView_Installer_${tag}_${archUpper}"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version /DAppArch=$arch /DOutputName=$outputName installer\QuickView.iss
+          
+          $installerPath = "Release\installer\${outputName}.exe"
+          if (Test-Path $installerPath) {
+              echo "INSTALLER_PATH=$installerPath" >> $env:GITHUB_ENV
+          } else {
+              Write-Error "Installer build failed at $installerPath"
+              exit 1
+          }
+
+      - name: Upload Build Artifacts (For Verification)
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickView-Packages-${{ matrix.platform }}
+          path: |
+            Release/*.zip
+            Release/installer/*.exe
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            Release/*.zip
+            Release/installer/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
