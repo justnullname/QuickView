@@ -24,11 +24,15 @@ jobs:
           submodules: recursive # Recursively fetch submodules like vcpkg
           fetch-depth: 0        # Fetch full history to support vcpkg versioning
 
-      - name: Install Minimal Visual Studio 2026 (v145)
+      - name: Install Essential Visual Studio 2026 (v145) Components
         shell: pwsh
         run: |
-          # Install only required components to save time: VCTools (Compiler/MSBuild), Windows SDK, and ATL
-          choco install visualstudio2026buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.ATL --includeRecommended --passive --norestart --locale en-US"
+          # Precision installation based on code analysis:
+          # 1. Workload.VCTools: Core compiler & MSBuild
+          # 2. Windows11SDK.22621: DirectX, WinRT, and System headers
+          # 3. VC.Tools.ARM64: Essential for the ARM64 release matrix
+          # 4. VC.ATL: Included for safe linking with some vcpkg dependencies
+          choco install visualstudio2026buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.VC.ATL --includeRecommended --passive --norestart --locale en-US"
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
