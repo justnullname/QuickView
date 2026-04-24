@@ -15,3 +15,4 @@ jobs:
           identifier: justnullname.QuickView
           token: ${{ secrets.WINGET_TOKEN }}
           installers-regex: '.*_Installer_.*\.exe$'
+          installer-type: inno
