@@ -10,6 +10,11 @@ using Microsoft::WRL::ComPtr;
 
 namespace QuickView {
 
+
+struct ColorMatrix3 {
+    float m[3][3];
+};
+
 struct ToneMapSettings {
     float contentPeakScRgb = 1.0f;
     float displayPeakScRgb = 1.0f;
@@ -101,6 +106,15 @@ public:
     /// </summary>
     HRESULT GenerateMips(ID3D11Texture2D* pTexture);
 
+    HRESULT DispatchGamutWarning(
+        ID3D11ShaderResourceView* pSrcLinearRgb,
+        int width, int height,
+        const ColorMatrix3& xyzToDst,
+        float targetPeak,
+        ID3D11Texture2D** outMaskTexture,
+        ID3D11Buffer** outStagingCounter);
+
+
 private:
     ComPtr<ID3D11Device> m_d3dDevice;
     ComPtr<ID3D11DeviceContext> m_d3dContext;
@@ -112,6 +126,9 @@ private:
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToSdr;
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToHdr;
     ComPtr<ID3D11ComputeShader> m_csComposeGainMap;
+    ComPtr<ID3D11ComputeShader> m_csGamutWarning;
+    ComPtr<ID3D11Buffer> m_gamutWarningConstantBuffer;
+
 
     ComPtr<ID3D11Buffer> m_toneMapConstantBuffer;
     ComPtr<ID3D11Buffer> m_gainMapConstantBuffer;

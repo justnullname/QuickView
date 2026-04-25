@@ -210,6 +210,50 @@ void CSToneMapHDR(uint3 id : SV_DispatchThreadID)
 // Output (u0): FP16 linear RGBA (R16G16B16A16_FLOAT)
 // Constant Buffer (b0): GpuShaderPayload (16-byte aligned rows)
 // ============================================================================
+
+static const char* HLSL_GamutWarning = R"(
+Texture2D<float4> SrcLinearRgb : register(t0);
+RWTexture2D<unorm float> MaskTex : register(u0);
+RWStructuredBuffer<uint> OverflowCounter : register(u1);
+
+cbuffer GamutParams : register(b0)
+{
+    float3x3 XyzToDst;
+    float TargetPeak;
+    uint Width;
+    uint Height;
+    float _pad0;
+    float _pad1;
+};
+
+[numthreads(8, 8, 1)]
+void CSGamutWarning(uint3 id : SV_DispatchThreadID)
+{
+    // Process every 2x2 block (subsample)
+    uint x = id.x * 2;
+    uint y = id.y * 2;
+
+    if (x >= Width || y >= Height) return;
+
+    float3 linearRgb = SrcLinearRgb[uint2(x, y)].rgb;
+
+    // Matrix mult
+    float dr = XyzToDst[0][0] * linearRgb.r + XyzToDst[0][1] * linearRgb.g + XyzToDst[0][2] * linearRgb.b;
+    float dg = XyzToDst[1][0] * linearRgb.r + XyzToDst[1][1] * linearRgb.g + XyzToDst[1][2] * linearRgb.b;
+    float db = XyzToDst[2][0] * linearRgb.r + XyzToDst[2][1] * linearRgb.g + XyzToDst[2][2] * linearRgb.b;
+
+    float kThreshold = 0.001f;
+    bool overflow = (dr < -kThreshold || dg < -kThreshold || db < -kThreshold ||
+                     dr > TargetPeak + kThreshold || dg > TargetPeak + kThreshold || db > TargetPeak + kThreshold);
+
+    if (overflow) {
+        MaskTex[id.xy] = 1.0f;
+        OverflowCounter[0] = 1;
+    } else {
+        MaskTex[id.xy] = 0.0f;
+    }
+}
+)";
 static const char* HLSL_ComposeGainMap = R"(
 Texture2D<float4> SdrTex        : register(t0);  // Unbounded float4 to support R32G32B32A32 input
 Texture2D<unorm float>  GainTex : register(t1);  // R8 Gain Map
@@ -358,6 +402,28 @@ HRESULT ComputeEngine::CompileShaders() {
     // Gain Map CB (sizeof GpuShaderPayload, must be 16-byte aligned)
     cbDesc.ByteWidth = sizeof(GpuShaderPayload);
     hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_gainMapConstantBuffer);
+    if (FAILED(hr)) return hr;
+
+
+    // 6. Gamut Warning CS
+    blob.Reset(); errorBlob.Reset();
+    hr = D3DCompile(HLSL_GamutWarning, strlen(HLSL_GamutWarning), nullptr, nullptr, nullptr, "CSGamutWarning", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) {
+            QV_LOG("Shader_Error", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Message"));
+        }
+        return hr;
+    }
+    hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csGamutWarning);
+    if (FAILED(hr)) return hr;
+
+    // Gamut Warning Constant Buffer
+    D3D11_BUFFER_DESC gamutCbDesc = {};
+    gamutCbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    gamutCbDesc.ByteWidth = 64; // float4x4 padding
+    gamutCbDesc.Usage = D3D11_USAGE_DYNAMIC;
+    gamutCbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    hr = m_d3dDevice->CreateBuffer(&gamutCbDesc, nullptr, &m_gamutWarningConstantBuffer);
     if (FAILED(hr)) return hr;
 
     // Linear sampler for bilinear gain map interpolation
@@ -796,3 +862,114 @@ HRESULT ComputeEngine::ComposeGainMap(
 
 } // namespace QuickView
 
+
+
+HRESULT ComputeEngine::DispatchGamutWarning(
+    ID3D11ShaderResourceView* pSrcLinearRgb,
+    int width, int height,
+    const ColorMatrix3& xyzToDst,
+    float targetPeak,
+    ID3D11Texture2D** outMaskTexture,
+    ID3D11Buffer** outStagingCounter)
+{
+    if (!m_valid || !pSrcLinearRgb || !outMaskTexture || !outStagingCounter) return E_INVALIDARG;
+
+    int maskW = (width + 1) / 2;
+    int maskH = (height + 1) / 2;
+
+    // 1. Create Mask Texture
+    D3D11_TEXTURE2D_DESC maskDesc = {};
+    maskDesc.Width = maskW;
+    maskDesc.Height = maskH;
+    maskDesc.MipLevels = 1;
+    maskDesc.ArraySize = 1;
+    maskDesc.Format = DXGI_FORMAT_R8_UNORM;
+    maskDesc.SampleDesc.Count = 1;
+    maskDesc.Usage = D3D11_USAGE_DEFAULT;
+    maskDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+
+    ComPtr<ID3D11Texture2D> pMaskTex;
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&maskDesc, nullptr, &pMaskTex);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11UnorderedAccessView> pMaskUAV;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pMaskTex.Get(), nullptr, &pMaskUAV);
+    if (FAILED(hr)) return hr;
+
+    // 2. Create Counter Buffer (UAV)
+    D3D11_BUFFER_DESC counterDesc = {};
+    counterDesc.ByteWidth = 4;
+    counterDesc.Usage = D3D11_USAGE_DEFAULT;
+    counterDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    counterDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    counterDesc.StructureByteStride = 4;
+
+    ComPtr<ID3D11Buffer> pCounterBuf;
+    hr = m_d3dDevice->CreateBuffer(&counterDesc, nullptr, &pCounterBuf);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11UnorderedAccessView> pCounterUAV;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pCounterBuf.Get(), nullptr, &pCounterUAV);
+    if (FAILED(hr)) return hr;
+
+    // Zero out counter
+    UINT zero[4] = {0, 0, 0, 0};
+    m_d3dContext->ClearUnorderedAccessViewUint(pCounterUAV.Get(), zero);
+
+    // 3. Create Staging Counter Buffer
+    D3D11_BUFFER_DESC stagingDesc = counterDesc;
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.BindFlags = 0;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+    hr = m_d3dDevice->CreateBuffer(&stagingDesc, nullptr, outStagingCounter);
+    if (FAILED(hr)) return hr;
+
+    // 4. Update Constant Buffer
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(m_d3dContext->Map(m_gamutWarningConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        struct GamutParams {
+            float m[3][4]; // float3x3 padded
+            float TargetPeak;
+            uint Width;
+            uint Height;
+            float _pad0;
+        } params = {};
+
+        // Transpose/pack for float3x3
+        params.m[0][0] = xyzToDst.m[0][0]; params.m[0][1] = xyzToDst.m[0][1]; params.m[0][2] = xyzToDst.m[0][2];
+        params.m[1][0] = xyzToDst.m[1][0]; params.m[1][1] = xyzToDst.m[1][1]; params.m[1][2] = xyzToDst.m[1][2];
+        params.m[2][0] = xyzToDst.m[2][0]; params.m[2][1] = xyzToDst.m[2][1]; params.m[2][2] = xyzToDst.m[2][2];
+        params.TargetPeak = targetPeak;
+        params.Width = width;
+        params.Height = height;
+
+        memcpy(mapped.pData, &params, sizeof(GamutParams));
+        m_d3dContext->Unmap(m_gamutWarningConstantBuffer.Get(), 0);
+    }
+
+    // 5. Dispatch
+    m_d3dContext->CSSetShader(m_csGamutWarning.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* srvs[] = { pSrcLinearRgb };
+    m_d3dContext->CSSetShaderResources(0, 1, srvs);
+    ID3D11UnorderedAccessView* uavs[] = { pMaskUAV.Get(), pCounterUAV.Get() };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+    ID3D11Buffer* cbs[] = { m_gamutWarningConstantBuffer.Get() };
+    m_d3dContext->CSSetConstantBuffers(0, 1, cbs);
+
+    m_d3dContext->Dispatch((maskW + 7) / 8, (maskH + 7) / 8, 1);
+
+    // 6. Copy Counter to Staging
+    m_d3dContext->CopyResource(*outStagingCounter, pCounterBuf.Get());
+
+    // 7. Cleanup
+    ID3D11UnorderedAccessView* nullUAVs[] = { nullptr, nullptr };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 2, nullUAVs, nullptr);
+    ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
+    m_d3dContext->CSSetShaderResources(0, 1, nullSRVs);
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullptr);
+    m_d3dContext->CSSetShader(nullptr, nullptr, 0);
+
+    *outMaskTexture = pMaskTex.Detach();
+    return S_OK;
+}

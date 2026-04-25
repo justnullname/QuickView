@@ -43,15 +43,6 @@ extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& o
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);
 extern bool IsCompareModeActive();
 extern bool GetAdaptiveUiPaneSnapshot(int paneIndex, AdaptiveUiPaneSnapshot& outSnapshot);
-struct GamutWarningOverlayState {
-    int width;
-    int height;
-    int cols;
-    int rows;
-    std::vector<uint8_t> mask;
-    bool hasOverflow;
-};
-extern GamutWarningOverlayState g_gamutWarningOverlay;
 extern float g_gamutWarningFlashOpacity;
 
 static bool PointInRect(float x, float y, const D2D1_RECT_F& rect) {
@@ -673,7 +664,6 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     m_blackBrush = blackBrush;
     m_accentBrush = accentBrush;
 
-    DrawGamutWarningOverlay(dc);
     
     // OSD
     DrawOSD(dc, hwnd);
@@ -682,6 +672,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     DrawDecodingStatus(dc, hwnd);
 
     // Compare Info HUD
+    DrawGamutWarningOverlay(dc);
     DrawCompareInfoHUD(dc);
     
     // Debug HUD
@@ -756,53 +747,6 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Modal Dialog (鏈€椤跺眰)
     RECT clientRect = { 0, 0, (LONG)m_width, (LONG)m_height };
     DrawDialog(dc, clientRect);
-}
-
-void UIRenderer::DrawGamutWarningOverlay(ID2D1DeviceContext* dc) {
-    if (!g_runtime.ShowGamutWarningOverlay || !g_gamutWarningOverlay.hasOverflow || !m_compEngine) return;
-    if (g_gamutWarningOverlay.cols <= 0 || g_gamutWarningOverlay.rows <= 0 || g_gamutWarningOverlay.mask.empty()) return;
-
-    const float imageW = static_cast<float>(g_gamutWarningOverlay.width > 0 ? g_gamutWarningOverlay.width : m_metadata.Width);
-    const float imageH = static_cast<float>(g_gamutWarningOverlay.height > 0 ? g_gamutWarningOverlay.height : m_metadata.Height);
-    if (imageW <= 0.0f || imageH <= 0.0f) return;
-
-    ComPtr<ID2D1SolidColorBrush> fillBrush;
-    ComPtr<ID2D1SolidColorBrush> lineBrush;
-    const float alpha = std::clamp(g_gamutWarningFlashOpacity, 0.2f, 1.0f);
-    dc->CreateSolidColorBrush(
-        D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 0.16f * alpha),
-        &fillBrush);
-    dc->CreateSolidColorBrush(
-        D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 0.78f * alpha),
-        &lineBrush);
-
-    D2D1_MATRIX_3X2_F oldTransform = D2D1::Matrix3x2F::Identity();
-    dc->GetTransform(&oldTransform);
-    dc->SetTransform(m_compEngine->GetScreenTransform());
-    dc->PushAxisAlignedClip(D2D1::RectF(0.0f, 0.0f, imageW, imageH), D2D1_ANTIALIAS_MODE_ALIASED);
-
-    const float cellW = imageW / static_cast<float>(g_gamutWarningOverlay.cols);
-    const float cellH = imageH / static_cast<float>(g_gamutWarningOverlay.rows);
-    const float hatchStep = std::max(6.0f, std::min(cellW, cellH) * 0.8f);
-
-    for (int row = 0; row < g_gamutWarningOverlay.rows; ++row) {
-        for (int col = 0; col < g_gamutWarningOverlay.cols; ++col) {
-            if (!g_gamutWarningOverlay.mask[static_cast<size_t>(row * g_gamutWarningOverlay.cols + col)]) continue;
-
-            const float left = col * cellW;
-            const float top = row * cellH;
-            const D2D1_RECT_F rect = D2D1::RectF(left, top, left + cellW, top + cellH);
-            dc->FillRectangle(rect, fillBrush.Get());
-
-            for (float x = rect.left - cellH; x < rect.right; x += hatchStep) {
-                dc->DrawLine(D2D1::Point2F(x, rect.bottom), D2D1::Point2F(x + cellH, rect.top),
-                             lineBrush.Get(), 1.4f * m_uiScale);
-            }
-        }
-    }
-
-    dc->PopAxisAlignedClip();
-    dc->SetTransform(oldTransform);
 }
 
 // ============================================================================
@@ -3900,5 +3844,46 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     // Reset hover if outside HUD
     if (!PointInRect((float)m_lastMousePos.x, (float)m_lastMousePos.y, m_lastHUDRect)) {
         if (m_hoverRowIndex <= -2) m_hoverRowIndex = -1;
+    }
+}
+
+
+
+
+
+void UIRenderer::DrawGamutWarningOverlay(ID2D1DeviceContext* dc) {
+    if (!g_runtime.ShowGamutWarningOverlay || !g_renderEngine) return;
+
+    if (!g_renderEngine->HasGamutWarningOverflow()) return;
+
+    auto* pMaskBitmap = g_renderEngine->GetGamutWarningMaskBitmap();
+    if (!pMaskBitmap) return;
+
+    const float imageW = static_cast<float>(m_metadata.Width);
+    const float imageH = static_cast<float>(m_metadata.Height);
+    if (imageW <= 0.0f || imageH <= 0.0f) return;
+
+    ComPtr<ID2D1Effect> colorMatrixEffect;
+    if (SUCCEEDED(dc->CreateEffect(CLSID_D2D1ColorMatrix, &colorMatrixEffect))) {
+        colorMatrixEffect->SetInput(0, pMaskBitmap);
+
+        const float alpha = std::clamp(g_gamutWarningFlashOpacity, 0.2f, 1.0f);
+        D2D1_MATRIX_5X4_F matrix = D2D1::Matrix5x4F(
+            g_config.GamutWarningColorR, 0, 0, 0,
+            0, g_config.GamutWarningColorG, 0, 0,
+            0, 0, g_config.GamutWarningColorB, 0,
+            0, 0, 0, alpha,
+            0, 0, 0, 0
+        );
+        colorMatrixEffect->SetValue(D2D1_COLORMATRIX_PROP_COLOR_MATRIX, matrix);
+
+        D2D1_MATRIX_3X2_F oldTransform = D2D1::Matrix3x2F::Identity();
+        dc->GetTransform(&oldTransform);
+        dc->SetTransform(m_compEngine->GetScreenTransform());
+
+        // Use Nearest Neighbor interpolation to draw the low-res mask directly over the image
+        dc->DrawImage(colorMatrixEffect.Get(), D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+
+        dc->SetTransform(oldTransform);
     }
 }

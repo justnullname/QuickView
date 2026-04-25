@@ -264,104 +264,6 @@ QuickView::ColorPrimaries ResolveFrameProfilePrimaries(
   return frame.hdrMetadata.primaries;
 }
 
-bool BuildGamutCheckSampleFrame(const QuickView::RawImageFrame &frame,
-                                QuickView::RawImageFrame *outSample,
-                                int *outCols, int *outRows) {
-  if (!outSample || !outCols || !outRows || !frame.IsValid() || !frame.pixels ||
-      frame.width <= 0 || frame.height <= 0) {
-    return false;
-  }
-
-  if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
-      frame.format == QuickView::PixelFormat::SVG_XML) {
-    return false;
-  }
-
-  outSample->Release();
-  outSample->format = QuickView::PixelFormat::BGRX8888;
-  outSample->width = std::clamp(frame.width / 16, 48, 256);
-  outSample->height = std::clamp(frame.height / 16, 48, 256);
-  outSample->stride = outSample->width * 4;
-  outSample->iccProfile = frame.iccProfile;
-  outSample->colorInfo = frame.colorInfo;
-  outSample->hdrMetadata = frame.hdrMetadata;
-  outSample->pixels =
-      static_cast<uint8_t *>(malloc(static_cast<size_t>(outSample->stride) *
-                                    static_cast<size_t>(outSample->height)));
-  outSample->memoryDeleter = [](uint8_t *p) { free(p); };
-  if (!outSample->pixels) {
-    outSample->Release();
-    return false;
-  }
-
-  for (int row = 0; row < outSample->height; ++row) {
-    uint8_t *dstRow =
-        outSample->pixels + static_cast<size_t>(row) * outSample->stride;
-    const float v = (static_cast<float>(row) + 0.5f) /
-                    static_cast<float>(outSample->height);
-    const int sy = std::clamp(
-        static_cast<int>(v * static_cast<float>(frame.height - 1)), 0,
-        frame.height - 1);
-    const uint8_t *srcRow =
-        frame.pixels + static_cast<size_t>(sy) * frame.stride;
-
-    for (int col = 0; col < outSample->width; ++col) {
-      const float u = (static_cast<float>(col) + 0.5f) /
-                      static_cast<float>(outSample->width);
-      const int sx = std::clamp(
-          static_cast<int>(u * static_cast<float>(frame.width - 1)), 0,
-          frame.width - 1);
-
-      const uint8_t *src = srcRow + static_cast<size_t>(sx) * 4;
-      uint8_t *dst = dstRow + static_cast<size_t>(col) * 4;
-      switch (frame.format) {
-      case QuickView::PixelFormat::BGRA8888:
-      case QuickView::PixelFormat::BGRX8888:
-        dst[0] = src[0];
-        dst[1] = src[1];
-        dst[2] = src[2];
-        dst[3] = 0;
-        break;
-      case QuickView::PixelFormat::RGBA8888:
-        dst[0] = src[2];
-        dst[1] = src[1];
-        dst[2] = src[0];
-        dst[3] = 0;
-        break;
-      default:
-        outSample->Release();
-        return false;
-      }
-    }
-  }
-
-  *outCols = outSample->width;
-  *outRows = outSample->height;
-  return true;
-}
-
-void DilateBinaryMask(std::vector<uint8_t> &mask, int cols, int rows) {
-  if (mask.empty() || cols <= 0 || rows <= 0)
-    return;
-
-  std::vector<uint8_t> expanded = mask;
-  for (int row = 0; row < rows; ++row) {
-    for (int col = 0; col < cols; ++col) {
-      if (!mask[static_cast<size_t>(row * cols + col)])
-        continue;
-      for (int oy = -1; oy <= 1; ++oy) {
-        for (int ox = -1; ox <= 1; ++ox) {
-          const int nx = col + ox;
-          const int ny = row + oy;
-          if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
-            expanded[static_cast<size_t>(ny * cols + nx)] = 255;
-          }
-        }
-      }
-    }
-  }
-  mask.swap(expanded);
-}
 
 ColorMatrix3x3 MakeIdentityMatrix() {
   return {{{1.0f, 0.0f, 0.0f},
@@ -587,151 +489,6 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
 
 float CRenderEngine::EstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
   return InternalEstimateFramePeakScRgb(frame);
-}
-
-HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
-    const QuickView::RawImageFrame &frame,
-    const GamutWarningAnalysisOptions &options,
-    GamutWarningAnalysisResult *outResult) const {
-  if (!outResult)
-    return E_INVALIDARG;
-
-  *outResult = {};
-  outResult->width = frame.width;
-  outResult->height = frame.height;
-
-  if (!frame.IsValid() || !frame.pixels || frame.width <= 0 || frame.height <= 0) {
-    return E_INVALIDARG;
-  }
-
-  // A hard clipping warning is only meaningful in relative colorimetric mode.
-  if (options.renderingIntent != 1) {
-    return S_OK;
-  }
-
-  // Windows can expose a synthetic or generic display ICC that does not
-  // describe the panel's real gamut. For screen-gamut warnings, prefer the
-  // caller's display-primaries approximation path instead of a misleading ICC
-  // transform. Keep the exact ICC path for explicit soft proofing only.
-  if (!options.enableSoftProofing || options.softProofProfilePath.empty()) {
-    return S_FALSE;
-  }
-
-  QuickView::RawImageFrame sampledFrame;
-  if (!BuildGamutCheckSampleFrame(frame, &sampledFrame, &outResult->cols,
-                                  &outResult->rows)) {
-    return S_FALSE;
-  }
-
-  ScopedColorProfile srcProfile;
-  ScopedColorProfile dstProfile;
-  std::vector<uint8_t> profileBytes;
-
-  auto openPrimariesProfile = [&](QuickView::ColorPrimaries primaries,
-                                  ScopedColorProfile *outProfile) -> bool {
-    if (!outProfile)
-      return false;
-    if (primaries == QuickView::ColorPrimaries::SRGB ||
-        primaries == QuickView::ColorPrimaries::Unknown) {
-      DWORD pathLen = 0;
-      if (!GetStandardColorSpaceProfileW(nullptr, LCS_sRGB, nullptr, &pathLen) ||
-          pathLen == 0) {
-        return false;
-      }
-      std::wstring profilePath(pathLen, L'\0');
-      if (!GetStandardColorSpaceProfileW(nullptr, LCS_sRGB, profilePath.data(),
-                                         &pathLen) ||
-          pathLen == 0) {
-        return false;
-      }
-      profilePath.resize(wcsnlen(profilePath.c_str(), pathLen));
-      outProfile->Reset(OpenProfileFromPath(profilePath));
-      return outProfile->handle != nullptr;
-    }
-    profileBytes.clear();
-    if (!TryLoadProfileBytesForPrimaries(primaries, &profileBytes)) {
-      return false;
-    }
-    outProfile->Reset(OpenProfileFromBytes(
-        profileBytes.data(), static_cast<DWORD>(profileBytes.size())));
-    return outProfile->handle != nullptr;
-  };
-
-  const QuickView::ColorPrimaries framePrimaries =
-      ResolveFrameProfilePrimaries(frame);
-
-  if (options.effectiveCmsMode == 2) {
-    openPrimariesProfile(QuickView::ColorPrimaries::SRGB, &srcProfile);
-  } else if (options.effectiveCmsMode == 3) {
-    openPrimariesProfile(QuickView::ColorPrimaries::DisplayP3, &srcProfile);
-  } else if (options.effectiveCmsMode == 4) {
-    openPrimariesProfile(QuickView::ColorPrimaries::AdobeRGB, &srcProfile);
-  } else if (options.effectiveCmsMode == 6) {
-    openPrimariesProfile(QuickView::ColorPrimaries::ProPhotoRGB, &srcProfile);
-  } else if (!frame.iccProfile.empty()) {
-    srcProfile.Reset(OpenProfileFromBytes(frame.iccProfile.data(),
-                                          static_cast<DWORD>(frame.iccProfile.size())));
-  } else if (!openPrimariesProfile(framePrimaries, &srcProfile)) {
-    const int fallback = g_config.CmsDefaultFallback;
-    if (fallback == 1) {
-      openPrimariesProfile(QuickView::ColorPrimaries::DisplayP3, &srcProfile);
-    } else if (fallback == 2) {
-      openPrimariesProfile(QuickView::ColorPrimaries::AdobeRGB, &srcProfile);
-    } else if (fallback == 3) {
-      openPrimariesProfile(QuickView::ColorPrimaries::ProPhotoRGB, &srcProfile);
-    } else {
-      openPrimariesProfile(QuickView::ColorPrimaries::SRGB, &srcProfile);
-    }
-  }
-
-  if (options.enableSoftProofing && !options.softProofProfilePath.empty()) {
-    dstProfile.Reset(OpenProfileFromPath(options.softProofProfilePath));
-  } else {
-    std::wstring monitorProfilePath;
-    if (TryGetMonitorProfilePath(options.displayState, &monitorProfilePath)) {
-      dstProfile.Reset(OpenProfileFromPath(monitorProfilePath));
-    }
-  }
-  if (!dstProfile.handle) {
-    openPrimariesProfile(QuickView::ColorPrimaries::SRGB, &dstProfile);
-  }
-
-  if (!srcProfile.handle || !dstProfile.handle) {
-    return S_FALSE;
-  }
-
-  HPROFILE profiles[] = {srcProfile.handle, dstProfile.handle};
-  DWORD intents[] = {INTENT_RELATIVE_COLORIMETRIC};
-  ScopedColorTransform transform;
-  DWORD transformFlags =
-      BEST_MODE | ENABLE_GAMUT_CHECKING | USE_RELATIVE_COLORIMETRIC;
-  transform.Reset(CreateMultiProfileTransform(profiles, 2, intents, 1,
-                                              transformFlags, 0));
-  if (!transform.handle) {
-    return S_FALSE;
-  }
-
-  outResult->mask.assign(
-      static_cast<size_t>(outResult->cols * outResult->rows), 0);
-  if (!CheckBitmapBits(transform.handle, sampledFrame.pixels, BM_xRGBQUADS,
-                       static_cast<DWORD>(sampledFrame.width),
-                       static_cast<DWORD>(sampledFrame.height),
-                       static_cast<DWORD>(sampledFrame.stride),
-                       outResult->mask.data(), nullptr, 0)) {
-    const DWORD lastError = GetLastError();
-    return HRESULT_FROM_WIN32(lastError != 0 ? lastError : ERROR_NOT_SUPPORTED);
-  }
-
-  for (uint8_t &entry : outResult->mask) {
-    entry = entry ? 255 : 0;
-    outResult->hasOverflow |= entry != 0;
-  }
-
-  if (outResult->hasOverflow) {
-    DilateBinaryMask(outResult->mask, outResult->cols, outResult->rows);
-  }
-
-  return S_OK;
 }
 
 CRenderEngine::~CRenderEngine() {
@@ -1540,4 +1297,112 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   // Fallback if CMS failed or bypassed (rawBitmap still has srcContext correctly attached)
   *outBitmap = rawBitmap.Detach();
   return S_OK;
+}
+
+
+
+}
+
+
+void CRenderEngine::ScheduleGamutWarningAnalysisAsync(
+    ID3D11ShaderResourceView* pSrcLinearRgb,
+    int width, int height,
+    const ColorMatrix3& xyzToDst,
+    float targetPeak)
+{
+    if (!m_computeEngine || !m_computeEngine->IsAvailable()) return;
+
+    ComPtr<ID3D11Texture2D> pMaskTexture;
+    ComPtr<ID3D11Buffer> pStagingCounter;
+
+    HRESULT hr = m_computeEngine->DispatchGamutWarning(
+        pSrcLinearRgb, width, height, xyzToDst, targetPeak,
+        &pMaskTexture, &pStagingCounter);
+
+    if (SUCCEEDED(hr)) {
+        m_gamutWarningState.pStagingCounter = pStagingCounter;
+        m_gamutWarningState.pMaskTexture = pMaskTexture;
+        m_gamutWarningState.maskW = (width + 1) / 2;
+        m_gamutWarningState.maskH = (height + 1) / 2;
+        m_gamutWarningState.isPending = true;
+        m_gamutWarningState.hasOverflow = false;
+        m_gamutWarningState.pMaskBitmap.Reset();
+    }
+}
+
+void CRenderEngine::PollGamutWarningAsync() {
+    if (!m_gamutWarningState.isPending || !m_gamutWarningState.pStagingCounter) return;
+
+    ComPtr<ID3D11DeviceContext> context;
+    m_d3dDevice->GetImmediateContext(&context);
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = context->Map(m_gamutWarningState.pStagingCounter.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+
+    if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+        // Still processing on GPU, try again later
+        return;
+    }
+
+    if (SUCCEEDED(hr)) {
+        uint32_t counter = *reinterpret_cast<uint32_t*>(mapped.pData);
+        context->Unmap(m_gamutWarningState.pStagingCounter.Get(), 0);
+
+        m_gamutWarningState.hasOverflow = (counter > 0);
+        m_gamutWarningState.isPending = false;
+
+        if (m_gamutWarningState.hasOverflow && m_gamutWarningState.pMaskTexture) {
+            // Create DXGI Surface and D2D Bitmap for zero-copy rendering
+            ComPtr<IDXGISurface> dxgiSurface;
+            if (SUCCEEDED(m_gamutWarningState.pMaskTexture.As(&dxgiSurface))) {
+                D2D1_BITMAP_PROPERTIES1 bitmapProperties = D2D1::BitmapProperties1(
+                    D2D1_BITMAP_OPTIONS_NONE,
+                    D2D1::PixelFormat(DXGI_FORMAT_R8_UNORM, D2D1_ALPHA_MODE_IGNORE)
+                );
+
+                ComPtr<ID2D1DeviceContext> d2dContext;
+                if (SUCCEEDED(m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext))) {
+                     d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &bitmapProperties, &m_gamutWarningState.pMaskBitmap);
+                }
+            }
+        }
+
+        // Let UI know the status changed
+        if (m_hwnd) {
+            PostMessageW(m_hwnd, WM_APP + 21 /* WM_GAMUT_WARNING_READY */, 0, 0);
+        }
+    }
+}
+
+
+
+
+HRESULT CRenderEngine::TriggerGamutWarningAnalysisMain(const QuickView::RawImageFrame& frame, const void* pMatrix3x3, float targetPeak) {
+    if (!m_computeEngine || !m_computeEngine->IsAvailable()) return S_FALSE;
+    if (!g_config.GamutWarningEnabled) return S_FALSE;
+
+    // Create Linear RGB texture for Gamut Warning Analysis
+    ComPtr<ID3D11Texture2D> pLinearTex;
+    HRESULT hr = m_computeEngine->UploadAndConvert(frame.pixels, frame.width, frame.height, frame.format, &pLinearTex);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11ShaderResourceView> pSRV;
+    hr = m_d3dDevice->CreateShaderResourceView(pLinearTex.Get(), nullptr, &pSRV);
+    if (FAILED(hr)) return hr;
+
+    // Use a reinterpret cast since we don't include main.cpp's ColorMatrix3 here
+    // But since it's just a struct with float m[3][3], we can use ColorMatrix3 if it is defined in ComputeEngine.h!
+    // And we added ColorMatrix3 to ComputeEngine.h!
+
+    const ColorMatrix3* pTransform = static_cast<const ColorMatrix3*>(pMatrix3x3);
+    ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, *pTransform, targetPeak);
+    return S_OK;
+}
+
+    ColorMatrix3 finalTransform = MultiplyColorMatrices(xyzToDst, rgbToXyz);
+
+    float targetPeak = 1.0f; // Target peak in linear space (where 1.0 = SDR white)
+
+    ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, finalTransform, targetPeak);
+    return S_OK;
 }

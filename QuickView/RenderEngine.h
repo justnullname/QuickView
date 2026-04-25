@@ -91,15 +91,6 @@ public:
     /// </summary>
     float EstimateFramePeakScRgb(const QuickView::RawImageFrame& frame);
 
-    /// <summary>
-    /// Run ICC-accurate out-of-gamut analysis using the Windows color system.
-    /// Returns S_FALSE when the exact ICC path is unavailable for this frame and
-    /// the caller should decide whether to fall back to an approximate path.
-    /// </summary>
-    HRESULT AnalyzeGamutWarningIcc(
-        const QuickView::RawImageFrame& frame,
-        const GamutWarningAnalysisOptions& options,
-        GamutWarningAnalysisResult* outResult) const;
 
     /// <summary>
     /// Get WIC factory
@@ -166,4 +157,16 @@ private:
     ComPtr<IWICImagingFactory> m_wicFactory;
     
     std::unique_ptr<QuickView::ComputeEngine> m_computeEngine;
+
+    // Gamut Warning Asynchronous State
+    struct GamutWarningAsyncState {
+        ComPtr<ID3D11Buffer> pStagingCounter;
+        ComPtr<ID3D11Texture2D> pMaskTexture;
+        ComPtr<ID2D1Bitmap1> pMaskBitmap;
+        bool isPending = false;
+        bool hasOverflow = false;
+        int maskW = 0;
+        int maskH = 0;
+    } m_gamutWarningState;
+
 };
