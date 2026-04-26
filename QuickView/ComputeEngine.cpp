@@ -859,10 +859,6 @@ HRESULT ComputeEngine::ComposeGainMap(
     return S_OK;
 }
 
-} // namespace QuickView
-
-
-
 HRESULT ComputeEngine::DispatchGamutWarning(
     ID3D11ShaderResourceView* pSrcLinearRgb,
     int width, int height,
@@ -973,3 +969,5 @@ HRESULT ComputeEngine::DispatchGamutWarning(
     *outMaskTexture = pMaskTex.Detach();
     return S_OK;
 }
+
+} // namespace QuickView
