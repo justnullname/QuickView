@@ -1307,7 +1307,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 void CRenderEngine::ScheduleGamutWarningAnalysisAsync(
     ID3D11ShaderResourceView* pSrcLinearRgb,
     int width, int height,
-    const ColorMatrix3& xyzToDst,
+    const QuickView::ColorMatrix3& xyzToDst,
     float targetPeak)
 {
     if (!m_computeEngine || !m_computeEngine->IsAvailable()) return;
@@ -1404,5 +1404,24 @@ HRESULT CRenderEngine::TriggerGamutWarningAnalysisMain(const QuickView::RawImage
     float targetPeak = 1.0f; // Target peak in linear space (where 1.0 = SDR white)
 
     ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, finalTransform, targetPeak);
+    return S_OK;
+}
+
+
+HRESULT CRenderEngine::TriggerGamutWarningAnalysisMain(const QuickView::RawImageFrame& frame, const void* pMatrix3x3, float targetPeak) {
+    if (!m_computeEngine || !m_computeEngine->IsAvailable()) return S_FALSE;
+    if (!g_config.GamutWarningEnabled) return S_FALSE;
+
+    // Create Linear RGB texture for Gamut Warning Analysis
+    ComPtr<ID3D11Texture2D> pLinearTex;
+    HRESULT hr = m_computeEngine->UploadAndConvert(frame.pixels, frame.width, frame.height, frame.format, &pLinearTex);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11ShaderResourceView> pSRV;
+    hr = m_d3dDevice->CreateShaderResourceView(pLinearTex.Get(), nullptr, &pSRV);
+    if (FAILED(hr)) return hr;
+
+    const QuickView::ColorMatrix3* pTransform = static_cast<const QuickView::ColorMatrix3*>(pMatrix3x3);
+    ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, *pTransform, targetPeak);
     return S_OK;
 }

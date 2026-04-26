@@ -483,11 +483,9 @@ struct GamutWarningSample {
 };
 
 
-GamutWarningOverlayState g_gamutWarningOverlay;
 float g_gamutWarningFlashOpacity = 1.0f;
 
 static std::mutex g_gamutWarningMutex;
-static GamutWarningAnalysisRequest g_gamutWarningRequest;
 static std::atomic<uint32_t> g_gamutWarningJobId = 0;
 static bool g_gamutWarningFlashActive = false;
 static DWORD g_gamutWarningFlashStartTick = 0;
@@ -799,17 +797,14 @@ static bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH
 }
 
 namespace {
-struct ColorMatrix3 {
-    float m[3][3];
-};
 
 struct ChromaticityPoint {
     float x = 0.0f;
     float y = 0.0f;
 };
 
-static ColorMatrix3 MultiplyColorMatrices(const ColorMatrix3& a, const ColorMatrix3& b) {
-    ColorMatrix3 out = {};
+static QuickView::ColorMatrix3 MultiplyColorMatrices(const QuickView::ColorMatrix3& a, const QuickView::ColorMatrix3& b) {
+    QuickView::ColorMatrix3 out = {};
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
             out.m[row][col] =
@@ -821,7 +816,7 @@ static ColorMatrix3 MultiplyColorMatrices(const ColorMatrix3& a, const ColorMatr
     return out;
 }
 
-static bool InvertColorMatrix(const ColorMatrix3& matrix, ColorMatrix3* outInverse) {
+static bool InvertColorMatrix(const QuickView::ColorMatrix3& matrix, QuickView::ColorMatrix3* outInverse) {
     if (!outInverse) return false;
 
     const float a = matrix.m[0][0], b = matrix.m[0][1], c = matrix.m[0][2];
@@ -853,7 +848,7 @@ static bool BuildRgbToXyzMatrixFromChromaticities(
     const ChromaticityPoint& green,
     const ChromaticityPoint& blue,
     const ChromaticityPoint& white,
-    ColorMatrix3* outMatrix) {
+    QuickView::ColorMatrix3* outMatrix) {
     if (!outMatrix ||
         red.x <= 0.0f || red.y <= 0.0f ||
         green.x <= 0.0f || green.y <= 0.0f ||
@@ -862,7 +857,7 @@ static bool BuildRgbToXyzMatrixFromChromaticities(
         return false;
     }
 
-    const ColorMatrix3 primaries = {{
+    const QuickView::ColorMatrix3 primaries = {{
         {red.x / red.y, green.x / green.y, blue.x / blue.y},
         {1.0f,          1.0f,             1.0f},
         {(1.0f - red.x - red.y) / red.y,
@@ -870,7 +865,7 @@ static bool BuildRgbToXyzMatrixFromChromaticities(
          (1.0f - blue.x - blue.y) / blue.y}
     }};
 
-    ColorMatrix3 primariesInverse = {};
+    QuickView::ColorMatrix3 primariesInverse = {};
     if (!InvertColorMatrix(primaries, &primariesInverse)) {
         return false;
     }
@@ -889,14 +884,14 @@ static bool BuildRgbToXyzMatrixFromChromaticities(
                          primariesInverse.m[2][1] * whiteY +
                          primariesInverse.m[2][2] * whiteZ;
 
-    const ColorMatrix3 scales = {{{scaleR, 0.0f, 0.0f},
+    const QuickView::ColorMatrix3 scales = {{{scaleR, 0.0f, 0.0f},
                                   {0.0f, scaleG, 0.0f},
                                   {0.0f, 0.0f, scaleB}}};
     *outMatrix = MultiplyColorMatrices(primaries, scales);
     return true;
 }
 
-static ColorMatrix3 GetRgbToXyzMatrix(QuickView::ColorPrimaries primaries) {
+static QuickView::ColorMatrix3 GetRgbToXyzMatrix(QuickView::ColorPrimaries primaries) {
     switch (primaries) {
     case QuickView::ColorPrimaries::DisplayP3:
         return {{{0.486571f, 0.265668f, 0.198217f},
@@ -923,7 +918,7 @@ static ColorMatrix3 GetRgbToXyzMatrix(QuickView::ColorPrimaries primaries) {
     }
 }
 
-static ColorMatrix3 GetXyzToRgbMatrix(QuickView::ColorPrimaries primaries) {
+static QuickView::ColorMatrix3 GetXyzToRgbMatrix(QuickView::ColorPrimaries primaries) {
     switch (primaries) {
     case QuickView::ColorPrimaries::DisplayP3:
         return {{{2.493497f, -0.931384f, -0.402711f},
@@ -966,11 +961,11 @@ static QuickView::ColorPrimaries ResolveDisplayPrimaries(const QuickView::Displa
 }
 
 static bool TryBuildDisplayXyzToRgbMatrix(const QuickView::DisplayColorState& state,
-                                          ColorMatrix3* outMatrix) {
+                                          QuickView::ColorMatrix3* outMatrix) {
     if (!outMatrix) return false;
 
     if (state.HasChromaticities()) {
-        ColorMatrix3 rgbToXyz = {};
+        QuickView::ColorMatrix3 rgbToXyz = {};
         if (BuildRgbToXyzMatrixFromChromaticities(
                 {state.redPrimary[0], state.redPrimary[1]},
                 {state.greenPrimary[0], state.greenPrimary[1]},
@@ -6972,8 +6967,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 if (g_config.GamutWarningEnabled && g_renderEngine && evt.rawFrame && evt.rawFrame->format != QuickView::PixelFormat::SVG_XML) {
                     // Extract matrix and peak logic...
                     const QuickView::ColorPrimaries srcPrimaries = NormalizePrimaries(ResolveFramePrimaries(*evt.rawFrame));
-                    const ColorMatrix3 rgbToXyz = GetRgbToXyzMatrix(srcPrimaries);
-                    ColorMatrix3 xyzToDst = {};
+                    const QuickView::ColorMatrix3 rgbToXyz = GetRgbToXyzMatrix(srcPrimaries);
+                    QuickView::ColorMatrix3 xyzToDst = {};
 
                     if (g_runtime.EnableSoftProofing && !g_runtime.SoftProofProfilePath.empty()) {
                         const QuickView::ColorPrimaries dstPrimaries =
@@ -6986,7 +6981,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         TryBuildDisplayXyzToRgbMatrix(displayState, &xyzToDst);
                     }
 
-                    ColorMatrix3 finalTransform = MultiplyColorMatrices(xyzToDst, rgbToXyz);
+                    QuickView::ColorMatrix3 finalTransform = MultiplyColorMatrices(xyzToDst, rgbToXyz);
                     float targetPeak = 1.0f; // Simplified linear target peak
 
                     // Trigger Gamut Warning Analysis asynchronously on the GPU

@@ -38,6 +38,9 @@ extern CImageLoader::ImageMetadata g_currentMetadata;  // [v3.2] For Info Panel
 extern std::wstring g_imagePath;  // [v3.2] For Info Panel
 extern bool g_slowMotionMode; // [Debug] Slow-motion crossfade mode
 extern AppConfig g_config;
+#include "RenderEngine.h"
+class CRenderEngine;
+extern std::unique_ptr<CRenderEngine> g_renderEngine;
 extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
 extern bool GetCompareIndicatorState(int& outPane, float& outSplitRatio, bool& outIsWipe);
 extern bool GetCompareInfoSnapshot(CImageLoader::ImageMetadata& left, CImageLoader::ImageMetadata& right);

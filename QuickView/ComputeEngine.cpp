@@ -226,8 +226,7 @@ cbuffer GamutParams : register(b0)
     float _pad1;
 };
 
-[numthreads(8, 8, 1)]
-void CSGamutWarning(uint3 id : SV_DispatchThreadID)
+// ...(uint3 id : SV_DispatchThreadID)
 {
     // Process every 2x2 block (subsample)
     uint x = id.x * 2;
@@ -867,7 +866,7 @@ HRESULT ComputeEngine::ComposeGainMap(
 HRESULT ComputeEngine::DispatchGamutWarning(
     ID3D11ShaderResourceView* pSrcLinearRgb,
     int width, int height,
-    const ColorMatrix3& xyzToDst,
+    const QuickView::ColorMatrix3& xyzToDst,
     float targetPeak,
     ID3D11Texture2D** outMaskTexture,
     ID3D11Buffer** outStagingCounter)
@@ -928,11 +927,12 @@ HRESULT ComputeEngine::DispatchGamutWarning(
     // 4. Update Constant Buffer
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (SUCCEEDED(m_d3dContext->Map(m_gamutWarningConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+
         struct GamutParams {
             float m[3][4]; // float3x3 padded
             float TargetPeak;
-            uint Width;
-            uint Height;
+            uint32_t Width;
+            uint32_t Height;
             float _pad0;
         } params = {};
 

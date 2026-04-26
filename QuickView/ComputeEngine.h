@@ -10,10 +10,11 @@ using Microsoft::WRL::ComPtr;
 
 namespace QuickView {
 
-
 struct ColorMatrix3 {
     float m[3][3];
 };
+
+
 
 struct ToneMapSettings {
     float contentPeakScRgb = 1.0f;
