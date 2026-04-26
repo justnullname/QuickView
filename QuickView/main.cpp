@@ -1207,11 +1207,13 @@ static void StartGamutWarningFlash(HWND hwnd) {
     SetTimer(hwnd, IDT_GAMUT_WARNING_FLASH, 16, nullptr);
 }
 
-static void ClearGamutWarningState(HWND hwnd) {
+static void ClearGamutWarningState(HWND hwnd, bool clearRequest = true) {
     {
         std::scoped_lock lock(g_gamutWarningMutex);
         g_gamutWarningOverlay = {};
-        g_gamutWarningRequest = {};
+        if (clearRequest) {
+            g_gamutWarningRequest = {};
+        }
         g_gamutWarningDebugSummary.clear();
     }
     g_runtime.ShowGamutWarningOverlay = false;
@@ -1225,13 +1227,36 @@ static void ClearGamutWarningState(HWND hwnd) {
 static void ScheduleGamutWarningAnalysisImpl(HWND hwnd) {
     if (!hwnd) return;
     if (!g_config.GamutWarningEnabled) {
-        ClearGamutWarningState(hwnd);
+        ClearGamutWarningState(hwnd, false);
         return;
     }
 
     GamutWarningAnalysisRequest requestCopy;
     {
         std::scoped_lock lock(g_gamutWarningMutex);
+        if (g_gamutWarningRequest.frame && g_gamutWarningRequest.frame->IsValid()) {
+            QuickView::DisplayColorState gamutAnalysisDisplayState =
+                g_renderEngine ? g_renderEngine->GetDisplayColorState() : QuickView::DisplayColorState{};
+            g_gamutWarningRequest.options.displayState = gamutAnalysisDisplayState;
+            g_gamutWarningRequest.options.enableSoftProofing = g_runtime.EnableSoftProofing;
+            g_gamutWarningRequest.options.softProofProfilePath = g_runtime.SoftProofProfilePath;
+            g_gamutWarningRequest.options.effectiveCmsMode =
+                g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+            g_gamutWarningRequest.options.renderingIntent = g_config.CmsRenderingIntent;
+            g_gamutWarningRequest.options.targetKind =
+                (g_runtime.EnableSoftProofing && !g_runtime.SoftProofProfilePath.empty())
+                    ? CRenderEngine::GamutTargetKind::ProofTarget
+                    : CRenderEngine::GamutTargetKind::ScreenTarget;
+            g_gamutWarningRequest.options.displayProfilePolicy =
+                gamutAnalysisDisplayState.advancedColorActive ||
+                        gamutAnalysisDisplayState.wideColorActive
+                    ? CRenderEngine::DisplayProfilePolicy::SyntheticOnly
+                    : CRenderEngine::DisplayProfilePolicy::PreferActualIcc;
+            g_gamutWarningRequest.options.allowGpuLutFallback = true;
+            g_gamutWarningRequest.options.acmAware =
+                gamutAnalysisDisplayState.advancedColorActive ||
+                gamutAnalysisDisplayState.wideColorActive;
+        }
         requestCopy = g_gamutWarningRequest;
     }
     if (!requestCopy.IsValid()) {
@@ -11113,25 +11138,6 @@ void ProcessEngineEvents(HWND hwnd) {
                     {
                         std::scoped_lock lock(g_gamutWarningMutex);
                         g_gamutWarningRequest.frame = evt.rawFrame;
-                        g_gamutWarningRequest.options.displayState = gamutAnalysisDisplayState;
-                        g_gamutWarningRequest.options.enableSoftProofing = g_runtime.EnableSoftProofing;
-                        g_gamutWarningRequest.options.softProofProfilePath = g_runtime.SoftProofProfilePath;
-                        g_gamutWarningRequest.options.effectiveCmsMode =
-                            g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
-                        g_gamutWarningRequest.options.renderingIntent = g_config.CmsRenderingIntent;
-                        g_gamutWarningRequest.options.targetKind =
-                            (g_runtime.EnableSoftProofing && !g_runtime.SoftProofProfilePath.empty())
-                                ? CRenderEngine::GamutTargetKind::ProofTarget
-                                : CRenderEngine::GamutTargetKind::ScreenTarget;
-                        g_gamutWarningRequest.options.displayProfilePolicy =
-                            gamutAnalysisDisplayState.advancedColorActive ||
-                                    gamutAnalysisDisplayState.wideColorActive
-                                ? CRenderEngine::DisplayProfilePolicy::SyntheticOnly
-                                : CRenderEngine::DisplayProfilePolicy::PreferActualIcc;
-                        g_gamutWarningRequest.options.allowGpuLutFallback = true;
-                        g_gamutWarningRequest.options.acmAware =
-                            gamutAnalysisDisplayState.advancedColorActive ||
-                            gamutAnalysisDisplayState.wideColorActive;
                     }
                     ScheduleGamutWarningAnalysis(hwnd);
                 } else {
