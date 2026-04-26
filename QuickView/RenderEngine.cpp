@@ -1304,6 +1304,21 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 }
 
 
+
+
+
+
+    ColorMatrix3 finalTransform = MultiplyColorMatrices(xyzToDst, rgbToXyz);
+
+    float targetPeak = 1.0f; // Target peak in linear space (where 1.0 = SDR white)
+
+    ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, finalTransform, targetPeak);
+    return S_OK;
+}
+
+
+
+
 void CRenderEngine::ScheduleGamutWarningAnalysisAsync(
     ID3D11ShaderResourceView* pSrcLinearRgb,
     int width, int height,
@@ -1340,7 +1355,6 @@ void CRenderEngine::PollGamutWarningAsync() {
     HRESULT hr = context->Map(m_gamutWarningState.pStagingCounter.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
 
     if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
-        // Still processing on GPU, try again later
         return;
     }
 
@@ -1352,14 +1366,12 @@ void CRenderEngine::PollGamutWarningAsync() {
         m_gamutWarningState.isPending = false;
 
         if (m_gamutWarningState.hasOverflow && m_gamutWarningState.pMaskTexture) {
-            // Create DXGI Surface and D2D Bitmap for zero-copy rendering
             ComPtr<IDXGISurface> dxgiSurface;
             if (SUCCEEDED(m_gamutWarningState.pMaskTexture.As(&dxgiSurface))) {
                 D2D1_BITMAP_PROPERTIES1 bitmapProperties = D2D1::BitmapProperties1(
                     D2D1_BITMAP_OPTIONS_NONE,
                     D2D1::PixelFormat(DXGI_FORMAT_R8_UNORM, D2D1_ALPHA_MODE_IGNORE)
                 );
-
                 ComPtr<ID2D1DeviceContext> d2dContext;
                 if (SUCCEEDED(m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext))) {
                      d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &bitmapProperties, &m_gamutWarningState.pMaskBitmap);
@@ -1367,52 +1379,15 @@ void CRenderEngine::PollGamutWarningAsync() {
             }
         }
 
-        // Let UI know the status changed
         if (m_hwnd) {
-            PostMessageW(m_hwnd, WM_APP + 21 /* WM_GAMUT_WARNING_READY */, 0, 0);
+            PostMessageW(m_hwnd, WM_APP + 21, 0, 0);
         }
     }
 }
 
-
-
-
 HRESULT CRenderEngine::TriggerGamutWarningAnalysisMain(const QuickView::RawImageFrame& frame, const void* pMatrix3x3, float targetPeak) {
     if (!m_computeEngine || !m_computeEngine->IsAvailable()) return S_FALSE;
-    if (!g_config.GamutWarningEnabled) return S_FALSE;
 
-    // Create Linear RGB texture for Gamut Warning Analysis
-    ComPtr<ID3D11Texture2D> pLinearTex;
-    HRESULT hr = m_computeEngine->UploadAndConvert(frame.pixels, frame.width, frame.height, frame.format, &pLinearTex);
-    if (FAILED(hr)) return hr;
-
-    ComPtr<ID3D11ShaderResourceView> pSRV;
-    hr = m_d3dDevice->CreateShaderResourceView(pLinearTex.Get(), nullptr, &pSRV);
-    if (FAILED(hr)) return hr;
-
-    // Use a reinterpret cast since we don't include main.cpp's ColorMatrix3 here
-    // But since it's just a struct with float m[3][3], we can use ColorMatrix3 if it is defined in ComputeEngine.h!
-    // And we added ColorMatrix3 to ComputeEngine.h!
-
-    const ColorMatrix3* pTransform = static_cast<const ColorMatrix3*>(pMatrix3x3);
-    ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, *pTransform, targetPeak);
-    return S_OK;
-}
-
-    ColorMatrix3 finalTransform = MultiplyColorMatrices(xyzToDst, rgbToXyz);
-
-    float targetPeak = 1.0f; // Target peak in linear space (where 1.0 = SDR white)
-
-    ScheduleGamutWarningAnalysisAsync(pSRV.Get(), frame.width, frame.height, finalTransform, targetPeak);
-    return S_OK;
-}
-
-
-HRESULT CRenderEngine::TriggerGamutWarningAnalysisMain(const QuickView::RawImageFrame& frame, const void* pMatrix3x3, float targetPeak) {
-    if (!m_computeEngine || !m_computeEngine->IsAvailable()) return S_FALSE;
-    if (!g_config.GamutWarningEnabled) return S_FALSE;
-
-    // Create Linear RGB texture for Gamut Warning Analysis
     ComPtr<ID3D11Texture2D> pLinearTex;
     HRESULT hr = m_computeEngine->UploadAndConvert(frame.pixels, frame.width, frame.height, frame.format, &pLinearTex);
     if (FAILED(hr)) return hr;

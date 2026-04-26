@@ -110,7 +110,7 @@ public:
     HRESULT DispatchGamutWarning(
         ID3D11ShaderResourceView* pSrcLinearRgb,
         int width, int height,
-        const ColorMatrix3& xyzToDst,
+        const QuickView::ColorMatrix3& xyzToDst,
         float targetPeak,
         ID3D11Texture2D** outMaskTexture,
         ID3D11Buffer** outStagingCounter);

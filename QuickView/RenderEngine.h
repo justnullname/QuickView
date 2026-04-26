@@ -105,6 +105,15 @@ public:
     // Context for Resource Creation (not drawing to screen)
     ID2D1DeviceContext* GetDeviceContext() const { return m_d2dContext.Get(); }
 
+    // Gamut Warning methods
+    void ScheduleGamutWarningAnalysisAsync(ID3D11ShaderResourceView* pSrcLinearRgb, int width, int height, const QuickView::ColorMatrix3& xyzToDst, float targetPeak);
+    void PollGamutWarningAsync();
+    HRESULT TriggerGamutWarningAnalysisMain(const QuickView::RawImageFrame& frame, const void* pMatrix3x3, float targetPeak);
+
+    bool HasGamutWarningOverflow() const { return m_gamutWarningState.hasOverflow; }
+    ID2D1Bitmap1* GetGamutWarningMaskBitmap() const { return m_gamutWarningState.pMaskBitmap.Get(); }
+
+
 private:
     HRESULT CreateDeviceResources();
     HRESULT ResolveSourceColorContext(const QuickView::RawImageFrame& frame,
