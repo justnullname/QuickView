@@ -1116,6 +1116,18 @@ HRESULT CompositionEngine::UpdateTransformMatrix(VisualState vs, float winW, flo
         // [Note] This calc remains valid because it's a ratio.
         compScaleX = vs.PhysicalSize.width / (float)pLayer->width;
         compScaleY = vs.PhysicalSize.height / (float)pLayer->height;
+
+        // [Fix] Dynamically sync the Gamut Warning Overlay scale to match the active layer's surface size
+        if (m_imageOverlayScaleTransform && m_imageOverlayMaskWidth > 0 && m_imageOverlayMaskHeight > 0) {
+            float overlayScaleX = (float)pLayer->width / (float)m_imageOverlayMaskWidth;
+            float overlayScaleY = (float)pLayer->height / (float)m_imageOverlayMaskHeight;
+            m_imageOverlayScaleTransform->SetCenterX(0.0f);
+            m_imageOverlayScaleTransform->SetCenterY(0.0f);
+            m_imageOverlayScaleTransform->SetScaleX(overlayScaleX);
+            m_imageOverlayScaleTransform->SetScaleY(overlayScaleY);
+            m_imageOverlayVisual->SetOffsetX(-static_cast<float>(pLayer->width) * 0.5f);
+            m_imageOverlayVisual->SetOffsetY(-static_cast<float>(pLayer->height) * 0.5f);
+        }
     }
 
     float targetScaleX = zoom * compScaleX;
