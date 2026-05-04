@@ -1739,7 +1739,7 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back(itemGamutWarning);
 
     SettingsItem itemGamutAutoPrompt = { L"自动提示色彩溢出", OptionType::Toggle, &g_config.GamutWarningAutoPrompt };
-    itemGamutAutoPrompt.tooltipText = L"检测到溢出后自动显示高亮、闪烁三次，并弹出 OSD 提示。";
+    itemGamutAutoPrompt.tooltipText = L"检测到溢出后弹出 OSD 提示。高亮区域可通过工具栏按钮手动查看。";
     itemGamutAutoPrompt.onChange = []() {
         SaveConfig();
     };
@@ -1763,6 +1763,8 @@ void SettingsOverlay::BuildMenu() {
             g_config.GamutWarningColorG = GetGValue(cc.rgbResult) / 255.0f;
             g_config.GamutWarningColorB = GetBValue(cc.rgbResult) / 255.0f;
             SaveConfig();
+            extern void RefreshGamutWarningOverlayVisual(HWND hwnd);
+            RefreshGamutWarningOverlayVisual(g_mainHwnd);
             extern void RequestRepaint(QuickView::PaintLayer layerMask);
             RequestRepaint(QuickView::PaintLayer::Dynamic);
         }

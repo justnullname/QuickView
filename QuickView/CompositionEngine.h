@@ -24,6 +24,7 @@ using Microsoft::WRL::ComPtr;
 //     │     ├── TileVisual (Bottom - Titan Tiled Layer)
 //     │     ├── ImageVisual B (Pong - Hidden/Pending)
 //     │     └── ImageVisual A (Ping - Visible/Active)
+//     │     └── ImageOverlayVisual (Gamut mask, inherits image transform)
 //     ├── Gallery Visual  - Gallery Overlay
 //     ├── Static Visual   - Toolbar, Window Controls
 //     └── Dynamic Visual  - HUD, OSD, Tooltip
@@ -83,6 +84,12 @@ public:
     // ===== UI Layer Drawing =====
     ID2D1DeviceContext* BeginLayerUpdate(UILayer layer, const RECT* dirtyRect = nullptr);
     HRESULT EndLayerUpdate(UILayer layer);
+
+    // Image-space overlay. The surface is mask-sized, then scaled inside ImageContainer
+    // so it follows zoom/pan/rotation exactly without repainting UI layers.
+    ID2D1DeviceContext* BeginImageOverlayUpdate(UINT sourceWidth, UINT sourceHeight, UINT maskWidth, UINT maskHeight);
+    HRESULT EndImageOverlayUpdate(bool visible);
+    HRESULT ClearImageOverlay();
     
     // Background management
     HRESULT UpdateBackground(float width, float height, const D2D1_COLOR_F& bgColor, bool showGrid);
@@ -193,6 +200,7 @@ private:
     // Visual Tree
     ComPtr<IDCompositionVisual2> m_rootVisual;
     ComPtr<IDCompositionVisual2> m_imageContainer; // Parent for image layers, holds transforms
+    ComPtr<IDCompositionVisual2> m_imageOverlayVisual;
     
     // Image Layers (Ping-Pong)
     // Image Layers (Ping-Pong)
@@ -203,6 +211,16 @@ private:
     
     // Shared D2D context for image rendering
     ComPtr<ID2D1DeviceContext> m_pendingContext;
+
+    // Gamut warning image-space overlay
+    ComPtr<IDCompositionSurface> m_imageOverlaySurface;
+    ComPtr<ID2D1DeviceContext> m_imageOverlayContext;
+    ComPtr<ID2D1Bitmap1> m_imageOverlayTarget;
+    ComPtr<IDCompositionScaleTransform> m_imageOverlayScaleTransform;
+    bool m_imageOverlayDrawing = false;
+    POINT m_imageOverlayDrawOffset = {};
+    UINT m_imageOverlayMaskWidth = 0;
+    UINT m_imageOverlayMaskHeight = 0;
     
     // Hardware Transforms (applied to m_imageContainer)
     ComPtr<IDCompositionScaleTransform> m_scaleTransform;

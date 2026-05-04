@@ -419,6 +419,9 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     
     hr = m_device->CreateVisual(&m_imageContainer);
     if (FAILED(hr)) return hr;
+
+    hr = m_device->CreateVisual(&m_imageOverlayVisual);
+    if (FAILED(hr)) return hr;
     
     hr = m_device->CreateVisual(&m_imageA.visual);
     if (FAILED(hr)) return hr;
@@ -442,6 +445,9 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     
     // 5. Create Hardware Transforms
     hr = m_device->CreateScaleTransform(&m_scaleTransform);
+    if (FAILED(hr)) return hr;
+
+    hr = m_device->CreateScaleTransform(&m_imageOverlayScaleTransform);
     if (FAILED(hr)) return hr;
     
     hr = m_device->CreateTranslateTransform(&m_translateTransform);
@@ -492,6 +498,9 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     // Image children
     m_imageContainer->AddVisual(m_imageB.visual.Get(), FALSE, nullptr);
     m_imageContainer->AddVisual(m_imageA.visual.Get(), TRUE, m_imageB.visual.Get());
+    m_imageContainer->AddVisual(m_imageOverlayVisual.Get(), TRUE, m_imageA.visual.Get());
+    m_imageOverlayVisual->SetTransform(m_imageOverlayScaleTransform.Get());
+    m_imageOverlayVisual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
     
     // 7. Set interpolation mode for image layers (HIGH QUALITY)
     m_imageA.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -504,6 +513,11 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     // 9. Create shared D2D contexts
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_pendingContext);
     if (FAILED(hr)) return hr;
+
+    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_imageOverlayContext);
+    if (FAILED(hr)) return hr;
+    m_imageOverlayContext->SetDpi(96.0f, 96.0f);
+    m_imageOverlayContext->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     
     hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_staticLayer.context);
     if (FAILED(hr)) return hr;
@@ -921,6 +935,104 @@ HRESULT CompositionEngine::EndLayerUpdate(UILayer layer) {
     data.isDrawing = false;
     
     return SUCCEEDED(hr) ? hr2 : hr;
+}
+
+ID2D1DeviceContext* CompositionEngine::BeginImageOverlayUpdate(UINT sourceWidth, UINT sourceHeight, UINT maskWidth, UINT maskHeight) {
+    if (!m_device || !m_imageOverlayVisual || !m_imageOverlayContext ||
+        sourceWidth == 0 || sourceHeight == 0 || maskWidth == 0 || maskHeight == 0 ||
+        m_imageOverlayDrawing) {
+        return nullptr;
+    }
+
+    if (!m_imageOverlaySurface ||
+        m_imageOverlayMaskWidth != maskWidth ||
+        m_imageOverlayMaskHeight != maskHeight) {
+        m_imageOverlaySurface.Reset();
+        HRESULT hr = m_device->CreateSurface(
+            maskWidth,
+            maskHeight,
+            kUiSurfaceFormat,
+            DXGI_ALPHA_MODE_PREMULTIPLIED,
+            &m_imageOverlaySurface);
+        if (FAILED(hr)) return nullptr;
+
+        m_imageOverlayMaskWidth = maskWidth;
+        m_imageOverlayMaskHeight = maskHeight;
+        m_imageOverlayVisual->SetContent(m_imageOverlaySurface.Get());
+    }
+
+    const float scaleX = static_cast<float>(sourceWidth) / static_cast<float>(maskWidth);
+    const float scaleY = static_cast<float>(sourceHeight) / static_cast<float>(maskHeight);
+    if (m_imageOverlayScaleTransform) {
+        m_imageOverlayScaleTransform->SetCenterX(0.0f);
+        m_imageOverlayScaleTransform->SetCenterY(0.0f);
+        m_imageOverlayScaleTransform->SetScaleX(scaleX);
+        m_imageOverlayScaleTransform->SetScaleY(scaleY);
+    }
+
+    // ImageContainer is anchored at image center; this places mask-local (0,0)
+    // at the source-image top-left before the shared image transform is applied.
+    m_imageOverlayVisual->SetOffsetX(-static_cast<float>(sourceWidth) * 0.5f);
+    m_imageOverlayVisual->SetOffsetY(-static_cast<float>(sourceHeight) * 0.5f);
+    m_imageOverlayVisual->SetContent(m_imageOverlaySurface.Get());
+
+    ComPtr<IDXGISurface> dxgiSurface;
+    HRESULT hr = m_imageOverlaySurface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &m_imageOverlayDrawOffset);
+    if (FAILED(hr)) return nullptr;
+
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(kUiSurfaceFormat, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+    m_imageOverlayTarget.Reset();
+    hr = m_imageOverlayContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &props, &m_imageOverlayTarget);
+    if (FAILED(hr)) {
+        m_imageOverlaySurface->EndDraw();
+        return nullptr;
+    }
+
+    m_imageOverlayContext->SetTarget(m_imageOverlayTarget.Get());
+    m_imageOverlayContext->BeginDraw();
+    m_imageOverlayContext->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(m_imageOverlayDrawOffset.x),
+        static_cast<float>(m_imageOverlayDrawOffset.y)));
+    m_imageOverlayContext->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+    m_imageOverlayContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+
+    m_imageOverlayDrawing = true;
+    return m_imageOverlayContext.Get();
+}
+
+HRESULT CompositionEngine::EndImageOverlayUpdate(bool visible) {
+    if (!m_imageOverlayDrawing || !m_imageOverlayContext || !m_imageOverlaySurface) return E_FAIL;
+
+    m_imageOverlayContext->SetTransform(D2D1::Matrix3x2F::Identity());
+    HRESULT hr = m_imageOverlayContext->EndDraw();
+    m_imageOverlayContext->SetTarget(nullptr);
+    m_imageOverlayTarget.Reset();
+
+    HRESULT hr2 = m_imageOverlaySurface->EndDraw();
+    m_imageOverlayDrawing = false;
+
+    if (m_imageOverlayVisual) {
+        if (visible) {
+            m_imageOverlayVisual->SetContent(m_imageOverlaySurface.Get());
+        } else {
+            m_imageOverlayVisual->SetContent(nullptr);
+        }
+    }
+
+    return SUCCEEDED(hr) ? hr2 : hr;
+}
+
+HRESULT CompositionEngine::ClearImageOverlay() {
+    if (m_imageOverlayDrawing) {
+        return E_PENDING;
+    }
+    if (m_imageOverlayVisual) {
+        return m_imageOverlayVisual->SetContent(nullptr);
+    }
+    return S_OK;
 }
 
 HRESULT CompositionEngine::SetGalleryOffset(float offsetX, float offsetY) {

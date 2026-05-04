@@ -505,18 +505,13 @@ struct GamutWarningOverlayState {
 };
 
 GamutWarningOverlayState g_gamutWarningOverlay;
-float g_gamutWarningFlashOpacity = 1.0f;
 std::wstring g_gamutWarningDebugSummary;
 
 static std::mutex g_gamutWarningMutex;
 static GamutWarningAnalysisRequest g_gamutWarningRequest;
 static std::atomic<uint32_t> g_gamutWarningJobId = 0;
-static bool g_gamutWarningFlashActive = false;
-static DWORD g_gamutWarningFlashStartTick = 0;
-static DWORD g_gamutWarningFlashDurationMs = 0;
 
 constexpr UINT WM_GAMUT_WARNING_READY = WM_APP + 21;
-constexpr UINT_PTR IDT_GAMUT_WARNING_FLASH = 1002;
 
 static constexpr UINT g_fallbackSvgSurfaceSize = 8192;  // Safe fallback if GPU caps are unavailable
 static constexpr UINT g_maxBitmapSurfaceSize = 8192; // Max dimension for bitmap surface upgrades
@@ -1199,14 +1194,6 @@ static GamutWarningOverlayState AnalyzeGamutWarning(const GamutWarningSample& sa
     return result;
 }
 
-static void StartGamutWarningFlash(HWND hwnd) {
-    g_gamutWarningFlashActive = true;
-    g_gamutWarningFlashStartTick = GetTickCount();
-    g_gamutWarningFlashDurationMs = 1200;
-    g_gamutWarningFlashOpacity = 1.0f;
-    SetTimer(hwnd, IDT_GAMUT_WARNING_FLASH, 16, nullptr);
-}
-
 static void ClearGamutWarningState(HWND hwnd) {
     {
         std::scoped_lock lock(g_gamutWarningMutex);
@@ -1215,11 +1202,13 @@ static void ClearGamutWarningState(HWND hwnd) {
         g_gamutWarningDebugSummary.clear();
     }
     g_runtime.ShowGamutWarningOverlay = false;
-    g_gamutWarningFlashActive = false;
-    g_gamutWarningFlashOpacity = 1.0f;
-    KillTimer(hwnd, IDT_GAMUT_WARNING_FLASH);
     g_toolbar.SetGamutWarningAvailable(false);
     g_toolbar.SetGamutWarningActive(false);
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        g_compEngine->ClearImageOverlay();
+        g_compEngine->Commit();
+    }
+    UNREFERENCED_PARAMETER(hwnd);
 }
 
 static void ScheduleGamutWarningAnalysisImpl(HWND hwnd) {
@@ -1271,6 +1260,88 @@ static void ScheduleGamutWarningAnalysisImpl(HWND hwnd) {
     }).detach();
 }
 } // namespace
+
+void RefreshGamutWarningOverlayVisual(HWND hwnd) {
+    if (!g_compEngine || !g_compEngine->IsInitialized()) return;
+
+    GamutWarningOverlayState overlay;
+    {
+        std::scoped_lock lock(g_gamutWarningMutex);
+        overlay = g_gamutWarningOverlay;
+    }
+
+    const bool visible = g_runtime.ShowGamutWarningOverlay &&
+                         overlay.hasOverflow &&
+                         overlay.width > 0 &&
+                         overlay.height > 0 &&
+                         overlay.cols > 0 &&
+                         overlay.rows > 0 &&
+                         !overlay.mask.empty();
+    if (!visible) {
+        g_compEngine->ClearImageOverlay();
+        g_compEngine->Commit();
+        return;
+    }
+
+    ID2D1DeviceContext* dc = g_compEngine->BeginImageOverlayUpdate(
+        static_cast<UINT>(overlay.width),
+        static_cast<UINT>(overlay.height),
+        static_cast<UINT>(overlay.cols),
+        static_cast<UINT>(overlay.rows));
+    if (!dc) return;
+
+    ComPtr<ID2D1SolidColorBrush> fillBrush;
+    ComPtr<ID2D1SolidColorBrush> lineBrush;
+    dc->CreateSolidColorBrush(
+        D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 0.18f),
+        &fillBrush);
+    dc->CreateSolidColorBrush(
+        D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 0.82f),
+        &lineBrush);
+
+    dc->PushAxisAlignedClip(
+        D2D1::RectF(0.0f, 0.0f, static_cast<float>(overlay.cols), static_cast<float>(overlay.rows)),
+        D2D1_ANTIALIAS_MODE_ALIASED);
+
+    for (int row = 0; row < overlay.rows; ++row) {
+        int col = 0;
+        while (col < overlay.cols) {
+            while (col < overlay.cols &&
+                   !overlay.mask[static_cast<size_t>(row * overlay.cols + col)]) {
+                ++col;
+            }
+            if (col >= overlay.cols) break;
+
+            const int runStart = col;
+            while (col < overlay.cols &&
+                   overlay.mask[static_cast<size_t>(row * overlay.cols + col)]) {
+                ++col;
+            }
+
+            const D2D1_RECT_F rect = D2D1::RectF(
+                static_cast<float>(runStart),
+                static_cast<float>(row),
+                static_cast<float>(col),
+                static_cast<float>(row + 1));
+            dc->FillRectangle(rect, fillBrush.Get());
+
+            // A lightweight hatch keeps clipped zones readable without obscuring image detail.
+            if (((row + runStart) & 3) == 0) {
+                dc->DrawLine(
+                    D2D1::Point2F(rect.left, rect.bottom),
+                    D2D1::Point2F(rect.right, rect.top),
+                    lineBrush.Get(),
+                    1.0f);
+            }
+        }
+    }
+
+    dc->PopAxisAlignedClip();
+    g_compEngine->EndImageOverlayUpdate(true);
+    g_compEngine->Commit();
+
+    UNREFERENCED_PARAMETER(hwnd);
+}
 
 void ScheduleGamutWarningAnalysis(HWND hwnd) {
     ScheduleGamutWarningAnalysisImpl(hwnd);
@@ -7354,9 +7425,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_runtime.ShowGamutWarningOverlay = false;
             g_toolbar.SetGamutWarningActive(false);
         } else if (g_config.GamutWarningAutoPrompt) {
-            g_runtime.ShowGamutWarningOverlay = true;
-            g_toolbar.SetGamutWarningActive(true);
-            StartGamutWarningFlash(hwnd);
+            g_toolbar.SetGamutWarningActive(g_runtime.ShowGamutWarningOverlay);
             g_osd.Show(hwnd, L"Detected out-of-gamut colors", false, true,
                        D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 1.0f));
         } else {
@@ -7365,6 +7434,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         RECT rc{}; GetClientRect(hwnd, &rc);
         g_toolbar.UpdateLayout((float)rc.right, (float)rc.bottom);
+        RefreshGamutWarningOverlayVisual(hwnd);
         if (g_showDebugHUD) {
             std::wstring debugOsd;
             {
@@ -7536,24 +7606,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
              }
         }
 
-        if (wParam == IDT_GAMUT_WARNING_FLASH) {
-            if (!g_gamutWarningFlashActive) {
-                KillTimer(hwnd, IDT_GAMUT_WARNING_FLASH);
-                return 0;
-            }
-            const DWORD elapsed = GetTickCount() - g_gamutWarningFlashStartTick;
-            if (elapsed >= g_gamutWarningFlashDurationMs) {
-                g_gamutWarningFlashActive = false;
-                g_gamutWarningFlashOpacity = 1.0f;
-                KillTimer(hwnd, IDT_GAMUT_WARNING_FLASH);
-            } else {
-                const float t = static_cast<float>(elapsed) / static_cast<float>(g_gamutWarningFlashDurationMs);
-                g_gamutWarningFlashOpacity = 0.35f + 0.65f * fabsf(sinf(t * 3.0f * 6.2831853f));
-            }
-            RequestRepaint(PaintLayer::Dynamic);
-            return 0;
-        }
-        
         // Gallery Fade Timer (998)
         if (wParam == 998) {
             if (g_gallery.IsVisible()) {
@@ -8963,11 +9015,12 @@ SKIP_EDGE_NAV:;
                 case ToolbarButtonID::GamutWarning: {
                     g_runtime.ShowGamutWarningOverlay = !g_runtime.ShowGamutWarningOverlay;
                     g_toolbar.SetGamutWarningActive(g_runtime.ShowGamutWarningOverlay);
+                    RefreshGamutWarningOverlayVisual(hwnd);
                     g_osd.Show(hwnd,
                         g_runtime.ShowGamutWarningOverlay ? L"色彩溢出高亮: 开" : L"色彩溢出高亮: 关",
                         false, false,
                         D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 1.0f));
-                    RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+                    RequestRepaint(PaintLayer::Dynamic);
                     break;
                 }
                 case ToolbarButtonID::FixExtension: SendMessage(hwnd, WM_COMMAND, IDM_FIX_EXTENSION, 0); break;
@@ -12977,7 +13030,7 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
               }
 
          }
-         RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image); 
+         RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image);
     }
 
     RefreshSvgSurfaceAfterZoom(hwnd);

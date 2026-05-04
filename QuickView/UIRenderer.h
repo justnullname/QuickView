@@ -196,7 +196,6 @@ private:
     void DrawNavIndicators(ID2D1DeviceContext* dc);
     void DrawComparePaneIndicator(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawCompareInfoHUD(ID2D1DeviceContext* dc);
-    void DrawGamutWarningOverlay(ID2D1DeviceContext* dc);
     
     struct TooltipInfo {
         std::wstring description;   // What is this?
