@@ -175,6 +175,7 @@ void HelpOverlay::RebuildList() {
     m_items.push_back({ false, AppStrings::Help_Tip_GamutDetection, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_Raw, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_JpegQ, L"" });
+    m_items.push_back({ false, AppStrings::Help_Tip_SoftProofCompare, L"" });
 }
 
 void HelpOverlay::SetVisible(bool visible) {

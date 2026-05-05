@@ -111,6 +111,19 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
 
     // --- Soft Proofing Submenu ---
     {
+        std::wstring proofLabel = AppStrings::Context_SoftProofProfile;
+        auto TruncateName = [](std::wstring name, size_t maxLen = 15) {
+            if (name.length() > maxLen) return name.substr(0, maxLen) + L"...";
+            return name;
+        };
+
+        if (enableSoftProofing && !softProofProfilePath.empty()) {
+            std::wstring name = softProofProfilePath.substr(softProofProfilePath.find_last_of(L"/\\") + 1);
+            if (!name.empty()) {
+                proofLabel += L" (" + TruncateName(name) + L")";
+            }
+        }
+
         std::vector<MI> proofItems;
         proofItems.push_back(MI::Check(IDM_SOFT_PROOF_TOGGLE, AppStrings::Context_SoftProofing, enableSoftProofing));
         proofItems.push_back(MI::Sep());
@@ -131,7 +144,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
             bool sel = (softProofProfilePath == profiles[i]);
             proofItems.push_back(MI::Check(IDM_SOFT_PROOF_BASE + i, fn.c_str(), sel));
         }
-        items.push_back(MI::Sub(AppStrings::Context_SoftProofProfile, GeekIcons::SoftProof, std::move(proofItems)));
+        items.push_back(MI::Sub(proofLabel.c_str(), GeekIcons::SoftProof, std::move(proofItems)).Checked(enableSoftProofing));
     }
 
     // --- Wallpaper Submenu ---

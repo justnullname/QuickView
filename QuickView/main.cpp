@@ -2294,6 +2294,14 @@ static void EnterCompareMode(HWND hwnd) {
     CaptureCurrentImageAsCompareLeft();
     if (!g_compare.left.valid) return;
 
+    // [v6.8] Special Route: If soft-proofing is enabled, automatically compare Before vs After.
+    if (g_runtime.EnableSoftProofing) {
+        g_compare.left.EnableSoftProofing = false; // Left pane is the "Before Proofing" version
+        g_runtime.LockWindowSize = false;         // [Fix] Allow window to adapt for side-by-side view
+        
+        g_osd.ShowCompare(hwnd, AppStrings::OSD_CompareBefore, AppStrings::OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
+    }
+
     if (g_config.AutoRotate && g_imageLoader && !g_imagePath.empty()) {
         CImageLoader::ImageMetadata rightMeta;
         if (SUCCEEDED(g_imageLoader->ReadMetadata(g_imagePath.c_str(), &rightMeta, true)) &&
@@ -2344,16 +2352,22 @@ static void EnterCompareMode(HWND hwnd) {
     // [Compare RAW] Initial state: right pane is selected by default
     RefreshCompareRawUI(hwnd);
 
-    g_compare.pendingSnap = true;
-
-
     // Auto-load next image into right pane if possible.
-    if (g_navigator.Count() > 1) {
+    // [v6.8] If we are in "Before vs After Soft Proofing" mode, do NOT load next image.
+    if (!g_runtime.EnableSoftProofing && g_navigator.Count() > 1) {
+        g_compare.pendingSnap = true;
         std::wstring nextPath = g_navigator.PeekNext();
         if (!nextPath.empty() && nextPath != g_imagePath) {
             g_viewState.Reset();
             LoadImageAsync(hwnd, nextPath, false, QuickView::BrowseDirection::FORWARD);
         }
+    } else if (g_runtime.EnableSoftProofing) {
+        // [Fix] Immediately adjust window size for side-by-side comparison
+        SnapWindowToCompareImages(hwnd);
+        g_compare.pendingSnap = false;
+
+        // Force refresh to re-render left pane without soft-proofing
+        RefreshImageDisplay(hwnd);
     }
 }
 

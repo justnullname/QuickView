@@ -674,14 +674,14 @@ void GeekContextMenu::RenderItem(const GeekMenuItem& item, int index) {
     if (item.isDanger && item.isEnabled) tb = m_dangerTextBrush.Get();
 
     // Checkmark
-    if (item.type == MenuItemType::CheckBox && item.isChecked) {
+    if ((item.type == MenuItemType::CheckBox || item.type == MenuItemType::Submenu) && item.isChecked) {
         D2D1_RECT_F checkR = D2D1::RectF(r.left + ICON_LEFT - 2, r.top + (rh - ICON_SIZE) / 2,
                                            r.left + ICON_LEFT + ICON_SIZE - 2, r.top + (rh + ICON_SIZE) / 2);
         GeekIconRenderer::DrawVectorIcon(m_rt.Get(), GeekIcons::CheckVector, checkR, m_accentBrush.Get());
     }
 
     // Icon
-    if (item.iconGlyph && !(item.type == MenuItemType::CheckBox && item.isChecked)) {
+    if (item.iconGlyph && !((item.type == MenuItemType::CheckBox || item.type == MenuItemType::Submenu) && item.isChecked)) {
         float iconScale = 1.0f;
         if (item.iconGlyph == GeekIcons::Exit) {
             iconScale = 0.84f; // Exit glyph is visually heavier; keep it optically aligned with peers.

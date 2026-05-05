@@ -15,6 +15,9 @@ const wchar_t *OSD_EdgeAdapted = nullptr;
 const wchar_t *OSD_Reencoded = nullptr;
 const wchar_t *OSD_ReadOnly = nullptr;
 const wchar_t *OSD_NotPerfect = nullptr;
+const wchar_t *OSD_CompareBefore = nullptr;
+const wchar_t *OSD_CompareAfter = nullptr;
+
 
 const wchar_t *Action_RotateCW = nullptr;
 const wchar_t *Action_RotateCCW = nullptr;
@@ -413,6 +416,8 @@ const wchar_t *Help_Tip_DesignerMode = nullptr;
 const wchar_t *Help_Tip_GamutDetection = nullptr;
 const wchar_t *Help_Tip_Raw = nullptr;
 const wchar_t *Help_Tip_JpegQ = nullptr;
+const wchar_t *Help_Tip_SoftProofCompare = nullptr;
+
 
 const wchar_t *HUD_Group_Physical = nullptr;
 const wchar_t *HUD_Group_Scientific = nullptr;
@@ -493,6 +498,9 @@ struct EN {
       L"Transform is not perfect (Edge optimized)";
   static constexpr const wchar_t *OSD_SpanOn = L"Video Wall: ON";
   static constexpr const wchar_t *OSD_SpanOff = L"Video Wall: OFF";
+  static constexpr const wchar_t *OSD_CompareBefore = L"Before (Original)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"After (Proofed)";
+
 
   static constexpr const wchar_t *Action_RotateCW = L"Rotate 90\x00B0 CW";
   static constexpr const wchar_t *Action_RotateCCW = L"Rotate 90\x00B0 CCW";
@@ -1044,6 +1052,10 @@ struct EN {
   static constexpr const wchar_t *Help_Tip_JpegQ =
       L"JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary "
       L"slightly from save settings due to encoder variance, which is normal.";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"Soft Proof Comparison: Entering Compare Mode while Soft Proofing is active "
+      L"will automatically compare the original vs. proofed image.";
+
 
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";
@@ -1099,6 +1111,9 @@ struct CN {
       L"变换不完美 (已进行边缘优化)";
   static constexpr const wchar_t *OSD_SpanOn = L"跨屏模式: 开启";
   static constexpr const wchar_t *OSD_SpanOff = L"跨屏模式: 关闭";
+  static constexpr const wchar_t *OSD_CompareBefore = L"打样前 (Original)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"打样后 (Proofed)";
+
 
   static constexpr const wchar_t *Action_RotateCW = L"顺时针旋转 90\x00B0";
   static constexpr const wchar_t *Action_RotateCCW = L"逆时针旋转 90\x00B0";
@@ -1591,6 +1606,9 @@ struct CN {
   static constexpr const wchar_t *Help_Tip_JpegQ =
       L"JPEG 质量：基于算法估算的质量值 (例如 Photoshop 100% ≈ 98%)。因"
       L"编码器差异，测算结果可能与保存时的设置略有偏差，属正常现象。";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"软打样对比：软打样后进入对比模式，将自动进行打样前后对比。";
+
 
   static constexpr const wchar_t *Help_Item_Compare = L"对比模式";
   static constexpr const wchar_t *Help_Item_FirstLast =
@@ -1657,6 +1675,9 @@ struct TW {
       L"變換不完美 (已進行邊緣優化)";
   static constexpr const wchar_t *OSD_SpanOn = L"跨屏模式: 開啟";
   static constexpr const wchar_t *OSD_SpanOff = L"跨屏模式: 關閉";
+  static constexpr const wchar_t *OSD_CompareBefore = L"打樣前 (Original)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"打樣後 (Proofed)";
+
   static constexpr const wchar_t *Action_RotateCW = L"順時針旋轉 90\x00B0";
   static constexpr const wchar_t *Action_RotateCCW = L"逆時針旋轉 90\x00B0";
   static constexpr const wchar_t *Action_Rotate180 = L"旋轉 180\x00B0";
@@ -2103,6 +2124,8 @@ struct TW {
       L"JPEG 壓縮率：信息面板顯示的 Q "
       L"值是逆向推算值。因算法差異，可能與保存時的數值略有出入 (例如 PS 100% "
       L"可能顯示為 98)，屬正常情況。";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"軟打樣對比：軟打樣後進入對比模式，將自動進行打樣前後對比。";
 
   static constexpr const wchar_t *Help_Item_Compare = L"對比模式";
   static constexpr const wchar_t *Help_Item_FirstLast =
@@ -2201,6 +2224,8 @@ struct JA {
       L"変換が不完全 (エッジ最適化済み)";
   static constexpr const wchar_t *OSD_SpanOn = L"Video Wall: ON";
   static constexpr const wchar_t *OSD_SpanOff = L"Video Wall: OFF";
+  static constexpr const wchar_t *OSD_CompareBefore = L"校正前 (元画像)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"校正後 (プロファイル適用)";
   static constexpr const wchar_t *Action_RotateCW = L"時計回りに90\x00B0回転";
   static constexpr const wchar_t *Action_RotateCCW =
       L"反時計回りに90\x00B0回転";
@@ -2653,6 +2678,8 @@ struct JA {
   static constexpr const wchar_t *Help_Tip_JpegQ =
       L"JPEG Quality: Estimated Q value (reverse engineered). May differ "
       L"slightly from save setting due to algorithm variations.";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"校正設定の比較：校正中に比較モードに入ると、元画像と校正後の画像を自動的に比較します。";
 
   static constexpr const wchar_t *Help_Item_Compare = L"Compare Mode";
   static constexpr const wchar_t *Help_Item_FirstLast = L"最初 / 最後の画像";
@@ -2774,6 +2801,8 @@ struct RU {
       L"Преобразование неидеально (оптимизация краёв)";
   static constexpr const wchar_t *OSD_SpanOn = L"Видеостена: ВКЛ";
   static constexpr const wchar_t *OSD_SpanOff = L"Видеостена: ВЫКЛ";
+  static constexpr const wchar_t *OSD_CompareBefore = L"До (Оригинал)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"После (Проба)";
 
   static constexpr const wchar_t *Action_RotateCW = L"Повернуть на 90\x00B0 по часовой";
   static constexpr const wchar_t *Action_RotateCCW = L"Повернуть на 90\x00B0 против часовой";
@@ -3326,6 +3355,8 @@ struct RU {
       L"Качество JPEG: Расчётное значение качества. Может слегка "
       L"отличаться от настройки сохранения из-за различий в алгоритме "
       L"(например, Photoshop 100% \u2248 98%).";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"Сравнение цветопробы: вход в режим сравнения при включенной цветопробе автоматически сравнит оригинал и пробу.";
 
   static constexpr const wchar_t *HUD_Group_Physical = L"ФИЗИЧЕСКИЕ АТРИБУТЫ";
   static constexpr const wchar_t *HUD_Group_Scientific = L"НАУЧНОЕ КАЧЕСТВО";
@@ -3382,6 +3413,8 @@ struct DE {
       L"Transformation nicht perfekt (Kantenoptimiert)";
   static constexpr const wchar_t *OSD_SpanOn = L"Video Wall: ON";
   static constexpr const wchar_t *OSD_SpanOff = L"Video Wall: OFF";
+  static constexpr const wchar_t *OSD_CompareBefore = L"Vorher (Original)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"Nachher (Proof)";
   static constexpr const wchar_t *Action_RotateCW =
       L"90\x00B0 im Uhrzeigersinn drehen";
   static constexpr const wchar_t *Action_RotateCCW =
@@ -3896,6 +3929,8 @@ struct DE {
   static constexpr const wchar_t *Help_Tip_JpegQ =
       L"JPEG Quality: Estimated Q value (reverse engineered). May differ "
       L"slightly from save setting due to algorithm variations.";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"Softproof-Vergleich: Wenn der Vergleichsmodus bei aktiviertem Softproof aufgerufen wird, werden Original und Proof-Bild automatisch verglichen.";
 
   static constexpr const wchar_t *Help_Item_Compare = L"Compare Mode";
   static constexpr const wchar_t *Help_Item_FirstLast = L"Erstes / Letztes Bild";
@@ -3974,6 +4009,8 @@ struct ES {
       L"Transformación no perfecta (bordes optimizados)";
   static constexpr const wchar_t *OSD_SpanOn = L"Video Wall: ON";
   static constexpr const wchar_t *OSD_SpanOff = L"Video Wall: OFF";
+  static constexpr const wchar_t *OSD_CompareBefore = L"Antes (Original)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"Después (Prueba)";
   static constexpr const wchar_t *Action_RotateCW =
       L"Girar 90\x00B0 en sentido horario";
   static constexpr const wchar_t *Action_RotateCCW =
@@ -4504,6 +4541,8 @@ struct ES {
   static constexpr const wchar_t *Help_Tip_JpegQ =
       L"JPEG Quality: Estimated Q value (reverse engineered). May differ "
       L"slightly from save setting due to algorithm variations.";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"Comparación de pruebas: entrar en el modo de comparación mientras la prueba de color está activa comparará automáticamente la imagen original frente a la de prueba.";
 
   static constexpr const wchar_t *Help_Item_Compare = L"Compare Mode";
   static constexpr const wchar_t *Help_Item_FirstLast = L"Primera / Última imagen";
@@ -4577,6 +4616,9 @@ template <typename T> void ApplyT() {
   OSD_NotPerfect = T::OSD_NotPerfect;
   OSD_SpanOn = T::OSD_SpanOn;
   OSD_SpanOff = T::OSD_SpanOff;
+  OSD_CompareBefore = T::OSD_CompareBefore;
+  OSD_CompareAfter = T::OSD_CompareAfter;
+
   OSD_GamutDetected = T::OSD_GamutDetected;
   OSD_GamutIncompatible = T::OSD_GamutIncompatible;
   OSD_GamutFailed = T::OSD_GamutFailed;
@@ -5002,6 +5044,8 @@ template <typename T> void ApplyT() {
   Help_Tip_GamutDetection = T::Help_Tip_GamutDetection;
   Help_Tip_Raw = T::Help_Tip_Raw;
   Help_Tip_JpegQ = T::Help_Tip_JpegQ;
+  Help_Tip_SoftProofCompare = T::Help_Tip_SoftProofCompare;
+
 
   Dialog_UpdateTitle = T::Dialog_UpdateTitle;
   Dialog_UpdateContent = T::Dialog_UpdateContent;
@@ -5049,6 +5093,8 @@ struct FR {
       L"Transform is not perfect (Edge optimized)";
   static constexpr const wchar_t *OSD_SpanOn = L"Video Wall: ON";
   static constexpr const wchar_t *OSD_SpanOff = L"Video Wall: OFF";
+  static constexpr const wchar_t *OSD_CompareBefore = L"Avant (Original)";
+  static constexpr const wchar_t *OSD_CompareAfter = L"Après (Preuve)";
 
   static constexpr const wchar_t *Action_RotateCW = L"Rotate 90\x00B0 CW";
   static constexpr const wchar_t *Action_RotateCCW = L"Rotate 90\x00B0 CCW";
@@ -5600,6 +5646,8 @@ struct FR {
   static constexpr const wchar_t *Help_Tip_JpegQ =
       L"JPEG Quality: Estimated value (e.g. Photoshop 100% ≈ 98%). May vary "
       L"slightly from save settings due to encoder variance, which is normal.";
+  static constexpr const wchar_t *Help_Tip_SoftProofCompare =
+      L"Comparaison d'épreuves : entrer en mode comparaison alors que le mode épreuvage est actif comparera automatiquement l'image originale et l'image épreuve.";
 
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
   static constexpr const wchar_t *HUD_Group_Scientific = L"SCIENTIFIC QUALITY";

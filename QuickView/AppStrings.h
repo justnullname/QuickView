@@ -30,6 +30,9 @@ namespace AppStrings {
     extern const wchar_t* OSD_NotPerfect;
     extern const wchar_t* OSD_SpanOn;
     extern const wchar_t* OSD_SpanOff;
+    extern const wchar_t* OSD_CompareBefore;
+    extern const wchar_t* OSD_CompareAfter;
+
     
     // Transform Action Names
     extern const wchar_t* Action_RotateCW;
@@ -449,6 +452,8 @@ namespace AppStrings {
     extern const wchar_t* Help_Tip_GamutDetection;
     extern const wchar_t* Help_Tip_Raw;
     extern const wchar_t* Help_Tip_JpegQ;
+    extern const wchar_t* Help_Tip_SoftProofCompare;
+
 
 
     extern const wchar_t* Settings_Option_Auto;
