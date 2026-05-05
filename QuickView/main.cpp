@@ -1360,11 +1360,16 @@ void RefreshGamutWarningOverlayVisual(HWND hwnd) {
 
     UNREFERENCED_PARAMETER(hwnd);
 }
+#define GAMUT_DEBOUNCE_TIMER_ID 995
 
 void ScheduleGamutWarningAnalysis(HWND hwnd) {
-    ScheduleGamutWarningAnalysisImpl(hwnd);
+    if (!hwnd) return;
+    SetTimer(hwnd, GAMUT_DEBOUNCE_TIMER_ID, 1000, nullptr);
+    if (g_compEngine && g_compEngine->IsInitialized()) {
+        g_compEngine->ClearImageOverlay();
+        g_compEngine->Commit();
+    }
 }
-
 static D2D1_INTERPOLATION_MODE GetOptimalD2DInterpolationMode(float totalScale, float origW, float origH) {
     if (IsEffectivelyPixelArtMode(totalScale, origW, origH)) {
         return D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
@@ -7483,6 +7488,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER: {
+        if (wParam == GAMUT_DEBOUNCE_TIMER_ID) {
+            KillTimer(hwnd, GAMUT_DEBOUNCE_TIMER_ID);
+            ScheduleGamutWarningAnalysisImpl(hwnd);
+            return 0;
+        }
+
         if (wParam == TIMER_ID_STARTUP_SHOW) {
             KillTimer(hwnd, TIMER_ID_STARTUP_SHOW);
             if (!IsWindowVisible(hwnd)) {
