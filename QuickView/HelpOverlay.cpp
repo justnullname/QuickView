@@ -172,6 +172,7 @@ void HelpOverlay::RebuildList() {
     m_items.push_back({ false, AppStrings::Help_Tip_Rotation, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_VideoWall, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_DesignerMode, L"" });
+    m_items.push_back({ false, AppStrings::Help_Tip_GamutDetection, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_Raw, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_JpegQ, L"" });
 }

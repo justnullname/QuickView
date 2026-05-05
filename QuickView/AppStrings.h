@@ -114,6 +114,7 @@ namespace AppStrings {
     extern const wchar_t* Toolbar_Tooltip_FixExtension;
     extern const wchar_t* Toolbar_Tooltip_Pin;
     extern const wchar_t* Toolbar_Tooltip_Unpin;
+    extern const wchar_t* Toolbar_Tooltip_GamutWarning;
 
     // Overlay Mode Tooltips
     extern const wchar_t* Toolbar_Tooltip_OverlayAlphaUp;
@@ -171,6 +172,9 @@ namespace AppStrings {
     extern const wchar_t* OSD_AnimPaused;
     extern const wchar_t* OSD_AnimDirtyOn;
     extern const wchar_t* OSD_AnimDirtyOff;
+    extern const wchar_t* OSD_GamutDetected;
+    extern const wchar_t* OSD_GamutIncompatible;
+    extern const wchar_t* OSD_GamutFailed;
 
     extern const wchar_t* Context_ColorSpace;
     
@@ -180,7 +184,6 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_CmsP3;
     extern const wchar_t* Settings_Option_CmsAdobeRGB;
     extern const wchar_t* Settings_Option_CmsGray;
-    extern const wchar_t* Settings_Option_CmsProPhoto;
     extern const wchar_t* Settings_Option_CmsProPhoto;
 
     
@@ -340,6 +343,11 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_HdrColorimetric;
     extern const wchar_t* Settings_Label_CustomProof;
     extern const wchar_t* Settings_Label_CmsIntent;
+    extern const wchar_t* Settings_Label_GamutWarning;
+    extern const wchar_t* Settings_Tooltip_GamutWarning;
+    extern const wchar_t* Settings_Label_GamutAutoPrompt;
+    extern const wchar_t* Settings_Tooltip_GamutAutoPrompt;
+    extern const wchar_t* Settings_Label_GamutColor;
     extern const wchar_t* Settings_Option_CmsIntentRelative;
     extern const wchar_t* Settings_Option_CmsIntentPerceptual;
     extern const wchar_t* Settings_Tooltip_CMS;
@@ -437,6 +445,7 @@ namespace AppStrings {
     extern const wchar_t* Help_Tip_Rotation;
     extern const wchar_t* Help_Tip_VideoWall;
     extern const wchar_t* Help_Tip_DesignerMode;
+    extern const wchar_t* Help_Tip_GamutDetection;
     extern const wchar_t* Help_Tip_Raw;
     extern const wchar_t* Help_Tip_JpegQ;
 

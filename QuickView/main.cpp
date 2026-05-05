@@ -495,6 +495,14 @@ struct GamutWarningAnalysisRequest {
     }
 };
 
+enum class GamutStatus : int {
+    Idle = 0,
+    Success,
+    OverflowDetected,
+    Incompatible,
+    Failed
+};
+
 struct GamutWarningOverlayState {
     int width = 0;
     int height = 0;
@@ -502,6 +510,7 @@ struct GamutWarningOverlayState {
     int rows = 0;
     std::vector<uint8_t> mask;
     bool hasOverflow = false;
+    GamutStatus status = GamutStatus::Idle;
 };
 
 GamutWarningOverlayState g_gamutWarningOverlay;
@@ -1231,7 +1240,7 @@ static void ScheduleGamutWarningAnalysisImpl(HWND hwnd) {
                               ? CRenderEngine::GamutTargetKind::ProofTarget
                               : CRenderEngine::GamutTargetKind::ScreenTarget;
         opts.effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
-        opts.renderingIntent  = g_config.CmsRenderingIntent;
+        opts.renderingIntent  = 1; // Always use Relative Colorimetric for gamut checking to identify physical clipping
         requestCopy = g_gamutWarningRequest;
     }
     if (!requestCopy.IsValid()) {
@@ -1252,13 +1261,34 @@ static void ScheduleGamutWarningAnalysisImpl(HWND hwnd) {
             analyzed.rows = exactResult.rows;
             analyzed.mask = std::move(exactResult.mask);
             analyzed.hasOverflow = exactResult.hasOverflow;
+            analyzed.status = exactResult.hasOverflow ? GamutStatus::OverflowDetected : GamutStatus::Success;
+
+            if (hr != S_OK) {
+                if (exactResult.debugSummary.find(L"Incompatible") != std::wstring::npos ||
+                    exactResult.debugSummary.find(L"Forw Transform Failed") != std::wstring::npos) {
+                    analyzed.status = GamutStatus::Incompatible;
+                } else {
+                    analyzed.status = GamutStatus::Failed;
+                }
+            }
+
             {
                 std::scoped_lock lock(g_gamutWarningMutex);
                 g_gamutWarningDebugSummary = exactResult.debugSummary;
             }
         }
         if (hr != S_OK && request.frame) {
-            analyzed = AnalyzeGamutWarning(BuildGamutWarningSample(*request.frame));
+            auto fallback = AnalyzeGamutWarning(BuildGamutWarningSample(*request.frame));
+            analyzed.width = fallback.width;
+            analyzed.height = fallback.height;
+            analyzed.cols = fallback.cols;
+            analyzed.rows = fallback.rows;
+            analyzed.mask = std::move(fallback.mask);
+            analyzed.hasOverflow = fallback.hasOverflow;
+            if (analyzed.status == GamutStatus::Idle) {
+                analyzed.status = fallback.hasOverflow ? GamutStatus::OverflowDetected : GamutStatus::Success;
+            }
+
             std::scoped_lock lock(g_gamutWarningMutex);
             if (g_gamutWarningDebugSummary.empty() || g_gamutWarningDebugSummary == L"LUT Build Failed") {
                 g_gamutWarningDebugSummary = L"Gamut CPU fallback";
@@ -1360,10 +1390,10 @@ void RefreshGamutWarningOverlayVisual(HWND hwnd) {
 
     UNREFERENCED_PARAMETER(hwnd);
 }
-#define GAMUT_DEBOUNCE_TIMER_ID 995
+#define GAMUT_DEBOUNCE_TIMER_ID 998
 
 void ScheduleGamutWarningAnalysis(HWND hwnd) {
-    if (!hwnd) return;
+    if (!hwnd || !g_config.GamutWarningEnabled) return;
     SetTimer(hwnd, GAMUT_DEBOUNCE_TIMER_ID, 1000, nullptr);
     if (g_compEngine && g_compEngine->IsInitialized()) {
         g_compEngine->ClearImageOverlay();
@@ -7447,11 +7477,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (!available) {
             g_runtime.ShowGamutWarningOverlay = false;
             g_toolbar.SetGamutWarningActive(false);
+            
+            // If it failed or is incompatible, show a subtle hint
+            if (g_config.GamutWarningEnabled && !overlay.hasOverflow) {
+                if (overlay.status == GamutStatus::Incompatible) {
+                    g_osd.Show(hwnd, AppStrings::OSD_GamutIncompatible, false, true,
+                               D2D1::ColorF(1.0f, 0.4f, 0.4f, 1.0f), OSDPosition::Bottom, 3000);
+                } else if (overlay.status == GamutStatus::Failed) {
+                    g_osd.Show(hwnd, AppStrings::OSD_GamutFailed, false, true,
+                               D2D1::ColorF(1.0f, 0.4f, 0.4f, 1.0f), OSDPosition::Bottom, 3000);
+                }
+            }
         } else if (g_config.GamutWarningAutoPrompt) {
             g_toolbar.SetGamutWarningActive(g_runtime.ShowGamutWarningOverlay);
-            g_osd.Show(hwnd, L"Detected out-of-gamut colors", false, true,
+            g_osd.Show(hwnd, AppStrings::OSD_GamutDetected, false, true,
                        D2D1::ColorF(g_config.GamutWarningColorR, g_config.GamutWarningColorG, g_config.GamutWarningColorB, 1.0f),
-                       OSDPosition::Bottom, 5000);
+                       OSDPosition::Bottom, 3000);
         } else {
             g_toolbar.SetGamutWarningActive(g_runtime.ShowGamutWarningOverlay);
         }

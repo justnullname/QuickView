@@ -1726,8 +1726,8 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemCmsIntent);
 
-    SettingsItem itemGamutWarning = { L"色彩溢出检测", OptionType::Toggle, &g_config.GamutWarningEnabled };
-    itemGamutWarning.tooltipText = L"开启后，在软打样裁剪或图片超出当前屏幕色域时分析并标出溢出区域。";
+    SettingsItem itemGamutWarning = { AppStrings::Settings_Label_GamutWarning, OptionType::Toggle, &g_config.GamutWarningEnabled };
+    itemGamutWarning.tooltipText = AppStrings::Settings_Tooltip_GamutWarning;
     itemGamutWarning.onChange = []() {
         SaveConfig();
         extern HWND g_mainHwnd;
@@ -1738,14 +1738,14 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemGamutWarning);
 
-    SettingsItem itemGamutAutoPrompt = { L"自动提示色彩溢出", OptionType::Toggle, &g_config.GamutWarningAutoPrompt };
-    itemGamutAutoPrompt.tooltipText = L"检测到溢出后弹出 OSD 提示。高亮区域可通过工具栏按钮手动查看。";
+    SettingsItem itemGamutAutoPrompt = { AppStrings::Settings_Label_GamutAutoPrompt, OptionType::Toggle, &g_config.GamutWarningAutoPrompt };
+    itemGamutAutoPrompt.tooltipText = AppStrings::Settings_Tooltip_GamutAutoPrompt;
     itemGamutAutoPrompt.onChange = []() {
         SaveConfig();
     };
     tabImage.items.push_back(itemGamutAutoPrompt);
 
-    SettingsItem itemGamutColor = { L"溢出高亮颜色", OptionType::CustomColorRow };
+    SettingsItem itemGamutColor = { AppStrings::Settings_Label_GamutColor, OptionType::CustomColorRow };
     itemGamutColor.pFloatVal = &g_config.GamutWarningColorR;
     itemGamutColor.onChange = []() {
         extern HWND g_mainHwnd;

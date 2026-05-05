@@ -173,6 +173,7 @@ const wchar_t *Toolbar_Tooltip_AnimNext = nullptr;
 const wchar_t *Toolbar_Tooltip_AnimDirtyOn = nullptr;
 const wchar_t *Toolbar_Tooltip_AnimDirtyOff = nullptr;
 const wchar_t *Toolbar_Tooltip_AnimSpeed = nullptr;
+const wchar_t *Toolbar_Tooltip_GamutWarning = nullptr;
 
 
 const wchar_t *OSD_Copied = nullptr;
@@ -203,6 +204,9 @@ const wchar_t *OSD_AnimDirtyOff = nullptr;
 
 const wchar_t *OSD_SpanOn = nullptr;
 const wchar_t *OSD_SpanOff = nullptr;
+const wchar_t *OSD_GamutDetected = nullptr;
+const wchar_t *OSD_GamutIncompatible = nullptr;
+const wchar_t *OSD_GamutFailed = nullptr;
 
 const wchar_t *Settings_Tab_Visuals = nullptr;
 const wchar_t *Settings_Tab_Controls = nullptr;
@@ -304,6 +308,11 @@ const wchar_t *Settings_Option_CmsAdobeRGB = nullptr;
 const wchar_t *Settings_Option_CmsGray = nullptr;
 const wchar_t *Settings_Option_CmsProPhoto = nullptr;
 const wchar_t *Settings_Label_CmsIntent = nullptr;
+const wchar_t *Settings_Label_GamutWarning = nullptr;
+const wchar_t *Settings_Tooltip_GamutWarning = nullptr;
+const wchar_t *Settings_Label_GamutAutoPrompt = nullptr;
+const wchar_t *Settings_Tooltip_GamutAutoPrompt = nullptr;
+const wchar_t *Settings_Label_GamutColor = nullptr;
 const wchar_t *Settings_Option_CmsIntentRelative = nullptr;
 const wchar_t *Settings_Option_CmsIntentPerceptual = nullptr;
 const wchar_t *Settings_Tooltip_CMS = nullptr;
@@ -400,6 +409,7 @@ const wchar_t *Help_Tip_ContextScope = nullptr;
 const wchar_t *Help_Tip_Rotation = nullptr;
 const wchar_t *Help_Tip_VideoWall = nullptr;
 const wchar_t *Help_Tip_DesignerMode = nullptr;
+const wchar_t *Help_Tip_GamutDetection = nullptr;
 const wchar_t *Help_Tip_Raw = nullptr;
 const wchar_t *Help_Tip_JpegQ = nullptr;
 
@@ -606,6 +616,7 @@ struct EN {
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Dirty Rect Debug: ON";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Dirty Rect Debug: OFF";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"Animation Speed";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"Show out-of-gamut highlight areas";
 
 
   // OSD
@@ -630,6 +641,9 @@ struct EN {
   static constexpr const wchar_t *OSD_RenameFailed = L"Rename Failed";
   static constexpr const wchar_t *OSD_Restored = L"Restored"; // New
   static constexpr const wchar_t *OSD_ExtensionFixed = L"Extension Fixed";
+  static constexpr const wchar_t *OSD_GamutDetected = L"Detected out-of-gamut colors";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"Gamut: Incompatible profile or parsing failed";
+  static constexpr const wchar_t *OSD_GamutFailed = L"Gamut: Analysis failed";
   static constexpr const wchar_t *OSD_FirstImage = L"First image";
   static constexpr const wchar_t *OSD_LastImage = L"Last image";
   static constexpr const wchar_t *OSD_HD = L"HD";
@@ -904,6 +918,13 @@ struct EN {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"Grayscale (Tonal Check)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Rendering Intent";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"Gamut Warning Detection";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"Analyze and highlight out-of-gamut areas when soft proofing or the image exceeds the screen gamut.";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Auto Prompt on Gamut Error";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"Show OSD notification when gamut errors are detected. Highlights can be manually toggled via toolbar.";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"Gamut Warning Highlight Color";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative =
       L"Relative Colorimetric";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual =
@@ -1012,8 +1033,9 @@ struct EN {
       L"Video Wall (Ctrl+F11): Spans all screens. If the close button is "
       L"hidden, double-click anywhere to exit.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Designer Mode: Pin Window + Lock Size. Use Zoom/Pan to focus on "
-      L"details. Useful for reference images.";
+      L"Tracing Mode / Film Mode: Once enabled, the image becomes semi-transparent, revealing underlying elements. You can adjust its size or transparency. Click the Mouse Passthrough toggle in the toolbar to enter Passthrough Mode, where all inputs except Shift+Esc are ignored, turning QuickView into a transparent overlay.";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"Gamut Warning: When enabled in settings, the system detects out-of-gamut colors for the target display or soft proofing profile after 1 second of inactivity. Toggle visibility via the toolbar button.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW: Shows embedded preview by default for speed. Click the RAW button "
       L"to fully decode (colors may vary).";
@@ -1301,6 +1323,13 @@ struct CN {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"灰度模式 (影调检查)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"渲染意图";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"色彩溢出检测";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"开启后，在软打样裁剪或图片超出当前屏幕色域时分析并标出溢出区域。";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"自动提示色彩溢出";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"检测到溢出后弹出 OSD 提示。高亮区域可通过工具栏按钮手动查看。";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"溢出高亮颜色";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相对色度";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"感知意图";
 
@@ -1469,6 +1498,7 @@ struct CN {
       L"扩展名不匹配 (修复)";
   static constexpr const wchar_t *Toolbar_Tooltip_Pin = L"固定工具栏";
   static constexpr const wchar_t *Toolbar_Tooltip_Unpin = L"取消固定工具栏";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"显示色彩溢出高亮区域";
   static constexpr const wchar_t *Toolbar_Tooltip_NormalMode = L"普通模式";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareMode = L"对比模式";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareOpen =
@@ -1527,6 +1557,9 @@ struct CN {
   static constexpr const wchar_t *OSD_AnimPaused = L"已暂停 (检查模式: Alt+左右方向键逐帧查看)";
   static constexpr const wchar_t *OSD_AnimDirtyOn = L"脏矩形: 开";
   static constexpr const wchar_t *OSD_AnimDirtyOff = L"脏矩形: 关";
+  static constexpr const wchar_t *OSD_GamutDetected = L"检测到色彩溢出";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"色彩空间不匹配 / 配置文件解析失败";
+  static constexpr const wchar_t *OSD_GamutFailed = L"色彩溢出分析失败";
 
 
   // static constexpr const wchar_t* Help_Action_Zoom = L"缩放";
@@ -1544,8 +1577,12 @@ struct CN {
       L"(Ctrl+F11)：合并所有显示器。若关闭按钮不可见(如L型布局)"
       L"，双击任意处即可退出。";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"设计师参考图：窗口置顶+"
-      L"锁定尺寸。配合缩放平移，可作为固定参考悬浮窗使用。";
+      L"临摹模式/薄膜模式：开启后图像将变为半透明并露出底部元素，此时您可调整尺寸或透明度。"
+      L"点击工具栏中的鼠标穿透模式开关，可进入鼠标穿透模式，此时除了退出快捷键 Shift+Esc 外的任何按键和鼠标输入均被忽略，"
+      L"QuickView 将变为一层透明薄膜覆盖层。";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"色彩溢出检测：在设置中开启后，系统将在静止 1 秒后检测当前图片在目标显示器或软打样配置下是否存在色彩溢出。"
+      L"点击工具栏按钮可高亮显示溢出区域。";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW "
       L"按钮可进行完整解码(色彩可能不同)。";
@@ -1694,6 +1731,7 @@ struct TW {
       L"副檔名不符 (修復)";
   static constexpr const wchar_t *Toolbar_Tooltip_Pin = L"固定工具列";
   static constexpr const wchar_t *Toolbar_Tooltip_Unpin = L"取消固定工具列";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"顯示色彩溢出高亮區域";
   static constexpr const wchar_t *Toolbar_Tooltip_NormalMode = L"普通模式";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareMode = L"對比模式";
   static constexpr const wchar_t *Toolbar_Tooltip_CompareOpen =
@@ -1750,6 +1788,9 @@ struct TW {
   static constexpr const wchar_t *OSD_AnimPaused = L"已暫停 (檢查模式: Alt+左右方向鍵逐幀查看)";
   static constexpr const wchar_t *OSD_AnimDirtyOn = L"髒矩形: 開";
   static constexpr const wchar_t *OSD_AnimDirtyOff = L"髒矩形: 關";
+  static constexpr const wchar_t *OSD_GamutDetected = L"檢測到色彩溢出";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"色彩空間不匹配 / 設定檔解析失敗";
+  static constexpr const wchar_t *OSD_GamutFailed = L"色彩溢出分析失敗";
 
   static constexpr const wchar_t *Context_Open = L"開啟...\tCtrl+O";
   static constexpr const wchar_t *Context_OpenWith = L"開啟方式...";
@@ -1935,6 +1976,13 @@ struct TW {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"灰度模式 (影調檢查)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"渲染意圖";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"色彩溢出檢測";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"開啟後，在軟打樣裁剪或圖片超出當前螢幕色域時分析並標出溢出區域。";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"自動提示色彩溢出";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"檢測到溢出後彈出 OSD 提示。高亮區域可透過工具欄按鈕手動查看。";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"溢出高亮顏色";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相對色度";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"感知意圖";
 
@@ -2039,8 +2087,12 @@ struct TW {
       L"(Ctrl+F11)：將所有顯示器視為一塊屏幕。若關閉按鈕位於顯示區外 "
       L"(如L型排布)，雙擊即可退出全屏。";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"設計師參考圖模式：設定窗口置頂，調整尺寸並鎖定，使用縮放/"
-      L"平移定位局部細節，拖動窗口至合適位置參考。";
+      L"臨摹模式/薄膜模式：開啟後圖像將變為半透明並露出底部元素，此時您可調整尺寸或透明度。"
+      L"點擊工具列中的滑鼠穿透模式開關，可進入滑鼠穿透模式，此時除了退出快捷鍵 Shift+Esc 外的任何按鍵和滑鼠輸入均被忽略，"
+      L"QuickView 將變為一層透明薄膜覆蓋層。";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"色彩溢出檢測：在設定中開啟後，系統將在靜止 1 秒後檢測當前圖片在目標顯示器或軟打樣配置下是否存在色彩溢出。"
+      L"點擊工具列按鈕可高亮顯示溢出區域。";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW 按鈕：QuickView 默認顯示 RAW "
       L"預覽圖。點擊此按鈕將使用默認參數完整渲染 RAW 文件 "
@@ -2260,6 +2312,7 @@ struct JA {
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"ダーティ領域デバッグ: オン";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"ダーティ領域デバッグ: オフ";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"アニメーション速度";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"色域外の色を検出しました";
 
   static constexpr const wchar_t *OSD_Copied = L"コピーしました!";
   static constexpr const wchar_t *OSD_CoordinatesCopied =
@@ -2282,6 +2335,9 @@ struct JA {
   static constexpr const wchar_t *OSD_RenameFailed = L"名前変更失敗";
   static constexpr const wchar_t *OSD_Restored = L"復元されました";
   static constexpr const wchar_t *OSD_ExtensionFixed = L"拡張子を修正しました";
+  static constexpr const wchar_t *OSD_GamutDetected = L"色域外の色を検出しました";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"色域: 互換性のないプロファイル";
+  static constexpr const wchar_t *OSD_GamutFailed = L"色域: 解析に失敗しました";
   static constexpr const wchar_t *OSD_FirstImage = L"最初の画像";
   static constexpr const wchar_t *OSD_LastImage = L"最後の画像";
   static constexpr const wchar_t *OSD_HD = L"HD";
@@ -2586,8 +2642,9 @@ struct JA {
       L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, "
       L"double-click to exit.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference "
-      L"detail. Drag window to position.";
+      L"トレースモード / フィルムモード：有効にすると画像が半透明になり、下の要素が表示されます。サイズや透明度を調整できます。ツールバーのマウスパススルー切り替えをクリックするとパススルーモードになり、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"色域警告の検出：設定で有効にすると、1 秒間のアイドル状態の後に、ターゲットディスプレイまたはソフトプルーフプロファイルの色域外の色が検出されます。ツールバーのボタンで表示を切り替えて、色域外の領域をハイライトできます。";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW Button: QuickView shows embedded preview by default. Click to "
       L"fully decode (may look different due to rendering parameters).";
@@ -2605,6 +2662,13 @@ struct JA {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"グレースケール (トーン確認)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"レンダリングインテント";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"色域外警告の検出";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"ソフトプルーフ中や画像が画面の色域を超えた場合に、色域外の領域を分析してハイライトします。";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"色域エラー時の自動プロンプト";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"色域エラーが検出されたときにOSD通知を表示します。ハイライトはツールバーで手動で切り替えられます。";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"色域外警告のハイライト色";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"相対的な色域を維持";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"知覚的";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"更新内容:";
@@ -2831,6 +2895,7 @@ struct RU {
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Отладка вид. обл.: ДА";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Отладка вид. обл.: НЕТ";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"Скорость анимации";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"Показать области вне охвата";
 
 
   // OSD
@@ -2855,6 +2920,9 @@ struct RU {
   static constexpr const wchar_t *OSD_RenameFailed = L"Ошибка переименования";
   static constexpr const wchar_t *OSD_Restored = L"Восстановлено";
   static constexpr const wchar_t *OSD_ExtensionFixed = L"Расширение исправлено";
+  static constexpr const wchar_t *OSD_GamutDetected = L"Обнаружены цвета вне цветового охвата";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"Охват: Несовместимый профиль";
+  static constexpr const wchar_t *OSD_GamutFailed = L"Охват: Ошибка анализа";
   static constexpr const wchar_t *OSD_FirstImage = L"Первое изображение";
   static constexpr const wchar_t *OSD_LastImage = L"Последнее изображение";
   static constexpr const wchar_t *OSD_HD = L"HD";
@@ -3129,6 +3197,13 @@ struct RU {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"Оттенки серого (контроль тона)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Цель рендеринга";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"Определение выхода за охват";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"Анализ и выделение областей вне цветового охвата при цветопробе или если изображение выходит за пределы охвата экрана.";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Автоуведомление об ошибке охвата";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"Показать OSD-уведомление при обнаружении ошибок охвата. Выделение можно включить вручную на панели инструментов.";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"Цвет выделения вне охвата";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative =
       L"Относительный колориметрический (точность)";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual =
@@ -3237,8 +3312,9 @@ struct RU {
       L"Видеостена (Ctrl+F11): Распределение картинки по всем мониторам. Если кнопка закрытия скрыта, "
       L"для выхода дважды щёлкните мышью.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Дизайнерский режим: Закрепление окна, изменение размера/блокировка, масштабирование/панорамирование "
-      L"изображения для получения детальной информации. Перетащите окно в нужное положение.";
+      L"Режим кальки / Режим пленки: после включения изображение становится полупрозрачным, открывая нижележащие элементы. Вы можете настроить его размер или прозрачность. Нажмите переключатель прохождения мыши на панели инструментов, чтобы войти в режим прохождения, в котором все вводы, кроме Shift+Esc, игнорируются, превращая QuickView в прозрачный оверлей.";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"Определение предупреждения о цветовом охвате: если включено в настройках, система обнаруживает цвета вне цветового охвата для целевого дисплея или профиля цветопробы после 1 секунды бездействия. Переключите видимость с помощью кнопки на панели инструментов, чтобы выделить области вне охвата.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"Кнопка RAW: По умолчанию QuickView показывает встроенную картинку предпросмотра. Нажмите "
       L"для полного декодирования (может выглядеть по-другому из-за параметров рендеринга).";
@@ -3424,6 +3500,7 @@ struct DE {
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Dirty Rect Debug: AN";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Dirty Rect Debug: AUS";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"Animationsgeschwindigkeit";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"Farbraumwarnung anzeigen";
 
   static constexpr const wchar_t *OSD_Copied = L"Kopiert!";
   static constexpr const wchar_t *OSD_CoordinatesCopied =
@@ -3449,6 +3526,9 @@ struct DE {
       L"Umbenennung fehlgeschlagen";
   static constexpr const wchar_t *OSD_Restored = L"Wiederhergestellt";
   static constexpr const wchar_t *OSD_ExtensionFixed = L"Erweiterung repariert";
+  static constexpr const wchar_t *OSD_GamutDetected = L"Farbraum-Überschreitung erkannt";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"Farbraum: Inkompatibles Profil";
+  static constexpr const wchar_t *OSD_GamutFailed = L"Farbraum: Analyse fehlgeschlagen";
   static constexpr const wchar_t *OSD_FirstImage = L"Erstes Bild";
   static constexpr const wchar_t *OSD_LastImage = L"Letztes Bild";
   static constexpr const wchar_t *OSD_HD = L"HD";
@@ -3803,8 +3883,9 @@ struct DE {
       L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, "
       L"double-click to exit.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference "
-      L"detail. Drag window to position.";
+      L"Pausmodus / Folienmodus: Sobald aktiviert, wird das Bild halbtransparent und gibt den Blick auf darunter liegende Elemente frei. Sie können die Größe oder Transparenz anpassen. Klicken Sie auf den Maus-Durchlass-Umschalter in der Symbolleiste, um in den Durchlassmodus zu gelangen, in dem alle Eingaben außer Umschalt+Esc ignoriert werden, wodurch QuickView zu einer transparenten Überlagerung wird.";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"Farbraumwarnung-Erkennung: Wenn in den Einstellungen aktiviert, erkennt das System nach 1 Sekunde Inaktivität Farben außerhalb des Farbraums für den Zielbildschirm oder das Softproofing-Profil. Die Sichtbarkeit kann über die Schaltfläche in der Symbolleiste umgeschaltet werden, um Farbraum-Überschreitungen hervorzuheben.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW Button: QuickView shows embedded preview by default. Click to "
       L"fully decode (may look different due to rendering parameters).";
@@ -3822,6 +3903,13 @@ struct DE {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"Graustufen (Tonwertkontrolle)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Rendering-Intent";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"Farbraumwarnung-Erkennung";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"Analysiert und markiert Farbbereiche außerhalb des Farbraums bei Softproofing oder wenn das Bild den Bildschirmfarbraum überschreitet.";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Automatische Benachrichtigung bei Farbraumfehlern";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"OSD-Benachrichtigung bei Farbraumfehlern anzeigen. Markierungen können manuell über die Symbolleiste umgeschaltet werden.";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"Farbraumwarnung-Highlight-Farbe";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"Relativ farbmetrisch";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"Perzeptiv";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"Was ist neu:";
@@ -4008,6 +4096,7 @@ struct ES {
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Depuración de Dirty Rect: ACTIVADO";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Depuración de Dirty Rect: DESACTIVADO";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"Velocidad de animación";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"Mostrar áreas fuera de gama";
 
   static constexpr const wchar_t *OSD_Copied = L"¡Copiado!";
   static constexpr const wchar_t *OSD_CoordinatesCopied =
@@ -4034,6 +4123,9 @@ struct ES {
   static constexpr const wchar_t *OSD_RenameFailed = L"Error al renombrar";
   static constexpr const wchar_t *OSD_Restored = L"Restaurado";
   static constexpr const wchar_t *OSD_ExtensionFixed = L"Extensión corregida";
+  static constexpr const wchar_t *OSD_GamutDetected = L"Colores fuera de gama detectados";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"Gama: Perfil incompatible";
+  static constexpr const wchar_t *OSD_GamutFailed = L"Gama: Error en el análisis";
   static constexpr const wchar_t *OSD_FirstImage = L"Primera imagen";
   static constexpr const wchar_t *OSD_LastImage = L"Última imagen";
   static constexpr const wchar_t *OSD_HD = L"HD";
@@ -4398,8 +4490,9 @@ struct ES {
       L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, "
       L"double-click to exit.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Designer Mode: Pin Window, Resize/Lock, Zoom/Pan image to reference "
-      L"detail. Drag window to position.";
+      L"Modo Calco / Modo Película: Una vez activado, la imagen se vuelve semitransparente, revelando los elementos subyacentes. Puede ajustar su tamaño o transparencia. Haga clic en el interruptor de Paso de Mouse en la barra de herramientas para entrar en el Modo de Paso, donde se ignoran todas las entradas excepto Mayús+Esc, convirtiendo QuickView en una superposición transparente.";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"Detección de aviso de gama: cuando está activado en la configuración, el sistema detecta colores fuera de gama para la pantalla de destino o el perfil de ajuste de prueba después de 1 segundo de inactividad. Alterna la visibilidad mediante el botón de la barra de herramientas para resaltar las áreas fuera de gama.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW Button: QuickView shows embedded preview by default. Click to "
       L"fully decode (may look different due to rendering parameters).";
@@ -4417,6 +4510,13 @@ struct ES {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"Escala de grises (Control de tono)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Intención de renderizado";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"Detección de fuera de gama";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"Analiza y resalta las áreas fuera de gama durante el ajuste de prueba o si la imagen supera la gama de la pantalla.";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Aviso automático de error de gama";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"Mostrar notificación OSD cuando se detecten errores de gama. Los resaltados se pueden activar manualmente en la barra de herramientas.";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"Color de resaltado de fuera de gama";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"Relativo colorimétrico";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"Perceptual";
   static constexpr const wchar_t *HUD_Group_Physical = L"PHYSICAL ATTRIBUTES";
@@ -4471,6 +4571,9 @@ template <typename T> void ApplyT() {
   OSD_NotPerfect = T::OSD_NotPerfect;
   OSD_SpanOn = T::OSD_SpanOn;
   OSD_SpanOff = T::OSD_SpanOff;
+  OSD_GamutDetected = T::OSD_GamutDetected;
+  OSD_GamutIncompatible = T::OSD_GamutIncompatible;
+  OSD_GamutFailed = T::OSD_GamutFailed;
 
   Action_RotateCW = T::Action_RotateCW;
   Action_RotateCCW = T::Action_RotateCCW;
@@ -4601,6 +4704,7 @@ template <typename T> void ApplyT() {
   Toolbar_Tooltip_FixExtension = T::Toolbar_Tooltip_FixExtension;
   Toolbar_Tooltip_Pin = T::Toolbar_Tooltip_Pin;
   Toolbar_Tooltip_Unpin = T::Toolbar_Tooltip_Unpin;
+  Toolbar_Tooltip_GamutWarning = T::Toolbar_Tooltip_GamutWarning;
   Toolbar_Tooltip_NormalMode = T::Toolbar_Tooltip_NormalMode;
   Toolbar_Tooltip_CompareMode = T::Toolbar_Tooltip_CompareMode;
   Toolbar_Tooltip_CompareOpen = T::Toolbar_Tooltip_CompareOpen;
@@ -4803,6 +4907,11 @@ template <typename T> void ApplyT() {
   Settings_Option_CmsGray = T::Settings_Option_CmsGray;
   Settings_Option_CmsProPhoto = T::Settings_Option_CmsProPhoto;
   Settings_Label_CmsIntent = T::Settings_Label_CmsIntent;
+  Settings_Label_GamutWarning = T::Settings_Label_GamutWarning;
+  Settings_Tooltip_GamutWarning = T::Settings_Tooltip_GamutWarning;
+  Settings_Label_GamutAutoPrompt = T::Settings_Label_GamutAutoPrompt;
+  Settings_Tooltip_GamutAutoPrompt = T::Settings_Tooltip_GamutAutoPrompt;
+  Settings_Label_GamutColor = T::Settings_Label_GamutColor;
   Settings_Option_CmsIntentRelative = T::Settings_Option_CmsIntentRelative;
   Settings_Option_CmsIntentPerceptual = T::Settings_Option_CmsIntentPerceptual;
   Settings_Tooltip_CMS = T::Settings_Tooltip_CMS;
@@ -4883,6 +4992,7 @@ template <typename T> void ApplyT() {
   Help_Tip_Rotation = T::Help_Tip_Rotation;
   Help_Tip_VideoWall = T::Help_Tip_VideoWall;
   Help_Tip_DesignerMode = T::Help_Tip_DesignerMode;
+  Help_Tip_GamutDetection = T::Help_Tip_GamutDetection;
   Help_Tip_Raw = T::Help_Tip_Raw;
   Help_Tip_JpegQ = T::Help_Tip_JpegQ;
 
@@ -5055,7 +5165,8 @@ struct FR {
   static constexpr const wchar_t *Toolbar_Tooltip_AnimNext = L"Next Frame";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOn = L"Dirty Rect Debug: ON";
   static constexpr const wchar_t *Toolbar_Tooltip_AnimDirtyOff = L"Dirty Rect Debug: OFF";
-  static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"Animation Speed";
+  static constexpr const wchar_t *Toolbar_Tooltip_AnimSpeed = L"Vitesse d'animation";
+  static constexpr const wchar_t *Toolbar_Tooltip_GamutWarning = L"Afficher les zones hors gamme";
 
 
   // OSD
@@ -5080,6 +5191,9 @@ struct FR {
   static constexpr const wchar_t *OSD_RenameFailed = L"Rename Failed";
   static constexpr const wchar_t *OSD_Restored = L"Restored"; // New
   static constexpr const wchar_t *OSD_ExtensionFixed = L"Extension Fixed";
+  static constexpr const wchar_t *OSD_GamutDetected = L"Couleurs hors gamme détectées";
+  static constexpr const wchar_t *OSD_GamutIncompatible = L"Gamme : Profil incompatible";
+  static constexpr const wchar_t *OSD_GamutFailed = L"Gamme : Échec de l'analyse";
   static constexpr const wchar_t *OSD_FirstImage = L"First image";
   static constexpr const wchar_t *OSD_LastImage = L"Last image";
   static constexpr const wchar_t *OSD_HD = L"HD";
@@ -5354,6 +5468,13 @@ struct FR {
   static constexpr const wchar_t *Settings_Option_CmsGray = L"Grayscale (Tonal Check)";
   static constexpr const wchar_t *Settings_Option_CmsProPhoto = L"ProPhoto RGB";
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Rendering Intent";
+  static constexpr const wchar_t *Settings_Label_GamutWarning = L"Détection de dépassement de gamme";
+  static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
+      L"Analyser et mettre en évidence les zones hors gamme lors de l'épreuvage ou si l'image dépasse la gamme de l'écran.";
+  static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Notification automatique d'erreur de gamme";
+  static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
+      L"Afficher une notification OSD en cas d'erreur de gamme. Les points forts peuvent être activés manuellement via la barre d'outils.";
+  static constexpr const wchar_t *Settings_Label_GamutColor = L"Couleur de mise en évidence de gamme";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative =
       L"Relative Colorimetric";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual =
@@ -5462,8 +5583,9 @@ struct FR {
       L"Video Wall (Ctrl+F11): Spans all screens. If the close button is "
       L"hidden, double-click anywhere to exit.";
   static constexpr const wchar_t *Help_Tip_DesignerMode =
-      L"Designer Mode: Pin Window + Lock Size. Use Zoom/Pan to focus on "
-      L"details. Useful for reference images.";
+      L"Mode Calque / Mode Pellicule : Une fois activé, l'image devient semi-transparente, révélant les éléments sous-jacents. Vous pouvez ajuster sa taille ou sa transparence. Cliquez sur le commutateur de passage de la souris dans la barre d'outils pour passer en mode passage, où toutes les entrées sauf Shift+Esc sont ignorées, transformant QuickView en une superposition transparente.";
+  static constexpr const wchar_t *Help_Tip_GamutDetection =
+      L"Détection d'avertissement de gamme : lorsqu'il est activé dans les paramètres, le système détecte les couleurs hors gamme pour l'affichage cible ou le profil d'épreuvage après 1 seconde d'inactivité. Basculez la visibilité via le bouton de la barre d'outils pour mettre en évidence les zones hors gamme.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW: Shows embedded preview by default for speed. Click the RAW button "
       L"to fully decode (colors may vary).";

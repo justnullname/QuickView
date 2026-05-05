@@ -349,7 +349,7 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   case ToolbarButtonID::FixExtension:
     return AppStrings::Toolbar_Tooltip_FixExtension;
   case ToolbarButtonID::GamutWarning:
-    return btn.isToggled ? L"Hide gamut warning overlay" : L"Show gamut warning overlay";
+    return AppStrings::Toolbar_Tooltip_GamutWarning;
   case ToolbarButtonID::Pin:
     return btn.isToggled ? AppStrings::Toolbar_Tooltip_Unpin
                          : AppStrings::Toolbar_Tooltip_Pin;
