@@ -226,7 +226,7 @@ struct AppConfig {
     int AdvancedColorMode = 2;           // 0=Off, 1=On, 2=Auto (HDR / FP16 scRGB pipeline)
     int CmsDefaultFallback = 0;          // Fallback for untagged images: 0=sRGB, 1=P3, 2=AdobeRGB, 3=ProPhoto
     std::wstring CustomSoftProofProfile; // Path to user-selected ICC file for soft proofing
-    bool GamutWarningEnabled = false;    // Enable gamut clipping / out-of-display warning analysis
+    int GamutWarningMode = 1;             // 0=Off, 1=SoftProof, 2=All (Default: 1)
     bool GamutWarningAutoPrompt = true;  // Auto show overlay + blink when overflow is detected
     float GamutWarningColorR = 1.0f;
     float GamutWarningColorG = 0.12f;

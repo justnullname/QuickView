@@ -1127,6 +1127,8 @@ static QuickView::ColorPrimaries ResolveGamutWarningDestinationPrimaries() {
     return ResolveDisplayPrimaries(g_renderEngine ? g_renderEngine->GetDisplayColorState() : QuickView::DisplayColorState{});
 }
 
+#define IS_GAMUT_WARNING_ACTIVE (g_config.GamutWarningMode == 2 || (g_config.GamutWarningMode == 1 && g_runtime.EnableSoftProofing))
+
 static GamutWarningOverlayState AnalyzeGamutWarning(const GamutWarningSample& sample) {
     GamutWarningOverlayState result;
     result.width = sample.width;
@@ -1134,7 +1136,7 @@ static GamutWarningOverlayState AnalyzeGamutWarning(const GamutWarningSample& sa
     result.cols = sample.cols;
     result.rows = sample.rows;
 
-    if (!sample.IsValid() || !g_config.GamutWarningEnabled) return result;
+    if (!sample.IsValid() || !IS_GAMUT_WARNING_ACTIVE) return result;
     if (g_runtime.EnableSoftProofing && g_config.CmsRenderingIntent != 1) return result;
 
     const QuickView::ColorPrimaries srcPrimaries = NormalizePrimaries(sample.srcPrimaries);
@@ -1222,7 +1224,7 @@ static void ClearGamutWarningState(HWND hwnd) {
 
 static void ScheduleGamutWarningAnalysisImpl(HWND hwnd) {
     if (!hwnd) return;
-    if (!g_config.GamutWarningEnabled) {
+    if (!IS_GAMUT_WARNING_ACTIVE) {
         ClearGamutWarningState(hwnd);
         return;
     }
@@ -1393,7 +1395,7 @@ void RefreshGamutWarningOverlayVisual(HWND hwnd) {
 #define GAMUT_DEBOUNCE_TIMER_ID 998
 
 void ScheduleGamutWarningAnalysis(HWND hwnd) {
-    if (!hwnd || !g_config.GamutWarningEnabled) return;
+    if (!hwnd || !IS_GAMUT_WARNING_ACTIVE) return;
     SetTimer(hwnd, GAMUT_DEBOUNCE_TIMER_ID, 1000, nullptr);
     if (g_compEngine && g_compEngine->IsInitialized()) {
         g_compEngine->ClearImageOverlay();
@@ -5394,7 +5396,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Image", L"HdrToneMappingMode", std::to_wstring(g_config.HdrToneMappingMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"HdrPeakNitsOverride", std::to_wstring(g_config.HdrPeakNitsOverride).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"CustomSoftProofProfile", g_config.CustomSoftProofProfile.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"GamutWarningEnabled", g_config.GamutWarningEnabled ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"GamutWarningMode", std::to_wstring(g_config.GamutWarningMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"GamutWarningAutoPrompt", g_config.GamutWarningAutoPrompt ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"GamutWarningColorR", std::to_wstring(g_config.GamutWarningColorR).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"GamutWarningColorG", std::to_wstring(g_config.GamutWarningColorG).c_str(), iniPath.c_str());
@@ -5637,7 +5639,7 @@ void LoadConfig() {
     wchar_t customProofPath[MAX_PATH];
     GetPrivateProfileStringW(L"Image", L"CustomSoftProofProfile", L"", customProofPath, MAX_PATH, iniPath.c_str());
     g_config.CustomSoftProofProfile = customProofPath;
-    g_config.GamutWarningEnabled = GetPrivateProfileIntW(L"Image", L"GamutWarningEnabled", 0, iniPath.c_str()) != 0;
+    g_config.GamutWarningMode = GetPrivateProfileIntW(L"Image", L"GamutWarningMode", 1, iniPath.c_str());
     g_config.GamutWarningAutoPrompt = GetPrivateProfileIntW(L"Image", L"GamutWarningAutoPrompt", 1, iniPath.c_str()) != 0;
     GetPrivateProfileStringW(L"Image", L"GamutWarningColorR", L"1.0", tempFloat, 64, iniPath.c_str());
     g_config.GamutWarningColorR = std::clamp(std::wcstof(tempFloat, nullptr), 0.0f, 1.0f);
@@ -7472,14 +7474,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             overlay = g_gamutWarningOverlay;
         }
 
-        const bool available = g_config.GamutWarningEnabled && overlay.hasOverflow;
+        const bool available = IS_GAMUT_WARNING_ACTIVE && overlay.hasOverflow;
         g_toolbar.SetGamutWarningAvailable(available);
         if (!available) {
             g_runtime.ShowGamutWarningOverlay = false;
             g_toolbar.SetGamutWarningActive(false);
             
             // If it failed or is incompatible, show a subtle hint
-            if (g_config.GamutWarningEnabled && !overlay.hasOverflow) {
+            if (IS_GAMUT_WARNING_ACTIVE && !overlay.hasOverflow) {
                 if (overlay.status == GamutStatus::Incompatible) {
                     g_osd.Show(hwnd, AppStrings::OSD_GamutIncompatible, false, true,
                                D2D1::ColorF(1.0f, 0.4f, 0.4f, 1.0f), OSDPosition::Bottom, 3000);

@@ -1726,7 +1726,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemCmsIntent);
 
-    SettingsItem itemGamutWarning = { AppStrings::Settings_Label_GamutWarning, OptionType::Toggle, &g_config.GamutWarningEnabled };
+    SettingsItem itemGamutWarning = { AppStrings::Settings_Label_GamutWarning, OptionType::Segment, nullptr, nullptr, &g_config.GamutWarningMode, nullptr, 0, 0, { AppStrings::Settings_Option_Off, AppStrings::Settings_Option_SoftProofing, AppStrings::Settings_Option_All } };
     itemGamutWarning.tooltipText = AppStrings::Settings_Tooltip_GamutWarning;
     itemGamutWarning.onChange = []() {
         SaveConfig();

@@ -376,6 +376,7 @@ const wchar_t *Settings_Option_Auto = nullptr;
 const wchar_t *Settings_Option_Eco = nullptr;
 const wchar_t *Settings_Option_Balanced = nullptr;
 const wchar_t *Settings_Option_Ultra = nullptr;
+const wchar_t *Settings_Option_SoftProofing = nullptr;
 
 const wchar_t *Help_Header_Shortcuts = nullptr;
 const wchar_t *Help_Header_Mouse = nullptr;
@@ -920,11 +921,12 @@ struct EN {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Rendering Intent";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"Gamut Warning Detection";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"Analyze and highlight out-of-gamut areas when soft proofing or the image exceeds the screen gamut.";
+      L"Analyze and highlight out-of-gamut areas. Options: Off, detect only in soft proofing mode, or detect both soft proofing and screen gamut.";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Auto Prompt on Gamut Error";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"Show OSD notification when gamut errors are detected. Highlights can be manually toggled via toolbar.";
   static constexpr const wchar_t *Settings_Label_GamutColor = L"Gamut Warning Highlight Color";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"Soft Proofing";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative =
       L"Relative Colorimetric";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual =
@@ -1035,7 +1037,7 @@ struct EN {
   static constexpr const wchar_t *Help_Tip_DesignerMode =
       L"Tracing Mode / Film Mode: Once enabled, the image becomes semi-transparent, revealing underlying elements. You can adjust its size or transparency. Click the Mouse Passthrough toggle in the toolbar to enter Passthrough Mode, where all inputs except Shift+Esc are ignored, turning QuickView into a transparent overlay.";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"Gamut Warning: When enabled in settings, the system detects out-of-gamut colors for the target display or soft proofing profile after 1 second of inactivity. Toggle visibility via the toolbar button.";
+      L"Gamut Warning: Detects out-of-gamut colors for the target display or soft proofing profile. Modes: Off, Soft Proofing only, or All (Default: Soft Proofing). Toggle via toolbar.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW: Shows embedded preview by default for speed. Click the RAW button "
       L"to fully decode (colors may vary).";
@@ -1325,7 +1327,8 @@ struct CN {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"渲染意图";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"色彩溢出检测";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"开启后，在软打样裁剪或图片超出当前屏幕色域时分析并标出溢出区域。";
+      L"分析并标出溢出区域：关闭、仅在软打样模式下检测（默认）、或者同时检测软打样和屏幕色彩溢出。";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"软打样";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"自动提示色彩溢出";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"检测到溢出后弹出 OSD 提示。高亮区域可通过工具栏按钮手动查看。";
@@ -1581,8 +1584,7 @@ struct CN {
       L"点击工具栏中的鼠标穿透模式开关，可进入鼠标穿透模式，此时除了退出快捷键 Shift+Esc 外的任何按键和鼠标输入均被忽略，"
       L"QuickView 将变为一层透明薄膜覆盖层。";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"色彩溢出检测：在设置中开启后，系统将在静止 1 秒后检测当前图片在目标显示器或软打样配置下是否存在色彩溢出。"
-      L"点击工具栏按钮可高亮显示溢出区域。";
+      L"色彩溢出检测：检测当前图片是否超出显示器或软打样配置的色域。模式：关闭、仅软打样（默认）、全部（包含屏幕）。可从工具栏手动开关。";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW 渲染：默认显示内嵌预览图以提升速度。点击 RAW "
       L"按钮可进行完整解码(色彩可能不同)。";
@@ -1978,7 +1980,8 @@ struct TW {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"渲染意圖";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"色彩溢出檢測";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"開啟後，在軟打樣裁剪或圖片超出當前螢幕色域時分析並標出溢出區域。";
+      L"分析並標出溢出區域：關閉、僅在軟打樣模式下檢測（預設）、或者同時檢測軟打樣和螢幕色彩溢出。";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"軟打樣";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"自動提示色彩溢出";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"檢測到溢出後彈出 OSD 提示。高亮區域可透過工具欄按鈕手動查看。";
@@ -2091,8 +2094,7 @@ struct TW {
       L"點擊工具列中的滑鼠穿透模式開關，可進入滑鼠穿透模式，此時除了退出快捷鍵 Shift+Esc 外的任何按鍵和滑鼠輸入均被忽略，"
       L"QuickView 將變為一層透明薄膜覆蓋層。";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"色彩溢出檢測：在設定中開啟後，系統將在靜止 1 秒後檢測當前圖片在目標顯示器或軟打樣配置下是否存在色彩溢出。"
-      L"點擊工具列按鈕可高亮顯示溢出區域。";
+      L"色彩溢出檢測：檢測當前圖片是否超出顯示器或軟打樣配置的色域。模式：關閉、僅軟打樣（預設）、全部（包含螢幕）。可從工具列手動開關。";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW 按鈕：QuickView 默認顯示 RAW "
       L"預覽圖。點擊此按鈕將使用默認參數完整渲染 RAW 文件 "
@@ -2644,7 +2646,7 @@ struct JA {
   static constexpr const wchar_t *Help_Tip_DesignerMode =
       L"トレースモード / フィルムモード：有効にすると画像が半透明になり、下の要素が表示されます。サイズや透明度を調整できます。ツールバーのマウスパススルー切り替えをクリックするとパススルーモードになり、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"色域警告の検出：設定で有効にすると、1 秒間のアイドル状態の後に、ターゲットディスプレイまたはソフトプルーフプロファイルの色域外の色が検出されます。ツールバーのボタンで表示を切り替えて、色域外の領域をハイライトできます。";
+      L"色域警告：ターゲットディスプレイまたはソフトプルーフプロファイルの色域外の色を検出します。モード：オフ、ソフトプルーフのみ、またはすべて（デフォルト：ソフトプルーフ）。ツールバーで切り替え可能。";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW Button: QuickView shows embedded preview by default. Click to "
       L"fully decode (may look different due to rendering parameters).";
@@ -2664,7 +2666,8 @@ struct JA {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"レンダリングインテント";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"色域外警告の検出";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"ソフトプルーフ中や画像が画面の色域を超えた場合に、色域外の領域を分析してハイライトします。";
+      L"色域外領域の分析とハイライト：オフ、ソフトプルーフモードのみ（デフォルト）、またはソフトプルーフとディスプレイ色域の両方。";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"ソフトプルーフ";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"色域エラー時の自動プロンプト";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"色域エラーが検出されたときにOSD通知を表示します。ハイライトはツールバーで手動で切り替えられます。";
@@ -3199,7 +3202,8 @@ struct RU {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Цель рендеринга";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"Определение выхода за охват";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"Анализ и выделение областей вне цветового охвата при цветопробе или если изображение выходит за пределы охвата экрана.";
+      L"Анализ и выделение областей вне цветового охвата. Режимы: Выкл, только в режиме цветопробы (по умолчанию) или для цветопробы и монитора одновременно.";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"Цветопроба";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Автоуведомление об ошибке охвата";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"Показать OSD-уведомление при обнаружении ошибок охвата. Выделение можно включить вручную на панели инструментов.";
@@ -3314,7 +3318,7 @@ struct RU {
   static constexpr const wchar_t *Help_Tip_DesignerMode =
       L"Режим кальки / Режим пленки: после включения изображение становится полупрозрачным, открывая нижележащие элементы. Вы можете настроить его размер или прозрачность. Нажмите переключатель прохождения мыши на панели инструментов, чтобы войти в режим прохождения, в котором все вводы, кроме Shift+Esc, игнорируются, превращая QuickView в прозрачный оверлей.";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"Определение предупреждения о цветовом охвате: если включено в настройках, система обнаруживает цвета вне цветового охвата для целевого дисплея или профиля цветопробы после 1 секунды бездействия. Переключите видимость с помощью кнопки на панели инструментов, чтобы выделить области вне охвата.";
+      L"Предупреждение о цветовом охвате: Обнаружение цветов вне охвата для монитора или профиля цветопробы. Режимы: Выкл, только цветопроба или все (по умолчанию: цветопроба). Переключение через панель инструментов.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"Кнопка RAW: По умолчанию QuickView показывает встроенную картинку предпросмотра. Нажмите "
       L"для полного декодирования (может выглядеть по-другому из-за параметров рендеринга).";
@@ -3885,7 +3889,7 @@ struct DE {
   static constexpr const wchar_t *Help_Tip_DesignerMode =
       L"Pausmodus / Folienmodus: Sobald aktiviert, wird das Bild halbtransparent und gibt den Blick auf darunter liegende Elemente frei. Sie können die Größe oder Transparenz anpassen. Klicken Sie auf den Maus-Durchlass-Umschalter in der Symbolleiste, um in den Durchlassmodus zu gelangen, in dem alle Eingaben außer Umschalt+Esc ignoriert werden, wodurch QuickView zu einer transparenten Überlagerung wird.";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"Farbraumwarnung-Erkennung: Wenn in den Einstellungen aktiviert, erkennt das System nach 1 Sekunde Inaktivität Farben außerhalb des Farbraums für den Zielbildschirm oder das Softproofing-Profil. Die Sichtbarkeit kann über die Schaltfläche in der Symbolleiste umgeschaltet werden, um Farbraum-Überschreitungen hervorzuheben.";
+      L"Farbraumwarnung: Erkennt Farben außerhalb des Farbumfangs für den Zielmonitor oder das Softproof-Profil. Modi: Aus, nur Softproof oder Alle (Standard: Softproof). Umschaltbar über die Symbolleiste.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW Button: QuickView shows embedded preview by default. Click to "
       L"fully decode (may look different due to rendering parameters).";
@@ -3910,6 +3914,7 @@ struct DE {
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"OSD-Benachrichtigung bei Farbraumfehlern anzeigen. Markierungen können manuell über die Symbolleiste umgeschaltet werden.";
   static constexpr const wchar_t *Settings_Label_GamutColor = L"Farbraumwarnung-Highlight-Farbe";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"Softproof";
   static constexpr const wchar_t *Settings_Option_CmsIntentRelative = L"Relativ farbmetrisch";
   static constexpr const wchar_t *Settings_Option_CmsIntentPerceptual = L"Perzeptiv";
   static constexpr const wchar_t *Dialog_UpdateLogHeader = L"Was ist neu:";
@@ -4492,7 +4497,7 @@ struct ES {
   static constexpr const wchar_t *Help_Tip_DesignerMode =
       L"Modo Calco / Modo Película: Una vez activado, la imagen se vuelve semitransparente, revelando los elementos subyacentes. Puede ajustar su tamaño o transparencia. Haga clic en el interruptor de Paso de Mouse en la barra de herramientas para entrar en el Modo de Paso, donde se ignoran todas las entradas excepto Mayús+Esc, convirtiendo QuickView en una superposición transparente.";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"Detección de aviso de gama: cuando está activado en la configuración, el sistema detecta colores fuera de gama para la pantalla de destino o el perfil de ajuste de prueba después de 1 segundo de inactividad. Alterna la visibilidad mediante el botón de la barra de herramientas para resaltar las áreas fuera de gama.";
+      L"Aviso de gama: detecta colores fuera de gama para la pantalla de destino o el perfil de prueba. Modos: Desactivado, solo prueba en pantalla o todo (predeterminado: prueba en pantalla). Alternar mediante la barra de herramientas.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW Button: QuickView shows embedded preview by default. Click to "
       L"fully decode (may look different due to rendering parameters).";
@@ -4512,7 +4517,8 @@ struct ES {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Intención de renderizado";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"Detección de fuera de gama";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"Analiza y resalta las áreas fuera de gama durante el ajuste de prueba o si la imagen supera la gama de la pantalla.";
+      L"Analizar y resaltar áreas fuera de gama. Opciones: Desactivado, solo en modo de prueba en pantalla (predeterminado), o tanto para la prueba como para la gama de la pantalla.";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"Pruebas en pantalla";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Aviso automático de error de gama";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"Mostrar notificación OSD cuando se detecten errores de gama. Los resaltados se pueden activar manualmente en la barra de herramientas.";
@@ -4939,6 +4945,7 @@ template <typename T> void ApplyT() {
   Settings_Option_Full = T::Settings_Option_Full;
   Settings_Option_LargeOnly = T::Settings_Option_LargeOnly;
   Settings_Option_All = T::Settings_Option_All;
+  Settings_Option_SoftProofing = T::Settings_Option_SoftProofing;
   Settings_Option_Window = T::Settings_Option_Window;
   Settings_Option_Pan = T::Settings_Option_Pan;
   Settings_Option_None = T::Settings_Option_None;
@@ -5470,7 +5477,8 @@ struct FR {
   static constexpr const wchar_t *Settings_Label_CmsIntent = L"Rendering Intent";
   static constexpr const wchar_t *Settings_Label_GamutWarning = L"Détection de dépassement de gamme";
   static constexpr const wchar_t *Settings_Tooltip_GamutWarning =
-      L"Analyser et mettre en évidence les zones hors gamme lors de l'épreuvage ou si l'image dépasse la gamme de l'écran.";
+      L"Analyser et mettre en évidence les zones hors gamme. Options : Désactivé, uniquement en mode épreuvage écran (par défaut), ou pour l'épreuvage et la gamme de l'écran simultanément.";
+  static constexpr const wchar_t *Settings_Option_SoftProofing = L"Épreuvage écran";
   static constexpr const wchar_t *Settings_Label_GamutAutoPrompt = L"Notification automatique d'erreur de gamme";
   static constexpr const wchar_t *Settings_Tooltip_GamutAutoPrompt =
       L"Afficher une notification OSD en cas d'erreur de gamme. Les points forts peuvent être activés manuellement via la barre d'outils.";
@@ -5585,7 +5593,7 @@ struct FR {
   static constexpr const wchar_t *Help_Tip_DesignerMode =
       L"Mode Calque / Mode Pellicule : Une fois activé, l'image devient semi-transparente, révélant les éléments sous-jacents. Vous pouvez ajuster sa taille ou sa transparence. Cliquez sur le commutateur de passage de la souris dans la barre d'outils pour passer en mode passage, où toutes les entrées sauf Shift+Esc sont ignorées, transformant QuickView en une superposition transparente.";
   static constexpr const wchar_t *Help_Tip_GamutDetection =
-      L"Détection d'avertissement de gamme : lorsqu'il est activé dans les paramètres, le système détecte les couleurs hors gamme pour l'affichage cible ou le profil d'épreuvage après 1 seconde d'inactivité. Basculez la visibilité via le bouton de la barre d'outils pour mettre en évidence les zones hors gamme.";
+      L"Alerte de gamme : détecte les couleurs hors gamme pour l'écran cible ou le profil d'épreuvage. Modes : Désactivé, épreuvage écran uniquement, ou tout (par défaut : épreuvage écran). Basculement via la barre d'outils.";
   static constexpr const wchar_t *Help_Tip_Raw =
       L"RAW: Shows embedded preview by default for speed. Click the RAW button "
       L"to fully decode (colors may vary).";

@@ -277,6 +277,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_Full;
     extern const wchar_t* Settings_Option_LargeOnly;
     extern const wchar_t* Settings_Option_All;
+    extern const wchar_t* Settings_Option_SoftProofing;
 
     // Controls
     extern const wchar_t* Settings_Header_Mouse;
