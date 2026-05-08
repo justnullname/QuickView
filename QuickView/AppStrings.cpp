@@ -281,6 +281,7 @@ const wchar_t *Settings_Label_HdrPeakNitsOverride = nullptr;
 const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = nullptr;
 const wchar_t *Settings_Option_HdrPerceptual = nullptr;
 const wchar_t *Settings_Option_HdrColorimetric = nullptr;
+const wchar_t *Settings_Option_HdrSpline = nullptr;
 const wchar_t *Settings_Label_CmsFallback = nullptr;
 const wchar_t *Settings_Label_CustomProof = nullptr;
 const wchar_t *Context_SoftProofing = nullptr;
@@ -894,6 +895,7 @@ struct EN {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Set to 0 to use system detected brightness.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimetric";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Untagged Image Fallback";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Soft Proof Profile (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Soft Proofing Preview";
@@ -1307,6 +1309,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"设为 0 表示通过系统自动检测亮度.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"无配置图片的默认回退";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"自定义软打样配置 (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"软打样预览";
@@ -1966,6 +1969,7 @@ struct TW {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"設為 0 表示通過系統自動檢測亮度.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"感知";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"無配置圖片的預設回退";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"自訂軟打樣配置 (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"軟打樣預覽";
@@ -2540,6 +2544,7 @@ struct JA {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"システム検出輝度を使用する場合は0に設定します。";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"知覚的";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"測色";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"プロファイルなし画像のフォールバック";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"ソフトプルーフプロファイル (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"ソフトプルーフプレビュー";
@@ -3196,6 +3201,7 @@ struct RU {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Установите 0 для системной яркости.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Перцептивная";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Колориметрическая";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Запасной профиль без тегов";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Профиль цветопробы (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Предпросмотр цветопробы";
@@ -3790,6 +3796,7 @@ struct DE {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Auf 0 setzen, um erkannte Helligkeit zu verwenden.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perzeptiv";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Farbmetrisch";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Fallback für Bilder ohne Tags";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Softproof-Profil (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Softproof-Vorschau";
@@ -4397,6 +4404,7 @@ struct ES {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Ajustar en 0 para usar el brillo detectado por el sistema.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimétrico";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Perfil alternativo sin etiquetas";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Perfil de prueba en pantalla (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Vista previa de prueba en pantalla";
@@ -4925,6 +4933,7 @@ template <typename T> void ApplyT() {
   Settings_Tooltip_HdrPeakNitsOverride = T::Settings_Tooltip_HdrPeakNitsOverride;
   Settings_Option_HdrPerceptual = T::Settings_Option_HdrPerceptual;
   Settings_Option_HdrColorimetric = T::Settings_Option_HdrColorimetric;
+  Settings_Option_HdrSpline = T::Settings_Option_HdrSpline;
   Settings_Label_CmsFallback = T::Settings_Label_CmsFallback;
   Settings_Label_CustomProof = T::Settings_Label_CustomProof;
   Context_SoftProofing = T::Context_SoftProofing;
@@ -5488,6 +5497,7 @@ struct FR {
   static constexpr const wchar_t *Settings_Tooltip_HdrPeakNitsOverride = L"Set to 0 to use system detected brightness.";
   static constexpr const wchar_t *Settings_Option_HdrPerceptual = L"Perceptual";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimetric";
+  static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline (libplacebo)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Untagged Image Fallback";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Soft Proof Profile (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Soft Proofing Preview";

@@ -1787,7 +1787,7 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back(itemAdvColor);
 
     SettingsItem itemHdrToneMapping = { AppStrings::Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
-        { AppStrings::Settings_Option_HdrPerceptual, AppStrings::Settings_Option_HdrColorimetric } };
+        { AppStrings::Settings_Option_HdrPerceptual, AppStrings::Settings_Option_HdrColorimetric, AppStrings::Settings_Option_HdrSpline } };
     itemHdrToneMapping.tooltipText = AppStrings::Settings_Tooltip_HdrToneMapping;
     itemHdrToneMapping.onChange = []() {
         SaveConfig();

@@ -345,6 +345,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Tooltip_HdrPeakNitsOverride;
     extern const wchar_t* Settings_Option_HdrPerceptual;
     extern const wchar_t* Settings_Option_HdrColorimetric;
+    extern const wchar_t* Settings_Option_HdrSpline;
     extern const wchar_t* Settings_Label_CustomProof;
     extern const wchar_t* Settings_Label_CmsIntent;
     extern const wchar_t* Settings_Label_GamutWarning;

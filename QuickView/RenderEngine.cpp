@@ -782,6 +782,77 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   settings.paperWhiteScRgb = paperWhiteScRgb;
   settings.toneMappingMode = g_config.HdrToneMappingMode;
 
+  if (settings.toneMappingMode == 2) { // Spline (libplacebo)
+      const float knee_adaptation = 0.4f;
+      const float knee_minimum = 0.1f;
+      const float knee_maximum = 0.8f;
+      const float knee_default = 0.4f;
+      const float slope_tuning = 1.5f;
+      const float slope_offset = 0.2f;
+      const float spline_contrast = 0.5f;
+
+      // libplacebo linear_to_pq inline
+      auto pq_oetf = [](float x) -> float {
+          x = std::max(0.0f, x * 10000.0f / 10000.0f); // libplacebo normalizes to 10k nits
+          const float m1 = 0.1593017578125f;
+          const float m2 = 78.84375f;
+          const float c1 = 0.8359375f;
+          const float c2 = 18.8515625f;
+          const float c3 = 18.6875f;
+          x = std::pow(x, m1);
+          return std::pow((c1 + c2 * x) / (1.0f + c3 * x), m2);
+      };
+
+      float src_min = pq_oetf(0.0f);
+      float src_max = pq_oetf(settings.contentPeakScRgb * 80.0f / 10000.0f);
+      float src_avg = pq_oetf(contentAverageScRgb * 80.0f / 10000.0f);
+      float dst_min = pq_oetf(0.0f);
+      float dst_max = pq_oetf(settings.displayPeakScRgb * 80.0f / 10000.0f);
+
+      float src_knee_min = src_min + (src_max - src_min) * knee_minimum;
+      float src_knee_max = src_min + (src_max - src_min) * knee_maximum;
+      float dst_knee_min = dst_min + (dst_max - dst_min) * knee_minimum;
+      float dst_knee_max = dst_min + (dst_max - dst_min) * knee_maximum;
+
+      float def_knee_val = src_min + (src_max - src_min) * knee_default;
+      float src_knee = (src_avg > 0.0f) ? src_avg : def_knee_val;
+      src_knee = std::clamp(src_knee, src_knee_min, src_knee_max);
+
+      float target = (src_knee - src_min) / std::max(1e-6f, src_max - src_min);
+      float adapted = dst_min + (dst_max - dst_min) * target;
+
+      auto smoothstep = [](float edge0, float edge1, float x) -> float {
+          float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+          return t * t * (3.0f - 2.0f * t);
+      };
+
+      float tuning = 1.0f - smoothstep(knee_maximum, knee_default, target) * smoothstep(knee_minimum, knee_default, target);
+      float adaptation = knee_adaptation + (1.0f - knee_adaptation) * tuning;
+      float dst_knee = src_knee + (adapted - src_knee) * adaptation;
+      dst_knee = std::clamp(dst_knee, dst_knee_min, dst_knee_max);
+
+      settings.src_pivot = src_knee;
+      settings.dst_pivot = dst_knee;
+
+      float slope = (dst_knee - dst_min) / std::max(1e-6f, src_knee - src_min);
+      float ratio = (settings.contentPeakScRgb / std::max(1e-6f, settings.displayPeakScRgb)) - 1.0f;
+      ratio = std::clamp(slope_tuning * ratio, slope_offset, 1.0f + slope_offset);
+      slope = std::pow(slope, (1.0f - spline_contrast) * ratio);
+
+      float in_min = src_min - src_knee;
+      float in_max = src_max - src_knee;
+      float out_min = dst_min - dst_knee;
+      float out_max = dst_max - dst_knee;
+
+      settings.Pa = (out_min - slope * in_min) / std::max(1e-6f, in_min * in_min);
+      settings.Pb = slope;
+
+      float t = 2.0f * in_max * in_max;
+      settings.Qa = (slope * in_max - out_max) / std::max(1e-6f, in_max * t);
+      settings.Qb = -3.0f * (slope * in_max - out_max) / std::max(1e-6f, t);
+      settings.Qc = slope;
+  }
+
   const float headroom = settings.displayPeakScRgb / settings.paperWhiteScRgb;
   settings.exposure = 1.0f;
   if (frame.hdrMetadata.hasGainMap) {
@@ -1945,6 +2016,42 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                       float premulR, premulG, premulB;
                       if (toneMapSettings.toneMappingMode == 1) { // Colorimetric
                           premulR = std::min(1.0f, r) * a; premulG = std::min(1.0f, g) * a; premulB = std::min(1.0f, b) * a;
+                      } else if (toneMapSettings.toneMappingMode == 2) { // Spline
+                          auto pq_oetf = [](float x) -> float {
+                              x = std::max(0.0f, x * 10000.0f / 10000.0f);
+                              const float m1 = 0.1593017578125f;
+                              const float m2 = 78.84375f;
+                              const float c1 = 0.8359375f;
+                              const float c2 = 18.8515625f;
+                              const float c3 = 18.6875f;
+                              x = std::pow(x, m1);
+                              return std::pow((c1 + c2 * x) / (1.0f + c3 * x), m2);
+                          };
+                          auto pq_eotf = [](float x) -> float {
+                              const float m1 = 0.1593017578125f;
+                              const float m2 = 78.84375f;
+                              const float c1 = 0.8359375f;
+                              const float c2 = 18.8515625f;
+                              const float c3 = 18.6875f;
+                              x = std::pow(x, 1.0f / m2);
+                              x = std::max(x - c1, 0.0f) / (c2 - c3 * x);
+                              return std::pow(x, 1.0f / m1);
+                          };
+
+                          float l = std::max(r, std::max(g, b));
+                          if (l <= 0.0f) {
+                              premulR = premulG = premulB = 0.0f;
+                          } else {
+                              float lpq = pq_oetf(l * 80.0f / 10000.0f);
+                              lpq -= toneMapSettings.src_pivot;
+                              float mapped_lpq = lpq > 0.0f ? ((toneMapSettings.Qa * lpq + toneMapSettings.Qb) * lpq + toneMapSettings.Qc) * lpq : (toneMapSettings.Pa * lpq + toneMapSettings.Pb) * lpq;
+                              mapped_lpq += toneMapSettings.dst_pivot;
+                              float mapped_l = pq_eotf(mapped_lpq) * 10000.0f / 80.0f;
+                              float scale = mapped_l / l;
+                              premulR = r * scale * a;
+                              premulG = g * scale * a;
+                              premulB = b * scale * a;
+                          }
                       } else { // Perceptual: Reinhard Extended (matches GPU shader)
                           float mapR, mapG, mapB;
                           ReinhardExtendedRGB(r, g, b, Lwhite, mapR, mapG, mapB);
