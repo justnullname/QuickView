@@ -707,6 +707,40 @@ float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
       static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height));
 }
 
+
+static float LinearToPQ(float linear) {
+    linear = std::max(linear, 0.0f);
+    // ST.2084 constants
+    const float m1 = 2610.0f / 16384.0f; // 0.1593017578125
+    const float m2 = 2523.0f / 4096.0f * 128.0f; // 78.84375
+    const float c1 = 3424.0f / 4096.0f; // 0.8359375
+    const float c2 = 2413.0f / 4096.0f * 32.0f; // 18.8515625
+    const float c3 = 2392.0f / 4096.0f * 32.0f; // 18.6875
+
+    // Scale linear light to [0, 1] range (where 1.0 represents 10000 nits)
+    // QuickView standard: 1.0 = 80 nits. So 10000 nits is 10000/80 = 125.0
+    float l = linear / 125.0f;
+    l = std::max(l, 0.0f);
+
+    float lm = std::pow(l, m1);
+    float pq = std::pow((c1 + c2 * lm) / (1.0f + c3 * lm), m2);
+    return pq;
+}
+
+static float PQToLinear(float pq) {
+    pq = std::max(pq, 0.0f);
+    const float m1 = 2610.0f / 16384.0f;
+    const float m2 = 2523.0f / 4096.0f * 128.0f;
+    const float c1 = 3424.0f / 4096.0f;
+    const float c2 = 2413.0f / 4096.0f * 32.0f;
+    const float c3 = 2392.0f / 4096.0f * 32.0f;
+
+    float p = std::pow(pq, 1.0f / m2);
+    float l = std::pow(std::max(p - c1, 0.0f) / (c2 - c3 * p), 1.0f / m1);
+
+    return l * 125.0f; // 125.0 corresponds to 10000 nits
+}
+
 QuickView::ToneMapSettings
 BuildToneMapSettings(const QuickView::RawImageFrame &frame,
                      const QuickView::DisplayColorState &displayState) {
@@ -786,6 +820,57 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   settings.exposure = 1.0f;
   if (frame.hdrMetadata.hasGainMap) {
     settings.exposure = 1.0f;
+  }
+
+  // Phase 2: Dual Track Physics Reference (HDR-to-SDR vs HDR-to-HDR)
+  float exposureGain = 1.0f;
+
+  bool isHdrOutput = g_config.IsAdvancedColorEnabled() && g_config.SystemSupportsAdvancedColor;
+  if (!isHdrOutput || peakNits < 750.0f) {
+      // HDR -> SDR Path: Map 203 nits (BT.2408 SDR reference white) to 80 nits
+      exposureGain = 203.0f / 80.0f;
+  } else {
+      // HDR -> HDR Path: Strict physical light transmission
+      exposureGain = 1.0f;
+  }
+
+  settings.exposureGain = exposureGain;
+
+  // Phase 1: Spline calculation in PQ space
+  float boostedContentPeak = settings.contentPeakScRgb * exposureGain;
+
+  // Choose knee points in PQ space. Following libplacebo's heuristic
+  float content_pq = LinearToPQ(boostedContentPeak);
+  float display_pq = LinearToPQ(settings.displayPeakScRgb);
+
+  // We place knee slightly lower than display peak to avoid hard clip
+  float src_pivot = std::min(content_pq, LinearToPQ(settings.displayPeakScRgb * 0.7f));
+  float dst_pivot = src_pivot; // map 1:1 up to knee point
+
+  settings.splineSrcPivot = src_pivot;
+  settings.splineDstPivot = dst_pivot;
+
+  float in_max = content_pq - src_pivot;
+  float out_max = display_pq - dst_pivot;
+
+  float slope = 1.0f; // Linear knee
+
+  settings.splineSlope = slope;
+
+  // Solve P of order 2 for (only active if x <= 0, handled in shader)
+  float in_min = 0.0f - src_pivot;
+  float out_min = 0.0f - dst_pivot;
+  float Pa = in_min != 0.0f ? (out_min - slope * in_min) / (in_min * in_min) : 0.0f;
+
+  settings.splinePa = Pa;
+
+  if (in_max > 0.0f) {
+      float t = 2.0f * in_max * in_max;
+      settings.splineQa = (slope * in_max - out_max) / (in_max * t);
+      settings.splineQb = -3.0f * (slope * in_max - out_max) / t;
+  } else {
+      settings.splineQa = 0.0f;
+      settings.splineQb = 0.0f;
   }
 
   if (frame.hdrMetadata.gainMapApplied) {

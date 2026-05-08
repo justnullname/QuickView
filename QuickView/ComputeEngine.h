@@ -15,8 +15,22 @@ struct alignas(16) ToneMapSettings {
     float displayPeakScRgb = 1.0f;
     float paperWhiteScRgb = 1.0f;
     float exposure = 1.0f;
+
+    // Spline Parameters
+    float splinePa = 0.0f;
+    float splineQa = 0.0f;
+    float splineQb = 0.0f;
+    float splineSlope = 1.0f;
+    float splineSrcPivot = 0.0f;
+    float splineDstPivot = 0.0f;
+    float exposureGain = 1.0f;
+
     int toneMappingMode = 0;
-    float _pad0[3] = {};
+    // float total size = 4 bytes.
+    // contentPeakScRgb, displayPeakScRgb, paperWhiteScRgb, exposure (16 bytes)
+    // splinePa, splineQa, splineQb, splineSlope (16 bytes)
+    // splineSrcPivot, splineDstPivot, exposureGain, toneMappingMode(int) (16 bytes)
+    // Total is exactly 48 bytes (multiple of 16).
 };
 static_assert(sizeof(ToneMapSettings) % 16 == 0, "CB size must be multiple of 16 bytes");
 

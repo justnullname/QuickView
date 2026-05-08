@@ -53,44 +53,59 @@ cbuffer ToneMapParams : register(b0)
     float DisplayPeakScRgb;
     float PaperWhiteScRgb;
     float Exposure;
+
+    float SplinePa;
+    float SplineQa;
+    float SplineQb;
+    float SplineSlope;
+
+    float SplineSrcPivot;
+    float SplineDstPivot;
+    float ExposureGain;
     uint ToneMappingMode;
-    float _pad0;
-    float _pad1;
-    float _pad2;
 };
 
-float3 LinearToSrgb(float3 value)
-{
-    float3 cutoff = step(value, float3(0.0031308, 0.0031308, 0.0031308));
-    float3 low = value * 12.92;
-    float3 high = 1.055 * pow(abs(value), 1.0 / 2.4) - 0.055;
-    return lerp(high, low, cutoff);
+float LinearToPQ(float linear) {
+    linear = max(linear, 0.0);
+    const float m1 = 2610.0 / 16384.0;
+    const float m2 = 2523.0 / 4096.0 * 128.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 4096.0 * 32.0;
+    const float c3 = 2392.0 / 4096.0 * 32.0;
+
+    float l = linear / 125.0; // 10000 nits = 125.0 * 80 nits
+    l = max(l, 0.0);
+
+    float lm = pow(l, m1);
+    float pq = pow((c1 + c2 * lm) / (1.0 + c3 * lm), m2);
+    return pq;
 }
 
-float3 ToneMapAces(float3 value)
-{
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-    return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
+float PQToLinear(float pq) {
+    pq = max(pq, 0.0);
+    const float m1 = 2610.0 / 16384.0;
+    const float m2 = 2523.0 / 4096.0 * 128.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 4096.0 * 32.0;
+    const float c3 = 2392.0 / 4096.0 * 32.0;
+
+    float p = pow(pq, 1.0 / m2);
+    float l = pow(max(p - c1, 0.0) / (c2 - c3 * p), 1.0 / m1);
+
+    return l * 125.0;
 }
 
-// Reinhard Extended: content-peak-aware perceptual tone mapping.
-// Maps [0, Lwhite] → [0, ~1.0] with smooth highlight roll-off.
-// Mathematically guarantees L=Lwhite → output≈1.0, spreading the full
-// HDR range across the entire SDR output space.
-float3 ReinhardExtended(float3 color, float Lwhite)
-{
-    float L = max(color.r, max(color.g, color.b));
-    if (L <= 0.0) return (float3)0;
-
-    float LwhiteSq = Lwhite * Lwhite;
-    float mappedL = L * (1.0 + L / LwhiteSq) / (1.0 + L);
-    mappedL = min(mappedL, 1.0);
-
-    return color * (mappedL / L);
+float SplineTonemap(float x) {
+    float pq = LinearToPQ(x);
+    float dx = pq - SplineSrcPivot;
+    float res = 0.0;
+    if (dx > 0.0) {
+        res = ((SplineQa * dx + SplineQb) * dx + SplineSlope) * dx;
+    } else {
+        res = (SplinePa * dx + SplineSlope) * dx;
+    }
+    res += SplineDstPivot;
+    return PQToLinear(res);
 }
 
 [numthreads(8, 8, 1)]
@@ -106,23 +121,36 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
     color.rgb = max(color.rgb, 0.0.xxx);
     color.a = saturate(color.a);
 
-    float paperWhite = max(PaperWhiteScRgb, 1.0);
-    float displayPeak = max(DisplayPeakScRgb, paperWhite);
-    float contentPeak = max(ContentPeakScRgb, 1.0);
+    float displayPeak = max(DisplayPeakScRgb, 1.0);
 
     if (ToneMappingMode == 1) {
-        // Colorimetric Mode: Hard clip at display peak (normalized to [0,1])
+        // Colorimetric Mode: Hard clip at display peak
         float3 mapped = clamp(color.rgb / displayPeak, 0.0, 1.0);
-        float3 encoded = LinearToSrgb(mapped) * color.a;
+        float3 encoded = pow(mapped, 1.0 / 2.2) * color.a;
         DstTex[id.xy] = float4(encoded.r, encoded.g, encoded.b, color.a);
     } else {
-        // Perceptual Mode: Reinhard Extended with display-peak anchor.
-        // Uses DisplayPeakScRgb (slider or monitor peak) as Lwhite.
-        // This ensures the brightness slider directly controls highlight compression.
-        float3 exposed = color.rgb * Exposure;
-        float Lwhite = displayPeak * Exposure;
-        float3 mapped = ReinhardExtended(exposed, Lwhite);
-        float3 encoded = LinearToSrgb(mapped) * color.a;
+        // Perceptual Mode: Spline
+        float3 exposed = color.rgb * ExposureGain;
+        float L = max(exposed.r, max(exposed.g, exposed.b));
+        float3 mapped = float3(0,0,0);
+
+        if (L > 0.0) {
+            float mappedL = SplineTonemap(L);
+            mapped = exposed * (mappedL / L);
+
+            // Highlight Desaturation
+            float desat = saturate((mappedL - displayPeak * 0.7) / (displayPeak * 0.3));
+            if (desat > 0.0) {
+                float3 grayscale = mappedL.xxx;
+                mapped = lerp(mapped, grayscale, desat);
+            }
+
+            mapped /= ExposureGain;
+        }
+
+        // Normalize to [0,1] for SDR unorm texture
+        mapped = clamp(mapped / displayPeak, 0.0, 1.0);
+        float3 encoded = pow(mapped, 1.0 / 2.2) * color.a;
         DstTex[id.xy] = float4(encoded.r, encoded.g, encoded.b, color.a);
     }
 }
@@ -138,61 +166,59 @@ cbuffer ToneMapParams : register(b0)
     float DisplayPeakScRgb;
     float PaperWhiteScRgb;
     float Exposure;
+
+    float SplinePa;
+    float SplineQa;
+    float SplineQb;
+    float SplineSlope;
+
+    float SplineSrcPivot;
+    float SplineDstPivot;
+    float ExposureGain;
     uint ToneMappingMode;
-    float _pad0;
-    float _pad1;
-    float _pad2;
 };
 
-// Perceptual TMO: Brightens midtones and smoothly rolls off highlights
-float3 ToneMapHDR(float3 color, float contentPeak, float displayPeak, float paperWhite, uint mode)
-{
-    float L = max(color.r, max(color.g, color.b));
-    if (L <= 0.0) return color;
+float LinearToPQ(float linear) {
+    linear = max(linear, 0.0);
+    const float m1 = 2610.0 / 16384.0;
+    const float m2 = 2523.0 / 4096.0 * 128.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 4096.0 * 32.0;
+    const float c3 = 2392.0 / 4096.0 * 32.0;
 
-    // Colorimetric Mode (1): Strict 80 nits mapping, hard clipping
-    if (mode == 1) {
-        if (L <= displayPeak) return color;
-        return color * (displayPeak / L); // Hard clip at display peak
+    float l = linear / 125.0; // 10000 nits = 125.0 * 80 nits
+    l = max(l, 0.0);
+
+    float lm = pow(l, m1);
+    float pq = pow((c1 + c2 * lm) / (1.0 + c3 * lm), m2);
+    return pq;
+}
+
+float PQToLinear(float pq) {
+    pq = max(pq, 0.0);
+    const float m1 = 2610.0 / 16384.0;
+    const float m2 = 2523.0 / 4096.0 * 128.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 4096.0 * 32.0;
+    const float c3 = 2392.0 / 4096.0 * 32.0;
+
+    float p = pow(pq, 1.0 / m2);
+    float l = pow(max(p - c1, 0.0) / (c2 - c3 * p), 1.0 / m1);
+
+    return l * 125.0;
+}
+
+float SplineTonemap(float x) {
+    float pq = LinearToPQ(x);
+    float dx = pq - SplineSrcPivot;
+    float res = 0.0;
+    if (dx > 0.0) {
+        res = ((SplineQa * dx + SplineQb) * dx + SplineSlope) * dx;
+    } else {
+        res = (SplinePa * dx + SplineSlope) * dx;
     }
-
-    // Perceptual Mode (0):
-    // 1. Normalize relative to paper white
-    float normL = L / paperWhite;
-    float normDisplayPeak = displayPeak / paperWhite;
-
-    // 2. Brighten midtones (Toe)
-    // Map [0, 1] (SDR range) using a power curve
-    float toe = pow(min(normL, 1.0), 0.85);
-
-    // 3. Smooth roll-off (Shoulder)
-    float compressedL = toe;
-    if (normL > 1.0) {
-        // Asymptotic roll-off for highlights > paperWhite
-        float overbright = normL - 1.0;
-        float headroom = normDisplayPeak - 1.0;
-
-        if (headroom > 0.0) {
-            // Simple exponential roll-off
-            // compressedL = 1.0 + headroom * (1.0 - exp(-overbright / headroom));
-
-            // Rational curve for smoother highlight preservation
-            float t = overbright / headroom;
-            float rollOff = headroom * t / (1.0 + t);
-            compressedL = 1.0 + rollOff;
-        } else {
-            // No headroom, hard clip to paper white
-            compressedL = 1.0;
-        }
-    }
-
-    // 4. Denormalize
-    float targetL = compressedL * paperWhite;
-
-    // Avoid exceeding display peak
-    targetL = min(targetL, displayPeak);
-
-    return color * (targetL / L);
+    res += SplineDstPivot;
+    return PQToLinear(res);
 }
 
 [numthreads(8, 8, 1)]
@@ -208,23 +234,25 @@ void CSToneMapHDR(uint3 id : SV_DispatchThreadID)
     color.rgb = max(color.rgb, 0.0.xxx);
     color.a = saturate(color.a);
 
-    float contentPeak = max(ContentPeakScRgb, 1.0);
     float displayPeak = max(DisplayPeakScRgb, 1.0);
 
-    // Fast Path: content fits within display range, no user exposure override
-    // Just pass through the linear ScRGB values directly (zero-cost on GPU)
-    if (contentPeak <= displayPeak && Exposure >= 0.999 && Exposure <= 1.001) {
+    if (ToneMappingMode == 1) {
+        // Colorimetric Mode: Hard clip at display peak
+        float L = max(color.r, max(color.g, color.b));
+        if (L > displayPeak) {
+            color.rgb *= (displayPeak / L);
+        }
         DstTex[id.xy] = color;
-        return;
+    } else {
+        // Perceptual Mode: Spline
+        float L = max(color.r, max(color.g, color.b));
+        if (L > 0.0) {
+            float mappedL = SplineTonemap(L);
+            mappedL = min(mappedL, displayPeak);
+            color.rgb *= (mappedL / L);
+        }
+        DstTex[id.xy] = color;
     }
-
-    // Apply exposure
-    color.rgb *= Exposure;
-
-    // Tone Map high dynamic range into display's actual peak
-    color.rgb = ToneMapHDR(color.rgb, contentPeak * Exposure, displayPeak, PaperWhiteScRgb, ToneMappingMode);
-
-    DstTex[id.xy] = color;
 }
 )";
 
@@ -755,12 +783,13 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
     D3D11_TEXTURE2D_DESC dstDesc = {};
     dstDesc.Width = srcDesc.Width;
     dstDesc.Height = srcDesc.Height;
-    dstDesc.MipLevels = 1;
+    dstDesc.MipLevels = 0;
     dstDesc.ArraySize = 1;
     dstDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     dstDesc.SampleDesc.Count = 1;
     dstDesc.Usage = D3D11_USAGE_DEFAULT;
     dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    dstDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
     ComPtr<ID3D11Texture2D> pDst;
     hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
@@ -782,18 +811,32 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
         float displayPeakScRgb;
         float paperWhiteScRgb;
         float exposure;
+
+        float splinePa;
+        float splineQa;
+        float splineQb;
+        float splineSlope;
+
+        float splineSrcPivot;
+        float splineDstPivot;
+        float exposureGain;
         uint32_t toneMappingMode;
-        float _pad0;
-        float _pad1;
-        float _pad2;
     };
     CBParams params = {
         settings.contentPeakScRgb,
         settings.displayPeakScRgb,
         settings.paperWhiteScRgb,
         settings.exposure,
-        (uint32_t)settings.toneMappingMode,
-        0.0f, 0.0f, 0.0f
+
+        settings.splinePa,
+        settings.splineQa,
+        settings.splineQb,
+        settings.splineSlope,
+
+        settings.splineSrcPivot,
+        settings.splineDstPivot,
+        settings.exposureGain,
+        (uint32_t)settings.toneMappingMode
     };
     memcpy(mapped.pData, &params, sizeof(params));
     m_d3dContext->Unmap(m_toneMapConstantBuffer.Get(), 0);
@@ -806,6 +849,13 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
     ID3D11Buffer* constantBuffers[] = { m_toneMapConstantBuffer.Get() };
     m_d3dContext->CSSetConstantBuffers(0, 1, constantBuffers);
     m_d3dContext->Dispatch((srcDesc.Width + 7) / 8, (srcDesc.Height + 7) / 8, 1);
+
+    // Phase 4: Mipmap generation
+    ComPtr<ID3D11ShaderResourceView> dstSRV;
+    m_d3dDevice->CreateShaderResourceView(pDst.Get(), nullptr, &dstSRV);
+    if (dstSRV) {
+        m_d3dContext->GenerateMips(dstSRV.Get());
+    }
 
     ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
     m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
@@ -844,12 +894,13 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
     D3D11_TEXTURE2D_DESC dstDesc = {};
     dstDesc.Width = srcDesc.Width;
     dstDesc.Height = srcDesc.Height;
-    dstDesc.MipLevels = 1;
+    dstDesc.MipLevels = 0;
     dstDesc.ArraySize = 1;
     dstDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     dstDesc.SampleDesc.Count = 1;
     dstDesc.Usage = D3D11_USAGE_DEFAULT;
     dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    dstDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
     ComPtr<ID3D11Texture2D> pDst;
     hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDst);
@@ -871,18 +922,32 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
         float displayPeakScRgb;
         float paperWhiteScRgb;
         float exposure;
+
+        float splinePa;
+        float splineQa;
+        float splineQb;
+        float splineSlope;
+
+        float splineSrcPivot;
+        float splineDstPivot;
+        float exposureGain;
         uint32_t toneMappingMode;
-        float _pad0;
-        float _pad1;
-        float _pad2;
     };
     CBParams params = {
         settings.contentPeakScRgb,
         settings.displayPeakScRgb,
         settings.paperWhiteScRgb,
         settings.exposure,
-        (uint32_t)settings.toneMappingMode,
-        0.0f, 0.0f, 0.0f
+
+        settings.splinePa,
+        settings.splineQa,
+        settings.splineQb,
+        settings.splineSlope,
+
+        settings.splineSrcPivot,
+        settings.splineDstPivot,
+        settings.exposureGain,
+        (uint32_t)settings.toneMappingMode
     };
     memcpy(mapped.pData, &params, sizeof(params));
     m_d3dContext->Unmap(m_toneMapConstantBuffer.Get(), 0);
@@ -895,6 +960,13 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
     ID3D11Buffer* constantBuffers[] = { m_toneMapConstantBuffer.Get() };
     m_d3dContext->CSSetConstantBuffers(0, 1, constantBuffers);
     m_d3dContext->Dispatch((srcDesc.Width + 7) / 8, (srcDesc.Height + 7) / 8, 1);
+
+    // Phase 4: Mipmap generation
+    ComPtr<ID3D11ShaderResourceView> dstSRV;
+    m_d3dDevice->CreateShaderResourceView(pDst.Get(), nullptr, &dstSRV);
+    if (dstSRV) {
+        m_d3dContext->GenerateMips(dstSRV.Get());
+    }
 
     ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
     m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
