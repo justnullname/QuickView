@@ -842,26 +842,63 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   // Choose knee points in PQ space. Following libplacebo's heuristic
   float content_pq = LinearToPQ(boostedContentPeak);
   float display_pq = LinearToPQ(settings.displayPeakScRgb);
+  float src_min_pq = 0.0f;
+  float dst_min_pq = 0.0f;
 
-  // We place knee slightly lower than display peak to avoid hard clip
-  float src_pivot = std::min(content_pq, LinearToPQ(settings.displayPeakScRgb * 0.7f));
-  float dst_pivot = src_pivot; // map 1:1 up to knee point
+  // st2094_pick_knee defaults
+  float min_knee = 0.1f;
+  float max_knee = 0.8f;
+  float def_knee = 0.4f;
+
+  float src_knee_min = src_min_pq + (content_pq - src_min_pq) * min_knee;
+  float src_knee_max = src_min_pq + (content_pq - src_min_pq) * max_knee;
+  float dst_knee_min = dst_min_pq + (display_pq - dst_min_pq) * min_knee;
+  float dst_knee_max = dst_min_pq + (display_pq - dst_min_pq) * max_knee;
+
+  float src_knee = src_min_pq + (content_pq - src_min_pq) * def_knee;
+  src_knee = std::clamp(src_knee, src_knee_min, src_knee_max);
+
+  float target = (src_knee - src_min_pq) / (content_pq - src_min_pq);
+  float adapted = dst_min_pq + (display_pq - dst_min_pq) * target;
+
+  // smoothstep implementation: x*x*(3-2*x)
+  auto smoothstep = [](float edge0, float edge1, float x) {
+      x = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+      return x * x * (3.0f - 2.0f * x);
+  };
+
+  float tuning = 1.0f - smoothstep(max_knee, def_knee, target) * smoothstep(min_knee, def_knee, target);
+  float adaptation = 1.0f * tuning + 0.4f * (1.0f - tuning); // knee_adaptation def is 0.4f
+  float dst_knee = src_knee * (1.0f - adaptation) + adapted * adaptation;
+  dst_knee = std::clamp(dst_knee, dst_knee_min, dst_knee_max);
+
+  float src_pivot = src_knee;
+  float dst_pivot = dst_knee;
 
   settings.splineSrcPivot = src_pivot;
   settings.splineDstPivot = dst_pivot;
 
+  // Solve for linear knee (Pa = 0)
+  float slope = (dst_pivot - dst_min_pq) / std::max(1e-6f, src_pivot - src_min_pq);
+
+  // Slope tuning logic
+  float ratio = std::max(0.0f, boostedContentPeak / settings.displayPeakScRgb - 1.0f);
+  float slope_tuning = 1.5f;
+  float slope_offset = 0.2f;
+  float spline_contrast = 0.5f;
+
+  ratio = std::clamp(slope_tuning * ratio, slope_offset, 1.0f + slope_offset);
+  slope = std::pow(slope, (1.0f - spline_contrast) * ratio);
+
   float in_max = content_pq - src_pivot;
   float out_max = display_pq - dst_pivot;
-
-  float slope = 1.0f; // Linear knee
+  float in_min = src_min_pq - src_pivot;
+  float out_min = dst_min_pq - dst_pivot;
 
   settings.splineSlope = slope;
 
-  // Solve P of order 2 for (only active if x <= 0, handled in shader)
-  float in_min = 0.0f - src_pivot;
-  float out_min = 0.0f - dst_pivot;
+  // Solve P of order 2 for:
   float Pa = in_min != 0.0f ? (out_min - slope * in_min) / (in_min * in_min) : 0.0f;
-
   settings.splinePa = Pa;
 
   if (in_max > 0.0f) {
