@@ -825,7 +825,7 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   // Phase 2: Dual Track Physics Reference (HDR-to-SDR vs HDR-to-HDR)
   float exposureGain = 1.0f;
 
-  bool isHdrOutput = g_config.IsAdvancedColorEnabled() && g_config.SystemSupportsAdvancedColor;
+  bool isHdrOutput = g_config.IsAdvancedColorEnabled(displayState.advancedColorActive) && displayState.advancedColorSupported;
   if (!isHdrOutput || peakNits < 750.0f) {
       // HDR -> SDR Path: Map 203 nits (BT.2408 SDR reference white) to 80 nits
       exposureGain = 203.0f / 80.0f;
