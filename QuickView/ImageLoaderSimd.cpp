@@ -258,9 +258,9 @@ void ComputeHistogramRowFloatImpl(const float* row, int width, float mapRange,
     const auto vMax = hn::Set(df, 255.0f);
     const auto vHalf = hn::Set(df, 0.5f);
 
-    const auto vLumaR = hn::Set(df, 0.299f);
-    const auto vLumaG = hn::Set(df, 0.587f);
-    const auto vLumaB = hn::Set(df, 0.114f);
+    const auto vLumaR = hn::Set(df, 0.2627f);
+    const auto vLumaG = hn::Set(df, 0.6780f);
+    const auto vLumaB = hn::Set(df, 0.0593f);
 
     int x = 0;
 
@@ -322,7 +322,7 @@ void ComputeHistogramRowFloatImpl(const float* row, int width, float mapRange,
         uint32_t ur = static_cast<uint32_t>(std::clamp(r + 0.5f, 0.0f, 255.0f));
         uint32_t ug = static_cast<uint32_t>(std::clamp(g + 0.5f, 0.0f, 255.0f));
         uint32_t ub = static_cast<uint32_t>(std::clamp(b + 0.5f, 0.0f, 255.0f));
-        uint32_t ul = static_cast<uint32_t>(std::clamp(r * 0.299f + g * 0.587f + b * 0.114f + 0.5f, 0.0f, 255.0f));
+        uint32_t ul = static_cast<uint32_t>(std::clamp(r * 0.2627f + g * 0.6780f + b * 0.0593f + 0.5f, 0.0f, 255.0f));
         
         histR[ur]++;
         histG[ug]++;
@@ -466,7 +466,8 @@ float SumLuminanceFloatRangeImpl(const float* row, int x0, int x1) {
 
     for (; x < x1; ++x) {
         const float* px = row + static_cast<size_t>(x) * 4;
-        total += (std::max)(0.0f, px[0] * 0.299f + px[1] * 0.587f + px[2] * 0.114f);
+        // Updated to BT.2020 luminance weights for better HDR accuracy
+        total += (std::max)(0.0f, px[0] * 0.2627f + px[1] * 0.6780f + px[2] * 0.0593f);
     }
 
     return total;

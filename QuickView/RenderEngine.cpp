@@ -729,10 +729,10 @@ float PQToLinear(float V) {
 // Ported from libplacebo's st2094_pick_knee (src/tone_mapping.c)
 static void PickKnee(float src_min, float src_max, float src_avg, float dst_min,
               float dst_max, float *out_src_pivot, float *out_dst_pivot) {
-  const float knee_adaptation = 0.4f;
+  const float knee_adaptation = 0.4f; // Scientific default from libplacebo
   const float knee_minimum = 0.1f;
   const float knee_maximum = 0.8f;
-  const float knee_default = 0.4f;
+  const float knee_default = 0.4f; // Scientific default
 
   const float src_knee_min = PL_MIX(src_min, src_max, knee_minimum);
   const float src_knee_max = PL_MIX(src_min, src_max, knee_maximum);
@@ -789,7 +789,7 @@ float InternalEstimateFrameAverageScRgb(const QuickView::RawImageFrame &frame) {
   size_t stride = static_cast<size_t>(frame.width) * 4;
   for (int y = 0; y < frame.height; ++y) {
     const float* row = reinterpret_cast<const float*>(frame.pixels) + (static_cast<size_t>(y) * stride);
-    totalLum += ImageLoaderSimd::SumLuminanceFloatRange(row, 0, frame.width);
+    totalLum += ImageLoaderSimd::SumLuminanceFloatRange(row, 0, frame.width); // This now uses BT.2020 weights
   }
 
   return static_cast<float>(totalLum / (static_cast<double>(frame.width) * frame.height));
@@ -898,9 +898,9 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
     const float slope_offset = 0.2f;
 
     const float pq_black = LinearToPQ(0.0f);
-    // Apply exposureGain to content peaks for PQ space mapping
-    float src_max = LinearToPQ(settings.contentPeakScRgb * exposureGain);
-    float src_avg = (contentAverageScRgb > 0.0f) ? LinearToPQ(contentAverageScRgb * exposureGain) : 0.0f;
+    // Use physical peaks for Spline solving (Standard libplacebo approach)
+    float src_max = LinearToPQ(settings.contentPeakScRgb);
+    float src_avg = (contentAverageScRgb > 0.0f) ? LinearToPQ(contentAverageScRgb) : 0.0f;
     float dst_max = LinearToPQ(settings.displayPeakScRgb);
 
     float src_pivot, dst_pivot;
@@ -2102,7 +2102,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               std::vector<uint8_t> sdrPixels(static_cast<size_t>(frame.width) * frame.height * 4);
               const QuickView::ToneMapSettings toneMapSettings = BuildToneMapSettings(frame, m_displayColorState);
               const float exposure = toneMapSettings.exposure;
-              const float Lwhite = toneMapSettings.displayPeakScRgb * exposure;
+              // Apply exposure
               for (int y = 0; y < frame.height; ++y) {
                   const float *srcRow = reinterpret_cast<const float *>(uploadPixels + static_cast<size_t>(y) * uploadStride);
                   uint8_t *dstRow = sdrPixels.data() + static_cast<size_t>(y) * frame.width * 4;
