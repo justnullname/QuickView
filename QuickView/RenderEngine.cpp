@@ -835,7 +835,7 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
       settings.dst_pivot = dst_knee;
 
       float slope = (dst_knee - dst_min) / std::max(1e-6f, src_knee - src_min);
-      float ratio = (settings.contentPeakScRgb / std::max(1e-6f, settings.displayPeakScRgb)) - 1.0f;
+      float ratio = (settings.contentPeakScRgb * 80.0f / 10000.0f) / std::max(1e-6f, settings.displayPeakScRgb * 80.0f / 10000.0f) - 1.0f;
       ratio = std::clamp(slope_tuning * ratio, slope_offset, 1.0f + slope_offset);
       slope = std::pow(slope, (1.0f - spline_contrast) * ratio);
 
