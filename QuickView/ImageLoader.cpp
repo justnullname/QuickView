@@ -4899,11 +4899,11 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
     if (FAILED(hr)) return hr;
 
     // Re-evaluate high precision to include 16-bit integers like HEIC (64bppRGBA)
-    // so we retain 10-bit color data by converting them to 128bppRGBAFloat.
+    // so we retain 10-bit color data by converting them to 64bppRGBA.
     bool isHighPrecision = isHdrSource;
 
     // Restore HDR for thumbnails! 
-    WICPixelFormatGUID targetFormat = isHighPrecision ? GUID_WICPixelFormat128bppRGBAFloat : GUID_WICPixelFormat32bppPBGRA;
+    WICPixelFormatGUID targetFormat = isHighPrecision ? GUID_WICPixelFormat64bppRGBA : GUID_WICPixelFormat32bppPBGRA;
 
     hr = converter->Initialize(
         finalSource.Get(), // Use frame source
@@ -5691,7 +5691,7 @@ namespace QuickView {
 
                 JxlBasicInfo info = {};
                 JxlColorEncoding encodedColor = {};
-                bool useFloatOutput = false;
+                bool useHighBitDepthOutput = false;
                 QuickView::TransferFunction transfer = QuickView::TransferFunction::Unknown;
                 QuickView::ColorPrimaries primaries = QuickView::ColorPrimaries::Unknown;
                 // Default RGBA
@@ -5789,7 +5789,7 @@ namespace QuickView {
                          if (JXL_DEC_SUCCESS == JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &encodedColor)) {
                              transfer = MapJxlTransferFunction(encodedColor.transfer_function);
                              primaries = MapJxlPrimaries(encodedColor.primaries);
-                            useFloatOutput =
+                            bool useHighBitDepthOutput =
                                 !ctx.forcePreview && !PrefersSdrTarget(ctx) &&
                                 (transfer == QuickView::TransferFunction::Linear ||
                                  transfer == QuickView::TransferFunction::PQ ||
@@ -5802,7 +5802,7 @@ namespace QuickView {
                                  ctx.pMetadata->colorInfo.nominalBitDepth =
                                      static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
                                  ctx.pMetadata->colorInfo.dataSpace =
-                                     useFloatOutput
+                                     useHighBitDepthOutput
                                          ? QuickView::PixelDataSpace::SceneLinear
                                          : ((transfer == QuickView::TransferFunction::PQ ||
                                              transfer == QuickView::TransferFunction::HLG)
@@ -5903,8 +5903,8 @@ namespace QuickView {
                         // else: not forcePreview, ignore DC event and continue to full decode
                     }
                     else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-                        if (useFloatOutput) {
-                            format.data_type = JXL_TYPE_FLOAT;
+                        if (useHighBitDepthOutput) {
+                            format.data_type = JXL_TYPE_UINT16;
                         }
 
                         size_t bufferSize = 0;
@@ -6000,22 +6000,15 @@ namespace QuickView {
                         result.pixels = pixels;
                         result.width = finalW;
                         result.height = finalH;
-                        if (useFloatOutput) {
-                            float* pf = reinterpret_cast<float*>(pixels);
-                            const size_t pixelCount = static_cast<size_t>(finalW) * finalH;
-                            for (size_t i = 0; i < pixelCount; ++i) {
-                                pf[i * 4 + 0] = DecodeTransferToLinear(pf[i * 4 + 0], transfer);
-                                pf[i * 4 + 1] = DecodeTransferToLinear(pf[i * 4 + 1], transfer);
-                                pf[i * 4 + 2] = DecodeTransferToLinear(pf[i * 4 + 2], transfer);
-                            }
-                            result.stride = finalW * 16;
-                            result.format = PixelFormat::R32G32B32A32_FLOAT;
-                            result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
-                            result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
+                        if (useHighBitDepthOutput) {
+                            result.stride = finalW * 8;
+                            result.format = PixelFormat::R16G16B16A16_UNORM;
+                            result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedHdr;
+                            result.metadata.colorInfo.transfer = transfer;
                             result.metadata.colorInfo.primaries = primaries;
                             result.metadata.colorInfo.nominalBitDepth =
                                 static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
-                            result.metadata.hdrMetadata.isSceneLinear = true;
+                            result.metadata.hdrMetadata.isSceneLinear = false;
                         } else {
                             // [v8.6] Fix: JXL outputs RGBA Straight, D2D needs BGRA Premultiplied.
                             ImageLoaderSimd::SwizzleRGBAToBGRA(pixels, (size_t)finalW * finalH);
@@ -6031,7 +6024,7 @@ namespace QuickView {
                         result.metadata.hdrMetadata.isValid = true;
                         result.metadata.hdrMetadata.transfer = transfer;
                         result.metadata.hdrMetadata.primaries = primaries;
-                        result.metadata.hdrMetadata.isHdr = useFloatOutput;
+                        result.metadata.hdrMetadata.isHdr = useHighBitDepthOutput;
                         
                         // [v6.2] Parse Captured EXIF
                         if (!jxlExifBuffer.empty() && result.metadata.IsEmpty()) {
@@ -6126,14 +6119,14 @@ namespace QuickView {
         const QuickView::TransferFunction transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
         const QuickView::ColorPrimaries primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
         const bool preferSdrTarget = PrefersSdrTarget(ctx);
-        const bool useFloatOutput = !preferSdrTarget &&
+        const bool useHighBitDepthOutput = !preferSdrTarget &&
                     (decoder->image->gainMap != nullptr ||
                      transfer == QuickView::TransferFunction::Linear ||
                      transfer == QuickView::TransferFunction::PQ ||
                      transfer == QuickView::TransferFunction::HLG ||
                      decoder->image->depth > 8);
 
-                if (useFloatOutput) {
+                if (useHighBitDepthOutput) {
                     if (decoder->image->gainMap) {
                         uint8_t* gainMappedPixels = nullptr;
                         int gainMappedWidth = 0;
@@ -6196,7 +6189,7 @@ namespace QuickView {
 
                     const int width = rgb.width;
                     const int height = rgb.height;
-                    const int stride = CalculateSIMDAlignedStride(width, 16);
+                    const int stride = CalculateSIMDAlignedStride(width, 8);
                     uint8_t* pixels = ctx.allocator(static_cast<size_t>(stride) * height);
                     if (!pixels) {
                         avifRGBImageFreePixels(&rgb);
@@ -6205,17 +6198,13 @@ namespace QuickView {
                     }
 
                     for (int y = 0; y < height; ++y) {
-                        float* dst = reinterpret_cast<float*>(pixels + static_cast<size_t>(y) * stride);
+                        uint16_t* dst = reinterpret_cast<uint16_t*>(pixels + static_cast<size_t>(y) * stride);
                         const uint16_t* src = reinterpret_cast<const uint16_t*>(rgb.pixels + static_cast<size_t>(y) * rgb.rowBytes);
                         for (int x = 0; x < width; ++x) {
-                            const float r = src[x * 4 + 0] / 65535.0f;
-                            const float g = src[x * 4 + 1] / 65535.0f;
-                            const float b = src[x * 4 + 2] / 65535.0f;
-                            const float a = src[x * 4 + 3] / 65535.0f;
-                            dst[x * 4 + 0] = DecodeTransferToLinear(r, transfer);
-                            dst[x * 4 + 1] = DecodeTransferToLinear(g, transfer);
-                            dst[x * 4 + 2] = DecodeTransferToLinear(b, transfer);
-                            dst[x * 4 + 3] = a;
+                            dst[x * 4 + 0] = src[x * 4 + 0];
+                            dst[x * 4 + 1] = src[x * 4 + 1];
+                            dst[x * 4 + 2] = src[x * 4 + 2];
+                            dst[x * 4 + 3] = src[x * 4 + 3];
                         }
                     }
 
@@ -6223,17 +6212,17 @@ namespace QuickView {
                     result.width = width;
                     result.height = height;
                     result.stride = stride;
-                    result.format = PixelFormat::R32G32B32A32_FLOAT;
+                    result.format = PixelFormat::R16G16B16A16_UNORM;
                     result.success = true;
                     result.metadata.LoaderName = L"libavif (Unified HDR)";
                     result.metadata.Width = origW;
                     result.metadata.Height = origH;
-                    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
-                    result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
+                    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedHdr;
+                    result.metadata.colorInfo.transfer = transfer;
                     result.metadata.colorInfo.primaries = primaries;
                     result.metadata.colorInfo.nominalBitDepth = 16;
                     PopulateAvifHdrStaticMetadata(decoder->image, &result.metadata.hdrMetadata);
-                    result.metadata.hdrMetadata.isSceneLinear = true;
+                    result.metadata.hdrMetadata.isSceneLinear = false;
                     result.metadata.hdrMetadata.isHdr = true;
                     if (decoder->image->icc.data && decoder->image->icc.size > 0) {
                         result.metadata.iccProfileData.assign(
@@ -7154,15 +7143,15 @@ namespace QuickView {
 
                 WICPixelFormatGUID targetFmt = GUID_WICPixelFormat32bppPBGRA;
                 if (isHighBitDepth && !PrefersSdrTarget(ctx)) {
-                    targetFmt = GUID_WICPixelFormat128bppRGBAFloat; 
-                    result.format = PixelFormat::R32G32B32A32_FLOAT;
+                    targetFmt = GUID_WICPixelFormat64bppRGBA;
+                    result.format = PixelFormat::R16G16B16A16_UNORM;
                 } else {
                     result.format = PixelFormat::BGRA8888;
                 }
 
                 if (FAILED(converter->Initialize(decodeSource.Get(), targetFmt, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeMedianCut))) return E_FAIL;
 
-                int bpp = (isHighBitDepth && !PrefersSdrTarget(ctx)) ? 16 : 4;
+                int bpp = (isHighBitDepth && !PrefersSdrTarget(ctx)) ? 8 : 4;
                 int stride = CalculateSIMDAlignedStride(decodeW, bpp);
                 size_t bufSize = (size_t)stride * decodeH;
                 uint8_t* pixels = ctx.allocator(bufSize);
@@ -7553,8 +7542,8 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     
     WICPixelFormatGUID srcWicFmt;
     wicBitmap->GetPixelFormat(&srcWicFmt);
-    bool isFloat = IsEqualGUID(srcWicFmt, GUID_WICPixelFormat128bppRGBAFloat);
-    int bpp = isFloat ? 16 : 4;
+    bool isHighBitDepth = IsEqualGUID(srcWicFmt, GUID_WICPixelFormat64bppRGBA);
+    int bpp = isHighBitDepth ? 8 : 4;
 
     UINT stride = w * bpp;
     size_t bufSize = (size_t)stride * h;
@@ -11393,8 +11382,9 @@ ctx.allocator.ctx = arena;
     WICPixelFormatGUID outWicFormat;
     wicBitmap->GetPixelFormat(&outWicFormat);
     bool isFloat = IsEqualGUID(outWicFormat, GUID_WICPixelFormat128bppRGBAFloat);
-    int bpp = isFloat ? 16 : 4;
-    QuickView::PixelFormat outPixelFormat = isFloat ? QuickView::PixelFormat::R32G32B32A32_FLOAT : QuickView::PixelFormat::BGRA8888;
+    bool isHighBitDepth = IsEqualGUID(outWicFormat, GUID_WICPixelFormat64bppRGBA) || IsEqualGUID(outWicFormat, GUID_WICPixelFormat64bppPRGBA);
+    int bpp = isFloat ? 16 : (isHighBitDepth ? 8 : 4);
+    QuickView::PixelFormat outPixelFormat = isFloat ? QuickView::PixelFormat::R32G32B32A32_FLOAT : (isHighBitDepth ? QuickView::PixelFormat::R16G16B16A16_UNORM : QuickView::PixelFormat::BGRA8888);
 
     // Allocate output buffer with aligned stride
     int outStride = CalculateSIMDAlignedStride(finalW, bpp);
