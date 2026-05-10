@@ -29,7 +29,9 @@ struct alignas(16) ToneMapSettings {
     float splineQc;
     uint32_t isHdrOutput;           // 1: HDR/Sim, 0: SDR
     float realHardwarePeakScRgb;    // Actual display peak in ScRGB
-    float padding1;                 // 16-byte alignment
+    uint32_t transferFunction;      // Enum QuickView::TransferFunction
+
+    float colorMatrix[12];          // 3x4 layout for structured float3x3 mapping (requires 48 bytes)
 };
 static_assert(sizeof(ToneMapSettings) % 16 == 0, "CB size must be multiple of 16 bytes");
 
@@ -94,11 +96,11 @@ public:
     /// </summary>
     HRESULT ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int height,
                            int stride, const ToneMapSettings& settings,
-                           ID3D11Texture2D** outTexture);
+                           ID3D11Texture2D** outTexture, PixelFormat srcFormat = PixelFormat::R32G32B32A32_FLOAT);
 
     HRESULT ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height,
                            int stride, const ToneMapSettings& settings,
-                           ID3D11Texture2D** outTexture);
+                           ID3D11Texture2D** outTexture, PixelFormat srcFormat = PixelFormat::R32G32B32A32_FLOAT);
 
     /// <summary>
     /// GPU-side Gain Map composition (ISO 21496-1).

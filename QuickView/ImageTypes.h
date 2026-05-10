@@ -142,6 +142,7 @@ enum class PixelFormat : uint8_t {
     BGRX8888,           // D2D Native (Opaque Alpha)
     RGBA8888,           // Some decoders (stb) - Compatible
     R32G32B32A32_FLOAT, // HDR (TinyEXR) - 128-bit floating point
+    R16G16B16A16_UNORM, // HDR (HEIC/AVIF) - 64-bit unsigned normalized
     SVG_XML             // [D2D Native] Raw SVG XML Data
 };
 

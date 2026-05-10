@@ -67,8 +67,23 @@ cbuffer ToneMapParams : register(b0)
     float SplineQc;
     uint  IsHdrOutput;
     float RealHardwarePeakScRgb;
-    float Padding1;
+    uint  TransferFunction;
+
+    float4x4 ColorMatrix;
 };
+
+// HLG EOTF inverse (HLG to Linear)
+float3 HLGToLinear(float3 v)
+{
+    float3 e;
+    e.r = v.r <= 0.5 ? (v.r * v.r / 3.0) : (exp((v.r - 0.17883277) / 0.28466892) + 0.02372241);
+    e.g = v.g <= 0.5 ? (v.g * v.g / 3.0) : (exp((v.g - 0.17883277) / 0.28466892) + 0.02372241);
+    e.b = v.b <= 0.5 ? (v.b * v.b / 3.0) : (exp((v.b - 0.17883277) / 0.28466892) + 0.02372241);
+    float L_S = 0.2627 * e.r + 0.6780 * e.g + 0.0593 * e.b;
+    float gamma = 1.2;
+    float3 L_D = e * pow(max(L_S, 0.0), gamma - 1.0);
+    return L_D * 12.5;
+}
 
 float LinearToPQ(float L)
 {
@@ -131,6 +146,21 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
     float4 color = SrcTex[id.xy];
     color.rgb = max(color.rgb, float3(0.0f, 0.0f, 0.0f));
     color.a = saturate(color.a);
+
+    // EOTF Inverse
+    if (TransferFunction == 3) { // PQ
+        color.r = PQToLinear(color.r);
+        color.g = PQToLinear(color.g);
+        color.b = PQToLinear(color.b);
+    } else if (TransferFunction == 4) { // HLG
+        color.rgb = HLGToLinear(color.rgb);
+    } else if (TransferFunction == 1) { // SRGB
+        // Approximate sRGB to linear
+        color.rgb = pow(color.rgb, float3(2.2f, 2.2f, 2.2f));
+    }
+
+    // Color Matrix (e.g. Rec.2020 to ScRGB)
+    color.rgb = mul((float3x3)ColorMatrix, color.rgb);
 
     float paperWhite = max(PaperWhiteScRgb, 1.0);
     float displayPeak = max(DisplayPeakScRgb, paperWhite);
@@ -199,8 +229,23 @@ cbuffer ToneMapParams : register(b0)
     float SplineQc;
     uint  IsHdrOutput;
     float RealHardwarePeakScRgb;
-    float Padding1;
+    uint  TransferFunction;
+
+    float4x4 ColorMatrix;
 };
+
+// HLG EOTF inverse (HLG to Linear)
+float3 HLGToLinear(float3 v)
+{
+    float3 e;
+    e.r = v.r <= 0.5 ? (v.r * v.r / 3.0) : (exp((v.r - 0.17883277) / 0.28466892) + 0.02372241);
+    e.g = v.g <= 0.5 ? (v.g * v.g / 3.0) : (exp((v.g - 0.17883277) / 0.28466892) + 0.02372241);
+    e.b = v.b <= 0.5 ? (v.b * v.b / 3.0) : (exp((v.b - 0.17883277) / 0.28466892) + 0.02372241);
+    float L_S = 0.2627 * e.r + 0.6780 * e.g + 0.0593 * e.b;
+    float gamma = 1.2;
+    float3 L_D = e * pow(max(L_S, 0.0), gamma - 1.0);
+    return L_D * 12.5;
+}
 
 float LinearToPQ(float L)
 {
@@ -282,10 +327,24 @@ void CSToneMapHDR(uint3 id : SV_DispatchThreadID)
     color.rgb = max(color.rgb, float3(0.0f, 0.0f, 0.0f));
     color.a = saturate(color.a);
 
+    // EOTF Inverse
+    if (TransferFunction == 3) { // PQ
+        color.r = PQToLinear(color.r);
+        color.g = PQToLinear(color.g);
+        color.b = PQToLinear(color.b);
+    } else if (TransferFunction == 4) { // HLG
+        color.rgb = HLGToLinear(color.rgb);
+    } else if (TransferFunction == 1) { // SRGB
+        color.rgb = pow(color.rgb, float3(2.2f, 2.2f, 2.2f));
+    }
+
+    // Color Matrix
+    color.rgb = mul((float3x3)ColorMatrix, color.rgb);
+
     float contentPeak = max(ContentPeakScRgb, 1.0f);
     float displayPeak = max(DisplayPeakScRgb, 1.0f);
 
-    if (contentPeak <= displayPeak && Exposure >= 0.999f && Exposure <= 1.001f && ExposureGain >= 0.999f && ExposureGain <= 1.001f) {
+    if (contentPeak <= displayPeak && Exposure >= 0.999f && Exposure <= 1.001f && ExposureGain >= 0.999f && ExposureGain <= 1.001f && TransferFunction == 2) {
         DstTex[id.xy] = color;
         return;
     }
@@ -528,14 +587,14 @@ HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int
     srcDesc.Height = height;
     srcDesc.MipLevels = 1;
     srcDesc.ArraySize = 1;
-    srcDesc.Format = (srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    srcDesc.Format = (srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? DXGI_FORMAT_R32G32B32A32_FLOAT : ((srcFormat == PixelFormat::R16G16B16A16_UNORM) ? DXGI_FORMAT_R16G16B16A16_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM);
     srcDesc.SampleDesc.Count = 1;
     srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
     srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     
     D3D11_SUBRESOURCE_DATA initData = {};
     initData.pSysMem = srcPixels;
-    initData.SysMemPitch = width * (srcFormat == PixelFormat::R32G32B32A32_FLOAT ? 16 : 4);
+    initData.SysMemPitch = width * ((srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? 16 : ((srcFormat == PixelFormat::R16G16B16A16_UNORM) ? 8 : 4));
     
     ComPtr<ID3D11Texture2D> pSrc;
     HRESULT hr = m_d3dDevice->CreateTexture2D(&srcDesc, &initData, &pSrc);
@@ -800,7 +859,7 @@ HRESULT ComputeEngine::DispatchGamutMaskLut(
     return ReadbackMaskTexture(maskTexture.Get(), outReadback);
 }
 
-HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture) {
+HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture, PixelFormat srcFormat) {
     if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
 
     D3D11_TEXTURE2D_DESC srcDesc = {};
@@ -808,7 +867,7 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
     srcDesc.Height = static_cast<UINT>(height);
     srcDesc.MipLevels = 1;
     srcDesc.ArraySize = 1;
-    srcDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    srcDesc.Format = srcFormat == PixelFormat::R16G16B16A16_UNORM ? DXGI_FORMAT_R16G16B16A16_UNORM : DXGI_FORMAT_R32G32B32A32_FLOAT;
     srcDesc.SampleDesc.Count = 1;
     srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
     srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -872,7 +931,7 @@ HRESULT ComputeEngine::ToneMapHdrToSdr(const uint8_t* srcPixels, int width, int 
 }
 
 
-HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture) {
+HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int height, int stride, const ToneMapSettings& settings, ID3D11Texture2D** outTexture, PixelFormat srcFormat) {
     if (!m_valid || !srcPixels || width <= 0 || height <= 0 || !outTexture) return E_INVALIDARG;
 
     D3D11_TEXTURE2D_DESC srcDesc = {};
@@ -880,7 +939,7 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
     srcDesc.Height = static_cast<UINT>(height);
     srcDesc.MipLevels = 1;
     srcDesc.ArraySize = 1;
-    srcDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    srcDesc.Format = srcFormat == PixelFormat::R16G16B16A16_UNORM ? DXGI_FORMAT_R16G16B16A16_UNORM : DXGI_FORMAT_R32G32B32A32_FLOAT;
     srcDesc.SampleDesc.Count = 1;
     srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
     srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
