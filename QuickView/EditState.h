@@ -185,7 +185,7 @@ struct AppConfig {
 
     // --- Window Lock Behaviors ---
     bool KeepWindowSizeOnNav = false;
-    bool RememberLastWindowSize = false;
+    bool RememberLastWindowSizeAndPosition = false;
     bool UpscaleSmallImagesWhenLocked = false;
 
     bool ShowBorderIndicator = true;

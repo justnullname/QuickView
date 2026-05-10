@@ -5380,7 +5380,7 @@ void SaveConfig() {
 
     // Window Lock Behaviors
     WritePrivateProfileStringW(L"View", L"KeepWindowSizeOnNav", g_config.KeepWindowSizeOnNav ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"RememberLastWindowSize", g_config.RememberLastWindowSize ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"RememberLastWindowSizeAndPosition", g_config.RememberLastWindowSizeAndPosition ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"UpscaleSmallImagesWhenLocked", g_config.UpscaleSmallImagesWhenLocked ? L"1" : L"0", iniPath.c_str());
 
     WritePrivateProfileStringW(L"View", L"ExifPanelMode", std::to_wstring(g_config.ExifPanelMode).c_str(), iniPath.c_str());
@@ -5604,7 +5604,7 @@ void LoadConfig() {
 
     // Window Lock Behaviors
     g_config.KeepWindowSizeOnNav = GetPrivateProfileIntW(L"View", L"KeepWindowSizeOnNav", 0, iniPath.c_str()) != 0;
-    g_config.RememberLastWindowSize = GetPrivateProfileIntW(L"View", L"RememberLastWindowSize", 0, iniPath.c_str()) != 0;
+    g_config.RememberLastWindowSizeAndPosition = GetPrivateProfileIntW(L"View", L"RememberLastWindowSizeAndPosition", 0, iniPath.c_str()) != 0;
     g_config.UpscaleSmallImagesWhenLocked = GetPrivateProfileIntW(L"View", L"UpscaleSmallImagesWhenLocked", 0, iniPath.c_str()) != 0;
 
     g_config.ExifPanelMode = GetPrivateProfileIntW(L"View", L"ExifPanelMode", 0, iniPath.c_str());
@@ -7043,9 +7043,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     int winW = 800;
     int winH = 600;
+    int xPos = (screenW - winW) / 2;
+    int yPos = (screenH - winH) / 2;
 
-    // Load last window size if RememberLastWindowSize is true
-    if (g_config.RememberLastWindowSize && g_config.LockWindowSize) {
+    bool startFullscreen = false;
+    bool startMaximized = false;
+
+    // Load last window size and position if RememberLastWindowSizeAndPosition is true
+    if (g_config.RememberLastWindowSizeAndPosition) {
         std::wstring iniPath = GetConfigPath();
         if (g_config.PortableMode) {
             wchar_t exePath[MAX_PATH];
@@ -7055,19 +7060,45 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdSh
             if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
             iniPath = exeDir + L"\\QuickView.ini";
         }
+
+        startFullscreen = GetPrivateProfileIntW(L"View", L"LastWindowWasFullscreen", 0, iniPath.c_str()) != 0;
+        startMaximized = GetPrivateProfileIntW(L"View", L"LastWindowWasMaximized", 0, iniPath.c_str()) != 0;
+
         int savedW = GetPrivateProfileIntW(L"View", L"LastWindowW", 0, iniPath.c_str());
         int savedH = GetPrivateProfileIntW(L"View", L"LastWindowH", 0, iniPath.c_str());
+        int savedX = GetPrivateProfileIntW(L"View", L"LastWindowX", -10000, iniPath.c_str());
+        int savedY = GetPrivateProfileIntW(L"View", L"LastWindowY", -10000, iniPath.c_str());
+
         if (savedW > 0 && savedH > 0) {
             winW = savedW;
             winH = savedH;
         }
-    }
 
-    int xPos = (screenW - winW) / 2;
-    int yPos = (screenH - winH) / 2;
+        if (savedX != -10000 && savedY != -10000) {
+            // Basic sanity check to ensure window is on screen
+            RECT testRect = { savedX, savedY, savedX + savedW, savedY + savedH };
+            HMONITOR hMon = MonitorFromRect(&testRect, MONITOR_DEFAULTTONULL);
+            if (hMon != NULL) {
+                xPos = savedX;
+                yPos = savedY;
+            }
+        }
+    }
 
     HWND hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, xPos, yPos, winW, winH, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
+
+    if (g_config.RememberLastWindowSizeAndPosition) {
+        if (startMaximized) {
+            nCmdShow = SW_MAXIMIZE;
+        }
+        if (startFullscreen && g_config.OpenFullScreenMode == 0) {
+            // We set g_isFullScreen to true. But wait, WM_COMMAND IDM_FULLSCREEN toggles.
+            // Let's just post a message to trigger it.
+            PostMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+        }
+    }
+
     RefreshWindowDpi(hwnd);
 
     // [Phase 0] Start Named Pipe server on Master process.
@@ -7965,20 +7996,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (!CheckUnsavedChanges(hwnd)) return 0;
 
         // Save Last Window Size
-        if (g_config.RememberLastWindowSize && g_config.LockWindowSize && !IsZoomed(hwnd) && !IsIconic(hwnd) && !g_isFullScreen) {
-            RECT rc;
-            if (GetWindowRect(hwnd, &rc)) {
-                std::wstring iniPath = GetConfigPath();
-                if (g_config.PortableMode) {
-                    wchar_t exePath[MAX_PATH];
-                    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-                    std::wstring exeDir = exePath;
-                    size_t lastSlash = exeDir.find_last_of(L"\\/");
-                    if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
-                    iniPath = exeDir + L"\\QuickView.ini";
+        if (g_config.RememberLastWindowSizeAndPosition && !IsIconic(hwnd)) {
+            std::wstring iniPath = GetConfigPath();
+            if (g_config.PortableMode) {
+                wchar_t exePath[MAX_PATH];
+                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+                std::wstring exeDir = exePath;
+                size_t lastSlash = exeDir.find_last_of(L"\\/");
+                if (lastSlash != std::wstring::npos) exeDir = exeDir.substr(0, lastSlash);
+                iniPath = exeDir + L"\\QuickView.ini";
+            }
+
+            WritePrivateProfileStringW(L"View", L"LastWindowWasFullscreen", g_isFullScreen ? L"1" : L"0", iniPath.c_str());
+            WritePrivateProfileStringW(L"View", L"LastWindowWasMaximized", IsZoomed(hwnd) ? L"1" : L"0", iniPath.c_str());
+
+            if (!g_isFullScreen) {
+                WINDOWPLACEMENT wp = { sizeof(WINDOWPLACEMENT) };
+                if (GetWindowPlacement(hwnd, &wp)) {
+                    int w = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+                    int h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
+                    WritePrivateProfileStringW(L"View", L"LastWindowW", std::to_wstring(w).c_str(), iniPath.c_str());
+                    WritePrivateProfileStringW(L"View", L"LastWindowH", std::to_wstring(h).c_str(), iniPath.c_str());
+                    WritePrivateProfileStringW(L"View", L"LastWindowX", std::to_wstring(wp.rcNormalPosition.left).c_str(), iniPath.c_str());
+                    WritePrivateProfileStringW(L"View", L"LastWindowY", std::to_wstring(wp.rcNormalPosition.top).c_str(), iniPath.c_str());
                 }
-                WritePrivateProfileStringW(L"View", L"LastWindowW", std::to_wstring(rc.right - rc.left).c_str(), iniPath.c_str());
-                WritePrivateProfileStringW(L"View", L"LastWindowH", std::to_wstring(rc.bottom - rc.top).c_str(), iniPath.c_str());
             }
         }
 

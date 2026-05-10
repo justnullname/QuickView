@@ -1526,16 +1526,16 @@ void SettingsOverlay::BuildMenu() {
         g_runtime.LockWindowSize = g_config.LockWindowSize;
         g_toolbar.SetLockState(g_runtime.LockWindowSize);
         if (!g_config.LockWindowSize) {
-            g_config.RememberLastWindowSize = false;
+            g_config.RememberLastWindowSizeAndPosition = false;
         }
         SaveConfig();
     };
     tabVisuals.items.push_back(itemLockWindow);
 
     tabVisuals.items.push_back({ AppStrings::Settings_Label_KeepWindowSizeOnNav, OptionType::Toggle, &g_config.KeepWindowSizeOnNav });
-    SettingsItem itemRememberWindow = { AppStrings::Settings_Label_RememberLastWindowSize, OptionType::Toggle, &g_config.RememberLastWindowSize };
+    SettingsItem itemRememberWindow = { AppStrings::Settings_Label_RememberLastWindowSizeAndPosition, OptionType::Toggle, &g_config.RememberLastWindowSizeAndPosition };
     itemRememberWindow.onChange = []() {
-        if (g_config.RememberLastWindowSize) {
+        if (g_config.RememberLastWindowSizeAndPosition) {
             g_config.LockWindowSize = true;
             g_runtime.LockWindowSize = true;
             g_toolbar.SetLockState(true);

@@ -244,7 +244,7 @@ const wchar_t *Settings_Label_WindowMinSize = nullptr;
 const wchar_t *Settings_Label_WindowMaxSizePercent = nullptr;
 const wchar_t *Settings_Label_ShowBorderIndicator = nullptr;
 const wchar_t *Settings_Label_KeepWindowSizeOnNav = nullptr;
-const wchar_t *Settings_Label_RememberLastWindowSize = nullptr;
+const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition = nullptr;
 const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
 const wchar_t *Settings_Label_EnableSmoothScaling = nullptr;
 const wchar_t *Settings_Label_ExifMode = nullptr;
@@ -844,8 +844,8 @@ struct EN {
       L"Show Edge Indicators";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"Keep window size on navigation";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"Remember last window size";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"Remember last window size and position";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"Adapt small images";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -1270,8 +1270,8 @@ struct CN {
       L"显示边界指示器";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"导航时保持窗口尺寸不变";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"记住最后窗口尺寸";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"记住最后窗口位置和尺寸";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"小于窗口尺寸图片适应窗口";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -1933,8 +1933,8 @@ struct TW {
       L"顯示邊界指示器";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"導航時保持視窗尺寸不變";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"記住最後視窗尺寸";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"記住最後視窗位置和尺寸";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"小於視窗尺寸圖片適應視窗";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -2507,8 +2507,8 @@ struct JA {
       L"エッジインジケーターを表示";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"ナビゲーション時にウィンドウサイズを保持";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"最後のウィンドウサイズを記憶";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"最後のウィンドウの位置とサイズを記憶";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"小さな画像をウィンドウに合わせる";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -3169,8 +3169,8 @@ struct RU {
       L"Показывать индикаторы границ";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"Не менять размер окна при навигации";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"Запоминать последний размер окна";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"Запоминать последние размер и положение окна";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"Адаптировать мелкие изображения";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -3767,8 +3767,8 @@ struct DE {
       L"Randindikatoren anzeigen";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"Fenstergröße bei Navigation beibehalten";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"Letzte Fenstergröße merken";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"Letzte Fensterposition und -größe merken";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"Kleine Bilder anpassen";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -4378,8 +4378,8 @@ struct ES {
       L"Mostrar indicadores de borde";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"Mantener el tamaño de la ventana al navegar";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"Recordar el último tamaño de ventana";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"Recordar el último tamaño y posición de la ventana";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"Adaptar imágenes pequeñas";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
@@ -4931,8 +4931,8 @@ template <typename T> void ApplyT() {
   Settings_Label_WindowMaxSizePercent = T::Settings_Label_WindowMaxSizePercent;
   Settings_Label_ShowBorderIndicator = T::Settings_Label_ShowBorderIndicator;
   Settings_Label_KeepWindowSizeOnNav = T::Settings_Label_KeepWindowSizeOnNav;
-  Settings_Label_RememberLastWindowSize =
-      T::Settings_Label_RememberLastWindowSize;
+  Settings_Label_RememberLastWindowSizeAndPosition =
+      T::Settings_Label_RememberLastWindowSizeAndPosition;
   Settings_Label_UpscaleSmallImagesWhenLocked =
       T::Settings_Label_UpscaleSmallImagesWhenLocked;
   Settings_Label_EnableSmoothScaling = T::Settings_Label_EnableSmoothScaling;
@@ -5483,8 +5483,8 @@ struct FR {
       L"Show Edge Indicators";
   static constexpr const wchar_t *Settings_Label_KeepWindowSizeOnNav =
       L"Keep window size on navigation";
-  static constexpr const wchar_t *Settings_Label_RememberLastWindowSize =
-      L"Remember last window size";
+  static constexpr const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition =
+      L"Remember last window size and position";
   static constexpr const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked =
       L"Adapt small images";
   static constexpr const wchar_t *Settings_Label_EnableSmoothScaling =
