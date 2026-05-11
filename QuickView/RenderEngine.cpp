@@ -517,7 +517,7 @@ bool BuildGamutCheckSampleFrame(const QuickView::RawImageFrame &frame,
   outSample->pixels =
       static_cast<uint8_t *>(malloc(static_cast<size_t>(outSample->stride) *
                                     static_cast<size_t>(outSample->height)));
-  outSample->memoryDeleter = [](uint8_t *p) { free(p); };
+  outSample->memoryDeleter = QuickView::MemoryDeleter::FromFree();
   if (!outSample->pixels) {
     outSample->Release();
     return false;
@@ -1442,17 +1442,16 @@ HRESULT CRenderEngine::AnalyzeGamutWarningIcc(
     }
   }
 
-  std::wstringstream summary;
-  summary << L"Gamut "
-          << (options.targetKind == GamutTargetKind::ProofTarget ? L"Proof" : L"Screen")
-          << L" / "
-          << (program->backend == GamutBackendKind::AnalyticMatrixTrc ? L"Analytic" :
-              (program->backend == GamutBackendKind::Lut3DCompiled ? L"LUT" : L"CPU"))
-          << L" / src=" << program->srcName
-          << L" / dst=" << program->dstName
-          << L" / ACM=" << (options.acmAware ? L"On" : L"Off")
-          << L" / mask=" << outResult->cols << L"x" << outResult->rows;
-  outResult->debugSummary = summary.str();
+  wchar_t buf[512];
+  swprintf_s(buf, L"Gamut %s / %s / src=%s / dst=%s / ACM=%s / mask=%dx%d",
+      (options.targetKind == GamutTargetKind::ProofTarget ? L"Proof" : L"Screen"),
+      (program->backend == GamutBackendKind::AnalyticMatrixTrc ? L"Analytic" :
+       (program->backend == GamutBackendKind::Lut3DCompiled ? L"LUT" : L"CPU")),
+      program->srcName.c_str(),
+      program->dstName.c_str(),
+      (options.acmAware ? L"On" : L"Off"),
+      outResult->cols, outResult->rows);
+  outResult->debugSummary = buf;
   return S_OK;
 }
 

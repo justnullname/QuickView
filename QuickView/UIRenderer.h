@@ -1,16 +1,21 @@
 #pragma once
 #include "pch.h"
-#include "CompositionEngine.h"
-#include "ImageLoader.h"  // For ImageMetadata
-#include <dwrite.h>
-#include <array>
-#include "EditState.h"
-#include <memory_resource>
+#include <string>
+#include <cwchar>
+#include <vector>
 #include <map>
 #include <unordered_map>
-#include "ImageEngine.h" // For CacheTopology
+#include <functional>
+#include <type_traits>
+#include <array>
+#include <memory_resource>
+#include "CompositionEngine.h"
+#include "ImageLoader.h"
+#include "EditState.h"
+#include "ImageEngine.h"
 #include "OSDState.h"
 #include "GeekGlass.h"
+#include <dwrite.h>
 
 // ============================================================================
 // UIRenderer - 多层 UI 渲染器

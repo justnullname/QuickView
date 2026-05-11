@@ -1,12 +1,12 @@
-#include "pch.h"
 #include "AnimationDecoder.h"
 #include "MappedFile.h"
+#include <memory>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
 #include <jxl/resizable_parallel_runner_cxx.h>
 #include "ImageLoaderSimd.h"
-#include <vector>
+
 
 namespace QuickView {
 
@@ -85,7 +85,7 @@ public:
         size_t outSize = (size_t)frame->stride * frame->height;
         frame->pixels = (uint8_t*)_aligned_malloc(outSize, 64);
         if (!frame->pixels) return nullptr;
-        frame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        frame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         
         // Copy from accumulation buffer
         // Note: libjxl output was RGBA (from pixFmt), we want BGRA.

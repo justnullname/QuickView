@@ -7,6 +7,16 @@
 #include <windowsx.h>
 #include <shlwapi.h>
 
+// Spartan Bedrock (Zero-cost types only)
+#include <cstdint>
+#include <cstddef>
+#include <cwchar>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <concepts>
+#include <bit>
+
 // [Critical] Resolve Windows macro interference BEFORE Direct2D/DirectWrite headers
 #undef DrawText
 #undef DrawTextW
@@ -21,18 +31,6 @@
 // COM smart pointers
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
-
-// C++ Standard Library
-#include <memory>
-#include <string>
-#include <vector>
-#include <algorithm>
-#include <stdexcept>
-#include <filesystem>
-#include <string_view>
-#include <memory_resource>
-#include <stop_token>
-#include <unordered_map>
 
 // Pragmas for linking
 #pragma comment(lib, "d2d1.lib")

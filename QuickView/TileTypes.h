@@ -8,6 +8,12 @@
 
 #include "ImageTypes.h"
 #include <vector>
+#include <unordered_map>
+#include <memory>
+#include <string>
+#include <cwchar>
+#include <type_traits>
+#include <functional>
 #include <mutex>
 #include <d2d1_1.h>
 #include <wrl/client.h>

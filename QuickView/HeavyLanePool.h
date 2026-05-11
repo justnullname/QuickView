@@ -1,24 +1,22 @@
 #pragma once
-#include "pch.h"
-#include "SystemInfo.h"
-#include "MemoryArena.h"
-#include "TileMemoryManager.h" // [Titan]
+#include "ImageEngine.h" // For EngineEvent complete type
 #include "ImageLoader.h"
-#include "ImageEngine.h"  // For EngineEvent complete type
-#include <vector>
-#include <deque>
-#include <mutex>
-#include <unordered_set>
-#include <unordered_map>
-#include <thread>
+#include "MemoryArena.h"
+#include "SystemInfo.h"
+#include "TileMemoryManager.h" // [Titan]
 #include <atomic>
-#include <optional>
 #include <chrono>
 #include <condition_variable>
-#include <semaphore>
-#include <algorithm>
+#include <deque>
 #include <limits>
-#include <functional>
+#include <mutex>
+#include <optional>
+#include <semaphore>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
 
 #include "TileTypes.h" // [Titan]
 
@@ -366,7 +364,9 @@ private:
     HANDLE m_workerJobObject = nullptr;
     
     // [Phase 4.1] Pass Worker reference for local activeWorkerProcess tracking to prevent zombie races
-    HRESULT FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader, CImageLoader::CancelPredicate checkCancel = nullptr);
+    HRESULT FullDecodeAndCacheLOD(
+        Worker &worker, const JobInfo &job, QuickView::RawImageFrame &outTile,
+        std::wstring &loader, CImageLoader::CancelPredicate checkCancel = {});
     HRESULT SliceTileFromLODCache(const JobInfo& job, QuickView::RawImageFrame& outTile, std::wstring& loader);
     HRESULT LaunchDecodeWorker(Worker& worker, const JobInfo& job, int targetW, int targetH, QuickView::RawImageFrame& outFrame, CImageLoader::ImageMetadata& outMeta, CImageLoader::CancelPredicate checkCancel, bool fullDecode = false, bool noFakeBase = false);
     bool ShouldUseSingleDecode(int lod) const;

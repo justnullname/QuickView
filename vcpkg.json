@@ -20,7 +20,6 @@
     },
     "libjxl",
     "libraw",
-    "mimalloc",
     "zlib",
     "highway"
   ],

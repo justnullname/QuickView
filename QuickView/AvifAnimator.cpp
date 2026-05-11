@@ -1,5 +1,6 @@
 #include "AnimationDecoder.h"
 #include "MappedFile.h"
+#include <memory>
 
 #include <avif/avif.h>
 
@@ -71,7 +72,7 @@ private:
         
         size_t bufSize = (size_t)frame->stride * frame->height;
         frame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
-        frame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        frame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         memcpy(frame->pixels, m_rgb.pixels, bufSize);
         
         auto& meta = frame->frameMeta;

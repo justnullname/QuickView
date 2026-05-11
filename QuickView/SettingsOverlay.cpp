@@ -8,7 +8,6 @@
 #include <commdlg.h>
 #include <functional>
 #include "UpdateManager.h"
-#include <sstream>
 #include <vector>
 #include <shellapi.h>
 #include <wincodec.h>
@@ -568,9 +567,14 @@ struct ToastLayout {
 // Helper to strip Markdown
 static std::wstring CleanMarkdown(const std::wstring& md) {
     std::wstring out;
-    std::wstringstream ss(md);
-    std::wstring line;
-    while (std::getline(ss, line)) {
+    size_t startPos = 0;
+    while (startPos < md.size()) {
+        size_t endPos = md.find(L'\n', startPos);
+        if (endPos == std::wstring::npos) endPos = md.size();
+        
+        std::wstring line = md.substr(startPos, endPos - startPos);
+        startPos = endPos + 1;
+
         size_t start = 0;
         while (start < line.size() && (line[start] == L'#' || line[start] == L' ')) start++;
         if (start < line.size()) {

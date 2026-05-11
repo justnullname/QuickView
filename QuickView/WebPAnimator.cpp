@@ -1,6 +1,6 @@
-#include "pch.h"
 #include "AnimationDecoder.h"
 #include "MappedFile.h"
+#include <memory>
 #include <webp/demux.h>
 #include <webp/decode.h>
 #include <vector>
@@ -119,7 +119,7 @@ public:
         auto frame = std::make_shared<RawImageFrame>();
         size_t bufSize = m_canvas.size();
         frame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
-        frame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        frame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         memcpy(frame->pixels, m_canvas.data(), bufSize);
         
         frame->width = m_width;

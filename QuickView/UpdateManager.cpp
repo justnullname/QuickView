@@ -1,13 +1,14 @@
-
-#include "UpdateManager.h"
-#include "picojson.h"
-#include <algorithm>
-#include <ctime>
-#include <fstream>
-#include <shellapi.h>
-#include <shlwapi.h>
+#include "pch.h"
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <fstream>
+#include <ios>
+#include <ctime>
+#include "UpdateManager.h"
+#include "yyjson.h"
+#include <shellapi.h>
+#include <shlwapi.h>
 #include <wincrypt.h>
 
 
@@ -77,7 +78,7 @@ void UpdateManager::CheckThread(int delaySeconds) {
                     valid = false;
                 }
             } else {
-                std::ifstream f(dest, std::ios::binary | std::ios::ate);
+                std::ifstream f(dest, std::ios_base::binary | std::ios_base::ate);
                 if (!f.good() || f.tellg() < 100000) valid = false;
             }
             if (valid) {
@@ -241,7 +242,7 @@ bool UpdateManager::DownloadUpdate(const std::string& url, const std::wstring& d
     }
 
     // Write to file
-    std::ofstream outfile(destPath, std::ios::binary);
+    std::ofstream outfile(destPath, std::ios_base::binary);
     if (!outfile.is_open()) return false;
     outfile.write(data.c_str(), data.size());
     outfile.close();
@@ -295,34 +296,45 @@ std::string UpdateManager::HttpGet(const std::wstring& host, const std::wstring&
 
 VersionInfo UpdateManager::ParseJson(const std::string& json) {
     VersionInfo info;
-    picojson::value v;
-    std::string err = picojson::parse(v, json);
-    if (!err.empty()) return info;
+    yyjson_doc *doc = yyjson_read(json.c_str(), json.size(), 0);
+    if (!doc) return info;
 
-    if (v.is<picojson::object>()) {
-        picojson::object& jsonObj = v.get<picojson::object>();
-        if (jsonObj.contains("version")) info.version = jsonObj.at("version").to_str();
-        if (jsonObj.contains("changelog")) info.changelog = jsonObj.at("changelog").to_str();
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (yyjson_is_obj(root)) {
+        yyjson_val *v = yyjson_obj_get(root, "version");
+        if (v) info.version = yyjson_get_str(v) ? yyjson_get_str(v) : "";
+        
+        yyjson_val *cl = yyjson_obj_get(root, "changelog");
+        if (cl) info.changelog = yyjson_get_str(cl) ? yyjson_get_str(cl) : "";
         
         SYSTEM_INFO si;
         GetNativeSystemInfo(&si);
         bool isArm64 = (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64);
 
-        if (isArm64 && jsonObj.contains("url_arm64") && jsonObj.contains("sha256_arm64")) {
-            info.downloadUrl = jsonObj.at("url_arm64").to_str();
-            info.expectedSha256 = jsonObj.at("sha256_arm64").to_str();
+        if (isArm64) {
+            yyjson_val *url_arm = yyjson_obj_get(root, "url_arm64");
+            yyjson_val *sha_arm = yyjson_obj_get(root, "sha256_arm64");
+            if (url_arm && sha_arm) {
+                info.downloadUrl = yyjson_get_str(url_arm) ? yyjson_get_str(url_arm) : "";
+                info.expectedSha256 = yyjson_get_str(sha_arm) ? yyjson_get_str(sha_arm) : "";
+            } else {
+                goto fallback;
+            }
         } else {
-            if (jsonObj.contains("url_x64")) {
-                info.downloadUrl = jsonObj.at("url_x64").to_str();
-            } else if (jsonObj.contains("url")) {
-                info.downloadUrl = jsonObj.at("url").to_str();
+fallback:
+            yyjson_val *url_x64 = yyjson_obj_get(root, "url_x64");
+            if (url_x64) {
+                info.downloadUrl = yyjson_get_str(url_x64) ? yyjson_get_str(url_x64) : "";
+            } else {
+                yyjson_val *url = yyjson_obj_get(root, "url");
+                if (url) info.downloadUrl = yyjson_get_str(url) ? yyjson_get_str(url) : "";
             }
             
-            if (jsonObj.contains("sha256_x64")) {
-                info.expectedSha256 = jsonObj.at("sha256_x64").to_str();
-            }
+            yyjson_val *sha_x64 = yyjson_obj_get(root, "sha256_x64");
+            if (sha_x64) info.expectedSha256 = yyjson_get_str(sha_x64) ? yyjson_get_str(sha_x64) : "";
         }
     }
+    yyjson_doc_free(doc);
     return info;
 }
 

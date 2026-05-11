@@ -8,13 +8,13 @@
 #include <cstdint>
 #include <vector>
 #include <memory_resource>
-#include <functional>
 #include "DisplayColorInfo.h"
+#include "ImageTypes.h"
 
 namespace WuffsLoader {
 
-using CancelPredicate = std::function<bool()>;
-using AllocatorFunc = std::function<uint8_t*(size_t size)>;
+using CancelPredicate = QuickView::SimplePredicate;
+using AllocatorFunc = QuickView::AllocatorCallback;
 
 /// <summary>
 /// Decode PNG image to BGRA pixels
@@ -40,17 +40,17 @@ struct WuffsImageInfo {
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr,
+               CancelPredicate checkCancel = {},
                WuffsImageInfo* pInfo = nullptr);
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr,
+               CancelPredicate checkCancel = {},
                WuffsImageInfo* pInfo = nullptr);
 bool DecodePNG(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr,
+               CancelPredicate checkCancel = {},
                WuffsImageInfo* pInfo = nullptr);
 
 /// <summary>
@@ -59,15 +59,15 @@ bool DecodePNG(const uint8_t* data, size_t size,
 bool DecodeGIF(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeGIF(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeGIF(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 
 /// <summary>
 /// Decode BMP image to BGRA pixels
@@ -75,15 +75,15 @@ bool DecodeGIF(const uint8_t* data, size_t size,
 bool DecodeBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 
 /// <summary>
 /// Decode TGA (Targa) image to BGRA pixels
@@ -91,15 +91,15 @@ bool DecodeBMP(const uint8_t* data, size_t size,
 bool DecodeTGA(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeTGA(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeTGA(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 
 /// <summary>
 /// Decode WBMP image to BGRA pixels
@@ -107,15 +107,15 @@ bool DecodeTGA(const uint8_t* data, size_t size,
 bool DecodeWBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeWBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeWBMP(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 
 /// <summary>
 /// Decode NetPBM (PAM, PBM, PGM, PPM) image to BGRA pixels
@@ -123,15 +123,15 @@ bool DecodeWBMP(const uint8_t* data, size_t size,
 bool DecodeNetpbm(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeNetpbm(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeNetpbm(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 
 /// <summary>
 /// Decode QOI (Quite OK Image) to BGRA pixels
@@ -139,14 +139,14 @@ bool DecodeNetpbm(const uint8_t* data, size_t size,
 bool DecodeQOI(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::pmr::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeQOI(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                std::vector<uint8_t>& outPixels,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 bool DecodeQOI(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
                AllocatorFunc alloc,
-               CancelPredicate checkCancel = nullptr);
+               CancelPredicate checkCancel = {});
 
 } // namespace WuffsLoader

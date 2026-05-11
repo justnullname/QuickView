@@ -7,6 +7,7 @@
 #include "HelpOverlay.h"
 #include "EditState.h"
 #include "ImageLoaderSimd.h"
+#include <vector>
 #include <psapi.h>
 #include <algorithm>
 #include <cmath>
@@ -53,8 +54,6 @@ static bool IsHdrLikeContent(const CImageLoader::ImageMetadata& metadata);
 static std::wstring BuildDynamicRangeLabel(const CImageLoader::ImageMetadata& metadata);
 static std::wstring BuildHdrSummary(const CImageLoader::ImageMetadata& metadata);
 static std::wstring BuildHdrDetail(const QuickView::HdrStaticMetadata& hdr);
-
-
 
 static int ClampToInt(float value, int low, int high) {
     if (high < low) return low;
@@ -516,7 +515,7 @@ bool UIRenderer::RenderAll(HWND hwnd) {
     // DO NOT add auto-dirty checks here - they can block initial rendering.
     // RequestRepaint() should be called when UI state changes.
     
-    // ===== Static Layer (浣庨鏇存柊) =====
+    // ===== Static Layer (低频更新) =====
     if (m_isStaticDirty) {
         ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Static, nullptr);
         if (dc) {
@@ -540,25 +539,25 @@ bool UIRenderer::RenderAll(HWND hwnd) {
 
     // ===== Dynamic Layer (Topmost, High Freq) =====
     if (m_isDynamicDirty) {
-        // 鏅鸿兘 Dirty Rects: 鍙湁 OSD 鍙樺寲鏃朵娇鐢ㄥ眬閮ㄦ洿鏂?
+        // 智能 Dirty Rects: 只有 OSD 变化时使用局部更新
         bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty;
         
         if (useOSDDirtyRect && m_osdOpacity > 0.01f) {
-            // 浠?OSD 闇€瑕佹洿鏂?- 浣跨敤 Dirty Rects
+            // 只 OSD 需要更新 - 使用 Dirty Rects
             RECT osdRect = CalculateOSDDirtyRect();
             ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, &osdRect);
             if (dc) {
-                // 鍒涘缓鐢诲埛
+                // 创建画刷
                 ComPtr<ID2D1SolidColorBrush> whiteBrush;
                 dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
                 m_whiteBrush = whiteBrush;
                 
-                DrawOSD(dc, hwnd); // 灞€閮ㄧ粯鍒?
+                DrawOSD(dc, hwnd); // 局部绘制
                 m_compEngine->EndLayerUpdate(UILayer::Dynamic);
                 rendered = true;
             }
         } else {
-            // 鍏ㄩ噺鏇存柊
+            // 全量更新
             ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
             if (dc) {
                 RenderDynamicLayer(dc, hwnd);
@@ -567,7 +566,7 @@ bool UIRenderer::RenderAll(HWND hwnd) {
             }
         }
         
-        // 閲嶇疆鎵€鏈夎剰鏍囪
+        // 重置所有脏标记
         m_isDynamicDirty = false;
         m_osdDirty = false;
         m_tooltipDirty = false;
@@ -582,7 +581,7 @@ bool UIRenderer::RenderAll(HWND hwnd) {
 // ============================================================================
 
 void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
-    // 鍒涘缓鐢诲埛 (姣忓眰鐙珛 context, 闇€瑕佺嫭绔嬪垱寤?
+    // 创建画刷 (每层独立 context, 需要独立创建)
     // [Fix] Clear surface before drawing to prevent "ghosting" of previous state (e.g. pinned vs unpinned background)
     dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
@@ -651,7 +650,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 // ============================================================================
 
 void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
-    // 鍒涘缓鐢诲埛
+    // 创建画刷
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
@@ -726,7 +725,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
             dc->DrawLine(D2D1::Point2F(ex, sy), D2D1::Point2F(ex, sy + cornerLen), cornerBrush.Get(), cw);
             // Bottom-left
             dc->DrawLine(D2D1::Point2F(sx, ey), D2D1::Point2F(sx + cornerLen, ey), cornerBrush.Get(), cw);
-            dc->DrawLine(D2D1::Point2F(sx, ey), D2D1::Point2F(sx, ey - cornerLen), cornerBrush.Get(), cw);
+            dc->DrawLine(D2D1::Point2F(sx, ey), D2D1::Point2F(sx, sy - cornerLen), cornerBrush.Get(), cw);
             // Bottom-right
             dc->DrawLine(D2D1::Point2F(ex, ey), D2D1::Point2F(ex - cornerLen, ey), cornerBrush.Get(), cw);
             dc->DrawLine(D2D1::Point2F(ex, ey), D2D1::Point2F(ex, ey - cornerLen), cornerBrush.Get(), cw);
@@ -739,7 +738,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Grid Tooltip
     DrawGridTooltip(dc);
     
-    // Modal Dialog (鏈€椤跺眰)
+    // Modal Dialog (最顶层)
     RECT clientRect = { 0, 0, (LONG)m_width, (LONG)m_height };
     DrawDialog(dc, clientRect);
 }
@@ -800,7 +799,9 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             
             bool glassDrawn = false;
             if (m_bgCommandList) {
-                std::string key = "OSD_" + std::to_string(index);
+                char buf[32];
+                sprintf_s(buf, "OSD_%d", index);
+                std::string key = buf;
                 auto& geekGlass = GetGlassEngine(key);
                 geekGlass.InitializeResources(dc);
                 QuickView::UI::GeekGlass::GeekGlassConfig config;

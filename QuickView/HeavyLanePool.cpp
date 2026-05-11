@@ -5,10 +5,33 @@ static constexpr const char* CURRENT_MODULE = "HeavyLanePool";
 #include "ImageLoaderSimd.h"
 #include "TileManager.h"
 #include "ToolProcessProtocol.h"
+#include <condition_variable>
+#include <semaphore>
+#include <algorithm>
+#include <limits>
+#include <new>
 #include "AnimationDecoder.h"
 #include <turbojpeg.h>
 #include <chrono>
 #include <winioctl.h>
+
+
+namespace {
+    struct AuxLayerReadyCtx {
+        HeavyLanePool* pool;
+        std::wstring path;
+        ImageID id;
+    };
+
+    struct MmfDeleterCtx {
+        void* mapView;
+        HANDLE hMap;
+    };
+
+    struct SharedPtrCtx {
+        std::shared_ptr<uint8_t[]> ptr;
+    };
+}
 
 
 using namespace QuickView;
@@ -1163,8 +1186,13 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
     // Access worker to check stopSource
     Worker& self = m_workers[workerId]; 
     
-    auto cancelPred = [&]() {
-        return st.stop_requested() || self.stopSource.stop_requested();
+    struct CancelCtx { std::stop_token* st; std::stop_source* src; };
+    CancelCtx cancelCtx = { &st, &self.stopSource };
+    QuickView::SimplePredicate cancelPred;
+    cancelPred.ctx = &cancelCtx;
+    cancelPred.pfn = [](void* c) -> bool {
+        auto* cc = static_cast<CancelCtx*>(c);
+        return cc->st->stop_requested() || cc->src->stop_requested();
     };
 
     if (cancelPred()) return;
@@ -1254,7 +1282,7 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                                 rawFrame.height = targetH;
                                 rawFrame.stride = (int)dstStride;
                                 rawFrame.format = QuickView::PixelFormat::BGRA8888;
-                                rawFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                                rawFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                                 rawFrame.srcWidth = mW;   // [v10.1] Preserve original resolution
                                 rawFrame.srcHeight = mH;  // for cache-hit metadata recovery
                                 
@@ -1289,16 +1317,24 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
               // Only use memory loader for formats that have true Zero-Copy memory decoders (JPEG).
               // For WIC formats (TIFF, AVIF, etc), loading from MMF via SHCreateMemStream COPIES the file,
               // leading to massive memory bloat/OOM for 1GB+ large files. Pass directly to file loader instead.
-              rawFrame.onAuxLayerReady = [this, cmdPath = job.path, cmdId = job.imageId](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
-                  EngineEvent ev;
-                  ev.type = EventType::AuxLayerReady;
-                  ev.filePath = cmdPath;
-                  ev.imageId = cmdId;
-                  ev.auxLayer = std::move(aux);
-                  ev.blendOp = op;
-                  ev.shaderPayload = payload;
-                  this->QueueResult(std::move(ev));
-              };
+              {
+                  auto* ctx = new(std::nothrow) AuxLayerReadyCtx{ this, job.path, job.imageId };
+                  if (ctx) {
+                      rawFrame.onAuxLayerReady.ctx = ctx;
+                      rawFrame.onAuxLayerReady.pfn = [](void* c, std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                          auto* lctx = static_cast<AuxLayerReadyCtx*>(c);
+                          EngineEvent ev;
+                          ev.type = EventType::AuxLayerReady;
+                          ev.filePath = lctx->path;
+                          ev.imageId = lctx->id;
+                          ev.auxLayer = std::move(aux);
+                          ev.blendOp = op;
+                          ev.shaderPayload = payload;
+                          lctx->pool->QueueResult(std::move(ev));
+                      };
+                      rawFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
+                  }
+              }
 
               const auto fmt = m_titanFormat.load();
               bool supportsMmfDecode = QuickView::SupportsTitanMemoryDecode(fmt);
@@ -1768,7 +1804,7 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                     safeFrame->srcWidth = rawFrame.srcWidth;   // [v10.1] Preserve original resolution
                     safeFrame->srcHeight = rawFrame.srcHeight;
                     safeFrame->exifOrientation = rawFrame.exifOrientation; // [Fix] Propagate Orientation to cache
-                    safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
+                    safeFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
 
                     // [CMS] Propagate color profile and HDR metadata
                     safeFrame->iccProfile = std::move(rawFrame.iccProfile);
@@ -1793,7 +1829,7 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                         uint8_t* auxHeap = new uint8_t[auxSize];
                         memcpy(auxHeap, rawFrame.auxLayer->pixels, auxSize);
                         safeAux->pixels = auxHeap;
-                        safeAux->deleter = [](uint8_t* p) { delete[] p; };
+                        safeAux->deleter = QuickView::MemoryDeleter::FromDeleteArray();
                         safeFrame->auxLayer = std::move(safeAux);
                     }
                 }
@@ -2094,6 +2130,11 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
         if (st.stop_requested()) return;
         if (m_generationID.load(std::memory_order_acquire) != warmupGen) return;
 
+        // [POD Cancel] Build cancel predicate from stop_token
+        QuickView::SimplePredicate cancelPred;
+        cancelPred.ctx = const_cast<std::stop_token*>(&st);
+        cancelPred.pfn = [](void* c) -> bool { return static_cast<std::stop_token*>(c)->stop_requested(); };
+
         // Skip when backing store already exists for this image.
         const uint8_t* existingView = nullptr;
         int bw = 0, bh = 0, bs = 0;
@@ -2141,13 +2182,10 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
 
             int decW = 0, decH = 0, decStride = 0;
 
-            // Note: FullDecodeToMMF subscribes to FRAME_PROGRESSION for diagnostic logging,
-            // but does NOT flush or swizzle at DC stage (causes data race with libjxl's
-            // continued AC writes). Full decode completes, then swizzle once.
-            // [Fix] pass cancellation check to FullDecodeToMMF
             hr = CImageLoader::FullDecodeToMMF(mmf->data(), mmf->size(), mmfView, mmfSize,
-                                               &decW, &decH, &decStride, nullptr,
-                                               [&st]() { return st.stop_requested(); });
+                                               &decW, &decH, &decStride, {},
+                                               cancelPred);
+            // [Fix] pass cancellation check to FullDecodeToMMF
 
             if (st.stop_requested() || m_generationID.load(std::memory_order_acquire) != warmupGen) return;
 
@@ -2184,26 +2222,37 @@ void HeavyLanePool::EnsureMasterWarmup(const std::wstring& path, ImageID imageId
             ResetMasterBackingStore(); // Clean up any partial empty MMF
 
             QuickView::RawImageFrame fullFrame;
-            fullFrame.onAuxLayerReady = [this, cmdPath = path, cmdId = imageId](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
-                EngineEvent ev;
-                ev.type = EventType::AuxLayerReady;
-                ev.filePath = cmdPath;
-                ev.imageId = cmdId;
-                ev.auxLayer = std::move(aux);
-                ev.blendOp = op;
-                ev.shaderPayload = payload;
-                this->QueueResult(std::move(ev));
-            };
+            {
+                auto* ctx = new(std::nothrow) AuxLayerReadyCtx{ this, path, imageId };
+                if (ctx) {
+                    fullFrame.onAuxLayerReady.ctx = ctx;
+                    fullFrame.onAuxLayerReady.pfn = [](void* c, std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                        auto* lctx = static_cast<AuxLayerReadyCtx*>(c);
+                        EngineEvent ev;
+                        ev.type = EventType::AuxLayerReady;
+                        ev.filePath = lctx->path;
+                        ev.imageId = lctx->id;
+                        ev.auxLayer = std::move(aux);
+                        ev.blendOp = op;
+                        ev.shaderPayload = payload;
+                        lctx->pool->QueueResult(std::move(ev));
+                    };
+                    fullFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
+                }
+            }
 
-            // [Fix] pass cancellation check to FullDecodeFromMemory
             hr = CImageLoader::FullDecodeFromMemory(mmf->data(), mmf->size(), &fullFrame,
-                                                    [&st]() { return st.stop_requested(); });
+                                                    cancelPred);
             if ((FAILED(hr) || !fullFrame.IsValid()) && !st.stop_requested()) {
-                auto cancelPred = [&]() {
-                    return st.stop_requested() ||
-                           m_generationID.load(std::memory_order_acquire) != warmupGen;
+                struct WarmupCancelCtx { std::stop_token* st; std::atomic<uint32_t>* genId; uint32_t gen; };
+                WarmupCancelCtx wcc = { const_cast<std::stop_token*>(&st), &m_generationID, warmupGen };
+                QuickView::SimplePredicate warmupCancel;
+                warmupCancel.ctx = &wcc;
+                warmupCancel.pfn = [](void* c) -> bool {
+                    auto* wc = static_cast<WarmupCancelCtx*>(c);
+                    return wc->st->stop_requested() || wc->genId->load(std::memory_order_acquire) != wc->gen;
                 };
-                hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, cancelPred, nullptr, true, false, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
+                hr = m_loader->LoadToFrame(path.c_str(), &fullFrame, nullptr, 0, 0, nullptr, warmupCancel, nullptr, true, false, m_targetHdrHeadroomStops.load(std::memory_order_relaxed));
             }
 
             if (st.stop_requested()) return;
@@ -2890,10 +2939,18 @@ HRESULT HeavyLanePool::LaunchDecodeWorker(
     outFrame.stride = static_cast<int>(header->stride);
     outFrame.format = QuickView::PixelFormat::BGRA8888;
     // Capture MMF handles; release when RawImageFrame is destroyed
-    outFrame.memoryDeleter = [mapView, hMap](uint8_t*) {
-        UnmapViewOfFile(mapView);
-        CloseHandle(hMap);
-    };
+    {
+        auto* ctx = new(std::nothrow) MmfDeleterCtx{ mapView, hMap };
+        if (ctx) {
+            outFrame.memoryDeleter.ctx = ctx;
+            outFrame.memoryDeleter.pfn = [](uint8_t*, void* c) {
+                auto* lctx = static_cast<MmfDeleterCtx*>(c);
+                UnmapViewOfFile(lctx->mapView);
+                CloseHandle(lctx->hMap);
+            };
+            outFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<MmfDeleterCtx*>(c); };
+        }
+    }
 
     // Propagate EXIF orientation from child
     outMeta.ExifOrientation = static_cast<int>(header->exifOrientation);
@@ -3017,7 +3074,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.height = targetH;
                     fullFrame.stride = (int)dstStride;
                     fullFrame.format = QuickView::PixelFormat::BGRA8888; // Assumed for memory formats
-                    fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                    fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                     hr = S_OK;
                     
                     QV_LOG("P15_MasterRoute",
@@ -3034,7 +3091,14 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.height = targetH;
                     fullFrame.stride = (int)dstStride;
                     fullFrame.format = QuickView::PixelFormat::BGRA8888;
-                    fullFrame.memoryDeleter = [masterPixels]([[maybe_unused]] uint8_t* p) mutable { masterPixels.reset(); };
+                    {
+                        auto* ctx = new(std::nothrow) SharedPtrCtx{ masterPixels };
+                        if (ctx) {
+                            fullFrame.memoryDeleter.ctx = ctx;
+                            fullFrame.memoryDeleter.pfn = [](uint8_t*, void* c) { static_cast<SharedPtrCtx*>(c)->ptr.reset(); };
+                            fullFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<SharedPtrCtx*>(c); };
+                        }
+                    }
                     hr = S_OK;
                     QV_LOG("P15_MasterRoute", TraceLoggingString("ZeroCopy LOD0 RAM", "Action"));
                 } else {
@@ -3054,7 +3118,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.height = targetH;
                         fullFrame.stride = (int)dstStride;
                         fullFrame.format = QuickView::PixelFormat::BGRA8888;
-                        fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                        fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                         hr = S_OK;
                         QV_LOG("P15_MasterRoute", TraceLoggingString("MMF CopyOut LOD0", "Action"));
                     }
@@ -3115,7 +3179,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.height = targetH;
                         fullFrame.stride = (int)dstStride;
                         fullFrame.format = QuickView::PixelFormat::BGRA8888;
-                        fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                        fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                         hr = S_OK;
                         
                         QV_LOG("P15_MasterRoute",
@@ -3158,16 +3222,24 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
             if (!warmupResolved && FAILED(hr)) {
                 const int targetW = (m_titanSrcW + (1 << lod) - 1) / (1 << lod);
                 const int targetH = (m_titanSrcH + (1 << lod) - 1) / (1 << lod);
-                fullFrame.onAuxLayerReady = [this, cmdPath = job.path, cmdId = job.imageId](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
-                    EngineEvent ev;
-                    ev.type = EventType::AuxLayerReady;
-                    ev.filePath = cmdPath;
-                    ev.imageId = cmdId;
-                    ev.auxLayer = std::move(aux);
-                    ev.blendOp = op;
-                    ev.shaderPayload = payload;
-                    this->QueueResult(std::move(ev));
-                };
+                {
+                    auto* ctx = new(std::nothrow) AuxLayerReadyCtx{ this, job.path, job.imageId };
+                    if (ctx) {
+                        fullFrame.onAuxLayerReady.ctx = ctx;
+                        fullFrame.onAuxLayerReady.pfn = [](void* c, std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                            auto* lctx = static_cast<AuxLayerReadyCtx*>(c);
+                            EngineEvent ev;
+                            ev.type = EventType::AuxLayerReady;
+                            ev.filePath = lctx->path;
+                            ev.imageId = lctx->id;
+                            ev.auxLayer = std::move(aux);
+                            ev.blendOp = op;
+                            ev.shaderPayload = payload;
+                            lctx->pool->QueueResult(std::move(ev));
+                        };
+                        fullFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
+                    }
+                }
                 hr = m_loader->LoadToFrame(job.path.c_str(), &fullFrame, nullptr, targetW, targetH, &loader, checkCancel, nullptr, true, false, job.targetHdrHeadroomStops);
                 if (SUCCEEDED(hr)) {
                     loader = L"WIC(LOD-Fallback)";
@@ -3234,7 +3306,7 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                             fullFrame.width = targetW;
                             fullFrame.height = targetH;
                             fullFrame.stride = (int)dstStride;
-                            fullFrame.memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                            fullFrame.memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
                             
                             QV_LOG("P15_MasterRoute",
                                 TraceLoggingString("SoftwareDownscale", "Action"),
@@ -3247,7 +3319,14 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                         fullFrame.width = targetW;
                         fullFrame.height = targetH;
                         fullFrame.stride = (int)dstStride;
-                        fullFrame.memoryDeleter = [frameSharedPtr]([[maybe_unused]] uint8_t* p) mutable { frameSharedPtr.reset(); };
+                        {
+                            auto* ctx = new(std::nothrow) SharedPtrCtx{ frameSharedPtr };
+                            if (ctx) {
+                                fullFrame.memoryDeleter.ctx = ctx;
+                                fullFrame.memoryDeleter.pfn = [](uint8_t*, void* c) { static_cast<SharedPtrCtx*>(c)->ptr.reset(); };
+                                fullFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<SharedPtrCtx*>(c); };
+                            }
+                        }
                         
                         QV_LOG("P15_MasterRoute", TraceLoggingString("ZeroCopy LOD0", "Action"));
                     }
@@ -3257,7 +3336,14 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                     fullFrame.width = fullFrame.width;
                     fullFrame.height = fullFrame.height;
                     fullFrame.stride = fullFrame.stride;
-                    fullFrame.memoryDeleter = [frameSharedPtr]([[maybe_unused]] uint8_t* p) mutable { frameSharedPtr.reset(); };
+                    {
+                        auto* ctx = new(std::nothrow) SharedPtrCtx{ frameSharedPtr };
+                        if (ctx) {
+                            fullFrame.memoryDeleter.ctx = ctx;
+                            fullFrame.memoryDeleter.pfn = [](uint8_t*, void* c) { static_cast<SharedPtrCtx*>(c)->ptr.reset(); };
+                            fullFrame.memoryDeleter.ctxDeleter = [](void* c) { delete static_cast<SharedPtrCtx*>(c); };
+                        }
+                    }
                     
                     QV_LOG("DecodeWorker_Result",
                         TraceLoggingString("DirectLOD Applied", "Action"),
@@ -3375,7 +3461,10 @@ HRESULT HeavyLanePool::SliceTileFromLODCache(const JobInfo& job, RawImageFrame& 
     out.stride = dstStride;
     out.format = QuickView::PixelFormat::BGRA8888;
     auto* mgr = &m_tileMemory;
-    out.memoryDeleter = [mgr](uint8_t* p) { mgr->Free(p); };
+    {
+        out.memoryDeleter.ctx = mgr;
+        out.memoryDeleter.pfn = [](uint8_t* p, void* c) { static_cast<QuickView::TileMemoryManager*>(c)->Free(p); };
+    }
     
     loader = L"LODCache Slice";
     return S_OK;

@@ -7,19 +7,112 @@
 // and the RenderEngine consumes it directly.
 // ============================================================================
 
-#include <cstdint>
-#include <memory>
-#include <functional>
-#include <algorithm>
-#include <malloc.h>
-#include <functional>
-#include <utility>
-#include <string>
-#include <vector>
-#include <memory>
 #include "DisplayColorInfo.h"
+#include <cstdint>
+#include <malloc.h>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 
 namespace QuickView {
+
+// ============================================================================
+// Lightweight Callbacks (Zero-Exceptions, C-Style Context Passing)
+// ============================================================================
+
+struct MemoryDeleter {
+  void (*pfn)(uint8_t *pixels, void *ctx) = nullptr;
+  void *ctx = nullptr;
+  void (*ctxDeleter)(void *ctx) =
+      nullptr; // Optional: destroy heap-allocated ctx
+
+  void Clear() noexcept {
+    pfn = nullptr;
+    ctx = nullptr;
+    ctxDeleter = nullptr;
+  }
+  void operator()(uint8_t *pixels) const {
+    if (pfn)
+      pfn(pixels, ctx);
+  }
+  void DestroyCtx() {
+    if (ctxDeleter && ctx) {
+      ctxDeleter(ctx);
+      ctx = nullptr;
+      ctxDeleter = nullptr;
+    }
+  }
+  explicit operator bool() const { return pfn != nullptr; }
+
+  static MemoryDeleter FromAlignedFree() {
+    return {[](uint8_t *p, void *) { _aligned_free(p); }, nullptr, nullptr};
+  }
+  static MemoryDeleter FromDeleteArray() {
+    return {[](uint8_t *p, void *) { delete[] p; }, nullptr, nullptr};
+  }
+  static MemoryDeleter FromFree() {
+    return {[](uint8_t *p, void *) { free(p); }, nullptr, nullptr};
+  }
+};
+
+struct SimplePredicate {
+  bool (*pfn)(void *ctx) = nullptr;
+  void *ctx = nullptr;
+
+  void Clear() noexcept {
+    pfn = nullptr;
+    ctx = nullptr;
+  }
+  bool operator()() const { return pfn ? pfn(ctx) : false; }
+  explicit operator bool() const { return pfn != nullptr; }
+};
+
+struct SimpleCallback {
+  void (*pfn)(void *ctx) = nullptr;
+  void *ctx = nullptr;
+
+  void Clear() noexcept {
+    pfn = nullptr;
+    ctx = nullptr;
+  }
+  void operator()() const {
+    if (pfn)
+      pfn(ctx);
+  }
+  explicit operator bool() const { return pfn != nullptr; }
+};
+
+struct AllocatorCallback {
+  uint8_t *(*pfn)(void *ctx, size_t size) = nullptr;
+  void *ctx = nullptr;
+
+  void Clear() noexcept {
+    pfn = nullptr;
+    ctx = nullptr;
+  }
+  uint8_t *operator()(size_t size) const {
+    return pfn ? pfn(ctx, size) : nullptr;
+  }
+  explicit operator bool() const { return pfn != nullptr; }
+};
+
+struct FreeCallback {
+  void (*pfn)(void *ctx, uint8_t *ptr) = nullptr;
+  void *ctx = nullptr;
+
+  void Clear() noexcept {
+    pfn = nullptr;
+    ctx = nullptr;
+  }
+  void operator()(uint8_t *ptr) const {
+    if (pfn)
+      pfn(ctx, ptr);
+  }
+  explicit operator bool() const { return pfn != nullptr; }
+};
+
 enum class PaintLayer : uint32_t {
     None    = 0,
     Static  = 1 << 0,   // Toolbar, Window Controls, Info Panel, Settings
@@ -92,7 +185,7 @@ struct AuxLayer {
     int height = 0;
     int stride = 0;         // Bytes per row
     int bytesPerPixel = 1;  // 1 for grayscale Gain Map
-    std::function<void(uint8_t*)> deleter;
+    MemoryDeleter deleter;
 
     ~AuxLayer() {
         if (pixels && deleter) deleter(pixels);
@@ -134,7 +227,7 @@ struct AuxLayer {
         cloned->pixels = (uint8_t*)_aligned_malloc(size, 64);
         if (cloned->pixels) {
             memcpy(cloned->pixels, pixels, size);
-            cloned->deleter = [](uint8_t* p) { _aligned_free(p); };
+            cloned->deleter = MemoryDeleter::FromAlignedFree();
         }
         return cloned;
     }
@@ -181,6 +274,33 @@ struct alignas(16) GpuShaderPayload {
     uint32_t _pad6 = 0;
 };
 static_assert(sizeof(GpuShaderPayload) % 16 == 0, "GpuShaderPayload must be 16-byte aligned for D3D11 cbuffer");
+
+struct AuxLayerCallback {
+  void (*pfn)(void *ctx, std::unique_ptr<AuxLayer> aux, GpuBlendOp op,
+              GpuShaderPayload payload) = nullptr;
+  void *ctx = nullptr;
+  void (*ctxDeleter)(void *ctx) =
+      nullptr; // Optional: destroy heap-allocated ctx
+
+  void Clear() noexcept {
+    pfn = nullptr;
+    ctx = nullptr;
+    ctxDeleter = nullptr;
+  }
+  void DestroyCtx() {
+    if (ctxDeleter && ctx) {
+      ctxDeleter(ctx);
+      ctx = nullptr;
+      ctxDeleter = nullptr;
+    }
+  }
+  void operator()(std::unique_ptr<AuxLayer> aux, GpuBlendOp op,
+                  GpuShaderPayload payload) const {
+    if (pfn)
+      pfn(ctx, std::move(aux), op, payload);
+  }
+  explicit operator bool() const { return pfn != nullptr; }
+};
 
 // ============================================================================
 // Animation Types
@@ -267,14 +387,14 @@ struct RawImageFrame {
 
     // === Lifecycle Management ===
     // Callback to release memory when frame is destroyed.
-    // - For Arena: nullptr (Arena manages memory)
-    // - For malloc (stb): [](uint8_t* p) { stbi_image_free(p); }
-    // - For new[]: [](uint8_t* p) { delete[] p; }
-    std::function<void(uint8_t*)> memoryDeleter = nullptr;
+    // - For Arena: empty (Arena manages memory)
+    // - For malloc (stb): MemoryDeleter wrapper
+    // - For new[]: MemoryDeleter::FromDeleteArray()
+    MemoryDeleter memoryDeleter;
 
     // [Async Gain Map] Callback to post AuxLayer back to main engine
-    std::function<void(std::unique_ptr<QuickView::AuxLayer>, QuickView::GpuBlendOp, QuickView::GpuShaderPayload)> onAuxLayerReady;
-    
+    AuxLayerCallback onAuxLayerReady;
+
     // === Helper Methods ===
     
     /// Check if frame contains valid data (pixels for raster, or XML for SVG)
@@ -340,7 +460,8 @@ struct RawImageFrame {
         width = 0;
         height = 0;
         stride = 0;
-        memoryDeleter = nullptr;
+        memoryDeleter.Clear();
+        onAuxLayerReady.Clear();
         svg.reset(); // [D2D Native] Release SVG data
         iccProfile.clear(); // Ensure it is cleared on reset
         // [GPU Pipeline] Release auxiliary layer
@@ -354,7 +475,7 @@ struct RawImageFrame {
     [[nodiscard]] uint8_t* Detach() noexcept {
         uint8_t* temp = pixels;
         pixels = nullptr;
-        memoryDeleter = nullptr;
+        memoryDeleter.Clear();
         return temp;
     }
 
@@ -374,7 +495,8 @@ private:
         srcWidth = other.srcWidth;
         srcHeight = other.srcHeight;
         memoryDeleter = std::move(other.memoryDeleter);
-        
+        onAuxLayerReady = std::move(other.onAuxLayerReady);
+
         // [D2D Native] Move SVG Data
         svg = std::move(other.svg);
         

@@ -1,6 +1,4 @@
-#include "pch.h"
 #include "TileMemoryManager.h"
-#include <new> // for std::bad_alloc
 
 namespace QuickView {
 

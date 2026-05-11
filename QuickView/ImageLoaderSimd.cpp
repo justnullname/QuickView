@@ -1,3 +1,4 @@
+#include <cstdint>
 // ImageLoaderSimd.cpp - Highway dynamic-dispatch SIMD implementations
 // Uses the standard HWY_TARGET_INCLUDE + foreach_target pattern for
 // automatic runtime dispatch across SSE4 / AVX2 / AVX-512 / NEON.

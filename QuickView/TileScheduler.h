@@ -3,6 +3,11 @@
 #include "TileTypes.h"
 #include "MappedFile.h"
 #include <vector>
+#include <string>
+#include <memory>
+#include <unordered_map>
+#include <chrono>
+#include <type_traits>
 #include <mutex>
 #include <optional>
 #include "SystemInfo.h"

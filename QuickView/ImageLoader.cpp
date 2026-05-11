@@ -1,7 +1,9 @@
 #include "pch.h"
 #include <filesystem>
-#include <fstream> 
 #include <memory>
+#include <string>
+#include <vector>
+#include <cstdint>
 #include <map>
 #include <DirectXPackedVector.h>
 #include <wincodec.h>
@@ -10,7 +12,6 @@
 #include "ImageLoader.h"
 #include "QuickViewETW.h"
 static constexpr const char* CURRENT_MODULE = "ImageLoader";
-#include "DebugMetrics.h"
 #include "AnimationDecoder.h"
 #include "MemoryArena.h" // [Fix] Include for QuantumArena definition
 #include "EditState.h" // For g_runtime
@@ -374,11 +375,11 @@ namespace QuickView {
         struct DecodeContext {
             // Memory Allocator: Returns pointer to allocated memory.
             // Caller (Codec) calculates 'totalSize' based on aligned stride and height.
-            std::function<uint8_t* (size_t size)> allocator;
-            std::function<void(uint8_t*)> freeFunc;
+            QuickView::AllocatorCallback allocator;
+            QuickView::FreeCallback freeFunc;
 
             // Runtime Control
-            std::function<bool()> checkCancel;
+            QuickView::SimplePredicate checkCancel;
             std::stop_token stopToken;
 
             // Parameters
@@ -403,7 +404,7 @@ namespace QuickView {
             bool isTitanMode = false;
 
             // [Async Gain Map] Callback to post AuxLayer back to main engine
-            std::function<void(std::unique_ptr<QuickView::AuxLayer>, QuickView::GpuBlendOp, QuickView::GpuShaderPayload)> onAuxLayerReady;
+            QuickView::AuxLayerCallback onAuxLayerReady;
         };
 
         struct DecodeResult {
@@ -675,9 +676,9 @@ void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult& result,
     outFrame->stride = result.stride;
     outFrame->format = result.format;
     if (arena && arena->Owns(result.pixels)) {
-        outFrame->memoryDeleter = nullptr;
+        outFrame->memoryDeleter.Clear();
     } else {
-        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
     }
 }
 
@@ -985,10 +986,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         if (arena) {
             // [Fix] Use Allocate instead of Alloc
             outFrame->pixels = (uint8_t*)arena->Allocate(bufSize, 64);
-            outFrame->memoryDeleter = nullptr; // Arena owned
+            outFrame->memoryDeleter.Clear(); // Arena owned
         } else {
              outFrame->pixels = (uint8_t*)_aligned_malloc(bufSize, 64);
-             outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+             outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         }
         
         if (!outFrame->pixels) {
@@ -1024,13 +1025,13 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
     {
         // Set up context
         DecodeContext ctx;
-        ctx.allocator = [&](size_t s) -> uint8_t* { 
-            if (arena) return static_cast<uint8_t*>(arena->Allocate(s, 64)); 
-            return static_cast<uint8_t*>(_aligned_malloc(s, 64)); 
+        ctx.allocator.ctx = arena;
+        ctx.allocator.pfn = [](void* c, size_t s) -> uint8_t* {
+            auto* a = static_cast<QuantumArena*>(c);
+            if (a) return static_cast<uint8_t*>(a->Allocate(s, 64));
+            return static_cast<uint8_t*>(_aligned_malloc(s, 64));
         };
-        ctx.freeFunc = [&](uint8_t*) { 
-            // _aligned_free handled by deleters below
-        };
+        // freeFunc: deleters below handle lifecycle
         ctx.targetWidth = targetWidth;
         ctx.targetHeight = targetHeight;
         ctx.pLoaderName = pLoaderName;
@@ -1373,11 +1374,8 @@ HRESULT CImageLoader::LoadFromFile(LPCWSTR filePath, IWICBitmapSource** bitmap) 
 #include <string>
 #include <algorithm>
 #include <vector>
-#include <sstream>
-#include <iomanip>
 #include "exif.h"
  // [v6.0] EasyExif
-#include "ImageEngine.h"
 
 // Wuffs (Google's memory-safe decoder)
 // Implementation is in WuffsImpl.cpp with selective module loading
@@ -1802,12 +1800,13 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         if (tileManager && finalSize <= TILE_SLAB_SIZE) {
             outFrame->pixels = (uint8_t*)tileManager->Allocate();
             if (outFrame->pixels) {
-                outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+                outFrame->memoryDeleter.ctx = tileManager;
+            outFrame->memoryDeleter.pfn = [](uint8_t* p, void* ctx) { static_cast<QuickView::TileMemoryManager*>(ctx)->Free(p); };
             }
         }
         if (!outFrame->pixels) {
             outFrame->pixels = (uint8_t*)_aligned_malloc(finalSize, 64);
-            outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+            outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         }
         
         if (!outFrame->pixels) {
@@ -1852,17 +1851,18 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         if (tileManager && totalSize <= TILE_SLAB_SIZE) {
             outFrame->pixels = (uint8_t*)tileManager->Allocate();
             if (outFrame->pixels) {
-                outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+                outFrame->memoryDeleter.ctx = tileManager;
+            outFrame->memoryDeleter.pfn = [](uint8_t* p, void* ctx) { static_cast<QuickView::TileMemoryManager*>(ctx)->Free(p); };
             }
         }
         
         if (!outFrame->pixels) {
              if (arena) {
                 outFrame->pixels = (uint8_t*)arena->Allocate(totalSize, 64);
-                outFrame->memoryDeleter = nullptr; // Arena managed
+                outFrame->memoryDeleter.Clear(); // Arena managed
             } else {
                 outFrame->pixels = (uint8_t*)_aligned_malloc(totalSize, 64);
-                outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+                outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
             }
         }
         
@@ -1962,10 +1962,10 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
     }
 
     DecodeContext ctx;
-    ctx.allocator = [](size_t s) -> uint8_t* {
+    ctx.allocator.pfn = [](void*, size_t s) -> uint8_t* {
         return static_cast<uint8_t*>(_aligned_malloc(s, 64));
     };
-    ctx.freeFunc = [](uint8_t* p) {
+    ctx.freeFunc.pfn = [](void*, uint8_t* p) {
         _aligned_free(p);
     };
     ctx.checkCancel = checkCancel;
@@ -1994,7 +1994,7 @@ HRESULT CImageLoader::FullDecodeFromMemory(const uint8_t* data, size_t size,
 HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
                                        uint8_t* mmfBuf, size_t mmfBufSize,
                                        int* outW, int* outH, int* outStride,
-                                       [[maybe_unused]] std::function<void()> dcReadyCallback,
+                                       [[maybe_unused]] QuickView::SimpleCallback dcReadyCallback,
                                        CancelPredicate checkCancel) {
     if (!data || size < 4 || !mmfBuf || !outW || !outH || !outStride) return E_INVALIDARG;
 
@@ -2140,12 +2140,16 @@ HRESULT CImageLoader::FullDecodeToMMF(const uint8_t* data, size_t size,
         uint32_t w = 0, h = 0;
         bool allocOK = true;
 
-        auto allocator = [&](size_t sz) -> uint8_t* {
-            if (sz > mmfBufSize) { allocOK = false; return nullptr; }
-            return mmfBuf; // Direct-to-MMF: Wuffs writes directly into MMF view
+        struct MmfContext { size_t sz; bool* ok; uint8_t* buf; } mctx = { mmfBufSize, &allocOK, mmfBuf };
+        QuickView::AllocatorCallback allocator;
+        allocator.ctx = &mctx;
+        allocator.pfn = [](void* context, size_t sz) -> uint8_t* {
+            auto* p = static_cast<MmfContext*>(context);
+            if (sz > p->sz) { *(p->ok) = false; return nullptr; }
+            return p->buf;
         };
 
-        if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, nullptr) || !allocOK) {
+        if (!WuffsLoader::DecodePNG(data, size, &w, &h, allocator, {}) || !allocOK) {
             QV_LOG("MMF_Decode", TraceLoggingString("PNG Failed", "Action"));
             return E_FAIL;
         }
@@ -2313,13 +2317,14 @@ HRESULT CImageLoader::LoadRegionGeneric_StrategyB(LPCWSTR filePath, QuickView::R
     if (tileManager && totalSize <= TILE_SLAB_SIZE) {
         outFrame->pixels = (uint8_t*)tileManager->Allocate();
         if (outFrame->pixels) {
-            outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+            outFrame->memoryDeleter.ctx = tileManager;
+            outFrame->memoryDeleter.pfn = [](uint8_t* p, void* ctx) { static_cast<QuickView::TileMemoryManager*>(ctx)->Free(p); };
         }
     }
     
     if (!outFrame->pixels) {
         outFrame->pixels = (uint8_t*)_aligned_malloc(totalSize, 64);
-        outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+        outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
     }
     
     if (!outFrame->pixels) return E_OUTOFMEMORY;
@@ -2398,17 +2403,18 @@ HRESULT CImageLoader::LoadWebPRegionToFrame(LPCWSTR filePath, QuickView::RegionR
     if (tileManager && totalSize <= TILE_SLAB_SIZE) {
         outFrame->pixels = (uint8_t*)tileManager->Allocate();
         if (outFrame->pixels) {
-            outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+            outFrame->memoryDeleter.ctx = tileManager;
+            outFrame->memoryDeleter.pfn = [](uint8_t* p, void* ctx) { static_cast<QuickView::TileMemoryManager*>(ctx)->Free(p); };
         }
     }
     
     if (!outFrame->pixels) {
         if (arena) {
              outFrame->pixels = (uint8_t*)arena->Allocate(totalSize, 64);
-             outFrame->memoryDeleter = nullptr; 
+             outFrame->memoryDeleter.Clear(); 
         } else {
              outFrame->pixels = (uint8_t*)_aligned_malloc(totalSize, 64);
-             outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+             outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         }
     }
     
@@ -2613,17 +2619,18 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
     if (tileManager && totalSize <= TILE_SLAB_SIZE) {
         outFrame->pixels = (uint8_t*)tileManager->Allocate();
         if (outFrame->pixels) {
-            outFrame->memoryDeleter = [tileManager](uint8_t* p) { tileManager->Free(p); };
+            outFrame->memoryDeleter.ctx = tileManager;
+            outFrame->memoryDeleter.pfn = [](uint8_t* p, void* ctx) { static_cast<QuickView::TileMemoryManager*>(ctx)->Free(p); };
         }
     }
     
     if (!outFrame->pixels) {
         if (arena) {
              outFrame->pixels = (uint8_t*)arena->Allocate(totalSize, 64);
-             outFrame->memoryDeleter = nullptr; 
+             outFrame->memoryDeleter.Clear(); 
         } else {
              outFrame->pixels = (uint8_t*)_aligned_malloc(totalSize, 64);
-             outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+             outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         }
     }
     
@@ -3521,7 +3528,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
         std::unique_ptr<RawImageFrame> pFrame(new (std::nothrow) RawImageFrame());
         if (!pFrame) return E_OUTOFMEMORY;
 
-        HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetSize, targetSize, &pData->loaderName, nullptr, nullptr);
+        HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetSize, targetSize, &pData->loaderName, {}, {});
         if (SUCCEEDED(hr) && pFrame->IsSvg() && pFrame->svg) {
             hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW, pFrame->svg->viewBoxH, targetSize, pData);
         } else if (SUCCEEDED(hr) && pFrame->pixels && pFrame->width > 0 && pFrame->height > 0) {
@@ -3544,10 +3551,10 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     ctx.forcePreview = true;
     ctx.targetWidth = targetSize;
     ctx.targetHeight = targetSize;
-    ctx.allocator = [&](size_t s) -> uint8_t* { 
-        pData->pixels.resize(s); return pData->pixels.data(); 
-    };
-    ctx.freeFunc = [&](uint8_t*) { pData->pixels.clear(); };
+    ctx.allocator.ctx = pData;
+    ctx.allocator.pfn = [](void* c, size_t s) -> uint8_t* { auto* d = static_cast<ThumbData*>(c); d->pixels.resize(s); return d->pixels.data(); };
+    ctx.freeFunc.ctx = pData;
+    ctx.freeFunc.pfn = [](void* c, uint8_t*) { static_cast<ThumbData*>(c)->pixels.clear(); };
     std::wstring loaderName;
     ctx.pLoaderName = &loaderName;
     
@@ -3586,7 +3593,7 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     // 2. Full compatibility fallback through the main loader chain.
     ComPtr<IWICBitmap> wicBitmap;
     std::wstring wicLoader;
-    HRESULT wicHr = LoadToMemory(filePath, &wicBitmap, &wicLoader, false, nullptr, targetSize, targetSize);
+    HRESULT wicHr = LoadToMemory(filePath, &wicBitmap, &wicLoader, false, {}, targetSize, targetSize);
     if (SUCCEEDED(wicHr) && wicBitmap) {
         HRESULT copyHr = CopyWicBitmapToThumbData(wicBitmap.Get(), pData);
         if (SUCCEEDED(copyHr)) {
@@ -3643,10 +3650,10 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     ctx.forcePreview = true;
     ctx.targetWidth = targetSize;
     ctx.targetHeight = targetSize;
-    ctx.allocator = [&](size_t s) -> uint8_t* {
-        pData->pixels.resize(s); return pData->pixels.data(); 
-    };
-    ctx.freeFunc = [&](uint8_t*) { pData->pixels.clear(); };
+    ctx.allocator.ctx = pData;
+    ctx.allocator.pfn = [](void* c, size_t s) -> uint8_t* { auto* d = static_cast<ThumbData*>(c); d->pixels.resize(s); return d->pixels.data(); };
+    ctx.freeFunc.ctx = pData;
+    ctx.freeFunc.pfn = [](void* c, uint8_t*) { static_cast<ThumbData*>(c)->pixels.clear(); };
     ctx.pLoaderName = nullptr; 
     // Capture loader name if possible? pData->loaderName is wstring.
     // DecodeContext uses std::wstring*.
@@ -4130,8 +4137,8 @@ HRESULT CImageLoader::LoadWebP(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMet
     using namespace QuickView::Codec;
     
     DecodeContext ctx;
-    ctx.allocator = [&](size_t s) -> uint8_t* { return new (std::nothrow) uint8_t[s]; };
-    ctx.freeFunc = [&](uint8_t* p) { delete[] p; };
+    ctx.allocator.pfn = [](void*, size_t s) -> uint8_t* { return new (std::nothrow) uint8_t[s]; };
+    ctx.freeFunc.pfn = [](void*, uint8_t* p) { delete[] p; };
     std::wstring details;
     ctx.pFormatDetails = &details;
     
@@ -4630,7 +4637,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
          HRESULT hr = LoadTgaWuffs(filePath, ppBitmap, checkCancel);
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs TGA"; return S_OK; }
     }
-     else if (detectedFmt == L"WBMP") {
+    else if (detectedFmt == L"WBMP") {
          HRESULT hr = LoadWbmpWuffs(filePath, ppBitmap, checkCancel);
          if (SUCCEEDED(hr)) { if (pLoaderName) *pLoaderName = L"Wuffs WBMP"; return S_OK; }
     }
@@ -4642,8 +4649,8 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap** ppBitmap, std:
         std::vector<uint8_t> psdBuf;
         if (ReadFileToVector(filePath, psdBuf)) {
             DecodeContext decodeCtx;
-            decodeCtx.allocator = [](size_t s) -> uint8_t* { return new (std::nothrow) uint8_t[s]; };
-            decodeCtx.freeFunc = [](uint8_t* p) { delete[] p; };
+            decodeCtx.allocator.pfn = [](void*, size_t s) -> uint8_t* { return new (std::nothrow) uint8_t[s]; };
+            decodeCtx.freeFunc.pfn = [](void*, uint8_t* p) { delete[] p; };
             decodeCtx.checkCancel = checkCancel;
 
             DecodeResult decodeRes;
@@ -5454,6 +5461,17 @@ using namespace QuickView::Codec;
 namespace QuickView {
     namespace Codec {
         namespace Wuffs {
+            struct CapturingAllocCtx {
+                const QuickView::AllocatorCallback* inner;
+                uint8_t** outPtr;
+            };
+
+            static uint8_t* CapturingAllocPfn(void* c, size_t s) {
+                auto* ctx = static_cast<CapturingAllocCtx*>(c);
+                *ctx->outPtr = ctx->inner->pfn(ctx->inner->ctx, s);
+                return *ctx->outPtr;
+            }
+
 
             static HRESULT LoadPNG(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
@@ -5463,10 +5481,8 @@ namespace QuickView {
                 
                 // We can wrap the allocator to capture the pointer.
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) -> uint8_t* {
-                    capturedPtr = ctx.allocator(s);
-                    return capturedPtr;
-                };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
                 
                 // Call Wuffs with CAPTURING allocator AND Metadata Info
                 if (!WuffsLoader::DecodePNG(data, size, &w, &h, capturingAlloc, ctx.checkCancel, &info)) return E_FAIL;
@@ -5520,7 +5536,8 @@ namespace QuickView {
             static HRESULT LoadGIF(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
 
                 if (WuffsLoader::DecodeGIF(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
                     result.pixels = capturedPtr;
@@ -5541,7 +5558,8 @@ namespace QuickView {
             static HRESULT LoadBMP(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
 
                 if (WuffsLoader::DecodeBMP(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
                     result.pixels = capturedPtr;
@@ -5562,7 +5580,8 @@ namespace QuickView {
             static HRESULT LoadTGA(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
 
                 if (WuffsLoader::DecodeTGA(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
                     result.pixels = capturedPtr;
@@ -5583,7 +5602,8 @@ namespace QuickView {
             static HRESULT LoadQOI(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
 
                 if (WuffsLoader::DecodeQOI(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
                     result.pixels = capturedPtr;
@@ -5604,7 +5624,8 @@ namespace QuickView {
             static HRESULT LoadWBMP(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
 
                 if (WuffsLoader::DecodeWBMP(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
                     result.pixels = capturedPtr;
@@ -5625,7 +5646,8 @@ namespace QuickView {
             static HRESULT LoadNetPBM(const uint8_t* data, size_t size, const DecodeContext& ctx, DecodeResult& result) {
                 uint32_t w = 0, h = 0;
                 uint8_t* capturedPtr = nullptr;
-                auto capturingAlloc = [&](size_t s) { return capturedPtr = ctx.allocator(s); };
+                CapturingAllocCtx cctx = { &ctx.allocator, &capturedPtr };
+                QuickView::AllocatorCallback capturingAlloc = { .pfn = CapturingAllocPfn, .ctx = &cctx };
 
                 if (WuffsLoader::DecodeNetpbm(data, size, &w, &h, capturingAlloc, ctx.checkCancel)) {
                     result.pixels = capturedPtr;
@@ -5750,8 +5772,7 @@ namespace QuickView {
                         }
                      }
                      
-                     // [v6.2] Handle Color Encoding (ICC)
-                     else if (status == JXL_DEC_COLOR_ENCODING) {
+                    else if (status == JXL_DEC_COLOR_ENCODING) {
                          if (ctx.pMetadata) {
                              size_t iccSize = 0;
                              if (JXL_DEC_SUCCESS == JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &iccSize)) {
@@ -7349,7 +7370,7 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                                                 aux->height = (int)gh;
                                                 aux->stride = gmStride;
                                                 aux->bytesPerPixel = 1;
-                                                aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                                aux->deleter = QuickView::MemoryDeleter::FromAlignedFree();
                                                 success = true;
                                             } else {
                                                 if (gmPixels) _aligned_free(gmPixels);
@@ -7385,7 +7406,7 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath, const DecodeContext& ct
                                                 aux->height = (int)gh;
                                                 aux->stride = gmStride;
                                                 aux->bytesPerPixel = 1;
-                                                aux->deleter = [](uint8_t* p) { _aligned_free(p); };
+                                                aux->deleter = QuickView::MemoryDeleter::FromAlignedFree();
                                                 success = true;
                                             } else {
                                                 if (gmPixels) _aligned_free(gmPixels);
@@ -7458,19 +7479,28 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage* pOutput, s
     pOutput->isValid = false;
     pOutput->pixels = std::pmr::vector<uint8_t>(pmr); // Re-bind to provided allocator
     
-    auto ShouldCancel = [&]() {
-        return st.stop_requested() || (checkCancel && checkCancel());
+    struct CancelWrapperCtx { std::stop_token* st; CancelPredicate* inner; };
+    CancelWrapperCtx cwctx = { &st, &checkCancel };
+    auto ShouldCancelPfn = [](void* c) -> bool {
+        auto* cc = static_cast<CancelWrapperCtx*>(c);
+        return cc->st->stop_requested() || (cc->inner && cc->inner->operator()());
     };
+    QuickView::SimplePredicate ShouldCancel = { .pfn = ShouldCancelPfn, .ctx = &cwctx };
     
     if (ShouldCancel()) return E_ABORT;
 
     // 1. Unified Dispatch (Primary Path)
     DecodeContext ctx;
-    ctx.allocator = [&](size_t s) -> uint8_t* {
-        pOutput->pixels.resize(s);
-        return pOutput->pixels.data();
-    };
-    ctx.freeFunc = [&](uint8_t*) { pOutput->pixels.clear(); };
+    struct AllocCtx { DecodedImage* pOut; };
+    AllocCtx actx = { pOutput };
+    ctx.allocator = { .pfn = [](void* c, size_t s) -> uint8_t* {
+        auto* p = static_cast<AllocCtx*>(c)->pOut;
+        p->pixels.resize(s);
+        return p->pixels.data();
+    }, .ctx = &actx };
+    ctx.freeFunc = { .pfn = [](void* c, uint8_t*) {
+        static_cast<AllocCtx*>(c)->pOut->pixels.clear();
+    }, .ctx = &actx };
     ctx.checkCancel = ShouldCancel;
     ctx.stopToken = st;
     ctx.targetWidth = targetWidth;
@@ -9651,11 +9681,16 @@ HRESULT CImageLoader::LoadThumbWebPFromMemory(const uint8_t* data, size_t size, 
     
     // 2. Call Helper
 
-    auto allocate = [&](size_t s) -> uint8_t* {
-             pData->pixels.resize(s);
-             return pData->pixels.data();
+    struct WebPAllocCtx { ThumbData* p; };
+    WebPAllocCtx wactx = { pData };
+    auto WebPAllocPfn = [](void* c, size_t s) -> uint8_t* {
+        auto* p = static_cast<WebPAllocCtx*>(c)->p;
+        p->pixels.resize(s);
+        return p->pixels.data();
     };
-    auto freeOnFail = [&](uint8_t*) { pData->pixels.clear(); };
+    QuickView::AllocatorCallback allocate = { .pfn = WebPAllocPfn, .ctx = &wactx };
+    auto WebPFreePfn = [](void* c, uint8_t*) { static_cast<WebPAllocCtx*>(c)->p->pixels.clear(); };
+    QuickView::FreeCallback freeOnFail = { .pfn = WebPFreePfn, .ctx = &wactx };
     
     DecodeContext ctx;
     ctx.allocator = allocate;
@@ -10182,9 +10217,12 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
         QuickView::Codec::DecodeContext ctx;
         ctx.forcePreview = true; 
         
-        ctx.allocator = [&](size_t s) -> uint8_t* {
-             pData->pixels.resize(s); return pData->pixels.data();
-        };
+        struct RawAllocCtx { ThumbData* p; };
+        RawAllocCtx ractx = { pData };
+        ctx.allocator = { .pfn = [](void* c, size_t s) -> uint8_t* {
+             auto* p = static_cast<RawAllocCtx*>(c)->p;
+             p->pixels.resize(s); return p->pixels.data();
+        }, .ctx = &ractx };
         
         QuickView::Codec::DecodeResult res;
         HRESULT hr = QuickView::Codec::RawCodec::Load(filePath, ctx, res);
@@ -10218,7 +10256,7 @@ HRESULT CImageLoader::LoadFastPass(LPCWSTR filePath, ThumbData* pData) {
         int targetH = -1;
         
         // Use LoadToFrame (Hybrid D2D Path) on Current Thread
-        HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetW, targetH, &pData->loaderName, nullptr, nullptr);
+        HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetW, targetH, &pData->loaderName, {}, nullptr);
         
         if (SUCCEEDED(hr)) {
              pData->width = pFrame->width;
@@ -10802,17 +10840,22 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     auto SetupDeleter = [&](uint8_t* ptr) {
         if (arena && arena->Owns(ptr)) {
             // Arena memory - no explicit free needed (Arena manages lifecycle)
-            outFrame->memoryDeleter = nullptr;
+            outFrame->memoryDeleter.Clear();
         } else {
             // Heap memory (either from Arena overflow or direct _aligned_malloc)
             // MUST use _aligned_free
-            outFrame->memoryDeleter = [](uint8_t* p) { _aligned_free(p); };
+            outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
         }
     };
     
     // [v4.2] Unified Codec Dispatch
     DecodeContext ctx;
-    ctx.allocator = [&](size_t s) -> uint8_t* { return AllocateBuffer(s); };
+ctx.allocator.ctx = arena;
+    ctx.allocator.pfn = [](void* c, size_t s) -> uint8_t* {
+        auto* a = static_cast<QuantumArena*>(c);
+        if (a) return static_cast<uint8_t*>(a->Allocate(s, 64));
+        return static_cast<uint8_t*>(_aligned_malloc(s, 64));
+    };
     ctx.checkCancel = checkCancel;
     ctx.targetWidth = targetWidth; // Pass scaling request
     ctx.targetHeight = targetHeight;
@@ -10920,9 +10963,9 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
             if (res.auxLayer->pixels) {
                 uint8_t* auxPtr = res.auxLayer->pixels;
                 if (arena && arena->Owns(auxPtr)) {
-                    res.auxLayer->deleter = nullptr;
+                    res.auxLayer->deleter = {};
                 } else {
-                    res.auxLayer->deleter = [](uint8_t* p) { _aligned_free(p); };
+                    res.auxLayer->deleter = QuickView::MemoryDeleter::FromAlignedFree();
                 }
             }
             outFrame->auxLayer = std::move(res.auxLayer);

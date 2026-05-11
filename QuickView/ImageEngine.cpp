@@ -12,6 +12,15 @@ static constexpr const char* CURRENT_MODULE = "ImageEngine";
 #pragma comment(lib, "psapi.lib")
 #include <cctype>
 #include <chrono>
+#include <new>
+
+namespace {
+    struct AuxLayerReadyCtx {
+        ImageEngine* engine;
+        std::wstring path;
+        ImageID id;
+    };
+}
 
 extern HWND g_mainHwnd;
 
@@ -1096,17 +1105,25 @@ void ImageEngine::FastLane::QueueWorker() {
             // [Unified Logic] SVG uses target=0 like other formats (User Request: Remove 80% special case)
 
             // [Direct D2D] Load directly to RawImageFrame backed by Arena
-            rawFrame.onAuxLayerReady = [this, cmdPath = cmd.path, cmdId = cmd.id](std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
-                EngineEvent ev;
-                ev.type = EventType::AuxLayerReady;
-                ev.filePath = cmdPath;
-                ev.imageId = cmdId;
-                ev.auxLayer = std::move(aux);
-                ev.blendOp = op;
-                ev.shaderPayload = payload;
-                this->m_parent->QueueEvent(std::move(ev));
-            };
-            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, nullptr, nullptr, true, false, cmd.targetHdrHeadroomStops);
+            {
+                auto* ctx = new(std::nothrow) AuxLayerReadyCtx{ m_parent, cmd.path, cmd.id };
+                if (ctx) {
+                    rawFrame.onAuxLayerReady.ctx = ctx;
+                    rawFrame.onAuxLayerReady.pfn = [](void* c, std::unique_ptr<QuickView::AuxLayer> aux, QuickView::GpuBlendOp op, QuickView::GpuShaderPayload payload) {
+                        auto* lctx = static_cast<AuxLayerReadyCtx*>(c);
+                        EngineEvent ev;
+                        ev.type = EventType::AuxLayerReady;
+                        ev.filePath = lctx->path;
+                        ev.imageId = lctx->id;
+                        ev.auxLayer = std::move(aux);
+                        ev.blendOp = op;
+                        ev.shaderPayload = payload;
+                        lctx->engine->QueueEvent(std::move(ev));
+                    };
+                    rawFrame.onAuxLayerReady.ctxDeleter = [](void* c) { delete static_cast<AuxLayerReadyCtx*>(c); };
+                }
+            }
+            HRESULT hr = m_loader->LoadToFrame(cmd.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, {}, nullptr, true, false, cmd.targetHdrHeadroomStops);
             
             int decodeMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
 
@@ -1155,7 +1172,7 @@ void ImageEngine::FastLane::QueueWorker() {
                     safeFrame->formatDetails = rawFrame.formatDetails;
                     safeFrame->quality = QuickView::DecodeQuality::Preview; 
                     safeFrame->exifOrientation = rawFrame.exifOrientation;
-                    safeFrame->memoryDeleter = [](uint8_t* p) { delete[] p; };
+                    safeFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
                     
                     // [CMS] Propagate color profile and HDR metadata
                     safeFrame->iccProfile = std::move(rawFrame.iccProfile);
@@ -1569,7 +1586,7 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
             cachedFrame->exifOrientation = frame->exifOrientation;
             cachedFrame->srcWidth = frame->srcWidth;
             cachedFrame->srcHeight = frame->srcHeight;
-            cachedFrame->memoryDeleter = [](uint8_t* p) { delete[] p; }; // Heap cleanup
+            cachedFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray(); // Heap cleanup
             
             // [CMS] Propagate color profile and HDR metadata
             cachedFrame->iccProfile = frame->iccProfile;
@@ -1590,7 +1607,7 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
                 uint8_t* auxHeap = new uint8_t[auxSize];
                 memcpy(auxHeap, frame->auxLayer->pixels, auxSize);
                 safeAux->pixels = auxHeap;
-                safeAux->deleter = [](uint8_t* p) { delete[] p; };
+                safeAux->deleter = QuickView::MemoryDeleter::FromDeleteArray();
                 cachedFrame->auxLayer = std::move(safeAux);
             }
         }

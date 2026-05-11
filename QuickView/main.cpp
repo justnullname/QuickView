@@ -6836,13 +6836,13 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
             }
             // Fallback: LoadToFrame with 0,0 (full-res, no scaling)
             if (FAILED(hr)) {
-                hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, 0, 0, &loaderName, nullptr, &meta);
+                hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, 0, 0, &loaderName, {}, &meta);
             }
         } else {
             // [Fix] Base layer: Use LoadToFrame (returns 1:8 DC preview or 1x1 Fake Base instantly for massive JXL)
             // If --no-fake-base is specified (e.g. for LOD requests), it guarantees real decoding is not bypassed.
             // DO NOT pass a restricted QuantumArena here, as format fallbacks may need full-resolution heap memory before scaling.
-            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, nullptr, &meta, !noFakeBase);
+            hr = loader.LoadToFrame(inputPath.c_str(), &rawFrame, nullptr, targetW, targetH, &loaderName, {}, &meta, !noFakeBase);
         }
         if (FAILED(hr) || !rawFrame.IsValid()) {
             // [HEIC] Signal parent if HEVC component is missing
@@ -11720,7 +11720,7 @@ static std::shared_ptr<QuickView::RawImageFrame> MakePhase1SkeletonFrame() {
     frame->stride = kSkeletonStride;
     frame->format = QuickView::PixelFormat::BGRA8888;
     frame->quality = QuickView::DecodeQuality::Preview;
-    frame->memoryDeleter = [](uint8_t* p) { std::free(p); };
+    frame->memoryDeleter = QuickView::MemoryDeleter::FromFree();
     return frame;
 }
 
@@ -11774,7 +11774,7 @@ static bool CopyWicSourceToRawFrame(IWICBitmapSource* source, std::shared_ptr<Qu
     frame->stride = static_cast<int>(stride);
     frame->format = QuickView::PixelFormat::BGRA8888;
     frame->quality = QuickView::DecodeQuality::Preview;
-    frame->memoryDeleter = [](uint8_t* p) { std::free(p); };
+    frame->memoryDeleter = QuickView::MemoryDeleter::FromFree();
     *outFrame = std::move(frame);
     return true;
 }
@@ -12396,7 +12396,7 @@ static FireAndForget LoadImageIntoCompareLeftSlot(HWND hwnd, std::wstring path, 
     CImageLoader::ImageMetadata meta;
     std::wstring loaderName;
     HRESULT hr = g_imageLoader->LoadToFrame(localPath.c_str(), &frame, nullptr, 0, 0,
-                                             &loaderName, nullptr, &meta, true, false,
+                                             &loaderName, {}, &meta, true, false,
                                              GetDisplayHdrHeadroomStopsForPane(hwnd, ComparePane::Left));
     
     co_await ResumeMainThread(hwnd);

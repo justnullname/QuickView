@@ -34,8 +34,8 @@
     },
     {
       "name": "Release-LTO",
-      "displayName": "Release-LTO (Speed Mode)",
-      "description": "Enable ThinLTO and clang:-O3 extreme optimizations.",
+      "displayName": "Release-LTO (Extreme Speed & Size)",
+      "description": "Enable Full LTO and explicit threshold tuning (No -O3/ThinLTO).",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",

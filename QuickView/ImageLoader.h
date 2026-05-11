@@ -2,12 +2,14 @@
 #include "ImageTypes.h"        // [Direct D2D] RawImageFrame
 #include "TileMemoryManager.h" // [Titan]
 #include "TileTypes.h"         // [Titan] RegionRect
-#include "WuffsLoader.h"
 #include "pch.h"
-#include <functional>
+#include <cstdint>
 #include <memory_resource>
 #include <stop_token>
 #include <vector>
+#include <string>
+#include <cwchar>
+#include <type_traits>
 
 namespace QuickView {
 namespace Codec {
@@ -31,7 +33,7 @@ public:
   HRESULT Initialize(IWICImagingFactory *wicFactory);
 
   // [v4.0] Infrastructure: Atomic Cancellation Predicate
-  using CancelPredicate = std::function<bool()>;
+  using CancelPredicate = QuickView::SimplePredicate;
 
   // --- Metadata Structure ---
   struct ImageMetadata {
@@ -249,8 +251,8 @@ public:
   HRESULT LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
                        std::wstring *pLoaderName = nullptr,
                        bool forceFullDecode = false,
-                       CancelPredicate checkCancel = nullptr,
-                       int targetWidth = 0, int targetHeight = 0);
+                       CancelPredicate checkCancel = {}, int targetWidth = 0,
+                       int targetHeight = 0);
 
   /// <summary>
   /// NEW: Load image directly into PMR-backed buffer (Zero-Copy for Heavy Lane)
@@ -261,7 +263,7 @@ public:
                           int targetHeight, /* 0 for full decode */
                           std::wstring *pLoaderName = nullptr,
                           std::stop_token st = {},
-                          CancelPredicate checkCancel = nullptr);
+                          CancelPredicate checkCancel = {});
 
   // [Infinity Engine] Zero-Copy Tile Loader
   // Decodes a region directly from a memory pointer (MMF) into a slab.
@@ -279,7 +281,7 @@ public:
   // Output pixels are heap-allocated and owned by outFrame::memoryDeleter.
   static HRESULT FullDecodeFromMemory(const uint8_t *data, size_t size,
                                       QuickView::RawImageFrame *outFrame,
-                                      CancelPredicate checkCancel = nullptr);
+                                      CancelPredicate checkCancel = {});
 
   // [Direct-to-MMF] Decode directly into caller-provided buffer (MMF view).
   // Zero heap allocation for pixel data — libjxl/Wuffs write directly into MMF.
@@ -288,11 +290,11 @@ public:
   // flushed to MMF.
   //   This allows early tile serving from the blurry DC preview while full
   //   decode continues.
-  static HRESULT
-  FullDecodeToMMF(const uint8_t *data, size_t size, uint8_t *mmfBuf,
-                  size_t mmfBufSize, int *outW, int *outH, int *outStride,
-                  std::function<void()> dcReadyCallback = nullptr,
-                  CancelPredicate checkCancel = nullptr);
+  static HRESULT FullDecodeToMMF(const uint8_t *data, size_t size,
+                                 uint8_t *mmfBuf, size_t mmfBufSize, int *outW,
+                                 int *outH, int *outStride,
+                                 QuickView::SimpleCallback dcReadyCallback = {},
+                                 CancelPredicate checkCancel = {});
 
   // ============================================================================
   // [Direct D2D] Zero-Copy Loading API
@@ -318,7 +320,7 @@ public:
   HRESULT LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame *outFrame,
                       class QuantumArena *arena = nullptr, int targetWidth = 0,
                       int targetHeight = 0, std::wstring *pLoaderName = nullptr,
-                      CancelPredicate checkCancel = nullptr,
+                      CancelPredicate checkCancel = {},
                       ImageMetadata *pMetadata = nullptr,
                       bool allowFakeBase = true, bool isTitanMode = false,
                       float targetHdrHeadroomStops = -1.0f);
@@ -477,15 +479,15 @@ private:
   // Wuffs (Google's memory-safe decoder) - Ultimate Performance
   // [v4.0] Cancellation Support
   HRESULT LoadPngWuffs(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                       CancelPredicate checkCancel = nullptr);
+                       CancelPredicate checkCancel = {});
   HRESULT LoadGifWuffs(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                       CancelPredicate checkCancel = nullptr);
+                       CancelPredicate checkCancel = {});
   HRESULT LoadBmpWuffs(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                       CancelPredicate checkCancel = nullptr);
+                       CancelPredicate checkCancel = {});
   HRESULT LoadTgaWuffs(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                       CancelPredicate checkCancel = nullptr);
+                       CancelPredicate checkCancel = {});
   HRESULT LoadWbmpWuffs(LPCWSTR filePath, IWICBitmap **ppBitmap,
-                        CancelPredicate checkCancel = nullptr);
+                        CancelPredicate checkCancel = {});
 
   // Stb Image (Legacy/Special Formats: PSD, HDR, PIC, PNM)
   HRESULT LoadStbImage(LPCWSTR filePath, IWICBitmap **ppBitmap,

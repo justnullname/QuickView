@@ -1,5 +1,11 @@
 #pragma once
 #include "pch.h"
+#include <string>
+#include <cwchar>
+#include <type_traits>
+#include <vector>
+#include <memory>
+#include <algorithm>
 #include "LosslessTransform.h" // For EditQuality enum
 #include <d2d1.h>
 #include "ImageTypes.h"
