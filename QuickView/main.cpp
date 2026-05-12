@@ -6182,8 +6182,10 @@ void RefreshImageDisplay(HWND hwnd) {
         auto frame = g_pImageEngine->GetCachedImage(g_imagePath);
         if (frame && frame->IsValid()) {
             if (g_currentMetadata.MeasuredPeakNits < 0.0f &&
-                frame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
-                frame->pixels) {
+                frame->pixels &&
+                (frame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
+                 frame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
+                 frame->format == QuickView::PixelFormat::R16G16B16A16_UNORM)) {
                 g_currentMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*frame) * 80.0f;
             }
             ComPtr<ID2D1Bitmap> bitmap;
@@ -6211,8 +6213,10 @@ void RefreshImageDisplay(HWND hwnd) {
         auto leftFrame = g_pImageEngine->GetCachedImage(g_compare.left.path);
         if (leftFrame && leftFrame->IsValid()) {
             if (g_compare.left.metadata.MeasuredPeakNits < 0.0f &&
-                leftFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT &&
-                leftFrame->pixels) {
+                leftFrame->pixels &&
+                (leftFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
+                 leftFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
+                 leftFrame->format == QuickView::PixelFormat::R16G16B16A16_UNORM)) {
                 g_compare.left.metadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*leftFrame) * 80.0f;
             }
             ComPtr<ID2D1Bitmap> leftBitmap;
@@ -11306,7 +11310,10 @@ void ProcessEngineEvents(HWND hwnd) {
                 auto finalMetadata = evt.metadata; // Create mutable copy
                 
                 // [v10.0] Measured Peak Scan (SIMD) - Only for HDR float frames
-                if (evt.rawFrame && evt.rawFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT && evt.rawFrame->pixels) {
+                if (evt.rawFrame && evt.rawFrame->pixels &&
+                    (evt.rawFrame->format == QuickView::PixelFormat::R32G32B32A32_FLOAT ||
+                     evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_FLOAT ||
+                     evt.rawFrame->format == QuickView::PixelFormat::R16G16B16A16_UNORM)) {
                     finalMetadata.MeasuredPeakNits = g_renderEngine->EstimateFramePeakScRgb(*evt.rawFrame) * 80.0f;
                 }
                 

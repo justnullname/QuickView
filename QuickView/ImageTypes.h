@@ -359,6 +359,11 @@ struct RawImageFrame {
     PixelColorInfo colorInfo;
     HdrStaticMetadata hdrMetadata;
 
+    // Lazily populated by the render path. These avoid re-scanning large HDR
+    // frames when the window repaints or tone-map settings are adjusted.
+    mutable float measuredPeakScRgb = -1.0f;
+    mutable float measuredAverageScRgb = -1.0f;
+
     // [v10.1] Original source dimensions (for Titan scaled base layers)
     // When width/height hold the scaled preview size (e.g. 3840x2160),
     // srcWidth/srcHeight preserve the true source resolution (e.g. 1080x9123).
@@ -421,6 +426,9 @@ struct RawImageFrame {
                 return 4;
             case PixelFormat::R32G32B32A32_FLOAT:
                 return 16;
+            case PixelFormat::R16G16B16A16_UNORM:
+            case PixelFormat::R16G16B16A16_FLOAT:
+                return 8;
             default:
                 return 4;
         }
@@ -466,6 +474,8 @@ struct RawImageFrame {
         onAuxLayerReady.Clear();
         svg.reset(); // [D2D Native] Release SVG data
         iccProfile.clear(); // Ensure it is cleared on reset
+        measuredPeakScRgb = -1.0f;
+        measuredAverageScRgb = -1.0f;
         // [GPU Pipeline] Release auxiliary layer
         auxLayer.reset();
         blendOp = GpuBlendOp::None;
@@ -494,6 +504,8 @@ private:
         iccProfile = std::move(other.iccProfile);
         colorInfo = other.colorInfo;
         hdrMetadata = other.hdrMetadata;
+        measuredPeakScRgb = other.measuredPeakScRgb;
+        measuredAverageScRgb = other.measuredAverageScRgb;
         srcWidth = other.srcWidth;
         srcHeight = other.srcHeight;
         memoryDeleter = std::move(other.memoryDeleter);
@@ -520,6 +532,8 @@ private:
         other.iccProfile.clear(); // Clear source vector after move
         other.colorInfo = {};
         other.hdrMetadata = {};
+        other.measuredPeakScRgb = -1.0f;
+        other.measuredAverageScRgb = -1.0f;
         other.exifOrientation = 1;
         other.blendOp = GpuBlendOp::None;
         other.shaderPayload = {};

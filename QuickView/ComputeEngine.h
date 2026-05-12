@@ -103,6 +103,14 @@ public:
                            int stride, const ToneMapSettings& settings,
                            ID3D11Texture2D** outTexture, PixelFormat srcFormat = PixelFormat::R32G32B32A32_FLOAT);
 
+    HRESULT ToneMapHdrTextureToHdr(ID3D11Texture2D* srcTexture,
+                                   const ToneMapSettings& settings,
+                                   ID3D11Texture2D** outTexture);
+
+    HRESULT ToneMapHdrTextureToSdr(ID3D11Texture2D* srcTexture,
+                                   const ToneMapSettings& settings,
+                                   ID3D11Texture2D** outTexture);
+
     /// <summary>
     /// GPU-side Gain Map composition (ISO 21496-1).
     /// Fuses SDR base layer + grayscale gain map into FP16 HDR output.

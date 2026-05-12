@@ -7169,27 +7169,24 @@ namespace QuickView {
                     : L"WIC HEIF (Native Accelerated)";
                 
                 if (isHighBitDepth && !PrefersSdrTarget(ctx)) {
-                    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedHdr;
-                    result.metadata.colorInfo.transfer = result.metadata.hdrMetadata.transfer;
-                    if (result.metadata.colorInfo.transfer == QuickView::TransferFunction::Unknown) {
-                        result.metadata.colorInfo.transfer = QuickView::TransferFunction::PQ;
-                    }
-                    result.metadata.colorInfo.primaries = result.metadata.hdrMetadata.primaries;
-                    if (result.metadata.colorInfo.primaries == QuickView::ColorPrimaries::Unknown) {
-                        result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::Rec2020;
-                    }
+                    result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinearScRgb;
+                    result.metadata.colorInfo.transfer = QuickView::TransferFunction::Linear;
+                    result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
                     
                     result.metadata.colorInfo.nominalBitDepth =
                         (srcFormat == GUID_WICPixelFormat64bppRGBAHalf || srcFormat == GUID_WICPixelFormat64bppRGBA)
                             ? 16
                             : 32;
 
-                    result.metadata.FormatDetails = L"High Precision HEIF";
-                    if (result.metadata.colorInfo.transfer == QuickView::TransferFunction::PQ) result.metadata.FormatDetails += L" / PQ";
-                    else if (result.metadata.colorInfo.transfer == QuickView::TransferFunction::HLG) result.metadata.FormatDetails += L" / HLG";
+                    result.metadata.hdrMetadata.isHdr = true;
+                    result.metadata.hdrMetadata.isSceneLinear = true;
+
+                    result.metadata.FormatDetails = L"High Precision HEIF / Linear scRGB";
+                    if (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::PQ) result.metadata.FormatDetails += L" / Source PQ";
+                    else if (result.metadata.hdrMetadata.transfer == QuickView::TransferFunction::HLG) result.metadata.FormatDetails += L" / Source HLG";
                     
-                    if (result.metadata.colorInfo.primaries == QuickView::ColorPrimaries::Rec2020) result.metadata.FormatDetails += L" / P2020";
-                    else if (result.metadata.colorInfo.primaries == QuickView::ColorPrimaries::DisplayP3) result.metadata.FormatDetails += L" / P3";
+                    if (result.metadata.hdrMetadata.primaries == QuickView::ColorPrimaries::Rec2020) result.metadata.FormatDetails += L" / Source P2020";
+                    else if (result.metadata.hdrMetadata.primaries == QuickView::ColorPrimaries::DisplayP3) result.metadata.FormatDetails += L" / Source P3";
                 } else {
                     result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
                     result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;

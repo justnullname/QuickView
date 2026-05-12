@@ -168,15 +168,14 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
     if (Mode == 0) {
         float3 exposed = color.rgb * Exposure * ExposureGain;
         float L = max(exposed.r, max(exposed.g, exposed.b));
-        float pqL = LinearToPQ(L);
-        float x = pqL - SplineSrcPivot;
-        float mappedPqL;
+        float x = L - SplineSrcPivot;
+        float targetL;
         if (x > 0.0f) {
-            mappedPqL = ((SplineQa * x + SplineQb) * x + SplineQc) * x + SplineDstPivot;
+            targetL = ((SplineQa * x + SplineQb) * x + SplineQc) * x + SplineDstPivot;
         } else {
-            mappedPqL = (SplinePa * x + SplinePb) * x + SplineDstPivot;
+            targetL = (SplinePa * x + SplinePb) * x + SplineDstPivot;
         }
-        float targetL = PQToLinear(mappedPqL);
+        targetL = max(0.0f, targetL);
         float3 mapped = exposed * (targetL / max(1e-6f, L));
 
         float desat = saturate((targetL - displayPeak * 0.7f) / (max(1e-6f, displayPeak * 0.3f)));
@@ -196,7 +195,7 @@ void CSToneMap(uint3 id : SV_DispatchThreadID)
         float3 exposed = color.rgb * Exposure * ExposureGain;
         float Lwhite = DisplayPeakScRgb * Exposure * ExposureGain;
         float3 mapped = ReinhardExtended(exposed, Lwhite);
-        float3 normalized = mapped / DisplayPeakScRgb;
+        float3 normalized = mapped;
         float3 encoded = LinearToSrgb(normalized) * color.a;
         DstTex[id.xy] = float4(encoded.r, encoded.g, encoded.b, color.a);
     }
@@ -270,15 +269,14 @@ float3 ToneMapHDR(float3 color, float displayPeak, float paperWhite, uint mode)
     if (L <= 0.0) return color;
 
     if (mode == 0) {
-        float pqL = LinearToPQ(L);
-        float x = pqL - SplineSrcPivot;
-        float mappedPqL;
+        float x = L - SplineSrcPivot;
+        float targetL;
         if (x > 0.0f) {
-            mappedPqL = ((SplineQa * x + SplineQb) * x + SplineQc) * x + SplineDstPivot;
+            targetL = ((SplineQa * x + SplineQb) * x + SplineQc) * x + SplineDstPivot;
         } else {
-            mappedPqL = (SplinePa * x + SplinePb) * x + SplineDstPivot;
+            targetL = (SplinePa * x + SplinePb) * x + SplineDstPivot;
         }
-        float targetL = PQToLinear(mappedPqL);
+        targetL = max(0.0f, targetL);
         
         float3 mapped = color.rgb * (targetL / L);
         float desat = saturate((targetL - displayPeak * 0.7f) / (max(1e-6f, displayPeak * 0.3f)));
@@ -1077,6 +1075,98 @@ HRESULT ComputeEngine::ToneMapHdrToHdr(const uint8_t* srcPixels, int width, int 
 
     *outTexture = pDst.Detach();
     return S_OK;
+}
+
+namespace {
+HRESULT ToneMapTextureCommon(ID3D11Device* device,
+                             ID3D11DeviceContext* context,
+                             ID3D11ComputeShader* shader,
+                             ID3D11Buffer* constantBuffer,
+                             ID3D11Texture2D* srcTexture,
+                             DXGI_FORMAT dstFormat,
+                             const QuickView::ToneMapSettings& settings,
+                             ID3D11Texture2D** outTexture) {
+    if (!device || !context || !shader || !constantBuffer || !srcTexture || !outTexture) {
+        return E_INVALIDARG;
+    }
+
+    D3D11_TEXTURE2D_DESC srcDesc = {};
+    srcTexture->GetDesc(&srcDesc);
+    if (srcDesc.Width == 0 || srcDesc.Height == 0) {
+        return E_INVALIDARG;
+    }
+
+    D3D11_TEXTURE2D_DESC dstDesc = {};
+    dstDesc.Width = srcDesc.Width;
+    dstDesc.Height = srcDesc.Height;
+    dstDesc.MipLevels = 1;
+    dstDesc.ArraySize = 1;
+    dstDesc.Format = dstFormat;
+    dstDesc.SampleDesc.Count = 1;
+    dstDesc.Usage = D3D11_USAGE_DEFAULT;
+    dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS |
+                        D3D11_BIND_SHADER_RESOURCE |
+                        D3D11_BIND_RENDER_TARGET;
+
+    ComPtr<ID3D11Texture2D> dst;
+    HRESULT hr = device->CreateTexture2D(&dstDesc, nullptr, &dst);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<ID3D11ShaderResourceView> srv;
+    ComPtr<ID3D11UnorderedAccessView> uav;
+    hr = device->CreateShaderResourceView(srcTexture, nullptr, &srv);
+    if (FAILED(hr)) return hr;
+    hr = device->CreateUnorderedAccessView(dst.Get(), nullptr, &uav);
+    if (FAILED(hr)) return hr;
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = context->Map(constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) return hr;
+    memcpy(mapped.pData, &settings, sizeof(settings));
+    context->Unmap(constantBuffer, 0);
+
+    context->CSSetShader(shader, nullptr, 0);
+    ID3D11ShaderResourceView* srvs[] = { srv.Get() };
+    context->CSSetShaderResources(0, 1, srvs);
+    ID3D11UnorderedAccessView* uavs[] = { uav.Get() };
+    context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    ID3D11Buffer* cbs[] = { constantBuffer };
+    context->CSSetConstantBuffers(0, 1, cbs);
+    context->Dispatch((srcDesc.Width + 7) / 8, (srcDesc.Height + 7) / 8, 1);
+
+    ID3D11UnorderedAccessView* nullUav[] = { nullptr };
+    ID3D11ShaderResourceView* nullSrv[] = { nullptr };
+    ID3D11Buffer* nullCb[] = { nullptr };
+    context->CSSetUnorderedAccessViews(0, 1, nullUav, nullptr);
+    context->CSSetShaderResources(0, 1, nullSrv);
+    context->CSSetConstantBuffers(0, 1, nullCb);
+    context->CSSetShader(nullptr, nullptr, 0);
+
+    *outTexture = dst.Detach();
+    return S_OK;
+}
+} // namespace
+
+HRESULT ComputeEngine::ToneMapHdrTextureToHdr(ID3D11Texture2D* srcTexture,
+                                              const ToneMapSettings& settings,
+                                              ID3D11Texture2D** outTexture) {
+    if (!m_valid) return E_FAIL;
+    return ToneMapTextureCommon(m_d3dDevice.Get(), m_d3dContext.Get(),
+                                m_csToneMapHdrToHdr.Get(),
+                                m_toneMapConstantBuffer.Get(), srcTexture,
+                                DXGI_FORMAT_R16G16B16A16_FLOAT, settings,
+                                outTexture);
+}
+
+HRESULT ComputeEngine::ToneMapHdrTextureToSdr(ID3D11Texture2D* srcTexture,
+                                              const ToneMapSettings& settings,
+                                              ID3D11Texture2D** outTexture) {
+    if (!m_valid) return E_FAIL;
+    return ToneMapTextureCommon(m_d3dDevice.Get(), m_d3dContext.Get(),
+                                m_csToneMapHdrToSdr.Get(),
+                                m_toneMapConstantBuffer.Get(), srcTexture,
+                                DXGI_FORMAT_R8G8B8A8_UNORM, settings,
+                                outTexture);
 }
 
 } // namespace QuickView

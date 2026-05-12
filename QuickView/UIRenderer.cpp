@@ -1687,7 +1687,8 @@ namespace {
     static std::wstring BuildDynamicRangeLabel(const CImageLoader::ImageMetadata& metadata);
     static std::wstring BuildRenderPathLabel(const CImageLoader::ImageMetadata& metadata,
                                              const QuickView::DisplayColorState& displayState);
-    static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState);
+    static std::wstring BuildDisplayHeadroomLabel(const CImageLoader::ImageMetadata& metadata,
+                                                  const QuickView::DisplayColorState& displayState);
     static std::wstring BuildMasteringDisplayLabel(const QuickView::HdrStaticMetadata& hdr);
     static std::wstring BuildGainRatioLabel(const QuickView::HdrStaticMetadata& hdr);
     static std::wstring BuildGainBlendWeightLabel(const QuickView::HdrStaticMetadata& hdr,
@@ -1951,7 +1952,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             if (metadata.MeasuredPeakNits > 0.0f) {
                 rows.push_back({L"\U00002600", L"ImagePeak", FormatHdrNits(metadata.MeasuredPeakNits), L"", L"Max content luminance detected by SIMD scan", TruncateMode::None, false});
             }
-            rows.push_back({L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(displayState), L"", L"", TruncateMode::EndEllipsis, false});
+            rows.push_back({L"\U0001F4A1", L"Display", BuildDisplayHeadroomLabel(metadata, displayState), L"", L"", TruncateMode::EndEllipsis, false});
 
             if (metadata.hdrMetadata.hasGainMap) {
                 rows.push_back({L"\U0001F5BC", L"Base", L"SDR Base Layer", L"", L"", TruncateMode::EndEllipsis, false});
@@ -2120,24 +2121,43 @@ namespace {
         return L"[SDR Native] D2D Color Management";
     }
 
-    static std::wstring BuildDisplayHeadroomLabel(const QuickView::DisplayColorState& displayState) {
+    static float ResolveDisplayPeakNitsForLabel(const QuickView::DisplayColorState& displayState) {
         const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
-        
+        if (g_config.HdrPeakNitsOverride > 0.0f) {
+            return g_config.HdrPeakNitsOverride;
+        }
+        if (displayState.maxLuminanceNits > 0.0f) {
+            return displayState.maxLuminanceNits;
+        }
+        return sdrWhite;
+    }
+
+    static float ResolveContentPeakNitsForLabel(const CImageLoader::ImageMetadata& metadata, float fallbackNits) {
+        if (metadata.MeasuredPeakNits > 0.0f) return metadata.MeasuredPeakNits;
+        if (metadata.hdrMetadata.maxCLLNits > 0.0f) return metadata.hdrMetadata.maxCLLNits;
+        if (metadata.hdrMetadata.masteringMaxNits > 0.0f) return metadata.hdrMetadata.masteringMaxNits;
+        return fallbackNits;
+    }
+
+    static std::wstring BuildDisplayHeadroomLabel(const CImageLoader::ImageMetadata& metadata,
+                                                  const QuickView::DisplayColorState& displayState) {
+        const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
+        const float peak = ResolveDisplayPeakNitsForLabel(displayState);
+        const float full = ResolveContentPeakNitsForLabel(metadata, peak);
+
         std::wstring peakSuffix = L"";
         if (g_config.HdrPeakNitsOverride > 0.0f) {
             peakSuffix = L" (Override)";
-        } else if (displayState.advancedColorActive && (displayState.maxLuminanceNits > 0.0f ? displayState.maxLuminanceNits : sdrWhite) < 400.0f) {
+        } else if (displayState.advancedColorActive && displayState.maxLuminanceNits > 0.0f && displayState.maxLuminanceNits < 400.0f) {
             peakSuffix = L" (EDID Fix)";
         }
-        
-        const float peak = displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride);
-        const float full = displayState.maxFullFrameLuminanceNits > 0.0f ? displayState.maxFullFrameLuminanceNits : sdrWhite;
-        
+
         std::wstring label = FormatHdrRatio(peak / sdrWhite);
         if (!label.empty()) label += L" ";
         wchar_t buf[128];
         swprintf_s(buf, L"(%.0f SDR / %.0f Max / %.0f Full)", sdrWhite, peak, full);
         label += buf;
+        label += peakSuffix;
         return label;
     }
 

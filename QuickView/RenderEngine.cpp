@@ -716,7 +716,7 @@ static __forceinline float pl_smoothstep(float edge0, float edge1, float x) {
     return x * x * (3.0f - 2.0f * x);
 }
 
-float LinearToPQ(float L) {
+[[maybe_unused]] float LinearToPQ(float L) {
   L = (std::max)(0.0f, L);
   float L_normalized = L / 125.0f; // (L * 80) / 10000
   float L_pow = powf(L_normalized, PQ_M1);
@@ -724,7 +724,7 @@ float LinearToPQ(float L) {
 }
 
 // Maps PQ [0, 1] to ScRGB (1.0 = 80 nits)
-float PQToLinear(float V) {
+[[maybe_unused]] float PQToLinear(float V) {
   V = (std::max)(0.0f, (std::min)(1.0f, V));
   float V_pow = powf(V, 1.0f / PQ_M2);
   float L_norm = powf((std::max)(0.0f, V_pow - PQ_C1) / (PQ_C2 - PQ_C3 * V_pow),
@@ -773,32 +773,47 @@ static void PickKnee(float src_min, float src_max, float src_avg, float dst_min,
 } // namespace
 
 float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
+  if (frame.measuredPeakScRgb > 0.0f) {
+    return frame.measuredPeakScRgb;
+  }
+
   if (!frame.pixels || frame.width <= 0 || frame.height <= 0) {
     return 1.0f;
   }
 
   float peak = 1.0f;
   if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
-    peak = ImageLoaderSimd::FindPeakFloat(
-        reinterpret_cast<const float *>(frame.pixels),
-        static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height));
+    float max_val = 0.0f;
+    for (int y = 0; y < frame.height; ++y) {
+      const float* row = reinterpret_cast<const float*>(
+          frame.pixels + static_cast<size_t>(y) * frame.stride);
+      max_val = (std::max)(
+          max_val,
+          ImageLoaderSimd::FindPeakFloat(row, static_cast<size_t>(frame.width)));
+    }
+    peak = max_val;
   } else if (frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
     float max_val = 0.0f;
-    size_t count = static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height) * 4;
-    const DirectX::PackedVector::HALF* ptr = reinterpret_cast<const DirectX::PackedVector::HALF*>(frame.pixels);
-    for (size_t i = 0; i < count; i += 4) {
-      float r = DirectX::PackedVector::XMConvertHalfToFloat(ptr[i]);
-      float g = DirectX::PackedVector::XMConvertHalfToFloat(ptr[i+1]);
-      float b = DirectX::PackedVector::XMConvertHalfToFloat(ptr[i+2]);
-      max_val = (std::max)({max_val, r, g, b});
+    for (int y = 0; y < frame.height; ++y) {
+      const DirectX::PackedVector::HALF* row =
+          reinterpret_cast<const DirectX::PackedVector::HALF*>(
+              frame.pixels + static_cast<size_t>(y) * frame.stride);
+      for (int x = 0; x < frame.width; ++x) {
+        float r = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 0]);
+        float g = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 1]);
+        float b = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 2]);
+        max_val = (std::max)({max_val, r, g, b});
+      }
     }
     peak = max_val;
   } else if (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM) {
     uint16_t max_val = 0;
-    size_t count = static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height) * 4;
-    const uint16_t* ptr = reinterpret_cast<const uint16_t*>(frame.pixels);
-    for (size_t i = 0; i < count; i += 4) {
-      max_val = (std::max)({max_val, ptr[i], ptr[i+1], ptr[i+2]});
+    for (int y = 0; y < frame.height; ++y) {
+      const uint16_t* row = reinterpret_cast<const uint16_t*>(
+          frame.pixels + static_cast<size_t>(y) * frame.stride);
+      for (int x = 0; x < frame.width; ++x) {
+        max_val = (std::max)({max_val, row[x * 4 + 0], row[x * 4 + 1], row[x * 4 + 2]});
+      }
     }
     peak = static_cast<float>(max_val) / 65535.0f;
   }
@@ -816,25 +831,31 @@ float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
     peak *= 12.5f; 
   }
 
-  return (std::max)(1.0f, peak);
+  frame.measuredPeakScRgb = (std::max)(1.0f, peak);
+  return frame.measuredPeakScRgb;
 }
 
 float InternalEstimateFrameAverageScRgb(const QuickView::RawImageFrame &frame) {
+  if (frame.measuredAverageScRgb >= 0.0f) {
+    return frame.measuredAverageScRgb;
+  }
+
   if (!frame.pixels || frame.width <= 0 || frame.height <= 0) {
     return 0.25f; // Reasonable fallback for HDR midtones
   }
 
   double totalLum = 0.0;
   if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
-    size_t stride = static_cast<size_t>(frame.width) * 4;
     for (int y = 0; y < frame.height; ++y) {
-      const float* row = reinterpret_cast<const float*>(frame.pixels) + (static_cast<size_t>(y) * stride);
+      const float* row = reinterpret_cast<const float*>(
+          frame.pixels + static_cast<size_t>(y) * frame.stride);
       totalLum += ImageLoaderSimd::SumLuminanceFloatRange(row, 0, frame.width); 
     }
   } else if (frame.format == QuickView::PixelFormat::R16G16B16A16_FLOAT) {
-    const DirectX::PackedVector::HALF* ptr = reinterpret_cast<const DirectX::PackedVector::HALF*>(frame.pixels);
     for (int y = 0; y < frame.height; ++y) {
-      const DirectX::PackedVector::HALF* row = ptr + (static_cast<size_t>(y) * frame.width * 4);
+      const DirectX::PackedVector::HALF* row =
+          reinterpret_cast<const DirectX::PackedVector::HALF*>(
+              frame.pixels + static_cast<size_t>(y) * frame.stride);
       for (int x = 0; x < frame.width; ++x) {
         float r = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 0]);
         float g = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 1]);
@@ -844,9 +865,9 @@ float InternalEstimateFrameAverageScRgb(const QuickView::RawImageFrame &frame) {
       }
     }
   } else if (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM) {
-    const uint16_t* ptr = reinterpret_cast<const uint16_t*>(frame.pixels);
     for (int y = 0; y < frame.height; ++y) {
-      const uint16_t* row = ptr + (static_cast<size_t>(y) * frame.width * 4);
+      const uint16_t* row = reinterpret_cast<const uint16_t*>(
+          frame.pixels + static_cast<size_t>(y) * frame.stride);
       for (int x = 0; x < frame.width; ++x) {
         float r = row[x * 4 + 0] / 65535.0f;
         float g = row[x * 4 + 1] / 65535.0f;
@@ -869,6 +890,7 @@ float InternalEstimateFrameAverageScRgb(const QuickView::RawImageFrame &frame) {
     avg = PQToLinear(avg);
   }
 
+  frame.measuredAverageScRgb = avg;
   return avg;
 }
 
@@ -941,11 +963,13 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
   settings.contentPeakScRgb = (contentPeakScRgb > 1.0f ? contentPeakScRgb : 1.0f);
 
   if (!displayState.advancedColorActive) {
-      // [Dynamic Simulation] SDR Simulation Mode
-      // We use the display's actual peak capability (from ICC or WinRT) if detected.
-      // If detection returns standard 80 nits (or fails), we use 270 nits as a reasonable fallback.
-      float peakNits = g_config.HdrPeakNitsOverride > 0.0f ? g_config.HdrPeakNitsOverride : displayState.maxLuminanceNits;
-      if (peakNits <= 80.0f) peakNits = 270.0f; 
+      // SDR output is a relative SDR signal. Use the OS SDR white level as the
+      // physical clipping point for colorimetric mode; perceptual modes compress
+      // HDR into the same SDR container instead of pretending the display is HDR.
+      float peakNits = g_config.HdrPeakNitsOverride > 0.0f
+          ? g_config.HdrPeakNitsOverride
+          : displayState.sdrWhiteLevelNits;
+      if (peakNits <= 0.0f) peakNits = 80.0f;
       settings.displayPeakScRgb = peakNits / 80.0f;
   } else {
       // HDR Mode: Map to the display's actual (or overridden) peak luminance.
@@ -968,6 +992,9 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
       exposureGain = 1.0f;
   }
   settings.exposureGain = exposureGain;
+  if (settings.mode == 1) {
+      settings.exposureGain = 1.0f;
+  }
 
   if (settings.mode == 0) { // Spline
     const float spline_contrast = 0.5f;
@@ -975,29 +1002,36 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
     const float slope_offset = 0.2f;
 
     const float pq_black = LinearToPQ(0.0f);
-    // Use physical peaks for Spline solving (Standard libplacebo approach)
-    float src_max = LinearToPQ(settings.contentPeakScRgb);
-    float src_avg = (contentAverageScRgb > 0.0f) ? LinearToPQ(contentAverageScRgb) : 0.0f;
-    float dst_max = LinearToPQ(settings.displayPeakScRgb);
+    // Match VideoLAN/libplacebo's tonemapper: pick the knee in perceptual PQ
+    // space, then solve/apply the spline in linear light. ScRGB uses
+    // 1.0 == 80 nits; use at least 1000 nits as the nominal HDR source range.
+    float src_max_linear = std::max(settings.contentPeakScRgb, 1000.0f / 80.0f);
+    src_max_linear = std::max(src_max_linear, settings.displayPeakScRgb);
+    const float src_max = LinearToPQ(src_max_linear);
+    const float src_avg = (contentAverageScRgb > 0.0f) ? LinearToPQ(contentAverageScRgb) : 0.0f;
+    const float dst_max = LinearToPQ(settings.displayPeakScRgb);
 
-    float src_pivot, dst_pivot;
-    PickKnee(pq_black, src_max, src_avg, pq_black, dst_max, &src_pivot, &dst_pivot);
+    float src_pivot_pq, dst_pivot_pq;
+    PickKnee(pq_black, src_max, src_avg, pq_black, dst_max, &src_pivot_pq, &dst_pivot_pq);
+
+    const float src_pivot = PQToLinear(src_pivot_pq);
+    const float dst_pivot = PQToLinear(dst_pivot_pq);
 
     settings.splineSrcPivot = src_pivot;
     settings.splineDstPivot = dst_pivot;
 
     // Solve for linear knee (Pa = 0)
-    float in_min = pq_black - src_pivot;
-    float out_min = pq_black - dst_pivot;
+    float in_min = -src_pivot;
+    float out_min = -dst_pivot;
     float slope = out_min / (in_min - 1e-9f);
 
     // Tune the slope at the knee point slightly
-    float ratio = src_max / (dst_max + 1e-9f) - 1.0f;
+    float ratio = src_max_linear / (settings.displayPeakScRgb + 1e-9f) - 1.0f;
     ratio = std::clamp(slope_tuning * ratio, slope_offset, 1.0f + slope_offset);
     slope = powf(slope, (1.0f - spline_contrast) * ratio);
 
-    const float in_max = src_max - src_pivot;
-    const float out_max = dst_max - dst_pivot;
+    const float in_max = src_max_linear - src_pivot;
+    const float out_max = settings.displayPeakScRgb - dst_pivot;
 
     // Solve P of order 2 for:
     //  P(in_min) = out_min
@@ -1918,6 +1952,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
           QuickView::GpuShaderPayload payload = frame.shaderPayload;
           // Calculate target headroom using the global override to allow simulation on SDR screens.
           payload.targetHeadroom = m_displayColorState.GetHdrHeadroomStops(g_config.HdrPeakNitsOverride);
+          const bool useHdrOutput = ShouldUseHdrOutputForFrame(frame);
 
           // Only trigger GPU Bake if we actually need to apply HDR gain (Headroom > 0).
           // For SDR displays, we fall back to the standard base-layer rendering
@@ -1940,15 +1975,6 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                                     m_bakeCache.lastBaseH == (UINT)frame.height &&
                                     m_bakeCache.baseTexture != nullptr &&
                                     m_bakeCache.auxTexture != nullptr);
-
-          if (useCachedTextures && fabsf(m_bakeCache.lastHeadroom - payload.targetHeadroom) < 0.001f && m_bakeCache.bakedBitmap) {
-              QV_LOG("Render_BakeCache",
-                  TraceLoggingString("CACHE HIT - No recomposition", "Action"),
-                  TraceLoggingFloat32(m_bakeCache.lastHeadroom, "CachedHeadroom"),
-                  TraceLoggingFloat32(payload.targetHeadroom, "RequestedHeadroom"));
-              m_bakeCache.bakedBitmap.CopyTo(outBitmap);
-              return S_OK;
-          }
 
           QV_LOG("Render_BakeCache",
               TraceLoggingString(useCachedTextures ? "CACHE MISS - Recompose (headroom changed)" : "CACHE MISS - Full Upload + Bake", "Action"),
@@ -1988,18 +2014,45 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
 
           if (SUCCEEDED(hrBake)) {
               m_bakeCache.lastHeadroom = payload.targetHeadroom;
+              QuickView::ToneMapSettings toneMapSettings =
+                  BuildToneMapSettings(frame, m_displayColorState);
+              toneMapSettings.contentPeakScRgb = (std::max)(
+                  toneMapSettings.contentPeakScRgb,
+                  std::exp2((std::max)(0.0f, payload.targetHeadroom)));
+              toneMapSettings.transferFunction =
+                  static_cast<uint32_t>(QuickView::TransferFunction::Linear);
+              toneMapSettings.colorMatrix[ 0] = 1.0f; toneMapSettings.colorMatrix[ 1] = 0.0f; toneMapSettings.colorMatrix[ 2] = 0.0f; toneMapSettings.colorMatrix[ 3] = 0.0f;
+              toneMapSettings.colorMatrix[ 4] = 0.0f; toneMapSettings.colorMatrix[ 5] = 1.0f; toneMapSettings.colorMatrix[ 6] = 0.0f; toneMapSettings.colorMatrix[ 7] = 0.0f;
+              toneMapSettings.colorMatrix[ 8] = 0.0f; toneMapSettings.colorMatrix[ 9] = 0.0f; toneMapSettings.colorMatrix[10] = 1.0f; toneMapSettings.colorMatrix[11] = 0.0f;
+              toneMapSettings.colorMatrix[12] = 0.0f; toneMapSettings.colorMatrix[13] = 0.0f; toneMapSettings.colorMatrix[14] = 0.0f; toneMapSettings.colorMatrix[15] = 1.0f;
+
+              ComPtr<ID3D11Texture2D> pMapped;
+              HRESULT hrToneMap = useHdrOutput
+                  ? m_computeEngine->ToneMapHdrTextureToHdr(pBaked.Get(), toneMapSettings, &pMapped)
+                  : m_computeEngine->ToneMapHdrTextureToSdr(pBaked.Get(), toneMapSettings, &pMapped);
+              if (SUCCEEDED(hrToneMap) && pMapped) {
+                  pBaked = pMapped;
+              } else {
+                  QV_LOG("Render_GpuBake",
+                      TraceLoggingString("Tone map after gain-map bake failed; using composed HDR texture", "Action"),
+                      TraceLoggingHResult(hrToneMap, "HRESULT"));
+              }
+
               ComPtr<IDXGISurface> dxgiSurface;
               if (SUCCEEDED(pBaked.As(&dxgiSurface))) {
-                  D2D1_BITMAP_PROPERTIES1 hdrProps = {};
-                  hdrProps.pixelFormat.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-                  hdrProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED; 
-                  hdrProps.dpiX = 96.0f;
-                  hdrProps.dpiY = 96.0f;
-                  
-                  ComPtr<ID2D1ColorContext> scRgbContext;
-                  if (SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbContext))) {
-                      hdrProps.colorContext = scRgbContext.Get();
-                  }
+                   D2D1_BITMAP_PROPERTIES1 hdrProps = {};
+                   hdrProps.pixelFormat.format = useHdrOutput
+                       ? DXGI_FORMAT_R16G16B16A16_FLOAT
+                       : DXGI_FORMAT_R8G8B8A8_UNORM;
+                   hdrProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED; 
+                   hdrProps.dpiX = 96.0f;
+                   hdrProps.dpiY = 96.0f;
+                   
+                   ComPtr<ID2D1ColorContext> scRgbContext;
+                   if (useHdrOutput &&
+                       SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbContext))) {
+                       hdrProps.colorContext = scRgbContext.Get();
+                   }
                   
                   ComPtr<ID2D1Bitmap1> result;
                   HRESULT hrResult = m_d2dContext->CreateBitmapFromDxgiSurface(
@@ -2250,15 +2303,14 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                           premulB = std::min(1.0f, b / toneMapSettings.displayPeakScRgb) * a;
                       } else if (toneMapSettings.mode == 0) { // Spline
                           float L = std::max({r, g, b});
-                          float pqL = LinearToPQ(L);
-                          float x = pqL - toneMapSettings.splineSrcPivot;
-                          float mappedPqL;
+                          float x = L - toneMapSettings.splineSrcPivot;
+                          float targetL;
                           if (x > 0) {
-                              mappedPqL = ((toneMapSettings.splineQa * x + toneMapSettings.splineQb) * x + toneMapSettings.splineQc) * x + toneMapSettings.splineDstPivot;
+                              targetL = ((toneMapSettings.splineQa * x + toneMapSettings.splineQb) * x + toneMapSettings.splineQc) * x + toneMapSettings.splineDstPivot;
                           } else {
-                              mappedPqL = (toneMapSettings.splinePa * x + toneMapSettings.splinePb) * x + toneMapSettings.splineDstPivot;
+                              targetL = (toneMapSettings.splinePa * x + toneMapSettings.splinePb) * x + toneMapSettings.splineDstPivot;
                           }
-                          float targetL = PQToLinear(mappedPqL);
+                          targetL = std::max(0.0f, targetL);
 
                           // Highlight Desaturation (CPU)
                           float desat = std::clamp((targetL - toneMapSettings.displayPeakScRgb * 0.7f) / (std::max(1e-6f, toneMapSettings.displayPeakScRgb * 0.3f)), 0.0f, 1.0f);
@@ -2281,9 +2333,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                           float mapR, mapG, mapB;
                           float Lwhite = toneMapSettings.displayPeakScRgb * exposure * toneMapSettings.exposureGain;
                           ReinhardExtendedRGB(r, g, b, Lwhite, mapR, mapG, mapB);
-                          premulR = (mapR / toneMapSettings.displayPeakScRgb) * a;
-                          premulG = (mapG / toneMapSettings.displayPeakScRgb) * a;
-                          premulB = (mapB / toneMapSettings.displayPeakScRgb) * a;
+                          premulR = mapR * a;
+                          premulG = mapG * a;
+                          premulB = mapB * a;
                       }
 
                       dstRow[x * 4 + 0] = EncodeLinearToSdr8(premulB);
