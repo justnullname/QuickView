@@ -578,7 +578,7 @@ HRESULT ComputeEngine::CompileShaders() {
     return hr;
 }
 
-HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int height, PixelFormat srcFormat, ID3D11Texture2D** outTexture) {
+HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int height, int stride, PixelFormat srcFormat, ID3D11Texture2D** outTexture) {
     if (!m_valid || !outTexture) return E_FAIL;
 
     // 1. Create Staging Texture (Immutable for fastest upload)
@@ -594,7 +594,7 @@ HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int
     
     D3D11_SUBRESOURCE_DATA initData = {};
     initData.pSysMem = srcPixels;
-    initData.SysMemPitch = width * ((srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? 16 : ((srcFormat == PixelFormat::R16G16B16A16_UNORM) ? 8 : 4));
+    initData.SysMemPitch = stride > 0 ? stride : width * ((srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? 16 : ((srcFormat == PixelFormat::R16G16B16A16_UNORM) ? 8 : 4));
     
     ComPtr<ID3D11Texture2D> pSrc;
     HRESULT hr = m_d3dDevice->CreateTexture2D(&srcDesc, &initData, &pSrc);

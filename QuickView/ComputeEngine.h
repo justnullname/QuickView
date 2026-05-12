@@ -83,7 +83,7 @@ public:
     /// <param name="srcFormat">Source format (e.g. RGBA, R32F)</param>
     /// <param name="outTexture">Output D3D Texture (Caller must release)</param>
     HRESULT UploadAndConvert(const uint8_t* srcPixels, int width, int height, 
-                             PixelFormat srcFormat, 
+                             int stride, PixelFormat srcFormat,
                              ID3D11Texture2D** outTexture);
 
     /// <summary>

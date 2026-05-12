@@ -2135,13 +2135,23 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
               const float exposure = toneMapSettings.exposure;
               // Apply exposure
               for (int y = 0; y < frame.height; ++y) {
-                  const float *srcRow = reinterpret_cast<const float *>(uploadPixels + static_cast<size_t>(y) * uploadStride);
+                  const uint8_t *srcRow = uploadPixels + static_cast<size_t>(y) * uploadStride;
                   uint8_t *dstRow = sdrPixels.data() + static_cast<size_t>(y) * frame.width * 4;
                   for (int x = 0; x < frame.width; ++x) {
-                      const float r = std::max(0.0f, srcRow[x * 4 + 0] * exposure * toneMapSettings.exposureGain);
-                      const float g = std::max(0.0f, srcRow[x * 4 + 1] * exposure * toneMapSettings.exposureGain);
-                      const float b = std::max(0.0f, srcRow[x * 4 + 2] * exposure * toneMapSettings.exposureGain);
-                      const float a = std::clamp(srcRow[x * 4 + 3], 0.0f, 1.0f);
+                      float r, g, b, a;
+                      if (frame.format == QuickView::PixelFormat::R16G16B16A16_UNORM) {
+                          const uint16_t* p16 = reinterpret_cast<const uint16_t*>(srcRow);
+                          r = std::max(0.0f, (p16[x * 4 + 0] / 65535.0f) * exposure * toneMapSettings.exposureGain);
+                          g = std::max(0.0f, (p16[x * 4 + 1] / 65535.0f) * exposure * toneMapSettings.exposureGain);
+                          b = std::max(0.0f, (p16[x * 4 + 2] / 65535.0f) * exposure * toneMapSettings.exposureGain);
+                          a = std::clamp(p16[x * 4 + 3] / 65535.0f, 0.0f, 1.0f);
+                      } else {
+                          const float* pf = reinterpret_cast<const float*>(srcRow);
+                          r = std::max(0.0f, pf[x * 4 + 0] * exposure * toneMapSettings.exposureGain);
+                          g = std::max(0.0f, pf[x * 4 + 1] * exposure * toneMapSettings.exposureGain);
+                          b = std::max(0.0f, pf[x * 4 + 2] * exposure * toneMapSettings.exposureGain);
+                          a = std::clamp(pf[x * 4 + 3], 0.0f, 1.0f);
+                      }
                       float premulR, premulG, premulB;
                       if (toneMapSettings.mode == 1) { // Colorimetric
                           premulR = std::min(1.0f, r / toneMapSettings.displayPeakScRgb) * a;
@@ -2222,7 +2232,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
         frame.pixels) {
       ComPtr<ID3D11Texture2D> pTex;
       if (SUCCEEDED(m_computeEngine->UploadAndConvert(
-              frame.pixels, (int)frame.width, (int)frame.height, frame.format,
+              frame.pixels, (int)frame.width, (int)frame.height, (int)frame.stride, frame.format,
               &pTex))) {
         ComPtr<IDXGISurface> dxgiSurface;
         if (SUCCEEDED(pTex.As(&dxgiSurface))) {
