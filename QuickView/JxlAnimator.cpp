@@ -39,13 +39,7 @@ public:
             if (st == JXL_DEC_NEED_MORE_INPUT) return nullptr;
             
             if (st == JXL_DEC_COLOR_ENCODING) {
-                JxlColorEncoding ce = {};
-                ce.color_space = JXL_COLOR_SPACE_RGB;
-                ce.white_point = JXL_WHITE_POINT_D65;
-                ce.primaries = JXL_PRIMARIES_SRGB;
-                ce.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
-                ce.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
-                JxlDecoderSetOutputColorProfile(m_decoder.get(), &ce, nullptr, 0);
+                // Removed force sRGB, preserve native
             }
             else if (st == JXL_DEC_FRAME) {
                 JxlFrameHeader frameHeader;
