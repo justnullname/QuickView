@@ -10642,13 +10642,25 @@ static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* he
 CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     ImageHeaderInfo result;
     if (!filePath) return result;
-    
+
     // === Archive VFS Support ===
     std::wstring pathStr(filePath);
     if (pathStr.find(L"|") != std::wstring::npos) {
-        // Assume VFS entries are small enough for Sprint lane initially, or rely on format dispatcher
-        result.type = ImageType::TypeA_Sprint;
-        result.format = L"JPEG"; // Generic assumption to bypass strict checks, real format detected in Load
+        result.type = ImageType::TypeA_Sprint; // VFS entries route through memory decoder usually small enough
+
+        // Zero-allocation extension extraction for format guessing
+        size_t lastDot = pathStr.find_last_of(L".");
+        if (lastDot != std::wstring::npos) {
+            std::wstring ext = pathStr.substr(lastDot);
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
+            if (ext == L".png") result.format = L"PNG";
+            else if (ext == L".webp") result.format = L"WEBP";
+            else if (ext == L".avif") result.format = L"AVIF";
+            else if (ext == L".jxl") result.format = L"JXL";
+            else result.format = L"JPEG"; // Fallback
+        } else {
+            result.format = L"JPEG";
+        }
         return result;
     }
 
@@ -10816,6 +10828,7 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
 
 
 #include "FileNavigator.h" // For ParseVirtualPath
+extern FileNavigator g_navigator;
 
 HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* outFrame,
                                    QuantumArena* arena,
@@ -10833,41 +10846,54 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     // Reset output frame
     outFrame->Release();
 
+    // Helper: Allocate memory (Always aligned)
+    auto AllocateBuffer = [&](size_t size) -> uint8_t* {
+        if (arena) {
+            uint8_t* ptr = static_cast<uint8_t*>(arena->Allocate(size, 64));
+            // Note: Arena::Allocate uses _aligned_malloc on overflow.
+            return ptr;
+        } else {
+            return static_cast<uint8_t*>(_aligned_malloc(size, 64));
+        }
+    };
+
     // === Archive VFS Support ===
     std::wstring pathStr(filePath);
     if (pathStr.find(L"|") != std::wstring::npos) {
         std::wstring archivePath;
         size_t entryIndex;
         if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
-            ZipArchive archive(archivePath);
-            if (archive.IsValid()) {
-                uint8_t* rawData = nullptr;
-                size_t rawSize = 0;
-                if (archive.ExtractEntry(entryIndex, &rawData, &rawSize)) {
-                    // Route to memory dispatcher
+            QuickView::ZipArchive* archive = g_navigator.GetArchive();
+
+            std::unique_ptr<QuickView::ZipArchive> tempArchive;
+            if (!archive || archivePath != g_navigator.m_archivePath) {
+                tempArchive = std::make_unique<QuickView::ZipArchive>(archivePath);
+                archive = tempArchive.get();
+            }
+
+            if (archive && archive->IsValid() && entryIndex < archive->GetEntryCount()) {
+                const QuickView::ArchiveEntry& entry = archive->GetEntry(entryIndex);
+                size_t rawSize = entry.uncompSize;
+
+                // Zero-allocation buffer provisioning (No new/delete needed here)
+                uint8_t* rawData = AllocateBuffer(rawSize);
+
+                if (rawData && archive->ExtractEntry(entryIndex, rawData, rawSize)) {
+                    // Route to memory dispatcher directly using the zero-overhead arena buffer
                     HRESULT hr = LoadToFrameFromMemory(rawData, rawSize, outFrame, arena, targetWidth, targetHeight, pLoaderName, pMetadata, targetHdrHeadroomStops);
-                    delete[] rawData;
+                    // rawData lifecycle is managed by LoadToFrameFromMemory or the Arena. No manual delete here!
+                    if (!arena) _aligned_free(rawData); // Fallback free if arena was null
                     return hr;
                 }
+                if (!arena && rawData) _aligned_free(rawData);
             }
-            return E_FAIL; // Failed to parse archive or extract entry
+            return E_FAIL;
         }
     }
     // ===========================
-    
+
     // Detect format from magic bytes
     std::wstring format = DetectFormatFromContent(filePath);
-    
-    // Helper: Allocate memory (Always aligned)
-    auto AllocateBuffer = [&](size_t size) -> uint8_t* {
-        if (arena) {
-            uint8_t* ptr = static_cast<uint8_t*>(arena->Allocate(size, 64));
-            // Note: Arena::Allocate uses _aligned_malloc on overflow.
-            return ptr; 
-        } else {
-            return static_cast<uint8_t*>(_aligned_malloc(size, 64));
-        }
-    };
     
     // Helper: Setup deleter based on allocation source
     auto SetupDeleter = [&](uint8_t* ptr) {

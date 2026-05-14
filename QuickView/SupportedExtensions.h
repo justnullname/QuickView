@@ -18,7 +18,7 @@ inline constexpr std::wstring_view SUPPORTED_EXTENSIONS[] = {
     L".arw", L".cr2", L".cr3", L".crw", L".dng", L".nef", L".orf", L".raf", L".rw2", L".srw", L".x3f",
     L".mrw", L".mos", L".kdc", L".dcr", L".sr2", L".pef", L".erf", L".3fr", L".mef", L".nrw", L".raw",
     // Archives (VFS supported)
-    L".cbz", L".zip", L".cbr", L".rar"
+    L".cbz", L".zip"
 };
 
 // Generate the COMDLG filter string, e.g., "All Images\0*.jpg;*.png...\0All Files\0*.*\0\0"

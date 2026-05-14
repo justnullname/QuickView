@@ -2,26 +2,17 @@
 #include <algorithm>
 #include <cstring>
 #include <cwchar>
-#include <cwctype>
 
 namespace QuickView {
 
-    // Simple hash function for wstring
-    static uint16_t HashWString(const std::wstring& str) {
-        uint32_t hash = 5381;
-        for (wchar_t c : str) {
-            hash = ((hash << 5) + hash) + std::towlower(c); // hash * 33 + c
+    // Fast FNV-1a hash for UTF-8 bytes (Zero allocation string hashing)
+    static uint16_t HashUtf8(const char* str, size_t len) {
+        uint32_t hash = 2166136261u;
+        for (size_t i = 0; i < len; ++i) {
+            hash ^= (uint8_t)(str[i]);
+            hash *= 16777619;
         }
         return (uint16_t)(hash & 0xFFFF);
-    }
-
-    // Helper to convert UTF-8 to UTF-16
-    static std::wstring Utf8ToUtf16(const char* utf8, size_t len) {
-        if (len == 0) return L"";
-        int size_needed = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, NULL, 0);
-        std::wstring wstrTo(size_needed, 0);
-        MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, &wstrTo[0], size_needed);
-        return wstrTo;
     }
 
     ZipArchive::ZipArchive(const std::wstring& path) : m_mappedFile(path) {
@@ -54,15 +45,13 @@ namespace QuickView {
         if (!foundEocd) return false;
 
         // 2. Parse EOCD to get Central Directory offset and size
-        // EOCD offset 16 is Central Directory offset
         uint32_t cdOffset = *(uint32_t*)(data + eocdOffset + 16);
         uint16_t numEntries = *(uint16_t*)(data + eocdOffset + 10);
 
         if (cdOffset >= size) return false;
 
-        // 3. Parse Central Directory records
+        // 3. Parse Central Directory records (Zero Allocation Parsing)
         m_entries.reserve(numEntries);
-        m_names.reserve(numEntries);
 
         size_t currentOffset = cdOffset;
         for (uint16_t i = 0; i < numEntries; ++i) {
@@ -82,24 +71,28 @@ namespace QuickView {
             uint16_t commentLen = *(uint16_t*)(data + currentOffset + 32);
             uint32_t headerOffset = *(uint32_t*)(data + currentOffset + 42);
 
-            // Extract Name
-            std::wstring wname = L"";
+            // Filter out directories instantly by looking at the last char of the name
+            bool isFile = false;
+            uint16_t nameHash = 0;
             if (nameLen > 0 && currentOffset + 46 + nameLen <= size) {
                 const char* namePtr = (const char*)(data + currentOffset + 46);
-                wname = Utf8ToUtf16(namePtr, nameLen);
+                if (namePtr[nameLen - 1] != '/') {
+                    isFile = true;
+                    nameHash = HashUtf8(namePtr, nameLen);
+                }
             }
 
-            // Only add if it's a file (not directory)
-            if (uncompSize > 0 && !wname.empty() && wname.back() != L'/') {
+            if (isFile && uncompSize > 0) {
                 ArchiveEntry entry;
                 entry.headerOffset = headerOffset;
                 entry.compSize = compSize;
                 entry.uncompSize = uncompSize;
-                entry.nameHash = HashWString(wname);
+                entry.nameHash = nameHash;
+                entry.nameOffset = (uint16_t)46; // Offset relative to current CD record start
+                entry.nameLen = nameLen;
                 entry.method = method;
 
                 m_entries.push_back(entry);
-                m_names.push_back(wname);
             }
 
             // Move to next CD record
@@ -109,13 +102,48 @@ namespace QuickView {
         return !m_entries.empty();
     }
 
-    bool ZipArchive::ExtractEntry(size_t index, uint8_t** outData, size_t* outSize) const {
-        if (index >= m_entries.size() || !m_mappedFile.IsValid()) return false;
+    std::wstring ZipArchive::GetEntryName(size_t index) const {
+        if (index >= m_entries.size() || !m_mappedFile.IsValid()) return L"";
 
         const ArchiveEntry& entry = m_entries[index];
         const uint8_t* data = m_mappedFile.data();
         size_t size = m_mappedFile.size();
 
+        // In the CD parsing phase, we just saved the string length. To actually get the string,
+        // we need to re-find the CD record. Since we don't save the CD offset per entry to save memory,
+        // we can actually just read the name from the Local File Header instead!
+        // The Local File Header starts at entry.headerOffset.
+
+        size_t lfhOffset = entry.headerOffset;
+        if (lfhOffset + 30 > size) return L"";
+
+        if (data[lfhOffset] != 0x50 || data[lfhOffset+1] != 0x4b ||
+            data[lfhOffset+2] != 0x03 || data[lfhOffset+3] != 0x04) {
+            return L"";
+        }
+
+        uint16_t nameLen = *(uint16_t*)(data + lfhOffset + 26);
+        if (nameLen == 0 || lfhOffset + 30 + nameLen > size) return L"";
+
+        const char* namePtr = (const char*)(data + lfhOffset + 30);
+
+        // Lazy UTF-8 to UTF-16 conversion
+        int size_needed = MultiByteToWideChar(CP_UTF8, 0, namePtr, (int)nameLen, NULL, 0);
+        if (size_needed <= 0) return L"";
+
+        std::wstring wstrTo(size_needed, 0);
+        MultiByteToWideChar(CP_UTF8, 0, namePtr, (int)nameLen, &wstrTo[0], size_needed);
+        return wstrTo;
+    }
+
+    bool ZipArchive::ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const {
+        if (index >= m_entries.size() || !m_mappedFile.IsValid() || !externalBuffer) return false;
+
+        const ArchiveEntry& entry = m_entries[index];
+        const uint8_t* data = m_mappedFile.data();
+        size_t size = m_mappedFile.size();
+
+        if (bufferSize < entry.uncompSize) return false;
         if (entry.headerOffset + 30 > size) return false;
 
         // Verify Local File Header signature 0x04034b50
@@ -129,48 +157,34 @@ namespace QuickView {
         uint16_t extraLen = *(uint16_t*)(data + lfhOffset + 28);
 
         size_t payloadOffset = lfhOffset + 30 + nameLen + extraLen;
-        if (payloadOffset > size || entry.compSize > size - payloadOffset) return false;
 
-        // Allocate output buffer
-        uint8_t* outBuffer = new uint8_t[entry.uncompSize];
-        if (!outBuffer) return false;
+        // Safe integer overflow check
+        if (payloadOffset > size || entry.compSize > size - payloadOffset) return false;
 
         if (entry.method == 0) {
             // Store (No compression)
-            if (entry.compSize != entry.uncompSize) {
-                delete[] outBuffer;
-                return false;
-            }
-            std::memcpy(outBuffer, data + payloadOffset, entry.uncompSize);
+            if (entry.compSize != entry.uncompSize) return false;
+            std::memcpy(externalBuffer, data + payloadOffset, entry.uncompSize);
         } else if (entry.method == 8) {
             // Deflate
             z_stream strm = {};
             strm.next_in = (Bytef*)(data + payloadOffset);
             strm.avail_in = entry.compSize;
-            strm.next_out = outBuffer;
+            strm.next_out = externalBuffer;
             strm.avail_out = entry.uncompSize;
 
             // -MAX_WBITS for raw deflate stream (no zlib header inside zip)
-            if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) {
-                delete[] outBuffer;
-                return false;
-            }
+            if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) return false;
 
             int ret = inflate(&strm, Z_FINISH);
             inflateEnd(&strm);
 
-            if (ret != Z_STREAM_END && ret != Z_OK) {
-                delete[] outBuffer;
-                return false;
-            }
+            if (ret != Z_STREAM_END && ret != Z_OK) return false;
         } else {
             // Unsupported compression method
-            delete[] outBuffer;
             return false;
         }
 
-        *outData = outBuffer;
-        *outSize = entry.uncompSize;
         return true;
     }
 

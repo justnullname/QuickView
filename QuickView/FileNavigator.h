@@ -9,7 +9,6 @@
 #include "EditState.h" // for g_runtime
 #include "exif.h"      // for easyexif
 #include "SupportedExtensions.h" // Unified supported extensions
-#include "ArchiveVFS.h"
 
 #pragma comment(lib, "Shlwapi.lib")
 
@@ -57,22 +56,17 @@ public:
         std::wstring pExt = p.extension().wstring();
         std::transform(pExt.begin(), pExt.end(), pExt.begin(), [](wchar_t c){ return std::towlower(c); });
 
-        if (pExt == L".cbz" || pExt == L".zip" || pExt == L".cbr" || pExt == L".rar") {
+        if (pExt == L".cbz" || pExt == L".zip") {
             // Load from Archive VFS
             m_archivePath = p.wstring();
-
-            if (pExt == L".cbz" || pExt == L".zip") {
-                m_archive = std::make_unique<QuickView::ZipArchive>(m_archivePath);
-            }
-            // else if (pExt == L".cbr" || pExt == L".rar") {
-            //     TODO: Instantiate UnRarArchive
-            // }
+            m_archive = std::make_unique<QuickView::ZipArchive>(m_archivePath);
 
             if (m_archive && m_archive->IsValid()) {
                 size_t numEntries = m_archive->GetEntryCount();
                 for (size_t i = 0; i < numEntries; ++i) {
                     const QuickView::ArchiveEntry& entry = m_archive->GetEntry(i);
-                    const std::wstring& name = m_archive->GetEntryName(i);
+                    // Use lazy evaluation for strings
+                    std::wstring name = m_archive->GetEntryName(i);
 
                     std::wstring ext = std::filesystem::path(name).extension().wstring();
                     std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
@@ -89,7 +83,6 @@ public:
                 }
             }
         } else {
-            // Standard Directory Scan
             for (const auto& entry : fs::directory_iterator(dir, ec)) {
                 if (entry.is_regular_file(ec)) {
                     std::wstring ext = entry.path().extension().wstring();
@@ -205,10 +198,18 @@ public:
         // Find current index
         if (!isDirectory) {
             std::wstring currentFull = p.wstring();
-            for (size_t i = 0; i < m_files.size(); ++i) {
-                if (m_files[i] == currentFull) {
-                    m_currentIndex = (int)i;
-                    break;
+
+            // Fix initial page load for Archive VFS
+            if (m_archive && m_archive->IsValid() && currentFull == m_archivePath) {
+                if (!m_files.empty()) {
+                    m_currentIndex = 0; // Default to first page in archive
+                }
+            } else {
+                for (size_t i = 0; i < m_files.size(); ++i) {
+                    if (m_files[i] == currentFull) {
+                        m_currentIndex = (int)i;
+                        break;
+                    }
                 }
             }
         }
@@ -347,7 +348,7 @@ public:
         return path.find(L"|") != std::wstring::npos;
     }
 
-    // Parse virtual path
+    // Parse virtual path avoiding exceptions
     static bool ParseVirtualPath(const std::wstring& path, std::wstring& outArchivePath, size_t& outIndex) {
         size_t firstPipe = path.find(L"|");
         if (firstPipe == std::wstring::npos) return false;
@@ -356,12 +357,19 @@ public:
         if (secondPipe == std::wstring::npos) return false;
 
         outArchivePath = path.substr(0, firstPipe);
-        try {
-            outIndex = std::stoull(path.substr(firstPipe + 1, secondPipe - firstPipe - 1));
-            return true;
-        } catch (...) {
-            return false;
+
+        // Fast string to integer avoiding exceptions
+        size_t index = 0;
+        for (size_t i = firstPipe + 1; i < secondPipe; ++i) {
+            wchar_t c = path[i];
+            if (c >= L'0' && c <= L'9') {
+                index = index * 10 + (c - L'0');
+            } else {
+                return false; // Invalid character
+            }
         }
+        outIndex = index;
+        return true;
     }
 
     QuickView::ZipArchive* GetArchive() const { return m_archive.get(); }
@@ -421,7 +429,7 @@ private:
                     // Treat archives as traversable directories
                     std::wstring ext = entry.path().extension().wstring();
                     std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-                    if (ext == L".cbz" || ext == L".zip" || ext == L".cbr" || ext == L".rar") {
+                    if (ext == L".cbz" || ext == L".zip") {
                         subfolders.push_back(entry.path().wstring());
                     }
                 }
@@ -451,7 +459,7 @@ private:
                 // Treat archives as sibling directories
                 std::wstring ext = entry.path().extension().wstring();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-                if (ext == L".cbz" || ext == L".zip" || ext == L".cbr" || ext == L".rar") {
+                if (ext == L".cbz" || ext == L".zip") {
                     folders.push_back(entry.path().wstring());
                 }
             }
@@ -502,5 +510,7 @@ private:
 
     // VFS Support
     std::unique_ptr<QuickView::ZipArchive> m_archive;
+
+public:
     std::wstring m_archivePath;
 };
