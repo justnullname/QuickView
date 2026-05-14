@@ -356,12 +356,21 @@ public:
         if (secondPipe == std::wstring::npos) return false;
 
         outArchivePath = path.substr(0, firstPipe);
-        try {
-            outIndex = std::stoull(path.substr(firstPipe + 1, secondPipe - firstPipe - 1));
-            return true;
-        } catch (...) {
-            return false;
+        
+        size_t index = 0;
+        size_t len = secondPipe - firstPipe - 1;
+        if (len == 0) return false;
+        
+        for (size_t i = firstPipe + 1; i < secondPipe; ++i) {
+            wchar_t c = path[i];
+            if (c >= L'0' && c <= L'9') {
+                index = index * 10 + (c - L'0');
+            } else {
+                return false;
+            }
         }
+        outIndex = index;
+        return true;
     }
 
     QuickView::ZipArchive* GetArchive() const { return m_archive.get(); }
