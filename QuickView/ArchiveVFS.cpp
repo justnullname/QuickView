@@ -1,6 +1,8 @@
 #include "ArchiveVFS.h"
 #include <cstring>
 #include <cwchar>
+#include <cstdarg>
+#include "rar.hpp"
 
 namespace QuickView {
 
@@ -119,6 +121,7 @@ namespace QuickView {
         return std::string_view((const char*)(m_mappedFile.data() + entry.nameOffset), entry.nameLen);
     }
 
+
     bool ZipArchive::ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const {
         if (index >= m_entries.size() || !m_mappedFile.IsValid() || !externalBuffer) return false;
 
@@ -170,5 +173,123 @@ namespace QuickView {
 
         return true;
     }
+
+    // --- RarArchive Implementation ---
+
+    RarArchive::RarArchive(const std::wstring& path) : m_mappedFile(path) {
+        if (m_mappedFile.IsValid()) {
+            m_valid = ParseArchive();
+        }
+    }
+
+    bool RarArchive::ParseArchive() {
+        Archive arc;
+        arc.SetMemoryBuffer(const_cast<uint8_t*>(m_mappedFile.data()), m_mappedFile.size());
+        
+        
+        
+        m_isSolid = arc.Solid;
+        
+        while (arc.ReadHeader() > 0) {
+            HEADER_TYPE type = arc.GetHeaderType();
+
+            if (type == HEAD_FILE || type == HEAD3_FILE) {
+                ArchiveEntry entry;
+                std::wstring wideName = arc.FileHead.FileName;
+                entry.headerOffset = (uint32_t)arc.CurBlockPos;
+                entry.compSize = (uint32_t)arc.FileHead.PackSize;
+                entry.uncompSize = (uint32_t)arc.FileHead.UnpSize;
+                entry.method = (uint16_t)arc.FileHead.Method;
+                
+                // Convert FileName to UTF-8 and store in m_namesBuffer
+                if (!wideName.empty()) {
+                    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideName.c_str(), (int)wideName.length(), nullptr, 0, nullptr, nullptr);
+                    if (utf8Len > 0) {
+                        entry.nameOffset = (uint32_t)m_namesBuffer.size();
+                        entry.nameLen = (uint16_t)utf8Len;
+                        m_namesBuffer.resize(m_namesBuffer.size() + utf8Len);
+                        WideCharToMultiByte(CP_UTF8, 0, wideName.c_str(), (int)wideName.length(), &m_namesBuffer[entry.nameOffset], utf8Len, nullptr, nullptr);
+                    } else {
+                        entry.nameOffset = 0;
+                        entry.nameLen = 0;
+                    }
+                } else {
+                    entry.nameOffset = 0;
+                    entry.nameLen = 0;
+                }
+                
+                m_entries.push_back(entry);
+            }
+            arc.SeekToNext();
+        }
+        return !m_entries.empty();
+    }
+
+    std::wstring RarArchive::GetEntryName(size_t index) const {
+        if (index >= m_entries.size()) return L"";
+        const ArchiveEntry& entry = m_entries[index];
+        if (entry.nameLen == 0) return L"";
+
+        std::string_view utf8Name(m_namesBuffer.data() + entry.nameOffset, entry.nameLen);
+        int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Name.data(), (int)utf8Name.length(), nullptr, 0);
+        if (wideLen <= 0) return L"";
+
+        std::wstring res(wideLen, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, utf8Name.data(), (int)utf8Name.length(), &res[0], wideLen);
+        return res;
+    }
+
+    std::string_view RarArchive::GetEntryNameView(size_t index) const {
+        if (index >= m_entries.size()) return std::string_view();
+        const ArchiveEntry& entry = m_entries[index];
+        if (entry.nameLen == 0) return std::string_view();
+        return std::string_view(m_namesBuffer.data() + entry.nameOffset, entry.nameLen);
+    }
+
+    bool RarArchive::ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const {
+        if (index >= m_entries.size() || !externalBuffer) return false;
+        const ArchiveEntry& entry = m_entries[index];
+
+
+        Archive arc;
+        arc.SetMemoryBuffer(const_cast<uint8_t*>(m_mappedFile.data()), m_mappedFile.size());
+        
+        // [Fix] Initialize archive format and SFX offset
+        if (!arc.IsArchive(true)) {
+            return false;
+        }
+
+        arc.Seek(entry.headerOffset, SEEK_SET);
+        if (arc.ReadHeader() <= 0) {
+            return false;
+        }
+
+
+        ComprDataIO dataIO;
+        dataIO.SetMemorySource(const_cast<uint8_t*>(m_mappedFile.data()), m_mappedFile.size());
+        dataIO.SetMemoryPos((size_t)arc.Tell());
+        dataIO.SetMemoryDest(externalBuffer, bufferSize);
+        dataIO.SetFiles(&arc, nullptr);
+        dataIO.SetPackedSize(arc.FileHead.PackSize);
+
+        if (arc.FileHead.Method == 0) {
+            byte buffer[16384];
+            int read;
+            while ((read = dataIO.UnpRead(buffer, sizeof(buffer))) > 0) {
+                dataIO.UnpWrite(buffer, read);
+            }
+        } else {
+            Unpack unpack(&dataIO);
+            unpack.Init(arc.FileHead.WinSize, arc.Solid);
+            unpack.SetDestSize(arc.FileHead.UnpSize);
+            unpack.DoUnpack(arc.FileHead.UnpVer, arc.Solid);
+        }
+
+        size_t written = dataIO.GetWrittenSize();
+
+        // Verify that we actually extracted data
+        return written > 0;
+    }
+
 
 }

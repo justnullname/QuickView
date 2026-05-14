@@ -10863,11 +10863,18 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
         std::wstring archivePath;
         size_t entryIndex;
         if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
-            QuickView::ZipArchive* archive = g_navigator.GetArchive();
+            QuickView::IArchive* archive = g_navigator.GetArchive();
 
-            std::unique_ptr<QuickView::ZipArchive> tempArchive;
+            std::unique_ptr<QuickView::IArchive> tempArchive;
             if (!archive || archivePath != g_navigator.m_archivePath) {
-                tempArchive = std::make_unique<QuickView::ZipArchive>(archivePath);
+                std::wstring ext = std::filesystem::path(archivePath).extension().wstring();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
+                
+                if (ext == L".cbr" || ext == L".rar") {
+                    tempArchive = std::make_unique<QuickView::RarArchive>(archivePath);
+                } else {
+                    tempArchive = std::make_unique<QuickView::ZipArchive>(archivePath);
+                }
                 archive = tempArchive.get();
             }
 
@@ -10884,6 +10891,7 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
                     // rawData lifecycle is managed by LoadToFrameFromMemory or the Arena. No manual delete here!
                     if (!arena) _aligned_free(rawData); // Fallback free if arena was null
                     return hr;
+                } else {
                 }
                 if (!arena && rawData) _aligned_free(rawData);
             }

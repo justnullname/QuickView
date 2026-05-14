@@ -27,7 +27,12 @@ class FileNavigator {
 public:
     void Initialize(const std::wstring& currentPath) {
         namespace fs = std::filesystem;
-        fs::path p(currentPath);
+        
+        std::wstring archivePart;
+        size_t vfsIndex = (size_t)-1;
+        bool isVfsInput = ParseVirtualPath(currentPath, archivePart, vfsIndex);
+        
+        fs::path p = isVfsInput ? fs::path(archivePart) : fs::path(currentPath);
         if (!fs::exists(p)) return;
 
         // VFS State Teardown
@@ -57,10 +62,14 @@ public:
         std::wstring pExt = p.extension().wstring();
         std::transform(pExt.begin(), pExt.end(), pExt.begin(), [](wchar_t c){ return std::towlower(c); });
 
-        if (pExt == L".cbz" || pExt == L".zip") {
+        if (pExt == L".cbz" || pExt == L".zip" || pExt == L".cbr" || pExt == L".rar") {
             // Load from Archive VFS
             m_archivePath = p.wstring();
-            m_archive = std::make_unique<QuickView::ZipArchive>(m_archivePath);
+            if (pExt == L".cbr" || pExt == L".rar") {
+                m_archive = std::make_unique<QuickView::RarArchive>(m_archivePath);
+            } else {
+                m_archive = std::make_unique<QuickView::ZipArchive>(m_archivePath);
+            }
 
             if (m_archive && m_archive->IsValid()) {
                 size_t numEntries = m_archive->GetEntryCount();
@@ -68,7 +77,7 @@ public:
                     const QuickView::ArchiveEntry& entry = m_archive->GetEntry(i);
                     // Zero-allocation extension check using string_view
                     std::string_view nameView = m_archive->GetEntryNameView(i);
-
+                    
                     size_t lastDot = nameView.find_last_of('.');
                     if (lastDot != std::string_view::npos) {
                         std::string_view extUtf8 = nameView.substr(lastDot);
@@ -128,13 +137,19 @@ public:
             e.p = m_files[i];
             e.s = m_sizes[i];
             std::error_code ec;
-            e.m = fs::last_write_time(e.p, ec);
+            
+            // For virtual paths, use the archive file's timestamp
+            if (IsVirtualPath(e.p)) {
+                e.m = fs::last_write_time(p, ec);
+            } else {
+                e.m = fs::last_write_time(e.p, ec);
+            }
 
             e.t = fs::path(e.p).extension().wstring();
             std::transform(e.t.begin(), e.t.end(), e.t.begin(), [](wchar_t c){ return std::towlower(c); });
 
-            // Only parse EXIF date if specifically requested (to save load time)
-            if (g_runtime.SortOrder == 3) {
+            // Only parse EXIF date if specifically requested and it's a real file
+            if (g_runtime.SortOrder == 3 && !IsVirtualPath(e.p)) {
                  FILE *fp = nullptr;
                  _wfopen_s(&fp, e.p.c_str(), L"rb");
                  if (fp) {
@@ -206,12 +221,13 @@ public:
             m_ids.push_back(ComputePathHash(f));
         }
 
+
         // Find current index
         if (!isDirectory) {
-            std::wstring currentFull = p.wstring();
+            std::wstring currentFull = isVfsInput ? currentPath : p.wstring();
 
             // Fix initial page load for Archive VFS
-            if (m_archive && m_archive->IsValid() && currentFull == m_archivePath) {
+            if (m_archive && m_archive->IsValid() && (isVfsInput || currentFull == m_archivePath)) {
                 if (!m_files.empty()) {
                     m_currentIndex = 0; // Default to first page in archive
                 }
@@ -393,7 +409,7 @@ public:
         return true;
     }
 
-    QuickView::ZipArchive* GetArchive() const { return m_archive.get(); }
+    QuickView::IArchive* GetArchive() const { return m_archive.get(); }
 
     const std::vector<std::wstring>& GetAllFiles() const { return m_files; }
 
@@ -450,7 +466,7 @@ private:
                     // Treat archives as traversable directories
                     std::wstring ext = entry.path().extension().wstring();
                     std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-                    if (ext == L".cbz" || ext == L".zip") {
+                    if (ext == L".cbz" || ext == L".zip" || ext == L".cbr" || ext == L".rar") {
                         subfolders.push_back(entry.path().wstring());
                     }
                 }
@@ -480,7 +496,7 @@ private:
                 // Treat archives as sibling directories
                 std::wstring ext = entry.path().extension().wstring();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-                if (ext == L".cbz" || ext == L".zip") {
+                if (ext == L".cbz" || ext == L".zip" || ext == L".cbr" || ext == L".rar") {
                     folders.push_back(entry.path().wstring());
                 }
             }
@@ -530,7 +546,7 @@ private:
     std::wstring m_crossFolderMessage;
 
     // VFS Support
-    std::unique_ptr<QuickView::ZipArchive> m_archive;
+    std::unique_ptr<QuickView::IArchive> m_archive;
 
 public:
     std::wstring m_archivePath;
