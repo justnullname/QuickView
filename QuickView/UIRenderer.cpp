@@ -511,13 +511,16 @@ void UIRenderer::OnResize(UINT width, UINT height) {
 // Main Render Entry Point
 // ============================================================================
 
-bool UIRenderer::RenderAll(HWND hwnd) {
+bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
     if (!m_compEngine || !m_compEngine->IsInitialized()) return false;
     
     bool rendered = false;
     
     EnsureTextFormats();
     
+    // [v6.0.8.2] Animation Updates (Must run even if layers aren't dirty yet to drive animation flags)
+    g_gallery.Update(deltaTime);
+
     // Note: Dirty flags are now managed by RequestRepaint() system.
     // DO NOT add auto-dirty checks here - they can block initial rendering.
     // RequestRepaint() should be called when UI state changes.
@@ -755,8 +758,6 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 // ============================================================================
 
 void UIRenderer::RenderGalleryLayer(ID2D1DeviceContext* dc) {
-    g_gallery.Update(0.016f);
-    
     if (g_gallery.IsVisible()) {
         D2D1_SIZE_F rtSize = D2D1::SizeF((float)m_width, (float)m_height);
         g_gallery.Render(dc, rtSize);

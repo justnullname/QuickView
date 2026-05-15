@@ -11,11 +11,29 @@
 #include <cstdint>
 #include <cstddef>
 #include <cwchar>
+#include <string>
 #include <string_view>
+#include <vector>
+#include <array>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
 #include <type_traits>
 #include <utility>
 #include <concepts>
 #include <bit>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <atomic>
+#include <thread>
+#include <filesystem>
+#include <algorithm>
+#include <chrono>
+#include <optional>
+#include <expected>
+#include <span>
 
 // [Critical] Resolve Windows macro interference BEFORE Direct2D/DirectWrite headers
 #undef DrawText
@@ -30,7 +48,9 @@
 
 // COM smart pointers
 #include <wrl/client.h>
+#ifndef ComPtr
 using Microsoft::WRL::ComPtr;
+#endif
 
 // Pragmas for linking
 #pragma comment(lib, "d2d1.lib")

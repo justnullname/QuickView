@@ -27,6 +27,7 @@ public:
         int origHeight;
         uint64_t fileSize;
         bool isValid;
+        bool isFailed;
     };
     ImageInfo GetImageInfo(size_t imageId);
 
@@ -82,9 +83,7 @@ private:
     std::unordered_map<size_t, std::list<size_t>::iterator> m_lruMap;
     size_t m_currentCacheSize = 0;
     
-    // Constants
-    const size_t MAX_CACHE_SIZE = 200 * 1024 * 1024; // 200MB
-    const size_t MAX_CACHE_COUNT = 1000;
+    // Constants moved below for organizational clarity
 
     // --- Worker Thread ---
     // --- Worker Threads ---
@@ -93,8 +92,19 @@ private:
         std::wstring path;
         int priorityDistance; // 0 = highest (center)
         bool isFastLane;      // Tag to verify lane if needed
+        uint64_t generation;   // [Fix] Track when this task was created
+
+        // [New] Archive-aware sorting
+        bool isArchive = false;
+        int archiveIndex = -1;
+        size_t archivePathHash = 0;
         
         bool operator>(const Task& other) const {
+            // Same archive: force sequential index order to maintain Solid VFS state
+            if (isArchive && other.isArchive && archivePathHash == other.archivePathHash) {
+                return archiveIndex > other.archiveIndex;
+            }
+            // Different archives or mixed: respect distance to screen center
             return priorityDistance > other.priorityDistance; // Min-heap
         }
     };
@@ -111,11 +121,15 @@ private:
     
     std::unordered_map<size_t, bool> m_pendingTasks; 
     std::atomic<bool> m_running = false;
+    std::atomic<uint64_t> m_currentGeneration{ 0 };
 
     void WorkerLoopFast();
     void WorkerLoopSlow();
     
     void EvictLRU();
-    void AddToLRU(size_t imageId, size_t size, size_t previousSize = 0);
+    void AddToLRU(size_t imageId, size_t size);
     void TouchLRU(size_t imageId);
+
+    const size_t MAX_CACHE_SIZE = 512 * 1024 * 1024; // [v6.0.6] Increased to 512MB for 4K/8K assets
+    const size_t MAX_CACHE_COUNT = 2000;
 };

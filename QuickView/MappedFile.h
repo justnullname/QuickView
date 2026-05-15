@@ -13,7 +13,7 @@ namespace QuickView {
     // Throws std::runtime_error on failure (construction).
     class MappedFile {
     public:
-        MappedFile(const std::wstring& path) {
+        MappedFile(const std::wstring& path) : m_path(path) {
             m_hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (m_hFile == INVALID_HANDLE_VALUE) return; // Invalid
 
@@ -42,6 +42,7 @@ namespace QuickView {
         bool IsValid() const { return m_ptr != nullptr; }
         const uint8_t* data() const { return m_ptr; }
         size_t size() const { return m_size; }
+        const std::wstring& GetPath() const { return m_path; }
 
     public:
         void Prefetch(size_t offset, size_t length) {
@@ -75,6 +76,7 @@ namespace QuickView {
         HANDLE m_hMap = nullptr;
         const uint8_t* m_ptr = nullptr;
         size_t m_size = 0;
+        std::wstring m_path;
     };
 
 } // namespace QuickView

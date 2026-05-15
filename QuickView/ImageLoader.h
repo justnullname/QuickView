@@ -164,6 +164,8 @@ public:
     int origHeight = 0;
     uint64_t fileSize = 0;
     bool isBlurry = true; // Phase 6: Fast Pass (false = Clear, true = Blur)
+    bool isFailed = false; // [New] Error Placeholder Strategy
+
 
     // [v3.2] Debug: 记录实际使用的 Loader
     std::wstring loaderName;

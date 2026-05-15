@@ -1,12 +1,16 @@
 #include "pch.h"
 #include "GalleryOverlay.h"
 #include "ThumbnailManager.h"
+#include "ImageTypes.h"
 #include "FileNavigator.h"
 #include "EditState.h"
 #include <algorithm>
 #include <cmath>
 
+extern void RequestRepaint(QuickView::PaintLayer layerMask);
+
 extern AppConfig g_config;
+extern HWND g_mainHwnd;
 
 
 
@@ -47,6 +51,14 @@ void GalleryOverlay::Update(float deltaTime) {
     if (m_isVisible && m_opacity < 1.0f && g_config.GlassUIAnimations) {
         m_opacity += deltaTime * 5.0f; // 0.2s fade in
         if (m_opacity > 1.0f) m_opacity = 1.0f;
+        
+        // [Fix] Keep the animation driving even if no mouse move
+        RequestRepaint(QuickView::PaintLayer::Gallery);
+        
+        // Force a new message into the queue to guarantee the loop continues during animation
+        if (g_mainHwnd) {
+            ::PostMessageW(g_mainHwnd, WM_APP + 4, 0, 0); // WM_DEFERRED_REPAINT
+        }
     }
 }
 
@@ -220,7 +232,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
             if (bmp) {
                 D2D1_SIZE_F bmpSize = bmp->GetSize();
                 D2D1_RECT_F src = GetCenterCropRect(bmpSize, cellRect);
-                pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, src);
+                pDC->DrawBitmap(bmp.Get(), cellRect, m_opacity, D2D1_INTERPOLATION_MODE_LINEAR, src);
             } else {
                 // Placeholder (Gray Box) call QueueRequest
                 D2D1_COLOR_F phBase =
@@ -255,8 +267,12 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size) {
         
         std::wstring desc = filename + L"\n";
         if (info.isValid) {
-            desc += std::to_wstring(info.origWidth) + L" x " + std::to_wstring(info.origHeight) + L"\n";
-            desc += std::to_wstring(info.fileSize / 1024) + L" KB";
+            if (info.isFailed) {
+                desc += L"Failed to load";
+            } else {
+                desc += std::to_wstring(info.origWidth) + L" x " + std::to_wstring(info.origHeight) + L"\n";
+                desc += std::to_wstring(info.fileSize / 1024) + L" KB";
+            }
         } else {
             desc += L"Loading...";
         }

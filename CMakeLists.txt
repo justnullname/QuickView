@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.25)
 # Project Configuration
 # ============================================================================
 project(QuickView LANGUAGES C CXX RC)
+include(cmake/MSVCEnv.cmake)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +47,7 @@ set(QUICKVIEW_SOURCES
     QuickView/StbLoader.cpp
     QuickView/TinyExrLoader.cpp
     QuickView/WuffsImpl.cpp
+    QuickView/ArchiveVFS.cpp
     QuickView/ContextMenu.cpp
     QuickView/GalleryOverlay.cpp
     QuickView/ThumbnailManager.cpp
@@ -81,6 +83,8 @@ set(QUICKVIEW_SOURCES
 # ============================================================================
 # Executable Target
 # ============================================================================
+add_subdirectory(third_party/unrar_core)
+
 add_executable(QuickView WIN32 ${QUICKVIEW_SOURCES})
 
 # Explicitly set the subsystem and machine type
@@ -93,7 +97,7 @@ endif()
 set_target_properties(QuickView PROPERTIES LINK_FLAGS "${QUICKVIEW_LINK_FLAGS}")
 
 # Include paths
-target_include_directories(QuickView PRIVATE QuickView third_party/yyjson)
+target_include_directories(QuickView PRIVATE QuickView third_party/yyjson third_party/unrar_core)
 
 # Precompiled Headers (PCH) - CXX only to avoid conflict with C source (yyjson.c)
 target_precompile_headers(QuickView PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
@@ -263,6 +267,7 @@ target_link_libraries(QuickView PRIVATE
     libraw::raw
     yuv
     ZLIB::ZLIB
+    unrar_core
     # Windows system libraries
     dwrite.lib
     windowscodecs.lib

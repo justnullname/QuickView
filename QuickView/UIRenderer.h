@@ -126,7 +126,7 @@ public:
     void MarkOSDDirty() { m_isDynamicDirty = true; m_osdDirty = true; }
     void MarkTooltipDirty() { m_isDynamicDirty = true; m_tooltipDirty = true; }
     
-    bool RenderAll(HWND hwnd);  // 渲染所有需要更新的层
+    bool RenderAll(HWND hwnd, float deltaTime);  // 渲染所有需要更新的层
     
     void UpdateMetadata(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath);
     void UpdateViewState(const ViewState& viewState);
@@ -168,7 +168,7 @@ public:
     WindowControlHit HitTestWindowControls(float x, float y);
     
     // 兼容旧接口
-    bool Render(HWND hwnd) { return RenderAll(hwnd); }
+    bool Render(HWND hwnd, float deltaTime) { return RenderAll(hwnd, deltaTime); }
 
     // ===== Info Panel Rendering Helpers =====
     D2D1_SIZE_F GetRequiredInfoPanelSize() const; // Calculate required dimensions

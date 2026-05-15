@@ -39,6 +39,8 @@ using namespace QuickView;
 #include <thread>
 #include <shobjidl.h> // [Add] for IShellItemImageFactory
 #include "MappedFile.h" // [Opt]
+#include "FileNavigator.h" 
+extern FileNavigator g_navigator;
 
 
 // Forward declaration
@@ -431,8 +433,43 @@ namespace QuickView {
         // File I/O Helpers
         // ------------------------------------------------------------------------
         
+        // Helper to get raw data from VFS or physical file
+        static bool GetVfsFileData(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
+            std::wstring pathStr(filePath);
+            if (pathStr.find(L"|") == std::wstring::npos) return false;
+            
+            std::wstring archivePath;
+            size_t entryIndex;
+            if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
+                QuickView::IArchive* archive = g_navigator.GetArchive();
+                std::shared_ptr<QuickView::IArchive> cachedArchive;
+                if (!archive || archivePath != g_navigator.m_archivePath) {
+                    cachedArchive = QuickView::IArchive::OpenCached(archivePath);
+                    archive = cachedArchive.get();
+                }
+                if (archive && archive->IsValid() && entryIndex < archive->GetEntryCount()) {
+                    const auto& entry = archive->GetEntry(entryIndex);
+                    buffer.resize(entry.uncompSize);
+                    size_t written = archive->ExtractEntry(entryIndex, buffer.data(), buffer.size());
+                    if (written > 0) {
+                        if (written < buffer.size()) buffer.resize(written);
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            return false;
+        }
+
         // Peek first 4KB of file (for format detection)
         static size_t PeekHeader(LPCWSTR filePath, uint8_t* buffer, size_t bufferSize) {
+            std::vector<uint8_t> vfsData;
+            if (GetVfsFileData(filePath, vfsData)) {
+                size_t toCopy = (std::min)(bufferSize, vfsData.size());
+                if (toCopy > 0) memcpy(buffer, vfsData.data(), toCopy);
+                return toCopy;
+            }
+
             HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (hFile == INVALID_HANDLE_VALUE) return 0;
             
@@ -869,6 +906,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
 
     // 2. TurboJPEG Fast Path
     if (fmt == L"JPEG") {
+        QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_Start", "Action"), TraceLoggingUInt64(size, "Size"));
         if (pLoaderName) *pLoaderName = L"TurboJPEG (MMF)";
         
         // [Opt] Thread-Local TurboJPEG Handle to avoid init overhead
@@ -881,7 +919,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         static thread_local TjCtx t_ctx;
         
         tjhandle handle = t_ctx.h;
-        if (!handle) return E_FAIL;
+        if (!handle) {
+            QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_NoHandle", "Action"));
+            return E_FAIL;
+        }
         
         // No Guard needed, handle persists with thread
         // Resetting to defaults might be needed? 
@@ -896,6 +937,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
 
         // [Fix] Use TurboJPEG v3 API correctly (Header -> Get)
         if (tj3DecompressHeader(handle, data, size) != 0) {
+             QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_HeaderFail", "Action"), TraceLoggingString(tj3GetErrorStr(handle), "Error"));
              return E_FAIL;
         }
 
@@ -906,6 +948,7 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         // Fall back to the file-path loader so the historical WIC/CMS path is preserved.
         int colorspace = tj3Get(handle, TJPARAM_COLORSPACE);
         if (colorspace == TJCS_CMYK || colorspace == TJCS_YCCK) {
+             QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_CMYK_Fallback", "Action"));
              return E_NOTIMPL;
         }
 
@@ -1000,8 +1043,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
         // NOTE: This will trigger PAGE FAULTS for the entire file sequentially!
         // This effectively "Warms Up" the OS Cache for random access later.
         if (tj3Decompress8(handle, data, size, outFrame->pixels, outFrame->stride, TJPF_BGRA) != 0) {
+             QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_DecompressFail", "Action"), TraceLoggingString(tj3GetErrorStr(handle), "Error"));
              return E_FAIL;
         }
+        QV_LOG("LoadToFrame_Memory", TraceLoggingString("JPEG_End", "Action"), TraceLoggingInt32(finalW, "Width"), TraceLoggingInt32(finalH, "Height"));
         
         // [CMS] Extract ICC Profile from TurboJPEG
         uint8_t* iccBuf = nullptr;
@@ -1043,8 +1088,13 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t* data, size_t size,
 
         if (hrUnified == E_OUTOFMEMORY || hrUnified == E_ABORT) return hrUnified;
         
+        if (FAILED(hrUnified) && hrUnified != E_NOTIMPL) {
+            QV_LOG("LoadToFrame_Memory", TraceLoggingString("Unified_Fail", "Action"), TraceLoggingHResult(hrUnified, "HR"), TraceLoggingWideString(fmt.c_str(), "Format"));
+        }
+        
         if (SUCCEEDED(hrUnified) && result.pixels) {
             MoveDecodeResultToFrame(result, outFrame, arena);
+            QV_LOG("LoadToFrame_Memory", TraceLoggingString("Unified_Success", "Action"), TraceLoggingWideString(fmt.c_str(), "Format"));
             
             if (pMetadata && result.width > 0) {
                 pMetadata->Width = result.width; 
@@ -1534,6 +1584,8 @@ static void PopulateMetadataFromEasyExif_Refined(const easyexif::EXIFInfo& exif,
 
 // Helper to read file to vector
 bool ReadFileToVector(LPCWSTR filePath, std::vector<uint8_t>& buffer) {
+    if (QuickView::Codec::GetVfsFileData(filePath, buffer)) return true;
+
     HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
 
@@ -3424,16 +3476,57 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     if (SUCCEEDED(LoadShellThumbnail(filePath, targetSize, pData))) {
         return S_OK;
     }
-
     const ImageHeaderInfo headerInfo = PeekHeader(filePath);
     const uint64_t fallbackFileSize = static_cast<uint64_t>(headerInfo.fileSize);
-    std::wstring format = headerInfo.format.empty() ? DetectFormatFromContent(filePath) : headerInfo.format;
+    
+    std::vector<uint8_t> extractedData;
+    const uint8_t* mappedData = nullptr;
+    size_t mappedSize = 0;
+    std::unique_ptr<QuickView::MappedFile> mapping;
+
+    std::wstring pathStr(filePath);
+    if (pathStr.find(L"|") != std::wstring::npos) {
+        std::wstring archivePath;
+        size_t entryIndex;
+        if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
+            QV_LOG("LoadThumbnail_Archive", TraceLoggingWideString(archivePath.c_str(), "Archive"), TraceLoggingUInt64(entryIndex, "Index"));
+            QuickView::IArchive* archive = g_navigator.GetArchive();
+            std::shared_ptr<QuickView::IArchive> cachedArchive;
+            if (!archive || archivePath != g_navigator.m_archivePath) {
+                cachedArchive = QuickView::IArchive::OpenCached(archivePath);
+                archive = cachedArchive.get();
+            }
+            if (archive && archive->IsValid() && entryIndex < archive->GetEntryCount()) {
+                const auto& entry = archive->GetEntry(entryIndex);
+                extractedData.resize(entry.uncompSize);
+                size_t written = archive->ExtractEntry(entryIndex, extractedData.data(), extractedData.size());
+                if (written > 0) {
+                    mappedData = extractedData.data();
+                    mappedSize = written;
+                    QV_LOG("LoadThumbnail_Extracted", TraceLoggingUInt64(mappedSize, "Size"));
+                } else {
+                    QV_LOG("LoadThumbnail_ExtractFailed", TraceLoggingWideString(archivePath.c_str(), "Archive"));
+                }
+            }
+        }
+    }
+
+    if (!mappedData) {
+        mapping = std::make_unique<QuickView::MappedFile>(filePath);
+        if (mapping->IsValid()) {
+            mappedData = mapping->data();
+            mappedSize = mapping->size();
+        }
+    }
+
+    std::wstring format = headerInfo.format;
+    if (format.empty()) {
+        if (mappedData) format = DetectFormatFromContent(mappedData, std::min<size_t>(mappedSize, 1024));
+        else format = DetectFormatFromContent(filePath);
+    }
+
     std::wstring pathLower = filePath;
     std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
-
-    QuickView::MappedFile mapping(filePath);
-    const uint8_t* mappedData = mapping.IsValid() ? mapping.data() : nullptr;
-    size_t mappedSize = mapping.IsValid() ? mapping.size() : 0;
 
     auto tryEmbeddedPreview = [&](const wchar_t* loaderName,
                                   auto extractor) -> bool {
@@ -3559,7 +3652,12 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData*
     ctx.pLoaderName = &loaderName;
     
     DecodeResult res;
-    HRESULT hr = LoadImageUnified(filePath, ctx, res);
+    HRESULT hr = E_FAIL;
+    if (mappedData && mappedSize > 0) {
+        hr = LoadBufferUnified(mappedData, mappedSize, format, ctx, res);
+    } else {
+        hr = LoadImageUnified(filePath, ctx, res);
+    }
     
     if (SUCCEEDED(hr)) {
         pData->width = res.width;
@@ -7594,7 +7692,12 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo* pInfo) {
     // 1. Get file size (cheap filesystem call)
     std::error_code ec_size;
     pInfo->fileSize = std::filesystem::file_size(filePath, ec_size);
-    if (ec_size) return E_FAIL;
+    if (ec_size) {
+        // Fallback for VFS
+        CImageLoader::ImageHeaderInfo vfsPeek = PeekHeader(filePath);
+        if (vfsPeek.fileSize > 0) pInfo->fileSize = vfsPeek.fileSize;
+        else return E_FAIL;
+    }
 
     // 2. Read first 64KB for initial detection
     size_t chunkStep = 64 * 1024;
@@ -10635,7 +10738,45 @@ static bool GetISOBMFFDimensions(LPCWSTR filePath, uint32_t* width, uint32_t* he
 CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
     ImageHeaderInfo result;
     if (!filePath) return result;
-    
+
+    // === Archive VFS Support ===
+    std::wstring pathStr(filePath);
+    if (pathStr.find(L"|") != std::wstring::npos) {
+        result.type = ImageType::TypeA_Sprint; // VFS entries route through memory decoder usually small enough
+
+        std::wstring archivePath;
+        size_t entryIndex;
+        if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
+            QuickView::IArchive* archive = g_navigator.GetArchive();
+            // Thread-safety: Reading from already valid archive metadata is generally safe
+            if (archive && archive->IsValid() && archivePath == g_navigator.m_archivePath) {
+                if (entryIndex < archive->GetEntryCount()) {
+                    result.fileSize = archive->GetEntry(entryIndex).uncompSize;
+                }
+            }
+        }
+
+        // Zero-allocation extension extraction for format guessing
+        size_t lastDot = pathStr.find_last_of(L".");
+        if (lastDot != std::wstring::npos) {
+            std::wstring ext = pathStr.substr(lastDot);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+            if (ext == L".png") result.format = L"PNG";
+            else if (ext == L".webp") result.format = L"WEBP";
+            else if (ext == L".avif") result.format = L"AVIF";
+            else if (ext == L".jxl") result.format = L"JXL";
+            else result.format = L"JPEG"; // Fallback
+        } else {
+            result.format = L"JPEG";
+        }
+        
+        // [v6.0.8] Set minimum dimensions to prevent Layout/Titan logic from stalling on 0x0
+        result.width = 1693; // Assume typical smartphone photo for layout hint
+        result.height = 2472;
+        
+        return result;
+    }
+
     // Get file size
     std::error_code ec;
     result.fileSize = std::filesystem::file_size(filePath, ec);
@@ -10799,6 +10940,10 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
 // ============================================================================
 
 
+// Removed from here - moved to top of file
+// #include "FileNavigator.h" // For ParseVirtualPath
+// extern FileNavigator g_navigator;
+
 HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* outFrame,
                                    QuantumArena* arena,
                                    int targetWidth, int targetHeight,
@@ -10814,20 +10959,57 @@ HRESULT CImageLoader::LoadToFrame(LPCWSTR filePath, QuickView::RawImageFrame* ou
     
     // Reset output frame
     outFrame->Release();
-    
-    // Detect format from magic bytes
-    std::wstring format = DetectFormatFromContent(filePath);
-    
+
     // Helper: Allocate memory (Always aligned)
     auto AllocateBuffer = [&](size_t size) -> uint8_t* {
         if (arena) {
             uint8_t* ptr = static_cast<uint8_t*>(arena->Allocate(size, 64));
             // Note: Arena::Allocate uses _aligned_malloc on overflow.
-            return ptr; 
+            return ptr;
         } else {
             return static_cast<uint8_t*>(_aligned_malloc(size, 64));
         }
     };
+
+    // === Archive VFS Support ===
+    std::wstring pathStr(filePath);
+    if (pathStr.find(L"|") != std::wstring::npos) {
+        std::wstring archivePath;
+        size_t entryIndex;
+        if (FileNavigator::ParseVirtualPath(pathStr, archivePath, entryIndex)) {
+            QV_LOG("LoadToFrame_Archive", TraceLoggingWideString(archivePath.c_str(), "Archive"), TraceLoggingUInt64(entryIndex, "Index"));
+            QuickView::IArchive* archive = g_navigator.GetArchive();
+            std::shared_ptr<QuickView::IArchive> cachedArchive;
+            if (!archive || archivePath != g_navigator.m_archivePath) {
+                cachedArchive = QuickView::IArchive::OpenCached(archivePath);
+                archive = cachedArchive.get();
+            }
+
+            if (archive && archive->IsValid() && entryIndex < archive->GetEntryCount()) {
+                const QuickView::ArchiveEntry& entry = archive->GetEntry(entryIndex);
+                size_t rawSize = entry.uncompSize;
+
+                // Zero-allocation buffer provisioning (No new/delete needed here)
+                uint8_t* rawData = AllocateBuffer(rawSize);
+
+                size_t written = archive->ExtractEntry(entryIndex, rawData, rawSize);
+                if (rawData && written > 0) {
+                    QV_LOG("LoadToFrame_Extracted", TraceLoggingUInt64(written, "Size"));
+                    HRESULT hr = LoadToFrameFromMemory(rawData, written, outFrame, arena, targetWidth, targetHeight, pLoaderName, pMetadata, targetHdrHeadroomStops);
+                    // rawData lifecycle is managed by LoadToFrameFromMemory or the Arena. No manual delete here!
+                    if (!arena) _aligned_free(rawData); // Fallback free if arena was null
+                    return hr;
+                } else {
+                }
+                if (!arena && rawData) _aligned_free(rawData);
+            }
+            return E_FAIL;
+        }
+    }
+    // ===========================
+
+    // Detect format from magic bytes
+    std::wstring format = DetectFormatFromContent(filePath);
     
     // Helper: Setup deleter based on allocation source
     auto SetupDeleter = [&](uint8_t* ptr) {
