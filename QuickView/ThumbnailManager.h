@@ -94,8 +94,18 @@ private:
         int priorityDistance; // 0 = highest (center)
         bool isFastLane;      // Tag to verify lane if needed
         uint64_t generation;   // [Fix] Track when this task was created
+
+        // [New] Archive-aware sorting
+        bool isArchive = false;
+        int archiveIndex = -1;
+        size_t archivePathHash = 0;
         
         bool operator>(const Task& other) const {
+            // Same archive: force sequential index order to maintain Solid VFS state
+            if (isArchive && other.isArchive && archivePathHash == other.archivePathHash) {
+                return archiveIndex > other.archiveIndex;
+            }
+            // Different archives or mixed: respect distance to screen center
             return priorityDistance > other.priorityDistance; // Min-heap
         }
     };

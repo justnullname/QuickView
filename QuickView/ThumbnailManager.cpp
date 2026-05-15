@@ -2,6 +2,8 @@
 #include "ThumbnailManager.h"
 #include <algorithm>
 #include <cwctype>
+#include "FileNavigator.h"
+extern FileNavigator g_navigator;
 
 ThumbnailManager::ThumbnailManager() {}
 
@@ -40,6 +42,11 @@ void ThumbnailManager::ClearCache() {
     m_pendingTasks.clear();
     m_fastQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
     m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
+
+    // Purge VFS state when cache is cleared
+    if (g_navigator.GetArchive()) {
+        g_navigator.GetArchive()->PurgeState();
+    }
 }
 
 ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(size_t imageId, LPCWSTR /*filePath*/, ID2D1RenderTarget* pRT) {
@@ -278,6 +285,8 @@ void ThumbnailManager::WorkerLoopSlow() {
 }
 
 // Added to match planned API changes
+#include "FileNavigator.h"
+
 void ThumbnailManager::QueueRequest(size_t imageId, LPCWSTR path, int priority) {
     {
         std::lock_guard<std::mutex> cacheLock(m_cacheMutex);
@@ -290,18 +299,20 @@ void ThumbnailManager::QueueRequest(size_t imageId, LPCWSTR path, int priority) 
     
     if (m_pendingTasks.count(imageId)) return; // Already queued
     
-    // Check if in Cache? (Avoid queuing if already cached)
-    // Accessing m_cacheMutex here might deadlock if called from UI thread which holds cacheMutex?
-    // Caller (UI) usually checks GetThumbnail (which locks Cache) -> returns null -> calls QueueRequest.
-    // So Cache is unlocked when QueueRequest is called. Safe.
-    // But we should double check L1 existence?
-    // Assuming UI checked GetThumbnail first.
-    
     Task t;
     t.imageId = imageId;
     t.path = path;
     t.priorityDistance = priority;
     t.generation = m_currentGeneration;
+
+    // Detect if this is a virtual archive path
+    std::wstring archivePath;
+    size_t archiveIndex = 0;
+    if (FileNavigator::ParseVirtualPath(path, archivePath, archiveIndex)) {
+        t.isArchive = true;
+        t.archiveIndex = (int)archiveIndex;
+        t.archivePathHash = ComputePathHash(archivePath);
+    }
 
     // Detect format for Lane Selection
     std::wstring ext = path;
@@ -315,7 +326,7 @@ void ThumbnailManager::QueueRequest(size_t imageId, LPCWSTR path, int priority) 
             e == L".arw" || e == L".cr2" || e == L".nef" || e == L".dng" || e == L".orf" || e == L".rw2" || e == L".raf" ||
             e == L".heic" || e == L".heif" || e == L".hif" || e == L".avif" ||
             e == L".psd" || e == L".psb" ||
-            e == L".webp") { // Debug Stats (Removed)
+            e == L".webp") { 
             isFast = true;
         }
     }
@@ -338,7 +349,13 @@ void ThumbnailManager::ClearQueue() {
     m_fastQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
     m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
     m_pendingTasks.clear();
+
+    // Purge VFS state on massive cancellation to free up resources/locks
+    if (g_navigator.GetArchive()) {
+        g_navigator.GetArchive()->PurgeState();
+    }
 }
+
 
 
 

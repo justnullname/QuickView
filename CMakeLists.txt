@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.25)
 # ============================================================================
 # Project Configuration
 # ============================================================================
+# Dynamic MSVC environment setup for Clang-CL
+include(cmake/MSVCEnv.cmake)
+
 project(QuickView LANGUAGES C CXX RC)
 
 set(CMAKE_CXX_STANDARD 23)

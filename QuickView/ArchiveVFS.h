@@ -6,7 +6,13 @@
 #include <cstdint>
 #include <zlib.h>
 #include <mutex>
+#include <chrono>
+#include <memory>
 
+
+class Archive;
+class ComprDataIO;
+class Unpack;
 
 namespace QuickView {
 
@@ -32,6 +38,7 @@ namespace QuickView {
         virtual std::wstring GetEntryName(size_t index) const = 0;
         virtual std::string_view GetEntryNameView(size_t index) const = 0;
         virtual bool ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const = 0;
+        virtual void PurgeState() const = 0;
     };
 
     class ZipArchive : public IArchive {
@@ -57,6 +64,8 @@ namespace QuickView {
         // Requires externalBuffer to be pre-allocated with a size >= entry.uncompSize
         bool ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const override;
 
+        void PurgeState() const override {}
+
     private:
         bool ParseCentralDirectory();
 
@@ -65,10 +74,11 @@ namespace QuickView {
 
         std::vector<ArchiveEntry> m_entries;
     };
+
     class RarArchive : public IArchive {
     public:
         RarArchive(const std::wstring& path);
-        ~RarArchive() = default;
+        ~RarArchive();
 
         bool IsValid() const override { return m_mappedFile.IsValid() && m_valid; }
         size_t GetEntryCount() const override { return m_entries.size(); }
@@ -76,8 +86,21 @@ namespace QuickView {
         std::wstring GetEntryName(size_t index) const override;
         std::string_view GetEntryNameView(size_t index) const override;
         bool ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const override;
+        void PurgeState() const override;
 
     private:
+        struct SolidState {
+            ::Archive* arc = nullptr;
+            ::ComprDataIO* dataIO = nullptr;
+            ::Unpack* unpack = nullptr;
+            size_t currentIndex = (size_t)-1;
+            std::chrono::steady_clock::time_point lastAccessed;
+
+            SolidState();
+            ~SolidState();
+            void Reset(const uint8_t* data, size_t size);
+        };
+
         bool ParseArchive();
 
         MappedFile m_mappedFile;
@@ -85,7 +108,9 @@ namespace QuickView {
         bool m_isSolid = false;
         std::vector<ArchiveEntry> m_entries;
         std::vector<char> m_namesBuffer;
-        mutable std::mutex m_extractMutex;
+        
+        mutable std::mutex m_solidMutex;
+        mutable std::unique_ptr<SolidState> m_solidState;
     };
 
 }
