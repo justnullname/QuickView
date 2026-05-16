@@ -2,12 +2,32 @@ set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
 
+# Ensure LLVM and Ninja are in PATH for vcpkg and its sub-processes (like Meson)
+set(LLVM_BIN "C:/Program Files/LLVM/bin")
+# Ninja is currently in a Winget path, we should ideally find it dynamically but let's use the known path for now
+# or better, find it and add its directory.
+find_program(NINJA_PATH ninja)
+if(NINJA_PATH)
+    get_filename_component(NINJA_DIR "${NINJA_PATH}" DIRECTORY)
+    set(ENV{PATH} "${LLVM_BIN};${NINJA_DIR};$ENV{PATH}")
+else()
+    set(ENV{PATH} "${LLVM_BIN};$ENV{PATH}")
+endif()
+
 # Dynamically find LLVM tools in PATH to get absolute paths required by vcpkg
-find_program(LLVM_C_COMPILER clang-cl)
-find_program(LLVM_CXX_COMPILER clang-cl)
-find_program(LLVM_LINKER lld-link)
-find_program(LLVM_AR llvm-lib)
-find_program(LLVM_RC llvm-rc)
+# If not in PATH, try standard installation paths
+set(LLVM_HINTS "${LLVM_BIN}" "C:/Program Files (x86)/LLVM/bin")
+
+find_program(LLVM_C_COMPILER clang-cl HINTS ${LLVM_HINTS})
+find_program(LLVM_CXX_COMPILER clang-cl HINTS ${LLVM_HINTS})
+find_program(LLVM_LINKER lld-link HINTS ${LLVM_HINTS})
+find_program(LLVM_AR llvm-lib HINTS ${LLVM_HINTS})
+find_program(LLVM_RC llvm-rc HINTS ${LLVM_HINTS})
+find_program(LLVM_MT llvm-mt HINTS ${LLVM_HINTS})
+
+if(NOT LLVM_C_COMPILER OR NOT LLVM_LINKER)
+    message(FATAL_ERROR "Could not find LLVM tools (clang-cl, lld-link). Please ensure LLVM is installed and in PATH, or at ${LLVM_HINTS}")
+endif()
 
 # Toolchain paths
 set(VCPKG_C_COMPILER "${LLVM_C_COMPILER}")
@@ -48,6 +68,7 @@ set(VCPKG_CMAKE_CONFIGURE_OPTIONS
     "-DCMAKE_LINKER=${LLVM_LINKER}"
     "-DCMAKE_AR=${LLVM_AR}"
     "-DCMAKE_RC_COMPILER=${LLVM_RC}"
+    "-DCMAKE_MT=${LLVM_MT}"
     "-DCMAKE_C_COMPILER_FRONTEND_VARIANT=MSVC"
     "-DCMAKE_CXX_COMPILER_FRONTEND_VARIANT=MSVC"
     "-DJPEGXL_ENABLE_ENC=OFF"
