@@ -961,20 +961,29 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
 
   settings.contentPeakScRgb = (contentPeakScRgb > 1.0f ? contentPeakScRgb : 1.0f);
 
-  // Phase 2: Exposure Gain Routing
+  // Phase 2: Exposure Gain Routing (Unified Physics Calibration Model)
   float exposureGain = 1.0f;
+  const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
+
   if (!displayState.advancedColorActive) {
-      // SDR Output Path: Standard sRGB reference white is 100 nits (1.25 scRGB).
-      // We default to 1.25 instead of 1.0 (80 nits) to match mpv and Windows Photos calibration.
+      // SDR Output Path: Map entire HDR content range to [0, 1.0] scRGB linear,
+      // which exactly fills the sRGB OETF [0, 1] encoding domain for UNORM8 output.
+      // This is the international standard approach (ITU-R BT.2390, mpv/libplacebo reference).
+      // 1.0 scRGB = sRGB reference white = maximum representable value in UNORM8 sRGB.
       settings.displayPeakScRgb = (g_config.HdrPeakNitsOverride > 0.0f) 
                                   ? (g_config.HdrPeakNitsOverride / 80.0f) 
-                                  : 1.25f;
+                                  : 1.0f;
       exposureGain = 1.0f;
   } else {
-      // HDR Output Path: Scale SDR content to Paper White (203 nits) to match
-      // OS expectations and avoid a "dim/gray" look for SDR images in HDR mode.
+      // HDR Output Path: DWM maps 1.0 scRGB to sdrWhiteLevelNits.
       if (settings.contentPeakScRgb <= 1.1f) {
-          exposureGain = 203.0f / 80.0f;
+          // SDR Image in HDR Mode: Keep exposureGain at 1.0f so the image white point 
+          // adaptive-aligns with the OS SDR slider (sdrWhiteLevelNits), matching the UI.
+          exposureGain = 1.0f;
+      } else {
+          // HDR Image in HDR Mode: Scale by 80.0f / sdrWhite to correct DWM's scaling amplification.
+          // This ensures absolute physical nits accuracy, perfectly aligning with mpv.
+          exposureGain = 80.0f / sdrWhite;
       }
       settings.displayPeakScRgb = displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride) / 80.0f;
   }

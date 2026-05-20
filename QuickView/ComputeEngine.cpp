@@ -160,7 +160,7 @@ void CSToneMap(uint3 id : SV_DispatchThreadID) {
     color.rgb *= Exposure * ExposureGain;
     float luma = dot(color.rgb, float3(0.2627, 0.6780, 0.0593));
     float displayPeak = max(DisplayPeakScRgb, 1.0);
-    float paperWhite = 1.25;
+    float paperWhite = max(PaperWhiteScRgb, 1.0);
 
     float3 toneMapped = color.rgb;
     if (luma > 1e-6) {
@@ -293,7 +293,7 @@ void CSToneMapHDR(uint3 id : SV_DispatchThreadID) {
     color.rgb *= Exposure * ExposureGain;
     float luma = dot(color.rgb, float3(0.2627, 0.6780, 0.0593));
     float displayPeak = max(DisplayPeakScRgb, 1.0);
-    float paperWhite = 1.25;
+    float paperWhite = max(PaperWhiteScRgb, 1.0);
 
     float3 toneMapped = color.rgb;
     if (luma > 1e-6) {
