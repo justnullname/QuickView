@@ -28,6 +28,7 @@ public:
     }
 
     ~QuantumArena() {
+        FreeOverflows();
         if (m_buffer) {
             _aligned_free(m_buffer);
             m_buffer = nullptr;
@@ -45,10 +46,12 @@ public:
         , m_offset(other.m_offset.load())
         , m_peakUsage(other.m_peakUsage.load())
         , m_resource(std::move(other.m_resource))
+        , m_overflowHead(other.m_overflowHead)
     {
         other.m_buffer = nullptr;
         other.m_capacity = 0;
         other.m_offset = 0;
+        other.m_overflowHead = nullptr;
     }
 
     // ========== 核心操作 ==========
@@ -68,6 +71,7 @@ public:
     /// 警告: 调用后，之前分配的所有内存变为无效！
     /// </summary>
     void Reset() noexcept {
+        FreeOverflows();
         m_offset = 0;
         // 重建 PMR 资源 (指向同一块 buffer)
         if (m_buffer && m_resource) {
@@ -93,7 +97,7 @@ public:
         // 检查是否溢出
         if (newOffset > m_capacity) {
             // 溢出到系统堆 (防爆仓)
-            return _aligned_malloc(size, alignment);
+            return AllocateOverflow(size, alignment);
         }
 
         // CAS 更新 (虽然设计为单线程，但保持原子性以防万一)
@@ -103,7 +107,7 @@ public:
             aligned = (current + alignment - 1) & ~(alignment - 1);
             newOffset = aligned + size;
             if (newOffset > m_capacity) {
-                return _aligned_malloc(size, alignment);
+                return AllocateOverflow(size, alignment);
             }
         }
 
@@ -118,9 +122,19 @@ public:
     /// 检查指针是否属于此 Arena (用于判断是否需要 free)
     /// </summary>
     bool Owns(void* ptr) const noexcept {
-        if (!m_buffer || !ptr) return false;
-        char* p = static_cast<char*>(ptr);
-        return p >= m_buffer && p < m_buffer + m_capacity;
+        if (!ptr) return false;
+        if (m_buffer) {
+            char* p = static_cast<char*>(ptr);
+            if (p >= m_buffer && p < m_buffer + m_capacity) return true;
+        }
+        // 检查溢出链表 (降级大图分配通常只有个位数个节点，遍历开销可忽略)
+        void* curr = m_overflowHead;
+        while (curr) {
+            void* node_ptr = static_cast<char*>(curr) + ALIGNMENT;
+            if (node_ptr == ptr) return true;
+            curr = *static_cast<void**>(curr);
+        }
+        return false;
     }
 
     // ========== 统计信息 ==========
@@ -135,6 +149,28 @@ public:
     bool IsInitialized() const noexcept { return m_buffer != nullptr; }
 
 private:
+    void* AllocateOverflow(size_t size, size_t alignment) noexcept {
+        // 分配 size + alignment，将链表节点放在前面，以保证返回的业务指针依然满足 alignment
+        void* raw_ptr = _aligned_malloc(size + alignment, alignment);
+        if (raw_ptr) {
+            void** header = static_cast<void**>(raw_ptr);
+            *header = m_overflowHead;
+            m_overflowHead = raw_ptr;
+            return static_cast<char*>(raw_ptr) + alignment;
+        }
+        return nullptr;
+    }
+
+    void FreeOverflows() noexcept {
+        void* curr = m_overflowHead;
+        while (curr) {
+            void* next = *static_cast<void**>(curr);
+            _aligned_free(curr);
+            curr = next;
+        }
+        m_overflowHead = nullptr;
+    }
+
     void EnsureInitialized() {
         if (m_buffer) return;
 
@@ -159,6 +195,7 @@ private:
     std::atomic<size_t> m_offset{0};
     std::atomic<size_t> m_peakUsage{0};
     std::unique_ptr<std::pmr::monotonic_buffer_resource> m_resource;
+    void* m_overflowHead = nullptr;
 };
 
 // ============================================================================

@@ -38,6 +38,19 @@ namespace QuickView {
         }
     }
 
+    ZipArchive::~ZipArchive() {
+        PurgeState();
+    }
+
+    void ZipArchive::PurgeState() const {
+        ::std::lock_guard<::std::mutex> lock(m_mutex);
+        if (m_zstream_init && m_zstream) {
+            inflateEnd(m_zstream.get());
+        }
+        m_zstream_init = false;
+        m_zstream.reset();
+    }
+
     bool ZipArchive::ParseCentralDirectory() {
         const uint8_t* data = m_mappedFile.data();
         size_t size = m_mappedFile.size();
@@ -176,20 +189,29 @@ namespace QuickView {
             if (entry.compSize != entry.uncompSize) return false;
             std::memcpy(externalBuffer, data + payloadOffset, entry.uncompSize);
         } else if (entry.method == 8) {
-            // Deflate
-            z_stream strm = {};
-            strm.next_in = (Bytef*)(data + payloadOffset);
-            strm.avail_in = entry.compSize;
-            strm.next_out = externalBuffer;
-            strm.avail_out = entry.uncompSize;
+            // Deflate (Zero-Allocation Pooling)
+            ::std::lock_guard<::std::mutex> lock(m_mutex);
+            if (!m_zstream) {
+                m_zstream = ::std::make_unique<z_stream>();
+                memset(m_zstream.get(), 0, sizeof(z_stream));
+                m_zstream_init = false;
+            }
 
-            // -MAX_WBITS for raw deflate stream (no zlib header inside zip)
-            if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) return false;
+            m_zstream->next_in = (Bytef*)(data + payloadOffset);
+            m_zstream->avail_in = entry.compSize;
+            m_zstream->next_out = externalBuffer;
+            m_zstream->avail_out = entry.uncompSize;
 
-            int ret = inflate(&strm, Z_FINISH);
-            inflateEnd(&strm);
+            if (!m_zstream_init) {
+                if (inflateInit2(m_zstream.get(), -MAX_WBITS) != Z_OK) return 0;
+                m_zstream_init = true;
+            } else {
+                if (inflateReset(m_zstream.get()) != Z_OK) return 0;
+            }
 
-            if (ret != Z_STREAM_END && ret != Z_OK) return false;
+            int ret = inflate(m_zstream.get(), Z_FINISH);
+
+            if (ret != Z_STREAM_END && ret != Z_OK) return 0;
         } else {
             // Unsupported compression method
             return false;
@@ -373,11 +395,8 @@ namespace QuickView {
 
         SolidState& ss = *m_solidState;
 
-        // 2. Check for stale state or backward jump
+        // 2. Check for backward jump
         if (index < ss.currentIndex + 1) {
-            ss.Reset(m_mappedFile.data(), m_mappedFile.size());
-        } else if (std::chrono::duration_cast<std::chrono::seconds>(now - ss.lastAccessed).count() > 60) {
-            // Timeout cleanup (60s)
             ss.Reset(m_mappedFile.data(), m_mappedFile.size());
         }
 

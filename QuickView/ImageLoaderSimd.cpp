@@ -58,11 +58,60 @@ namespace hn = hwy::HWY_NAMESPACE;
 // Layout: B[0] G[1] R[2] A[3] per pixel
 // ============================================================================
 void PremultiplyAlphaImpl(uint8_t* data, int width, int height, int stride) {
+    const hn::ScalableTag<uint8_t> d8;
+    const hn::ScalableTag<uint16_t> d16;
+    const size_t N = hn::Lanes(d8);
+    const size_t pixelsPerVec = N;
+
+    const auto v127 = hn::Set(d16, 127u);
+
+    // Skia's magic formula: (val * alpha + 127) / 255 
+    // Approx: temp = val * alpha + 127; result = (temp + (temp >> 8)) >> 8
+    // Completely safe within 16-bit bounds (max: 255*255+127 = 65152)
+    auto pm = [&](auto v, auto a) {
+        auto temp = hn::Add(hn::Mul(v, a), v127);
+        return hn::ShiftRight<8>(hn::Add(temp, hn::ShiftRight<8>(temp)));
+    };
+
     for (int y = 0; y < height; ++y) {
         uint8_t* row = data + static_cast<size_t>(y) * stride;
+        size_t x = 0;
+        
+        for (; x + pixelsPerVec <= static_cast<size_t>(width); x += pixelsPerVec) {
+            uint8_t* px = row + x * 4;
+            hn::Vec<decltype(d8)> vB, vG, vR, vA;
+            hn::LoadInterleaved4(d8, px, vB, vG, vR, vA);
 
-        for (int x = 0; x < width; ++x) {
-            uint8_t* px = row + static_cast<size_t>(x) * 4;
+            hn::Half<decltype(d8)> d8_half;
+            // Promote to 16-bit for math
+            auto vB_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vB));
+            auto vB_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vB));
+            auto vG_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vG));
+            auto vG_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vG));
+            auto vR_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vR));
+            auto vR_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vR));
+            auto vA_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vA));
+            auto vA_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vA));
+
+            // Multiply and divide by 255 (Branchless)
+            vB_low = pm(vB_low, vA_low);
+            vB_high = pm(vB_high, vA_high);
+            vG_low = pm(vG_low, vA_low);
+            vG_high = pm(vG_high, vA_high);
+            vR_low = pm(vR_low, vA_low);
+            vR_high = pm(vR_high, vA_high);
+
+            // Demote back to 8-bit
+            vB = hn::Combine(d8, hn::DemoteTo(d8_half, vB_high), hn::DemoteTo(d8_half, vB_low));
+            vG = hn::Combine(d8, hn::DemoteTo(d8_half, vG_high), hn::DemoteTo(d8_half, vG_low));
+            vR = hn::Combine(d8, hn::DemoteTo(d8_half, vR_high), hn::DemoteTo(d8_half, vR_low));
+
+            hn::StoreInterleaved4(vB, vG, vR, vA, d8, px);
+        }
+
+        // Scalar tail
+        for (; x < static_cast<size_t>(width); ++x) {
+            uint8_t* px = row + x * 4;
             const uint32_t a = px[3];
             if (a == 0) {
                 px[0] = px[1] = px[2] = 0;
@@ -80,31 +129,50 @@ void PremultiplyAlphaImpl(uint8_t* data, int width, int height, int stride) {
 // ============================================================================
 void SwizzleRGBAToBGRAImpl(uint8_t* data, size_t pixelCount) {
     const hn::ScalableTag<uint8_t> d8;
+    const hn::ScalableTag<uint16_t> d16;
     const size_t N = hn::Lanes(d8);
-    const size_t pixelsPerVec = N / 4;
+    const size_t pixelsPerVec = N; 
     size_t i = 0;
 
-    // Vector loop
+    const auto v127 = hn::Set(d16, 127u);
+
+    // Skia's magic formula
+    auto pm = [&](auto v, auto a) {
+        auto temp = hn::Add(hn::Mul(v, a), v127);
+        return hn::ShiftRight<8>(hn::Add(temp, hn::ShiftRight<8>(temp)));
+    };
+
+    // Vector loop (True SIMD with Branchless execution)
     for (; i + pixelsPerVec <= pixelCount; i += pixelsPerVec) {
-        uint8_t* p = data + i * 4;
-        for (size_t k = 0; k < pixelsPerVec; ++k) {
-            uint8_t* px = p + k * 4;
-            const uint8_t r = px[0];
-            const uint8_t g = px[1];
-            const uint8_t b = px[2];
-            const uint8_t a = px[3];
-            if (a == 255) {
-                px[0] = b;
-                // px[1] = g; // unchanged
-                px[2] = r;
-            } else if (a == 0) {
-                px[0] = 0; px[1] = 0; px[2] = 0;
-            } else {
-                px[0] = static_cast<uint8_t>((b * a + 127) / 255);
-                px[1] = static_cast<uint8_t>((g * a + 127) / 255);
-                px[2] = static_cast<uint8_t>((r * a + 127) / 255);
-            }
-        }
+        uint8_t* px = data + i * 4;
+        
+        hn::Vec<decltype(d8)> vR, vG, vB, vA;
+        // In RGBA: px[0]=R, px[1]=G, px[2]=B
+        hn::LoadInterleaved4(d8, px, vR, vG, vB, vA);
+
+        hn::Half<decltype(d8)> d8_half;
+        auto vR_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vR));
+        auto vR_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vR));
+        auto vG_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vG));
+        auto vG_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vG));
+        auto vB_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vB));
+        auto vB_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vB));
+        auto vA_low = hn::PromoteTo(d16, hn::LowerHalf(d8_half, vA));
+        auto vA_high = hn::PromoteTo(d16, hn::UpperHalf(d8_half, vA));
+
+        vR_low = pm(vR_low, vA_low);
+        vR_high = pm(vR_high, vA_high);
+        vG_low = pm(vG_low, vA_low);
+        vG_high = pm(vG_high, vA_high);
+        vB_low = pm(vB_low, vA_low);
+        vB_high = pm(vB_high, vA_high);
+
+        auto vNewR = hn::Combine(d8, hn::DemoteTo(d8_half, vR_high), hn::DemoteTo(d8_half, vR_low));
+        auto vNewG = hn::Combine(d8, hn::DemoteTo(d8_half, vG_high), hn::DemoteTo(d8_half, vG_low));
+        auto vNewB = hn::Combine(d8, hn::DemoteTo(d8_half, vB_high), hn::DemoteTo(d8_half, vB_low));
+
+        // Store back in BGRA format
+        hn::StoreInterleaved4(vNewB, vNewG, vNewR, vA, d8, px);
     }
 
     // Scalar tail
@@ -512,16 +580,13 @@ void TransformColorMatrix3x3Impl(float* pixels, int width, int height,
 // ============================================================================
 // ToneMapAcesBatch - ACES tonemap float→uint8 BGRA
 // ============================================================================
-static inline float AcesToneMap(float v) {
-    v = (v > 0.0f) ? v : 0.0f;
-    const float num = v * (2.51f * v + 0.03f);
-    const float den = v * (2.43f * v + 0.59f) + 0.14f;
-    if (den <= 0.0f) return 0.0f;
-    float res = num / den;
-    return (res < 0.0f) ? 0.0f : (res > 1.0f ? 1.0f : res);
+
+
+static inline float AcesToneMapScalar(float v) {
+    return (v * (2.51f * v + 0.03f)) / (v * (2.43f * v + 0.59f) + 0.14f);
 }
 
-static inline uint8_t LinearToSdr8(float v) {
+static inline uint8_t LinearToSdr8Scalar(float v) {
     v = (v > 0.0f ? v : 0.0f);
     // [v6.1.4.27] High-precision piece-wise sRGB OETF
     if (v <= 0.0031308f) {
@@ -536,24 +601,112 @@ static inline uint8_t LinearToSdr8(float v) {
 void ToneMapAcesBatchImpl(const float* src, int srcStride,
                           uint8_t* dst, int dstStride,
                           int width, int height, float exposure) {
+    const hn::ScalableTag<float> df;
+    const hn::Rebind<uint32_t, decltype(df)> du32;
+    const hn::Rebind<int32_t, decltype(df)> di32;
+    const hn::Rebind<uint16_t, decltype(df)> du16;
+    const hn::Rebind<uint8_t, decltype(df)> d8;
+    const size_t N = hn::Lanes(df);
+    const size_t pixelsPerVec = N;
+
+    const auto vZero = hn::Zero(df);
+    const auto vOne = hn::Set(df, 1.0f);
+    const auto vExposure = hn::Set(df, exposure);
+
+    // Hardcore Inline FastLog2 & FastExp2 Approximation (SDR 8-bit accuracy)
+    auto fastLog2 = [&](auto x) {
+        auto ix = hn::BitCast(di32, x);
+        auto exp = hn::Sub(hn::ShiftRight<23>(ix), hn::Set(di32, 127));
+        auto m = hn::BitCast(df, hn::Or(hn::And(ix, hn::Set(di32, 0x007FFFFF)), hn::Set(di32, 0x3F800000)));
+        auto f = hn::Sub(m, hn::Set(df, 1.0f));
+        auto p = hn::Add(hn::Set(df, -0.72134752f), hn::Mul(f, hn::Set(df, 0.48089834f)));
+        p = hn::Add(hn::Set(df, 1.44269504f), hn::Mul(f, p));
+        return hn::Add(hn::ConvertTo(df, exp), hn::Mul(f, p));
+    };
+
+    auto fastExp2 = [&](auto x) {
+        x = hn::Clamp(x, hn::Set(df, -126.0f), hn::Set(df, 126.0f));
+        auto i = hn::ConvertTo(di32, x);
+        auto f = hn::Sub(x, hn::ConvertTo(df, i));
+        auto mask = hn::Lt(f, hn::Zero(df));
+        auto mask_i = hn::RebindMask(di32, mask);
+        i = hn::IfThenElse(mask_i, hn::Sub(i, hn::Set(di32, 1)), i);
+        f = hn::IfThenElse(mask, hn::Add(f, hn::Set(df, 1.0f)), f);
+        auto p = hn::Add(hn::Set(df, 0.24022650f), hn::Mul(f, hn::Set(df, 0.055504108f)));
+        p = hn::Add(hn::Set(df, 0.69314718f), hn::Mul(f, p));
+        auto pow2f = hn::Add(hn::Set(df, 1.0f), hn::Mul(f, p));
+        auto pow2i = hn::BitCast(df, hn::ShiftLeft<23>(hn::Add(i, hn::Set(di32, 127))));
+        return hn::Mul(pow2i, pow2f);
+    };
+
+    auto fastPow = [&](auto x, auto y) { return fastExp2(hn::Mul(y, fastLog2(x))); };
+
+    auto AcesToneMap = [&](auto v) {
+        auto num = hn::Mul(v, hn::Add(hn::Mul(hn::Set(df, 2.51f), v), hn::Set(df, 0.03f)));
+        auto den = hn::Add(hn::Mul(v, hn::Add(hn::Mul(hn::Set(df, 2.43f), v), hn::Set(df, 0.59f))), hn::Set(df, 0.14f));
+        return hn::Div(num, den);
+    };
+
+    const auto vSrgbThreshold = hn::Set(df, 0.0031308f);
+    const auto vSrgbMul = hn::Set(df, 12.92f);
+    const auto vSrgbPowFactor = hn::Set(df, 1.055f);
+    const auto vSrgbPowOffset = hn::Set(df, 0.055f);
+    const auto vSrgbPowInvGamma = hn::Set(df, 1.0f / 2.4f);
+    const auto v255 = hn::Set(df, 255.0f);
+    const auto vHalf = hn::Set(df, 0.5f);
+
+    auto LinearToSdr8 = [&](auto v) {
+        v = hn::Max(v, vZero);
+        auto mask = hn::Le(v, vSrgbThreshold);
+        auto pathA = hn::Mul(v, vSrgbMul);
+        auto vSafe = hn::Max(v, hn::Set(df, 1e-10f));
+        auto pathB = hn::Sub(hn::Mul(vSrgbPowFactor, fastPow(vSafe, vSrgbPowInvGamma)), vSrgbPowOffset);
+        v = hn::IfThenElse(mask, pathA, pathB);
+        v = hn::Clamp(v, vZero, vOne);
+        return hn::Add(hn::Mul(v, v255), vHalf);
+    };
+
     for (int y = 0; y < height; ++y) {
         const float* srcRow = reinterpret_cast<const float*>(
             reinterpret_cast<const uint8_t*>(src) + static_cast<size_t>(y) * srcStride);
         uint8_t* dstRow = dst + static_cast<size_t>(y) * dstStride;
 
-        for (int x = 0; x < width; ++x) {
+        int x = 0;
+        for (; x + static_cast<int>(pixelsPerVec) <= width; x += static_cast<int>(pixelsPerVec)) {
+            hn::Vec<decltype(df)> vR, vG, vB, vA;
+            hn::LoadInterleaved4(df, srcRow + x * 4, vR, vG, vB, vA);
+
+            vR = hn::Mul(vR, vExposure);
+            vG = hn::Mul(vG, vExposure);
+            vB = hn::Mul(vB, vExposure);
+            vA = hn::Clamp(vA, vZero, vOne);
+
+            vR = hn::Mul(AcesToneMap(vR), vA);
+            vG = hn::Mul(AcesToneMap(vG), vA);
+            vB = hn::Mul(AcesToneMap(vB), vA);
+
+            auto u8B = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, LinearToSdr8(vB))));
+            auto u8G = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, LinearToSdr8(vG))));
+            auto u8R = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, LinearToSdr8(vR))));
+            auto u8A = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, hn::Add(hn::Mul(vA, v255), vHalf))));
+
+            hn::StoreInterleaved4(u8B, u8G, u8R, u8A, d8, dstRow + x * 4);
+        }
+
+        // Scalar tail
+        for (; x < width; ++x) {
             const float r = srcRow[static_cast<size_t>(x) * 4 + 0] * exposure;
             const float g = srcRow[static_cast<size_t>(x) * 4 + 1] * exposure;
             const float b = srcRow[static_cast<size_t>(x) * 4 + 2] * exposure;
             const float a = std::clamp(srcRow[static_cast<size_t>(x) * 4 + 3], 0.0f, 1.0f);
 
-            const float tmR = AcesToneMap(r) * a;
-            const float tmG = AcesToneMap(g) * a;
-            const float tmB = AcesToneMap(b) * a;
+            const float tmR = AcesToneMapScalar(r) * a;
+            const float tmG = AcesToneMapScalar(g) * a;
+            const float tmB = AcesToneMapScalar(b) * a;
 
-            dstRow[static_cast<size_t>(x) * 4 + 0] = LinearToSdr8(tmB);
-            dstRow[static_cast<size_t>(x) * 4 + 1] = LinearToSdr8(tmG);
-            dstRow[static_cast<size_t>(x) * 4 + 2] = LinearToSdr8(tmR);
+            dstRow[static_cast<size_t>(x) * 4 + 0] = LinearToSdr8Scalar(tmB);
+            dstRow[static_cast<size_t>(x) * 4 + 1] = LinearToSdr8Scalar(tmG);
+            dstRow[static_cast<size_t>(x) * 4 + 2] = LinearToSdr8Scalar(tmR);
             dstRow[static_cast<size_t>(x) * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
         }
     }
@@ -562,20 +715,97 @@ void ToneMapAcesBatchImpl(const float* src, int srcStride,
 void ToneMapClipBatchImpl(const float* src, int srcStride,
                           uint8_t* dst, int dstStride,
                           int width, int height, float exposure) {
+    const hn::ScalableTag<float> df;
+    const hn::Rebind<uint32_t, decltype(df)> du32;
+    const hn::Rebind<int32_t, decltype(df)> di32;
+    const hn::Rebind<uint16_t, decltype(df)> du16;
+    const hn::Rebind<uint8_t, decltype(df)> d8;
+    const size_t N = hn::Lanes(df);
+    const size_t pixelsPerVec = N;
+
+    const auto vZero = hn::Zero(df);
+    const auto vOne = hn::Set(df, 1.0f);
+    const auto vExposure = hn::Set(df, exposure);
+
+    auto fastLog2 = [&](auto x) {
+        auto ix = hn::BitCast(di32, x);
+        auto exp = hn::Sub(hn::ShiftRight<23>(ix), hn::Set(di32, 127));
+        auto m = hn::BitCast(df, hn::Or(hn::And(ix, hn::Set(di32, 0x007FFFFF)), hn::Set(di32, 0x3F800000)));
+        auto f = hn::Sub(m, hn::Set(df, 1.0f));
+        auto p = hn::Add(hn::Set(df, -0.72134752f), hn::Mul(f, hn::Set(df, 0.48089834f)));
+        p = hn::Add(hn::Set(df, 1.44269504f), hn::Mul(f, p));
+        return hn::Add(hn::ConvertTo(df, exp), hn::Mul(f, p));
+    };
+
+    auto fastExp2 = [&](auto x) {
+        x = hn::Clamp(x, hn::Set(df, -126.0f), hn::Set(df, 126.0f));
+        auto i = hn::ConvertTo(di32, x);
+        auto f = hn::Sub(x, hn::ConvertTo(df, i));
+        auto mask = hn::Lt(f, hn::Zero(df));
+        auto mask_i = hn::RebindMask(di32, mask);
+        i = hn::IfThenElse(mask_i, hn::Sub(i, hn::Set(di32, 1)), i);
+        f = hn::IfThenElse(mask, hn::Add(f, hn::Set(df, 1.0f)), f);
+        auto p = hn::Add(hn::Set(df, 0.24022650f), hn::Mul(f, hn::Set(df, 0.055504108f)));
+        p = hn::Add(hn::Set(df, 0.69314718f), hn::Mul(f, p));
+        auto pow2f = hn::Add(hn::Set(df, 1.0f), hn::Mul(f, p));
+        auto pow2i = hn::BitCast(df, hn::ShiftLeft<23>(hn::Add(i, hn::Set(di32, 127))));
+        return hn::Mul(pow2i, pow2f);
+    };
+
+    auto fastPow = [&](auto x, auto y) { return fastExp2(hn::Mul(y, fastLog2(x))); };
+
+    const auto vSrgbThreshold = hn::Set(df, 0.0031308f);
+    const auto vSrgbMul = hn::Set(df, 12.92f);
+    const auto vSrgbPowFactor = hn::Set(df, 1.055f);
+    const auto vSrgbPowOffset = hn::Set(df, 0.055f);
+    const auto vSrgbPowInvGamma = hn::Set(df, 1.0f / 2.4f);
+    const auto v255 = hn::Set(df, 255.0f);
+    const auto vHalf = hn::Set(df, 0.5f);
+
+    auto LinearToSdr8 = [&](auto v) {
+        v = hn::Max(v, vZero);
+        auto mask = hn::Le(v, vSrgbThreshold);
+        auto pathA = hn::Mul(v, vSrgbMul);
+        auto vSafe = hn::Max(v, hn::Set(df, 1e-10f));
+        auto pathB = hn::Sub(hn::Mul(vSrgbPowFactor, fastPow(vSafe, vSrgbPowInvGamma)), vSrgbPowOffset);
+        v = hn::IfThenElse(mask, pathA, pathB);
+        v = hn::Clamp(v, vZero, vOne);
+        return hn::Add(hn::Mul(v, v255), vHalf);
+    };
+
     for (int y = 0; y < height; ++y) {
         const float* srcRow = reinterpret_cast<const float*>(
             reinterpret_cast<const uint8_t*>(src) + static_cast<size_t>(y) * srcStride);
         uint8_t* dstRow = dst + static_cast<size_t>(y) * dstStride;
 
-        for (int x = 0; x < width; ++x) {
+        int x = 0;
+        for (; x + static_cast<int>(pixelsPerVec) <= width; x += static_cast<int>(pixelsPerVec)) {
+            hn::Vec<decltype(df)> vR, vG, vB, vA;
+            hn::LoadInterleaved4(df, srcRow + x * 4, vR, vG, vB, vA);
+
+            vR = hn::Mul(vR, vExposure);
+            vG = hn::Mul(vG, vExposure);
+            vB = hn::Mul(vB, vExposure);
+            vA = hn::Clamp(vA, vZero, vOne);
+
+            // Clip (Colorimetric) just clamps after exposure, no ACES
+            auto u8B = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, LinearToSdr8(hn::Mul(vB, vA)))));
+            auto u8G = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, LinearToSdr8(hn::Mul(vG, vA)))));
+            auto u8R = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, LinearToSdr8(hn::Mul(vR, vA)))));
+            auto u8A = hn::DemoteTo(d8, hn::DemoteTo(du16, hn::ConvertTo(du32, hn::Add(hn::Mul(vA, v255), vHalf))));
+
+            hn::StoreInterleaved4(u8B, u8G, u8R, u8A, d8, dstRow + x * 4);
+        }
+
+        for (; x < width; ++x) {
             const float r = srcRow[static_cast<size_t>(x) * 4 + 0] * exposure;
             const float g = srcRow[static_cast<size_t>(x) * 4 + 1] * exposure;
             const float b = srcRow[static_cast<size_t>(x) * 4 + 2] * exposure;
             const float a = std::clamp(srcRow[static_cast<size_t>(x) * 4 + 3], 0.0f, 1.0f);
 
-            dstRow[static_cast<size_t>(x) * 4 + 0] = LinearToSdr8(b * a);
-            dstRow[static_cast<size_t>(x) * 4 + 1] = LinearToSdr8(g * a);
-            dstRow[static_cast<size_t>(x) * 4 + 2] = LinearToSdr8(r * a);
+            dstRow[static_cast<size_t>(x) * 4 + 0] = LinearToSdr8Scalar(b * a);
+            dstRow[static_cast<size_t>(x) * 4 + 1] = LinearToSdr8Scalar(g * a);
+            dstRow[static_cast<size_t>(x) * 4 + 2] = LinearToSdr8Scalar(r * a);
             dstRow[static_cast<size_t>(x) * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
         }
     }

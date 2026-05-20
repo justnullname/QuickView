@@ -1842,7 +1842,7 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         
         // Decompress to Temp
         if (tj3Decompress8(tj, buf, bufSize, pDecodeBuf, decodeStride, TJPF_BGRX) != 0) {
-            if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
+            if (!arena) _aligned_free(pDecodeBuf);
             return E_FAIL;
         }
 
@@ -1868,7 +1868,7 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         }
         
         if (!outFrame->pixels) {
-            if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
+            if (!arena) _aligned_free(pDecodeBuf);
             return E_OUTOFMEMORY;
         }
 
@@ -1892,7 +1892,7 @@ static HRESULT LoadJpegRegion_V3(const uint8_t* buf, size_t bufSize, QuickView::
         }
 
         // Free temp
-        if (!arena || !arena->Owns(pDecodeBuf)) _aligned_free(pDecodeBuf);
+        if (!arena) _aligned_free(pDecodeBuf);
         
     } else {
         // [Direct Decode] - No resize needed (or close enough)
@@ -2585,7 +2585,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
 
     for (;;) {
         if (checkCancel && checkCancel()) {
-            if (tempBuf && (!arena || !arena->Owns(tempBuf))) _aligned_free(tempBuf);
+            if (tempBuf && !arena) _aligned_free(tempBuf);
             return E_ABORT;
         }
 
@@ -2661,7 +2661,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
             TraceLoggingString("FailureExit", "Action"),
             TraceLoggingUInt32((uint32_t)hr, "HR"),
             TraceLoggingBool(planReady, "PlanReady"));
-        if (tempBuf && (!arena || !arena->Owns(tempBuf))) _aligned_free(tempBuf);
+        if (tempBuf && !arena) _aligned_free(tempBuf);
         return hr == S_OK ? E_FAIL : hr;
     }
 
@@ -2693,7 +2693,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
     }
     
     if (!outFrame->pixels) {
-        if (tempBuf && (!arena || !arena->Owns(tempBuf))) _aligned_free(tempBuf);
+        if (tempBuf && !arena) _aligned_free(tempBuf);
         return E_OUTOFMEMORY;
     }
 
@@ -2710,7 +2710,7 @@ HRESULT CImageLoader::LoadJxlRegionToFrame(LPCWSTR filePath, QuickView::RegionRe
                               outFrame->pixels, plan.contentW, plan.contentH, outFrame->stride);
 
     // Cleanup
-    if (tempBuf && (!arena || !arena->Owns(tempBuf))) {
+    if (tempBuf && !arena) {
         _aligned_free(tempBuf);
     }
 

@@ -698,9 +698,10 @@ HRESULT ComputeEngine::Upload3DLut(const float* rgbValues, int edge, ID3D11Textu
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
     std::vector<uint16_t> packed(static_cast<size_t>(edge) * edge * edge * 4, 0);
+
     auto floatToHalf = [](float value) -> uint16_t {
         uint32_t bits = 0;
-        memcpy(&bits, &value, sizeof(bits));
+        std::memcpy(&bits, &value, sizeof(bits));
         uint32_t sign = (bits >> 16) & 0x8000;
         uint32_t mantissa = bits & 0x007fffff;
         int exp = ((bits >> 23) & 0xff) - 127 + 15;
@@ -709,6 +710,8 @@ HRESULT ComputeEngine::Upload3DLut(const float* rgbValues, int edge, ID3D11Textu
         return static_cast<uint16_t>(sign | (exp << 10) | (mantissa >> 13));
     };
 
+    // 3D LUT generation only runs once upon loading, having extremely small size (~35K voxels).
+    // Bypassing compiler target AVX instruction constraints to ensure perfect cross-platform compatibility.
     const size_t voxelCount = static_cast<size_t>(edge) * edge * edge;
     for (size_t i = 0; i < voxelCount; ++i) {
         packed[i * 4 + 0] = floatToHalf(rgbValues[i * 3 + 0]);

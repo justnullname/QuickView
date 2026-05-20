@@ -47,7 +47,7 @@ namespace QuickView {
     class ZipArchive : public IArchive {
     public:
         ZipArchive(const ::std::wstring& path);
-        ~ZipArchive() = default;
+        ~ZipArchive();
 
         bool IsValid() const override { return m_mappedFile.IsValid() && m_valid; }
 
@@ -67,7 +67,7 @@ namespace QuickView {
         // Requires externalBuffer to be pre-allocated with a size >= entry.uncompSize
         size_t ExtractEntry(size_t index, uint8_t* externalBuffer, size_t bufferSize) const override;
 
-        void PurgeState() const override {}
+        void PurgeState() const override;
 
     private:
         bool ParseCentralDirectory();
@@ -76,6 +76,11 @@ namespace QuickView {
         bool m_valid = false;
 
         ::std::vector<ArchiveEntry> m_entries;
+        
+        // --- Domain-Driven GC: State Pooling ---
+        mutable ::std::mutex m_mutex;
+        mutable ::std::unique_ptr<z_stream> m_zstream;
+        mutable bool m_zstream_init = false;
     };
 
     class RarArchive : public IArchive {
