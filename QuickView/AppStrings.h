@@ -334,6 +334,7 @@ namespace AppStrings {
 
     // Image
     extern const wchar_t* Settings_Header_Render;
+    extern const wchar_t* Settings_Header_Hdr;
     extern const wchar_t* Settings_Header_Prompts;
     extern const wchar_t* Settings_Header_System;
     

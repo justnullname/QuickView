@@ -1803,6 +1803,31 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemAdvColor);
 
+    SettingsItem itemExposure = {AppStrings::Settings_Label_Exposure,
+                                 OptionType::Slider, nullptr,
+                                 &g_config.Exposure};
+    itemExposure.tooltipText = AppStrings::Settings_Tooltip_Exposure;
+    itemExposure.minVal = 0.18f;
+    itemExposure.maxVal = 10.0f;
+    itemExposure.displayFormat = L"%.2fx";
+    itemExposure.onChange = []() {
+      extern HWND g_mainHwnd;
+      extern void RefreshImageDisplay(HWND hwnd);
+      RefreshImageDisplay(g_mainHwnd);
+      SaveConfig();
+    };
+    itemExposure.onReset = []() {
+      g_config.Exposure = 1.0f;
+      SaveConfig();
+      extern HWND g_mainHwnd;
+      extern void RefreshImageDisplay(HWND hwnd);
+      RefreshImageDisplay(g_mainHwnd);
+    };
+    tabImage.items.push_back(itemExposure);
+
+    // HDR settings group header
+    tabImage.items.push_back({ AppStrings::Settings_Header_Hdr, OptionType::Header });
+
     SettingsItem itemHdrToneMapping = { AppStrings::Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
         { AppStrings::Settings_Option_HdrSpline, AppStrings::Settings_Option_HdrColorimetric, AppStrings::Settings_Option_HdrLegacyReinhard } };
     itemHdrToneMapping.tooltipText = AppStrings::Settings_Tooltip_HdrToneMapping;
@@ -1829,28 +1854,6 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
     };
     tabImage.items.push_back(itemHdrPeak);
-
-    SettingsItem itemExposure = {AppStrings::Settings_Label_Exposure,
-                                 OptionType::Slider, nullptr,
-                                 &g_config.Exposure};
-    itemExposure.tooltipText = AppStrings::Settings_Tooltip_Exposure;
-    itemExposure.minVal = 0.18f;
-    itemExposure.maxVal = 10.0f;
-    itemExposure.displayFormat = L"%.2fx";
-    itemExposure.onChange = []() {
-      extern HWND g_mainHwnd;
-      extern void RefreshImageDisplay(HWND hwnd);
-      RefreshImageDisplay(g_mainHwnd);
-      SaveConfig();
-    };
-    itemExposure.onReset = []() {
-      g_config.Exposure = 1.0f;
-      SaveConfig();
-      extern HWND g_mainHwnd;
-      extern void RefreshImageDisplay(HWND hwnd);
-      RefreshImageDisplay(g_mainHwnd);
-    };
-    tabImage.items.push_back(itemExposure);
 
     SettingsItem itemDesatRange = { AppStrings::Settings_Label_HdrDesatThreshold, OptionType::Slider, nullptr, &g_config.HdrDesatThreshold };
     itemDesatRange.tooltipText = AppStrings::Settings_Tooltip_HdrDesatThreshold;

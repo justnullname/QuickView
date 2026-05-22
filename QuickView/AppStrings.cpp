@@ -225,6 +225,7 @@ const wchar_t *Settings_Header_Panel = nullptr;
 const wchar_t *Settings_Header_Mouse = nullptr;
 const wchar_t *Settings_Header_Edge = nullptr;
 const wchar_t *Settings_Header_Render = nullptr;
+const wchar_t *Settings_Header_Hdr = nullptr;
 const wchar_t *Settings_Header_Prompts = nullptr;
 const wchar_t *Settings_Header_System = nullptr;
 const wchar_t *Settings_Header_Features = nullptr;
@@ -755,6 +756,7 @@ struct EN {
   static constexpr const wchar_t *Settings_Header_Mouse = L"Mouse";
   static constexpr const wchar_t *Settings_Header_Edge = L"Edge";
   static constexpr const wchar_t *Settings_Header_Render = L"Render";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"HDR";
   static constexpr const wchar_t *Settings_Header_Prompts = L"Prompts";
   static constexpr const wchar_t *Settings_Header_System = L"System";
   static constexpr const wchar_t *Settings_Header_Features = L"Features";
@@ -909,7 +911,7 @@ struct EN {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"Maximum intensity of desaturation at extreme highlights. 0.0 means no desaturation, 1.0 means fully desaturated to white. Recommended default is 0.75.";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimetric";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"Classic Reinhard";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Untagged Image Fallback";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Soft Proof Profile (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Soft Proofing Preview";
@@ -1111,8 +1113,7 @@ struct EN {
       L"exceeding monitor capabilities.\nSpline: High-fidelity highlight "
       L"roll-off using piecewise spline (Recommended).\nColorimetric: Strict "
       L"luminance mapping; highlights exceeding the monitor limit are "
-      L"clipped.\nClassic Reinhard: The original extended Reinhard curve (More "
-      L"contrast).";
+      L"clipped.\nBT.2390 (EETF): ITU-R BT.2390 EETF curve for high-fidelity tone mapping.";
 
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Professional Tools";
@@ -1212,6 +1213,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Header_Mouse = L"鼠标";
   static constexpr const wchar_t *Settings_Header_Edge = L"边缘";
   static constexpr const wchar_t *Settings_Header_Render = L"渲染";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"高动态范围 (HDR)";
   static constexpr const wchar_t *Settings_Header_Prompts = L"提示";
   static constexpr const wchar_t *Settings_Header_System = L"系统";
   static constexpr const wchar_t *Settings_Header_Features = L"功能";
@@ -1336,7 +1338,7 @@ struct CN {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"高光去饱和的最大强度。0.0 表示不进行去饱和，1.0 表示在高光处完全去饱和为白色。推荐默认值 0.75。";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"样条映射";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"经典 Reinhard";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"无配置图片的默认回退";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"自定义软打样配置 (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"软打样预览";
@@ -1690,7 +1692,7 @@ struct CN {
       L"HDR 降级策略 (Tone Mapping)：\n当 HDR 图片超出显示器极限时的映射方式。\n"
       L"Spline 样条映射：采用分段样条曲线，实现高保真的高光细节还原（推荐）。\n"
       L"色度模式：保持严格亮度映射，超出显示器极限的亮度将被直接裁剪。\n"
-      L"经典 Reinhard：经典的 Reinhard 扩展曲线，对比度更高。";
+      L"BT.2390 EETF：ITU-R BT.2390 标准高保真降级曲线。";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自动：图片小于屏幕尺寸时 100% 缩放，图片大于屏幕尺寸时适应屏幕尺寸缩放。";
   static constexpr const wchar_t *Settings_Header_Professional = L"专业工具";
   static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"动画模式下显示重绘区域预览按钮";
@@ -1931,6 +1933,7 @@ struct TW {
   static constexpr const wchar_t *Settings_Header_Mouse = L"滑鼠";
   static constexpr const wchar_t *Settings_Header_Edge = L"邊緣";
   static constexpr const wchar_t *Settings_Header_Render = L"渲染";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"高動態範圍 (HDR)";
   static constexpr const wchar_t *Settings_Header_Prompts = L"提示";
   static constexpr const wchar_t *Settings_Header_System = L"系統";
   static constexpr const wchar_t *Settings_Header_Features = L"功能";
@@ -2010,7 +2013,7 @@ struct TW {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"高光去飽和的最大強度。0.0 表示不進行去飽和，1.0 表示在高光處完全去飽和為白色。推薦預設值 0.75。";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"色度";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"樣條映射";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"經典 Reinhard";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"無配置圖片的預設回退";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"自訂軟打樣配置 (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"軟打樣預覽";
@@ -2207,7 +2210,7 @@ struct TW {
       L"HDR 降級策略 (Tone Mapping)：\n當 HDR 圖片超出顯示器極限時的對映方式。\n"
       L"Spline 樣條對映：採用分段樣條曲線，實現高保真的高光細節還原（推薦）。\n"
       L"色度模式：保持嚴格亮度對映，超出顯示器極限的亮度將被直接裁剪。\n"
-      L"Legacy Reinhard：經典的 Reinhard 擴充曲線，對比度更高。";
+      L"BT.2390 EETF：ITU-R BT.2390 標準高保真降級曲線。";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自動：圖片小於螢幕尺寸時 100% 縮放，圖片大於螢幕尺寸時適應螢幕尺寸縮放。";
   static constexpr const wchar_t *Settings_Header_VectorAssets = L"邊緣";
   static constexpr const wchar_t *Settings_Label_VectorStrokeWeight = L"線框粗细";
@@ -2510,6 +2513,7 @@ struct JA {
   static constexpr const wchar_t *Settings_Header_Mouse = L"マウス";
   static constexpr const wchar_t *Settings_Header_Edge = L"エッジ";
   static constexpr const wchar_t *Settings_Header_Render = L"レンダリング";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"ハイダイナミックレンジ (HDR)";
   static constexpr const wchar_t *Settings_Header_Prompts = L"プロンプト";
   static constexpr const wchar_t *Settings_Header_System = L"システム";
   static constexpr const wchar_t *Settings_Header_Features = L"機能";
@@ -2597,7 +2601,7 @@ struct JA {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"極端なハイライトでの去飽和の最大強度。0.0は去飽和なし、1.0は完全に白に去飽和されることを意味します。推奨デフォルトは0.75です。";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"測色";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"スプライン";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"クラシック Reinhard";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"プロファイルなし画像のフォールバック";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"ソフトプルーフプロファイル (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"ソフトプルーフプレビュー";
@@ -2797,7 +2801,7 @@ struct JA {
       L"HDR トーンマッピング戦略:\nモニターの限界を超えるHDR画像の表示方法を決定します。\n"
       L"スプライン:区分スプライン曲線を使用した高忠実度のハイライトロールオフ（推奨）。\n"
       L"測色: 厳密な輝度マッピング。モニターの限界を超えるハイライトはクリップされます。\n"
-      L"クラシック Reinhard: クラシックな拡張 Reinhard 曲線（より高いコントラスト）。";
+      L"BT.2390 (EETF): ITU-R BT.2390 EETF 曲線による高忠実度なトーンマッピング。";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"自動：画像が画面サイズより小さい場合は100%に拡大縮小し、大きい場合は画面サイズに合わせて拡大縮小します。";
   static constexpr const wchar_t *Settings_Header_VectorAssets = L"エッジ";
   static constexpr const wchar_t *Settings_Label_VectorStrokeWeight = L"線幅";
@@ -3112,6 +3116,7 @@ struct RU {
   static constexpr const wchar_t *Settings_Header_Mouse = L"Мышь";
   static constexpr const wchar_t *Settings_Header_Edge = L"Край";
   static constexpr const wchar_t *Settings_Header_Render = L"Рендеринг";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"HDR";
   static constexpr const wchar_t *Settings_Header_Prompts = L"Запросы";
   static constexpr const wchar_t *Settings_Header_System = L"Система";
   static constexpr const wchar_t *Settings_Header_Features = L"Функции";
@@ -3266,7 +3271,7 @@ struct RU {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"Максимальная интенсивность десатурации в экстремальных бликах. 0.0 - без десатурации, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Колориметрическая";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"Сплайн";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"Классический Reinhard";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Запасной профиль без тегов";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Профиль цветопробы (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Предпросмотр цветопробы";
@@ -3467,8 +3472,7 @@ struct RU {
       L"HDR-изображения, превышающие возможности монитора.\nSpline: "
       L"Высокоточное сжатие светов с использованием сплайнов (Рекомендуется).\n"
       L"Колориметрическая: Строгое отображение яркости; светлые участки, "
-      L"превышающие предел монитора, обрезаются.\nClassic Reinhard: Классическая "
-      L"расширенная кривая Рейнхарда (Более контрастная).";
+      L"превышающие предел монитора, обрезаются.\nBT.2390 (EETF): Кривая ITU-R BT.2390 EETF для высокоточного отображения тонов.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Профессиональные инструменты";
   static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Показывать кнопку отображаемой области в режиме анимации";
@@ -3740,6 +3744,7 @@ struct DE {
   static constexpr const wchar_t *Settings_Header_Mouse = L"Maus";
   static constexpr const wchar_t *Settings_Header_Edge = L"Rand";
   static constexpr const wchar_t *Settings_Header_Render = L"Rendering";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"HDR";
   static constexpr const wchar_t *Settings_Header_Prompts =
       L"Eingabeaufforderungen";
   static constexpr const wchar_t *Settings_Header_System = L"System";
@@ -3875,7 +3880,7 @@ struct DE {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"Maximale Intensität der Entsättigung bei extremen Highlights. 0,0 bedeutet keine Entsättigung, 1,0 bedeutet vollständige Entsättigung zu Weiß. Empfohlener Standardwert ist 0,75.";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Farbmetrisch";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"Klassischer Reinhard";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Fallback für Bilder ohne Tags";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Softproof-Profil (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Softproof-Vorschau";
@@ -4077,7 +4082,7 @@ struct DE {
       L"wenn sie die Fähigkeiten des Monitors überschreiten.\nSpline: "
       L"Hochpräzises Highlight-Roll-off mittels stückweiser Splines "
       L"(Empfohlen).\nFarbmetrisch: Strikte Luminanzzuordnung; Highlights, die "
-      L"das Monitorlimit überschreiten, werden abgeschnitten.\nClassic Reinhard: Die ursprüngliche erweiterte Reinhard-Kurve (Mehr Kontrast).";
+      L"das Monitorlimit überschreiten, werden abgeschnitten.\nBT.2390 (EETF): ITU-R BT.2390 EETF-Kurve für hochpräzise Tonzuordnung.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100 % Skalierung, wenn das Bild kleiner als der Bildschirm ist, und an den Bildschirm anpassen, wenn es größer ist.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Profi-Werkzeuge";
   static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Schaltfläche \"Dirty Rect\" im Animationsmodus anzeigen";
@@ -4356,6 +4361,7 @@ struct ES {
   static constexpr const wchar_t *Settings_Header_Mouse = L"Ratón";
   static constexpr const wchar_t *Settings_Header_Edge = L"Borde";
   static constexpr const wchar_t *Settings_Header_Render = L"Renderizado";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"HDR";
   static constexpr const wchar_t *Settings_Header_Prompts = L"Indicaciones";
   static constexpr const wchar_t *Settings_Header_System = L"Sistema";
   static constexpr const wchar_t *Settings_Header_Features = L"Funciones";
@@ -4496,7 +4502,7 @@ struct ES {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"Intensidad máxima de la desaturación en brillos extremos. 0.0 significa sin desaturación, 1.0 significa completamente desaturado a blanco. El valor predeterminado recomendado es 0.75.";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimétrico";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"Reinhard clásico";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Perfil alternativo sin etiquetas";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Perfil de prueba en pantalla (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Vista previa de prueba en pantalla";
@@ -4702,8 +4708,7 @@ struct ES {
       L"muestran las imágenes HDR cuando exceden las capacidades del monitor.\n"
       L"Spline: Roll-off de luces de alta fidelidad mediante splines por tramos "
       L"(Recomendado).\nColorimétrico: Mapeo de luminancia estricto; las luces "
-      L"que exceden el límite del monitor se recortan.\nClassic Reinhard: La "
-      L"curva Reinhard extendida original (Más contraste).";
+      L"que exceden el límite del monitor se recortan.\nBT.2390 (EETF): Curva ITU-R BT.2390 EETF para mapeo de tonos de alta fidelidad.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Automático: Escala al 100% cuando la imagen es más pequeña que la pantalla, se ajusta a la pantalla cuando es más grande.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Herramientas profesionales";
   static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Mostrar el botón de rectángulo sucio en el modo de animación";
@@ -4930,6 +4935,7 @@ template <typename T> void ApplyT() {
   Settings_Header_Mouse = T::Settings_Header_Mouse;
   Settings_Header_Edge = T::Settings_Header_Edge;
   Settings_Header_Render = T::Settings_Header_Render;
+  Settings_Header_Hdr = T::Settings_Header_Hdr;
   Settings_Header_Prompts = T::Settings_Header_Prompts;
   Settings_Header_System = T::Settings_Header_System;
   Settings_Header_Features = T::Settings_Header_Features;
@@ -5457,6 +5463,7 @@ struct FR {
   static constexpr const wchar_t *Settings_Header_Mouse = L"Mouse";
   static constexpr const wchar_t *Settings_Header_Edge = L"Edge";
   static constexpr const wchar_t *Settings_Header_Render = L"Render";
+  static constexpr const wchar_t *Settings_Header_Hdr = L"HDR";
   static constexpr const wchar_t *Settings_Header_Prompts = L"Prompts";
   static constexpr const wchar_t *Settings_Header_System = L"System";
   static constexpr const wchar_t *Settings_Header_Features = L"Features";
@@ -5611,7 +5618,7 @@ struct FR {
   static constexpr const wchar_t *Settings_Tooltip_HdrMaxDesat = L"Intensité maximale de désaturation des hautes lumières extrêmes. 0.0 signifie pas de désaturation, 1.0 signifie désaturé à 100% en blanc. Par défaut recommandé : 0.75.";
   static constexpr const wchar_t *Settings_Option_HdrColorimetric = L"Colorimétrique";
   static constexpr const wchar_t *Settings_Option_HdrSpline = L"Spline";
-  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"Reinhard classique";
+  static constexpr const wchar_t *Settings_Option_HdrLegacyReinhard = L"BT.2390 (EETF)";
   static constexpr const wchar_t *Settings_Label_CmsFallback = L"Profil de repli pour images non étiquetées";
   static constexpr const wchar_t *Settings_Label_CustomProof = L"Profil d'épreuvage écran (.icc)";
   static constexpr const wchar_t *Context_SoftProofing = L"Aperçu de l'épreuvage écran";
@@ -5812,8 +5819,7 @@ struct FR {
       L"moniteur.\nSpline : Atténuation des hautes lumières haute fidélité "
       L"utilisant une spline par morceaux (Recommandé).\nColorimétrique : "
       L"Mappage de luminance strict ; les hautes lumières dépassant la limite "
-      L"du moniteur sont tronquées.\nClassic Reinhard : La courbe Reinhard "
-      L"étendue originale (Plus de contraste).";
+      L"du moniteur sont tronquées.\nBT.2390 (EETF) : Courbe ITU-R BT.2390 EETF pour un mappage de tons haute fidélité.";
   static constexpr const wchar_t *Settings_Tooltip_ZoomAuto = L"Auto: 100% scale when image is smaller than screen, fit to screen when larger.";
   static constexpr const wchar_t *Settings_Header_Professional = L"Professional Tools";
   static constexpr const wchar_t *Settings_Label_ShowDirtyRect = L"Show update regions button in animation mode";
