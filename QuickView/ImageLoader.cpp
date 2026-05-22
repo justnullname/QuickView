@@ -404,6 +404,9 @@ namespace QuickView {
             // [v10.1] Override to prevent 1x1 Fake Base generation (e.g. for specific LODs)
             bool allowFakeBase = true;
             bool isTitanMode = false;
+            
+            // [v6.2.5.3] Flag to preserve FP16/FP32 data (bypassing CPU SDR reduction). True for main viewport rendering.
+            bool preserveFloat = false;
 
             // [Async Gain Map] Callback to post AuxLayer back to main engine
             QuickView::AuxLayerCallback onAuxLayerReady;
@@ -667,6 +670,24 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext& ctx,
         result.width <= 0 || result.height <= 0) {
         return S_FALSE;
     }
+
+    // [v6.2.5.3] 强制补齐浮点格式的 HDR 元数据。
+    // 任何解出浮点数的图像都具备超越 SDR 白点 (1.0) 的亮度潜力。
+    // 即使由于元数据缺失导致未被标记为 HDR (例如 JXL 浮点图)，
+    // 我们也必须强行标记它，防止下游 (包括 CPU Clip 和 GPU RenderEngine) 
+    // 将其误认为 SDR 而导致 1.0 以上的高光数据遭到大面积截断死白过曝。
+    if (!result.metadata.hdrMetadata.isHdr) {
+        result.metadata.hdrMetadata.isHdr = true;
+    }
+
+    // [v6.2.5.3] 彻底解封显卡算力：主渲染管道 (FastLane/HeavyLane 都会设置 preserveFloat=true)
+    // 绝不在 CPU 执行任何会导致高光截断或画质妥协的 ToneMap 降级！
+    // 强制保留 FP16/FP32 并原封不动送给 RenderEngine，
+    // 利用其内建的高精度 GPU Spline ToneMapping，在普通的 8-bit SDR 画布上压制出绝美的平滑灰阶。
+    if (ctx.preserveFloat) {
+        return S_FALSE;
+    }
+
     if (!PrefersSdrTarget(ctx)) {
         return S_FALSE;
     }
@@ -6269,12 +6290,12 @@ namespace QuickView {
         const QuickView::TransferFunction transfer = MapAvifTransferFunction(decoder->image->transferCharacteristics);
         const QuickView::ColorPrimaries primaries = MapAvifPrimaries(decoder->image->colorPrimaries);
         const bool preferSdrTarget = PrefersSdrTarget(ctx);
-        const bool useHighBitDepthOutput = !preferSdrTarget &&
-                    (decoder->image->gainMap != nullptr ||
-                     transfer == QuickView::TransferFunction::Linear ||
-                     transfer == QuickView::TransferFunction::PQ ||
-                     transfer == QuickView::TransferFunction::HLG ||
-                     decoder->image->depth > 8);
+        const bool isPureHdrFormat = (transfer == QuickView::TransferFunction::Linear ||
+                                      transfer == QuickView::TransferFunction::PQ ||
+                                      transfer == QuickView::TransferFunction::HLG);
+        const bool useHighBitDepthOutput = isPureHdrFormat || 
+                                          (!preferSdrTarget && decoder->image->gainMap != nullptr) || 
+                                          (!preferSdrTarget && decoder->image->depth > 8);
 
                 if (useHighBitDepthOutput) {
                     if (decoder->image->gainMap) {
@@ -11152,6 +11173,7 @@ ctx.allocator.ctx = arena;
     ctx.forceRenderFull = true; // [v10] Ensure HeavyLane base layer decode does not abort for large non-DC JXLs
     ctx.allowFakeBase = allowFakeBase; // [v10.1] Pass the fallback behavior override
     ctx.isTitanMode = isTitanMode;
+    ctx.preserveFloat = (arena != nullptr); // [v6.2.5.3] Main viewport requests always use an arena; protect them from CPU SDR reduction!
     ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
 
     // Pass callback to intercept async AuxLayer from LoadImageUnified

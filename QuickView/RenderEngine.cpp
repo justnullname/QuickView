@@ -1018,6 +1018,12 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
 
   const float totalGain = settings.exposure * settings.exposureGain;
   settings.contentPeakScRgb = (std::max)(settings.contentPeakScRgb * totalGain, 1e-4f);
+
+  // Defense: Prevent artificial attenuation of native SDR images (Mode 1) in the SDR output pipeline
+  // Without this, the shader would divide physical 1.0 peak by 2.5375, destroying brightness.
+  if (settings.mode == 1 && settings.contentPeakScRgb <= 1.001f && !displayState.advancedColorActive) {
+      settings.displayPeakScRgb = 1.0f;
+  }
   const float contentPeakLinear = settings.contentPeakScRgb;
   const float displayPeakLinear = (std::max)(settings.displayPeakScRgb, 1e-4f);
 
