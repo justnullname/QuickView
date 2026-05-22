@@ -1695,9 +1695,10 @@ void SettingsOverlay::BuildMenu() {
     tabImage.name = AppStrings::Settings_Tab_Image; 
     tabImage.icon = Icons::Image;
     
+    // --- 1. Render Group ---
     tabImage.items.push_back({ AppStrings::Settings_Header_Render, OptionType::Header });
 
-    // Zoom Mode
+    // Zoom Mode In
     SettingsItem itemZoomIn = { AppStrings::Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} };
     itemZoomIn.onChange = []() {
         SaveConfig();
@@ -1707,6 +1708,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemZoomIn);
 
+    // Zoom Mode Out
     SettingsItem itemZoomOut = { AppStrings::Settings_Label_ZoomModeOut, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeOut), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} };
     itemZoomOut.onChange = []() {
         SaveConfig();
@@ -1716,9 +1718,18 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemZoomOut);
 
+    // Auto Rotate
     tabImage.items.push_back({ AppStrings::Settings_Label_AutoRotate, OptionType::Toggle, &g_config.AutoRotate });
     
-    // CMS - Color Management System
+    // Force Raw Decode (moved to Render group)
+    SettingsItem itemRaw = { AppStrings::Settings_Label_ForceRaw, OptionType::Toggle, &g_config.ForceRawDecode };
+    itemRaw.onChange = []() { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
+    tabImage.items.push_back(itemRaw);
+
+    // --- 2. Color Management (CMS) Group ---
+    tabImage.items.push_back({ AppStrings::Settings_Label_CMS, OptionType::Header });
+
+    // CMS - Color Management System Toggle
     SettingsItem itemCmsToggle = { AppStrings::Settings_Label_CMS, OptionType::Toggle, &g_config.ColorManagement };
     itemCmsToggle.tooltipText = AppStrings::Settings_Tooltip_CMS;
     itemCmsToggle.onChange = []() {
@@ -1731,6 +1742,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemCmsToggle);
 
+    // CMS Intent
     SettingsItem itemCmsIntent = { AppStrings::Settings_Label_CmsIntent, OptionType::ComboBox, nullptr, nullptr, &g_config.CmsRenderingIntent, nullptr, 0, 0,
         { AppStrings::Settings_Option_CmsIntentPerceptual, AppStrings::Settings_Option_CmsIntentRelative } };
     itemCmsIntent.tooltipText = AppStrings::Settings_Tooltip_CmsIntent;
@@ -1742,6 +1754,42 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemCmsIntent);
 
+    // Default CMS Fallback (for unprofiled images)
+    SettingsItem itemCmsFallback = { AppStrings::Settings_Label_CmsFallback, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsDefaultFallback), nullptr, 0, 0, {AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3, AppStrings::Settings_Option_CmsAdobeRGB, AppStrings::Settings_Option_CmsProPhoto} };
+    itemCmsFallback.onChange = []() {
+        SaveConfig();
+        extern void RequestRepaint(QuickView::PaintLayer layerMask);
+        RequestRepaint(QuickView::PaintLayer::All);
+    };
+    tabImage.items.push_back(itemCmsFallback);
+    
+    // Custom Soft Proofing Profile
+    SettingsItem itemCustomProof = { AppStrings::Settings_Label_CustomProof, OptionType::ActionButton };
+    itemCustomProof.buttonText = AppStrings::Context_SoftProofCustom;
+    if (!g_config.CustomSoftProofProfile.empty()) {
+        std::wstring filename = g_config.CustomSoftProofProfile.substr(g_config.CustomSoftProofProfile.find_last_of(L"/\\") + 1);
+        itemCustomProof.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
+    }
+    itemCustomProof.onChange = []() {
+        extern HWND g_mainHwnd;
+        wchar_t filename[MAX_PATH] = { 0 };
+        OPENFILENAMEW ofn;
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = g_mainHwnd;
+        ofn.lpstrFilter = L"ICC Profiles (*.icc;*.icm)\0*.icc;*.icm\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+        ofn.lpstrDefExt = L"icc";
+        if (GetOpenFileNameW(&ofn)) {
+            g_config.CustomSoftProofProfile = filename;
+            SaveConfig();
+        }
+    };
+    tabImage.items.push_back(itemCustomProof);
+
+    // Gamut Overflow / Color Spill Warning Detection
     SettingsItem itemGamutWarning = { AppStrings::Settings_Label_GamutWarning, OptionType::Segment, nullptr, nullptr, &g_config.GamutWarningMode, nullptr, 0, 0, { AppStrings::Settings_Option_Off, AppStrings::Settings_Option_SoftProofing, AppStrings::Settings_Option_All } };
     itemGamutWarning.tooltipText = AppStrings::Settings_Tooltip_GamutWarning;
     itemGamutWarning.onChange = []() {
@@ -1754,6 +1802,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemGamutWarning);
 
+    // Gamut Overflow Auto Prompt
     SettingsItem itemGamutAutoPrompt = { AppStrings::Settings_Label_GamutAutoPrompt, OptionType::Toggle, &g_config.GamutWarningAutoPrompt };
     itemGamutAutoPrompt.tooltipText = AppStrings::Settings_Tooltip_GamutAutoPrompt;
     itemGamutAutoPrompt.onChange = []() {
@@ -1761,6 +1810,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemGamutAutoPrompt);
 
+    // Gamut Warning Highlight Color Customizer
     SettingsItem itemGamutColor = { AppStrings::Settings_Label_GamutColor, OptionType::CustomColorRow };
     itemGamutColor.pFloatVal = &g_config.GamutWarningColorR;
     itemGamutColor.onChange = []() {
@@ -1788,6 +1838,10 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemGamutColor);
 
+    // --- 3. High Dynamic Range (HDR) Group ---
+    tabImage.items.push_back({ AppStrings::Settings_Header_Hdr, OptionType::Header });
+
+    // Advanced Color (HDR & Wide Color Gamut switcher)
     SettingsItem itemAdvColor = { AppStrings::Settings_Label_AdvancedColor, OptionType::Segment, nullptr, nullptr, &g_config.AdvancedColorMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Auto} };
     itemAdvColor.tooltipText = AppStrings::Settings_Tooltip_AdvancedColor;
     itemAdvColor.onChange = []() {
@@ -1803,6 +1857,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemAdvColor);
 
+    // Exposure Control
     SettingsItem itemExposure = {AppStrings::Settings_Label_Exposure,
                                  OptionType::Slider, nullptr,
                                  &g_config.Exposure};
@@ -1825,9 +1880,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemExposure);
 
-    // HDR settings group header
-    tabImage.items.push_back({ AppStrings::Settings_Header_Hdr, OptionType::Header });
-
+    // HDR Tone Mapping Mode
     SettingsItem itemHdrToneMapping = { AppStrings::Settings_Label_HdrToneMapping, OptionType::ComboBox, nullptr, nullptr, &g_config.HdrToneMappingMode, nullptr, 0, 0,
         { AppStrings::Settings_Option_HdrSpline, AppStrings::Settings_Option_HdrColorimetric, AppStrings::Settings_Option_HdrLegacyReinhard } };
     itemHdrToneMapping.tooltipText = AppStrings::Settings_Tooltip_HdrToneMapping;
@@ -1839,6 +1892,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemHdrToneMapping);
 
+    // HDR Peak Nits Override
     SettingsItem itemHdrPeak = { AppStrings::Settings_Label_HdrPeakNitsOverride, OptionType::Slider, nullptr, &g_config.HdrPeakNitsOverride };
     itemHdrPeak.tooltipText = AppStrings::Settings_Tooltip_HdrPeakNitsOverride;
     itemHdrPeak.minVal = 0.0f;
@@ -1855,6 +1909,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemHdrPeak);
 
+    // HDR Desaturation Threshold (Range)
     SettingsItem itemDesatRange = { AppStrings::Settings_Label_HdrDesatThreshold, OptionType::Slider, nullptr, &g_config.HdrDesatThreshold };
     itemDesatRange.tooltipText = AppStrings::Settings_Tooltip_HdrDesatThreshold;
     itemDesatRange.minVal = 0.0f;
@@ -1875,6 +1930,7 @@ void SettingsOverlay::BuildMenu() {
     };
     tabImage.items.push_back(itemDesatRange);
 
+    // HDR Maximum Desaturation Strength
     SettingsItem itemDesatStrength = { AppStrings::Settings_Label_HdrMaxDesat, OptionType::Slider, nullptr, &g_config.HdrMaxDesat };
     itemDesatStrength.tooltipText = AppStrings::Settings_Tooltip_HdrMaxDesat;
     itemDesatStrength.minVal = 0.0f;
@@ -1894,43 +1950,6 @@ void SettingsOverlay::BuildMenu() {
       RefreshImageDisplay(g_mainHwnd);
     };
     tabImage.items.push_back(itemDesatStrength);
-
-    SettingsItem itemCmsFallback = { AppStrings::Settings_Label_CmsFallback, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.CmsDefaultFallback), nullptr, 0, 0, {AppStrings::Settings_Option_CmssRGB, AppStrings::Settings_Option_CmsP3, AppStrings::Settings_Option_CmsAdobeRGB, AppStrings::Settings_Option_CmsProPhoto} };
-    itemCmsFallback.onChange = []() {
-        SaveConfig();
-        extern void RequestRepaint(QuickView::PaintLayer layerMask);
-        RequestRepaint(QuickView::PaintLayer::All);
-    };
-    tabImage.items.push_back(itemCmsFallback);
-    
-    SettingsItem itemCustomProof = { AppStrings::Settings_Label_CustomProof, OptionType::ActionButton };
-    itemCustomProof.buttonText = AppStrings::Context_SoftProofCustom;
-    if (!g_config.CustomSoftProofProfile.empty()) {
-        std::wstring filename = g_config.CustomSoftProofProfile.substr(g_config.CustomSoftProofProfile.find_last_of(L"/\\") + 1);
-        itemCustomProof.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
-    }
-    itemCustomProof.onChange = []() {
-        extern HWND g_mainHwnd;
-        wchar_t filename[MAX_PATH] = { 0 };
-        OPENFILENAMEW ofn;
-        ZeroMemory(&ofn, sizeof(ofn));
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = g_mainHwnd;
-        ofn.lpstrFilter = L"ICC Profiles (*.icc;*.icm)\0*.icc;*.icm\0All Files (*.*)\0*.*\0";
-        ofn.lpstrFile = filename;
-        ofn.nMaxFile = MAX_PATH;
-        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-        ofn.lpstrDefExt = L"icc";
-        if (GetOpenFileNameW(&ofn)) {
-            g_config.CustomSoftProofProfile = filename;
-            SaveConfig();
-        }
-    };
-    tabImage.items.push_back(itemCustomProof);
-
-    SettingsItem itemRaw = { AppStrings::Settings_Label_ForceRaw, OptionType::Toggle, &g_config.ForceRawDecode };
-    itemRaw.onChange = []() { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
-    tabImage.items.push_back(itemRaw);
     
     tabImage.items.push_back({ AppStrings::Settings_Header_Prompts, OptionType::Header });
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossless, OptionType::Toggle, &g_config.AlwaysSaveLossless });
