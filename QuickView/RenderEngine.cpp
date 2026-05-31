@@ -741,18 +741,97 @@ bool IsSceneLinearFrame(const QuickView::RawImageFrame &frame) {
   return frame.colorInfo.IsSceneLinear();
 }
 
-bool IsHdrLikeFrame(const QuickView::RawImageFrame &frame) {
-  return frame.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
-         frame.hdrMetadata.isHdr;
-}
+float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame);
 
 namespace {
+
+constexpr float kRelativeHdrPeakThresholdScRgb = 1.05f;
+
+QuickView::TransferFunction ResolveTransferFunction(
+    const QuickView::RawImageFrame &frame) {
+  return frame.colorInfo.transfer != QuickView::TransferFunction::Unknown
+             ? frame.colorInfo.transfer
+             : frame.hdrMetadata.transfer;
+}
+
+QuickView::HdrContentKind ClassifyHdrContent(const QuickView::RawImageFrame &frame,
+                                             bool composedAbsoluteHdr = false) {
+  if (composedAbsoluteHdr) {
+    return QuickView::HdrContentKind::AbsolutePhotometric;
+  }
+
+  if (frame.hdrMetadata.hasGainMap && !frame.hdrMetadata.gainMapApplied &&
+      frame.blendOp == QuickView::GpuBlendOp::UltraHdrGainMap) {
+    return QuickView::HdrContentKind::UltraHdrPending;
+  }
+
+  if (frame.hdrMetadata.gainMapApplied) {
+    return QuickView::HdrContentKind::AbsolutePhotometric;
+  }
+
+  if (frame.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
+      frame.colorInfo.IsScRgb()) {
+    return QuickView::HdrContentKind::AbsolutePhotometric;
+  }
+
+  if (frame.hdrMetadata.hasNitsMetadata) {
+    return QuickView::HdrContentKind::AbsolutePhotometric;
+  }
+
+  const QuickView::TransferFunction transfer = ResolveTransferFunction(frame);
+  if (transfer == QuickView::TransferFunction::PQ ||
+      transfer == QuickView::TransferFunction::HLG) {
+    return QuickView::HdrContentKind::AbsolutePhotometric;
+  }
+
+  if (frame.colorInfo.IsSceneLinear() || frame.hdrMetadata.isSceneLinear) {
+    return QuickView::HdrContentKind::RelativeSceneLinear;
+  }
+
+  if (frame.hdrMetadata.isHdr) {
+    return QuickView::HdrContentKind::RelativeSceneLinear;
+  }
+
+  return QuickView::HdrContentKind::RelativeSdr;
+}
+
+const char *HdrContentKindLabel(QuickView::HdrContentKind kind) {
+  switch (kind) {
+  case QuickView::HdrContentKind::AbsolutePhotometric:
+    return "AbsolutePhotometric";
+  case QuickView::HdrContentKind::RelativeSdr:
+    return "RelativeSdr";
+  case QuickView::HdrContentKind::RelativeSceneLinear:
+    return "RelativeSceneLinear";
+  case QuickView::HdrContentKind::UltraHdrPending:
+    return "UltraHdrPending";
+  }
+  return "Unknown";
+}
+
+bool IsHdrLikeFrame(const QuickView::RawImageFrame &frame) {
+  switch (ClassifyHdrContent(frame)) {
+  case QuickView::HdrContentKind::AbsolutePhotometric:
+  case QuickView::HdrContentKind::UltraHdrPending:
+    return true;
+  case QuickView::HdrContentKind::RelativeSceneLinear:
+    return InternalEstimateFramePeakScRgb(frame) > kRelativeHdrPeakThresholdScRgb;
+  case QuickView::HdrContentKind::RelativeSdr:
+  default:
+    return false;
+  }
+}
+
 // ST.2084 (PQ) constants
 constexpr float PQ_M1 = 2610.0f / 16384.0f;
 constexpr float PQ_M2 = (2523.0f / 4096.0f) * 128.0f;
 constexpr float PQ_C1 = 3424.0f / 4096.0f;
 constexpr float PQ_C2 = (2413.0f / 4096.0f) * 32.0f;
 constexpr float PQ_C3 = (2392.0f / 4096.0f) * 32.0f;
+constexpr float HLG_A = 0.17883277f;
+constexpr float HLG_B = 0.28466892f;
+constexpr float HLG_C = 0.55991073f;
+constexpr float HLG_REFERENCE_PEAK_SCRGB = 12.5f; // 1000 nits / 80 nits
 
 // Maps ScRGB (1.0 = 80 nits) to PQ [0, 1] (1.0 = 10000 nits)
 [[maybe_unused]] float LinearToPQ(float L) {
@@ -771,10 +850,30 @@ float PQToLinear(float V) {
   return L_norm * 125.0f;
 }
 
+float HlgScalarToLinearScRgb(float v) {
+  v = std::clamp(v, 0.0f, 1.0f);
+  const float scene = (v <= 0.5f)
+                          ? ((v * v) / 3.0f)
+                          : ((expf((v - HLG_C) / HLG_A) + HLG_B) / 12.0f);
+  return powf((std::max)(scene, 0.0f), 1.2f) * HLG_REFERENCE_PEAK_SCRGB;
+}
+
 // libplacebo-compatible smoothstep (edge0 > edge1 maps to decreasing ramp)
 float SmoothStep(float edge0, float edge1, float x) {
   x = std::clamp((x - edge0) / (edge1 - edge0 + 1e-9f), 0.0f, 1.0f);
   return x * x * (3.0f - 2.0f * x);
+}
+
+uint32_t FloatBits(float value) {
+  uint32_t bits = 0;
+  memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+float FloatFromBits(uint32_t bits) {
+  float value = 0.0f;
+  memcpy(&value, &bits, sizeof(value));
+  return value;
 }
 } // namespace
 
@@ -809,7 +908,7 @@ float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
                   float g = row[x * 4 + 1];
                   float b = row[x * 4 + 2];
                   float lum = std::max(0.0f, r * 0.2627f + g * 0.6780f + b * 0.0593f);
-                  uint32_t bits = *(uint32_t*)&lum;
+                  uint32_t bits = FloatBits(lum);
                   if (bits > 0x7FFFFFFF) bits = 0; // Filter negatives/-0
                   uint32_t bin = bits >> 16;
                   if (bin < 32768) {
@@ -827,7 +926,7 @@ float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
                   float g = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 1]);
                   float b = DirectX::PackedVector::XMConvertHalfToFloat(row[x * 4 + 2]);
                   float lum = std::max(0.0f, r * 0.2627f + g * 0.6780f + b * 0.0593f);
-                  uint32_t bits = *(uint32_t*)&lum;
+                  uint32_t bits = FloatBits(lum);
                   if (bits > 0x7FFFFFFF) bits = 0;
                   uint32_t bin = bits >> 16;
                   if (bin < 32768) {
@@ -845,12 +944,20 @@ float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
               accum += hist[i];
               if (accum > target_exclude) {
                   uint32_t bits = static_cast<uint32_t>(i) << 16;
-                  peak = *(float*)&bits;
+                  peak = FloatFromBits(bits);
                   break;
               }
           }
       }
-      return peak;
+      const QuickView::TransferFunction transfer = ResolveTransferFunction(frame);
+      if (transfer == QuickView::TransferFunction::PQ) {
+        peak = PQToLinear(peak);
+      } else if (transfer == QuickView::TransferFunction::HLG) {
+        peak = HlgScalarToLinearScRgb(peak);
+      }
+
+      frame.measuredPeakScRgb = (std::max)(1.0f, peak);
+      return frame.measuredPeakScRgb;
   }
 
   if (frame.format == QuickView::PixelFormat::R32G32B32A32_FLOAT) {
@@ -890,16 +997,12 @@ float InternalEstimateFramePeakScRgb(const QuickView::RawImageFrame &frame) {
   }
 
   // Final Pass: Apply EOTF if content is still encoded (PQ/HLG)
-  const QuickView::TransferFunction transfer =
-      frame.colorInfo.transfer != QuickView::TransferFunction::Unknown
-          ? frame.colorInfo.transfer
-          : frame.hdrMetadata.transfer;
+  const QuickView::TransferFunction transfer = ResolveTransferFunction(frame);
 
   if (transfer == QuickView::TransferFunction::PQ) {
     peak = PQToLinear(peak);
   } else if (transfer == QuickView::TransferFunction::HLG) {
-    // HLG is relative; usually we treat 1.0 as 1000 nits (12.5f scRGB)
-    peak *= 12.5f; 
+    peak = HlgScalarToLinearScRgb(peak);
   }
 
   frame.measuredPeakScRgb = (std::max)(1.0f, peak);
@@ -946,12 +1049,11 @@ float InternalEstimateFrameAverageScRgb(const QuickView::RawImageFrame &frame) {
   float avg = static_cast<float>(totalLum / (static_cast<double>(frame.width) * frame.height));
 
   // If encoded in PQ, convert avg to linear
-  const QuickView::TransferFunction transfer =
-      frame.colorInfo.transfer != QuickView::TransferFunction::Unknown
-          ? frame.colorInfo.transfer
-          : frame.hdrMetadata.transfer;
+  const QuickView::TransferFunction transfer = ResolveTransferFunction(frame);
   if (transfer == QuickView::TransferFunction::PQ) {
     avg = PQToLinear(avg);
+  } else if (transfer == QuickView::TransferFunction::HLG) {
+    avg = HlgScalarToLinearScRgb(avg);
   }
 
   frame.measuredAverageScRgb = avg;
@@ -960,17 +1062,29 @@ float InternalEstimateFrameAverageScRgb(const QuickView::RawImageFrame &frame) {
 
 QuickView::ToneMapSettings
 BuildToneMapSettings(const QuickView::RawImageFrame &frame,
-                     const QuickView::DisplayColorState &displayState) {
+                     const QuickView::DisplayColorState &displayState,
+                     bool composedAbsoluteHdr = false) {
   QuickView::ToneMapSettings settings = {};
   settings.exposure = g_config.Exposure;
 
   const float paperWhiteScRgb =
       (displayState.GetSdrWhiteScale() > 1.0f ? displayState.GetSdrWhiteScale() : 1.0f);
-  float peakNits = displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride);
-  settings.isHdrOutput = displayState.advancedColorActive ? 1u : 0u;
-  settings.realHardwarePeakScRgb = (std::max)(1.0f, peakNits / 80.0f);
+  const float effectivePeakNits =
+      displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride);
+  const float reportedHardwarePeakNits =
+      (std::max)({displayState.maxLuminanceNits, displayState.sdrWhiteLevelNits, 80.0f});
+  const float renderablePeakNits =
+      displayState.advancedColorActive
+          ? (std::max)(reportedHardwarePeakNits, effectivePeakNits)
+          : (std::max)(reportedHardwarePeakNits, 80.0f);
+  const bool hdrOutputActive =
+      displayState.advancedColorActive &&
+      (g_runtime.ForceHdrSimulation ||
+       g_config.IsAdvancedColorEnabled(displayState.advancedColorActive));
+  settings.isHdrOutput = hdrOutputActive ? 1u : 0u;
+  settings.realHardwarePeakScRgb = hdrOutputActive ? (renderablePeakNits / 80.0f) : 1.0f;
       
-  const float displayPeakScRgb = (peakNits / 80.0f > 1.0f ? peakNits / 80.0f : 1.0f); (void)displayPeakScRgb;
+  const float displayPeakScRgb = (effectivePeakNits / 80.0f > 1.0f ? effectivePeakNits / 80.0f : 1.0f); (void)displayPeakScRgb;
 
   float contentPeakScRgb = 1.0f;
   float contentAverageScRgb = 0.0f;
@@ -1015,11 +1129,13 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
     contentAverageScRgb = InternalEstimateFrameAverageScRgb(frame);
   }
 
-  if (contentPeakScRgb <= 1.0f && IsHdrLikeFrame(frame)) {
-    const QuickView::TransferFunction transfer =
-        frame.colorInfo.transfer != QuickView::TransferFunction::Unknown
-            ? frame.colorInfo.transfer
-            : frame.hdrMetadata.transfer;
+  const QuickView::HdrContentKind contentKind =
+      ClassifyHdrContent(frame, composedAbsoluteHdr);
+
+  if (contentPeakScRgb <= 1.0f &&
+      (contentKind == QuickView::HdrContentKind::AbsolutePhotometric ||
+       contentKind == QuickView::HdrContentKind::UltraHdrPending)) {
+    const QuickView::TransferFunction transfer = ResolveTransferFunction(frame);
     switch (transfer) {
     case QuickView::TransferFunction::PQ:
     case QuickView::TransferFunction::HLG:
@@ -1045,12 +1161,13 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
       TraceLoggingFloat32(frame.hdrMetadata.masteringMaxNits, "RawMasteringMax"));
 
   settings.contentPeakScRgb = (contentPeakScRgb > 1.0f ? contentPeakScRgb : 1.0f);
+  const float intrinsicContentPeakScRgb = settings.contentPeakScRgb;
 
   // Phase 2: Exposure Gain Routing (Unified Physics Calibration Model)
   float exposureGain = 1.0f;
   const float sdrWhite = displayState.sdrWhiteLevelNits > 0.0f ? displayState.sdrWhiteLevelNits : 80.0f;
 
-  if (!displayState.advancedColorActive) {
+  if (!hdrOutputActive) {
       // SDR Output Path: Map HDR content using 203 nits standard target peak (ITU-R BT.2408 graphics white).
       // This ensures that SDR elements in the HDR image (mapped from 203 nits) align exactly with
       // the sRGB OETF max white domain, maintaining harmonious brightness alongside standard SDR images
@@ -1060,48 +1177,62 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
                                   : (203.0f / 80.0f);
       exposureGain = 1.0f;
   } else {
-      // HDR Output Path: Windows Advanced Color FP16 SwapChain is absolute photometric (1.0f = 80 nits).
-      // DWM does NOT automatically scale scRGB values by the SDR White slider.
-      // 
-      // Dynamic Exposure Routing based on The Architect's correction:
-      if (IsHdrLikeFrame(frame)) {
-          // [Absolute Photometric Path for True HDR]
-          // HDR images (PQ/HLG/Linear with absolute nits metadata) represent exact physical 
-          // photon counts. We MUST NOT artificially inflate them to match the SDR UI slider, 
-          // otherwise a 600 nits sun will be incorrectly blown out to 1800 nits and forced 
-          // through unnecessary tone-mapping compression. 
+      // HDR Output Path: MS Advanced Color FP16 scRGB — 1.0 = 80 nits reference white.
+      // DWM does not scale scRGB by the SDR White slider; only relative (non-absolute) content
+      // is scaled by SdrWhiteLevelInNits / 80 per Microsoft Advanced Color guidance.
+      switch (contentKind) {
+      case QuickView::HdrContentKind::AbsolutePhotometric:
           exposureGain = 1.0f;
-      } else {
-          // [Relative UI Path for SDR]
-          // Standard SDR images (sRGB) lack physical absolute brightness. 
-          // To prevent them from looking "too dark" against bright UI elements, 
-          // we scale their diffuse white (1.0f) to match the user's OS SDR White Level.
+          break;
+      case QuickView::HdrContentKind::RelativeSdr:
+      case QuickView::HdrContentKind::UltraHdrPending:
           exposureGain = sdrWhite / 80.0f;
+          break;
+      case QuickView::HdrContentKind::RelativeSceneLinear:
+          exposureGain = (pixelScanPeak > kRelativeHdrPeakThresholdScRgb)
+                               ? 1.0f
+                               : (sdrWhite / 80.0f);
+          break;
       }
-      
-      // Calculate max capable scRGB in the absolute coordinate system (1.0f = 80 nits).
-      settings.displayPeakScRgb = displayState.GetEffectivePeakNits(g_config.HdrPeakNitsOverride) / 80.0f;
+
+      settings.displayPeakScRgb = effectivePeakNits / 80.0f;
   }
   settings.exposureGain = exposureGain;
   settings.paperWhiteScRgb = paperWhiteScRgb;
-  // SDR Bypass: Force mode 1 (Colorimetric/Clip) for SDR images to avoid unnecessary HDR curve compression.
-  settings.mode = IsHdrLikeFrame(frame) ? g_config.HdrToneMappingMode : 1;
+
+  const bool needsHdrToneMap =
+      contentKind == QuickView::HdrContentKind::AbsolutePhotometric ||
+      (contentKind == QuickView::HdrContentKind::RelativeSceneLinear &&
+       pixelScanPeak > kRelativeHdrPeakThresholdScRgb);
+  settings.mode = needsHdrToneMap ? g_config.HdrToneMappingMode : 1;
   settings.desatThreshold = g_config.HdrDesatThreshold;
   settings.desatStrength = g_config.HdrMaxDesat;
 
   const float totalGain = settings.exposure * settings.exposureGain;
-  settings.contentPeakScRgb = (std::max)(settings.contentPeakScRgb * totalGain, 1e-4f);
+  settings.contentPeakScRgb =
+      (std::max)(intrinsicContentPeakScRgb * totalGain, 1e-4f);
 
-  // Smart Passthrough: Bypass ToneMapping (force Mode 1: Colorimetric/Clip) if the content 
-  // completely fits within the display's current capabilities, avoiding unnecessary curve compression.
-  if (settings.mode == 0 && settings.contentPeakScRgb <= settings.displayPeakScRgb) {
-      settings.mode = 1;
+  const char *passthroughReason = "SplineBypass_NonSplineMode";
+  const bool splinePassthrough =
+      settings.mode == 0 &&
+      settings.contentPeakScRgb <= settings.displayPeakScRgb + 1e-4f;
+  if (settings.mode == 0) {
+    passthroughReason = splinePassthrough ? "SplineSkipped_ContentFits"
+                                          : "SplineActive_PeakExceedsDisplay";
+    if (splinePassthrough) {
+        settings.mode = 1; // Force colorimetric clip (passthrough) to prevent GPU executing empty spline
+    }
   }
 
-  // Defense: Prevent artificial attenuation of native SDR images (Mode 1) in the SDR output pipeline
-  // Without this, the shader would divide physical 1.0 peak by 2.5375, destroying brightness.
-  if (settings.mode == 1 && settings.contentPeakScRgb <= 1.001f && !displayState.advancedColorActive) {
+  // Defense: Prevent artificial attenuation of relative images in the SDR output pipeline.
+  // The SDR shader normalizes by DisplayPeakScRgb, so relative whites must keep DisplayPeakScRgb at 1.
+  const bool relativePassthrough =
+      contentKind == QuickView::HdrContentKind::RelativeSdr ||
+      (contentKind == QuickView::HdrContentKind::RelativeSceneLinear &&
+       pixelScanPeak <= kRelativeHdrPeakThresholdScRgb);
+  if (settings.mode == 1 && settings.isHdrOutput == 0 && relativePassthrough) {
       settings.displayPeakScRgb = 1.0f;
+      settings.contentPeakScRgb = settings.displayPeakScRgb;
   }
   const float contentPeakLinear = settings.contentPeakScRgb;
   const float displayPeakLinear = (std::max)(settings.displayPeakScRgb, 1e-4f);
@@ -1217,6 +1348,16 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
     settings.contrastRecovery = 0.0f; // Disable contrast recovery for other modes
   }
 
+  QV_LOG("Render_ToneMapPassthrough",
+      TraceLoggingString(HdrContentKindLabel(contentKind), "ContentKind"),
+      TraceLoggingString(passthroughReason, "PassthroughReason"),
+      TraceLoggingFloat32(intrinsicContentPeakScRgb, "IntrinsicContentPeakScRgb"),
+      TraceLoggingFloat32(pixelScanPeak * totalGain, "EffectivePixelPeakScRgb"),
+      TraceLoggingFloat32(settings.contentPeakScRgb, "EffectiveContentPeakScRgb"),
+      TraceLoggingFloat32(settings.displayPeakScRgb, "DisplayPeakScRgb"),
+      TraceLoggingFloat32(settings.realHardwarePeakScRgb, "HardwarePeakScRgb"),
+      TraceLoggingInt32(static_cast<int>(settings.mode), "ToneMappingMode"));
+
   const float headroom = settings.displayPeakScRgb / settings.paperWhiteScRgb; (void)headroom;
 
   // [DEBUG] Dump all tone map CB parameters for diagnostics
@@ -1275,10 +1416,7 @@ BuildToneMapSettings(const QuickView::RawImageFrame &frame,
 
   // Fallback for untagged images:
   if (srcPrimaries == QuickView::ColorPrimaries::Unknown) {
-      const QuickView::TransferFunction transfer =
-          frame.colorInfo.transfer != QuickView::TransferFunction::Unknown
-              ? frame.colorInfo.transfer
-              : frame.hdrMetadata.transfer;
+      const QuickView::TransferFunction transfer = ResolveTransferFunction(frame);
 
       if (transfer == QuickView::TransferFunction::PQ || 
           transfer == QuickView::TransferFunction::HLG) 
@@ -2067,12 +2205,6 @@ HRESULT CRenderEngine::ResolveDestinationColorContext(
 
 bool CRenderEngine::ShouldUseHdrOutputForFrame(
     const QuickView::RawImageFrame &frame) const {
-    // Knife 3: VIP Simulation Path Priority
-    if (g_runtime.ForceHdrSimulation) return true;
-
-    if (!IsHdrLikeFrame(frame)) return false;
-    if (!m_isAdvancedColor) return false;
-
   // [Fix] When HDR simulation is active on a physically-SDR display,
   // route through HdrToSdr so the output (BGRA8) is actually visible.
   // FP16 output on SDR gets clipped at 1.0 by DWM, rendering all
@@ -2080,6 +2212,13 @@ bool CRenderEngine::ShouldUseHdrOutputForFrame(
   if (g_runtime.ForceHdrSimulation &&
       !m_displayColorState.highDynamicRangeUserEnabled) {
     return false;
+  }
+
+  if (!IsHdrLikeFrame(frame) && !g_runtime.ForceHdrSimulation) return false;
+  if (!m_isAdvancedColor) return false;
+
+  if (g_runtime.ForceHdrSimulation) {
+    return true;
   }
 
   return g_config.IsAdvancedColorEnabled(m_displayColorState.advancedColorActive);
@@ -2220,7 +2359,7 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
                   m_bakeCache.lastHeadroom = payload.targetHeadroom;
                   
                   QuickView::ToneMapSettings toneMapSettings =
-                      BuildToneMapSettings(frame, m_displayColorState);
+                      BuildToneMapSettings(frame, m_displayColorState, true);
                   
                   // Gain Map composition results in a "fake" HDR texture. 
                   // We need to override the peak to match the gain applied.

@@ -35,6 +35,14 @@ enum class PixelDataSpace : uint8_t {
     SceneLinearScRgb
 };
 
+// Absolute vs relative luminance routing for Advanced Color / scRGB output.
+enum class HdrContentKind : uint8_t {
+    AbsolutePhotometric,  // PQ/HLG/scRGB/nits metadata or composed gain map
+    RelativeSdr,          // Encoded SDR (sRGB, 8-bit)
+    RelativeSceneLinear,  // Scene-linear float without absolute calibration
+    UltraHdrPending,      // ISO 21496-1 base layer before GPU gain-map compose
+};
+
 struct PixelColorInfo {
     PixelDataSpace dataSpace = PixelDataSpace::Unknown;
     TransferFunction transfer = TransferFunction::Unknown;

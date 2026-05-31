@@ -76,12 +76,13 @@ cbuffer ToneMapParams : register(b0)
 };
 
 float3 HLGToLinear(float3 v) {
-    float3 e;
-    e.r = v.r <= 0.5 ? (v.r * v.r / 3.0) : (exp((v.r - 0.17883277) / 0.28466892) + 0.02372241);
-    e.g = v.g <= 0.5 ? (v.g * v.g / 3.0) : (exp((v.g - 0.17883277) / 0.28466892) + 0.02372241);
-    e.b = v.b <= 0.5 ? (v.b * v.b / 3.0) : (exp((v.b - 0.17883277) / 0.28466892) + 0.02372241);
+    float3 e = lerp(
+        v * v / 3.0,
+        ((exp((v - 0.55991073) / 0.17883277) + 0.28466892) / 12.0),
+        step(0.5, v)
+    );
     float L_S = 0.2627 * e.r + 0.6780 * e.g + 0.0593 * e.b;
-    return e * pow(max(L_S, 0.0), 1.2 - 1.0) * 12.5;
+    return e * pow(max(L_S, 0.0), 0.2) * 12.5;
 }
 
 float LinearToPQ(float L) {
@@ -253,12 +254,13 @@ cbuffer ToneMapParams : register(b0)
 };
 
 float3 HLGToLinear(float3 v) {
-    float3 e;
-    e.r = v.r <= 0.5 ? (v.r * v.r / 3.0) : (exp((v.r - 0.17883277) / 0.28466892) + 0.02372241);
-    e.g = v.g <= 0.5 ? (v.g * v.g / 3.0) : (exp((v.g - 0.17883277) / 0.28466892) + 0.02372241);
-    e.b = v.b <= 0.5 ? (v.b * v.b / 3.0) : (exp((v.b - 0.17883277) / 0.28466892) + 0.02372241);
+    float3 e = lerp(
+        v * v / 3.0,
+        ((exp((v - 0.55991073) / 0.17883277) + 0.28466892) / 12.0),
+        step(0.5, v)
+    );
     float L_S = 0.2627 * e.r + 0.6780 * e.g + 0.0593 * e.b;
-    return e * pow(max(L_S, 0.0), 1.2 - 1.0) * 12.5;
+    return e * pow(max(L_S, 0.0), 0.2) * 12.5;
 }
 
 float LinearToPQ(float L) {
@@ -378,16 +380,17 @@ void CSToneMapHDR(uint3 id : SV_DispatchThreadID) {
 
     color.rgb *= Exposure * ExposureGain;
     float luma = dot(color.rgb, float3(0.2627, 0.6780, 0.0593));
-    float displayPeak = max((Mode == 0) ? RealHardwarePeakScRgb : DisplayPeakScRgb, 1.0);
+    float toneMapTargetPeak = max(DisplayPeakScRgb, 1.0);
+    float gamutPeak = max(min(RealHardwarePeakScRgb, DisplayPeakScRgb), 1.0);
     float paperWhite = max(PaperWhiteScRgb, 1.0);
 
     float3 toneMapped = color.rgb;
     if (luma > 1e-6) {
-        toneMapped = ToneMapHDR(color.rgb, displayPeak, paperWhite, Mode);
+        toneMapped = ToneMapHDR(color.rgb, toneMapTargetPeak, paperWhite, Mode);
     }
 
     float3 finalColor = mul((float3x3)ColorMatrix, toneMapped);
-    finalColor = GamutMapHuePreserving(finalColor, displayPeak);
+    finalColor = GamutMapHuePreserving(finalColor, gamutPeak);
 
     DstTex[id.xy] = float4(finalColor, color.a);
 }

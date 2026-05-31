@@ -4560,9 +4560,7 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap** ppBitmap, ImageMeta
                         (pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::Linear);
                     pMetadata->hdrMetadata.isHdr =
                         pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::PQ ||
-                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::HLG ||
-                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::Linear ||
-                        info.bits_per_sample > 8;
+                        pMetadata->hdrMetadata.transfer == QuickView::TransferFunction::HLG;
                 }
             }
         }
@@ -5655,6 +5653,7 @@ namespace QuickView {
                 if (hasUltraHdr) {
                     result.metadata.hdrMetadata.hasGainMap = true;
                     result.metadata.hdrMetadata.isValid = true;
+                    result.metadata.hdrMetadata.isHdr = false;
                     result.metadata.hdrMetadata.transfer = QuickView::TransferFunction::SRGB;
                     if (ultraHdrPayloadParsed) {
                         result.metadata.hdrMetadata.gainMapBaseHeadroom = ultraHdrPayload.hdrCapacityMin;
@@ -6066,7 +6065,10 @@ namespace QuickView {
                             }
 
                              if (ctx.pMetadata) {
-                                 ctx.pMetadata->colorInfo.transfer = transfer;
+                                 ctx.pMetadata->colorInfo.transfer =
+                                     useHighBitDepthOutput
+                                         ? QuickView::TransferFunction::Linear
+                                         : transfer;
                                  ctx.pMetadata->colorInfo.primaries = primaries;
                                  ctx.pMetadata->colorInfo.nominalBitDepth =
                                      static_cast<uint8_t>((std::min)(info.bits_per_sample, 255u));
@@ -6080,12 +6082,13 @@ namespace QuickView {
                                  ctx.pMetadata->hdrMetadata.isValid = true;
                                  ctx.pMetadata->hdrMetadata.transfer = transfer;
                                  ctx.pMetadata->hdrMetadata.primaries = primaries;
-                                 ctx.pMetadata->hdrMetadata.isSceneLinear = (transfer == QuickView::TransferFunction::Linear);
+                                 ctx.pMetadata->hdrMetadata.isSceneLinear =
+                                     useHighBitDepthOutput ||
+                                     transfer == QuickView::TransferFunction::Linear;
                                  ctx.pMetadata->hdrMetadata.isHdr =
-                                     transfer == QuickView::TransferFunction::Linear ||
                                      transfer == QuickView::TransferFunction::PQ ||
                                      transfer == QuickView::TransferFunction::HLG;
-                             }
+                              }
                          }
                      }
                      
@@ -6293,8 +6296,7 @@ namespace QuickView {
                         result.metadata.hdrMetadata.transfer = transfer;
                         result.metadata.hdrMetadata.primaries = primaries;
                         result.metadata.hdrMetadata.isHdr =
-                            (transfer == QuickView::TransferFunction::Linear ||
-                             transfer == QuickView::TransferFunction::PQ ||
+                            (transfer == QuickView::TransferFunction::PQ ||
                              transfer == QuickView::TransferFunction::HLG);
                         
                         // [v6.2] Parse Captured EXIF
@@ -11921,8 +11923,13 @@ ctx.allocator.ctx = arena;
                 ? QuickView::TransferFunction::Linear
                 : QuickView::TransferFunction::SRGB;
             pMetadata->hdrMetadata.primaries = QuickView::ColorPrimaries::SRGB;
-            pMetadata->hdrMetadata.isHdr = (isFloat || isHalfFloat);
+            pMetadata->hdrMetadata.isHdr = false;
             pMetadata->hdrMetadata.isSceneLinear = (isFloat || isHalfFloat);
+            if (isFloat || isHalfFloat) {
+                pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::SceneLinear;
+            } else {
+                pMetadata->colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+            }
         }
         if (pMetadata->colorInfo.nominalBitDepth == 0) {
             pMetadata->colorInfo.nominalBitDepth = isFloat ? 32 : ((isHalfFloat || isHighBitDepth) ? 16 : 8);
@@ -12046,13 +12053,10 @@ static float DecodePqToLinearScRgb(float value) {
 
 static float DecodeHlgToLinear(float value) {
     value = (std::clamp)(value, 0.0f, 1.0f);
-    if (value <= 0.5f) {
-        return ((value * value) / 3.0f) * 12.5f;
-    }
-    static constexpr float a = 0.17883277f;
-    static constexpr float b = 0.28466892f;
-    static constexpr float c = 0.55991073f;
-    return (((expf((value - c) / a) + b) / 12.0f) * 12.5f);
+    const float scene = (value <= 0.5f)
+                            ? ((value * value) / 3.0f)
+                            : ((expf((value - 0.55991073f) / 0.17883277f) + 0.28466892f) / 12.0f);
+    return powf((std::max)(scene, 0.0f), 1.2f) * 12.5f;
 }
 
 static float DecodeSrgbToLinear(float value) {
