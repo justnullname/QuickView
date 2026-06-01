@@ -81,25 +81,41 @@ find_program(ADAPTIVE_LLVM_RC   llvm-rc   HINTS ${LLVM_HINTS})
 # 5. Locate Ninja and NASM (Prioritize vcpkg downloads for project consistency)
 get_filename_component(WORKSPACE_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(VCPKG_TOOLS_DIR "${WORKSPACE_ROOT}/third_party/vcpkg/downloads/tools")
+if(DEFINED ENV{VCPKG_DOWNLOADS})
+    set(VCPKG_TOOLS_DIR "$ENV{VCPKG_DOWNLOADS}/tools")
+endif()
 
 # Search for Ninja
 set(NINJA_HINTS "PATH")
+if(VS_INSTALL_PATH)
+    list(APPEND NINJA_HINTS "${VS_INSTALL_PATH}/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja")
+    list(APPEND NINJA_HINTS "${VS_INSTALL_PATH}/VC/Tools/Llvm/x64/bin")
+    list(APPEND NINJA_HINTS "${VS_INSTALL_PATH}/VC/Tools/Llvm/bin")
+endif()
+list(APPEND NINJA_HINTS "C:/Program Files/CMake/bin")
+list(APPEND NINJA_HINTS "C:/Program Files (x86)/CMake/bin")
+list(APPEND NINJA_HINTS "C:/Program Files/LLVM/bin")
+
 file(GLOB NINJA_EXES "${VCPKG_TOOLS_DIR}/ninja-*/ninja.exe")
 if(NINJA_EXES)
     list(SORT NINJA_EXES ORDER DESCENDING)
     list(GET NINJA_EXES 0 LATEST_NINJA)
     get_filename_component(NINJA_DIR "${LATEST_NINJA}" DIRECTORY)
-    list(APPEND NINJA_HINTS "${NINJA_DIR}")
+    list(INSERT NINJA_HINTS 0 "${NINJA_DIR}") # prioritize latest downloaded ninja
 endif()
 
 # Search for NASM
 set(NASM_HINTS "PATH")
+if(VS_INSTALL_PATH)
+    list(APPEND NASM_HINTS "${VS_INSTALL_PATH}/VC/Tools/Asm/nasm")
+endif()
+
 file(GLOB NASM_EXES "${VCPKG_TOOLS_DIR}/nasm/*/nasm.exe")
 if(NASM_EXES)
     list(SORT NASM_EXES ORDER DESCENDING)
     list(GET NASM_EXES 0 LATEST_NASM)
     get_filename_component(NASM_DIR "${LATEST_NASM}" DIRECTORY)
-    list(APPEND NASM_HINTS "${NASM_DIR}")
+    list(INSERT NASM_HINTS 0 "${NASM_DIR}") # prioritize latest downloaded nasm
 endif()
 
 find_program(ADAPTIVE_NINJA ninja HINTS ${NINJA_HINTS})
