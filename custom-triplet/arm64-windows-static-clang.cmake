@@ -2,6 +2,7 @@ set(VCPKG_TARGET_ARCHITECTURE arm64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_KEEP_ENV_VARS PATH)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 
 # Adaptive Toolchain Discovery
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/AdaptiveToolchain.cmake")
