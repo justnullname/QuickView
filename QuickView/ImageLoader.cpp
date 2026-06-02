@@ -866,6 +866,15 @@ void MoveDecodeResultToFrame(const QuickView::Codec::DecodeResult &result,
   outFrame->height = result.height;
   outFrame->stride = result.stride;
   outFrame->format = result.format;
+
+  outFrame->formatDetails = result.metadata.FormatDetails;
+  outFrame->exifOrientation = result.metadata.ExifOrientation;
+  outFrame->colorInfo = result.metadata.colorInfo;
+  outFrame->hdrMetadata = result.metadata.hdrMetadata;
+  if (!result.metadata.iccProfileData.empty()) {
+      outFrame->iccProfile.assign(result.metadata.iccProfileData.begin(), result.metadata.iccProfileData.end());
+  }
+
   if (arena && arena->Owns(result.pixels)) {
     outFrame->memoryDeleter.Clear();
   } else {
@@ -1302,6 +1311,13 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
         pMetadata->Width = result.width;
         pMetadata->Height = result.height;
         pMetadata->Format = fmt;
+        pMetadata->colorInfo = result.metadata.colorInfo;
+        pMetadata->hdrMetadata = result.metadata.hdrMetadata;
+        pMetadata->HasEmbeddedColorProfile = result.metadata.HasEmbeddedColorProfile;
+        pMetadata->ColorSpace = result.metadata.ColorSpace;
+        if (!result.metadata.iccProfileData.empty()) {
+            pMetadata->iccProfileData.assign(result.metadata.iccProfileData.begin(), result.metadata.iccProfileData.end());
+        }
       }
       if (pLoaderName && !result.metadata.LoaderName.empty()) {
         *pLoaderName = result.metadata.LoaderName;
