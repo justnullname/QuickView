@@ -110,6 +110,9 @@ scratch/
 vcpkg_installed/
 vcpkg-packages/
 vcpkg-downloads/
+third_party/vcpkg/buildtrees/
+third_party/vcpkg/downloads/
+third_party/vcpkg/packages/
 
 # Compilation database and CMake user presets
 compile_commands.json

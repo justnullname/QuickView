@@ -1,0 +1,13 @@
+# AI ignore file
+Local-Files/
+third_party/vcpkg/
+build/
+out/
+bld/
+.vs/
+*.zip
+*.psd
+*.psb
+*.png
+*.7z
+*.lib
