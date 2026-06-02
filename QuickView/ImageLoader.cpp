@@ -1287,7 +1287,10 @@ HRESULT CImageLoader::LoadToFrameFromMemory(const uint8_t *data, size_t size,
     ctx.targetHeight = targetHeight;
     ctx.pLoaderName = pLoaderName;
     ctx.pMetadata = pMetadata;
-    ctx.isTitanMode = true; // explicitly for MMF paths
+    ctx.isTitanMode = false; // Cannot assume MMF; often used for archive extraction where full decode is needed
+    ctx.preserveFloat = (targetWidth == 0 || targetHeight == 0);
+    ctx.forceRenderFull = (targetWidth == 0 && targetHeight == 0);
+    ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
 
     DecodeResult result;
     HRESULT hrUnified = LoadBufferUnified(data, size, fmt, ctx, result);
