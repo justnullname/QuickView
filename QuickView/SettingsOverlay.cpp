@@ -2104,6 +2104,15 @@ void SettingsOverlay::BuildMenu() {
     };
     tabAdvanced.items.push_back(itemPrefetch);
 
+    SettingsItem itemMemoryReclaim = { AppStrings::Settings_Label_MemoryReclaim, OptionType::Segment, nullptr, nullptr, &g_config.MemoryReclaimStrategy, nullptr, 0, 0, {AppStrings::Settings_Option_MemSmart, AppStrings::Settings_Option_MemAggressive, AppStrings::Settings_Option_MemOnDemand} };
+    itemMemoryReclaim.tooltipText = AppStrings::Settings_Tooltip_MemoryReclaim;
+    itemMemoryReclaim.onChange = []() {
+         SaveConfig();
+         // Runtime will naturally apply this on the next cycle, or we can force a shrink
+         extern void QuickView_TryReclaimMemory();
+         QuickView_TryReclaimMemory();
+    };
+    tabAdvanced.items.push_back(itemMemoryReclaim);
     
     // System Helpers
     tabAdvanced.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });

@@ -397,6 +397,11 @@ namespace AppStrings {
     
     extern const wchar_t* Settings_Label_DebugHUD;
     extern const wchar_t* Settings_Label_Prefetch;
+    extern const wchar_t* Settings_Label_MemoryReclaim;
+    extern const wchar_t* Settings_Option_MemSmart;
+    extern const wchar_t* Settings_Option_MemAggressive;
+    extern const wchar_t* Settings_Option_MemOnDemand;
+    extern const wchar_t* Settings_Tooltip_MemoryReclaim;
 
     extern const wchar_t* Settings_Label_Reset;
     extern const wchar_t* Settings_Action_Restore;

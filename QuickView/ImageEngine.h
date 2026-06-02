@@ -143,6 +143,9 @@ public:
     // High Priority = Warp Mode (Skip Slow Decodes)
     void SetHighPriorityMode(bool enabled);
     
+    // [Memory Management] Force manual memory reclamation
+    void TryReclaimMemory();
+    
     // === Phase 3: Prefetch API ===
     struct PrefetchPolicy {
         bool enablePrefetch = true;

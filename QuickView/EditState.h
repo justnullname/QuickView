@@ -225,6 +225,7 @@ struct AppConfig {
     bool DisableEdgeNavInCompare = true;
     int NavIndicator = 0;               // 0=Arrow
     int PrefetchGear = 1;               // 0=Off, 1=Auto, 2=Eco, 3=Balanced, 4=Ultra
+    int MemoryReclaimStrategy = 0;      // 0=Smart, 1=Aggressive, 2=OnDemand
     
     // --- Image & Edit ---
     bool AutoRotate = true;

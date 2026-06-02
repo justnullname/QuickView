@@ -29,12 +29,16 @@ public:
     size_t GetUsed() const;
     size_t GetFree() const;
 
+    // Dynamically decommit unused free slabs
+    void Shrink();
+
 private:
     uint8_t* m_basePtr = nullptr;
     size_t m_capacity; // Number of slabs
     size_t m_totalSize; // Total bytes
 
     std::vector<int> m_freeIndices;
+    std::vector<bool> m_committed; // Tracks which slabs have physical memory mapped
     std::mutex m_mutex;
     
     // Check if ptr belongs to us

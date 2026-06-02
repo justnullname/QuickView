@@ -9,9 +9,12 @@
 #include <condition_variable>
 #include <deque>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <semaphore>
+#include <stop_token>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -122,6 +125,9 @@ public:
     // Check if any worker is busy (for wait cursor logic)
     bool IsBusy() const { return m_busyCount.load() > 0; }
     bool IsIdle() const;
+
+    // [Memory]
+    void ShrinkMemory();
 
 private:
     // === Worker Structure ===

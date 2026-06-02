@@ -5502,6 +5502,7 @@ void SaveConfig() {
     // Advanced / Debug
     WritePrivateProfileStringW(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Advanced", L"PrefetchGear", std::to_wstring((int)g_config.PrefetchGear).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Advanced", L"MemoryReclaimStrategy", std::to_wstring((int)g_config.MemoryReclaimStrategy).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Advanced", L"ShowDirtyRectButton", g_config.ShowDirtyRectButton ? L"1" : L"0", iniPath.c_str());
     
     // Internal / Navigation
@@ -5763,6 +5764,7 @@ void LoadConfig() {
     // Advanced / Debug
     g_config.EnableDebugFeatures = GetPrivateProfileIntW(L"Advanced", L"EnableDebugFeatures", 0, iniPath.c_str()) != 0;
     g_config.PrefetchGear = GetPrivateProfileIntW(L"Advanced", L"PrefetchGear", 1, iniPath.c_str());
+    g_config.MemoryReclaimStrategy = GetPrivateProfileIntW(L"Advanced", L"MemoryReclaimStrategy", 0, iniPath.c_str());
     g_config.ShowDirtyRectButton = GetPrivateProfileIntW(L"Advanced", L"ShowDirtyRectButton", 0, iniPath.c_str()) != 0;
     
     // Internal

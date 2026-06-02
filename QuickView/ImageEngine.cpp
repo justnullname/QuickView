@@ -63,6 +63,55 @@ void ImageEngine::SetWindow(HWND hwnd) {
     m_hwnd = hwnd;
 }
 
+// ============================================================================
+// Memory Management Implementations
+// ============================================================================
+
+bool QuantumArena::ShouldShrinkMemory() noexcept {
+    extern AppConfig g_config;
+    if (g_config.MemoryReclaimStrategy == 2) {
+        return true; // Always shrink (On-Demand)
+    } else if (g_config.MemoryReclaimStrategy == 1) {
+        return false; // Never shrink (Aggressive)
+    } else {
+        // Smart mode: check physical RAM
+        MEMORYSTATUSEX memInfo;
+        memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+        GlobalMemoryStatusEx(&memInfo);
+        
+        // Return true if available physical memory < 2GB (Tight / Alarm)
+        return memInfo.ullAvailPhys < (2ULL * 1024 * 1024 * 1024);
+    }
+}
+
+void ImageEngine::TryReclaimMemory() {
+    if (m_pool.GetTotalCapacity() > 0) {
+        // Need to cast away const because GetScoutArenaPtr() returns const
+        const QuantumArena* scout = m_pool.GetScoutArenaPtr();
+        if (scout) const_cast<QuantumArena*>(scout)->Shrink();
+        
+        const QuantumArena* heavy0 = m_pool.GetHeavyArena0Ptr();
+        if (heavy0) const_cast<QuantumArena*>(heavy0)->Shrink();
+        
+        // heavy1 is not directly exposed by const ptr?
+        // Let's just use the non-const getters if we have them, or GetTotalCapacity implies initialized
+        // Wait, m_pool has GetActiveHeavyArena() and GetBackHeavyArena().
+        m_pool.GetActiveHeavyArena().Shrink();
+        m_pool.GetBackHeavyArena().Shrink();
+    }
+    
+    if (m_heavyPool) {
+        m_heavyPool->ShrinkMemory();
+    }
+}
+
+void QuickView_TryReclaimMemory() {
+    extern ImageEngine* g_pImageEngine;
+    if (g_pImageEngine) {
+        g_pImageEngine->TryReclaimMemory();
+    }
+}
+
 void ImageEngine::SetHighPriorityMode(bool enabled) {
     m_isHighPriority = enabled;
 }
@@ -613,6 +662,8 @@ std::vector<EngineEvent> ImageEngine::PollState() {
              // Still pass to batch? 
              // Yes, Main Thread might want to trigger Repaint.
              // But UI doesn't need to know details.
+         } else if (e->type == EventType::FullReady && e->imageId == m_currentImageId.load()) {
+             m_pool.SwapHeavy();
          }
          batch.push_back(std::move(*e));
     }

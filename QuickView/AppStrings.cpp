@@ -344,6 +344,12 @@ const wchar_t *Settings_Header_Professional = nullptr;
 const wchar_t *Settings_Label_ShowDirtyRect = nullptr;
 const wchar_t *Settings_Tooltip_ShowDirtyRect = nullptr;
 
+const wchar_t *Settings_Label_MemoryReclaim = nullptr;
+const wchar_t *Settings_Option_MemSmart = nullptr;
+const wchar_t *Settings_Option_MemAggressive = nullptr;
+const wchar_t *Settings_Option_MemOnDemand = nullptr;
+const wchar_t *Settings_Tooltip_MemoryReclaim = nullptr;
+
 const wchar_t *Settings_Action_CheckUpdates = nullptr;
 const wchar_t *Settings_Action_ViewUpdate = nullptr;
 const wchar_t *Settings_Status_Checking = nullptr;
@@ -769,6 +775,15 @@ struct EN {
   static constexpr const wchar_t *Settings_Header_Features = L"Features";
   static constexpr const wchar_t *Settings_Header_Performance = L"Performance";
   static constexpr const wchar_t *Settings_Header_Transparency = L"Transparency";
+
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Smart Memory Management";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim = 
+      L"Smart: Automatically reclaim memory only when system RAM < 4GB.\n"
+      L"Aggressive: Keep memory reserved for absolute 0ns allocation speed.\n"
+      L"On-Demand: Always reclaim idle memory to save physical RAM.";
 
   // Geek Glass Settings
   static constexpr const wchar_t *Settings_Header_GeekGlass =
@@ -1234,6 +1249,15 @@ struct CN {
   static constexpr const wchar_t *Settings_Header_Features = L"功能";
   static constexpr const wchar_t *Settings_Header_Performance = L"性能";
   static constexpr const wchar_t *Settings_Header_Transparency = L"透明度";
+
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"智能内存管理";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"智能";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"激进";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"按需";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim = 
+      L"智能 (推荐): 仅当系统可用内存 < 4GB 时，回收图片空闲内存。\n"
+      L"激进: 永不回收，保持 2GB 内存独占以换取绝对 0ns 的看图切换极速。\n"
+      L"按需: 图片切换时立刻回收空闲内存，保持最低物理内存占用。";
 
   // Geek Glass Settings
   static constexpr const wchar_t *Settings_Header_GeekGlass = L"玻璃引擎 (GPU加速)";
@@ -1961,6 +1985,13 @@ struct TW {
   static constexpr const wchar_t *Settings_Header_System = L"系統";
   static constexpr const wchar_t *Settings_Header_Features = L"功能";
   static constexpr const wchar_t *Settings_Header_Performance = L"效能";
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Memory Reclaim Strategy:";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart (Auto)";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive (Max Perf)";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand (Min RAM)";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim =
+      L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.";
+
   static constexpr const wchar_t *Settings_Header_Transparency = L"透明度";
 
   static constexpr const wchar_t *Settings_Label_CanvasColor = L"畫布顏色";
@@ -2550,6 +2581,13 @@ struct JA {
   static constexpr const wchar_t *Settings_Header_Features = L"機能";
   static constexpr const wchar_t *Settings_Header_Performance =
       L"パフォーマンス";
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Memory Reclaim Strategy:";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart (Auto)";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive (Max Perf)";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand (Min RAM)";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim =
+      L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.";
+
   static constexpr const wchar_t *Settings_Header_Transparency = L"透明度";
 
   static constexpr const wchar_t *Settings_Label_CanvasColor = L"キャンバス色";
@@ -3160,6 +3198,13 @@ struct RU {
   static constexpr const wchar_t *Settings_Header_System = L"Система";
   static constexpr const wchar_t *Settings_Header_Features = L"Функции";
   static constexpr const wchar_t *Settings_Header_Performance = L"Производительность";
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Memory Reclaim Strategy:";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart (Auto)";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive (Max Perf)";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand (Min RAM)";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim =
+      L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.";
+
   static constexpr const wchar_t *Settings_Header_Transparency = L"Прозрачность";
 
   // Geek Glass Settings (Fallback to English)
@@ -3797,6 +3842,13 @@ struct DE {
   static constexpr const wchar_t *Settings_Header_System = L"System";
   static constexpr const wchar_t *Settings_Header_Features = L"Funktionen";
   static constexpr const wchar_t *Settings_Header_Performance = L"Leistung";
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Memory Reclaim Strategy:";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart (Auto)";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive (Max Perf)";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand (Min RAM)";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim =
+      L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.";
+
   static constexpr const wchar_t *Settings_Header_Transparency = L"Transparenz";
 
   // Geek Glass Settings (Fallback to English)
@@ -4421,6 +4473,13 @@ struct ES {
   static constexpr const wchar_t *Settings_Header_System = L"Sistema";
   static constexpr const wchar_t *Settings_Header_Features = L"Funciones";
   static constexpr const wchar_t *Settings_Header_Performance = L"Rendimiento";
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Memory Reclaim Strategy:";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart (Auto)";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive (Max Perf)";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand (Min RAM)";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim =
+      L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.";
+
   static constexpr const wchar_t *Settings_Header_Transparency =
       L"Transparencia";
 
@@ -4953,7 +5012,13 @@ template <typename T> void ApplyT() {
   Toolbar_Tooltip_AnimDirtyOff = T::Toolbar_Tooltip_AnimDirtyOff;
   Toolbar_Tooltip_AnimSpeed = T::Toolbar_Tooltip_AnimSpeed;
 
+  Settings_Header_Performance = T::Settings_Header_Performance;
   Settings_Header_Professional = T::Settings_Header_Professional;
+  Settings_Label_MemoryReclaim = T::Settings_Label_MemoryReclaim;
+  Settings_Option_MemSmart = T::Settings_Option_MemSmart;
+  Settings_Option_MemAggressive = T::Settings_Option_MemAggressive;
+  Settings_Option_MemOnDemand = T::Settings_Option_MemOnDemand;
+  Settings_Tooltip_MemoryReclaim = T::Settings_Tooltip_MemoryReclaim;
   Settings_Label_ShowDirtyRect = T::Settings_Label_ShowDirtyRect;
   Settings_Tooltip_ShowDirtyRect = T::Settings_Tooltip_ShowDirtyRect;
 
@@ -5538,6 +5603,13 @@ struct FR {
   static constexpr const wchar_t *Settings_Header_System = L"System";
   static constexpr const wchar_t *Settings_Header_Features = L"Features";
   static constexpr const wchar_t *Settings_Header_Performance = L"Performance";
+  static constexpr const wchar_t *Settings_Label_MemoryReclaim = L"Memory Reclaim Strategy:";
+  static constexpr const wchar_t *Settings_Option_MemSmart = L"Smart (Auto)";
+  static constexpr const wchar_t *Settings_Option_MemAggressive = L"Aggressive (Max Perf)";
+  static constexpr const wchar_t *Settings_Option_MemOnDemand = L"On-Demand (Min RAM)";
+  static constexpr const wchar_t *Settings_Tooltip_MemoryReclaim =
+      L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.";
+
   static constexpr const wchar_t *Settings_Header_Transparency = L"Transparency";
 
   // Geek Glass Settings

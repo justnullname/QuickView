@@ -15,7 +15,7 @@ namespace QuickView {
 
     // Thread-Safe Tile Entry
     struct TileEntry {
-        std::atomic<TileStateCode> state = TileStateCode::Empty;
+        std::atomic<TileStateCode> state{TileStateCode::Empty};
         std::shared_ptr<TileState> data; // Holds the logical tile data (Frame, Texture) - SHARED for RenderEngine access
 
         TileEntry() = default;
@@ -26,6 +26,14 @@ namespace QuickView {
         TileEntry(TileEntry&& other) noexcept {
             state.store(other.state.load());
             data = std::move(other.data);
+        }
+        
+        TileEntry& operator=(TileEntry&& other) noexcept {
+            if (this != &other) {
+                state.store(other.state.load());
+                data = std::move(other.data);
+            }
+            return *this;
         }
     };
 
