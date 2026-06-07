@@ -26,12 +26,13 @@ static ComPtr<ID2D1PathGeometry> BuildGeometry(ID2D1Factory* factory, const Geek
     // This is CRITICAL for correct rendering of outlined/hollow icon shapes.
     sink->SetFillMode(D2D1_FILL_MODE_WINDING);
 
+    constexpr float InvScale = 1.0f / 30000.0f;
     for (size_t i = 0; i < icon.count; i++) {
         const auto& cmd = icon.commands[i];
         switch (cmd.type) {
-            case 'M': sink->BeginFigure({cmd.x1, cmd.y1}, D2D1_FIGURE_BEGIN_FILLED); break;
-            case 'L': sink->AddLine({cmd.x1, cmd.y1}); break;
-            case 'B': sink->AddBezier({{cmd.x1, cmd.y1}, {cmd.x2, cmd.y2}, {cmd.x3, cmd.y3}}); break;
+            case 'M': sink->BeginFigure({cmd.x1 * InvScale, cmd.y1 * InvScale}, D2D1_FIGURE_BEGIN_FILLED); break;
+            case 'L': sink->AddLine({cmd.x1 * InvScale, cmd.y1 * InvScale}); break;
+            case 'B': sink->AddBezier({{cmd.x1 * InvScale, cmd.y1 * InvScale}, {cmd.x2 * InvScale, cmd.y2 * InvScale}, {cmd.x3 * InvScale, cmd.y3 * InvScale}}); break;
             case 'Z': sink->EndFigure(D2D1_FIGURE_END_CLOSED); break;
         }
     }

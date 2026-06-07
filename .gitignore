@@ -122,6 +122,7 @@ CMakeUserPresets.json
 
 # tools
 !tools/QuickView_Diagnostic_Tool.bat
+!tools/VectorIconExtractor/pack_icons.py
 
 # Local salvage files
 Local-Files/
