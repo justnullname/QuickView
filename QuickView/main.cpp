@@ -3827,6 +3827,9 @@ void SaveConfig() {
     // Legacy cleanup
     WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str());
+    
+    // Flush cache to force write to disk
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, iniPath.c_str());
 }
 
 void LoadConfig() {

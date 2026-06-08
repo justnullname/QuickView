@@ -31,6 +31,7 @@ extern std::wstring& g_imagePath;
 extern FileNavigator& g_navigator;
 extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state directly
 extern HelpOverlay g_helpOverlay;
+extern void SaveConfig();
 
 namespace {
 
@@ -1013,6 +1014,7 @@ void SettingsOverlay::BuildMenu() {
     };
     itemLang.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+        SaveConfig();
         // Force resource recreation to apply new font size
         overlay->m_brushBg.Reset();
         
@@ -2314,6 +2316,7 @@ void SettingsOverlay::SetVisible(bool visible) {
         }
     } else {
         // ... (Cleanup if needed)
+        SaveConfig();
         if (m_hwnd) {
              extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
              if (!m_showUpdateToast) AdjustWindowForOverlay(m_hwnd, true);
@@ -3546,6 +3549,11 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         int visibleItems = (count > maxItems) ? maxItems : count;
         float dropH = visibleItems * itemH;
         
+        bool expandUp = (dropY + dropH > m_windowHeight - 10.0f * s);
+        if (expandUp) {
+            dropY = m_pActiveCombo->rect.top - dropH;
+        }
+        
         D2D1_RECT_F dropRect = D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
         
         if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
@@ -3742,6 +3750,11 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         int maxItems = 8;
         int visibleItems = (count > maxItems) ? maxItems : count;
         float dropH = visibleItems * itemH;
+        
+        bool expandUp = (dropY + dropH > m_windowHeight - 10.0f * s);
+        if (expandUp) {
+            dropY = m_pActiveCombo->rect.top - dropH;
+        }
         
         D2D1_RECT_F dropRect = D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
         
@@ -4015,6 +4028,12 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
     int visibleItems = (count > maxItems) ? maxItems : count;
     
     float dropH = visibleItems * itemH;
+    
+    bool expandUp = (dropY + dropH > m_windowHeight - 10.0f * s);
+    if (expandUp) {
+        dropY = m_pActiveCombo->rect.top - dropH;
+    }
+    
     D2D1_RECT_F dropRect = D2D1::RectF(controlX, dropY, controlX + controlW, dropY + dropH);
     
     // Shadow / Background
