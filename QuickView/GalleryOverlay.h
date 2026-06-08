@@ -164,7 +164,8 @@ private:
     
     // Text Rendering
     ComPtr<IDWriteFactory> m_dwriteFactory;
-    ComPtr<IDWriteTextFormat> m_textFormat; // For Grid cells
+    ComPtr<IDWriteTextFormat> m_textFormat; // For Grid cells (Title)
+    ComPtr<IDWriteTextFormat> m_textFormatStats; // For stats
     ComPtr<IDWriteTextFormat> m_textFormatOSD; // For global stats
 
     // GeekGlass Support
@@ -173,5 +174,6 @@ private:
     bool m_restoreInfoPanel = false;
 
     void EnsureVisible(int index, const D2D1_SIZE_F& size);
+    __declspec(noinline) D2D1_RECT_F GetItemRect(int index, float winW) const;
     int HitTest(float x, float y);
 };

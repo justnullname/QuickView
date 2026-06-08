@@ -774,6 +774,10 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
             bool iconHovered = (m_lastMousePos.x >= iconRect.left - 4.0f && m_lastMousePos.x <= iconRect.right + 4.0f &&
                                 m_lastMousePos.y >= iconRect.top - 4.0f && m_lastMousePos.y <= iconRect.bottom + 4.0f);
             
+            D2D1_COLOR_F oldAccentColor = m_accentBrush->GetColor();
+            float oldAccentOpacity = m_accentBrush->GetOpacity();
+            float oldWhiteOpacity = m_whiteBrush->GetOpacity();
+            
             // Ripple effect (Mode 1: hover trigger with expanding ring) - always draws if progress > 0
             if (g_config.GalleryTriggerMode == 1) {
                 float progress = g_gallery.GetHoverProgress();
@@ -783,26 +787,32 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
                     float ringAlpha = (1.0f - progress) * 0.6f;
                     
                     D2D1_ELLIPSE ring = D2D1::Ellipse(D2D1::Point2F(cx, iconY + iconSize / 2.0f), rippleRadius, rippleRadius);
-                    ComPtr<ID2D1SolidColorBrush> rippleBrush;
-                    dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue, ringAlpha), &rippleBrush);
-                    if (rippleBrush) {
-                        // Outer expanding ring
-                        dc->DrawEllipse(ring, rippleBrush.Get(), 1.5f * m_uiScale);
-                        // Inner soft filled circle
-                        rippleBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue, ringAlpha * 0.25f));
-                        dc->FillEllipse(ring, rippleBrush.Get());
-                    }
+                    m_accentBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue));
+                    m_accentBrush->SetOpacity(ringAlpha);
+                    dc->DrawEllipse(ring, m_accentBrush.Get(), 1.5f * m_uiScale);
+                    
+                    m_accentBrush->SetOpacity(ringAlpha * 0.25f);
+                    dc->FillEllipse(ring, m_accentBrush.Get());
                 }
             }
             
             // Icon color: semi-transparent white normally, DodgerBlue opaque when hovered
-            D2D1_COLOR_F iconClr = iconHovered
-                ? D2D1::ColorF(D2D1::ColorF::DodgerBlue, 1.0f)
-                : D2D1::ColorF(D2D1::ColorF::White, 0.55f);
+            ID2D1SolidColorBrush* pIconBrush = nullptr;
+            if (iconHovered) {
+                m_accentBrush->SetColor(D2D1::ColorF(D2D1::ColorF::DodgerBlue));
+                m_accentBrush->SetOpacity(1.0f);
+                pIconBrush = m_accentBrush.Get();
+            } else {
+                m_whiteBrush->SetOpacity(0.55f);
+                pIconBrush = m_whiteBrush.Get();
+            }
+            if (pIconBrush) {
+                QuickView::UI::GeekIconRenderer::DrawVectorIcon(dc, GeekIcons::GalleryVector, iconRect, pIconBrush);
+            }
             
-            ComPtr<ID2D1SolidColorBrush> iconBrush;
-            dc->CreateSolidColorBrush(iconClr, &iconBrush);
-            QuickView::UI::GeekIconRenderer::DrawVectorIcon(dc, GeekIcons::GalleryVector, iconRect, iconBrush.Get());
+            m_accentBrush->SetColor(oldAccentColor);
+            m_accentBrush->SetOpacity(oldAccentOpacity);
+            m_whiteBrush->SetOpacity(oldWhiteOpacity);
         }
     }
 }
