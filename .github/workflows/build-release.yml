@@ -51,7 +51,7 @@ jobs:
           }
 
       - name: Configure CMake
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DVCPKG_MANIFEST_INSTALL=ON
 
       - name: Build Project
         run: cmake --build --preset ${{ matrix.preset }}
