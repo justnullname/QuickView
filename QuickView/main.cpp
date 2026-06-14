@@ -5748,7 +5748,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     g_renderEngine = std::make_unique<CRenderEngine>();
     g_pRenderEngine = g_renderEngine.get();
-    g_renderEngine->Initialize(hwnd);
+    if (FAILED(g_renderEngine->Initialize(hwnd))) {
+        QV_LOG("Init_Error", TraceLoggingString("RenderEngine initialization failed. Exiting gracefully.", "Action"));
+        g_renderEngine.reset();
+        DestroyWindow(hwnd);
+        UnregisterClassW(g_szClassName, hInstance);
+        CoUninitialize();
+        if (argv) LocalFree(argv);
+        return 0;
+    }
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
     g_pImageEngine = g_imageEngine.get(); // [v3.1] Init Global Accessor
@@ -5844,18 +5852,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     // Initialize DirectComposition (Visual Ping-Pong Architecture)
     // g_compEngine = std::make_unique<CompositionEngine>();
     g_compEngine = new CompositionEngine();
-    if (SUCCEEDED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
-        g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
-        g_compEngine->SetAdvancedColorEnabled(g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorActive));
-        g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
-        g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());
-        // Pure DComp architecture: Surfaces are managed by CompositionEngine
-        
-        // Initialize UI Renderer (renders to independent DComp Surface)
-        g_uiRenderer = std::make_unique<UIRenderer>();
-        g_uiRenderer->Initialize(g_compEngine, g_renderEngine->GetDWriteFactory());
-        g_uiRenderer->SetUIScale(g_uiScale);
+    if (FAILED(g_compEngine->Initialize(hwnd, g_renderEngine->GetD3DDevice(), g_renderEngine->GetD2DDevice()))) {
+        QV_LOG("Init_Error", TraceLoggingString("CompositionEngine initialization failed. Exiting gracefully.", "Action"));
+        delete g_compEngine;
+        g_compEngine = nullptr;
+        g_imageEngine.reset();
+        g_imageLoader.reset();
+        g_renderEngine.reset();
+        DestroyWindow(hwnd);
+        UnregisterClassW(g_szClassName, hInstance);
+        CoUninitialize();
+        if (argv) LocalFree(argv);
+        return 0;
     }
+
+    g_compEngine->RefreshDisplayColorState(g_runtime.ForceHdrSimulation);
+    g_compEngine->SetAdvancedColorEnabled(g_config.IsAdvancedColorEnabled(g_compEngine->GetDisplayColorState().advancedColorActive));
+    g_renderEngine->SetAdvancedColorMode(g_compEngine->IsAdvancedColor());
+    g_renderEngine->SetDisplayColorState(g_compEngine->GetDisplayColorState());
+    // Pure DComp architecture: Surfaces are managed by CompositionEngine
+    
+    // Initialize UI Renderer (renders to independent DComp Surface)
+    g_uiRenderer = std::make_unique<UIRenderer>();
+    g_uiRenderer->Initialize(g_compEngine, g_renderEngine->GetDWriteFactory());
+    g_uiRenderer->SetUIScale(g_uiScale);
     
     // Init Gallery
     g_thumbMgr.Initialize(hwnd, g_imageLoader.get());
@@ -8640,7 +8660,9 @@ SKIP_EDGE_NAV:;
             }
             if (handled) {
                 g_imageEngine->UpdateConfig(g_runtime); // Push to engine
-                g_uiRenderer->SetRuntimeConfig(g_runtime); // Push to HUD
+                if (g_uiRenderer) {
+                    g_uiRenderer->SetRuntimeConfig(g_runtime); // Push to HUD
+                }
             }
         }
 
