@@ -494,6 +494,11 @@ bool CompareController::RenderComposite(HWND hwnd) {
 void CompareController::EnterMode(HWND hwnd) {
     m_hwnd = hwnd;
     if (IsActive() || !GetPaneContext(PaneSlot::Primary).resource) return;
+    if (g_slideshowState.IsActive) {
+        g_slideshowState.Reset();
+        KillTimer(hwnd, 106);
+        g_toolbar.SetSlideshowMode(false, false);
+    }
     if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) {
         g_osd.Show(hwnd, L"Compare mode is not available for Titan images yet.", true);
         return;

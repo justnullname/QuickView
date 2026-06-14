@@ -77,6 +77,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
         viewItems.push_back(MI::Check(IDM_RENDER_RAW, AppStrings::Context_RenderRAW, renderRaw).Enabled(isRawFile));
         viewItems.push_back(MI::Check(IDM_PIXEL_ART_MODE, AppStrings::Context_PixelArtMode, isPixelArtMode));
         viewItems.push_back(MI::Check(IDM_FULLSCREEN, AppStrings::Context_Fullscreen, isFullscreen));
+        viewItems.push_back(MI::Check(IDM_SLIDESHOW, AppStrings::Context_SlideshowMode, g_slideshowState.IsActive, nullptr, L"F10"));
         viewItems.push_back(MI::Check(IDM_TOGGLE_SPAN, AppStrings::Context_SpanDisplays, isCrossMonitor));
 
         items.push_back(MI::Sub(AppStrings::Context_View, GeekIcons::Eye, std::move(viewItems)));

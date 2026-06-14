@@ -22,6 +22,7 @@ enum ContextMenuCommand : UINT {
 
     // [视图控制] Group
     IDM_FULLSCREEN,
+    IDM_SLIDESHOW,
     IDM_ZOOM_100,
     IDM_ZOOM_FIT, // Lite
     IDM_ZOOM_IN,

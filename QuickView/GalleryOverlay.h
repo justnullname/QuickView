@@ -45,6 +45,7 @@ public:
     
     // Pin (persistent filmstrip) mode
     void TogglePin() { m_isPinned = !m_isPinned; }
+    void SetPinned(bool pinned) { m_isPinned = pinned; }
     bool IsPinned() const { return m_isPinned; }
     bool IsMouseLButtonDown() const { return m_isLButtonDown; }
     

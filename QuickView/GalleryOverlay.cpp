@@ -265,6 +265,10 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
     
     if (repaintNeeded) {
         RequestRepaint(QuickView::PaintLayer::Gallery);
+        if (fabsf(m_transitionProgress - m_targetProgress) > 0.001f ||
+            fabsf(m_gridProgress - m_targetGridProgress) > 0.001f) {
+            RequestRepaint(QuickView::PaintLayer::Static);
+        }
         if (m_mode == GalleryMode::Hidden) {
             RequestRepaint(QuickView::PaintLayer::Dynamic);
         }
@@ -641,20 +645,24 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
         }
         
         if (pHandleBrush && m_brushOverlay) {
-            // 1. Draw Drop Shadow (offset 1.2px down/right)
+            // 1. Draw Inverse Glow / Stroke
             if (m_gridProgress < 0.2f) {
-                float shadowOffset = 1.2f;
-                // Handle Shadow
-                D2D1_RECT_F handleShadowRect = D2D1::RectF(
-                    cx - handleW / 2.0f + 0.5f, cy - handleH / 2.0f + shadowOffset,
-                    cx + handleW / 2.0f + 0.5f, cy + handleH / 2.0f + shadowOffset);
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(handleShadowRect, handleH / 2.0f, handleH / 2.0f), m_brushOverlay.Get());
+                D2D1_COLOR_F strokeClr = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.0f, 0.0f, 0.0f);
+                m_brushOverlay->SetColor(strokeClr);
+                m_brushOverlay->SetOpacity(m_transitionProgress * 0.8f);
+
+                // Handle Outline
+                D2D1_RECT_F handleStrokeRect = D2D1::RectF(
+                    cx - handleW / 2.0f - 1.5f, cy - handleH / 2.0f - 1.5f,
+                    cx + handleW / 2.0f + 1.5f, cy + handleH / 2.0f + 1.5f);
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(handleStrokeRect, handleH / 2.0f + 1.5f, handleH / 2.0f + 1.5f), m_brushOverlay.Get());
                 
-                // Chevron Shadow
+                // Chevron Outline
                 float chevronSize = 6.0f;
                 float chevronY = cy + 5.0f;
-                pDC->DrawLine(D2D1::Point2F(cx - chevronSize + 0.5f, chevronY - chevronSize / 2.0f + shadowOffset), D2D1::Point2F(cx + 0.5f, chevronY + chevronSize / 2.0f + shadowOffset), m_brushOverlay.Get(), 2.0f);
-                pDC->DrawLine(D2D1::Point2F(cx + 0.5f, chevronY + chevronSize / 2.0f + shadowOffset), D2D1::Point2F(cx + chevronSize + 0.5f, chevronY - chevronSize / 2.0f + shadowOffset), m_brushOverlay.Get(), 2.0f);
+                float strokeThickness = 4.5f;
+                pDC->DrawLine(D2D1::Point2F(cx - chevronSize, chevronY - chevronSize / 2.0f), D2D1::Point2F(cx, chevronY + chevronSize / 2.0f), m_brushOverlay.Get(), strokeThickness);
+                pDC->DrawLine(D2D1::Point2F(cx, chevronY + chevronSize / 2.0f), D2D1::Point2F(cx + chevronSize, chevronY - chevronSize / 2.0f), m_brushOverlay.Get(), strokeThickness);
             }
             
             // 2. Draw Foreground

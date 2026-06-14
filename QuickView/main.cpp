@@ -308,6 +308,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleFullscreen, KeyCombo{ VK_F11, 0 }, KeyCombo{ VK_F11, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleSpan, KeyCombo{ VK_F11, 1 }, KeyCombo{ VK_F11, 1 } }, // Ctrl + F11
+    HotkeyBinding{ HotkeyAction::ToggleSlideshow, KeyCombo{ VK_F10, 0 }, KeyCombo{ VK_F10, 0 } },
     HotkeyBinding{ HotkeyAction::OpenFile, KeyCombo{ 'O', 0 }, KeyCombo{ 'O', 0 } },
     HotkeyBinding{ HotkeyAction::EditFile, KeyCombo{ 'E', 0 }, KeyCombo{ 'E', 0 } },
     HotkeyBinding{ HotkeyAction::RenameFile, KeyCombo{ VK_F2, 0 }, KeyCombo{ VK_F2, 0 } },
@@ -326,6 +327,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::Exit, KeyCombo{ VK_ESCAPE, 0 }, KeyCombo{ VK_ESCAPE, 0 } }
 };
 RuntimeConfig g_runtime;
+SlideshowState g_slideshowState;
 bool HandleHotkeyAction(HWND hwnd, HotkeyAction action);
 bool g_preserveViewStateOnNextLoad = false;
 ViewState g_preservedViewState;
@@ -2417,7 +2419,13 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     // [Fix] Enable smooth cross-fade transition.
     // Use 150ms fade to eliminate transparent flicker.
     // For fast upgrades (same image, new surface size), swap instantly to avoid scale-jump artifacts.
-    float fadeMs = (isFastUpgrade || !g_config.EnableCrossFade) ? 0.0f : 90.0f;
+    bool enableCrossFade = g_config.EnableCrossFade;
+    float baseFadeMs = 90.0f;
+    if (g_slideshowState.IsActive) {
+        enableCrossFade = false; // Disable all slideshow transitions
+        baseFadeMs = 0.0f;
+    }
+    float fadeMs = (isFastUpgrade || !enableCrossFade) ? 0.0f : baseFadeMs;
     g_compEngine->PlayPingPongCrossFade(fadeMs);
     if (g_compEngine->IsInitialized()) {
         SyncDCompState(hwnd, (float)winW, (float)winH);
@@ -3753,6 +3761,26 @@ void ApplyWindowTheme(HWND hwnd) {
     const BOOL useDarkFrame = useLightTheme ? FALSE : TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &useDarkFrame, sizeof(useDarkFrame));
 
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_COLOR_DEFAULT
+#define DWMWA_COLOR_DEFAULT 0xFFFFFFFF
+#endif
+
+    if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+        COLORREF black = 0x00000000;
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &black, sizeof(black));
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &black, sizeof(black));
+    } else {
+        COLORREF def = DWMWA_COLOR_DEFAULT;
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &def, sizeof(def));
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &def, sizeof(def));
+    }
+
     if (const auto setPreferredAppMode = LoadSetPreferredAppMode()) {
         setPreferredAppMode(useLightTheme ? PreferredAppMode::ForceLight : PreferredAppMode::ForceDark);
     }
@@ -3870,6 +3898,9 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"KeepWindowSizeOnNav", g_config.KeepWindowSizeOnNav ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"RememberLastWindowSizeAndPosition", g_config.RememberLastWindowSizeAndPosition ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"UpscaleSmallImagesWhenLocked", g_config.UpscaleSmallImagesWhenLocked ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"SlideshowIntervalMs", std::to_wstring(g_config.SlideshowIntervalMs).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"SlideshowImmersiveMode", std::to_wstring(g_config.SlideshowImmersiveMode).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"SlideshowTransitionMode", std::to_wstring(g_config.SlideshowTransitionMode).c_str(), iniPath.c_str());
 
     WritePrivateProfileStringW(L"View", L"ExifPanelMode", std::to_wstring(g_config.ExifPanelMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"ToolbarInfoDefault", std::to_wstring(g_config.ToolbarInfoDefault).c_str(), iniPath.c_str());
@@ -4109,6 +4140,9 @@ void LoadConfig() {
     g_config.KeepWindowSizeOnNav = GetPrivateProfileIntW(L"View", L"KeepWindowSizeOnNav", 0, iniPath.c_str()) != 0;
     g_config.RememberLastWindowSizeAndPosition = GetPrivateProfileIntW(L"View", L"RememberLastWindowSizeAndPosition", 0, iniPath.c_str()) != 0;
     g_config.UpscaleSmallImagesWhenLocked = GetPrivateProfileIntW(L"View", L"UpscaleSmallImagesWhenLocked", 0, iniPath.c_str()) != 0;
+    g_config.SlideshowIntervalMs = GetPrivateProfileIntW(L"View", L"SlideshowIntervalMs", 3000, iniPath.c_str());
+    g_config.SlideshowImmersiveMode = GetPrivateProfileIntW(L"View", L"SlideshowImmersiveMode", 1, iniPath.c_str());
+    g_config.SlideshowTransitionMode = GetPrivateProfileIntW(L"View", L"SlideshowTransitionMode", 1, iniPath.c_str());
 
     g_config.ExifPanelMode = GetPrivateProfileIntW(L"View", L"ExifPanelMode", 0, iniPath.c_str());
     g_config.ToolbarInfoDefault = GetPrivateProfileIntW(L"View", L"ToolbarInfoDefault", 0, iniPath.c_str());
@@ -4968,6 +5002,9 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
 }
 
 static D2D1_COLOR_F ResolveCanvasColor() {
+    if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+        return D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f); // Fully transparent background in Spotlight mode
+    }
     switch (g_config.CanvasColor) {
         case 0: return D2D1::ColorF(0.08f, 0.08f, 0.08f); // Black
         case 1: return D2D1::ColorF(0.95f, 0.95f, 0.95f); // White
@@ -4990,7 +5027,14 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
     if (IsOverlayModeActive()) {
         bgColor = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f);
     }
-    g_compEngine->UpdateBackground(winW, winH, bgColor, IsOverlayModeActive() ? false : (g_config.CanvasColor == 2 || g_config.CanvasShowGrid));
+    bool showGrid = (g_config.CanvasColor == 2 || g_config.CanvasShowGrid);
+    if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+        showGrid = false;
+    }
+    if (IsOverlayModeActive()) {
+        showGrid = false;
+    }
+    g_compEngine->UpdateBackground(winW, winH, bgColor, showGrid);
 
     if (IsCompareModeActive()) {
         AppContext::GetInstance().ZoomAnimCtrl->Reset();
@@ -5014,6 +5058,9 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
             if (effWinH < 1.0f) effWinH = 1.0f;
 
             float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+            if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+                baseFit *= 0.85f; // Constrain to 85% of available space for Spotlight effect
+            }
 
             float targetZoom = baseFit * GetPaneContext(PaneSlot::Primary).view.Zoom;
 
@@ -6232,6 +6279,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER: {
+        if (wParam == 106) { // IDT_SLIDESHOW
+            if (g_slideshowState.IsActive && g_slideshowState.IsPlaying) {
+                if (CheckUnsavedChanges(hwnd)) {
+                    Navigate(hwnd, 1);
+                }
+            } else {
+                KillTimer(hwnd, 106);
+            }
+            return 0;
+        }
+
         if (wParam == GAMUT_DEBOUNCE_TIMER_ID) {
             KillTimer(hwnd, GAMUT_DEBOUNCE_TIMER_ID);
             ScheduleGamutWarningAnalysisImpl(hwnd);
@@ -6301,7 +6359,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     // Update timer delay with speed multiplier
                     uint32_t delayMs = GetPaneContext(PaneSlot::Primary).resource.frameMeta.delayMs;
                     if (delayMs < 10) delayMs = 100;
-                    float speedMult = g_toolbar.GetAnimSpeedMultiplier();
+                    float speedMult = g_toolbar.GetAnimSpeedMult();
                     if (speedMult > 0.01f) delayMs = (uint32_t)(delayMs / speedMult);
                     if (delayMs < 1) delayMs = 1;
                     SetTimer(hwnd, IDT_ANIMATION, delayMs, NULL);
@@ -6967,8 +7025,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
 SKIP_EDGE_NAV:;
 
-          // Skip UI interactions (Toolbar, Window Controls, etc.) when Gallery covers screen
-          if (!g_gallery.IsVisible()) {
+          // Skip UI interactions (Toolbar, Window Controls, etc.) when Gallery covers screen (except filmstrip)
+          if (!g_gallery.IsVisible() || g_gallery.GetMode() != GalleryMode::FullGrid) {
           // Toolbar Trigger
           RECT rc; GetClientRect(hwnd, &rc);
           float winH = (float)(rc.bottom - rc.top);
@@ -8097,6 +8155,26 @@ SKIP_EDGE_NAV:;
                     ExitOverlayMode(hwnd);
                     RequestRepaint(PaintLayer::All);
                     break;
+                case ToolbarButtonID::SlideshowImmersiveToggle:
+                    if (g_slideshowState.IsActive) {
+                        g_config.SlideshowImmersiveMode = (g_config.SlideshowImmersiveMode == 0) ? 1 : 0;
+                        if (g_config.SlideshowImmersiveMode == 1) {
+                            g_gallery.SetPinned(true);
+                            g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
+                        } else {
+                            g_gallery.SetPinned(false);
+                            g_gallery.Close();
+                        }
+                        SaveConfig();
+                        ApplyWindowTheme(hwnd); // Update DWM borders
+                        g_toolbar.SetSlideshowMode(true, g_slideshowState.IsPlaying);
+                        RequestRepaint(PaintLayer::All);
+                        g_osd.Show(hwnd, g_config.SlideshowImmersiveMode == 1 ? AppStrings::OSD_ImmersiveSpotlight : AppStrings::OSD_ImmersiveNormal, true);
+                    }
+                    break;
+                case ToolbarButtonID::SlideshowExit:
+                    SendMessage(hwnd, WM_COMMAND, IDM_SLIDESHOW, 0);
+                    break;
                 case ToolbarButtonID::CompareSwap:
                     if (IsCompareModeActive() && GetPaneContext(PaneSlot::Left).valid && GetPaneContext(PaneSlot::Primary).resource) {
                         ImageResource rightRes = std::move(GetPaneContext(PaneSlot::Primary).resource);
@@ -8193,15 +8271,43 @@ SKIP_EDGE_NAV:;
                     break;
                 // [v10.5] Animation Toolbar Buttons
                 case ToolbarButtonID::AnimPlayPause:
-                    if (GetPaneContext(PaneSlot::Primary).resource.animator) {
-                        SendMessage(hwnd, WM_KEYDOWN, VK_SPACE, 0);
+                    if (g_slideshowState.IsActive) {
+                        g_slideshowState.IsPlaying = !g_slideshowState.IsPlaying;
+                        if (g_slideshowState.IsPlaying) {
+                            int interval = (int)(g_config.SlideshowIntervalMs / g_toolbar.GetAnimSpeedMult());
+                            SetTimer(hwnd, 106, interval, nullptr);
+                            g_toolbar.SetSlideshowMode(true, true);
+                            g_osd.Show(hwnd, AppStrings::OSD_SlideshowResumed, true);
+                        } else {
+                            KillTimer(hwnd, 106);
+                            g_toolbar.SetSlideshowMode(true, false);
+                            g_osd.Show(hwnd, AppStrings::OSD_SlideshowPaused, true);
+                        }
+                    } else {
+                        HandleHotkeyAction(hwnd, HotkeyAction::ToggleAnimation);
                     }
                     break;
+                case ToolbarButtonID::AnimSpeedUp:
+                case ToolbarButtonID::AnimSpeedDown:
+                    if (g_slideshowState.IsActive && g_slideshowState.IsPlaying) {
+                        int interval = (int)(g_config.SlideshowIntervalMs / g_toolbar.GetAnimSpeedMult());
+                        SetTimer(hwnd, 106, interval, nullptr);
+                    }
+                    RequestRepaint(PaintLayer::Static);
+                    break;
                 case ToolbarButtonID::AnimPrevFrame:
-                    HandleAnimFrameStep(hwnd, false);
+                    if (g_slideshowState.IsActive) {
+                        Navigate(hwnd, -1);
+                    } else {
+                        HandleAnimFrameStep(hwnd, false);
+                    }
                     break;
                 case ToolbarButtonID::AnimNextFrame:
-                    HandleAnimFrameStep(hwnd, true);
+                    if (g_slideshowState.IsActive) {
+                        Navigate(hwnd, 1);
+                    } else {
+                        HandleAnimFrameStep(hwnd, true);
+                    }
                     break;
                 case ToolbarButtonID::AnimDirtyRect:
                     if (GetPaneContext(PaneSlot::Primary).resource.animator) {
@@ -8975,6 +9081,10 @@ SKIP_EDGE_NAV:;
             }
             break;
         }
+        case IDM_SLIDESHOW: {
+            HandleHotkeyAction(hwnd, HotkeyAction::ToggleSlideshow);
+            break;
+        }
         case IDM_FULLSCREEN: {
             // [Fix] True Fullscreen Implementation
             DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
@@ -9295,7 +9405,7 @@ SKIP_EDGE_NAV:;
             
             // When turning on, set expanded state based on ToolbarInfoDefault config
             if (g_runtime.ShowInfoPanel) {
-                if (g_gallery.IsVisible()) {
+                if (g_gallery.IsVisible() && !g_gallery.IsPinned()) {
                     g_gallery.Close();
                     RestoreOverlayWindowState(hwnd);
                 }
@@ -12174,6 +12284,16 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
     [[maybe_unused]] bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     [[maybe_unused]] bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
+    if (g_slideshowState.IsActive && action != HotkeyAction::ToggleSlideshow && action != HotkeyAction::ToggleAnimation) {
+        g_slideshowState.Reset();
+        KillTimer(hwnd, 106); // IDT_SLIDESHOW
+        g_osd.Show(hwnd, AppStrings::OSD_SlideshowStopped, true);
+        g_toolbar.SetSlideshowMode(false, false);
+        ApplyWindowTheme(hwnd); // Restore normal window theme
+        RequestRepaint(PaintLayer::Static);
+        // Continue processing the action...
+    }
+
     switch (action) {
     case HotkeyAction::NavNext:
         if (alt && GetPaneContext(PaneSlot::Primary).resource.animator) {
@@ -12297,7 +12417,20 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         return true;
 
     case HotkeyAction::ToggleAnimation:
-        if (GetPaneContext(PaneSlot::Primary).resource.animator) {
+        if (g_slideshowState.IsActive) {
+            g_slideshowState.IsPlaying = !g_slideshowState.IsPlaying;
+            if (g_slideshowState.IsPlaying) {
+                int interval = (int)(g_config.SlideshowIntervalMs / g_toolbar.GetAnimSpeedMult());
+                SetTimer(hwnd, 106, interval, nullptr);
+                g_toolbar.SetSlideshowMode(true, true);
+                g_osd.Show(hwnd, AppStrings::OSD_SlideshowResumed, true);
+            } else {
+                KillTimer(hwnd, 106);
+                g_toolbar.SetSlideshowMode(true, false);
+                g_osd.Show(hwnd, AppStrings::OSD_SlideshowPaused, true);
+            }
+            RequestRepaint(PaintLayer::Static);
+        } else if (GetPaneContext(PaneSlot::Primary).resource.animator) {
             g_animPlaying = !g_animPlaying;
             if (g_animPlaying) {
                 g_animInspectorFrame = -1;
@@ -12506,6 +12639,44 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         g_helpOverlay.Toggle();
         RequestRepaint(PaintLayer::Static);
+        return true;
+
+    case HotkeyAction::ToggleSlideshow:
+        g_slideshowState.IsActive = !g_slideshowState.IsActive;
+        if (g_slideshowState.IsActive) {
+            if (IsCompareModeActive()) {
+                AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+            }
+            g_slideshowState.IsPlaying = true;
+            g_slideshowState.HasTimer = true;
+            g_slideshowState.TimerId = 106; // IDT_SLIDESHOW
+            g_slideshowState.WasGalleryPinned = g_gallery.IsPinned();
+            if (g_config.SlideshowImmersiveMode == 1) {
+                g_gallery.SetPinned(true);
+                g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
+            }
+            int interval = (int)(g_config.SlideshowIntervalMs / g_toolbar.GetAnimSpeedMult());
+            SetTimer(hwnd, 106, interval, nullptr);
+            g_osd.Show(hwnd, AppStrings::OSD_SlideshowStarted, true);
+            if (!g_isFullScreen) {
+                SendMessage(hwnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+            }
+            g_toolbar.SetSlideshowMode(true, true);
+        } else {
+            bool wasPinned = g_slideshowState.WasGalleryPinned;
+            g_slideshowState.Reset();
+            KillTimer(hwnd, 106);
+            if (g_config.SlideshowImmersiveMode == 1) {
+                g_gallery.SetPinned(wasPinned);
+                if (!wasPinned) {
+                    g_gallery.Close();
+                }
+            }
+            g_osd.Show(hwnd, AppStrings::OSD_SlideshowStopped, true);
+            g_toolbar.SetSlideshowMode(false, false);
+        }
+        ApplyWindowTheme(hwnd); // Update DWM borders
+        RequestRepaint(PaintLayer::All);
         return true;
 
     case HotkeyAction::Exit:

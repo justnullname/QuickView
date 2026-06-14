@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "pch.h"
 #include <string>
 #include <cwchar>
@@ -142,6 +142,7 @@ enum class HotkeyAction : uint8_t {
     ToggleExifPanel,   // Toggle Exif Panel (Full)
     ToggleFullscreen,  // Toggle Fullscreen
     ToggleSpan,        // Toggle Span Displays
+    ToggleSlideshow,   // Toggle Slideshow Mode
     OpenFile,          // Open File Dialog
     EditFile,          // Edit with External Editor
     RenameFile,        // Rename File Dialog
@@ -202,6 +203,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::OverlayAlphaDown: return L"OverlayAlphaDown";
         case HotkeyAction::OverlayTogglePassthrough: return L"OverlayTogglePassthrough";
         case HotkeyAction::Help: return L"Help";
+        case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
         case HotkeyAction::Exit: return L"Exit";
         default: return L"None";
     }
@@ -245,6 +247,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"OverlayAlphaDown") return HotkeyAction::OverlayAlphaDown;
     if (sv == L"OverlayTogglePassthrough") return HotkeyAction::OverlayTogglePassthrough;
     if (sv == L"Help") return HotkeyAction::Help;
+    if (sv == L"ToggleSlideshow") return HotkeyAction::ToggleSlideshow;
     if (sv == L"Exit") return HotkeyAction::Exit;
     return HotkeyAction::None;
 }
@@ -564,6 +567,11 @@ struct AppConfig {
     int PrefetchGear = 1;               // 0=Off, 1=Auto, 2=Eco, 3=Balanced, 4=Ultra
     int MemoryReclaimStrategy = 0;      // 0=Smart, 1=Aggressive, 2=OnDemand
     
+    // --- Slideshow ---
+    int SlideshowIntervalMs = 3000;      // Default 3s
+    int SlideshowImmersiveMode = 1;      // 0=Normal Fullscreen, 1=Picasa Spotlight
+    int SlideshowTransitionMode = 1;     // 0=None, 1=Alpha Fade, 2=Zoom In
+    
     // --- Image & Edit ---
     bool AutoRotate = true;
     bool EnableSmoothScaling = false;    // New: Smooth Zoom toggle
@@ -754,10 +762,13 @@ struct ViewState {
 struct AnimationPlaybackState {
     bool IsAnimated = false;          
     bool IsPlaying = true;            
-    bool InspectorMode = false;       
-    bool ShowDirtyRect = false;       
-    uint32_t TotalFrames = 1;         
-    uint32_t CurrentFrameIndex = 0;   
+    bool InspectorMode = false;     // Professional Tools
+    bool ShowDirtyRect = false;
+
+    // System
+    int NumDecodingThreads = 0;         
+    uint32_t CurrentFrameIndex = 0;
+    uint32_t TotalFrames = 1;
     uint32_t CurrentFrameDelayTime = 0;
     QuickView::FrameDisposalMode CurrentDisposal = QuickView::FrameDisposalMode::Keep;
     
@@ -799,6 +810,34 @@ struct AnimationPlaybackState {
         }
 };
 extern AnimationPlaybackState g_animationState;
+
+// Slideshow state
+struct SlideshowState {
+    bool IsActive = false;
+    bool IsPlaying = false;
+    bool HasTimer = false;
+    bool WasGalleryPinned = false;
+    UINT_PTR TimerId = 0;
+    
+    // Cross-fade animation state
+    bool IsFading = false;
+    float FadeAlpha = 1.0f;        // 0.0 -> 1.0 during transition
+    DWORD FadeStartTime = 0;
+    std::wstring PrevImagePath;    // For cross-fading from previous image
+    
+    void Reset() {
+        IsActive = false;
+        IsPlaying = false;
+        HasTimer = false;
+        WasGalleryPinned = false;
+        TimerId = 0;
+        IsFading = false;
+        FadeAlpha = 1.0f;
+        FadeStartTime = 0;
+        PrevImagePath.clear();
+    }
+};
+extern SlideshowState g_slideshowState;
 
 // Runtime State (Reset on Restart)
 struct RuntimeConfig {

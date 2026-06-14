@@ -1619,6 +1619,29 @@ void SettingsOverlay::BuildMenu() {
     };
     tabVisuals.items.push_back(itemFsZoom);
     
+    // --- Slideshow ---
+    tabVisuals.items.push_back({ AppStrings::Context_SlideshowMode, OptionType::Header });
+    
+    SettingsItem itemSlideInterval = { AppStrings::Settings_Label_SlideshowInterval, OptionType::Slider, nullptr, nullptr, nullptr, nullptr, 1.0f, 60.0f, {}, L"%.0fs" };
+    // Map ms to seconds for the slider
+    static float s_slideshowSecs = g_config.SlideshowIntervalMs / 1000.0f;
+    s_slideshowSecs = g_config.SlideshowIntervalMs / 1000.0f;
+    itemSlideInterval.pFloatVal = &s_slideshowSecs;
+    itemSlideInterval.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        g_config.SlideshowIntervalMs = (int)(s_slideshowSecs * 1000.0f);
+        SaveConfig();
+        if (g_slideshowState.IsActive && g_slideshowState.IsPlaying) {
+            HWND hwnd = GetActiveWindow();
+            int interval = (int)(g_config.SlideshowIntervalMs / g_toolbar.GetAnimSpeedMult());
+            SetTimer(hwnd, 106, interval, nullptr);
+        }
+    };
+    tabVisuals.items.push_back(itemSlideInterval);
+
+    SettingsItem itemSlideMode = { AppStrings::Settings_Label_SlideshowImmersive, OptionType::Segment, nullptr, nullptr, &g_config.SlideshowImmersiveMode, nullptr, 0, 0, { AppStrings::Settings_Option_SlideshowNormal, AppStrings::Settings_Option_SlideshowSpotlight } };
+    itemSlideMode.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tabVisuals.items.push_back(itemSlideMode);
+
     // Professional Tools
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Professional, OptionType::Header });
     SettingsItem itemShowDirtyRect = { AppStrings::Settings_Label_ShowDirtyRect, OptionType::Toggle, &g_config.ShowDirtyRectButton };
@@ -2221,6 +2244,8 @@ void SettingsOverlay::BuildMenu() {
          
          // 2. Reset In-Memory Config
          g_config = AppConfig(); 
+          extern void SaveConfig();
+          SaveConfig();
          for (auto& binding : g_hotkeys) {
              binding.combo = binding.defaultCombo;
          }

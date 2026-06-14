@@ -159,6 +159,8 @@ const wchar_t *Toolbar_Tooltip_CompareSyncZoomOn = nullptr;
 const wchar_t *Toolbar_Tooltip_CompareSyncZoomOff = nullptr;
 const wchar_t *Toolbar_Tooltip_CompareSyncPanOn = nullptr;
 const wchar_t *Toolbar_Tooltip_CompareSyncPanOff = nullptr;
+const wchar_t *Toolbar_Tooltip_SlideshowImmersiveToggle = nullptr;
+const wchar_t *Toolbar_Tooltip_SlideshowExit = nullptr;
 const wchar_t *Toolbar_Tooltip_CompareExit = nullptr;
 const wchar_t *Toolbar_Tooltip_AnimPlay = nullptr;
 const wchar_t *Toolbar_Tooltip_AnimPause = nullptr;
@@ -477,6 +479,17 @@ const wchar_t *Settings_Option_GalleryTriggerDelay = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerClick = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerDisable = nullptr;
 const wchar_t *Settings_Tooltip_GalleryTrigger = nullptr;
+const wchar_t *OSD_SlideshowStarted = nullptr;
+const wchar_t *OSD_SlideshowStopped = nullptr;
+const wchar_t *OSD_SlideshowResumed = nullptr;
+const wchar_t *OSD_SlideshowPaused = nullptr;
+const wchar_t *OSD_ImmersiveSpotlight = nullptr;
+const wchar_t *OSD_ImmersiveNormal = nullptr;
+const wchar_t *Context_SlideshowMode = nullptr;
+const wchar_t *Settings_Label_SlideshowInterval = nullptr;
+const wchar_t *Settings_Label_SlideshowImmersive = nullptr;
+const wchar_t *Settings_Option_SlideshowNormal = nullptr;
+const wchar_t *Settings_Option_SlideshowSpotlight = nullptr;
 
 // --- Static Constants ---
 const wchar_t *Settings_Text_Copyright = L"Copyright \u00A9 2025-%s Vivor Loong (Github@justnullname)";
@@ -631,6 +644,8 @@ struct LanguageTable {
     const wchar_t *Toolbar_Tooltip_CompareSyncZoomOff;
     const wchar_t *Toolbar_Tooltip_CompareSyncPanOn;
     const wchar_t *Toolbar_Tooltip_CompareSyncPanOff;
+    const wchar_t *Toolbar_Tooltip_SlideshowImmersiveToggle;
+    const wchar_t *Toolbar_Tooltip_SlideshowExit;
     const wchar_t *Toolbar_Tooltip_CompareExit;
     const wchar_t *Toolbar_Tooltip_AnimPlay;
     const wchar_t *Toolbar_Tooltip_AnimPause;
@@ -949,6 +964,17 @@ struct LanguageTable {
     const wchar_t *Settings_Option_GalleryTriggerClick;
     const wchar_t *Settings_Option_GalleryTriggerDisable;
     const wchar_t *Settings_Tooltip_GalleryTrigger;
+    const wchar_t *OSD_SlideshowStarted;
+    const wchar_t *OSD_SlideshowStopped;
+    const wchar_t *OSD_SlideshowResumed;
+    const wchar_t *OSD_SlideshowPaused;
+    const wchar_t *OSD_ImmersiveSpotlight;
+    const wchar_t *OSD_ImmersiveNormal;
+    const wchar_t *Context_SlideshowMode;
+    const wchar_t *Settings_Label_SlideshowInterval;
+    const wchar_t *Settings_Label_SlideshowImmersive;
+    const wchar_t *Settings_Option_SlideshowNormal;
+    const wchar_t *Settings_Option_SlideshowSpotlight;
 };
 
 // ----------------------------------------------------------------
@@ -1100,6 +1126,8 @@ static const LanguageTable Table_EN = {
     L"Zoom Sync: OFF", // Toolbar_Tooltip_CompareSyncZoomOff
     L"Pan Sync: ON", // Toolbar_Tooltip_CompareSyncPanOn
     L"Pan Sync: OFF", // Toolbar_Tooltip_CompareSyncPanOff
+    L"Toggle Immersive Spotlight", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"Exit Slideshow Mode", // Toolbar_Tooltip_SlideshowExit
     L"Exit Compare", // Toolbar_Tooltip_CompareExit
     L"Play Animation", // Toolbar_Tooltip_AnimPlay
     L"Pause Animation", // Toolbar_Tooltip_AnimPause
@@ -1418,6 +1446,17 @@ static const LanguageTable Table_EN = {
     L"Click Hotspot", // Settings_Option_GalleryTriggerClick
     L"Disabled", // Settings_Option_GalleryTriggerDisable
     L"This feature is automatically disabled when the window is smaller than 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Slideshow Started", // OSD_SlideshowStarted
+    L"Slideshow Stopped", // OSD_SlideshowStopped
+    L"Slideshow Resumed", // OSD_SlideshowResumed
+    L"Slideshow Paused", // OSD_SlideshowPaused
+    L"Immersive: Spotlight", // OSD_ImmersiveSpotlight
+    L"Immersive: Normal", // OSD_ImmersiveNormal
+    L"Slideshow Mode", // Context_SlideshowMode
+    L"Interval (seconds)", // Settings_Label_SlideshowInterval
+    L"Immersive Mode", // Settings_Label_SlideshowImmersive
+    L"Normal", // Settings_Option_SlideshowNormal
+    L"Spotlight", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -1569,6 +1608,8 @@ static const LanguageTable Table_CN = {
     L"缩放同步: 关", // Toolbar_Tooltip_CompareSyncZoomOff
     L"平移同步: 开", // Toolbar_Tooltip_CompareSyncPanOn
     L"平移同步: 关", // Toolbar_Tooltip_CompareSyncPanOff
+    L"切换沉浸聚光灯", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"退出幻灯片模式", // Toolbar_Tooltip_SlideshowExit
     L"退出对比", // Toolbar_Tooltip_CompareExit
     L"播放动画", // Toolbar_Tooltip_AnimPlay
     L"暂停动画", // Toolbar_Tooltip_AnimPause
@@ -1887,6 +1928,17 @@ static const LanguageTable Table_CN = {
     L"点击热点", // Settings_Option_GalleryTriggerClick
     L"停用", // Settings_Option_GalleryTriggerDisable
     L"该功能在窗口小于 600x450 时将自动禁用。", // Settings_Tooltip_GalleryTrigger
+    L"开始播放幻灯片", // OSD_SlideshowStarted
+    L"停止播放幻灯片", // OSD_SlideshowStopped
+    L"继续播放幻灯片", // OSD_SlideshowResumed
+    L"幻灯片已暂停", // OSD_SlideshowPaused
+    L"沉浸模式: 聚光灯", // OSD_ImmersiveSpotlight
+    L"沉浸模式: 普通", // OSD_ImmersiveNormal
+    L"幻灯片模式", // Context_SlideshowMode
+    L"切换间隔 (秒)", // Settings_Label_SlideshowInterval
+    L"沉浸模式", // Settings_Label_SlideshowImmersive
+    L"普通", // Settings_Option_SlideshowNormal
+    L"聚光灯", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -2038,6 +2090,8 @@ static const LanguageTable Table_TW = {
     L"縮放同步: 關", // Toolbar_Tooltip_CompareSyncZoomOff
     L"平移同步: 開", // Toolbar_Tooltip_CompareSyncPanOn
     L"平移同步: 關", // Toolbar_Tooltip_CompareSyncPanOff
+    L"切換沉浸聚光燈", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"退出幻燈片模式", // Toolbar_Tooltip_SlideshowExit
     L"退出對比", // Toolbar_Tooltip_CompareExit
     L"播放動畫", // Toolbar_Tooltip_AnimPlay
     L"暫停動畫", // Toolbar_Tooltip_AnimPause
@@ -2356,6 +2410,17 @@ static const LanguageTable Table_TW = {
     L"點擊熱點", // Settings_Option_GalleryTriggerClick
     L"停用", // Settings_Option_GalleryTriggerDisable
     L"該功能在視窗小於 600x450 時將自動禁用。", // Settings_Tooltip_GalleryTrigger
+    L"開始播放幻燈片", // OSD_SlideshowStarted
+    L"停止播放幻燈片", // OSD_SlideshowStopped
+    L"繼續播放幻燈片", // OSD_SlideshowResumed
+    L"幻燈片已暫停", // OSD_SlideshowPaused
+    L"沉浸模式: 聚光燈", // OSD_ImmersiveSpotlight
+    L"沉浸模式: 普通", // OSD_ImmersiveNormal
+    L"幻燈片模式", // Context_SlideshowMode
+    L"切換間隔 (秒)", // Settings_Label_SlideshowInterval
+    L"沉浸模式", // Settings_Label_SlideshowImmersive
+    L"普通", // Settings_Option_SlideshowNormal
+    L"聚光燈", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -2507,6 +2572,8 @@ static const LanguageTable Table_JA = {
     L"ズーム同期: オフ", // Toolbar_Tooltip_CompareSyncZoomOff
     L"移動同期: オン", // Toolbar_Tooltip_CompareSyncPanOn
     L"移動同期: オフ", // Toolbar_Tooltip_CompareSyncPanOff
+    L"シネマティック スポットライトの切り替え", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"スライドショーモードの終了", // Toolbar_Tooltip_SlideshowExit
     L"比較を終了", // Toolbar_Tooltip_CompareExit
     L"アニメーション再生", // Toolbar_Tooltip_AnimPlay
     L"アニメーション一時停止", // Toolbar_Tooltip_AnimPause
@@ -2825,6 +2892,17 @@ static const LanguageTable Table_JA = {
     L"ホットスポットクリック", // Settings_Option_GalleryTriggerClick
     L"無効", // Settings_Option_GalleryTriggerDisable
     L"ウィンドウが600x450より小さい場合、この機能は自動的に無効になります。", // Settings_Tooltip_GalleryTrigger
+    L"スライドショー開始", // OSD_SlideshowStarted
+    L"スライドショー停止", // OSD_SlideshowStopped
+    L"スライドショー再開", // OSD_SlideshowResumed
+    L"スライドショー一時停止", // OSD_SlideshowPaused
+    L"イマーシブ: スポットライト", // OSD_ImmersiveSpotlight
+    L"イマーシブ: 通常", // OSD_ImmersiveNormal
+    L"スライドショーモード", // Context_SlideshowMode
+    L"切り替え間隔 (秒)", // Settings_Label_SlideshowInterval
+    L"イマーシブモード", // Settings_Label_SlideshowImmersive
+    L"通常", // Settings_Option_SlideshowNormal
+    L"スポットライト", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -2976,6 +3054,8 @@ static const LanguageTable Table_RU = {
     L"Синхр. масштаба: НЕТ", // Toolbar_Tooltip_CompareSyncZoomOff
     L"Синхр. панорамирования: ДА", // Toolbar_Tooltip_CompareSyncPanOn
     L"Синхр. панорамирования: НЕТ", // Toolbar_Tooltip_CompareSyncPanOff
+    L"Переключить эффект прожектора", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"Выйти из режима слайд-шоу", // Toolbar_Tooltip_SlideshowExit
     L"Выйти из сравнения", // Toolbar_Tooltip_CompareExit
     L"Воспроизвести анимацию", // Toolbar_Tooltip_AnimPlay
     L"Приостановить анимацию", // Toolbar_Tooltip_AnimPause
@@ -3294,6 +3374,17 @@ static const LanguageTable Table_RU = {
     L"Клик по точке", // Settings_Option_GalleryTriggerClick
     L"Отключено", // Settings_Option_GalleryTriggerDisable
     L"Эта функция автоматически отключается, если размер окна меньше 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Слайд-шоу запущено", // OSD_SlideshowStarted
+    L"Слайд-шоу остановлено", // OSD_SlideshowStopped
+    L"Слайд-шоу возобновлено", // OSD_SlideshowResumed
+    L"Слайд-шоу на паузе", // OSD_SlideshowPaused
+    L"Эффект: Прожектор", // OSD_ImmersiveSpotlight
+    L"Эффект: Обычный", // OSD_ImmersiveNormal
+    L"Режим слайд-шоу", // Context_SlideshowMode
+    L"Интервал (секунд)", // Settings_Label_SlideshowInterval
+    L"Иммерсивный режим", // Settings_Label_SlideshowImmersive
+    L"Обычный", // Settings_Option_SlideshowNormal
+    L"Прожектор", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -3445,6 +3536,8 @@ static const LanguageTable Table_DE = {
     L"Zoom-Sync: AUS", // Toolbar_Tooltip_CompareSyncZoomOff
     L"Pan-Sync: AN", // Toolbar_Tooltip_CompareSyncPanOn
     L"Pan-Sync: AUS", // Toolbar_Tooltip_CompareSyncPanOff
+    L"Spotlight-Effekt umschalten", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"Diashow beenden", // Toolbar_Tooltip_SlideshowExit
     L"Vergleich beenden", // Toolbar_Tooltip_CompareExit
     L"Animation abspielen", // Toolbar_Tooltip_AnimPlay
     L"Animation pausieren", // Toolbar_Tooltip_AnimPause
@@ -3763,6 +3856,17 @@ static const LanguageTable Table_DE = {
     L"Hotspot-Klick", // Settings_Option_GalleryTriggerClick
     L"Deaktiviert", // Settings_Option_GalleryTriggerDisable
     L"Diese Funktion wird automatisch deaktiviert, wenn das Fenster kleiner als 600x450 ist.", // Settings_Tooltip_GalleryTrigger
+    L"Diashow gestartet", // OSD_SlideshowStarted
+    L"Diashow gestoppt", // OSD_SlideshowStopped
+    L"Diashow fortgesetzt", // OSD_SlideshowResumed
+    L"Diashow pausiert", // OSD_SlideshowPaused
+    L"Immersiv: Spotlight", // OSD_ImmersiveSpotlight
+    L"Immersiv: Normal", // OSD_ImmersiveNormal
+    L"Diashow-Modus", // Context_SlideshowMode
+    L"Intervall (Sekunden)", // Settings_Label_SlideshowInterval
+    L"Immersiver Modus", // Settings_Label_SlideshowImmersive
+    L"Normal", // Settings_Option_SlideshowNormal
+    L"Spotlight", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -3914,6 +4018,8 @@ static const LanguageTable Table_ES = {
     L"Sincronizar zoom: DESACTIVADO", // Toolbar_Tooltip_CompareSyncZoomOff
     L"Sincronizar panorámica: ACTIVADO", // Toolbar_Tooltip_CompareSyncPanOn
     L"Sincronizar panorámica: DESACTIVADO", // Toolbar_Tooltip_CompareSyncPanOff
+    L"Alternar efecto foco", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"Salir de la presentación de diapositivas", // Toolbar_Tooltip_SlideshowExit
     L"Salir de comparación", // Toolbar_Tooltip_CompareExit
     L"Reproducir animación", // Toolbar_Tooltip_AnimPlay
     L"Pausar animación", // Toolbar_Tooltip_AnimPause
@@ -4232,6 +4338,17 @@ static const LanguageTable Table_ES = {
     L"Clic en punto caliente", // Settings_Option_GalleryTriggerClick
     L"Deshabilitado", // Settings_Option_GalleryTriggerDisable
     L"Esta función se desactiva automáticamente cuando la ventana es menor de 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Presentación iniciada", // OSD_SlideshowStarted
+    L"Presentación detenida", // OSD_SlideshowStopped
+    L"Presentación reanudada", // OSD_SlideshowResumed
+    L"Presentación pausada", // OSD_SlideshowPaused
+    L"Inmersivo: Foco", // OSD_ImmersiveSpotlight
+    L"Inmersivo: Normal", // OSD_ImmersiveNormal
+    L"Modo de presentación", // Context_SlideshowMode
+    L"Intervalo (segundos)", // Settings_Label_SlideshowInterval
+    L"Modo inmersivo", // Settings_Label_SlideshowImmersive
+    L"Normal", // Settings_Option_SlideshowNormal
+    L"Foco", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -4383,6 +4500,8 @@ static const LanguageTable Table_FR = {
     L"Zoom Sync: OFF", // Toolbar_Tooltip_CompareSyncZoomOff
     L"Pan Sync: ON", // Toolbar_Tooltip_CompareSyncPanOn
     L"Pan Sync: OFF", // Toolbar_Tooltip_CompareSyncPanOff
+    L"Basculer le mode projecteur immersif", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"Quitter le mode diaporama", // Toolbar_Tooltip_SlideshowExit
     L"Exit Compare", // Toolbar_Tooltip_CompareExit
     L"Play Animation", // Toolbar_Tooltip_AnimPlay
     L"Pause Animation", // Toolbar_Tooltip_AnimPause
@@ -4701,6 +4820,17 @@ static const LanguageTable Table_FR = {
     L"Clic sur le point chaud", // Settings_Option_GalleryTriggerClick
     L"Désactivé", // Settings_Option_GalleryTriggerDisable
     L"Cette fonctionnalité est automatiquement désactivée lorsque la fenêtre est plus petite que 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Diaporama démarré", // OSD_SlideshowStarted
+    L"Diaporama arrêté", // OSD_SlideshowStopped
+    L"Diaporama repris", // OSD_SlideshowResumed
+    L"Diaporama en pause", // OSD_SlideshowPaused
+    L"Immersif : Projecteur", // OSD_ImmersiveSpotlight
+    L"Immersif : Normal", // OSD_ImmersiveNormal
+    L"Mode diaporama", // Context_SlideshowMode
+    L"Intervalle (secondes)", // Settings_Label_SlideshowInterval
+    L"Mode immersif", // Settings_Label_SlideshowImmersive
+    L"Normal", // Settings_Option_SlideshowNormal
+    L"Projecteur", // Settings_Option_SlideshowSpotlight
 };
 
 // ----------------------------------------------------------------
@@ -4852,6 +4982,8 @@ void Apply(const LanguageTable& t) {
   Toolbar_Tooltip_CompareSyncZoomOff = t.Toolbar_Tooltip_CompareSyncZoomOff;
   Toolbar_Tooltip_CompareSyncPanOn = t.Toolbar_Tooltip_CompareSyncPanOn;
   Toolbar_Tooltip_CompareSyncPanOff = t.Toolbar_Tooltip_CompareSyncPanOff;
+  Toolbar_Tooltip_SlideshowImmersiveToggle = t.Toolbar_Tooltip_SlideshowImmersiveToggle;
+  Toolbar_Tooltip_SlideshowExit = t.Toolbar_Tooltip_SlideshowExit;
   Toolbar_Tooltip_CompareExit = t.Toolbar_Tooltip_CompareExit;
   Toolbar_Tooltip_AnimPlay = t.Toolbar_Tooltip_AnimPlay;
   Toolbar_Tooltip_AnimPause = t.Toolbar_Tooltip_AnimPause;
@@ -5170,6 +5302,17 @@ void Apply(const LanguageTable& t) {
   Settings_Option_GalleryTriggerClick = t.Settings_Option_GalleryTriggerClick;
   Settings_Option_GalleryTriggerDisable = t.Settings_Option_GalleryTriggerDisable;
   Settings_Tooltip_GalleryTrigger = t.Settings_Tooltip_GalleryTrigger;
+  OSD_SlideshowStarted = t.OSD_SlideshowStarted;
+  OSD_SlideshowStopped = t.OSD_SlideshowStopped;
+  OSD_SlideshowResumed = t.OSD_SlideshowResumed;
+  OSD_SlideshowPaused = t.OSD_SlideshowPaused;
+  OSD_ImmersiveSpotlight = t.OSD_ImmersiveSpotlight;
+  OSD_ImmersiveNormal = t.OSD_ImmersiveNormal;
+  Context_SlideshowMode = t.Context_SlideshowMode;
+  Settings_Label_SlideshowInterval = t.Settings_Label_SlideshowInterval;
+  Settings_Label_SlideshowImmersive = t.Settings_Label_SlideshowImmersive;
+  Settings_Option_SlideshowNormal = t.Settings_Option_SlideshowNormal;
+  Settings_Option_SlideshowSpotlight = t.Settings_Option_SlideshowSpotlight;
 }
 
 void Init() { SetLanguage(Language::Auto); }
@@ -5355,6 +5498,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     bool needsCleaning = true;
     
     switch (action) {
+    case HotkeyAction::ToggleSlideshow: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"幻灯片模式 (播放/暂停)"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"幻燈片模式 (播放/暫停)"; break;
+        case AppStrings::Language::Japanese:           raw = L"スライドショー (再生/一時停止)"; break;
+        case AppStrings::Language::Russian:            raw = L"Слайд-шоу (Запуск/Пауза)"; break;
+        case AppStrings::Language::German:             raw = L"Diashow (Wiedergabe/Pause)"; break;
+        case AppStrings::Language::Spanish:            raw = L"Presentación de diapositivas (Reproducir/Pausar)"; break;
+        case AppStrings::Language::French:             raw = L"Diaporama (Lecture/Pause)"; break;
+        default:                                       raw = L"Slideshow (Play/Pause)"; break;
+        }
+        break;
+    }
     case HotkeyAction::NavNext:
         raw = AppStrings::Toolbar_Tooltip_Next;
         break;

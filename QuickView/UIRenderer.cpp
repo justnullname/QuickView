@@ -598,6 +598,8 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // [Fix] Clear surface before drawing to prevent "ghosting" of previous state (e.g. pinned vs unpinned background)
     dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
+
+
     // [Geek Glass] Initialize lazily here (we have valid context on the UI static layer)
     m_geekGlass.InitializeResources(dc);
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
@@ -2821,9 +2823,19 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     
     float startX = g_runtime.InfoPanelX * s;
     float startY = g_runtime.InfoPanelY * s;
+    
+    // Push info panel down if it overlaps with the top filmstrip overlay
+    extern GalleryOverlay g_gallery;
+    float galleryH = g_gallery.IsVisible() ? g_gallery.GetVisualHeight((float)m_height) : 0.0f;
+    if (galleryH > 0.0f && startY < galleryH + 12.0f * s) {
+        startY = galleryH + 12.0f * s;
+    }
+    
     D2D1_RECT_F rect = D2D1::RectF(startX, startY, startX + textW, startY + 24.0f * s);
-    // [Visual Consistency] Follow UI theme instead of image luma
-    const AdaptiveUiPalette palette = BuildAdaptivePalette(IsLightThemeActive() ? 1.0f : 0.0f, &m_compactInfoAdaptiveBlend);
+    // [Visual Consistency] Adaptive UI based on underlying image luma
+    float panelLuma = EstimateRectLuminance(rect);
+    if (panelLuma < 0.0f) panelLuma = IsLightThemeActive() ? 1.0f : 0.0f; // fallback
+    const AdaptiveUiPalette palette = BuildAdaptivePalette(panelLuma, &m_compactInfoAdaptiveBlend);
 
     // Shadow Text
     ComPtr<ID2D1SolidColorBrush> brushShadow, brushText, brushYellow, brushRed;
@@ -3046,6 +3058,13 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     float height = 26.0f * s + (float)m_infoGrid.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
     float startX = g_runtime.InfoPanelX * s;
     float startY = g_runtime.InfoPanelY * s;
+    
+    // Push info panel down if it overlaps with the top filmstrip overlay
+    extern GalleryOverlay g_gallery;
+    float galleryH = g_gallery.IsVisible() ? g_gallery.GetVisualHeight((float)m_height) : 0.0f;
+    if (galleryH > 0.0f && startY < galleryH + 12.0f * s) {
+        startY = galleryH + 12.0f * s;
+    }
     
     if (g_currentMetadata.HasGPS) height += 50.0f * s;
     if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f * s;

@@ -1,7 +1,9 @@
 #include "pch.h"
 #include "CompositionEngine.h"
-#include "QuickViewETW.h"
+#include "EditState.h"
 #include "GalleryOverlay.h"
+#include "QuickViewETW.h"
+
 static constexpr const char* CURRENT_MODULE = "CompositionEngine";
 #include "DebugMetrics.h"
 #include <dxgi1_6.h>
@@ -1294,10 +1296,21 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
     UINT h = (UINT)height;
     if (w == 0 || h == 0) return S_OK;
 
-    bool needsRedraw = (bgColor.r != m_lastBgColor.r || bgColor.g != m_lastBgColor.g || bgColor.b != m_lastBgColor.b || bgColor.a != m_lastBgColor.a) ||
-                       (showGrid != m_lastBgGrid) ||
-                       (w != m_lastBgW || h != m_lastBgH) ||
-                       (!m_backgroundLayer.surface);
+    extern GalleryOverlay g_gallery;
+    float galleryH =
+        g_gallery.IsVisible() ? g_gallery.GetVisualHeight((float)h) : 0.0f;
+
+    extern SlideshowState g_slideshowState;
+    extern AppConfig g_config;
+    bool isSpotlight =
+        g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1;
+
+    bool needsRedraw =
+        (bgColor.r != m_lastBgColor.r || bgColor.g != m_lastBgColor.g ||
+         bgColor.b != m_lastBgColor.b || bgColor.a != m_lastBgColor.a) ||
+        (showGrid != m_lastBgGrid) || (w != m_lastBgW || h != m_lastBgH) ||
+        (galleryH != m_lastGalleryH) || (isSpotlight != m_lastSpotlight) ||
+        (!m_backgroundLayer.surface);
 
     if (!needsRedraw) return S_OK;
 
@@ -1336,30 +1349,90 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
     // Handle Transparency
     m_backgroundLayer.context->Clear(bgColor);
 
-    // 3. Draw Grid
-    if (showGrid) {
-        float bgLuma = (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
-        D2D1_COLOR_F overlayColor = (bgLuma < 0.5f) ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f);
+    if (isSpotlight) {
+      // Spotlight Mode - Draw a premium theatrical radial gradient background
+      extern VisualState GetVisualState();
+      VisualState vs = GetVisualState();
 
-        ComPtr<ID2D1SolidColorBrush> brush;
-        m_backgroundLayer.context->CreateSolidColorBrush(overlayColor, &brush);
-        
-        extern GalleryOverlay g_gallery;
-        float startY = 0.0f;
-        if (g_gallery.IsVisible()) {
-            startY = g_gallery.GetVisualHeight((float)h);
+      float wImage = 0.0f;
+      float hImage = 0.0f;
+      if (vs.VisualSize.width > 0.0f && vs.VisualSize.height > 0.0f) {
+        float effWinH = (float)h - galleryH;
+        if (effWinH < 1.0f)
+          effWinH = 1.0f;
+        float baseFit = (std::min)((float)w / vs.VisualSize.width,
+                                   effWinH / vs.VisualSize.height);
+        baseFit *= 0.85f; // Constrain to 85% spotlight viewport size
+        wImage = vs.VisualSize.width * baseFit;
+        hImage = vs.VisualSize.height * baseFit;
+      }
+      if (wImage <= 0.0f || hImage <= 0.0f) {
+        wImage = (float)w * 0.85f;
+        hImage = ((float)h - galleryH) * 0.85f;
+      }
+
+      D2D1_POINT_2F center =
+          D2D1::Point2F((float)w / 2.0f, (galleryH + (float)h) / 2.0f);
+
+      // Dynamic adaptive radius: Ensure vignette surrounds the actual image
+      // with a larger halo
+      float radiusX = (std::max)(wImage * 1.80f, (float)w * 0.60f);
+      float radiusY = (std::max)(hImage * 1.80f, ((float)h - galleryH) * 0.60f);
+
+      ComPtr<ID2D1GradientStopCollection> stops;
+      D2D1_GRADIENT_STOP stopData[3];
+      // Center: Ambient theatrical reflection glow (pure black, lower opacity)
+      stopData[0].position = 0.0f;
+      stopData[0].color = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.75f);
+
+      // Mid-outer: Smooth transition to near black (pushed out to 70%)
+      stopData[1].position = 0.70f;
+      stopData[1].color = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.9f);
+
+      // Outer boundaries: Pure theatrical pitch black
+      stopData[2].position = 1.0f;
+      stopData[2].color = D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.00f);
+
+      if (SUCCEEDED(m_backgroundLayer.context->CreateGradientStopCollection(
+              stopData, 3, &stops))) {
+        ComPtr<ID2D1RadialGradientBrush> radialBrush;
+        if (SUCCEEDED(m_backgroundLayer.context->CreateRadialGradientBrush(
+                D2D1::RadialGradientBrushProperties(center, D2D1::Point2F(0, 0),
+                                                    radiusX, radiusY),
+                stops.Get(), &radialBrush))) {
+          m_backgroundLayer.context->FillRectangle(
+              D2D1::RectF(0, 0, (float)w, (float)h), radialBrush.Get());
         }
-        
-        const float gridSize = 16.0f;
-        float alignedStartY = std::floor(startY / gridSize) * gridSize;
-        
-        for (float y = alignedStartY; y < (float)h; y += gridSize) {
-            for (float x = 0; x < (float)w; x += gridSize) {
-                if (((int)(x / gridSize) + (int)(y / gridSize)) % 2 != 0) {
-                    m_backgroundLayer.context->FillRectangle(D2D1::RectF(x, y, x + gridSize, y + gridSize), brush.Get());
-                }
-            }
+      }
+    }
+
+    // 3. Draw Grid
+    if (showGrid && !isSpotlight) {
+      float bgLuma =
+          (bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f);
+      D2D1_COLOR_F overlayColor = (bgLuma < 0.5f)
+                                      ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f)
+                                      : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f);
+
+      ComPtr<ID2D1SolidColorBrush> brush;
+      m_backgroundLayer.context->CreateSolidColorBrush(overlayColor, &brush);
+
+      float startY = 0.0f;
+      if (g_gallery.IsVisible()) {
+        startY = g_gallery.GetVisualHeight((float)h);
+      }
+
+      const float gridSize = 16.0f;
+      float alignedStartY = std::floor(startY / gridSize) * gridSize;
+
+      for (float y = alignedStartY; y < (float)h; y += gridSize) {
+        for (float x = 0; x < (float)w; x += gridSize) {
+          if (((int)(x / gridSize) + (int)(y / gridSize)) % 2 != 0) {
+            m_backgroundLayer.context->FillRectangle(
+                D2D1::RectF(x, y, x + gridSize, y + gridSize), brush.Get());
+          }
         }
+      }
     }
 
     m_backgroundLayer.context->EndDraw();
@@ -1371,6 +1444,8 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
     m_lastBgGrid = showGrid;
     m_lastBgW = w;
     m_lastBgH = h;
+    m_lastGalleryH = galleryH;
+    m_lastSpotlight = isSpotlight;
 
     return S_OK;
 }

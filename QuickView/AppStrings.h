@@ -79,6 +79,7 @@ namespace AppStrings {
     extern const wchar_t* Context_RenderRAW;
     extern const wchar_t* Context_PixelArtMode;
     extern const wchar_t* Context_Fullscreen;
+    extern const wchar_t* Context_SlideshowMode;
     extern const wchar_t* Context_SpanDisplays;
     extern const wchar_t* Context_View;
     extern const wchar_t* Context_WallpaperFill;
@@ -146,6 +147,8 @@ namespace AppStrings {
     extern const wchar_t* Toolbar_Tooltip_CompareSyncZoomOff;
     extern const wchar_t* Toolbar_Tooltip_CompareSyncPanOn;
     extern const wchar_t* Toolbar_Tooltip_CompareSyncPanOff;
+    extern const wchar_t* Toolbar_Tooltip_SlideshowImmersiveToggle;
+    extern const wchar_t* Toolbar_Tooltip_SlideshowExit;
     extern const wchar_t* Toolbar_Tooltip_CompareExit;
     extern const wchar_t* Toolbar_Tooltip_AnimPlay;
     extern const wchar_t* Toolbar_Tooltip_AnimPause;
@@ -184,6 +187,12 @@ namespace AppStrings {
     extern const wchar_t* OSD_GamutDetected;
     extern const wchar_t* OSD_GamutIncompatible;
     extern const wchar_t* OSD_GamutFailed;
+    extern const wchar_t* OSD_SlideshowStarted;
+    extern const wchar_t* OSD_SlideshowStopped;
+    extern const wchar_t* OSD_SlideshowResumed;
+    extern const wchar_t* OSD_SlideshowPaused;
+    extern const wchar_t* OSD_ImmersiveSpotlight;
+    extern const wchar_t* OSD_ImmersiveNormal;
 
     extern const wchar_t* Context_ColorSpace;
     
@@ -284,6 +293,10 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_RememberLastWindowSizeAndPosition;
     extern const wchar_t* Settings_Label_UpscaleSmallImagesWhenLocked;
     extern const wchar_t* Settings_Label_EnableSmoothScaling; // New
+    extern const wchar_t* Settings_Label_SlideshowInterval;
+    extern const wchar_t* Settings_Label_SlideshowImmersive;
+    extern const wchar_t* Settings_Option_SlideshowNormal;
+    extern const wchar_t* Settings_Option_SlideshowSpotlight;
     extern const wchar_t* Settings_Label_ExifMode;
     extern const wchar_t* Settings_Label_ToolbarInfoDefault;
     extern const wchar_t* Settings_Label_OpenFullScreenMode;

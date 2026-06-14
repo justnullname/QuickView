@@ -39,7 +39,10 @@ enum class ToolbarButtonID {
     OverlayAlphaUp,
     OverlayAlphaDown,
     OverlayPassthrough,
-    OverlayExit
+    OverlayExit,
+    // Slideshow mode
+    SlideshowImmersiveToggle,
+    SlideshowExit
 };
 
 struct ToolbarButton {
@@ -106,13 +109,16 @@ public:
     // [v10.5] Animation Mode
     void SetAnimationMode(bool enabled, bool playing = true, bool dirtyRect = false, bool supportsDirtyRect = true);
     bool IsAnimationMode() const { return m_animMode; }
+    void SetSlideshowMode(bool enabled, bool playing = true);
+    bool IsSlideshowMode() const { return m_slideshowMode; }
     void SetAnimProgress(float progress) { m_animProgress = progress; }
     void SetAnimFrameInfo(uint32_t currentFrame, uint32_t totalFrames) { 
         m_currentFrame = currentFrame; 
         m_totalFrames = totalFrames; 
     }
+    float GetAnimSpeedMult() const { return m_animSpeedMult; }
+    void SetAnimSpeedMult(float mult) { m_animSpeedMult = mult; }
     void SetDraggingProgress(bool dragging) { m_isDraggingProgress = dragging; }
-    float GetAnimSpeedMultiplier() const { return m_animSpeedMult; }
 
     // [Overlay Mode]
     void SetOverlayMode(bool enabled);
@@ -149,6 +155,7 @@ private:
     bool m_compareMode = false;
     bool m_comicMode = false;
     bool m_animMode = false;
+    bool m_slideshowMode = false;
     bool m_animPlaying = true;
     bool m_animDirtyRect = false;
     bool m_overlayMode = false;

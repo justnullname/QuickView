@@ -253,6 +253,8 @@ private:
     bool m_lastBgGrid = false;
     UINT m_lastBgW = 0;
     UINT m_lastBgH = 0;
+    float m_lastGalleryH = -1.0f;
+    bool m_lastSpotlight = false;
 
     // State tracking for Drift Compensation and Glass rendering
     float m_currentScale = 1.0f;

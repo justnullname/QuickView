@@ -53,6 +53,9 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::OverlayAlphaDown,   Icons::ComboDown,  {}, true, false},
       {ToolbarButtonID::OverlayPassthrough, Icons::Passthrough,{}, true, false},
       {ToolbarButtonID::OverlayExit,        Icons::ExitToolbar,  {}, true, false},
+      // Slideshow mode buttons
+      {ToolbarButtonID::SlideshowImmersiveToggle, Icons::Eye, {}, true, false},
+      {ToolbarButtonID::SlideshowExit,            Icons::ExitToolbar, {}, true, false},
       // Pin at the very end
       {ToolbarButtonID::Pin, Icons::Pin, {}, true, false},
   };
@@ -222,12 +225,25 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       {ToolbarButtonID::OverlayExit},  // Core
   };
 
+  static constexpr ResponsiveHideGroup kSlideshowHideOrder[] = {
+      {ToolbarButtonID::Pin},
+      {ToolbarButtonID::Exif},
+      {ToolbarButtonID::Gallery},
+      {ToolbarButtonID::SlideshowImmersiveToggle},
+      {ToolbarButtonID::AnimPrevFrame, ToolbarButtonID::AnimNextFrame},
+      {ToolbarButtonID::AnimPlayPause},
+      {ToolbarButtonID::SlideshowExit},  // Core
+  };
+
   // Select the appropriate hide table for the current mode
   const ResponsiveHideGroup* hideOrder = kNormalHideOrder;
   int hideOrderCount = (int)std::size(kNormalHideOrder);
   if (m_overlayMode) {
       hideOrder = kOverlayHideOrder;
       hideOrderCount = (int)std::size(kOverlayHideOrder);
+  } else if (m_slideshowMode) {
+      hideOrder = kSlideshowHideOrder;
+      hideOrderCount = (int)std::size(kSlideshowHideOrder);
   } else if (m_animMode) {
       hideOrder = kAnimHideOrder;
       hideOrderCount = (int)std::size(kAnimHideOrder);
@@ -252,14 +268,38 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     if (btn.id == ToolbarButtonID::Gallery && (winH < 450.0f || winW < 600.0f)) {
       return false;
     }
+    auto isSlideshowButton = [](ToolbarButtonID id) {
+      return id == ToolbarButtonID::SlideshowImmersiveToggle ||
+             id == ToolbarButtonID::SlideshowExit ||
+             id == ToolbarButtonID::AnimPrevFrame ||
+             id == ToolbarButtonID::AnimPlayPause ||
+             id == ToolbarButtonID::AnimNextFrame;
+    };
+
+    auto isSlideshowOnlyButton = [](ToolbarButtonID id) {
+      return id == ToolbarButtonID::SlideshowImmersiveToggle ||
+             id == ToolbarButtonID::SlideshowExit;
+    };
+    if (isSlideshowOnlyButton(btn.id) && !m_slideshowMode) {
+      return false;
+    }
+
+    if (m_slideshowMode) {
+      // White-list slideshow controls (play group, immersive toggle, exit, gallery, exif, pin)
+      if (isSlideshowButton(btn.id) || btn.id == ToolbarButtonID::Gallery || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::Pin) {
+        return btn.isEnabled;
+      }
+      return false;
+    }
+
     if (m_overlayMode) {
       if (isOverlayButton(btn.id)) return true;
       if (btn.id == ToolbarButtonID::CompareZoomIn || btn.id == ToolbarButtonID::CompareZoomOut || btn.id == ToolbarButtonID::LockSize) return true;
       if (isAlwaysVisible(btn.id)) return true;
       return false;
     }
-    if (m_animMode) {
-      if (btn.id == ToolbarButtonID::AnimDirtyRect) return g_config.ShowDirtyRectButton;
+    if (m_animMode || m_slideshowMode) {
+      if (btn.id == ToolbarButtonID::AnimDirtyRect) return m_animMode && g_config.ShowDirtyRectButton;
       if (btn.id == ToolbarButtonID::Prev || btn.id == ToolbarButtonID::Next || btn.id == ToolbarButtonID::Exif || btn.id == ToolbarButtonID::LockSize) return true;
       if (isAnimButton(btn.id)) return true;
       if (isAlwaysVisible(btn.id)) return true;
@@ -297,7 +337,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   auto calcTotalWidth = [&]() -> float {
     int count = 0;
     bool hasZoom = false;
-    bool hasSpeed = m_animMode && !m_overlayMode;
+    bool hasSpeed = (m_animMode || m_slideshowMode) && !m_overlayMode;
     for (const auto &btn : m_buttons) {
       if (isVisibleButton(btn)) count++;
       if ((m_compareMode || m_overlayMode) && (btn.id == ToolbarButtonID::CompareZoomIn || btn.id == ToolbarButtonID::CompareZoomOut)) {
@@ -313,7 +353,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
       const float zoomGap = 2.0f * m_uiScale;
       w += (56.0f * m_uiScale) + (zoomGap * 2.0f) - gap;
     }
-    if (m_animMode && hasSpeed) {
+    if ((m_animMode || m_slideshowMode) && hasSpeed) {
       const float speedGap = 2.0f * m_uiScale;
       w += (56.0f * m_uiScale) + (speedGap * 2.0f) - gap;
     }
@@ -414,7 +454,7 @@ void Toolbar::UpdateLayout(float winW, float winH) {
         stepInserted = true;
       }
       
-      if (m_animMode && btn.id == ToolbarButtonID::AnimNextFrame &&
+      if ((m_animMode || m_slideshowMode) && btn.id == ToolbarButtonID::AnimNextFrame &&
           !speedInserted) {
         cx -= gap; // Backtrack standard gap
         const float speedGap = 2.0f * m_uiScale;
@@ -440,6 +480,10 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 
 const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   switch (btn.id) {
+  case ToolbarButtonID::SlideshowImmersiveToggle:
+    return AppStrings::Toolbar_Tooltip_SlideshowImmersiveToggle;
+  case ToolbarButtonID::SlideshowExit:
+    return AppStrings::Toolbar_Tooltip_SlideshowExit;
   case ToolbarButtonID::Prev:
     return AppStrings::Toolbar_Tooltip_Prev;
   case ToolbarButtonID::Next:
@@ -803,7 +847,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
     }
     
     // [v10.5] Animation speed capsule
-    if (m_animMode && m_animSpeedRect.right > m_animSpeedRect.left) {
+    if ((m_animMode || m_slideshowMode) && m_animSpeedRect.right > m_animSpeedRect.left) {
       D2D1_ROUNDED_RECT speedRect = D2D1::RoundedRect(
           m_animSpeedRect, 6.0f * m_uiScale, 6.0f * m_uiScale);
       pRT->FillRoundedRectangle(speedRect, m_brushHover.Get());
@@ -874,7 +918,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
     }
   }
 
-  if (!activeTip && m_animMode && m_animSpeedHover) {
+  if (!activeTip && (m_animMode || m_slideshowMode) && m_animSpeedHover) {
     activeTip = AppStrings::Toolbar_Tooltip_AnimSpeed;
     activeRect = m_animSpeedRect;
   }
@@ -955,7 +999,7 @@ bool Toolbar::OnMouseMove(float x, float y) {
   }
   // [v10.5] Animation speed capsule hover
   bool sHover = false, sUpHover = false, sDownHover = false;
-  if (m_animMode && m_animSpeedRect.right > m_animSpeedRect.left) {
+  if ((m_animMode || m_slideshowMode) && m_animSpeedRect.right > m_animSpeedRect.left) {
     if (x >= m_animSpeedRect.left && x < m_animSpeedRect.right && y >= m_animSpeedRect.top && y < m_animSpeedRect.bottom) {
       sHover = true;
       if (x >= m_animSpeedUpRect.left && x < m_animSpeedUpRect.right && y >= m_animSpeedUpRect.top && y < m_animSpeedUpRect.bottom) sUpHover = true;
@@ -1009,14 +1053,14 @@ bool Toolbar::OnClick(float x, float y, ToolbarButtonID &outId) {
       }
     }
     // [v10.5] Animation speed capsule clicks
-    if (m_animMode && m_animSpeedRect.right > m_animSpeedRect.left) {
+    if ((m_animMode || m_slideshowMode) && m_animSpeedRect.right > m_animSpeedRect.left) {
       if (x >= m_animSpeedUpRect.left && x < m_animSpeedUpRect.right && y >= m_animSpeedUpRect.top && y < m_animSpeedUpRect.bottom) {
         m_animSpeedMult = (std::min)(4.0f, m_animSpeedMult + 0.25f);
-        outId = ToolbarButtonID::None; return true;
+        outId = ToolbarButtonID::AnimSpeedUp; return true;
       }
       if (x >= m_animSpeedDownRect.left && x < m_animSpeedDownRect.right && y >= m_animSpeedDownRect.top && y < m_animSpeedDownRect.bottom) {
         m_animSpeedMult = (std::max)(0.25f, m_animSpeedMult - 0.25f);
-        outId = ToolbarButtonID::None; return true;
+        outId = ToolbarButtonID::AnimSpeedDown; return true;
       }
     }
     // Progress bar click
@@ -1141,12 +1185,31 @@ void Toolbar::SetOverlayMode(bool enabled) {
   m_overlayMode = enabled;
 }
 
-void Toolbar::SetAnimationMode(bool enabled, bool playing, bool dirtyRect, bool supportsDirtyRect) {
-  m_animMode = enabled;
+void Toolbar::SetSlideshowMode(bool enabled, bool playing) {
+  m_slideshowMode = enabled;
   m_animPlaying = playing;
-  m_animDirtyRect = dirtyRect;
   for (auto &btn : m_buttons) {
     if (btn.id == ToolbarButtonID::AnimPlayPause) {
+      btn.iconGlyph = playing ? Icons::Pause : Icons::Play;
+      btn.isToggled = playing;
+    }
+    if (btn.id == ToolbarButtonID::SlideshowImmersiveToggle) {
+      btn.isToggled = (g_config.SlideshowImmersiveMode == 1);
+    }
+    if (btn.id == ToolbarButtonID::AnimPrevFrame || btn.id == ToolbarButtonID::AnimNextFrame) {
+      btn.isEnabled = true;
+    }
+  }
+}
+
+void Toolbar::SetAnimationMode(bool enabled, bool playing, bool dirtyRect, bool supportsDirtyRect) {
+  m_animMode = enabled;
+  m_animDirtyRect = dirtyRect;
+  if (!m_slideshowMode) {
+    m_animPlaying = playing;
+  }
+  for (auto &btn : m_buttons) {
+    if (btn.id == ToolbarButtonID::AnimPlayPause && !m_slideshowMode) {
       btn.iconGlyph = playing ? Icons::Pause : Icons::Play;
       btn.isToggled = playing;
     }

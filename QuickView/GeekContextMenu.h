@@ -71,10 +71,11 @@ struct GeekMenuItem {
         m.submenu = std::move(children);
         return m;
     }
-    static GeekMenuItem Check(UINT id, const wchar_t* text, bool checked, GeekIcons::IconGlyph icon = nullptr) {
+    static GeekMenuItem Check(UINT id, const wchar_t* text, bool checked, GeekIcons::IconGlyph icon = nullptr, const wchar_t* shortcut = nullptr) {
         GeekMenuItem m;
         m.type = MenuItemType::CheckBox; m.commandId = id; m.text = text;
         m.isChecked = checked; m.iconGlyph = icon;
+        if (shortcut) m.shortcut = shortcut;
         return m;
     }
     GeekMenuItem& Enabled(bool e) { isEnabled = e; return *this; }
