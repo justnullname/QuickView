@@ -1241,8 +1241,8 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     if (g_gallery.IsVisible()) return;
     if (!m_showControls && m_winCtrlHover == -1) return;
     const float s = m_uiScale;
-    float btnW = 32.0f * s;
-    float btnH = 32.0f * s;
+    float btnW = 28.0f * s;
+    float btnH = 28.0f * s;
 
     // Do not draw if there is not even enough space for the buttons
     if (m_width < btnW * 4) return;
@@ -1348,8 +1348,8 @@ void UIRenderer::DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd) {
     auto DrawHover = [&](const D2D1_RECT_F& r, D2D1_COLOR_F color) {
         float cx = (r.left + r.right) * 0.5f;
         float cy = (r.top + r.bottom) * 0.5f;
-        // The capsule height is 36px (32 + 2*padY).
-        // A radius of 0.5f * 32 = 16px (diameter 32px) ensures the glow stays perfectly inside the capsule.
+        // The capsule height is 32px (28 + 2*padY).
+        // A radius of 0.5f * 28 = 14px (diameter 28px) ensures the glow stays perfectly inside the capsule.
         float radius = std::min(r.right - r.left, r.bottom - r.top) * 0.5f;
         
         ComPtr<ID2D1GradientStopCollection> stops;

@@ -89,6 +89,7 @@ private:
     
     float m_scrollLeft = 0.0f;
     float m_maxScrollLeft = 0.0f;
+    float m_targetScrollLeft = -1.0f;
     
     // Physical Inertia
     float m_velocityX = 0.0f;
@@ -174,7 +175,7 @@ private:
 
     bool m_restoreInfoPanel = false;
 
-    void EnsureVisible(int index, const D2D1_SIZE_F& size);
+    void EnsureVisible(int index, const D2D1_SIZE_F& size, bool smooth = true);
     __declspec(noinline) D2D1_RECT_F GetItemRect(int index, float winW) const;
     int HitTest(float x, float y);
 };

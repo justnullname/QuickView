@@ -68,6 +68,7 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
     // Reset transient states
     m_scrollTop = 0.0f;
     m_scrollLeft = 0.0f;
+    m_targetScrollLeft = -1.0f;
     m_hoverIndex = -1;
     m_velocityX = 0.0f;
     m_dragYOffset = 0.0f;
@@ -145,7 +146,22 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
             m_scrollLeft = m_maxScrollLeft;
             m_velocityX = 0.0f;
         }
+        m_targetScrollLeft = m_scrollLeft;
         repaintNeeded = true;
+    } else if (m_gridProgress < 0.2f && !m_isLButtonDown) {
+        // Smooth scroll interpolation for Filmstrip horizontal scrolling
+        if (m_targetScrollLeft < 0.0f) {
+            m_targetScrollLeft = m_scrollLeft;
+        }
+        if (fabsf(m_scrollLeft - m_targetScrollLeft) > 0.1f) {
+            float speed = g_config.GlassUIAnimations ? 12.0f : 100.0f;
+            m_scrollLeft += (m_targetScrollLeft - m_scrollLeft) * deltaTime * speed;
+            m_scrollLeft = std::clamp(m_scrollLeft, 0.0f, m_maxScrollLeft);
+            repaintNeeded = true;
+        }
+    } else {
+        // Under manual dragging or non-filmstrip mode, keep target in sync
+        m_targetScrollLeft = m_scrollLeft;
     }
     
     // 4. Alpha Transitions for Arrows & Visual Cues
@@ -257,7 +273,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
             int navIdx = m_pNav->Index();
             if (m_selectedIndex != navIdx) {
                 m_selectedIndex = navIdx;
-                EnsureVisible(m_selectedIndex, m_lastSize);
+                EnsureVisible(m_selectedIndex, m_lastSize, true);
                 repaintNeeded = true;
             }
         }
@@ -384,6 +400,11 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
     float filmCellH = FILM_CELL_SIZE;
     float filmLeftMargin = 48.0f;
     m_maxScrollLeft = std::max(0.0f, filmLeftMargin * 2.0f + count * (filmCellW + GAP) - GAP - size.width);
+    
+    // If target scroll was uninitialized (e.g. newly opened), calculate it now with the correct max scroll
+    if (m_targetScrollLeft < 0.0f && m_selectedIndex >= 0) {
+        EnsureVisible(m_selectedIndex, size, false);
+    }
     
     // Keep scroll offsets in bounds
     m_scrollTop = std::clamp(m_scrollTop, 0.0f, m_maxScroll);
@@ -706,10 +727,12 @@ bool GalleryOverlay::OnKeyDown(UINT key) {
         case VK_LEFT:
             if (m_isPinned && m_mode == GalleryMode::Filmstrip) return false;
             m_selectedIndex = std::max(0, m_selectedIndex - 1);
+            EnsureVisible(m_selectedIndex, m_lastSize, true);
             break;
         case VK_RIGHT:
             if (m_isPinned && m_mode == GalleryMode::Filmstrip) return false;
             m_selectedIndex = std::min((int)m_pNav->Count() - 1, m_selectedIndex + 1);
+            EnsureVisible(m_selectedIndex, m_lastSize, true);
             break;
         case VK_UP:
             if (m_mode == GalleryMode::FullGrid) {
@@ -779,11 +802,15 @@ bool GalleryOverlay::OnLButtonDown(int x, int y) {
         float arrowR = 30.0f;
         
         if (fx < 48.0f && fabsf(fy - arrowCy) < arrowR) {
-            m_scrollLeft = std::max(0.0f, m_scrollLeft - 300.0f);
+            if (m_targetScrollLeft < 0.0f) m_targetScrollLeft = m_scrollLeft;
+            m_targetScrollLeft = std::max(0.0f, m_targetScrollLeft - 300.0f);
+            RequestRepaint(QuickView::PaintLayer::Gallery);
             return true;
         }
         if (fx > m_lastSize.width - 48.0f && fabsf(fy - arrowCy) < arrowR) {
-            m_scrollLeft = std::min(m_maxScrollLeft, m_scrollLeft + 300.0f);
+            if (m_targetScrollLeft < 0.0f) m_targetScrollLeft = m_scrollLeft;
+            m_targetScrollLeft = std::min(m_maxScrollLeft, m_targetScrollLeft + 300.0f);
+            RequestRepaint(QuickView::PaintLayer::Gallery);
             return true;
         }
     }
@@ -946,7 +973,8 @@ bool GalleryOverlay::OnLButtonUp(int x, int y, int& outSelectedIndex) {
     return false; // Did not select a cell (it was a drag release)
 }
 
-void GalleryOverlay::EnsureVisible(int index, const D2D1_SIZE_F& size) {
+
+void GalleryOverlay::EnsureVisible(int index, const D2D1_SIZE_F& size, bool smooth) {
     if (index < 0) return;
     
     if (m_mode == GalleryMode::FullGrid) {
@@ -964,12 +992,14 @@ void GalleryOverlay::EnsureVisible(int index, const D2D1_SIZE_F& size) {
         float cellW = FILM_CELL_SIZE;
         float filmLeftMargin = 48.0f;
         float itemLeft = filmLeftMargin + index * (cellW + GAP);
-        float itemRight = itemLeft + cellW;
         
-        if (itemLeft < m_scrollLeft + filmLeftMargin) {
-            m_scrollLeft = itemLeft - filmLeftMargin;
-        } else if (itemRight > m_scrollLeft + size.width - filmLeftMargin) {
-            m_scrollLeft = itemRight - size.width + filmLeftMargin;
+        float itemCenter = itemLeft + cellW * 0.5f;
+        float target = itemCenter - size.width * 0.5f;
+        float clampedTarget = std::clamp(target, 0.0f, m_maxScrollLeft);
+        
+        m_targetScrollLeft = clampedTarget;
+        if (!smooth) {
+            m_scrollLeft = clampedTarget;
         }
     }
 }
