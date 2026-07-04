@@ -2921,7 +2921,7 @@ static const LanguageTable Table_RU = {
     L"До (Оригинал)", // OSD_CompareBefore
     L"После (Проба)", // OSD_CompareAfter
     L"Обнаружены цвета вне цветового охвата", // OSD_GamutDetected
-    L"Охват: Несовместимый профиль", // OSD_GamutIncompatible
+    L"Охват: Несовместимый профиль или ошибка разбора", // OSD_GamutIncompatible
     L"Охват: Ошибка анализа", // OSD_GamutFailed
     L"Повернуть на 90\x00B0 по часовой", // Action_RotateCW
     L"Повернуть на 90\x00B0 против часовой", // Action_RotateCCW
@@ -2956,7 +2956,7 @@ static const LanguageTable Table_RU = {
     L"Всегда сортировать архивы по имени", // Settings_Label_SortArchivesByNameAscending
     L"Подтверждение удаления", // Settings_Label_ConfirmDel
     L"Портативный режим / Очистка", // Settings_Label_Portable
-    L"Портативный режим и очистка реестра:\nПри включении QuickView работает в " L"портативном режиме. Он автоматически очистит существующие ассоциации в " L"реестре, отключит автоматическое изменение реестра и будет хранить файлы " L"конфигурации в каталоге приложения вместо AppData.", // Settings_Tooltip_Portable
+    L"Портативный режим и очистка реестра:\nПри включении QuickView работает в " L"портативном режиме. Будут автоматически очищены имеющиеся ассоциации в " L"реестре, отключено автоизменение реестра, а файлы конфигурации " L"будут храниться не в AppData, а в папке приложения.", // Settings_Tooltip_Portable
     L"Распределять по мониторам (видеостена)", // Settings_Label_SpanDisplays
     L"Масштаб интерфейса", // Settings_Label_UIScale
     L"Требуется перезапуск", // Settings_Status_RestartRequired
@@ -2998,30 +2998,30 @@ static const LanguageTable Table_RU = {
     L"Исправить расширение", // Context_FixExtension
     L"Удалить\tDel", // Context_Delete
     L"Сортировка", // Context_SortBy
-    L"Порядок навигации", // Context_NavOrder
+    L"Навигация", // Context_NavOrder
     L"По возрастанию", // Context_SortAscending
     L"По убыванию", // Context_SortDescending
     L"Настройки...", // Context_Settings
     L"Режим сравнения\tC", // Context_CompareMode
-    L"Режим кальки\tCtrl+Shift+O", // Context_OverlayMode
+    L"Режим наложения\tCtrl+Shift+O", // Context_OverlayMode
     L"Открыть в режиме сравнения", // Context_GalleryOpenCompare
     L"Открыть в новом окне", // Context_GalleryOpenNewWindow
     L"Выход\tMButton/Esc", // Context_Exit
-    L"Выйти из режима сквозного клика", // Menu_ExitPassthrough
-    L"Режим сквозного клика", // Dialog_PassthroughTitle
-    L"События мыши будут проходить сквозь окно.\nВыйти можно только через глобальный хоткей (Shift+Esc) или меню панели задач.\n\nПродолжить?", // Dialog_PassthroughContent
-    L"Сквозной клик: ВКЛ (Shift+Esc для выхода)", // OSD_PassthroughOn
-    L"Сквозной клик: ВЫКЛ", // OSD_PassthroughOff
-    L"Режим кальки: ВКЛ", // OSD_OverlayModeOn
-    L"Режим кальки: ВЫКЛ", // OSD_OverlayModeOff
+    L"Выйти из режима сквозного щелчка", // Menu_ExitPassthrough
+    L"Режим сквозного щелчка", // Dialog_PassthroughTitle
+    L"События мыши будут 'проходить' сквозь окно.\nВыйти можно только через глобальную горячую клавишу (Shift+Esc) или в меню панели задач.\n\nПродолжить?", // Dialog_PassthroughContent
+    L"Сквозной щелчок: ВКЛ (Shift+Esc - выход)", // OSD_PassthroughOn
+    L"Сквозной щелчок: ВЫКЛ", // OSD_PassthroughOff
+    L"Режим наложения: ВКЛ", // OSD_OverlayModeOn
+    L"Режим наложения: ВЫКЛ", // OSD_OverlayModeOff
     L"Непрозрачность", // OSD_Opacity
-    L"Увеличить (калька)", // Toolbar_Tooltip_OverlayZoomIn
-    L"Уменьшить (калька)", // Toolbar_Tooltip_OverlayZoomOut
+    L"Увеличить (наложение)", // Toolbar_Tooltip_OverlayZoomIn
+    L"Уменьшить (наложение)", // Toolbar_Tooltip_OverlayZoomOut
     L"Увеличить непрозрачность", // Toolbar_Tooltip_OverlayAlphaUp
     L"Уменьшить непрозрачность", // Toolbar_Tooltip_OverlayAlphaDown
-    L"Включить сквозной клик", // Toolbar_Tooltip_OverlayPassthroughOn
-    L"Выключить сквозной клик", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"Выйти из режима кальки", // Toolbar_Tooltip_OverlayExit
+    L"Включить сквозной щелчок", // Toolbar_Tooltip_OverlayPassthroughOn
+    L"Выключить сквозной щелчок", // Toolbar_Tooltip_OverlayPassthroughOff
+    L"Выйти из режима наложения", // Toolbar_Tooltip_OverlayExit
     L"Ошибка", // Message_SaveErrorTitle
     L"Не удалось сохранить файл. Файл заблокирован?", // Message_SaveErrorContent
     L"Предыдущее (Влево)", // Toolbar_Tooltip_Prev
@@ -3054,7 +3054,7 @@ static const LanguageTable Table_RU = {
     L"Синхр. масштаба: НЕТ", // Toolbar_Tooltip_CompareSyncZoomOff
     L"Синхр. панорамирования: ДА", // Toolbar_Tooltip_CompareSyncPanOn
     L"Синхр. панорамирования: НЕТ", // Toolbar_Tooltip_CompareSyncPanOff
-    L"Переключить эффект прожектора", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"Вкл./выкл. эффект прожектора", // Toolbar_Tooltip_SlideshowImmersiveToggle
     L"Выйти из режима слайд-шоу", // Toolbar_Tooltip_SlideshowExit
     L"Выйти из сравнения", // Toolbar_Tooltip_CompareExit
     L"Воспроизвести анимацию", // Toolbar_Tooltip_AnimPlay
@@ -3066,11 +3066,11 @@ static const LanguageTable Table_RU = {
     L"Скорость анимации", // Toolbar_Tooltip_AnimSpeed
     L"Производительность", // Settings_Header_Performance
     L"Профессиональные инструменты", // Settings_Header_Professional
-    L"Memory Reclaim Strategy:", // Settings_Label_MemoryReclaim
-    L"Smart (Auto)", // Settings_Option_MemSmart
-    L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
-    L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
-    L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
+    L"Стратегия восстановления памяти:", // Settings_Label_MemoryReclaim
+    L"Умная (авто)", // Settings_Option_MemSmart
+    L"Агрессивная (макс. производительность)", // Settings_Option_MemAggressive
+    L"По требованию (мин. ОЗУ)", // Settings_Option_MemOnDemand
+    L"Умная: Баланс производительности и ОЗУ.\nАгрессивная: Максимальная производительность и высокий уровень использования памяти.\nПо требованию: Сразу высвобождать память при простоях.", // Settings_Tooltip_MemoryReclaim
     L"Показывать кнопку отображаемой области в режиме анимации", // Settings_Label_ShowDirtyRect
     L"Показывать кнопку отладки отображаемой области на панели инструментов анимации для отображения обновляемых участков.", // Settings_Tooltip_ShowDirtyRect
     L"Скопировано!", // OSD_Copied
@@ -3129,8 +3129,8 @@ static const LanguageTable Table_RU = {
     L"Сила теней окружающего затенения.", // Settings_Tooltip_ShadowIntensity
     L"Векторный рендеринг", // Settings_Header_VectorAssets
     L"Обводка значков", // Settings_Label_VectorStrokeWeight
-    L"Стандартная (1.5 пкс)", // Settings_Option_StrokeStandard
-    L"Тонкая ine (1.0 пкс)", // Settings_Option_StrokeFine
+    L"Обычная (1.5 пкс)", // Settings_Option_StrokeStandard
+    L"Тонкая (1.0 пкс)", // Settings_Option_StrokeFine
     L"Профиль оттенка", // Settings_Header_GlassTint
     L"Цветовая логика", // Settings_Label_TintProfile
     L"Авто (адаптивно)", // Settings_Option_TintAuto
@@ -3141,10 +3141,10 @@ static const LanguageTable Table_RU = {
     L"Прозрачность для небольших плавающих наложений.", // Settings_Tooltip_OsdDensity
     L"Панель инструментов и боковые панели", // Settings_Label_PanelsDensity
     L"Прозрачность для постоянных панелей управления.", // Settings_Tooltip_PanelsDensity
-    L"Диалоги и настройки", // Settings_Label_ModalsDensity
+    L"Окна и настройки", // Settings_Label_ModalsDensity
     L"Прозрачность центрированных всплывающих окон.", // Settings_Tooltip_ModalsDensity
     L"Меню", // Settings_Label_MenusDensity
-    L"Transparency for right-click context menus.", // Settings_Tooltip_MenusDensity
+    L"Прозрачность контекстных меню, вызываемых правой кнопкой мыши.", // Settings_Tooltip_MenusDensity
     L"Тема", // Settings_Tab_Theme
     L"Пресет", // Settings_Label_ThemeMode
     L"Авто", // Settings_Option_ThemeAuto
@@ -3164,10 +3164,10 @@ static const LanguageTable Table_RU = {
     L"Плавный переход между изображениями", // Settings_Label_CrossFade
     L"Поверх всех окон", // Settings_Label_AlwaysOnTop
     L"Заблокировать окно", // Settings_Label_LockWindow
-    L"Управляет тем, блокирует ли программа по умолчанию границы окна при запуске, не следуя за масштабированием изображения.", // Settings_Tooltip_LockWindow
+    L"Определяет, будут ли блокироваться границы окна по умолчанию при запуске, а не после масштабирования изображения.", // Settings_Tooltip_LockWindow
     L"Автоскрытие заголовка", // Settings_Label_AutoHideTitle
     L"Скруглённые углы", // Settings_Label_RoundedCorners
-    L"Controls window and context menu rounded corners. Requires Windows 11.", // Settings_Tooltip_RoundedCorners
+    L"Определяет, будут ли окно и контекстное меню со скруглёнными углами. Требуется Windows 11.", // Settings_Tooltip_RoundedCorners
     L"Закрепить нижнюю панель", // Settings_Label_LockToolbar
     L"Мин. ширина окна", // Settings_Label_WindowMinSize
     L"Макс. начальный размер (%)", // Settings_Label_WindowMaxSizePercent
@@ -3182,12 +3182,12 @@ static const LanguageTable Table_RU = {
     L"Масштаб в полноэкранном режиме", // Settings_Label_FullScreenZoomMode
     L"Вписывать", // Settings_Option_FitScreen
     L"Авто", // Settings_Option_AutoFit
-    L"Инвертировать действие колеса", // Settings_Label_InvertWheel
+    L"Инвертировать действие колёсика", // Settings_Label_InvertWheel
     L"Задержка привязки зума (100%)", // Settings_Label_ZoomSnapDamping
     L"Масштабировать окно от позиции мыши", // Settings_Label_MouseAnchorZoom
     L"Масштаб правой кнопкой мыши", // Settings_Label_RightButtonDragZoom
-    L"Скорость зума колесиком", // Settings_Label_WheelZoomSpeed
-    L"Боковое колесико", // Settings_Label_ThumbWheel
+    L"Скорость зума колёсиком", // Settings_Label_WheelZoomSpeed
+    L"Боковое колёсико", // Settings_Label_ThumbWheel
     L"Скорость зума правой кнопкой", // Settings_Label_RightDragZoomSpeed
     L"Скорость зума (временно): ", // OSD_WheelZoomSpeed
     L"Временно настроить скорость зума", // Help_Action_AdjustZoomSpeed
@@ -3205,20 +3205,20 @@ static const LanguageTable Table_RU = {
     L"Управление цветом (CMS)", // Settings_Label_CMS
     L"Расширенный цвет (HDR)", // Settings_Label_AdvancedColor
     L"Тональная компрессия HDR", // Settings_Label_HdrToneMapping
-    L"Spline Knee Point", // Settings_Label_HdrSplineKnee
-    L"Стратегия тональной компрессии HDR:\nОпределяет, как отображаются " L"HDR-изображения, превышающие возможности монитора.\nSpline: " L"Высокоточное сжатие светов с использованием сплайнов (Рекомендуется).\n" L"Колориметрическая: Строгое отображение яркости; светлые участки, " L"превышающие предел монитора, обрезаются.\nBT.2390 (EETF): Кривая ITU-R BT.2390 EETF для высокоточного отображения тонов.", // Settings_Tooltip_HdrToneMapping
-    L"0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
+    L"Точка перегиба сплайна", // Settings_Label_HdrSplineKnee
+    L"Стратегия тональной компрессии HDR:\nОпределяет, как отображаются " L"HDR-изображения, превышающие возможности монитора.\nСплайн: " L"Высокоточное сжатие светов с использованием сплайнов (рекомендуется).\n" L"Колориметрическая: Строгое отображение яркости; светлые участки, " L"превышающие предел монитора, обрезаются.\nBT.2390 (EETF): Кривая ITU-R BT.2390 EETF для высокоточного отображения тонов.", // Settings_Tooltip_HdrToneMapping
+    L"0 = Авто (рассчитывается на основе яркости изображения).\nЗначение представляет собой соотношение пиковой яркости монитора. Яркость ниже этой точки перегиба отображается в соотношении 1:1, а яркость выше плавно сжимается с помощью сплайновой кривой.\n(Рекомендуется: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
     L"Пиковая яркость HDR (ниты)", // Settings_Label_HdrPeakNitsOverride
     L"Установите 0 для системной яркости.", // Settings_Tooltip_HdrPeakNitsOverride
-    L"HDR Peak Percentile", // Settings_Label_HdrPeakPercentile
-    L"Discard extremely bright pixels to raise overall brightness (mpv default: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
-    L"100% (Absolute Peak)", // Settings_Option_HdrPeakPercentile_100
-    L"99.995% (Stable)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (Aggressive)", // Settings_Option_HdrPeakPercentile_999
-    L"Диапазон десатурации HDR", // Settings_Label_HdrDesatThreshold
-    L"Порог начала десатурации светлых участков. 0.0 - десатурировать всю яркость, 1.0 - без десатурации. Рекомендуемое значение: 0.18.", // Settings_Tooltip_HdrDesatThreshold
-    L"Интенсивность десатурации HDR", // Settings_Label_HdrMaxDesat
-    L"Максимальная интенсивность десатурации в экстремальных бликах. 0.0 - без десатурации, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.", // Settings_Tooltip_HdrMaxDesat
+    L"Пиковый процентиль HDR", // Settings_Label_HdrPeakPercentile
+    L"Удаление слишком ярких пикселов для повышения общей яркости (mpv по умолчанию: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
+    L"100% (абсолютный пик)", // Settings_Option_HdrPeakPercentile_100
+    L"99.995% (стабильный)", // Settings_Option_HdrPeakPercentile_99995
+    L"99.9% (агрессивный)", // Settings_Option_HdrPeakPercentile_999
+    L"Диапазон обесцвечивания светов HDR", // Settings_Label_HdrDesatThreshold
+    L"Порог начала обесцвечивания светлых участков. 0.0 - обесцвечивать все света, 1.0 - не обесцвечивать. Рекомендуемое значение: 0.18.", // Settings_Tooltip_HdrDesatThreshold
+    L"Интенсивность обесцвечивания светов HDR", // Settings_Label_HdrMaxDesat
+    L"Максимальная интенсивность обесцвечивания экстремальных светов. 0.0 - не обесцвечивать, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.", // Settings_Tooltip_HdrMaxDesat
     L"Колориметрическая", // Settings_Option_HdrColorimetric
     L"Сплайн", // Settings_Option_HdrSpline
     L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
@@ -3229,7 +3229,7 @@ static const LanguageTable Table_RU = {
     L"Свой...", // Context_SoftProofCustom
     L"Скоро", // Settings_Value_ComingSoon
     L"Принудительное декодирование RAW", // Settings_Label_ForceRaw
-    L"Экспозиция (Яркость)", // Settings_Label_Exposure
+    L"Экспозиция (яркость)", // Settings_Label_Exposure
     L"Регулировка яркости изображения (компенсация экспозиции). Диапазон: 0.18x - 10.0x.", // Settings_Tooltip_Exposure
     L"Добавить в 'Открыть с помощью'", // Settings_Label_AddToOpenWith
     L"Пользовательский редактор", // Settings_Label_CustomEditor
@@ -3254,15 +3254,15 @@ static const LanguageTable Table_RU = {
     L"ProPhoto RGB", // Settings_Option_CmsProPhoto
     L"Цель рендеринга", // Settings_Label_CmsIntent
     L"Определение выхода за охват", // Settings_Label_GamutWarning
-    L"Анализ и выделение областей вне цветового охвата. Режимы: Выкл, только в режиме цветопробы (по умолчанию) или для цветопробы и монитора одновременно.", // Settings_Tooltip_GamutWarning
+    L"Анализ и выделение областей вне цветового охвата. Режимы: Выкл, только в режиме цветопробы (по умолчанию), либо для цветопробы и монитора одновременно.", // Settings_Tooltip_GamutWarning
     L"Автоуведомление об ошибке охвата", // Settings_Label_GamutAutoPrompt
     L"Показать OSD-уведомление при обнаружении ошибок охвата. Выделение можно включить вручную на панели инструментов.", // Settings_Tooltip_GamutAutoPrompt
     L"Цвет выделения вне охвата", // Settings_Label_GamutColor
     L"Относительный колориметрический (точность)", // Settings_Option_CmsIntentRelative
     L"Перцептивный (восприятие)", // Settings_Option_CmsIntentPerceptual
     L"Использовать систему управления цветом (CMS).\nЕсли включено, применяется высокоточное преобразование цветового пространства через ГП для восстановления истинных цветов.\nЕсли отключено, снижается нагрузка на ГП, но возможно перенасыщение цветов на дисплеях с широким цветовым охватом.", // Settings_Tooltip_CMS
-    L"Метод преобразования цветового пространства (Rendering Intent).\nПерцептивная сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительная колориметрическая сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для интерфейса и значков).\nПримечание: Визуальные различия проявляются только при использовании продвинутых профилей ICC, содержащих LUT (таблицы поиска). Стандартные матричные профили автоматически возвращаются к относительной колориметрии.", // Settings_Tooltip_CmsIntent
-    L"Использовать 16-разрядный конвейер рендеринга с плавающей запятой (scRGB).\nЕсли включено, идеально отображаются яркие участки фотографий на HDR-дисплеях, не ограничиваясь SDR.\nЕсли отключено, изображение принудительно отображается в SDR.\n* При включении увеличивается потребление видеопамяти.", // Settings_Tooltip_AdvancedColor
+    L"Метод преобразования цветового пространства (цель рендеринга).\nПерцептивный: сжимает цвета вне охвата для сохранения деталей и градиентов (идеально для фото).\nОтносительный колориметрический: сохраняет цвета в пределах охвата и обрезает выходящие за его пределы (идеально для интерфейса и значков).\n* Визуальные различия проявляются только при использовании улучшенных профилей ICC, содержащих LUT (таблицы поиска). Стандартные матричные профили автоматически возвращаются к относительной колориметрии.", // Settings_Tooltip_CmsIntent
+    L"Использовать 16-разрядный конвейер рендеринга с плавающей запятой (scRGB).\nЕсли включено, идеально отображаются яркие участки фотографий на HDR-дисплеях, без ограничения SDR.\nЕсли отключено, изображение принудительно отображается как SDR.\n* При включении увеличивается потребление видеопамяти.", // Settings_Tooltip_AdvancedColor
     L"Авто: масштаб 100%, если изображение меньше экрана, и вписывание в экран, если больше.", // Settings_Tooltip_ZoomAuto
     L"Проверить наличие новой версии", // Settings_Action_CheckUpdates
     L"Посмотреть обновление", // Settings_Action_ViewUpdate
@@ -3334,11 +3334,11 @@ static const LanguageTable Table_RU = {
     L"* Горячие клавиши и контекстное меню действуют только на текущий процесс. Настройки не изменяются.", // Help_Tip_ContextScope
     L"Поворот: При оптимизации краёв они слегка обрезаются, чтобы вписать в границы блока " L"(без потерь). В режиме с потерями выполняется полное перекодирование изображения.", // Help_Tip_Rotation
     L"Видеостена (Ctrl+F11): Распределение картинки по всем мониторам. Если кнопка закрытия скрыта, " L"для выхода дважды щёлкните мышью.", // Help_Tip_VideoWall
-    L"Режим кальки / Режим пленки: после включения изображение становится полупрозрачным, открывая нижележащие элементы. Вы можете настроить его размер или прозрачность. Нажмите переключатель прохождения мыши на панели инструментов, чтобы войти в режим прохождения, в котором все вводы, кроме Shift+Esc, игнорируются, превращая QuickView в прозрачный оверлей.", // Help_Tip_DesignerMode
-    L"Предупреждение о цветовом охвате: Обнаружение цветов вне охвата для монитора или профиля цветопробы. Режимы: Выкл, только цветопроба или все (по умолчанию: цветопроба). Переключение через панель инструментов.", // Help_Tip_GamutDetection
-    L"Кнопка RAW: По умолчанию QuickView показывает встроенную картинку предпросмотра. Нажмите " L"для полного декодирования (может выглядеть по-другому из-за параметров рендеринга).", // Help_Tip_Raw
-    L"Качество JPEG: Расчётное значение качества. Может слегка " L"отличаться от настройки сохранения из-за различий в алгоритме " L"(например, Photoshop 100% \u2248 98%).", // Help_Tip_JpegQ
-    L"Сравнение цветопробы: вход в режим сравнения при включенной цветопробе автоматически сравнит оригинал и пробу.", // Help_Tip_SoftProofCompare
+    L"Режим кальки/плёнки: Если включено, изображение становится полупрозрачным, открывая нижележащие элементы. Размер и прозрачность настраиваются. Включите на панели инструментов режим сквозных щелчков мышью, в котором всё, кроме Shift+Esc, игнорируется - QuickView становится прозрачным наложением.", // Help_Tip_DesignerMode
+    L"Предупреждение о цветовом охвате: Обнаружение цветов вне охвата для монитора или профиля цветопробы. Режимы: Выкл/Только цветопроба/Все (по умолчанию: цветопроба). Переключение - через панель инструментов.", // Help_Tip_GamutDetection
+    L"RAW: По умолчанию QuickView показывает встроенную картинку предпросмотра. Нажмите кнопку RAW " L"для полного декодирования (может выглядеть по-другому из-за параметров рендеринга).", // Help_Tip_Raw
+    L"Качество JPEG: Ориентировочное значение качества. Может слегка " L"отличаться от настройки сохранения из-за различий в алгоритме " L"(например, Photoshop 100% \u2248 98%).", // Help_Tip_JpegQ
+    L"Сравнение цветопробы: Вход в режим сравнения при включённой цветопробе автоматически сравнит оригинал и пробу.", // Help_Tip_SoftProofCompare
     L"Доступна новая версия!", // Dialog_UpdateTitle
     L"Доступна версия %s.", // Dialog_UpdateContent
     L"История изменений", // Dialog_UpdateLogHeader
@@ -3346,7 +3346,7 @@ static const LanguageTable Table_RU = {
     L"Позже", // Dialog_ButtonLater
     L"Звезда на GitHub", // Dialog_ButtonStar
     L"QuickView создан с любовью", // Dialog_Update_LoveTitle
-    L"Я разрабатываю QuickView в свободное время, потому что считаю, что " L"в Windows должен быть более быстрый и чистый просмотрщик. Если вам " L"нравится эта программа, пожалуйста, поставьте звезду на " L"GitHub или расскажите о QuickView другу.", // Dialog_Update_LoveMessage
+    L"Я разрабатываю QuickView в свободное время и считаю, что " L"в Windows должен быть более быстрый и эффективный просмотрщик. Если вам " L"нравится эта программа, пожалуйста, поставьте звезду на " L"GitHub или расскажите о QuickView другу.", // Dialog_Update_LoveMessage
     L"Режим сравнения", // Help_Item_Compare
     L"Первое/последнее изображение", // Help_Item_FirstLast
     L"ФИЗИЧЕСКИЕ АТРИБУТЫ", // HUD_Group_Physical
@@ -3367,13 +3367,13 @@ static const LanguageTable Table_RU = {
     L"Высокая: ", // HUD_Label_High
     L"Низкая: ", // HUD_Label_Low
     L"Эталон: ", // HUD_Label_Ref
-    L"Пленка галереи (при наведении сверху)", // Settings_Header_GalleryTrigger
+    L"Диафильм из галереи (при наведении сверху)", // Settings_Header_GalleryTrigger
     L"Режим триггера", // Settings_Label_GalleryTriggerMode
-    L"Авто-наведение", // Settings_Option_GalleryTriggerAuto
+    L"Автонаведение", // Settings_Option_GalleryTriggerAuto
     L"Наведение на точку", // Settings_Option_GalleryTriggerDelay
-    L"Клик по точке", // Settings_Option_GalleryTriggerClick
+    L"Щелчок по точке", // Settings_Option_GalleryTriggerClick
     L"Отключено", // Settings_Option_GalleryTriggerDisable
-    L"Эта функция автоматически отключается, если размер окна меньше 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Эта функция автоматически отключается, если размер окна меньше 600x450 пкс.", // Settings_Tooltip_GalleryTrigger
     L"Слайд-шоу запущено", // OSD_SlideshowStarted
     L"Слайд-шоу остановлено", // OSD_SlideshowStopped
     L"Слайд-шоу возобновлено", // OSD_SlideshowResumed
@@ -3381,8 +3381,8 @@ static const LanguageTable Table_RU = {
     L"Эффект: Прожектор", // OSD_ImmersiveSpotlight
     L"Эффект: Обычный", // OSD_ImmersiveNormal
     L"Режим слайд-шоу", // Context_SlideshowMode
-    L"Интервал (секунд)", // Settings_Label_SlideshowInterval
-    L"Иммерсивный режим", // Settings_Label_SlideshowImmersive
+    L"Интервал (сек)", // Settings_Label_SlideshowInterval
+    L"Режим погружения", // Settings_Label_SlideshowImmersive
     L"Обычный", // Settings_Option_SlideshowNormal
     L"Прожектор", // Settings_Option_SlideshowSpotlight
 };
@@ -5555,7 +5555,7 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         case AppStrings::Language::ChineseSimplified:  raw = L"放大微调"; break;
         case AppStrings::Language::ChineseTraditional: raw = L"放大微調"; break;
         case AppStrings::Language::Japanese:           raw = L"ズームイン (微調整)"; break;
-        case AppStrings::Language::Russian:            raw = L"Приближение (точно)"; break;
+        case AppStrings::Language::Russian:            raw = L"Увеличить (точно)"; break;
         case AppStrings::Language::German:             raw = L"Vergrößern (Fein)"; break;
         case AppStrings::Language::Spanish:            raw = L"Acercar (Ajuste fino)"; break;
         case AppStrings::Language::French:             raw = L"Zoom avant (Précis)"; break;
@@ -5572,7 +5572,7 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         case AppStrings::Language::ChineseSimplified:  raw = L"缩小微调"; break;
         case AppStrings::Language::ChineseTraditional: raw = L"縮小微調"; break;
         case AppStrings::Language::Japanese:           raw = L"ズームアウト (微調整)"; break;
-        case AppStrings::Language::Russian:            raw = L"Отдаление (точно)"; break;
+        case AppStrings::Language::Russian:            raw = L"Уменьшить (точно)"; break;
         case AppStrings::Language::German:             raw = L"Verkleinern (Fein)"; break;
         case AppStrings::Language::Spanish:            raw = L"Alejar (Ajuste fino)"; break;
         case AppStrings::Language::French:             raw = L"Zoom arrière (Précis)"; break;
@@ -5705,4 +5705,4 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     if (!raw) return L"";
     return needsCleaning ? CleanLabel(raw) : std::wstring(raw);
 }
-}
+}
