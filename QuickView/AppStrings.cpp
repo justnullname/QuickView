@@ -5512,6 +5512,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         }
         break;
     }
+    case HotkeyAction::Loupe: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"放大镜 (按住)"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"放大鏡 (按住)"; break;
+        case AppStrings::Language::Japanese:           raw = L"ルーペ (長押し)"; break;
+        case AppStrings::Language::Russian:            raw = L"Лупа (удерживать)"; break;
+        case AppStrings::Language::German:             raw = L"Lupe (halten)"; break;
+        case AppStrings::Language::Spanish:            raw = L"Lupa (mantener)"; break;
+        case AppStrings::Language::French:             raw = L"Loupe (maintenir)"; break;
+        default:                                       raw = L"Loupe (Hold)"; break;
+        }
+        break;
+    }
     case HotkeyAction::NavNext:
         raw = AppStrings::Toolbar_Tooltip_Next;
         break;

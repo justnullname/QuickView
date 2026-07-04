@@ -296,6 +296,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ZoomOutFine, KeyCombo{ VK_OEM_MINUS, 1 }, KeyCombo{ VK_OEM_MINUS, 1 } }, // Ctrl + -
     HotkeyBinding{ HotkeyAction::Zoom100, KeyCombo{ 'Z', 0 }, KeyCombo{ 'Z', 0 } },
     HotkeyBinding{ HotkeyAction::ZoomFit, KeyCombo{ 'F', 0 }, KeyCombo{ 'F', 0 } },
+    HotkeyBinding{ HotkeyAction::Loupe, KeyCombo{ 'L', 0 }, KeyCombo{ 'L', 0 } }, // Hold to magnify
     HotkeyBinding{ HotkeyAction::RotateCW, KeyCombo{ 'R', 0 }, KeyCombo{ 'R', 0 } },
     HotkeyBinding{ HotkeyAction::RotateCCW, KeyCombo{ 'R', 2 }, KeyCombo{ 'R', 2 } }, // Shift + R
     HotkeyBinding{ HotkeyAction::FlipH, KeyCombo{ 'H', 0 }, KeyCombo{ 'H', 0 } },
@@ -3949,6 +3950,11 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"GalleryTriggerMode", std::to_wstring(g_config.GalleryTriggerMode).c_str(), iniPath.c_str());
     // NavIndicator moved to View section
 
+    // Loupe (activation key lives in the [Hotkeys] Loupe binding)
+    WritePrivateProfileStringW(L"Controls", L"LoupeEnabled", g_config.LoupeEnabled ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"LoupeSizeRatio", std::to_wstring(g_config.LoupeSizeRatio).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"LoupeZoom", std::to_wstring(g_config.LoupeZoom).c_str(), iniPath.c_str());
+
     // Image
     WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
@@ -4203,6 +4209,13 @@ void LoadConfig() {
     g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
     g_config.GalleryTriggerMode = GetPrivateProfileIntW(L"Controls", L"GalleryTriggerMode", 1, iniPath.c_str());
     // NavIndicator moved to View section
+
+    // Loupe (activation key lives in the [Hotkeys] Loupe binding)
+    g_config.LoupeEnabled = GetPrivateProfileIntW(L"Controls", L"LoupeEnabled", 1, iniPath.c_str()) != 0;
+    GetPrivateProfileStringW(L"Controls", L"LoupeSizeRatio", L"0.25", buf, 64, iniPath.c_str());
+    g_config.LoupeSizeRatio = std::clamp((float)_wtof(buf), 0.1f, 0.5f);
+    GetPrivateProfileStringW(L"Controls", L"LoupeZoom", L"1.0", buf, 64, iniPath.c_str());
+    g_config.LoupeZoom = std::clamp((float)_wtof(buf), 1.0f, 8.0f);
     
     // Image
     g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;
@@ -6007,6 +6020,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     if (message == WM_SETCURSOR) {
+        // [Loupe] Hide the cursor while the loupe is active so it does not
+        // obscure the magnified region it sits on.
+        if (AppContext::GetInstance().Loupe.active && LOWORD(lParam) == HTCLIENT) {
+            SetCursor(nullptr);
+            return TRUE;
+        }
+
         // Don't show Wait cursor when gallery is visible
         if (g_isLoading && !g_gallery.IsVisible()) {
             SetCursor(LoadCursor(nullptr, IDC_WAIT));
@@ -6863,6 +6883,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           float winW = (float)(rcClient.right - rcClient.left);
           float winH = (float)(rcClient.bottom - rcClient.top);
           bool hasGallery = g_gallery.IsVisible() && g_gallery.HitTestArea(pt.x, pt.y, winW, winH);
+
+          // [Loupe] While the loupe key is held, the magnifier follows the
+          // cursor. Update its position, keep the cursor hidden, and skip the
+          // normal pan/hover handling (which would re-show the cursor below).
+          if (AppContext::GetInstance().Loupe.active) {
+              AppContext::GetInstance().Loupe.cursorClient = pt;
+              SetCursor(nullptr);
+              RequestRepaint(PaintLayer::Dynamic);
+              return 0;
+          }
 
           if (GetPaneContext(PaneSlot::Primary).view.IsDraggingInfoPanel) {
               int dx = pt.x - GetPaneContext(PaneSlot::Primary).view.InfoPanelDragAnchor.x;
@@ -8481,7 +8511,19 @@ SKIP_EDGE_NAV:;
 
     case WM_MOUSEWHEEL: {
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
-        
+
+        // [Loupe] While the loupe is held, the wheel resizes the loupe box
+        // (a fraction of the viewport's short side) instead of zooming the image.
+        if (AppContext::GetInstance().Loupe.active) {
+            const float before = g_config.LoupeSizeRatio;
+            g_config.LoupeSizeRatio = std::clamp(g_config.LoupeSizeRatio + wheelDelta * 0.02f, 0.1f, 0.5f);
+            if (g_config.LoupeSizeRatio != before) {
+                AppContext::GetInstance().Loupe.sizeChanged = true;
+                RequestRepaint(PaintLayer::Dynamic);
+            }
+            return 0;
+        }
+
         if (g_helpOverlay.IsVisible()) {
             if (g_helpOverlay.OnMouseWheel(wheelDelta * 120.0f)) { // HelpOverlay expects raw delta
                 RequestRepaint(PaintLayer::Static);
@@ -8631,6 +8673,20 @@ SKIP_EDGE_NAV:;
 
     case WM_SYSKEYUP:
     case WM_KEYUP:
+        // [Loupe] Releasing the loupe key hides the magnifier. The key is the
+        // rebindable HotkeyAction::Loupe binding (default 'L'), so this honours
+        // user remapping rather than a hardcoded key.
+        if (AppContext::GetInstance().Loupe.active
+            && wParam == g_hotkeys[static_cast<size_t>(HotkeyAction::Loupe)].combo.virtualKey) {
+            AppContext::GetInstance().Loupe.active = false;
+            SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW)); // restore now
+            if (AppContext::GetInstance().Loupe.sizeChanged) {
+                AppContext::GetInstance().Loupe.sizeChanged = false;
+                SaveConfig(); // persist the wheel-adjusted loupe size
+            }
+            RequestRepaint(PaintLayer::Dynamic);
+            return 0;
+        }
         if (wParam == VK_MENU) return 0; // 拦截 Alt 释放，防止进入菜单循环导致焦点丢失
         break;
 
@@ -8742,7 +8798,7 @@ SKIP_EDGE_NAV:;
         bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-        
+
         // [Fix] 增加对 VK_MENU 的排除，防止 Alt 键交给 DefWindowProc 触发菜单系统
         if (message == WM_SYSKEYDOWN && wParam != VK_F10 && wParam != VK_LEFT && wParam != VK_RIGHT && wParam != VK_UP && wParam != VK_DOWN && wParam != VK_MENU) {
             break; // 其他系统键交给默认处理
@@ -12715,6 +12771,22 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             ShowWindow(hwnd, SW_RESTORE);
         } else {
             if (CheckUnsavedChanges(hwnd)) PostMessage(hwnd, WM_CLOSE, 0, 0);
+        }
+        return true;
+
+    case HotkeyAction::Loupe:
+        // Press-and-hold magnifier: activate on key-down (this dispatch); the
+        // matching key-up in WndProc hides it. Auto-repeat re-enters here and is
+        // idempotent. Only fires with an image loaded, the feature enabled, and
+        // the image shown below 100% — at/above actual size the loupe (which
+        // magnifies to actual pixels) would add nothing.
+        if (g_config.LoupeEnabled && GetPaneContext(PaneSlot::Primary).resource
+            && GetCurrentZoomPercent() < 100
+            && !AppContext::GetInstance().Loupe.active) {
+            POINT cp; GetCursorPos(&cp); ScreenToClient(hwnd, &cp);
+            AppContext::GetInstance().Loupe.active = true;
+            AppContext::GetInstance().Loupe.cursorClient = cp;
+            RequestRepaint(PaintLayer::Dynamic);
         }
         return true;
 

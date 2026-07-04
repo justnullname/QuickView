@@ -126,6 +126,18 @@ struct CompareState {
     bool showDividerHandle = false;
 };
 
+// --- Loupe Definitions ---
+// A press-and-hold magnifier that pops up under the cursor and shows the local
+// region at actual pixels (e.g. for quickly confirming focus while culling).
+// Activated by holding the HotkeyAction::Loupe key (rebindable, default 'L');
+// follows the cursor while held and disappears on release. Works in Compare
+// mode too (the same image location is magnified on both panes).
+struct LoupeState {
+    bool active = false;
+    POINT cursorClient = { 0, 0 }; // current cursor position in client coords
+    bool sizeChanged = false;      // wheel resized the loupe this session -> persist on release
+};
+
 // --- Global App Context ---
 // Using a Singleton for stage 1 refactoring, easy to migrate to DI later.
 #include <memory>
@@ -141,6 +153,7 @@ public:
     SmoothZoomState SmoothZoom;
     SmoothWindowZoomState SmoothWindowZoom;
     CompareState Compare;
+    LoupeState Loupe;
 
     std::unique_ptr<CompareController> CompareCtrl;
     std::unique_ptr<DialogController> DialogCtrl;

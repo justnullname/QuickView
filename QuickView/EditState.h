@@ -130,6 +130,7 @@ enum class HotkeyAction : uint8_t {
     ZoomOutFine,       // Zoom Out Fine
     Zoom100,           // Zoom 100% / Restore
     ZoomFit,           // Zoom Fit / Restore
+    Loupe,             // Hold to show the magnifier (loupe)
     RotateCW,          // Rotate 90 CW
     RotateCCW,         // Rotate 90 CCW
     FlipH,             // Flip Horizontal
@@ -205,6 +206,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::Help: return L"Help";
         case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
         case HotkeyAction::Exit: return L"Exit";
+        case HotkeyAction::Loupe: return L"Loupe";
         default: return L"None";
     }
 }
@@ -249,6 +251,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"Help") return HotkeyAction::Help;
     if (sv == L"ToggleSlideshow") return HotkeyAction::ToggleSlideshow;
     if (sv == L"Exit") return HotkeyAction::Exit;
+    if (sv == L"Loupe") return HotkeyAction::Loupe;
     return HotkeyAction::None;
 }
 
@@ -553,6 +556,12 @@ struct AppConfig {
     bool RightButtonDragZoom = true;      // Hold right button and drag vertically to zoom
     float WheelZoomSpeed = 10.0f;         // 5.0f to 50.0f (percentage)
     float RightDragZoomSpeed = 1.0f;      // 0.1f to 3.0f (multiplier)
+
+    // --- Loupe (hold-key magnifier; e.g. for checking focus while culling) ---
+    // The activation key is the rebindable HotkeyAction::Loupe binding.
+    bool LoupeEnabled = true;             // Master toggle for the loupe
+    float LoupeSizeRatio = 0.25f;         // Loupe box edge as a fraction of the viewport's short side (resolution-adaptive)
+    float LoupeZoom = 1.0f;               // Magnification vs actual image pixels (1.0 = 100%)
     MouseAction LeftDragAction = MouseAction::WindowDrag;
     MouseAction MiddleDragAction = MouseAction::PanImage;
     MouseAction MiddleClickAction = MouseAction::ExitApp;

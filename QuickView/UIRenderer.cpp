@@ -16,6 +16,8 @@
 
 #include "ImageEngine.h" // [v3.1] Access for HasEmbeddedThumb
 #include "GeekIconRenderer.h"
+#include "AppContext.h"   // [Loupe] loupe + compare state
+#include "PaneContext.h"  // [Loupe] per-pane image + view transform
 
 // External globals (retained - these are global state needed by overlays)
 extern Toolbar g_toolbar;
@@ -754,6 +756,154 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 // Dynamic Layer: Debug HUD, OSD, Tooltip, Dialog
 // ============================================================================
 
+// [Loupe] Press-and-hold magnifier. Maps the cursor to an image pixel via the
+// inverse of the on-screen draw transform, then renders a crisp (nearest-
+// neighbour) magnified patch of the source bitmap in a box at the cursor. In
+// Compare mode the same image location is magnified on both panes at once.
+void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
+    AppContext& app = AppContext::GetInstance();
+    if (!app.Loupe.active || !g_config.LoupeEnabled) return;
+
+    RECT rcClient; GetClientRect(hwnd, &rcClient);
+    const float winW = (float)(rcClient.right - rcClient.left);
+    const float winH = (float)(rcClient.bottom - rcClient.top);
+    if (winW < 2.0f || winH < 2.0f) return;
+
+    const float cursorX = (float)app.Loupe.cursorClient.x;
+    const float cursorY = (float)app.Loupe.cursorClient.y;
+
+    const float uiScale = (m_uiScale > 0.0f) ? m_uiScale : 1.0f;
+    const float loupeRatio = std::clamp(g_config.LoupeSizeRatio, 0.1f, 0.5f);
+    const float loupeZoom = std::clamp(g_config.LoupeZoom, 1.0f, 8.0f);
+
+    // Oriented (display) size: EXIF 5-8 swap width/height.
+    auto orientedSize = [](const D2D1_SIZE_F& raw, int exif) -> D2D1_SIZE_F {
+        if (exif >= 5 && exif <= 8) return D2D1::SizeF(raw.height, raw.width);
+        return raw;
+    };
+    // Forward transform (native bitmap pixels -> screen), mirroring
+    // DrawResourceIntoViewport() so our inverse matches what is actually drawn.
+    auto buildForward = [](const D2D1_SIZE_F& raw, int exif, float scale,
+                           float centerX, float centerY) -> D2D1::Matrix3x2F {
+        D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Translation(-raw.width * 0.5f, -raw.height * 0.5f);
+        switch (exif) {
+            case 2: m = m * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f); break;
+            case 3: m = m * D2D1::Matrix3x2F::Rotation(180.0f); break;
+            case 4: m = m * D2D1::Matrix3x2F::Scale(1.0f, -1.0f); break;
+            case 5: m = m * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f) * D2D1::Matrix3x2F::Rotation(270.0f); break;
+            case 6: m = m * D2D1::Matrix3x2F::Rotation(90.0f); break;
+            case 7: m = m * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f) * D2D1::Matrix3x2F::Rotation(90.0f); break;
+            case 8: m = m * D2D1::Matrix3x2F::Rotation(270.0f); break;
+            default: break;
+        }
+        m = m * D2D1::Matrix3x2F::Scale(scale, scale);
+        m = m * D2D1::Matrix3x2F::Translation(centerX, centerY);
+        return m;
+    };
+
+    struct LoupeTarget { PaneSlot slot; D2D1_RECT_F viewport; };
+    LoupeTarget targets[2];
+    int targetCount = 0;
+    const bool compare = (app.Compare.mode != ViewMode::Single) && app.CompareCtrl;
+    if (compare) {
+        targets[targetCount++] = { PaneSlot::Left,    app.CompareCtrl->GetViewport(hwnd, ComparePane::Left) };
+        targets[targetCount++] = { PaneSlot::Primary, app.CompareCtrl->GetViewport(hwnd, ComparePane::Right) };
+    } else {
+        targets[targetCount++] = { PaneSlot::Primary, D2D1::RectF(0.0f, 0.0f, winW, winH) };
+    }
+
+    // On-screen forward transform for a target at its true zoom (for inverse-mapping).
+    auto computeForward = [&](const LoupeTarget& t, D2D1::Matrix3x2F& outM, D2D1_SIZE_F& outRaw) -> bool {
+        PaneContext& pane = GetPaneContext(t.slot);
+        if (!pane.resource.bitmap) return false;
+        outRaw = pane.resource.GetSize();
+        if (outRaw.width <= 0.0f || outRaw.height <= 0.0f) return false;
+        const D2D1_SIZE_F osz = orientedSize(outRaw, pane.view.ExifOrientation);
+        const float vpW = t.viewport.right - t.viewport.left;
+        const float vpH = t.viewport.bottom - t.viewport.top;
+        if (vpW < 1.0f || vpH < 1.0f) return false;
+        float fitScale = std::min(vpW / osz.width, vpH / osz.height);
+        if (osz.width < 200.0f && osz.height < 200.0f && fitScale > 1.0f) fitScale = 1.0f;
+        const float totalScale = fitScale * (std::max)(0.02f, pane.view.Zoom);
+        const float centerX = (t.viewport.left + t.viewport.right) * 0.5f + pane.view.PanX;
+        const float centerY = (t.viewport.top + t.viewport.bottom) * 0.5f + pane.view.PanY;
+        outM = buildForward(outRaw, pane.view.ExifOrientation, totalScale, centerX, centerY);
+        return true;
+    };
+
+    // Which pane is the cursor over? Map it to a normalized image location there.
+    int hoveredIdx = 0;
+    for (int i = 0; i < targetCount; ++i) {
+        const D2D1_RECT_F& vp = targets[i].viewport;
+        if (cursorX >= vp.left && cursorX < vp.right && cursorY >= vp.top && cursorY < vp.bottom) {
+            hoveredIdx = i; break;
+        }
+    }
+    D2D1::Matrix3x2F hovM; D2D1_SIZE_F hovRaw;
+    if (!computeForward(targets[hoveredIdx], hovM, hovRaw)) return;
+    if (!hovM.Invert()) return; // hovM becomes screen->image
+    const D2D1_POINT_2F imgPt = hovM.TransformPoint(D2D1::Point2F(cursorX, cursorY));
+    const float fracX = imgPt.x / hovRaw.width;
+    const float fracY = imgPt.y / hovRaw.height;
+
+    // Reusable brushes (crisp white border, dark backing).
+    ComPtr<ID2D1SolidColorBrush> borderBrush, backBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.9f), &borderBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.85f), &backBrush);
+
+    D2D1_MATRIX_3X2_F identity; dc->GetTransform(&identity);
+
+    for (int i = 0; i < targetCount; ++i) {
+        PaneContext& pane = GetPaneContext(targets[i].slot);
+        if (!pane.resource.bitmap) continue;
+        const D2D1_SIZE_F rawT = pane.resource.GetSize();
+        if (rawT.width <= 0.0f || rawT.height <= 0.0f) continue;
+        const D2D1_RECT_F& vp = targets[i].viewport;
+        const float vpW = vp.right - vp.left;
+        const float vpH = vp.bottom - vp.top;
+        if (vpW < 1.0f || vpH < 1.0f) continue;
+
+        // Resolution-adaptive box size: a fraction of this viewport's short side.
+        const float shortSide = std::min(vpW, vpH);
+        const float boxSize = std::clamp(shortSide * loupeRatio, 80.0f, shortSide * 0.9f);
+
+        // Same scene location in this pane's native pixels.
+        const D2D1_POINT_2F tImgPt = D2D1::Point2F(fracX * rawT.width, fracY * rawT.height);
+
+        // Where that pixel currently appears on screen in this pane -> box center.
+        D2D1::Matrix3x2F fwdT; D2D1_SIZE_F rawTmp;
+        if (!computeForward(targets[i], fwdT, rawTmp)) continue;
+        const D2D1_POINT_2F screenPt = fwdT.TransformPoint(tImgPt);
+
+        const float half = boxSize * 0.5f;
+        float cx = screenPt.x, cy = screenPt.y;
+        cx = (vpW <= boxSize) ? (vp.left + vp.right) * 0.5f : std::clamp(cx, vp.left + half, vp.right - half);
+        cy = (vpH <= boxSize) ? (vp.top + vp.bottom) * 0.5f : std::clamp(cy, vp.top + half, vp.bottom - half);
+        const D2D1_RECT_F box = D2D1::RectF(cx - half, cy - half, cx + half, cy + half);
+
+        // Loupe transform: native bitmap -> magnified, centered so tImgPt lands at box center.
+        D2D1::Matrix3x2F L0 = buildForward(rawT, pane.view.ExifOrientation, loupeZoom, cx, cy);
+        const D2D1_POINT_2F p = L0.TransformPoint(tImgPt);
+        D2D1::Matrix3x2F L = L0 * D2D1::Matrix3x2F::Translation(cx - p.x, cy - p.y);
+
+        // Dark backing (covers regions outside the image near edges).
+        dc->FillRectangle(box, backBrush.Get());
+
+        // Magnified patch, clipped to the box, drawn with the loupe transform.
+        dc->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED);
+        dc->SetTransform(L);
+        dc->DrawBitmap(pane.resource.bitmap.Get(),
+                       D2D1::RectF(0.0f, 0.0f, rawT.width, rawT.height),
+                       1.0f,
+                       D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        dc->SetTransform(identity);
+        dc->PopAxisAlignedClip();
+
+        // Border.
+        dc->DrawRectangle(box, borderBrush.Get(), 1.5f * uiScale);
+    }
+}
+
 void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // 创建画刷
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
@@ -767,7 +917,10 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 
     // OSD
     DrawOSD(dc, hwnd);
-    
+
+    // [Loupe] press-and-hold magnifier (drawn above OSD, below dialogs)
+    DrawLoupe(dc, hwnd);
+
     // [Edge Focus] Tile decode status line
     DrawDecodingStatus(dc, hwnd);
 
