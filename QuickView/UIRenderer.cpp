@@ -3082,7 +3082,6 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     }
     
     float textW = MeasureTextWidth(info);
-    // [[maybe_unused]] float totalW = textW + 56.0f * s;
     
     float startX = g_runtime.InfoPanelX * s;
     float startY = g_runtime.InfoPanelY * s;
@@ -3094,31 +3093,90 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
         startY = galleryH + 12.0f * s;
     }
     
-    D2D1_RECT_F rect = D2D1::RectF(startX, startY, startX + textW, startY + 24.0f * s);
-    // [Visual Consistency] Adaptive UI based on underlying image luma
-    float panelLuma = EstimateRectLuminance(rect);
-    if (panelLuma < 0.0f) panelLuma = IsLightThemeActive() ? 1.0f : 0.0f; // fallback
-    const AdaptiveUiPalette palette = BuildAdaptivePalette(panelLuma, &m_compactInfoAdaptiveBlend);
+    // Layout and Geometry
+    float paddingLeft = 10.0f * s;
+    float paddingRight = 10.0f * s;
+    float paddingTop = 3.0f * s;
+    float itemHeight = 20.0f * s;
+    float totalHeight = 26.0f * s;
+    
+    // Horizontal positions
+    float textLeft = startX + paddingLeft;
+    float textRight = textLeft + textW;
+    
+    float btnTop = startY + 5.0f * s;
+    float btnBottom = btnTop + 16.0f * s;
+    
+    // Expand Button [+] -> draw as "+"
+    float toggleLeft = textRight + 8.0f * s;
+    float toggleRight = toggleLeft + 16.0f * s;
+    m_panelToggleRect = D2D1::RectF(toggleLeft, btnTop, toggleRight, btnBottom);
+    
+    // Close Button [x] -> draw as "x"
+    float closeLeft = toggleRight + 6.0f * s;
+    float closeRight = closeLeft + 16.0f * s;
+    m_panelCloseRect = D2D1::RectF(closeLeft, btnTop, closeRight, btnBottom);
+    
+    float totalWidth = (closeRight + paddingRight) - startX;
+    D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + totalWidth, startY + totalHeight);
+    m_lastInfoPanelRect = panelRect;
+    
+    // [Geek Glass] Panel Background Render
+    QuickView::UI::GeekGlass::GeekGlassConfig glassConfig;
+    glassConfig.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
+    glassConfig.panelBounds = panelRect;
+    glassConfig.cornerRadius = 6.0f * s;
+    glassConfig.enableGeekGlass = g_config.EnableGeekGlass;
+    glassConfig.tintProfile = g_config.GlassTintProfile;
+    glassConfig.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, g_config.GlassTintAlpha);
+    glassConfig.tintAlpha = g_config.GlassTintAlpha;
+    glassConfig.specularOpacity = g_config.GlassSpecularOpacity;
+    glassConfig.blurStandardDeviation = g_config.GlassBlurSigma * s;
+    glassConfig.opacity = g_config.GlassPanelsOpacity / 100.0f;
+    glassConfig.strokeWeight = g_config.GetVectorStrokeWeight();
+    glassConfig.shadowOpacity = g_config.GlassShadowOpacity;
+    glassConfig.pBackgroundCommandList = m_bgCommandList.Get();
+    
+    if (m_compEngine) {
+        glassConfig.backgroundTransform = m_compEngine->GetScreenTransform();
+    }
+    
+    m_geekGlass.DrawGeekGlassPanel(dc, glassConfig);
 
-    // Shadow Text
-    ComPtr<ID2D1SolidColorBrush> brushShadow, brushText, brushYellow, brushRed;
-    dc->CreateSolidColorBrush(palette.shadow, &brushShadow);
+    // [Material Boost] Consistency
+    if (g_config.EnableGeekGlass) {
+        float masterOpacity = g_config.GlassPanelsOpacity / 100.0f;
+        ComPtr<ID2D1SolidColorBrush> materialBrush;
+        
+        bool isLight = IsLightThemeActive();
+        D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+        
+        dc->CreateSolidColorBrush(fillerColor, &materialBrush);
+        if (materialBrush) {
+            materialBrush->SetOpacity(masterOpacity);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(panelRect, glassConfig.cornerRadius, glassConfig.cornerRadius), materialBrush.Get());
+        }
+        
+        m_geekGlass.DrawGeekGlassToppings(dc, glassConfig);
+    }
+    
+    // Theme-aware Text Colors
+    float panelLuma = IsLightThemeActive() ? 1.0f : 0.0f; 
+    float unusedBlend;
+    const AdaptiveUiPalette palette = BuildAdaptivePalette(panelLuma, &unusedBlend);
+
+    ComPtr<ID2D1SolidColorBrush> brushText;
     dc->CreateSolidColorBrush(palette.foreground, &brushText);
-    dc->CreateSolidColorBrush(palette.warning, &brushYellow);
-    dc->CreateSolidColorBrush(palette.danger, &brushRed);
     
-    DrawTextWithFourWayShadow(dc, info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), rect, brushText.Get(), brushShadow.Get(), 1.1f * s);
-
-    // Expand Button [+]
-    m_panelToggleRect = D2D1::RectF(rect.right + 6.0f * s, rect.top, rect.right + 30.0f * s, rect.bottom);
-    DrawTextWithFourWayShadow(dc, L"[+]", 3, m_panelFormat.Get(), m_panelToggleRect, brushYellow.Get(), brushShadow.Get(), 1.1f * s);
+    // Text drawing
+    D2D1_RECT_F textRect = D2D1::RectF(textLeft, startY + paddingTop, textRight, startY + paddingTop + itemHeight);
+    dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), textRect, brushText.Get());
     
-    // Close Button [x]
-    m_panelCloseRect = D2D1::RectF(m_panelToggleRect.right + 4.0f * s, rect.top, m_panelToggleRect.right + 28.0f * s, rect.bottom);
-    DrawTextWithFourWayShadow(dc, L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, brushRed.Get(), brushShadow.Get(), 1.1f * s);
-
-    // Save bounds for hit testing (include buttons)
-    m_lastInfoPanelRect = D2D1::RectF(rect.left, rect.top, m_panelCloseRect.right, m_panelCloseRect.bottom);
+    // Draw expand button "+"
+    dc->DrawText(L"+", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 4.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushText.Get());
+    
+    // Draw close button "x"
+    dc->DrawText(L"x", 1, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 4.0f * s, m_panelCloseRect.top, m_panelCloseRect.right, m_panelCloseRect.bottom), brushText.Get());
 }
 
 float UIRenderer::EstimateCanvasLuminance() const {
