@@ -515,8 +515,8 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 
                 m_heavyPool->Submit(path, imageId, primaryMMF, targetSlot, generationId);
             } else {
-                // [v3.2.5 Restore] 普通非Titan大型大图，像旧版一样直接跑 FullDecode
-                // 免去 300ms 延迟，速度最快，并天然由解码端展示自带预览图！
+                // [v3.2.5 Restore] Ordinary non-Titan large images, run FullDecode directly like the old version
+                // Eliminates 300ms latency, fastest speed, and naturally shows the embedded preview from the decoder!
                 QV_LOG("Dispatch_Route", TraceLoggingString("JXL Large HeavyFullDecode", "Action"));
                 m_heavyPool->SubmitFullDecode(path, imageId, primaryMMF, targetSlot, generationId);
             }

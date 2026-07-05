@@ -27,7 +27,7 @@ struct WuffsImageInfo {
     QuickView::TransferFunction transfer = QuickView::TransferFunction::Unknown;
     QuickView::ColorPrimaries primaries = QuickView::ColorPrimaries::Unknown;
     
-    // [CMS] 提取出的原始 ICC 配置数据 (如果是 zlib 压缩的，Wuffs 返回时我们会当场解压放进来)
+    // [CMS] Extracted raw ICC profile data (if compressed with zlib, we decompress it on the fly)
     std::pmr::vector<uint8_t> iccProfile;
 
     WuffsImageInfo() : iccProfile(std::pmr::get_default_resource()) {}

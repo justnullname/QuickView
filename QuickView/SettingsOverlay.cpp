@@ -924,7 +924,7 @@ void SettingsOverlay::RebuildMenu() {
 void SettingsOverlay::BuildMenu() {
     m_tabs.clear();
 
-    // --- 1. General (常规) ---
+    // --- 1. General ---
     SettingsTab tabGeneral;
     tabGeneral.name = AppStrings::Settings_Tab_General;
     tabGeneral.icon = Icons::Settings;
@@ -1092,7 +1092,7 @@ void SettingsOverlay::BuildMenu() {
 
     m_tabs.push_back(tabGeneral);
 
-    // --- 2. Theme & Geek Glass (主题) ---
+    // --- 2. Theme & Geek Glass ---
     SettingsTab tabTheme;
     tabTheme.name = AppStrings::Settings_Tab_Theme;
     tabTheme.icon = Icons::Personalize;
@@ -1582,7 +1582,7 @@ void SettingsOverlay::BuildMenu() {
 
     m_tabs.push_back(tabVisuals);
 
-    // --- 3. Controls (操作) ---
+    // --- 3. Controls ---
     SettingsTab tabControl;
     tabControl.name = AppStrings::Settings_Tab_Controls;
     tabControl.icon = Icons::Control;
@@ -1660,7 +1660,7 @@ void SettingsOverlay::BuildMenu() {
     }
     m_tabs.push_back(tabControl);
 
-    // --- 4. Shortcuts (快捷键) ---
+    // --- 4. Shortcuts ---
     SettingsTab tabKeys;
     tabKeys.name = AppStrings::Settings_Tab_Shortcuts;
     tabKeys.icon = Icons::Keyboard;
@@ -1726,7 +1726,7 @@ void SettingsOverlay::BuildMenu() {
     }
     m_tabs.push_back(tabKeys);
 
-    // --- 4. Image & Edit (图像与编辑) ---
+    // --- 4. Image & Edit ---
     SettingsTab tabImage;
     tabImage.name = AppStrings::Settings_Tab_Image; 
     tabImage.icon = Icons::Image;
@@ -2085,7 +2085,7 @@ void SettingsOverlay::BuildMenu() {
 
     m_tabs.push_back(tabImage);
 
-    // --- 5. Advanced (高级) ---
+    // --- 5. Advanced ---
     SettingsTab tabAdvanced;
     tabAdvanced.name = AppStrings::Settings_Tab_Advanced;
     tabAdvanced.icon = Icons::Advanced;
@@ -2200,8 +2200,8 @@ void SettingsOverlay::BuildMenu() {
 
 
 
-    // --- 6. About (关于) ---
-    // --- 6. About (关于) ---
+    // --- 6. About ---
+    // --- 6. About ---
     SettingsTab tabAbout;
     tabAbout.name = AppStrings::Settings_Tab_About;
     tabAbout.icon = Icons::Info;

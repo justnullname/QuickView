@@ -167,7 +167,7 @@ public:
     bool isFailed = false; // [New] Error Placeholder Strategy
 
 
-    // [v3.2] Debug: 记录实际使用的 Loader
+    // [v3.2] Debug: Record the actual Loader used
     std::wstring loaderName;
   };
 
@@ -437,7 +437,7 @@ public:
   HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData *pData,
                         bool allowSlow = true);
 
-  // [JXL Global Runner] 全局线程池单例，避免每次解码创建开销
+  // [JXL Global Runner] Global thread pool singleton to avoid creation overhead for each decode
   static void *GetJxlRunner();
   // Public Specialized Loaders (needed by helpers)
   static HRESULT LoadThumbJXL_DC(const uint8_t *data, size_t size,

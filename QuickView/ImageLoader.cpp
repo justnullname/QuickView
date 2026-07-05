@@ -783,19 +783,19 @@ HRESULT CollapseFloatResultToSdr(const QuickView::Codec::DecodeContext &ctx,
     return S_FALSE;
   }
 
-  // [v6.2.5.3] 强制补齐浮点格式的 HDR 元数据。
-  // 任何解出浮点数的图像都具备超越 SDR 白点 (1.0) 的亮度潜力。
-  // 即使由于元数据缺失导致未被标记为 HDR (例如 JXL 浮点图)，
-  // 我们也必须强行标记它，防止下游 (包括 CPU Clip 和 GPU RenderEngine)
-  // 将其误认为 SDR 而导致 1.0 以上的高光数据遭到大面积截断死白过曝。
+  // [v6.2.5.3] Force-complete HDR metadata in floating-point format.
+  // Any image decoded to float values has brightness potential exceeding SDR white point (1.0).
+  // Even if it is not marked as HDR due to missing metadata (e.g., JXL float images),
+  // we must force-mark it to prevent downstream components (including CPU Clip and GPU RenderEngine)
+  // from misidentifying it as SDR, which would cause large-scale clipping and overexposure of highlights above 1.0.
   if (!result.metadata.hdrMetadata.isHdr) {
     result.metadata.hdrMetadata.isHdr = true;
   }
 
-  // [v6.2.5.3] 彻底解封显卡算力：主渲染管道 (FastLane/HeavyLane 都会设置
-  // preserveFloat=true) 绝不在 CPU 执行任何会导致高光截断或画质妥协的 ToneMap
-  // 降级！ 强制保留 FP16/FP32 并原封不动送给 RenderEngine， 利用其内建的高精度
-  // GPU Spline ToneMapping，在普通的 8-bit SDR 画布上压制出绝美的平滑灰阶。
+  // [v6.2.5.3] Fully unleash GPU compute: the main rendering pipeline (both FastLane/HeavyLane will set
+  // preserveFloat=true) and never executes any CPU-side ToneMap that causes highlight clipping or compromised quality.
+  // Downscaling is avoided! FP16/FP32 are preserved and sent intact to RenderEngine, utilizing its built-in high-precision
+  // GPU Spline ToneMapping to produce beautiful smooth gradations on ordinary 8-bit SDR canvases.
   if (ctx.preserveFloat) {
     return S_FALSE;
   }
@@ -4807,7 +4807,7 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
   if (ctx.targetWidth > 0 || ctx.targetHeight > 0) {
     config.options.use_scaling = 1;
 
-    // 修复 Bug 1: 必须保持长宽比缩放
+    // Fix Bug 1: Must preserve aspect ratio when scaling
     int tw = ctx.targetWidth > 0 ? ctx.targetWidth : config.input.width;
     int th = ctx.targetHeight > 0 ? ctx.targetHeight : config.input.height;
 
@@ -11154,7 +11154,7 @@ void CImageLoader::ComputeHistogramFromFrame(
     const uint8_t *row = ptr + (UINT64)y * stride;
 
     if (isFloat) {
-      float mapRange = 4.0f; // 默认 4.0x SDR 头顶空间
+      float mapRange = 4.0f; // Default 4.0x SDR headroom
       if (frame.hdrMetadata.masteringMaxNits > 80.f) {
         mapRange = frame.hdrMetadata.masteringMaxNits / 80.0f;
       }

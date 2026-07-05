@@ -212,7 +212,7 @@ void CSToneMap(uint3 id : SV_DispatchThreadID) {
         toneMapped = ToneMapSDR(color.rgb, displayPeak, paperWhite, Mode);
     }
 
-    // 关键物理校正：将 [0, displayPeak] 范围的物理线性亮度归一化到 [0, 1] 供 SDR OETF 编码
+    // Key physical correction: Normalize physical linear luminance in the range [0, displayPeak] to [0, 1] for SDR OETF encoding
     float3 normalizedColor = toneMapped / displayPeak;
     float3 finalColor = mul((float3x3)ColorMatrix, normalizedColor);
     finalColor = GamutMapHuePreserving(finalColor, 1.0);

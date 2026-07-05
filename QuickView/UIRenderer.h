@@ -22,12 +22,12 @@ namespace GeekIcons {
 #include <dwrite.h>
 
 // ============================================================================
-// UIRenderer - 多层 UI 渲染器
+// UIRenderer - Multi-layer UI Renderer
 // ============================================================================
-// 架构:
+// Architecture:
 //   Static Layer:  Toolbar, Window Controls, Info Panel, Settings
 //   Dynamic Layer: Debug HUD, OSD, Tooltip, Dialog
-//   Gallery Layer: Gallery Overlay (独立滚动/动画)
+//   Gallery Layer: Gallery Overlay (Independent scrolling/animation)
 // ============================================================================
 
 // ============================================================================
@@ -101,10 +101,10 @@ public:
     UIRenderer() = default;
     ~UIRenderer() = default;
 
-    // 初始化
+    // Initialization
     HRESULT Initialize(CompositionEngine* compEngine, IDWriteFactory* dwriteFactory);
     
-    // 资源释放 (Device Loss 恢复)
+    // Resource release (Device Loss recovery)
     void DiscardDeviceResources() {
         for (auto& pair : m_glassCache) {
             pair.second.ReleaseResources();
@@ -114,13 +114,13 @@ public:
         m_bgCommandList.Reset();
     }
     
-    // ===== 分层渲染控制 =====
+    // ===== Layered Rendering Control =====
     void MarkStaticDirty() { m_isStaticDirty = true; }
     void MarkDynamicDirty() { m_isDynamicDirty = true; m_dynamicFullDirty = true; }
     void MarkGalleryDirty() { m_isGalleryDirty = true; }
-    void MarkDirty() { MarkDynamicDirty(); }  // 兼容旧接口
+    void MarkDirty() { MarkDynamicDirty(); }  // Backward compatibility
 
-    // ===== 极客玻璃缓存池 (Engine Cache Map) =====
+    // ===== Geek Glass Cache Pool (Engine Cache Map) =====
     QuickView::UI::GeekGlass::GeekGlassEngine& GetGlassEngine(const std::string& key) {
         return m_glassCache[key];
     }
@@ -128,11 +128,11 @@ public:
         return m_bgCommandList.Get(); 
     }
     
-    // 细粒度脏标记 (用于 Dirty Rects 优化)
+    // Fine-grained dirty flags (used for Dirty Rects optimization)
     void MarkOSDDirty() { m_isDynamicDirty = true; m_osdDirty = true; }
     void MarkTooltipDirty() { m_isDynamicDirty = true; m_tooltipDirty = true; }
     
-    bool RenderAll(HWND hwnd, float deltaTime);  // 渲染所有需要更新的层
+    bool RenderAll(HWND hwnd, float deltaTime);  // Render all layers that need updating
     
     void UpdateMetadata(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath);
     void UpdateViewState(const ViewState& viewState);
@@ -154,7 +154,7 @@ public:
     D2D1_RECT_F GetPanelToggleRect() const { return m_panelToggleRect; }
     D2D1_RECT_F GetPanelCloseRect() const { return m_panelCloseRect; }
     
-    // ===== UI 状态更新 =====
+    // ===== UI State Updates =====
     void SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White), OSDPosition pos = OSDPosition::Bottom);
     void SetCompareOSD(const std::wstring& left, const std::wstring& right, float opacity, D2D1_COLOR_F color = D2D1::ColorF(D2D1::ColorF::White));
     void SetDebugHUDVisible(bool visible) { m_showDebugHUD = visible; MarkDynamicDirty(); }
@@ -174,7 +174,7 @@ public:
     // ===== Window Controls Hit Testing =====
     WindowControlHit HitTestWindowControls(float x, float y);
     
-    // 兼容旧接口
+    // Backward compatibility
     bool Render(HWND hwnd, float deltaTime) { return RenderAll(hwnd, deltaTime); }
 
     // ===== Info Panel Rendering Helpers =====
@@ -194,7 +194,7 @@ private:
         D2D1_COLOR_F danger = D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f);
     };
 
-    // 分层渲染方法
+    // Layered rendering methods
     void RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd);
     void RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd);
     void RenderGalleryLayer(ID2D1DeviceContext* dc);
@@ -224,7 +224,7 @@ private:
 private:
     InfoRow m_hoverInfoRow; // Cached row for HUD tooltips
     
-    // 绘制函数
+    // Drawing functions
     void DrawOSD(ID2D1DeviceContext* dc, HWND hwnd);
     // [Loupe] press-and-hold magnifier overlay (shows the region at actual pixels)
     void DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd);
@@ -247,7 +247,7 @@ public:
     std::wstring MakeEndEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format = nullptr);
 
 private:
-    // Dirty Rects 计算
+    // Dirty Rects calculation
     RECT CalculateOSDDirtyRect();
     
 private:
@@ -283,7 +283,7 @@ private:
     static constexpr float GRID_ROW_HEIGHT = 20.0f;
     static constexpr float GRID_PADDING = 6.0f;
     
-    // OSD 状态
+    // OSD state
     std::wstring m_osdText;
     std::wstring m_osdTextLeft;  // For compare mode
     std::wstring m_osdTextRight; // For compare mode
@@ -317,17 +317,17 @@ private:
     D2D1_RECT_F m_welcomeOpenFolderRect = {};
     int m_hoverWelcomeBtn = 0; // 0: None, 1: Open File, 2: Open Folder
     
-    // 脏标记
+    // Dirty flags
     bool m_isStaticDirty = true;
     bool m_isDynamicDirty = true;
     bool m_isGalleryDirty = true;
     
-    // 细粒度脏标记 (Dirty Rects 优化)
-    bool m_osdDirty = false;       // 仅 OSD 需要更新
-    bool m_tooltipDirty = false;   // 仅 Tooltip 需要更新
-    bool m_dynamicFullDirty = true; // 需要全量更新 Dynamic 层
+    // Fine-grained dirty flags (Dirty Rects optimization)
+    bool m_osdDirty = false;       // Only OSD needs update
+    bool m_tooltipDirty = false;   // Only Tooltip needs update
+    bool m_dynamicFullDirty = true; // Need full update of Dynamic layer
     
-    // OSD Dirty Rect 计算缓存
+    // OSD Dirty Rect calculation cache
     D2D1_RECT_F m_lastOSDRect = {};
     
     UINT m_width = 0;
@@ -343,7 +343,7 @@ private:
     void DrawWelcomeScreen(ID2D1DeviceContext* dc);
     void DrawWelcomeButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, const wchar_t* text, const GeekIcons::VectorIcon& icon, int hoverState);
     
-    // 缓存的 D2D 资源
+    // Cached D2D resources
     ComPtr<ID2D1SolidColorBrush> m_whiteBrush;
     ComPtr<ID2D1SolidColorBrush> m_blackBrush;
     ComPtr<ID2D1SolidColorBrush> m_accentBrush;

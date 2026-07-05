@@ -33,7 +33,7 @@ using Microsoft::WRL::ComPtr;
 enum class UILayer {
     Static,   // Toolbar, Window Controls, Info Panel, Settings
     Dynamic,  // Debug HUD, OSD, Tooltip, Dialog
-    Gallery   // Gallery Overlay (独立滚动动画)
+    Gallery   // Gallery Overlay (Independent scrolling/animation)
 };
 
 class CompositionEngine {

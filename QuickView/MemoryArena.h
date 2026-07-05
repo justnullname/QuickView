@@ -10,15 +10,15 @@
 #include <windows.h>
 
 // ============================================================================
-// QuantumArena - 量子流架构核心内存池
+// QuantumArena - Quantum Stream architecture core memory pool
 // ============================================================================
-// 设计目标:
-//   1. 0ns 级 Reset() - 通过指针重置而非释放
-//   2. 64 字节对齐 - SIMD/AVX 友好 (Cache Line Alignment)
-//   3. 双缓冲支持 - Active/Back 交换
-//   4. 无锁设计 - 单线程独占使用 (HeavyLane 专用)
-//   5. 溢出保护 - 超大图自动溢出到系统堆
-//   6. 动态按需提交 - 预留海量地址空间，用到多少提交多少，闲置时释放物理内存
+// Design goals:
+//   1. 0ns-level Reset() - reset via pointer instead of releasing
+//   2. 64-byte alignment - SIMD/AVX friendly (Cache Line Alignment)
+//   3. Double buffering support - Active/Back swapping
+//   4. Lock-free design - single-thread exclusive use (dedicated for HeavyLane)
+//   5. Overflow protection - ultra-large images automatically overflow to system heap
+//   6. Dynamic on-demand commit - reserve huge address space, commit as much as needed, release physical memory when idle
 // ============================================================================
 
 class QuantumArena;
@@ -26,14 +26,14 @@ class QuantumArena;
 
 class QuantumArena {
 public:
-    // 默认 512MB 预分配 (足够 8K x 8K RGBA)
+    // Default 512MB pre-allocation (enough for 8K x 8K RGBA)
     static constexpr size_t DEFAULT_SIZE = 512 * 1024 * 1024;
     static constexpr size_t ALIGNMENT = 64; // Cache Line
 
     QuantumArena(size_t capacity = DEFAULT_SIZE) 
         : m_capacity(capacity) 
     {
-        // 延迟初始化 - 构造函数不分配内存
+        // Lazy initialization - constructor does not allocate memory
     }
 
     ~QuantumArena() {
@@ -44,11 +44,11 @@ public:
         }
     }
 
-    // 禁止拷贝
+    // Copy constructor and assignment disabled
     QuantumArena(const QuantumArena&) = delete;
     QuantumArena& operator=(const QuantumArena&) = delete;
 
-    // 允许移动
+    // Move constructor and assignment enabled
     QuantumArena(QuantumArena&& other) noexcept 
         : m_buffer(other.m_buffer)
         , m_capacity(other.m_capacity)
@@ -64,32 +64,32 @@ public:
         other.m_overflowHead = nullptr;
     }
 
-    // ========== 核心操作 ==========
+    // ========== Core Operations ==========
 
 
     // Declaration for global strategy check (implemented in main.cpp or ImageEngine.cpp)
     static bool ShouldShrinkMemory() noexcept;
 
     /// <summary>
-    /// 极速重置 - 0ns 级操作
-    /// 不释放内存，仅重置分配指针。并动态释放物理内存归还系统
-    /// 警告: 调用后，之前分配的所有内存变为无效！
+    /// Fast reset - 0ns-level operation
+    /// Does not release memory, only resets allocation pointer, and dynamically decommits physical memory back to the OS
+    /// Warning: After calling, all previously allocated memory becomes invalid!
     /// </summary>
     void Reset() noexcept {
         FreeOverflows();
         m_offset = 0;
         if (ShouldShrinkMemory()) {
-            Shrink(); // 归还空闲物理内存
+            Shrink(); // Return free physical memory
         }
     }
 
     /// <summary>
-    /// 收缩内存 - 将未使用的预留内存去提交 (Decommit)，归还给 OS
+    /// Shrink memory - decommit unused reserved memory, returning it to the OS
     /// </summary>
     void Shrink() noexcept {
         if (!m_buffer) return;
         size_t used = m_offset.load(std::memory_order_relaxed);
-        // 按 4KB 页对齐
+        // Align to 4KB page size
         size_t keepSize = (used + 4095) & ~4095;
         if (keepSize < m_committed) {
             std::lock_guard<std::mutex> lock(m_commitMutex);
@@ -102,29 +102,29 @@ public:
     }
 
     /// <summary>
-    /// 线性分配 (Arena 语义)
-    /// 返回对齐的内存块，失败返回 nullptr
+    /// Linear allocation (Arena semantics)
+    /// Returns aligned memory block, or nullptr on failure
     /// </summary>
     void* Allocate(size_t size, size_t alignment = ALIGNMENT) noexcept {
         EnsureInitialized();
         if (!m_buffer) return AllocateOverflow(size, alignment);
 
-        // 计算对齐后的偏移
+        // Calculate aligned offset
         size_t current = m_offset.load(std::memory_order_relaxed);
         size_t aligned = (current + alignment - 1) & ~(alignment - 1);
         size_t newOffset = aligned + size;
 
-        // 检查是否溢出虚拟容量
+        // Check if virtual capacity is overflowed
         if (newOffset > m_capacity) {
-            // 溢出到系统堆 (防爆仓)
+            // Overflow to system heap (prevent memory exhaustion)
             return AllocateOverflow(size, alignment);
         }
 
-        // 按需动态提交物理内存 (MEM_COMMIT)
+        // Dynamically commit physical memory on demand (MEM_COMMIT)
         if (newOffset > m_committed) {
             std::lock_guard<std::mutex> lock(m_commitMutex);
             if (newOffset > m_committed) {
-                size_t chunk = 1024 * 1024; // 1MB 粒度提交，兼顾性能和内存占用
+                size_t chunk = 1024 * 1024; // 1MB commit granularity, balancing performance and memory footprint
                 size_t targetCommit = (newOffset + chunk - 1) & ~(chunk - 1);
                 if (targetCommit > m_capacity) targetCommit = m_capacity;
 
@@ -137,7 +137,7 @@ public:
             }
         }
 
-        // CAS 更新 (虽然设计为单线程，但保持原子性以防万一)
+        // CAS update (although designed for single-thread, keep atomic just in case)
         while (!m_offset.compare_exchange_weak(current, newOffset,
             std::memory_order_release, std::memory_order_relaxed)) 
         {
@@ -164,7 +164,7 @@ public:
             }
         }
 
-        // 更新峰值统计
+        // Update peak stats
         size_t peak = m_peakUsage.load(std::memory_order_relaxed);
         while (newOffset > peak && !m_peakUsage.compare_exchange_weak(peak, newOffset));
 
@@ -172,7 +172,7 @@ public:
     }
 
     /// <summary>
-    /// 检查指针是否属于此 Arena (用于判断是否需要 free)
+    /// Check if pointer belongs to this Arena (used to decide if free is needed)
     /// </summary>
     bool Owns(void* ptr) const noexcept {
         if (!ptr) return false;
@@ -180,7 +180,7 @@ public:
             char* p = static_cast<char*>(ptr);
             if (p >= m_buffer && p < m_buffer + m_capacity) return true;
         }
-        // 检查溢出链表 (降级大图分配通常只有个位数个节点，遍历开销可忽略)
+        // Check overflow linked list (fallback large allocations typically have single-digit nodes, traversal overhead is negligible)
         void* curr = m_overflowHead;
         while (curr) {
             void* node_ptr = static_cast<char*>(curr) + ALIGNMENT;
@@ -190,7 +190,7 @@ public:
         return false;
     }
 
-    // ========== 统计信息 ==========
+    // ========== Statistics ==========
 
     size_t GetCapacity() const noexcept { return m_capacity; }
     size_t GetUsedBytes() const noexcept { return m_offset.load(std::memory_order_relaxed); }
@@ -203,7 +203,7 @@ public:
 
 private:
     void* AllocateOverflow(size_t size, size_t alignment) noexcept {
-        // 分配 size + alignment，将链表节点放在前面，以保证返回的业务指针依然满足 alignment
+        // Allocate size + alignment, place linked list node in front to ensure returned pointer still satisfies alignment
         void* raw_ptr = _aligned_malloc(size + alignment, alignment);
         if (raw_ptr) {
             std::lock_guard<std::mutex> lock(m_overflowMutex);
@@ -232,7 +232,7 @@ private:
     void EnsureInitialized() {
         if (m_buffer) return;
 
-        // 仅预留虚拟地址空间 (MEM_RESERVE)，不消耗任何物理内存！
+        // Only reserve virtual address space (MEM_RESERVE), consumes no physical memory!
         m_buffer = static_cast<char*>(VirtualAlloc(nullptr, m_capacity, MEM_RESERVE, PAGE_READWRITE));
         if (!m_buffer) {
             return;
@@ -258,9 +258,9 @@ public:
 
 
 // ============================================================================
-// QuantumArenaPool - 双缓冲 Arena 管理器
+// QuantumArenaPool - Double buffered Arena manager
 // ============================================================================
-// 用于 Ping-Pong 模式：一个 Arena 供当前显示，另一个供后台解码
+// Used for Ping-Pong mode: one Arena for current display, the other for background decoding
 // ============================================================================
 
 class QuantumArenaPool {
@@ -271,28 +271,28 @@ public:
     {}
 
     /// <summary>
-    /// 获取当前活跃的 Arena (屏幕显示中)
+    /// Get currently active Arena (on-screen display)
     /// </summary>
     QuantumArena& GetActive() noexcept {
         return m_arenas[m_activeIndex.load(std::memory_order_acquire)];
     }
 
     /// <summary>
-    /// 获取后台 Arena (解码用)
+    /// Get background Arena (for decoding)
     /// </summary>
     QuantumArena& GetBack() noexcept {
         return m_arenas[1 - m_activeIndex.load(std::memory_order_acquire)];
     }
 
     /// <summary>
-    /// 交换 Active 和 Back Arena (解码完成后调用)
+    /// Swap Active and Back Arenas (called after decoding completes)
     /// </summary>
     void Swap() noexcept {
         m_activeIndex.fetch_xor(1, std::memory_order_acq_rel);
     }
 
     /// <summary>
-    /// 重置后台 Arena (新任务开始前调用)
+    /// Reset background Arena (called before a new task starts)
     /// </summary>
     void ResetBack() noexcept {
         GetBack().Reset();
@@ -316,15 +316,15 @@ private:
 };
 
 // ============================================================================
-// ArenaConfig - 动态内存配额 (根据物理内存自动配置)
+// ArenaConfig - Dynamic memory quota (auto-configured based on physical RAM)
 // ============================================================================
 
 struct ArenaConfig {
-    size_t scoutArenaSize;    // Scout Arena 大小
-    size_t heavyArenaSize;    // Heavy Arena 大小 (每个)
+    size_t scoutArenaSize;    // Scout Arena size
+    size_t heavyArenaSize;    // Heavy Arena size (each)
     
     /// <summary>
-    /// 根据系统物理内存自动计算最佳配置
+    /// Automatically calculate best configuration based on system physical memory
     /// </summary>
     static ArenaConfig Detect() {
         MEMORYSTATUSEX statex;
@@ -335,15 +335,15 @@ struct ArenaConfig {
         ArenaConfig config;
         
         if (totalPhys <= 4ULL * 1024 * 1024 * 1024) {
-            // <= 4GB: Lite 模式
+            // <= 4GB: Lite mode
             config.scoutArenaSize = 64 * 1024 * 1024;   // 64MB
             config.heavyArenaSize = 256 * 1024 * 1024;  // 256MB × 2
         } else if (totalPhys <= 8ULL * 1024 * 1024 * 1024) {
-            // <= 8GB: 标准模式
+            // <= 8GB: Standard mode
             config.scoutArenaSize = 128 * 1024 * 1024;  // 128MB
             config.heavyArenaSize = 512 * 1024 * 1024;  // 512MB × 2
         } else {
-            // > 8GB: 极限模式 (仅预留地址空间，按需提交)
+            // > 8GB: Extreme mode (reserve address space only, commit on demand)
             config.scoutArenaSize = 256 * 1024 * 1024;  // 256MB
             config.heavyArenaSize = 1024 * 1024 * 1024; // 1GB × 2
         }
@@ -352,7 +352,7 @@ struct ArenaConfig {
     }
     
     /// <summary>
-    /// 获取配置模式名称 (用于调试)
+    /// Get config mode name (for debugging)
     /// </summary>
     const wchar_t* GetModeName() const {
         if (heavyArenaSize <= 256 * 1024 * 1024) return L"Lite (4GB)";
@@ -362,9 +362,9 @@ struct ArenaConfig {
 };
 
 // ============================================================================
-// TripleArenaPool - 三 Arena 管理器
+// TripleArenaPool - Triple Arena manager
 // ============================================================================
-// Scout 专用 1 个小型 Arena + Heavy 专用 2 个大型 Arena (Ping-Pong)
+// 1 small Arena dedicated for Scout + 2 large Arenas dedicated for Heavy (Ping-Pong)
 // ============================================================================
 
 class TripleArenaPool {
@@ -372,18 +372,18 @@ public:
     TripleArenaPool() 
         : m_heavyIndex(0)
     {
-        // 延迟初始化 - 构造函数不分配内存
+        // Lazy initialization - constructor does not allocate memory
     }
     
     /// <summary>
-    /// 使用探测到的配置初始化
+    /// Initialize using detected configuration
     /// </summary>
     void Initialize() {
         Initialize(ArenaConfig::Detect());
     }
     
     /// <summary>
-    /// 使用指定配置初始化
+    /// Initialize using specified configuration
     /// </summary>
     void Initialize(const ArenaConfig& config) {
         m_config = config;
@@ -401,7 +401,7 @@ public:
     }
     
     /// <summary>
-    /// 重置 Scout Arena (每次任务开始前调用)
+    /// Reset Scout Arena (called before each task starts)
     /// </summary>
     void ResetScout() {
         if (m_scoutArena) m_scoutArena->Reset();
@@ -420,20 +420,20 @@ public:
     }
     
     /// <summary>
-    /// 交换 Heavy Arena (解码完成后调用)
+    /// Swap Heavy Arenas (called after decoding completes)
     /// </summary>
     void SwapHeavy() {
         m_heavyIndex.fetch_xor(1, std::memory_order_acq_rel);
     }
     
     /// <summary>
-    /// 重置后台 Heavy Arena (新任务开始前调用)
+    /// Reset background Heavy Arena (called before each task starts)
     /// </summary>
     void ResetBackHeavy() {
         GetBackHeavyArena().Reset();
     }
     
-    // ============== 调试统计 ==============
+    // ============== Debug Statistics ==============
     
     const ArenaConfig& GetConfig() const { return m_config; }
     int GetHeavyIndex() const { return m_heavyIndex.load(std::memory_order_acquire); }
@@ -478,7 +478,7 @@ private:
 };
 
 // ============================================================================
-// 别名 - 保持向后兼容
+// Aliases - keep backward compatibility
 // ============================================================================
 using MemoryArena = QuantumArena;
 

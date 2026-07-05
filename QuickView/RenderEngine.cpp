@@ -14,7 +14,7 @@
 #include <DirectXPackedVector.h>
 
 
-// 核心修复：引入 DirectX GUID 定义库 与 必要库
+// Core fix: Import DirectX GUID definition library and necessary libraries
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "d3d11.lib")

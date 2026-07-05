@@ -91,7 +91,7 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
                WuffsImageInfo* pInfo) {
     if (!data || size == 0) return false;
 
-    // [CMS/HDR] 预扫 PNG 关键块，提取 bit depth / iCCP / cICP / sRGB。
+    // [CMS/HDR] Pre-scan PNG critical chunks, extract bit depth / iCCP / cICP / sRGB.
     if (pInfo) {
         const uint8_t* p = data;
         size_t offset = 8; // skip PNG signature

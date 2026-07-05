@@ -218,8 +218,8 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
         FlushFileBuffers(hPipe);
         CloseHandle(hPipe);
 
-        // 核心修复：路由进程目前还持有 Explorer 给予的前台焦点权限
-        // 在退出前，将其赋予所有即将请求前台权力的进程（如主进程或新产生的子进程）
+        // Core fix: The router process currently still holds the foreground focus permission granted by Explorer
+        // Before exiting, delegate it to all processes that are about to request foreground permissions (e.g. main process or newly spawned child processes)
         AllowSetForegroundWindow(ASFW_ANY);
 
         return RouteResult::RoutedToMaster;

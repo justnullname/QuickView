@@ -149,8 +149,8 @@ static std::unique_ptr<CImageLoader> g_imageLoader;
 std::unique_ptr<ImageEngine> g_imageEngine;
 ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
 CompositionEngine* g_compEngine = nullptr; // [Fix] Raw pointer to avoid unique_ptr include hell
-static std::unique_ptr<UIRenderer> g_uiRenderer;  // 鐙珛 UI 灞傛覆鏌撳櫒
-static InputController g_inputController;  // Quantum Stream: 杈撳叆鐘舵€佹満
+static std::unique_ptr<UIRenderer> g_uiRenderer;  // Independent UI layer renderer
+static InputController g_inputController;  // Quantum Stream: Input state machine
 CRenderEngine* g_pRenderEngine = nullptr; // Global raw alias for linker compatibility
 
 bool g_isDraggingAnimSeek = false;
@@ -2954,7 +2954,7 @@ void ApplyCompareZoomWithMultiplier(HWND hwnd,
 
 
 
-// 渚挎嵎锟?(淇濇寔鍚戝悗鍏煎)
+// Shortcuts (keep backward compatibility)
 #define MarkStaticLayerDirty() RequestRepaint(PaintLayer::Static)
 #define MarkDynamicLayerDirty() RequestRepaint(PaintLayer::Dynamic)
 #define MarkGalleryLayerDirty() RequestRepaint(PaintLayer::Gallery)
@@ -5458,7 +5458,7 @@ static int RunDecodeWorker(int argc, LPWSTR* argv) {
 
         // [Fix JXL Titan] Full-decode mode: use static FullDecodeFromMemory (libjxl/Wuffs/TJ direct).
         // This guarantees full-resolution output for Master Cache construction.
-        // FullDecodeFromMemory is a static function 鈥?no CImageLoader::Initialize() needed.
+        // FullDecodeFromMemory is a static function - no CImageLoader::Initialize() needed.
         if (fullDecode) {
             QuickView::MappedFile mmf(inputPath.c_str());
             if (mmf.IsValid()) {
@@ -5546,11 +5546,11 @@ static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
     return true;
 }
 
-// [Phase 0] Lightweight INI read 鈥?only the SingleInstance flag.
+// [Phase 0] Lightweight INI read - only the SingleInstance flag.
 // Called BEFORE COM/D2D/Config initialization.
 
 
-// [Phase 0] Master flag 鈥?true if this process runs the pipe server.
+// [Phase 0] Master flag - true if this process runs the pipe server.
 static bool g_isMasterProcess = false;
 
 // Helper to force window to foreground and take focus
@@ -5736,8 +5736,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     RefreshWindowDpi(hwnd);
 
     // [Phase 0] Start Named Pipe server on Master process.
-    // SingleInstance ON  鈫?replace current image in Master's window
-    // SingleInstance OFF 鈫?spawn child viewer process (Chrome multi-window)
+    // SingleInstance ON  -> replace current image in Master's window
+    // SingleInstance OFF -> spawn child viewer process (Chrome multi-window)
     if (g_isMasterProcess) {
         QuickView::ProcessRouter::StartMasterServer([](std::wstring path, void* context) {
             // Callback runs on pipe server thread.
@@ -6005,7 +6005,7 @@ static bool TryTriggerCustomMouseHotkey(HWND hwnd, uint16_t vk, bool execute) {
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    // [Loupe] 当放大镜处于活动状态时，拦截并忽略所有鼠标点击和双击事件，以防在此期间误操作缩放、导航或分栏控制
+    // [Loupe] While the loupe is active, intercept and ignore all mouse click and double-click events to prevent accidental zoom, navigation, or split-pane control during this time
     if (AppContext::GetInstance().Loupe.active) {
         if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_LBUTTONDBLCLK ||
             message == WM_RBUTTONDOWN || message == WM_RBUTTONUP || message == WM_RBUTTONDBLCLK ||
@@ -6053,7 +6053,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     switch (message) {
     case WM_ACTIVATE:
         if (LOWORD(wParam) == WA_INACTIVE) {
-            // [Loupe] 当窗口失去焦点时，确保重置放大镜状态并恢复鼠标指针，以防按键释放事件丢失
+            // [Loupe] When the window loses focus, ensure the loupe state is reset and mouse pointer is restored, in case the key release event is lost
             if (AppContext::GetInstance().Loupe.active) {
                 AppContext::GetInstance().Loupe.active = false;
                 SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
@@ -8712,7 +8712,7 @@ SKIP_EDGE_NAV:;
             RequestRepaint(PaintLayer::Dynamic);
             return 0;
         }
-        if (wParam == VK_MENU) return 0; // 拦截 Alt 释放，防止进入菜单循环导致焦点丢失
+        if (wParam == VK_MENU) return 0; // Intercept Alt release to prevent entering the menu loop and losing focus
         break;
 
     case WM_SYSKEYDOWN:
@@ -8824,9 +8824,9 @@ SKIP_EDGE_NAV:;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
-        // [Fix] 增加对 VK_MENU 的排除，防止 Alt 键交给 DefWindowProc 触发菜单系统
+        // [Fix] Add exclusion for VK_MENU to prevent the Alt key from being handed to DefWindowProc and triggering the menu system
         if (message == WM_SYSKEYDOWN && wParam != VK_F10 && wParam != VK_LEFT && wParam != VK_RIGHT && wParam != VK_UP && wParam != VK_DOWN && wParam != VK_MENU) {
-            break; // 其他系统键交给默认处理
+            break; // Hand other system keys to default processing
         }
         
 
@@ -11753,7 +11753,7 @@ void OnPaint(HWND hwnd) {
             }
 
             // [Fix] Snapshot metadata to avoid dangling .c_str() if coroutine resets GetPaneContext(PaneSlot::Primary).metadata mid-paint.
-            const auto titanMeta = GetPaneContext(PaneSlot::Primary).metadata; // Value copy 鈥?safe from concurrent reset
+            const auto titanMeta = GetPaneContext(PaneSlot::Primary).metadata; // Value copy - safe from concurrent reset
 
             // [Infinity Engine] Cascade Rendering Path
             bool isTitan = g_imageEngine && g_imageEngine->IsTitanModeEnabled() && !GetPaneContext(PaneSlot::Primary).path.empty();
@@ -11861,7 +11861,7 @@ void OnPaint(HWND hwnd) {
                      g_showTileGrid,
                      &visibleRect
                  );
-                 // [Throttle] Deferred tiles exist 鈥?request next frame to continue uploading
+                 // [Throttle] Deferred tiles exist - request next frame to continue uploading
                  if (hrTile == S_FALSE) {
                      // [Fix] Do not use RequestRepaint (which relies on InvalidateRect).
                      // InvalidateRect might be cleared by ValidateRect if OnPaint hasn't returned.

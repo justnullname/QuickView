@@ -11,7 +11,6 @@
 #include "Toolbar.h"
 #include <algorithm>
 #include <cmath>
-#include <d2d1effects.h>
 #include <vector>
 
 #include "ImageEngine.h" // [v3.1] Access for HasEmbeddedThumb
@@ -599,7 +598,7 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
     // DO NOT add auto-dirty checks here - they can block initial rendering.
     // RequestRepaint() should be called when UI state changes.
     
-    // ===== Static Layer (低频更新) =====
+    // ===== Static Layer (Low-frequency updates) =====
     if (m_isStaticDirty) {
         ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Static, nullptr);
         if (dc) {
@@ -623,25 +622,25 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
 
     // ===== Dynamic Layer (Topmost, High Freq) =====
     if (m_isDynamicDirty) {
-        // 智能 Dirty Rects: 只有 OSD 变化时使用局部更新
+        // Smart Dirty Rects: Only use local updates when OSD changes
         bool useOSDDirtyRect = m_osdDirty && !m_dynamicFullDirty && !m_tooltipDirty && !AppContext::GetInstance().Loupe.active;
         
         if (useOSDDirtyRect && m_osdOpacity > 0.01f) {
-            // 只 OSD 需要更新 - 使用 Dirty Rects
+            // Only OSD needs update - use Dirty Rects
             RECT osdRect = CalculateOSDDirtyRect();
             ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, &osdRect);
             if (dc) {
-                // 创建画刷
+                // Create brushes
                 ComPtr<ID2D1SolidColorBrush> whiteBrush;
                 dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
                 m_whiteBrush = whiteBrush;
                 
-                DrawOSD(dc, hwnd); // 局部绘制
+                DrawOSD(dc, hwnd); // Local draw
                 m_compEngine->EndLayerUpdate(UILayer::Dynamic);
                 rendered = true;
             }
         } else {
-            // 全量更新
+            // Full update
             ID2D1DeviceContext* dc = m_compEngine->BeginLayerUpdate(UILayer::Dynamic, nullptr);
             if (dc) {
                 RenderDynamicLayer(dc, hwnd);
@@ -650,7 +649,7 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
             }
         }
         
-        // 重置所有脏标记
+        // Reset all dirty flags
         m_isDynamicDirty = false;
         m_osdDirty = false;
         m_tooltipDirty = false;
@@ -665,7 +664,7 @@ bool UIRenderer::RenderAll(HWND hwnd, float deltaTime) {
 // ============================================================================
 
 void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
-    // 创建画刷 (每层独立 context, 需要独立创建)
+    // Create brushes (each layer has a separate context and needs separate creation)
     // [Fix] Clear surface before drawing to prevent "ghosting" of previous state (e.g. pinned vs unpinned background)
     dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
@@ -924,7 +923,7 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
 }
 
 void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
-    // 创建画刷
+    // Create brushes
     ComPtr<ID2D1SolidColorBrush> whiteBrush, blackBrush, accentBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &whiteBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), &blackBrush);
@@ -1015,7 +1014,7 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Grid Tooltip
     DrawGridTooltip(dc);
     
-    // Modal Dialog (最顶层)
+    // Modal Dialog (Topmost)
     if (AppContext::GetInstance().DialogCtrl->IsActive()) {
         AppContext::GetInstance().DialogCtrl->Render(dc);
     }
@@ -4356,6 +4355,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 
 static void GetCleanButtonText(const wchar_t *src, wchar_t *dest,
                                size_t destSize) {
+  if (destSize == 0 || !dest) return;
   size_t i = 0;
   while (src[i] != L'\0' && src[i] != L'\t' && i < destSize - 1) {
     dest[i] = src[i];
@@ -4402,24 +4402,24 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   {
     ComPtr<ID2D1LinearGradientBrush> bgBrush;
     ComPtr<ID2D1GradientStopCollection> bgStopCollection;
-    D2D1_GRADIENT_STOP bgStops[3];
+    std::array<D2D1_GRADIENT_STOP, 3> bgStops;
     if (IsLightThemeActive()) {
-      bgStops[0] = {0.0f, D2D1::ColorF(0.98f, 0.98f, 0.99f, 1.0f)};
-      bgStops[1] = {0.75f, D2D1::ColorF(0.95f, 0.96f, 0.98f, 1.0f)};
-      bgStops[2] = {1.0f, D2D1::ColorF(0.92f, 0.94f, 0.97f, 1.0f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.98f, 0.98f, 0.99f, 1.0f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{0.75f, D2D1::ColorF(0.95f, 0.96f, 0.98f, 1.0f)};
+      bgStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.92f, 0.94f, 0.97f, 1.0f)};
     } else {
       // Smooth space blue-black gradient
-      bgStops[0] = {0.0f, D2D1::ColorF(0.006f, 0.006f, 0.008f,
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.006f, 0.006f, 0.008f,
                                        1.0f)}; // Top: pitch black space
-      bgStops[1] = {0.75f, D2D1::ColorF(0.015f, 0.02f, 0.035f,
+      bgStops[1] = D2D1_GRADIENT_STOP{0.75f, D2D1::ColorF(0.015f, 0.02f, 0.035f,
                                         1.0f)}; // Mid: fading space blue
-      bgStops[2] = {1.0f,
+      bgStops[2] = D2D1_GRADIENT_STOP{1.0f,
                     D2D1::ColorF(0.03f, 0.06f, 0.12f,
                                  1.0f)}; // Bottom: ambient atmosphere blue
     }
 
     if (SUCCEEDED(
-            dc->CreateGradientStopCollection(bgStops, 3, &bgStopCollection))) {
+            dc->CreateGradientStopCollection(bgStops.data(), static_cast<UINT32>(bgStops.size()), &bgStopCollection))) {
       if (SUCCEEDED(dc->CreateLinearGradientBrush(
               D2D1::LinearGradientBrushProperties(
                   D2D1::Point2F(m_width / 2.0f, 0.0f),
@@ -4445,22 +4445,22 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
 
     ComPtr<ID2D1RadialGradientBrush> glowBrush;
     ComPtr<ID2D1GradientStopCollection> glowStopsCol;
-    D2D1_GRADIENT_STOP glowStops[3];
+    std::array<D2D1_GRADIENT_STOP, 3> glowStops;
 
     if (IsLightThemeActive()) {
-      glowStops[0] = {0.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 1.0f)};
-      glowStops[1] = {0.2f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.5f)};
-      glowStops[2] = {1.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.0f)};
+      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 1.0f)};
+      glowStops[1] = D2D1_GRADIENT_STOP{0.2f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.5f)};
+      glowStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.6f, 0.85f, 1.0f, 0.0f)};
     } else {
       // Paler cyan core, not too blue
-      glowStops[0] = {0.0f, D2D1::ColorF(0.4f, 0.9f, 1.0f, 0.95f)}; 
+      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.4f, 0.9f, 1.0f, 0.95f)}; 
       // Strengthened core density (+20%)
-      glowStops[1] = {0.20f, D2D1::ColorF(0.2f, 0.7f, 0.95f, 0.35f)}; 
+      glowStops[1] = D2D1_GRADIENT_STOP{0.20f, D2D1::ColorF(0.2f, 0.7f, 0.95f, 0.35f)}; 
       // Long, sparsely foggy tail fading to transparent
-      glowStops[2] = {1.0f, D2D1::ColorF(0.1f, 0.4f, 0.7f, 0.0f)}; 
+      glowStops[2] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.1f, 0.4f, 0.7f, 0.0f)}; 
     }
 
-    if (SUCCEEDED(dc->CreateGradientStopCollection(glowStops, 3, &glowStopsCol))) {
+    if (SUCCEEDED(dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), &glowStopsCol))) {
       // Increased vertical thickness by exactly 20% (ry = 42s)
       dc->CreateRadialGradientBrush(
           D2D1::RadialGradientBrushProperties(D2D1::Point2F(w / 2.0f, curvePeakY),
@@ -4473,7 +4473,7 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     // center highlight ---
     ComPtr<ID2D1LinearGradientBrush> lineBrush;
     ComPtr<ID2D1GradientStopCollection> linearStopsCol;
-    D2D1_GRADIENT_STOP linearStops[7];
+    std::array<D2D1_GRADIENT_STOP, 7> linearStops;
 
     D2D1_COLOR_F coreColor = IsLightThemeActive()
                                  ? D2D1::ColorF(0.2f, 0.6f, 1.0f, 1.0f)
@@ -4484,15 +4484,15 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
     D2D1_COLOR_F fadeColor = coreColor;
     fadeColor.a = 0.0f;
 
-    linearStops[0] = {0.0f, fadeColor};
-    linearStops[1] = {0.25f, coreColor};
-    linearStops[2] = {0.35f, coreColor};
-    linearStops[3] = {0.5f, highlightColor};
-    linearStops[4] = {0.65f, coreColor};
-    linearStops[5] = {0.75f, coreColor};
-    linearStops[6] = {1.0f, fadeColor};
+    linearStops[0] = D2D1_GRADIENT_STOP{0.0f, fadeColor};
+    linearStops[1] = D2D1_GRADIENT_STOP{0.25f, coreColor};
+    linearStops[2] = D2D1_GRADIENT_STOP{0.35f, coreColor};
+    linearStops[3] = D2D1_GRADIENT_STOP{0.5f, highlightColor};
+    linearStops[4] = D2D1_GRADIENT_STOP{0.65f, coreColor};
+    linearStops[5] = D2D1_GRADIENT_STOP{0.75f, coreColor};
+    linearStops[6] = D2D1_GRADIENT_STOP{1.0f, fadeColor};
 
-    if (SUCCEEDED(dc->CreateGradientStopCollection(linearStops, 7,
+    if (SUCCEEDED(dc->CreateGradientStopCollection(linearStops.data(), static_cast<UINT32>(linearStops.size()),
                                                    &linearStopsCol))) {
       dc->CreateLinearGradientBrush(
           D2D1::LinearGradientBrushProperties(D2D1::Point2F(0.0f, 0.0f),
@@ -4616,17 +4616,17 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   {
     ComPtr<ID2D1RadialGradientBrush> glowBrush;
     ComPtr<ID2D1GradientStopCollection> glowStopsCol;
-    D2D1_GRADIENT_STOP glowStops[2];
+    std::array<D2D1_GRADIENT_STOP, 2> glowStops;
     if (IsLightThemeActive()) {
-      glowStops[0] = {0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.12f)};
-      glowStops[1] = {1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
+      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.12f)};
+      glowStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
     } else {
-      glowStops[0] = {0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.18f)};
-      glowStops[1] = {1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
+      glowStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.18f)};
+      glowStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.0f)};
     }
 
     if (SUCCEEDED(
-            dc->CreateGradientStopCollection(glowStops, 2, &glowStopsCol))) {
+            dc->CreateGradientStopCollection(glowStops.data(), static_cast<UINT32>(glowStops.size()), &glowStopsCol))) {
       float glowCenterX = iconX + iconSize / 2.0f;
       float glowCenterY = iconY + iconSize / 2.0f;
       float glowRadius = iconSize * 1.5f;
@@ -4693,18 +4693,18 @@ void UIRenderer::DrawWelcomeScreen(ID2D1DeviceContext *dc) {
   m_welcomeOpenFolderRect = D2D1::RectF(btn2X, btnY, btn2X + btnW, btnY + btnH);
 
   // Extract clean localized text without keyboard shortcuts and ellipsis
-  wchar_t cleanOpenText[64] = {};
+  std::array<wchar_t, 64> cleanOpenText = {};
   if (AppStrings::Context_Open) {
-    GetCleanButtonText(AppStrings::Context_Open, cleanOpenText, 64);
+    GetCleanButtonText(AppStrings::Context_Open, cleanOpenText.data(), cleanOpenText.size());
   } else {
-    wcscpy_s(cleanOpenText, L"Open");
+    wcscpy_s(cleanOpenText.data(), cleanOpenText.size(), L"Open");
   }
 
   const wchar_t *openFolderText = AppStrings::Context_OpenFolder
                                       ? AppStrings::Context_OpenFolder
                                       : L"Open Folder";
 
-  DrawWelcomeButton(dc, m_welcomeOpenFileRect, cleanOpenText, Icons::OpenVector,
+  DrawWelcomeButton(dc, m_welcomeOpenFileRect, cleanOpenText.data(), Icons::OpenVector,
                     m_hoverWelcomeBtn == 1);
   DrawWelcomeButton(dc, m_welcomeOpenFolderRect, openFolderText,
                     Icons::FolderVector, m_hoverWelcomeBtn == 2);
@@ -4718,28 +4718,28 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
   // touch)
   ComPtr<ID2D1LinearGradientBrush> btnBgBrush;
   ComPtr<ID2D1GradientStopCollection> btnBgStopsCol;
-  D2D1_GRADIENT_STOP bgStops[2];
+  std::array<D2D1_GRADIENT_STOP, 2> bgStops;
   const float s = m_uiScale;
 
   if (hoverState != 0) {
     if (IsLightThemeActive()) {
-      bgStops[0] = {0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.28f)};
-      bgStops[1] = {1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.38f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.28f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.38f)};
     } else {
-      bgStops[0] = {0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.42f)};
-      bgStops[1] = {1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.52f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.42f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.12f, 0.48f, 0.9f, 0.52f)};
     }
   } else {
     if (IsLightThemeActive()) {
-      bgStops[0] = {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.03f)};
-      bgStops[1] = {1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.07f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.03f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.07f)};
     } else {
-      bgStops[0] = {0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f)};
-      bgStops[1] = {1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.04f)};
+      bgStops[0] = D2D1_GRADIENT_STOP{0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f)};
+      bgStops[1] = D2D1_GRADIENT_STOP{1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.04f)};
     }
   }
 
-  if (SUCCEEDED(dc->CreateGradientStopCollection(bgStops, 2, &btnBgStopsCol))) {
+  if (SUCCEEDED(dc->CreateGradientStopCollection(bgStops.data(), static_cast<UINT32>(bgStops.size()), &btnBgStopsCol))) {
     dc->CreateLinearGradientBrush(
         D2D1::LinearGradientBrushProperties(D2D1::Point2F(r.left, r.top),
                                             D2D1::Point2F(r.right, r.bottom)),

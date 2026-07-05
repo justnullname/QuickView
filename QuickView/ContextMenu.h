@@ -10,7 +10,7 @@
 // Command IDs (WM_COMMAND wParam)
 // ============================================================
 enum ContextMenuCommand : UINT {
-    // [打开 & 编辑] Group
+    // [Open & Edit] Group
     IDM_OPEN = 1001,
     IDM_OPENWITH_DEFAULT,
     IDM_EDIT,  // Open with default editor
@@ -20,7 +20,7 @@ enum ContextMenuCommand : UINT {
     IDM_COPY_PATH,
     IDM_PRINT,
 
-    // [视图控制] Group
+    // [View Control] Group
     IDM_FULLSCREEN,
     IDM_SLIDESHOW,
     IDM_ZOOM_100,
@@ -55,12 +55,12 @@ enum ContextMenuCommand : UINT {
     IDM_FLIP_H,
     IDM_FLIP_V,
 
-    // [文件操作] Group
+    // [File Operations] Group
     IDM_RENAME,
     IDM_FIX_EXTENSION,
     IDM_DELETE,
 
-    // [應用設置] Group
+    // [App Settings] Group
     IDM_SETTINGS,
     IDM_EXIT,
 
