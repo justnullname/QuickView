@@ -413,7 +413,7 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
     }
 
     // 2. [Geek Upgrade] Gradient Border with Additive Blending
-    if (m_borderBrush) {
+    if (m_borderBrush && config.strokeWeight > 0.0f) {
         pRT->DrawRoundedRectangle(roundedRect, m_borderBrush.Get(), config.strokeWeight);
     }
 
@@ -423,7 +423,7 @@ void GeekGlassEngine::DrawGeekGlassToppings(ID2D1RenderTarget* pRT, const GeekGl
     }
 
     // 3. [Structural Depth] Inner Bevel (Micro-refraction)
-    if (m_bevelBrush) {
+    if (m_bevelBrush && config.strokeWeight > 0.0f) {
         
         // Draw slightly inside the main border
         D2D1_ROUNDED_RECT innerRect = roundedRect;

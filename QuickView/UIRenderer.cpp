@@ -63,7 +63,7 @@ static int ClampToInt(float value, int low, int high) {
     return (std::clamp)(rounded, low, high);
 }
 
-static void DrawTextWithFourWayShadow(
+[[maybe_unused]] static void DrawTextWithFourWayShadow(
     ID2D1DeviceContext* dc,
     const wchar_t* text,
     UINT32 length,
@@ -180,6 +180,7 @@ void UIRenderer::UpdateAnimationState(const AnimationPlaybackState& animState) {
 
 HitTestResult UIRenderer::HitTest(float x, float y) {
     HitTestResult result;
+    const float s = m_uiScale;
     
     // Every hit test should start by resetting the hover state
     m_hoverRowIndex = -1;
@@ -198,8 +199,25 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
     }
 
     // Only hit test if info panel OR HUD is visible
-    bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo;
-    if (!g_runtime.ShowInfoPanel && !hudVisible) return result;
+    extern GalleryOverlay g_gallery;
+    float cx = m_width / 2.0f;
+    float neckH = 40.0f * s;
+    float neckW = 200.0f * s;
+    bool isInNeck = (m_lastMousePos.y >= 0 && m_lastMousePos.y < neckH &&
+                     m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
+    bool isHotspotShowing = !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
+
+    bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo && !g_gallery.IsVisible() && !isHotspotShowing;
+    
+    bool infoPanelVisible = g_runtime.ShowInfoPanel;
+    if (infoPanelVisible) {
+        bool overlapsHotspot = (m_lastInfoPanelRect.top < neckH && m_lastInfoPanelRect.right > cx - neckW && m_lastInfoPanelRect.left < cx + neckW);
+        if (isHotspotShowing && overlapsHotspot) {
+            infoPanelVisible = false;
+        }
+    }
+
+    if (!infoPanelVisible && !hudVisible) return result;
 
     // HUD Hit Test (if visible)
     if (hudVisible) {
@@ -237,7 +255,7 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
         }
     }
     
-    if (!g_runtime.ShowInfoPanel) return result;
+    if (!infoPanelVisible) return result;
     
     // Panel Toggle Button
     if (x >= m_panelToggleRect.left && x <= m_panelToggleRect.right &&
@@ -3050,19 +3068,19 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     
         // Add Size
         if (g_currentMetadata.Width > 0) {
-            wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
+            wchar_t sz[64]; swprintf_s(sz, L"  %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
             info += sz;
             
             if (g_currentMetadata.FileSize > 0) {
                 double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
-                swprintf_s(sz, L"   %.2f MB", mb);
+                swprintf_s(sz, L"  %.2f MB", mb);
                 info += sz;
             }
         }
     
         // Add Compact EXIF
         std::wstring meta = g_currentMetadata.GetCompactString();
-        if (!meta.empty()) info += L"   " + meta;
+        if (!meta.empty()) info += L"  " + meta;
 
         if (!g_currentMetadata.FormatDetails.empty()) {
             std::wstring compactDetails = StripQualityFromFormatDetails(g_currentMetadata.FormatDetails);
@@ -3094,17 +3112,17 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     }
     
     // Layout and Geometry
-    float paddingLeft = 10.0f * s;
-    float paddingRight = 10.0f * s;
-    float paddingTop = 3.0f * s;
+    float paddingLeft = 12.0f * s;
+    float paddingRight = 12.0f * s;
+    float paddingTop = 1.0f * s;
     float itemHeight = 20.0f * s;
-    float totalHeight = 26.0f * s;
+    float totalHeight = 22.0f * s;
     
     // Horizontal positions
     float textLeft = startX + paddingLeft;
     float textRight = textLeft + textW;
     
-    float btnTop = startY + 5.0f * s;
+    float btnTop = startY + 3.0f * s;
     float btnBottom = btnTop + 16.0f * s;
     
     // Expand Button [+] -> draw as "+"
@@ -3119,6 +3137,19 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     
     float totalWidth = (closeRight + paddingRight) - startX;
     D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + totalWidth, startY + totalHeight);
+    
+    // Smart Overlap Avoidance: Hide if overlaps with top gallery trigger hotspot
+    float cx = m_width / 2.0f;
+    float neckH = 40.0f * s;
+    float neckW = 200.0f * s;
+    bool isInNeck = (m_lastMousePos.y >= 0 && m_lastMousePos.y < neckH &&
+                     m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
+    bool isHotspotShowing = !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
+    bool overlapsHotspot = (panelRect.top < neckH && panelRect.right > cx - neckW && panelRect.left < cx + neckW);
+    if (isHotspotShowing && overlapsHotspot) {
+        m_lastInfoPanelRect = {};
+        return;
+    }
     m_lastInfoPanelRect = panelRect;
     
     // [Geek Glass] Panel Background Render
@@ -3133,7 +3164,7 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     glassConfig.specularOpacity = g_config.GlassSpecularOpacity;
     glassConfig.blurStandardDeviation = g_config.GlassBlurSigma * s;
     glassConfig.opacity = g_config.GlassPanelsOpacity / 100.0f;
-    glassConfig.strokeWeight = g_config.GetVectorStrokeWeight();
+    glassConfig.strokeWeight = 0.0f; // [Compact refinement] Remove borders
     glassConfig.shadowOpacity = g_config.GlassShadowOpacity;
     glassConfig.pBackgroundCommandList = m_bgCommandList.Get();
     
@@ -3165,18 +3196,20 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     float unusedBlend;
     const AdaptiveUiPalette palette = BuildAdaptivePalette(panelLuma, &unusedBlend);
 
-    ComPtr<ID2D1SolidColorBrush> brushText;
+    ComPtr<ID2D1SolidColorBrush> brushText, brushYellow, brushRed;
     dc->CreateSolidColorBrush(palette.foreground, &brushText);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.7f, 0.0f, 1.0f), &brushYellow);
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f), &brushRed);
     
     // Text drawing
     D2D1_RECT_F textRect = D2D1::RectF(textLeft, startY + paddingTop, textRight, startY + paddingTop + itemHeight);
     dc->DrawText(info.c_str(), (UINT32)info.length(), m_panelFormat.Get(), textRect, brushText.Get());
     
     // Draw expand button "+"
-    dc->DrawText(L"+", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 4.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushText.Get());
+    dc->DrawText(L"+", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 4.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), brushYellow.Get());
     
     // Draw close button "x"
-    dc->DrawText(L"x", 1, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 4.0f * s, m_panelCloseRect.top, m_panelCloseRect.right, m_panelCloseRect.bottom), brushText.Get());
+    dc->DrawText(L"x", 1, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 4.0f * s, m_panelCloseRect.top, m_panelCloseRect.right, m_panelCloseRect.bottom), brushRed.Get());
 }
 
 float UIRenderer::EstimateCanvasLuminance() const {
@@ -3391,6 +3424,19 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f * s;
 
     D2D1_RECT_F panelRect = D2D1::RectF(startX, startY, startX + width, startY + height);
+    
+    // Smart Overlap Avoidance: Hide if overlaps with top gallery trigger hotspot
+    float cx = m_width / 2.0f;
+    float neckH = 40.0f * s;
+    float neckW = 200.0f * s;
+    bool isInNeck = (m_lastMousePos.y >= 0 && m_lastMousePos.y < neckH &&
+                     m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
+    bool isHotspotShowing = !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
+    bool overlapsHotspot = (panelRect.top < neckH && panelRect.right > cx - neckW && panelRect.left < cx + neckW);
+    if (isHotspotShowing && overlapsHotspot) {
+        m_lastInfoPanelRect = {};
+        return;
+    }
     m_lastInfoPanelRect = panelRect;
     
     // [Geek Glass] Panel Background Render
@@ -3813,13 +3859,25 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         m_lastHUDRect = {};
         return;
     }
+    
+    // Smart Overlap Avoidance: Hide HUD if top gallery filmstrip is visible or triggering hotspot is active
+    extern GalleryOverlay g_gallery;
+    const float s = m_uiScale;
+    float cx = m_width / 2.0f;
+    float neckH = 40.0f * s;
+    float neckW = 200.0f * s;
+    bool isInNeck = (m_lastMousePos.y >= 0 && m_lastMousePos.y < neckH &&
+                     m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
+    bool isHotspotShowing = !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
+    if (g_gallery.IsVisible() || isHotspotShowing) {
+        m_lastHUDRect = {};
+        return;
+    }
     CImageLoader::ImageMetadata leftMeta, rightMeta;
     if (!GetCompareInfoSnapshot(leftMeta, rightMeta)) return;
 
     EnsureTextFormats();
     if (!m_panelFormat) return;
-
-    const float s = m_uiScale;
 
     // --- LITE MODE (Single Line, Center Aligned) ---
     if (g_runtime.CompareHudMode == 0) {
@@ -3879,9 +3937,19 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         auto leftMetrics = buildMetrics(leftMeta, rightMeta);
         auto rightMetrics = buildMetrics(rightMeta, leftMeta);
 
+        // Layout and Geometry (Synced with DrawCompactInfo)
         float y = 16.0f * s;
-        float gap = 12.0f * s;
-        float centerGap = 20.0f * s;
+        float paddingLeft = 12.0f * s;
+        float paddingRight = 12.0f * s;
+        float paddingTop = 1.0f * s;
+        float itemHeight = 20.0f * s;
+        float totalHeight = 22.0f * s;
+        float gap = 8.0f * s;
+        float centerGap = 16.0f * s;
+        
+        float btnTop = y + 3.0f * s;
+        float btnBottom = btnTop + 16.0f * s;
+
         float leftTotalW = 0.0f;
         for (const auto& m : leftMetrics) leftTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
         if (leftTotalW > 0.0f) leftTotalW -= gap;
@@ -3889,31 +3957,99 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         for (const auto& m : rightMetrics) rightTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
         if (rightTotalW > 0.0f) rightTotalW -= gap;
 
-        const D2D1_RECT_F leftRect = D2D1::RectF(
-            splitX - centerGap - leftTotalW,
-            y,
-            splitX - centerGap,
-            y + 24.0f * s);
-        const D2D1_RECT_F rightRect = D2D1::RectF(
-            splitX + centerGap,
-            y,
-            splitX + centerGap + rightTotalW + 56.0f * s,
-            y + 24.0f * s);
-        const AdaptiveUiPalette leftPalette = BuildAdaptivePalette(EstimateRectLuminance(leftRect), nullptr);
-        const AdaptiveUiPalette rightPalette = BuildAdaptivePalette(EstimateRectLuminance(rightRect), nullptr);
+        // Calculate panel dimensions
+        float leftTextStart = splitX - centerGap - leftTotalW;
+        float rightTextStart = splitX + centerGap;
+        float rightTextEnd = rightTextStart + rightTotalW;
 
-        ComPtr<ID2D1SolidColorBrush> leftShadowBrush, leftTextBrush, leftWinBrush;
-        ComPtr<ID2D1SolidColorBrush> rightShadowBrush, rightTextBrush, rightWinBrush, rightRedBrush;
-        dc->CreateSolidColorBrush(leftPalette.shadow, &leftShadowBrush);
+        // Expand Button [+] -> draw as "+"
+        float toggleLeft = rightTextEnd + 8.0f * s;
+        float toggleRight = toggleLeft + 16.0f * s;
+        m_panelToggleRect = D2D1::RectF(toggleLeft, btnTop, toggleRight, btnBottom);
+
+        // Close Button [x] -> draw as "x"
+        float closeLeft = toggleRight + 6.0f * s;
+        float closeRight = closeLeft + 16.0f * s;
+        m_panelCloseRect = D2D1::RectF(closeLeft, btnTop, closeRight, btnBottom);
+
+        D2D1_RECT_F panelRect = D2D1::RectF(
+            leftTextStart - paddingLeft,
+            y,
+            closeRight + paddingRight,
+            y + totalHeight);
+
+        // Smart Overlap Avoidance: Hide if overlaps with top gallery trigger hotspot
+        float cx = m_width / 2.0f;
+        float neckH = 40.0f * s;
+        float neckW = 200.0f * s;
+        extern GalleryOverlay g_gallery;
+        bool isInNeck = (m_lastMousePos.y >= 0 && m_lastMousePos.y < neckH &&
+                         m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
+        bool isHotspotShowing = !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
+        bool overlapsHotspot = (panelRect.top < neckH && panelRect.right > cx - neckW && panelRect.left < cx + neckW);
+        if (isHotspotShowing && overlapsHotspot) {
+            m_lastHUDRect = {};
+            m_hudToggleLiteRect = {};
+            return;
+        }
+
+        // --- Render Background Glass (Single Connected Panel) ---
+        auto drawGlassBackground = [&](const D2D1_RECT_F& targetRect) {
+            QuickView::UI::GeekGlass::GeekGlassConfig glassConfig;
+            glassConfig.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
+            glassConfig.panelBounds = targetRect;
+            glassConfig.cornerRadius = 6.0f * s;
+            glassConfig.enableGeekGlass = g_config.EnableGeekGlass;
+            glassConfig.tintProfile = g_config.GlassTintProfile;
+            glassConfig.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, g_config.GlassTintAlpha);
+            glassConfig.tintAlpha = g_config.GlassTintAlpha;
+            glassConfig.specularOpacity = g_config.GlassSpecularOpacity;
+            glassConfig.blurStandardDeviation = g_config.GlassBlurSigma * s;
+            glassConfig.opacity = g_config.GlassPanelsOpacity / 100.0f;
+            glassConfig.strokeWeight = 0.0f; // [Compact refinement] Remove borders
+            glassConfig.shadowOpacity = g_config.GlassShadowOpacity;
+            glassConfig.pBackgroundCommandList = m_bgCommandList.Get();
+            if (m_compEngine) {
+                glassConfig.backgroundTransform = m_compEngine->GetScreenTransform();
+            }
+            
+            m_geekGlass.DrawGeekGlassPanel(dc, glassConfig);
+
+            if (g_config.EnableGeekGlass) {
+                float masterOpacity = g_config.GlassPanelsOpacity / 100.0f;
+                ComPtr<ID2D1SolidColorBrush> materialBrush;
+                
+                bool isLight = IsLightThemeActive();
+                D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
+                
+                dc->CreateSolidColorBrush(fillerColor, &materialBrush);
+                if (materialBrush) {
+                    materialBrush->SetOpacity(masterOpacity);
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(targetRect, glassConfig.cornerRadius, glassConfig.cornerRadius), materialBrush.Get());
+                }
+                
+                m_geekGlass.DrawGeekGlassToppings(dc, glassConfig);
+            }
+        };
+
+        drawGlassBackground(panelRect);
+
+        // Theme-aware Text Colors (Synced with DrawCompactInfo)
+        float panelLuma = IsLightThemeActive() ? 1.0f : 0.0f;
+        float unusedBlend;
+        const AdaptiveUiPalette leftPalette = BuildAdaptivePalette(panelLuma, &unusedBlend);
+        const AdaptiveUiPalette rightPalette = BuildAdaptivePalette(panelLuma, &unusedBlend);
+
+        ComPtr<ID2D1SolidColorBrush> leftTextBrush, leftWinBrush;
+        ComPtr<ID2D1SolidColorBrush> rightTextBrush, rightWinBrush, rightYellowBrush, rightRedBrush;
         dc->CreateSolidColorBrush(leftPalette.foreground, &leftTextBrush);
         dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.9f, 0.4f), &leftWinBrush);
-        dc->CreateSolidColorBrush(rightPalette.shadow, &rightShadowBrush);
         dc->CreateSolidColorBrush(rightPalette.foreground, &rightTextBrush);
         dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.9f, 0.4f), &rightWinBrush);
-        dc->CreateSolidColorBrush(rightPalette.danger, &rightRedBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.7f, 0.0f, 1.0f), &rightYellowBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f), &rightRedBrush);
 
         auto DrawMetrics = [&](const std::vector<LiteMetric>& metrics, float startX, bool alignRight,
-                               ID2D1SolidColorBrush* shadowBrush,
                                ID2D1SolidColorBrush* textBrush,
                                ID2D1SolidColorBrush* winBrush) {
             float currentX = startX;
@@ -3926,29 +4062,23 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 
             for (const auto& m : metrics) {
                 float tw = MeasureTextWidth(m.val, m_panelFormat.Get());
-                D2D1_RECT_F r = D2D1::RectF(currentX, y, currentX + tw, y + 24.0f * s);
-                // [[maybe_unused]] D2D1_RECT_F sr = D2D1::RectF(r.left + 1*s, r.top + 1*s, r.right + 1*s, r.bottom + 1*s);
+                D2D1_RECT_F r = D2D1::RectF(currentX, y + paddingTop, currentX + tw, y + paddingTop + itemHeight);
                 ID2D1SolidColorBrush* b = m.isWinner ? winBrush : textBrush;
                 
-                DrawTextWithFourWayShadow(dc, m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b, shadowBrush, 1.1f * s);
+                dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b);
                 currentX += tw + gap;
             }
         };
 
-        DrawMetrics(leftMetrics, splitX - centerGap, true, leftShadowBrush.Get(), leftTextBrush.Get(), leftWinBrush.Get());
-        DrawMetrics(rightMetrics, splitX + centerGap, false, rightShadowBrush.Get(), rightTextBrush.Get(), rightWinBrush.Get());
+        DrawMetrics(leftMetrics, splitX - centerGap, true, leftTextBrush.Get(), leftWinBrush.Get());
+        DrawMetrics(rightMetrics, splitX + centerGap, false, rightTextBrush.Get(), rightWinBrush.Get());
 
-        // Draw [+] and [x] buttons
-        float buttonsX = splitX + centerGap + rightTotalW;
-
-        m_hudToggleLiteRect = D2D1::RectF(buttonsX + 8.0f * s, y, buttonsX + 32.0f * s, y + 24.0f * s);
-        m_panelCloseRect = D2D1::RectF(m_hudToggleLiteRect.right + 4.0f * s, y, m_hudToggleLiteRect.right + 28.0f * s, y + 24.0f * s);
-
-        DrawTextWithFourWayShadow(dc, L"[+]", 3, m_panelFormat.Get(), m_hudToggleLiteRect, rightTextBrush.Get(), rightShadowBrush.Get(), 1.1f * s);
-        DrawTextWithFourWayShadow(dc, L"[x]", 3, m_panelFormat.Get(), m_panelCloseRect, rightRedBrush.Get(), rightShadowBrush.Get(), 1.1f * s);
+        // Draw expand button "+" and close button "x" with warning / danger color
+        dc->DrawText(L"+", 1, m_panelFormat.Get(), D2D1::RectF(m_panelToggleRect.left + 4.0f * s, m_panelToggleRect.top, m_panelToggleRect.right, m_panelToggleRect.bottom), rightYellowBrush.Get());
+        dc->DrawText(L"x", 1, m_panelFormat.Get(), D2D1::RectF(m_panelCloseRect.left + 4.0f * s, m_panelCloseRect.top, m_panelCloseRect.right, m_panelCloseRect.bottom), rightRedBrush.Get());
 
         // Update Hit Rect for the whole Lite HUD line (prevent click-through)
-        m_lastHUDRect = D2D1::RectF(0, 0, (float)m_width, y + 24.0f * s);
+        m_lastHUDRect = D2D1::RectF(0, 0, (float)m_width, y + totalHeight);
         m_hudToggleExpandRect = {};
         return;
     }

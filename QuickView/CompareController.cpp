@@ -51,7 +51,6 @@ extern void ApplyCompareZoomWithMultiplier([[maybe_unused]] HWND hwnd, ComparePa
 
 extern PaneContext g_panes[2];
 extern Toolbar g_toolbar;
-extern GalleryOverlay g_gallery;
 extern std::unique_ptr<CRenderEngine> g_renderEngine;
 extern std::unique_ptr<UIRenderer> g_uiRenderer;
 extern void AdjustWindowToImage(HWND hwnd);

@@ -6004,6 +6004,21 @@ static bool TryTriggerCustomMouseHotkey(HWND hwnd, uint16_t vk, bool execute) {
     return false;
 }
 
+static bool IsMouseOverUI(HWND hwnd, int x, int y) {
+    RECT rcClient; GetClientRect(hwnd, &rcClient);
+    float winW = (float)(rcClient.right - rcClient.left);
+    float winH = (float)(rcClient.bottom - rcClient.top);
+
+    if (g_gallery.IsVisible() && g_gallery.HitTestArea(x, y, winW, winH)) return true;
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) return true;
+    if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)x, (float)y)) return true;
+    if (g_uiRenderer) {
+        auto hit = g_uiRenderer->HitTest((float)x, (float)y);
+        if (hit.type != UIHitResult::None) return true;
+    }
+    return false;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     // [Loupe] While the loupe is active, intercept and ignore all mouse click and double-click events to prevent accidental zoom, navigation, or split-pane control during this time
     if (AppContext::GetInstance().Loupe.active) {
@@ -6023,9 +6038,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     if (AppContext::GetInstance().CompareCtrl && AppContext::GetInstance().CompareCtrl->IsActive()) {
-        auto result = AppContext::GetInstance().CompareCtrl->HandleMessage(hwnd, message, wParam, lParam);
-        if (result.has_value()) {
-            return result.value();
+        bool passToCompare = true;
+        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK || message == WM_RBUTTONDOWN || message == WM_RBUTTONDBLCLK) {
+            int x = (short)LOWORD(lParam);
+            int y = (short)HIWORD(lParam);
+            if (IsMouseOverUI(hwnd, x, y)) passToCompare = false;
+        }
+        if (passToCompare) {
+            auto result = AppContext::GetInstance().CompareCtrl->HandleMessage(hwnd, message, wParam, lParam);
+            if (result.has_value()) {
+                return result.value();
+            }
         }
     }
 
@@ -7885,10 +7908,25 @@ SKIP_EDGE_NAV:;
                         int idx = g_gallery.GetSelectedIndex();
                         if (idx >= 0 && idx < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
                              std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(idx);
-                             // Only load if different from current image
-                             if (path != GetPaneContext(PaneSlot::Primary).path) {
-                                 GetPaneContext(PaneSlot::Primary).navigator.Initialize(path, hwnd);
-                                 LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path).c_str());
+                             bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
+                             std::wstring resolvedPath = GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path);
+                             if (isLeft) {
+                                 if (resolvedPath != GetPaneContext(PaneSlot::Left).path) {
+                                     GetPaneContext(PaneSlot::Left).navigator.Initialize(resolvedPath, hwnd);
+                                     AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolvedPath, [](bool success){
+                                         if (success) {
+                                             AppContext::GetInstance().Compare.activePane = ComparePane::Left;
+                                             AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
+                                             MarkCompareDirty();
+                                             RequestRepaint(PaintLayer::All);
+                                         }
+                                     });
+                                 }
+                             } else {
+                                 if (resolvedPath != GetPaneContext(PaneSlot::Primary).path) {
+                                     GetPaneContext(PaneSlot::Primary).navigator.Initialize(resolvedPath, hwnd);
+                                     LoadImageAsync(hwnd, resolvedPath.c_str());
+                                 }
                              }
                         }
                         RequestRepaint(PaintLayer::All);
@@ -8149,8 +8187,26 @@ SKIP_EDGE_NAV:;
                 if (clicked && selectedIdx >= 0) {
                     if (selectedIdx < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
                         std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(selectedIdx);
-                        GetPaneContext(PaneSlot::Primary).navigator.Initialize(path, hwnd);
-                        LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path).c_str());
+                        bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
+                        std::wstring resolvedPath = GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path);
+                        if (isLeft) {
+                            if (resolvedPath != GetPaneContext(PaneSlot::Left).path) {
+                                GetPaneContext(PaneSlot::Left).navigator.Initialize(resolvedPath, hwnd);
+                                AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolvedPath, [](bool success){
+                                    if (success) {
+                                        AppContext::GetInstance().Compare.activePane = ComparePane::Left;
+                                        AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
+                                        MarkCompareDirty();
+                                        RequestRepaint(PaintLayer::All);
+                                    }
+                                });
+                            }
+                        } else {
+                            if (resolvedPath != GetPaneContext(PaneSlot::Primary).path) {
+                                GetPaneContext(PaneSlot::Primary).navigator.Initialize(resolvedPath, hwnd);
+                                LoadImageAsync(hwnd, resolvedPath.c_str());
+                            }
+                        }
                     }
                     if (!g_gallery.IsPinned()) {
                         SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Restore cursor
@@ -8801,10 +8857,25 @@ SKIP_EDGE_NAV:;
                     int idx = g_gallery.GetSelectedIndex();
                     if (idx >= 0 && idx < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
                          std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(idx);
-                         // Only load if different from current image
-                         if (path != GetPaneContext(PaneSlot::Primary).path) {
-                             GetPaneContext(PaneSlot::Primary).navigator.Initialize(path, hwnd); 
-                             LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path).c_str());
+                         bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
+                         std::wstring resolvedPath = GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path);
+                         if (isLeft) {
+                             if (resolvedPath != GetPaneContext(PaneSlot::Left).path) {
+                                 GetPaneContext(PaneSlot::Left).navigator.Initialize(resolvedPath, hwnd);
+                                 AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolvedPath, [](bool success){
+                                     if (success) {
+                                         AppContext::GetInstance().Compare.activePane = ComparePane::Left;
+                                         AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
+                                         MarkCompareDirty();
+                                         RequestRepaint(PaintLayer::All);
+                                     }
+                                 });
+                             }
+                         } else {
+                             if (resolvedPath != GetPaneContext(PaneSlot::Primary).path) {
+                                 GetPaneContext(PaneSlot::Primary).navigator.Initialize(resolvedPath, hwnd); 
+                                 LoadImageAsync(hwnd, resolvedPath.c_str());
+                             }
                          }
                     }
                     RequestRepaint(PaintLayer::All);
