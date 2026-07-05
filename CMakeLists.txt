@@ -299,6 +299,7 @@ target_link_libraries(QuickView PRIVATE
     ZLIB::ZLIB
     unrar-mini
     # Windows system libraries
+    imm32.lib
     dwrite.lib
     windowscodecs.lib
     shlwapi.lib

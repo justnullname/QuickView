@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <shlwapi.h>
+#include <imm.h>
 
 // Spartan Bedrock (Zero-cost types only)
 #include <cstdint>
@@ -61,6 +62,7 @@ using Microsoft::WRL::ComPtr;
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "shlwapi.lib") // [SVG] For SHCreateMemStream
 #pragma comment(lib, "ole32.lib")   // [SVG] For CreateStreamOnHGlobal
+#pragma comment(lib, "imm32.lib")
 
 // Helper macro for HRESULT checking
 

@@ -10,6 +10,7 @@
 
 extern float g_uiScale;
 extern AppConfig g_config;
+extern HIMC g_defaultIMC;
 extern std::unique_ptr<UIRenderer> g_uiRenderer;
 extern CompositionEngine* g_compEngine;
 extern bool IsLightThemeActive();
@@ -18,7 +19,7 @@ extern void RequestRepaint(QuickView::PaintLayer layer);
 extern void AdjustWindowForOverlay(HWND hwnd, bool animate);
 extern void EnsureWindowSizeForDialog(HWND hwnd);
 
-static DialogLayout CalculateDialogLayoutInternal(D2D1_SIZE_F size, DialogState& dialog);
+extern DialogLayout CalculateDialogLayout(D2D1_SIZE_F size);
 
 LRESULT CALLBACK DialogEditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     DialogState& dialog = AppContext::GetInstance().Dialog;
@@ -69,7 +70,7 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     RECT clientRect{};
     GetClientRect(m_hwnd, &clientRect);
     D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
-    DialogLayout layout = CalculateDialogLayoutInternal(size, m_context.Dialog);
+    DialogLayout layout = CalculateDialogLayout(size);
 
     // Overlay (background dimming)
     ComPtr<ID2D1SolidColorBrush> pOverlayBrush;
@@ -252,66 +253,49 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     }
 }
 
-static DialogLayout CalculateDialogLayoutInternal(D2D1_SIZE_F size, DialogState& dialog) {
-    DialogLayout layout;
-    float cx = size.width / 2.0f;
-    float cy = size.height / 2.0f;
-    
-    if (dialog.UseCustomCenter) {
-        cx = dialog.CustomCenter.x;
-        cy = dialog.CustomCenter.y;
+
+
+static LRESULT CALLBACK InputHostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_CTLCOLOREDIT) {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, RGB(255, 255, 255));
+        SetBkColor(hdc, RGB(30, 30, 30));
+        static HBRUSH hBrush = CreateSolidBrush(RGB(30, 30, 30));
+        return (LRESULT)hBrush;
     }
-    
-    float boxWidth = 400.0f * g_uiScale;
-    float baseBoxHeight = 220.0f * g_uiScale;
-    if (dialog.HasCheckbox) baseBoxHeight += 40.0f * g_uiScale;
-    if (dialog.HasInput) baseBoxHeight += 50.0f * g_uiScale;
-    if (!dialog.QualityText.empty()) baseBoxHeight += 20.0f * g_uiScale;
-    
-    layout.Box = D2D1::RectF(cx - boxWidth/2, cy - baseBoxHeight/2, cx + boxWidth/2, cy + baseBoxHeight/2);
-    
-    float contentTop = layout.Box.top + 100.0f * g_uiScale;
-    if (!dialog.QualityText.empty()) contentTop += 20.0f * g_uiScale;
-    
-    if (dialog.HasInput) {
-        layout.Input = D2D1::RectF(layout.Box.left + 30.0f * g_uiScale, contentTop, layout.Box.right - 30.0f * g_uiScale, contentTop + 36.0f * g_uiScale);
-        contentTop += 50.0f * g_uiScale;
-    }
-    
-    if (dialog.HasCheckbox) {
-        layout.Checkbox = D2D1::RectF(layout.Box.left + 30.0f * g_uiScale, contentTop, layout.Box.left + 50.0f * g_uiScale, contentTop + 20.0f * g_uiScale);
-        contentTop += 40.0f * g_uiScale;
-    }
-    
-    float buttonAreaY = layout.Box.bottom - 60.0f * g_uiScale;
-    float buttonWidth = 100.0f * g_uiScale;
-    float buttonHeight = 36.0f * g_uiScale;
-    float spacing = 15.0f * g_uiScale;
-    int btnCount = (int)dialog.Buttons.size();
-    float totalBtnWidth = btnCount * buttonWidth + (btnCount - 1) * spacing;
-    float startX = cx - totalBtnWidth / 2.0f;
-    
-    for (int i = 0; i < btnCount; ++i) {
-        layout.Buttons.push_back(D2D1::RectF(startX, buttonAreaY, startX + buttonWidth, buttonAreaY + buttonHeight));
-        startX += buttonWidth + spacing;
-    }
-    return layout;
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 static void CreateDialogInputInternal(HWND parent, DialogState& dialog) {
     if (!dialog.HasInput || dialog.hEdit) return;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.lpfnWndProc = InputHostWndProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = L"QuickViewInputHost";
+        wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30));
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
     RECT clientRect; GetClientRect(parent, &clientRect);
     D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
-    DialogLayout layout = CalculateDialogLayoutInternal(size, dialog);
+    DialogLayout layout = CalculateDialogLayout(size);
     
-    int x = (int)layout.Input.left;
-    int y = (int)layout.Input.top;
-    int w = (int)(layout.Input.right - layout.Input.left);
-    int h = (int)(layout.Input.bottom - layout.Input.top);
+    D2D1_RECT_F r = layout.Input;
+    POINT ptTL{ (LONG)r.left, (LONG)r.top };
+    POINT ptBR{ (LONG)r.right, (LONG)r.bottom };
+    ClientToScreen(parent, &ptTL);
+    ClientToScreen(parent, &ptBR);
     
-    POINT pt{ x, y };
-    ClientToScreen(parent, &pt);
-    x = pt.x; y = pt.y;
+    int x = ptTL.x + 8;
+    int y = ptTL.y + 6;
+    int w = (ptBR.x - ptTL.x) - 16;
+    int h = (ptBR.y - ptTL.y) - 12;
     
     dialog.hInputHost = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"QuickViewInputHost", L"", 
         WS_POPUP | WS_VISIBLE, x, y, w, h, parent, nullptr, GetModuleHandle(nullptr), nullptr);
@@ -324,6 +308,9 @@ static void CreateDialogInputInternal(HWND parent, DialogState& dialog) {
             dialog.hInputHost, nullptr, GetModuleHandle(nullptr), nullptr);
             
         if (dialog.hEdit) {
+          if (g_defaultIMC) {
+              ImmAssociateContext(dialog.hEdit, g_defaultIMC);
+          }
           int fontHeight = (int)(22 * g_uiScale);
           dialog.hFont = CreateFontW(
               fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -473,7 +460,7 @@ std::optional<LRESULT> DialogController::OnKeyDown([[maybe_unused]] HWND hwnd, W
 std::optional<LRESULT> DialogController::OnLButtonDown(HWND hwnd, int x, int y) {
     RECT clientRect; GetClientRect(hwnd, &clientRect);
     D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
-    DialogLayout layout = CalculateDialogLayoutInternal(size, m_context.Dialog);
+    DialogLayout layout = CalculateDialogLayout(size);
     
     float mouseX = (float)x;
     float mouseY = (float)y;

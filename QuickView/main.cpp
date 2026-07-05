@@ -2655,6 +2655,7 @@ using QuickView::HasLayer;
 
 // Global window handle for RequestRepaint (set in wWinMain)
 HWND g_mainHwnd = nullptr;
+HIMC g_defaultIMC = nullptr;
 
 void RequestRepaint(PaintLayer layer) {
   if (g_uiRenderer) {
@@ -5721,6 +5722,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
 
     HWND hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, g_szClassName, g_szWindowTitle, WS_OVERLAPPEDWINDOW, xPos, yPos, winW, winH, nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
+
+    g_defaultIMC = ImmAssociateContext(hwnd, nullptr);
 
     if (g_config.RememberLastWindowSizeAndPosition) {
         if (startMaximized) {
