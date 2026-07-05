@@ -72,6 +72,8 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
     m_targetScrollLeft = -1.0f;
     m_hoverIndex = -1;
     m_velocityX = 0.0f;
+    m_lastUserScrollTime = 0;
+    m_recenterPending = false;
     m_dragYOffset = 0.0f;
     m_dismissalTimer = 0.0f;
     m_hoverDelayTimer = 0.0f;
@@ -269,12 +271,25 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
             repaintNeeded = true;
         }
 
+        // 8. User scroll cooldown check (robust against idle demand-driven rendering)
+        if (m_recenterPending && (GetTickCount() - m_lastUserScrollTime >= 3000)) {
+            EnsureVisible(m_selectedIndex, m_lastSize, true);
+            m_recenterPending = false;
+            repaintNeeded = true;
+        }
+
         // Sync gallery selection index with the navigator's current index if it changed in the background
         if (m_pNav) {
             int navIdx = m_pNav->Index();
             if (m_selectedIndex != navIdx) {
                 m_selectedIndex = navIdx;
-                EnsureVisible(m_selectedIndex, m_lastSize, true);
+                // Only auto-center if user is not actively browsing the filmstrip (within 3 seconds)
+                if (GetTickCount() - m_lastUserScrollTime >= 3000) {
+                    EnsureVisible(m_selectedIndex, m_lastSize, true);
+                    m_recenterPending = false;
+                } else {
+                    m_recenterPending = true;
+                }
                 repaintNeeded = true;
             }
         }
@@ -811,6 +826,10 @@ bool GalleryOverlay::OnMouseWheel(int delta) {
     if (m_gridProgress < 0.5f) {
         m_scrollLeft -= delta * 0.5f;
         m_scrollLeft = std::clamp(m_scrollLeft, 0.0f, m_maxScrollLeft);
+        m_targetScrollLeft = m_scrollLeft; // Sync target to prevent smooth-scroll snap-back
+        m_velocityX = 0.0f;               // Kill any residual inertia
+        m_lastUserScrollTime = GetTickCount(); // Suppress auto-centering while user browses
+        m_recenterPending = true;
     } else {
         m_scrollTop -= delta * 0.5f;
         m_scrollTop = std::clamp(m_scrollTop, 0.0f, m_maxScroll);
@@ -948,6 +967,8 @@ bool GalleryOverlay::OnMouseMove(int x, int y) {
         if (m_dragMode == DragMode::Horizontal) {
             m_scrollLeft = m_dragStartScrollLeft - dx;
             m_scrollLeft = std::clamp(m_scrollLeft, 0.0f, m_maxScrollLeft);
+            m_lastUserScrollTime = GetTickCount(); // Suppress auto-centering while user drags
+            m_recenterPending = true;
             
             // Track velocity for inertia
             DWORD now = GetTickCount();

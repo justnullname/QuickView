@@ -94,6 +94,10 @@ private:
     // Physical Inertia
     float m_velocityX = 0.0f;
     float m_friction = 0.85f; // Friction damping factor
+    
+    // User scroll cooldown: suppresses auto-centering while user is browsing the filmstrip
+    DWORD m_lastUserScrollTime = 0;
+    bool m_recenterPending = false;
 
     // Dragging
     enum class DragMode { None, Horizontal, Vertical };
