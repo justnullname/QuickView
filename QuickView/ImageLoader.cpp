@@ -5773,9 +5773,31 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
   // inline or call existing helper. Re-use existing WIC fallback logic:
 
   ComPtr<IWICBitmapDecoder> decoder;
-  HRESULT hr = m_wicFactory->CreateDecoderFromFilename(
-      filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
-      &decoder);
+  HRESULT hr = E_FAIL;
+
+  // [v10.4 Optimization] Fast path for WIC using memory-mapped IStream instead of File IStream.
+  // This completely eliminates the severe small-read penalty of WIC's default file stream
+  // on uncompressed or tiled formats (e.g. large TIFFs).
+  QuickView::MappedFile fileMap(filePath);
+  ComPtr<IWICStream> stream;
+  
+  if (fileMap.IsValid() && fileMap.size() <= 0xFFFFFFFF) {
+    if (SUCCEEDED(m_wicFactory->CreateStream(&stream))) {
+      if (SUCCEEDED(stream->InitializeFromMemory(const_cast<BYTE*>(fileMap.data()), static_cast<DWORD>(fileMap.size())))) {
+        hr = m_wicFactory->CreateDecoderFromStream(
+            stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand,
+            &decoder);
+      }
+    }
+  }
+
+  // Fallback to filename stream if memory mapping or init failed
+  if (FAILED(hr)) {
+    hr = m_wicFactory->CreateDecoderFromFilename(
+        filePath, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+        &decoder);
+  }
+
   if (FAILED(hr))
     return hr;
 
@@ -8501,12 +8523,13 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
 
   ComPtr<IWICBitmapDecoder> decoder;
   HRESULT hr = E_FAIL;
-  if (fileMap && fileMap->IsValid()) {
-    ComPtr<IStream> stream;
-    stream.Attach(SHCreateMemStream(fileMap->data(), (UINT)fileMap->size()));
-    if (stream) {
-      hr = factory->CreateDecoderFromStream(
-          stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+  ComPtr<IWICStream> stream;
+  if (fileMap && fileMap->IsValid() && fileMap->size() <= 0xFFFFFFFF) {
+    if (SUCCEEDED(factory->CreateStream(&stream))) {
+      if (SUCCEEDED(stream->InitializeFromMemory(const_cast<BYTE*>(fileMap->data()), static_cast<DWORD>(fileMap->size())))) {
+        hr = factory->CreateDecoderFromStream(
+            stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+      }
     }
   }
 
@@ -9090,7 +9113,7 @@ HRESULT CImageLoader::LoadToMemoryPMR(LPCWSTR filePath, DecodedImage *pOutput,
 
   ComPtr<IWICBitmap> wicBitmap;
   HRESULT hrWic =
-      LoadToMemory(filePath, &wicBitmap, pLoaderName, false, ShouldCancel);
+      LoadToMemory(filePath, &wicBitmap, pLoaderName, false, ShouldCancel, targetWidth, targetHeight);
   if (FAILED(hrWic) || !wicBitmap) {
     return (hr != E_NOTIMPL) ? hr : hrWic;
   }
