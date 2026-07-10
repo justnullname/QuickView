@@ -152,6 +152,7 @@ enum class HotkeyAction : uint8_t {
     CopyImage,         // Copy Image to Clipboard
     CopyPath,          // Copy Path to Clipboard
     ToggleCompare,     // Toggle Compare Mode
+    ComparePair,       // Compare a pair: rendered vs RAW side by side
     AlwaysOnTop,       // Toggle Always on Top
     ToggleDebugHud,    // Toggle Debug Performance HUD
     Print,             // Print Image
@@ -198,6 +199,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::CopyImage: return L"CopyImage";
         case HotkeyAction::CopyPath: return L"CopyPath";
         case HotkeyAction::ToggleCompare: return L"ToggleCompare";
+        case HotkeyAction::ComparePair: return L"ComparePair";
         case HotkeyAction::AlwaysOnTop: return L"AlwaysOnTop";
         case HotkeyAction::ToggleDebugHud: return L"ToggleDebugHud";
         case HotkeyAction::Print: return L"Print";
@@ -244,6 +246,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"CopyImage") return HotkeyAction::CopyImage;
     if (sv == L"CopyPath") return HotkeyAction::CopyPath;
     if (sv == L"ToggleCompare") return HotkeyAction::ToggleCompare;
+    if (sv == L"ComparePair") return HotkeyAction::ComparePair;
     if (sv == L"AlwaysOnTop") return HotkeyAction::AlwaysOnTop;
     if (sv == L"ToggleDebugHud") return HotkeyAction::ToggleDebugHud;
     if (sv == L"Print") return HotkeyAction::Print;

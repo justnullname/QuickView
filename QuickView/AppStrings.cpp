@@ -5648,6 +5648,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::RenderRaw:
         raw = AppStrings::Context_RenderRAW;
         break;
+    case HotkeyAction::ComparePair: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"配对对比 (直出 vs RAW)"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"配對對比 (直出 vs RAW)"; break;
+        case AppStrings::Language::Japanese:           raw = L"ペア比較 (撮って出し vs RAW)"; break;
+        case AppStrings::Language::Russian:            raw = L"Сравнение пары (камерный снимок и RAW)"; break;
+        case AppStrings::Language::German:             raw = L"Paarvergleich (Kamerabild vs. RAW)"; break;
+        case AppStrings::Language::Spanish:            raw = L"Comparar par (imagen de cámara vs RAW)"; break;
+        case AppStrings::Language::French:             raw = L"Comparer la paire (image boîtier vs RAW)"; break;
+        default:                                       raw = L"Compare Pair (Rendered vs RAW)"; break;
+        }
+        break;
+    }
     case HotkeyAction::ToggleAnimation: {
         // Special case: returns concatenated string
         std::wstring play = CleanLabel(AppStrings::Toolbar_Tooltip_AnimPlay);
