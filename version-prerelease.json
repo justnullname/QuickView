@@ -1,10 +1,10 @@
 {
-  "version": "6.10.13.5",
-  "url": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.5/QuickView_v6.10.13.5_X64.zip",
-  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.5/QuickView_v6.10.13.5_X64.zip",
-  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.5/QuickView_v6.10.13.5_ARM64.zip",
-  "sha256_x64": "29ce04b3bde7dc0798a3be2b67b36e894c085ad5c4e24c211a8132e6cc96d9e6",
-  "sha256_arm64": "b722c8c3bb51c79cd8d474008e0b34cc08724659c5eeda7edd84c8b1e3e31653",
+  "version": "6.10.13.6",
+  "url": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.6/QuickView_v6.10.13.6_X64.zip",
+  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.6/QuickView_v6.10.13.6_X64.zip",
+  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.6/QuickView_v6.10.13.6_ARM64.zip",
+  "sha256_x64": "13e81bab816db3f077e671ade6d366553e864f086f5cf7403615c09fedbbfe83",
+  "sha256_arm64": "773aac1b916a75317f7ce4e352344629ef0dc07d293e0f862710eccbd54b417c",
   "date": "2026-07-12",
-  "changelog": "Test autoupdate for Pre-release channel"
+  "changelog": "Test autoupdate for Pre-release channel\r\n\r\n"
 }
