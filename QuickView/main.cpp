@@ -3847,6 +3847,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"General", L"Language", std::to_wstring(g_config.Language).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"SingleInstance", g_config.SingleInstance ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"CheckUpdates", g_config.CheckUpdates ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"General", L"UpdateChannel", std::to_wstring(g_config.UpdateChannel).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"NavLoop", g_config.NavLoop ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"NavTraverse", g_config.NavTraverse ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str()); // [Clean] Remove legacy key
@@ -4033,6 +4034,7 @@ void LoadConfig() {
     g_config.Language = GetPrivateProfileIntW(L"General", L"Language", 0, iniPath.c_str());
     g_config.SingleInstance = GetPrivateProfileIntW(L"General", L"SingleInstance", 1, iniPath.c_str()) != 0;
     g_config.CheckUpdates = GetPrivateProfileIntW(L"General", L"CheckUpdates", 1, iniPath.c_str()) != 0;
+    g_config.UpdateChannel = GetPrivateProfileIntW(L"General", L"UpdateChannel", 0, iniPath.c_str());
     // Navigation: Decoupled Loop & Traverse (Legacy Migration)
     int navLoopValue = GetPrivateProfileIntW(L"General", L"NavLoopMode", -1, iniPath.c_str());
     if (navLoopValue != -1) {
