@@ -1,0 +1,10 @@
+{
+  "version": "6.10.13.4",
+  "url": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.4/QuickView_v6.10.13.4_X64.zip",
+  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.4/QuickView_v6.10.13.4_X64.zip",
+  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.10.13.4/QuickView_v6.10.13.4_ARM64.zip",
+  "sha256_x64": "36de2920581d896004ae98627052abe5529ee16ea82ac9b26620ba83e4c6f7d6",
+  "sha256_arm64": "4bf91505b3a8ad15848b69051c15b4049243467d3998851676c6af0507f8498f",
+  "date": "2026-07-12",
+  "changelog": "Test autoupdate for Pre-release channel"
+}
