@@ -99,6 +99,8 @@ const wchar_t *Context_FlipV = nullptr;
 const wchar_t *Context_Transform = nullptr;
 const wchar_t *Context_ActualSize = nullptr;
 const wchar_t *Context_FitToScreen = nullptr;
+const wchar_t *Context_FitWindow = nullptr;
+const wchar_t *Context_FillWindow = nullptr;
 const wchar_t *Context_ZoomIn = nullptr;
 const wchar_t *Context_ZoomOut = nullptr;
 const wchar_t *Context_LockWindow = nullptr;
@@ -199,6 +201,8 @@ const wchar_t *OSD_CoordinatesCopied = nullptr;
 const wchar_t *OSD_FilePathCopied = nullptr;
 const wchar_t *OSD_Zoom100 = nullptr;
 const wchar_t *OSD_ZoomFit = nullptr;
+const wchar_t *OSD_ZoomFitWindow = nullptr;
+const wchar_t *OSD_ZoomFill = nullptr;
 const wchar_t *OSD_PrintInstruction = nullptr;
 const wchar_t *OSD_MovedToRecycleBin = nullptr;
 const wchar_t *OSD_WindowLocked = nullptr;
@@ -605,6 +609,8 @@ struct LanguageTable {
     const wchar_t *Context_Transform;
     const wchar_t *Context_ActualSize;
     const wchar_t *Context_FitToScreen;
+    const wchar_t *Context_FitWindow;
+    const wchar_t *Context_FillWindow;
     const wchar_t *Context_ZoomIn;
     const wchar_t *Context_ZoomOut;
     const wchar_t *Context_LockWindow;
@@ -708,6 +714,8 @@ struct LanguageTable {
     const wchar_t *OSD_FilePathCopied;
     const wchar_t *OSD_Zoom100;
     const wchar_t *OSD_ZoomFit;
+    const wchar_t *OSD_ZoomFitWindow;
+    const wchar_t *OSD_ZoomFill;
     const wchar_t *OSD_PrintInstruction;
     const wchar_t *OSD_MovedToRecycleBin;
     const wchar_t *OSD_WindowLocked;
@@ -1111,6 +1119,8 @@ static const LanguageTable Table_EN = {
     L"Transform", // Context_Transform
     L"Actual Size (100%)\t1 / Z", // Context_ActualSize
     L"Fit to Screen\t0 / F", // Context_FitToScreen
+    L"Fit Window", // Context_FitWindow
+    L"Fill Window", // Context_FillWindow
     L"Zoom In\t+ / Ctrl +", // Context_ZoomIn
     L"Zoom Out\t- / Ctrl -", // Context_ZoomOut
     L"Lock Window", // Context_LockWindow
@@ -1214,6 +1224,8 @@ static const LanguageTable Table_EN = {
     L"File path copied!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
     L"Zoom: Fit Screen", // OSD_ZoomFit
+    L"Zoom: Fit Window", // OSD_ZoomFitWindow
+    L"Zoom: Fill Window", // OSD_ZoomFill
     L"Print: Use Ctrl+P in opened app", // OSD_PrintInstruction
     L"Moved to Recycle Bin", // OSD_MovedToRecycleBin
     L"Window Locked", // OSD_WindowLocked
@@ -1617,6 +1629,8 @@ static const LanguageTable Table_CN = {
     L"变换", // Context_Transform
     L"实际大小 (100%)\t1 / Z", // Context_ActualSize
     L"适应屏幕\t0 / F", // Context_FitToScreen
+    L"适应窗口", // Context_FitWindow
+    L"填充窗口", // Context_FillWindow
     L"放大\t+ / Ctrl +", // Context_ZoomIn
     L"缩小\t- / Ctrl -", // Context_ZoomOut
     L"锁定窗口", // Context_LockWindow
@@ -1720,6 +1734,8 @@ static const LanguageTable Table_CN = {
     L"文件路径已复制!", // OSD_FilePathCopied
     L"缩放: 100%", // OSD_Zoom100
     L"缩放: 适应屏幕", // OSD_ZoomFit
+    L"缩放: 适应窗口", // OSD_ZoomFitWindow
+    L"缩放: 填充窗口", // OSD_ZoomFill
     L"打印: 请在打开的应用中使用 Ctrl+P", // OSD_PrintInstruction
     L"已移至回收站", // OSD_MovedToRecycleBin
     L"窗口已锁定", // OSD_WindowLocked
@@ -2123,6 +2139,8 @@ static const LanguageTable Table_TW = {
     L"變換", // Context_Transform
     L"實際大小 (100%)\t1 / Z", // Context_ActualSize
     L"適應螢幕\t0 / F", // Context_FitToScreen
+    L"適應視窗", // Context_FitWindow
+    L"填滿視窗", // Context_FillWindow
     L"放大\t+ / Ctrl +", // Context_ZoomIn
     L"縮小\t- / Ctrl -", // Context_ZoomOut
     L"鎖定視窗", // Context_LockWindow
@@ -2226,6 +2244,8 @@ static const LanguageTable Table_TW = {
     L"檔案路徑已複製!", // OSD_FilePathCopied
     L"縮放: 100%", // OSD_Zoom100
     L"縮放: 適應螢幕", // OSD_ZoomFit
+    L"縮放: 適應視窗", // OSD_ZoomFitWindow
+    L"縮放: 填滿視窗", // OSD_ZoomFill
     L"列印: 請在開啟的應用程式中使用 Ctrl+P", // OSD_PrintInstruction
     L"已移至資源回收筒", // OSD_MovedToRecycleBin
     L"視窗已鎖定", // OSD_WindowLocked
@@ -2629,6 +2649,8 @@ static const LanguageTable Table_JA = {
     L"変換", // Context_Transform
     L"実際のサイズ (100%)\t1 / Z", // Context_ActualSize
     L"画面に合わせる\t0 / F", // Context_FitToScreen
+    L"ウィンドウに合わせる", // Context_FitWindow
+    L"ウィンドウにフィット", // Context_FillWindow
     L"拡大\t+ / Ctrl +", // Context_ZoomIn
     L"縮小\t- / Ctrl -", // Context_ZoomOut
     L"ウィンドウをロック", // Context_LockWindow
@@ -2732,6 +2754,8 @@ static const LanguageTable Table_JA = {
     L"ファイルパスをコピーしました!", // OSD_FilePathCopied
     L"ズーム: 100%", // OSD_Zoom100
     L"ズーム: 画面に合わせる", // OSD_ZoomFit
+    L"ズーム: ウィンドウに合わせる", // OSD_ZoomFitWindow
+    L"ズーム: ウィンドウにフィット", // OSD_ZoomFill
     L"印刷: 開いたアプリでCtrl+Pを使用", // OSD_PrintInstruction
     L"ごみ箱に移動しました", // OSD_MovedToRecycleBin
     L"ウィンドウ固定", // OSD_WindowLocked
@@ -3135,6 +3159,8 @@ static const LanguageTable Table_RU = {
     L"Преобразовать", // Context_Transform
     L"Настоящий размер (100%)\t1 / Z", // Context_ActualSize
     L"По размеру экрана\t0 / F", // Context_FitToScreen
+    L"По размеру окна", // Context_FitWindow
+    L"Заполнить окно", // Context_FillWindow
     L"Увеличить\t+ / Ctrl +", // Context_ZoomIn
     L"Уменьшить\t- / Ctrl -", // Context_ZoomOut
     L"Заблокировать окно", // Context_LockWindow
@@ -3238,6 +3264,8 @@ static const LanguageTable Table_RU = {
     L"Путь к файлу скопирован!", // OSD_FilePathCopied
     L"Масштаб: 100%", // OSD_Zoom100
     L"Масштаб: По размеру экрана", // OSD_ZoomFit
+    L"Масштаб: По размеру окна", // OSD_ZoomFitWindow
+    L"Масштаб: Заполнить окно", // OSD_ZoomFill
     L"Печать: Нажмите Ctrl+P в открытом приложении", // OSD_PrintInstruction
     L"Перемещено в Корзину", // OSD_MovedToRecycleBin
     L"Окно заблокировано", // OSD_WindowLocked
@@ -3641,6 +3669,8 @@ static const LanguageTable Table_DE = {
     L"Transformieren", // Context_Transform
     L"Originalgröße (100%)\t1 / Z", // Context_ActualSize
     L"An Bildschirm anpassen\t0 / F", // Context_FitToScreen
+    L"An Fenster anpassen", // Context_FitWindow
+    L"Fenster ausfüllen", // Context_FillWindow
     L"Vergrößern\t+ / Strg +", // Context_ZoomIn
     L"Verkleinern\t- / Strg -", // Context_ZoomOut
     L"Fenstergröße sperren", // Context_LockWindow
@@ -3744,6 +3774,8 @@ static const LanguageTable Table_DE = {
     L"Dateipfad kopiert!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
     L"Zoom: An Bildschirm anpassen", // OSD_ZoomFit
+    L"Zoom: An Fenster anpassen", // OSD_ZoomFitWindow
+    L"Zoom: Fenster ausfüllen", // OSD_ZoomFill
     L"Drucken: Benutzen Sie Strg+P in der geöffneten App", // OSD_PrintInstruction
     L"In Papierkorb verschoben", // OSD_MovedToRecycleBin
     L"Fenster gesperrt", // OSD_WindowLocked
@@ -4147,6 +4179,8 @@ static const LanguageTable Table_ES = {
     L"Transformar", // Context_Transform
     L"Tamaño real (100%)\t1 / Z", // Context_ActualSize
     L"Ajustar a pantalla\t0 / F", // Context_FitToScreen
+    L"Ajustar a ventana", // Context_FitWindow
+    L"Rellenar ventana", // Context_FillWindow
     L"Acercar\t+ / Ctrl +", // Context_ZoomIn
     L"Alejar\t- / Ctrl -", // Context_ZoomOut
     L"Bloquear ventana", // Context_LockWindow
@@ -4250,6 +4284,8 @@ static const LanguageTable Table_ES = {
     L"¡Ruta del archivo copiada!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
     L"Zoom: Ajustar a pantalla", // OSD_ZoomFit
+    L"Zoom: Ajustar a ventana", // OSD_ZoomFitWindow
+    L"Zoom: Rellenar ventana", // OSD_ZoomFill
     L"Imprimir: Use Ctrl+P en la aplicación abierta", // OSD_PrintInstruction
     L"Movido a la papelera", // OSD_MovedToRecycleBin
     L"Ventana bloqueada", // OSD_WindowLocked
@@ -4653,6 +4689,8 @@ static const LanguageTable Table_FR = {
     L"Transform", // Context_Transform
     L"Actual Size (100%)\t1 / Z", // Context_ActualSize
     L"Fit to Screen\t0 / F", // Context_FitToScreen
+    L"Fit Window", // Context_FitWindow
+    L"Fill Window", // Context_FillWindow
     L"Zoom In\t+ / Ctrl +", // Context_ZoomIn
     L"Zoom Out\t- / Ctrl -", // Context_ZoomOut
     L"Lock Window", // Context_LockWindow
@@ -4756,6 +4794,8 @@ static const LanguageTable Table_FR = {
     L"File path copied!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
     L"Zoom: Fit Screen", // OSD_ZoomFit
+    L"Zoom: Fit Window", // OSD_ZoomFitWindow
+    L"Zoom: Fill Window", // OSD_ZoomFill
     L"Print: Use Ctrl+P in opened app", // OSD_PrintInstruction
     L"Moved to Recycle Bin", // OSD_MovedToRecycleBin
     L"Window Locked", // OSD_WindowLocked
@@ -5159,6 +5199,8 @@ void Apply(const LanguageTable& t) {
   Context_Transform = t.Context_Transform;
   Context_ActualSize = t.Context_ActualSize;
   Context_FitToScreen = t.Context_FitToScreen;
+  Context_FitWindow = t.Context_FitWindow;
+  Context_FillWindow = t.Context_FillWindow;
   Context_ZoomIn = t.Context_ZoomIn;
   Context_ZoomOut = t.Context_ZoomOut;
   Context_LockWindow = t.Context_LockWindow;
@@ -5262,6 +5304,8 @@ void Apply(const LanguageTable& t) {
   OSD_FilePathCopied = t.OSD_FilePathCopied;
   OSD_Zoom100 = t.OSD_Zoom100;
   OSD_ZoomFit = t.OSD_ZoomFit;
+  OSD_ZoomFitWindow = t.OSD_ZoomFitWindow;
+  OSD_ZoomFill = t.OSD_ZoomFill;
   OSD_PrintInstruction = t.OSD_PrintInstruction;
   OSD_MovedToRecycleBin = t.OSD_MovedToRecycleBin;
   OSD_WindowLocked = t.OSD_WindowLocked;
@@ -5873,6 +5917,12 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         break;
     case HotkeyAction::ZoomFit:
         raw = AppStrings::Context_FitToScreen;
+        break;
+    case HotkeyAction::ZoomFitWindow:
+        raw = AppStrings::Context_FitWindow;
+        break;
+    case HotkeyAction::ZoomFill:
+        raw = AppStrings::Context_FillWindow;
         break;
     case HotkeyAction::RotateCW:
         raw = AppStrings::Context_RotateCW;

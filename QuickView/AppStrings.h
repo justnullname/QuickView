@@ -75,6 +75,8 @@ namespace AppStrings {
     extern const wchar_t* Context_Transform;
     extern const wchar_t* Context_ActualSize;
     extern const wchar_t* Context_FitToScreen;
+    extern const wchar_t* Context_FitWindow;
+    extern const wchar_t* Context_FillWindow;
     extern const wchar_t* Context_ZoomIn;
     extern const wchar_t* Context_ZoomOut;
     extern const wchar_t* Context_LockWindow;
@@ -173,6 +175,8 @@ namespace AppStrings {
     extern const wchar_t* OSD_FilePathCopied;
     extern const wchar_t* OSD_Zoom100;
     extern const wchar_t* OSD_ZoomFit;
+    extern const wchar_t* OSD_ZoomFitWindow;
+    extern const wchar_t* OSD_ZoomFill;
     extern const wchar_t* OSD_PrintInstruction;
     extern const wchar_t* OSD_MovedToRecycleBin;
     extern const wchar_t* OSD_WindowLocked;

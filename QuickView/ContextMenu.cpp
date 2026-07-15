@@ -72,6 +72,8 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
         viewItems.push_back(MI::Sep());
         viewItems.push_back(MI::Normal(IDM_ZOOM_100, AppStrings::Context_ActualSize));
         viewItems.push_back(MI::Normal(IDM_ZOOM_FIT, AppStrings::Context_FitToScreen));
+        viewItems.push_back(MI::Normal(IDM_ZOOM_FIT_WINDOW, AppStrings::Context_FitWindow));
+        viewItems.push_back(MI::Normal(IDM_ZOOM_FILL, AppStrings::Context_FillWindow));
         viewItems.push_back(MI::Normal(IDM_ZOOM_IN, AppStrings::Context_ZoomIn));
         viewItems.push_back(MI::Normal(IDM_ZOOM_OUT, AppStrings::Context_ZoomOut));
         viewItems.push_back(MI::Sep());

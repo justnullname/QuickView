@@ -301,6 +301,8 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ZoomOutFine, KeyCombo{ VK_OEM_MINUS, 1 }, KeyCombo{ VK_OEM_MINUS, 1 } }, // Ctrl + -
     HotkeyBinding{ HotkeyAction::Zoom100, KeyCombo{ 'Z', 0 }, KeyCombo{ 'Z', 0 } },
     HotkeyBinding{ HotkeyAction::ZoomFit, KeyCombo{ 'F', 0 }, KeyCombo{ 'F', 0 } },
+    HotkeyBinding{ HotkeyAction::ZoomFitWindow, KeyCombo{ 0, 0 }, KeyCombo{ 0, 0 } },
+    HotkeyBinding{ HotkeyAction::ZoomFill, KeyCombo{ 0, 0 }, KeyCombo{ 0, 0 } },
     HotkeyBinding{ HotkeyAction::Loupe, KeyCombo{ 'L', 0 }, KeyCombo{ 'L', 0 } }, // Hold to magnify
     HotkeyBinding{ HotkeyAction::RotateCW, KeyCombo{ 'R', 0 }, KeyCombo{ 'R', 0 } },
     HotkeyBinding{ HotkeyAction::RotateCCW, KeyCombo{ 'R', 2 }, KeyCombo{ 'R', 2 } }, // Shift + R
@@ -3623,7 +3625,7 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
             GetPaneContext(PaneSlot::Primary).view.Zoom = 1.0f;
             GetPaneContext(PaneSlot::Primary).view.PanX = 0;
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
-            g_osd.Show(hwnd, AppStrings::OSD_ZoomFit, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            g_osd.Show(hwnd, AppStrings::OSD_ZoomFitWindow, false, false, D2D1::ColorF(D2D1::ColorF::White));
             RequestRepaint(PaintLayer::All);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
             SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
@@ -3688,6 +3690,32 @@ static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResiz
         RequestRepaint(PaintLayer::All);
         GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
         SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
+    }
+}
+
+static void PerformZoomFill(HWND hwnd) {
+    AppContext::GetInstance().ZoomAnimCtrl->Reset();
+    if (GetPaneContext(PaneSlot::Primary).resource) {
+        RECT rcClient; GetClientRect(hwnd, &rcClient);
+        float vpW = (float)(rcClient.right - rcClient.left);
+        float vpH = (float)(rcClient.bottom - rcClient.top);
+        D2D1_SIZE_F effSize = GetVisualImageSize();
+        if (effSize.width > 0 && effSize.height > 0 && vpW > 0 && vpH > 0) {
+            float ratioW = vpW / effSize.width;
+            float ratioH = vpH / effSize.height;
+            float fitScale = (std::min)(ratioW, ratioH);
+            float fillScale = (std::max)(ratioW, ratioH);
+            float targetZoom = (fitScale > 0.0f) ? (fillScale / fitScale) : 1.0f;
+            
+            GetPaneContext(PaneSlot::Primary).view.Zoom = targetZoom;
+            GetPaneContext(PaneSlot::Primary).view.PanX = 0;
+            GetPaneContext(PaneSlot::Primary).view.PanY = 0;
+            
+            g_osd.Show(hwnd, AppStrings::OSD_ZoomFill, false, false, D2D1::ColorF(D2D1::ColorF::White));
+            RequestRepaint(PaintLayer::All);
+            GetPaneContext(PaneSlot::Primary).view.IsInteracting = true;
+            SetTimer(hwnd, IDT_INTERACTION, 150, nullptr);
+        }
     }
 }
 
@@ -9984,7 +10012,8 @@ SKIP_EDGE_NAV:;
 
         case IDM_ZOOM_100: SendMessage(hwnd, WM_KEYDOWN, '1', 0); break;
         case IDM_ZOOM_FIT: SendMessage(hwnd, WM_KEYDOWN, '0', 0); break;
-             
+        case IDM_ZOOM_FIT_WINDOW: HandleHotkeyAction(hwnd, HotkeyAction::ZoomFitWindow); break;
+        case IDM_ZOOM_FILL: HandleHotkeyAction(hwnd, HotkeyAction::ZoomFill); break;
         case IDM_ZOOM_IN:  SendMessage(hwnd, WM_KEYDOWN, VK_ADD, 0); break;
         case IDM_ZOOM_OUT: SendMessage(hwnd, WM_KEYDOWN, VK_SUBTRACT, 0); break;
 
@@ -12977,6 +13006,22 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 if (!isMaximizedOrFullscreen && s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
                 PerformZoomFit(hwnd);
             }
+        }
+        return true;
+
+    case HotkeyAction::ZoomFitWindow:
+        if (IsCompareModeActive()) {
+            PerformCompareZoomFit(hwnd);
+        } else if (GetPaneContext(PaneSlot::Primary).resource) {
+            PerformZoomFit(hwnd, 1.0f, false);
+        }
+        return true;
+
+    case HotkeyAction::ZoomFill:
+        if (IsCompareModeActive()) {
+            PerformCompareZoomFit(hwnd);
+        } else if (GetPaneContext(PaneSlot::Primary).resource) {
+            PerformZoomFill(hwnd);
         }
         return true;
 

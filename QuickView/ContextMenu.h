@@ -25,6 +25,8 @@ enum ContextMenuCommand : UINT {
     IDM_SLIDESHOW,
     IDM_ZOOM_100,
     IDM_ZOOM_FIT, // Lite
+    IDM_ZOOM_FIT_WINDOW,
+    IDM_ZOOM_FILL,
     IDM_ZOOM_IN,
     IDM_ZOOM_OUT,
     IDM_LOCK_WINDOW_SIZE,

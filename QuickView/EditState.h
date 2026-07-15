@@ -130,6 +130,8 @@ enum class HotkeyAction : uint8_t {
     ZoomOutFine,       // Zoom Out Fine
     Zoom100,           // Zoom 100% / Restore
     ZoomFit,           // Zoom Fit / Restore
+    ZoomFitWindow,     // Zoom Fit Window (Without Resizing Window)
+    ZoomFill,          // Zoom Fill (Without Resizing Window)
     Loupe,             // Hold to show the magnifier (loupe)
     RotateCW,          // Rotate 90 CW
     RotateCCW,         // Rotate 90 CCW
@@ -178,6 +180,8 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::ZoomOutFine: return L"ZoomOutFine";
         case HotkeyAction::Zoom100: return L"Zoom100";
         case HotkeyAction::ZoomFit: return L"ZoomFit";
+        case HotkeyAction::ZoomFitWindow: return L"ZoomFitWindow";
+        case HotkeyAction::ZoomFill: return L"ZoomFill";
         case HotkeyAction::RotateCW: return L"RotateCW";
         case HotkeyAction::RotateCCW: return L"RotateCCW";
         case HotkeyAction::FlipH: return L"FlipH";
