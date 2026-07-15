@@ -316,6 +316,10 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_ToolbarInfoDefault;
     extern const wchar_t* Settings_Label_OpenFullScreenMode;
     extern const wchar_t* Settings_Label_FullScreenZoomMode;
+    extern const wchar_t* Settings_Label_CustomLiteInfoPanel;
+    extern const wchar_t* Settings_Label_ItemsInNormalMode;
+    extern const wchar_t* Settings_Label_ItemsInCompareMode;
+    extern const wchar_t* Settings_Label_SeparatorPreset;
     extern const wchar_t* Settings_Option_FitScreen;
     extern const wchar_t* Settings_Option_AutoFit;
     

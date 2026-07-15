@@ -510,6 +510,10 @@ const wchar_t *OSD_ImmersiveNormal = nullptr;
 const wchar_t *Context_SlideshowMode = nullptr;
 const wchar_t *Settings_Label_SlideshowInterval = nullptr;
 const wchar_t *Settings_Label_SlideshowImmersive = nullptr;
+const wchar_t *Settings_Label_CustomLiteInfoPanel = nullptr;
+const wchar_t *Settings_Label_ItemsInNormalMode = nullptr;
+const wchar_t *Settings_Label_ItemsInCompareMode = nullptr;
+const wchar_t *Settings_Label_SeparatorPreset = nullptr;
 const wchar_t *Settings_Option_SlideshowNormal = nullptr;
 const wchar_t *Settings_Option_SlideshowSpotlight = nullptr;
 
@@ -1015,6 +1019,10 @@ struct LanguageTable {
     const wchar_t *Context_SlideshowMode;
     const wchar_t *Settings_Label_SlideshowInterval;
     const wchar_t *Settings_Label_SlideshowImmersive;
+    const wchar_t *Settings_Label_CustomLiteInfoPanel;
+    const wchar_t *Settings_Label_ItemsInNormalMode;
+    const wchar_t *Settings_Label_ItemsInCompareMode;
+    const wchar_t *Settings_Label_SeparatorPreset;
     const wchar_t *Settings_Option_SlideshowNormal;
     const wchar_t *Settings_Option_SlideshowSpotlight;
 };
@@ -1517,6 +1525,10 @@ static const LanguageTable Table_EN = {
     L"Slideshow Mode", // Context_SlideshowMode
     L"Interval (seconds)", // Settings_Label_SlideshowInterval
     L"Immersive Mode", // Settings_Label_SlideshowImmersive
+    L"Custom Lite Info Panel", // Settings_Label_CustomLiteInfoPanel
+    L"items in Normal mode", // Settings_Label_ItemsInNormalMode
+    L"items in Compare mode", // Settings_Label_ItemsInCompareMode
+    L"Separator preset", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Spotlight", // Settings_Option_SlideshowSpotlight
 };
@@ -2019,6 +2031,10 @@ static const LanguageTable Table_CN = {
     L"幻灯片模式", // Context_SlideshowMode
     L"切换间隔 (秒)", // Settings_Label_SlideshowInterval
     L"沉浸模式", // Settings_Label_SlideshowImmersive
+    L"自定义精简信息栏", // Settings_Label_CustomLiteInfoPanel
+    L"普通模式显示项", // Settings_Label_ItemsInNormalMode
+    L"对比模式显示项", // Settings_Label_ItemsInCompareMode
+    L"分隔符预设", // Settings_Label_SeparatorPreset
     L"普通", // Settings_Option_SlideshowNormal
     L"聚光灯", // Settings_Option_SlideshowSpotlight
 };
@@ -2521,6 +2537,10 @@ static const LanguageTable Table_TW = {
     L"幻燈片模式", // Context_SlideshowMode
     L"切換間隔 (秒)", // Settings_Label_SlideshowInterval
     L"沉浸模式", // Settings_Label_SlideshowImmersive
+    L"自定義精簡信息欄", // Settings_Label_CustomLiteInfoPanel
+    L"普通模式顯示項", // Settings_Label_ItemsInNormalMode
+    L"對比模式顯示項", // Settings_Label_ItemsInCompareMode
+    L"分隔符預設", // Settings_Label_SeparatorPreset
     L"普通", // Settings_Option_SlideshowNormal
     L"聚光燈", // Settings_Option_SlideshowSpotlight
 };
@@ -3023,6 +3043,10 @@ static const LanguageTable Table_JA = {
     L"スライドショーモード", // Context_SlideshowMode
     L"切り替え間隔 (秒)", // Settings_Label_SlideshowInterval
     L"イマーシブモード", // Settings_Label_SlideshowImmersive
+    L"簡易情報パネルのカスタマイズ", // Settings_Label_CustomLiteInfoPanel
+    L"通常モードの表示項目", // Settings_Label_ItemsInNormalMode
+    L"比較モードの表示項目", // Settings_Label_ItemsInCompareMode
+    L"区切り文字プリセット", // Settings_Label_SeparatorPreset
     L"通常", // Settings_Option_SlideshowNormal
     L"スポットライト", // Settings_Option_SlideshowSpotlight
 };
@@ -3525,6 +3549,10 @@ static const LanguageTable Table_RU = {
     L"Режим слайд-шоу", // Context_SlideshowMode
     L"Интервал (сек)", // Settings_Label_SlideshowInterval
     L"Режим погружения", // Settings_Label_SlideshowImmersive
+    L"Настройка краткой инфо-панели", // Settings_Label_CustomLiteInfoPanel
+    L"Элементы в обычном режиме", // Settings_Label_ItemsInNormalMode
+    L"Элементы в режиме сравнения", // Settings_Label_ItemsInCompareMode
+    L"Шаблон разделителя", // Settings_Label_SeparatorPreset
     L"Обычный", // Settings_Option_SlideshowNormal
     L"Прожектор", // Settings_Option_SlideshowSpotlight
 };
@@ -4027,6 +4055,10 @@ static const LanguageTable Table_DE = {
     L"Diashow-Modus", // Context_SlideshowMode
     L"Intervall (Sekunden)", // Settings_Label_SlideshowInterval
     L"Immersiver Modus", // Settings_Label_SlideshowImmersive
+    L"Kompakte Infoleiste anpassen", // Settings_Label_CustomLiteInfoPanel
+    L"Elemente im Normalmodus", // Settings_Label_ItemsInNormalMode
+    L"Elemente im Vergleichsmodus", // Settings_Label_ItemsInCompareMode
+    L"Trennzeichen-Vorlage", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Spotlight", // Settings_Option_SlideshowSpotlight
 };
@@ -4529,6 +4561,10 @@ static const LanguageTable Table_ES = {
     L"Modo de presentación", // Context_SlideshowMode
     L"Intervalo (segundos)", // Settings_Label_SlideshowInterval
     L"Modo inmersivo", // Settings_Label_SlideshowImmersive
+    L"Personalizar panel de información compacto", // Settings_Label_CustomLiteInfoPanel
+    L"Elementos en modo normal", // Settings_Label_ItemsInNormalMode
+    L"Elementos en modo de comparación", // Settings_Label_ItemsInCompareMode
+    L"Preajuste de separador", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Foco", // Settings_Option_SlideshowSpotlight
 };
@@ -5031,6 +5067,10 @@ static const LanguageTable Table_FR = {
     L"Mode diaporama", // Context_SlideshowMode
     L"Intervalle (secondes)", // Settings_Label_SlideshowInterval
     L"Mode immersif", // Settings_Label_SlideshowImmersive
+    L"Personnaliser le panneau d'infos compact", // Settings_Label_CustomLiteInfoPanel
+    L"Éléments en mode normal", // Settings_Label_ItemsInNormalMode
+    L"Éléments en mode comparaison", // Settings_Label_ItemsInCompareMode
+    L"Séparateur prédéfini", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Projecteur", // Settings_Option_SlideshowSpotlight
 };
@@ -5533,6 +5573,10 @@ void Apply(const LanguageTable& t) {
   Context_SlideshowMode = t.Context_SlideshowMode;
   Settings_Label_SlideshowInterval = t.Settings_Label_SlideshowInterval;
   Settings_Label_SlideshowImmersive = t.Settings_Label_SlideshowImmersive;
+  Settings_Label_CustomLiteInfoPanel = t.Settings_Label_CustomLiteInfoPanel;
+  Settings_Label_ItemsInNormalMode = t.Settings_Label_ItemsInNormalMode;
+  Settings_Label_ItemsInCompareMode = t.Settings_Label_ItemsInCompareMode;
+  Settings_Label_SeparatorPreset = t.Settings_Label_SeparatorPreset;
   Settings_Option_SlideshowNormal = t.Settings_Option_SlideshowNormal;
   Settings_Option_SlideshowSpotlight = t.Settings_Option_SlideshowSpotlight;
 }

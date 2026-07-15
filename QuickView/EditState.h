@@ -613,6 +613,12 @@ struct AppConfig {
     // --- Fixed Zoom Levels ---
     bool UseFixedZoom = false;           // Fixed Zoom option
     std::wstring FixedZoomLevels = L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128";
+    
+    // --- Customizable Info Panel Lite ---
+    std::wstring InfoPanelLiteItemsNormal = L"Zoom,Progress,File,Size,Disk,Format";
+    std::wstring InfoPanelLiteItemsCompare = L"File,Size,Disk,Sharp,Ent,BPP,Date";
+    std::wstring InfoPanelLiteSeparator = L" \u00b7 ";
+    
     // --- Save Options --- (Functional options removed, fully automated/smart)
     std::wstring LastRegisteredVersion;
     std::wstring LastRegisteredPath;

@@ -28,6 +28,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #include "InputController.h"  // Quantum Stream: Warp Mode
 #include "LosslessTransform.h"
 #include "EditState.h"
+#include "StringUtils.h"
 #include "PaneContext.h"
 #include "AppStrings.h"
 #include "ContextMenu.h"
@@ -4190,6 +4191,12 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"UseFixedZoom", g_config.UseFixedZoom ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"FixedZoomLevels", g_config.FixedZoomLevels.c_str(), iniPath.c_str());
 
+    // Customizable Info Panel Lite
+    std::wstring wrappedSeparator = L"\"" + g_config.InfoPanelLiteSeparator + L"\"";
+    WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteItemsNormal", g_config.InfoPanelLiteItemsNormal.c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteItemsCompare", g_config.InfoPanelLiteItemsCompare.c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteSeparator", wrappedSeparator.c_str(), iniPath.c_str());
+
     // Image
     WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
@@ -4459,6 +4466,28 @@ void LoadConfig() {
     wchar_t bufZoomLevels[512];
     GetPrivateProfileStringW(L"Controls", L"FixedZoomLevels", L"0.05,0.1,0.125,0.166,0.25,0.333,0.5,0.66,1,1.5,2,3,4,5,6,7,8,12,16,32,64,128", bufZoomLevels, 512, iniPath.c_str());
     g_config.FixedZoomLevels = bufZoomLevels;
+
+    // Customizable Info Panel Lite
+    wchar_t bufLiteItems[256];
+    GetPrivateProfileStringW(L"Controls", L"InfoPanelLiteItemsNormal", L"Zoom,Progress,File,Size,Disk,Format", bufLiteItems, 256, iniPath.c_str());
+    g_config.InfoPanelLiteItemsNormal = bufLiteItems;
+
+    GetPrivateProfileStringW(L"Controls", L"InfoPanelLiteItemsCompare", L"File,Size,Disk,Sharp,Ent,BPP,Date", bufLiteItems, 256, iniPath.c_str());
+    g_config.InfoPanelLiteItemsCompare = bufLiteItems;
+
+    // Normalize loaded CSV configs (de-duplicate, check against allowed tags, limit to kInfoPanelLiteMaxItems (8))
+    std::vector<std::wstring> allowedNormal = { L"Zoom", L"Progress", L"File", L"Size", L"Disk", L"Format", L"Camera", L"Exp", L"Lens", L"Focal", L"Date", L"Flash", L"GPS", L"Profile" };
+    std::vector<std::wstring> allowedCompare = { L"File", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date", L"Progress", L"Zoom", L"Format", L"Camera", L"Exp", L"Lens", L"Focal", L"Flash", L"GPS", L"Profile" };
+    g_config.InfoPanelLiteItemsNormal = QuickView::NormalizeCSV(g_config.InfoPanelLiteItemsNormal, allowedNormal, 8);
+    g_config.InfoPanelLiteItemsCompare = QuickView::NormalizeCSV(g_config.InfoPanelLiteItemsCompare, allowedCompare, 8);
+
+    wchar_t bufSeparator[64];
+    GetPrivateProfileStringW(L"Controls", L"InfoPanelLiteSeparator", L"\" \u00b7 \"", bufSeparator, 64, iniPath.c_str());
+    std::wstring rawSep = bufSeparator;
+    if (rawSep.length() >= 2 && rawSep.front() == L'"' && rawSep.back() == L'"') {
+        rawSep = rawSep.substr(1, rawSep.length() - 2);
+    }
+    g_config.InfoPanelLiteSeparator = rawSep;
 
     // Image
     g_config.AutoRotate = GetPrivateProfileIntW(L"Image", L"AutoRotate", 1, iniPath.c_str()) != 0;

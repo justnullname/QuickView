@@ -317,6 +317,7 @@ add_executable(QuickViewTests
     tests/ColorMathTests.cpp 
     tests/FileNavigatorTests.cpp 
     tests/HotkeyTests.cpp
+    tests/StringUtilsTests.cpp
     QuickView/ColorMath.cpp 
     QuickView/FileNavigator.cpp 
     QuickView/ArchiveVFS.cpp 

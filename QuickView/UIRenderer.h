@@ -218,7 +218,8 @@ private:
         std::wstring reference;     // Typical range
     };
     
-    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false) const;
+    std::wstring BuildCompactInfoText() const;
+    std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false, int positionIndex = -1, size_t positionTotal = 0) const;
     TooltipInfo GetTooltipInfo(const std::wstring& label) const;
     
 private:

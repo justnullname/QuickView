@@ -1,4 +1,5 @@
 #include "CompareController.h"
+#include "StringUtils.h"
 #include "SettingsOverlay.h"
 #include "ThemeSystem.h"
 #include "HelpOverlay.h"
@@ -35,6 +36,11 @@ extern Toolbar g_toolbar; // [Fix] Allow Settings to update toolbar state direct
 extern HelpOverlay g_helpOverlay;
 
 namespace {
+
+// SplitString alias for backward compat (delegates to shared StringUtils)
+inline std::vector<std::wstring> SplitString(const std::wstring& str, wchar_t delim) {
+    return QuickView::SplitAndTrimCSV(str, delim);
+}
 
 struct SettingsThemePalette {
     D2D1_COLOR_F dimmer;
@@ -926,6 +932,13 @@ void SettingsOverlay::RebuildMenu() {
 void SettingsOverlay::BuildMenu() {
     m_tabs.clear();
 
+    // Compute active separator preset index
+    m_separatorPresetIndex = -1;
+    if (g_config.InfoPanelLiteSeparator == L" \u00b7 ") m_separatorPresetIndex = 0;
+    else if (g_config.InfoPanelLiteSeparator == L"  ") m_separatorPresetIndex = 1;
+    else if (g_config.InfoPanelLiteSeparator == L" | ") m_separatorPresetIndex = 2;
+    else if (g_config.InfoPanelLiteSeparator == L" - ") m_separatorPresetIndex = 3;
+
     // [UX Fix] Sync 3-state border option from config
     if (!g_config.GlassShowBorders) {
         m_borderStrokeOption = 0; // None
@@ -1504,6 +1517,23 @@ void SettingsOverlay::BuildMenu() {
 
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Toggle, &g_config.ShowBorderIndicator });
 
+    // Open FullScreen Mode & FullScreen Zoom Mode (Moved to Window Category Bottom)
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
+    
+    SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
+    itemFsZoom.tooltipText = AppStrings::Settings_Tooltip_ZoomAuto;
+    itemFsZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        SaveConfig();
+        HWND hwnd = GetActiveWindow();
+        if (hwnd && (IsZoomed(hwnd) || g_isFullScreen)) {
+            // Forward declaration to let main.cpp handle this cleanly
+            extern void ApplyFullScreenZoomMode(HWND hwnd);
+            ApplyFullScreenZoomMode(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+    };
+    tabVisuals.items.push_back(itemFsZoom);
+
     tabVisuals.items.push_back({ AppStrings::Settings_Header_WindowLock, OptionType::Header });
     SettingsItem itemLockWindow = { AppStrings::Settings_Label_LockWindow, OptionType::Toggle, &g_config.LockWindowSize };
     itemLockWindow.tooltipText = AppStrings::Settings_Tooltip_LockWindow;
@@ -1560,25 +1590,44 @@ void SettingsOverlay::BuildMenu() {
     };
     tabVisuals.items.push_back(itemExif);
     
-    // Toolbar Info Button Default (Lite/Full)
+    // Toolbar Info Button Default (Lite/Full) (Moved to Panel Category)
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} });
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_OpenFullScreenMode, OptionType::Segment, nullptr, nullptr, &g_config.OpenFullScreenMode, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_LargeOnly, AppStrings::Settings_Option_All} });
     
-    SettingsItem itemFsZoom = { AppStrings::Settings_Label_FullScreenZoomMode, OptionType::Segment, nullptr, nullptr, &g_config.FullScreenZoomMode, nullptr, 0, 0, {AppStrings::Settings_Option_FitScreen, AppStrings::Settings_Option_AutoFit} };
-    itemFsZoom.tooltipText = AppStrings::Settings_Tooltip_ZoomAuto;
-    itemFsZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        SaveConfig();
-        HWND hwnd = GetActiveWindow();
-        if (hwnd && (IsZoomed(hwnd) || g_isFullScreen)) {
-            // Forward declaration to let main.cpp handle this cleanly
-            extern void ApplyFullScreenZoomMode(HWND hwnd);
-            ApplyFullScreenZoomMode(hwnd);
-            // We use InvalidateRect here to avoid missing PaintLayer enum declaration in this file.
-            // main.cpp's WM_PAINT will handle the redraw.
-            InvalidateRect(hwnd, nullptr, FALSE);
+    // Custom Lite Info Panel Section (Group Header + Cloud Lists + Presets)
+    tabVisuals.items.push_back({ AppStrings::Settings_Label_CustomLiteInfoPanel, OptionType::Header });
+    
+    SettingsItem tagCloudNormal;
+    tagCloudNormal.label = AppStrings::Settings_Label_ItemsInNormalMode;
+    tagCloudNormal.type = OptionType::TagCloud;
+    tagCloudNormal.pStrVal = &g_config.InfoPanelLiteItemsNormal;
+    tagCloudNormal.options = { L"Zoom", L"Progress", L"File", L"Size", L"Disk", L"Format", L"Camera", L"Exp", L"Lens", L"Focal", L"Date", L"Flash", L"GPS", L"Profile" };
+    tagCloudNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tabVisuals.items.push_back(tagCloudNormal);
+
+    SettingsItem tagCloudCompare;
+    tagCloudCompare.label = AppStrings::Settings_Label_ItemsInCompareMode;
+    tagCloudCompare.type = OptionType::TagCloud;
+    tagCloudCompare.pStrVal = &g_config.InfoPanelLiteItemsCompare;
+    tagCloudCompare.options = { L"File", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date", L"Progress", L"Zoom", L"Format", L"Camera", L"Exp", L"Lens", L"Focal", L"Flash", L"GPS", L"Profile" };
+    tagCloudCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tabVisuals.items.push_back(tagCloudCompare);
+
+    SettingsItem separatorPreset;
+    separatorPreset.label = AppStrings::Settings_Label_SeparatorPreset;
+    separatorPreset.type = OptionType::Segment;
+    separatorPreset.pIntVal = &m_separatorPresetIndex;
+    separatorPreset.options = { L" \u00b7 ", L"  ", L" | ", L" - " };
+    separatorPreset.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (item->pIntVal) {
+            int idx = *item->pIntVal;
+            if (idx >= 0 && idx < (int)item->options.size()) {
+                g_config.InfoPanelLiteSeparator = item->options[idx];
+                SaveConfig();
+                overlay->RebuildMenu();
+            }
         }
     };
-    tabVisuals.items.push_back(itemFsZoom);
+    tabVisuals.items.push_back(separatorPreset);
     
     // --- Slideshow ---
     tabVisuals.items.push_back({ AppStrings::Context_SlideshowMode, OptionType::Header });
@@ -2924,6 +2973,119 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 contentY = badgeY + badgeH + 26.0f * s;
                 continue;
             }
+            else if (item.type == OptionType::TagCloud) {
+                const float topGap = 10.0f * s;
+                const float headerH = 20.0f * s;
+                const float badgeH = 26.0f * s;
+                const float badgePadX = 12.0f * s;
+                const float badgeGapX = 6.0f * s;
+                const float badgeGapY = 8.0f * s;
+                const float badgeRadius = 4.0f * s;
+
+                contentY += topGap;
+                
+                // Draw Label / Header
+                D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + headerH);
+                pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), headerRect, m_brushText.Get());
+
+                float badgeX = contentX;
+                float badgeY = contentY + headerH + 6.0f * s;
+                float maxLineRight = contentX + contentW;
+                
+                // Parse current items
+                std::wstring currentStr = item.pStrVal ? *item.pStrVal : L"";
+                std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
+                
+                item.optionRects.clear();
+
+                for (const auto& opt : item.options) {
+                    // Check if active
+                    auto it = std::find(activeItems.begin(), activeItems.end(), opt);
+                    bool isActive = (it != activeItems.end());
+                    int activeIndex = isActive ? (int)(std::distance(activeItems.begin(), it) + 1) : 0;
+
+                    // Build display string
+                    std::wstring displayText = opt;
+                    if (isActive) {
+                        displayText = std::to_wstring(activeIndex) + L". " + opt;
+                    }
+
+                    float textW = 0.0f;
+                    if (m_dwriteFactory && m_textFormatItem) {
+                        ComPtr<IDWriteTextLayout> layout;
+                        if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                            displayText.c_str(),
+                            (UINT32)displayText.length(),
+                            m_textFormatItem.Get(),
+                            2000.0f,
+                            badgeH,
+                            &layout))) {
+                            DWRITE_TEXT_METRICS metrics = {};
+                            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                                textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                            }
+                        }
+                    }
+                    if (textW <= 0.0f) textW = (float)displayText.length() * 8.0f * s;
+
+                    float badgeW = textW + badgePadX * 2.0f;
+                    if (badgeW > contentW) badgeW = contentW;
+
+                    if (badgeX + badgeW > maxLineRight + 0.5f) {
+                        badgeX = contentX;
+                        badgeY += badgeH + badgeGapY;
+                    }
+
+                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
+                    item.optionRects.push_back(badgeRect);
+
+                    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(badgeRect, badgeRadius, badgeRadius);
+                    
+                    if (isActive) {
+                        // Active: Fill with Accent Blue, draw white text for contrast
+                        pRT->FillRoundedRectangle(rr, m_brushAccent.Get());
+                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        ComPtr<ID2D1SolidColorBrush> badgeTextBrush;
+                        pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &badgeTextBrush);
+                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, badgeTextBrush.Get());
+                    } else {
+                        // Inactive: Draw border and dim text
+                        pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
+                        pRT->DrawRoundedRectangle(rr, m_brushBorder.Get(), 1.0f * s);
+                        m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
+                    }
+
+                    badgeX += badgeW + badgeGapX;
+                }
+
+                m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                contentY = badgeY + badgeH + 16.0f * s;
+                
+                // Define overall item.rect for scrolling / basic containment
+                item.rect = D2D1::RectF(contentX, headerRect.top, contentX + contentW, contentY);
+                item.interactRect = item.rect;
+                
+                // Draw limit warning feedback if active
+                if (!item.statusText.empty() && item.statusSetTime > 0) {
+                     if (GetTickCount() - item.statusSetTime > 3000) {
+                         item.statusText.clear();
+                     }
+                }
+                if (!item.statusText.empty()) {
+                    ComPtr<ID2D1SolidColorBrush> statusBrush;
+                    pRT->CreateSolidColorBrush(item.statusColor, &statusBrush);
+                    D2D1_RECT_F statusR = D2D1::RectF(contentX, contentY - 12.0f * s, contentX + contentW, contentY + 6.0f * s);
+                    pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get());
+                    contentY += 18.0f * s;
+                }
+                
+                m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
+                continue;
+            }
             else if (item.type == OptionType::AboutSystemInfo) {
                 // Absolute positioning from bottom
                 float bottomY = hudY + hudH;
@@ -3635,12 +3797,14 @@ std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std
 
     float totalTextW = 0.0f;
     for (const auto& opt : options) {
+        bool isAllSpaces = !opt.empty() && std::all_of(opt.begin(), opt.end(), [](wchar_t c) { return c == L' '; });
+        std::wstring dispText = isAllSpaces ? L"Space" : opt;
         float textW = 0.0f;
         if (m_dwriteFactory && m_textFormatItem) {
             ComPtr<IDWriteTextLayout> layout;
             if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                opt.c_str(),
-                (UINT32)opt.length(),
+                dispText.c_str(),
+                (UINT32)dispText.length(),
                 m_textFormatItem.Get(),
                 2000.0f,
                 50.0f,
@@ -3651,7 +3815,7 @@ std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std
                 }
             }
         }
-        if (textW <= 0.0f) textW = (float)opt.length() * 8.0f * m_uiScale;
+        if (textW <= 0.0f) textW = (float)dispText.length() * 8.0f * m_uiScale;
         widths.push_back(textW);
         totalTextW += textW;
     }
@@ -3701,8 +3865,11 @@ void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& re
     for (size_t i = 0; i < options.size(); i++) {
         D2D1_RECT_F tRect = D2D1::RectF(currentX, rect.top, currentX + itemWidths[i], rect.bottom);
         
+        bool isAllSpaces = !options[i].empty() && std::all_of(options[i].begin(), options[i].end(), [](wchar_t c) { return c == L' '; });
+        std::wstring dispText = isAllSpaces ? L"Space" : options[i];
+
         // Draw Divider (if not first and not selected/adjacent) - simplified: just text
-        pRT->DrawText(options[i].c_str(), (UINT32)options[i].length(), m_textFormatItem.Get(), tRect, isDisabled ? m_brushTextDim.Get() : m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
+        pRT->DrawText(dispText.c_str(), (UINT32)dispText.length(), m_textFormatItem.Get(), tRect, isDisabled ? m_brushTextDim.Get() : m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
         currentX += itemWidths[i];
     }
     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING); // Restore Default
@@ -3860,6 +4027,22 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) m_hoverLinkIndex = 2;
 
                         if (m_hoverLinkIndex != -1) g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+                    }
+                    
+                    if (item.type == OptionType::TagCloud) {
+                        bool onBadge = false;
+                        for (const auto& r : item.optionRects) {
+                            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                                onBadge = true;
+                                break;
+                            }
+                        }
+                        if (onBadge) {
+                            g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+                        } else {
+                            m_pHoverItem = nullptr;
+                            item.isHovered = false;
+                        }
                     }
                     
                     if (!m_pHoverTooltipItem) break;
@@ -4077,6 +4260,49 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                     if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
                     return SettingsAction::RepaintAll;
                 }
+            }
+            return SettingsAction::RepaintStatic;
+        }
+        // TagCloud Option Type Click
+        if (m_pHoverItem->type == OptionType::TagCloud) {
+            if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
+            
+            int clickedIdx = -1;
+            for (int i = 0; i < (int)m_pHoverItem->optionRects.size(); ++i) {
+                const auto& r = m_pHoverItem->optionRects[i];
+                if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                    clickedIdx = i;
+                    break;
+                }
+            }
+            
+            if (clickedIdx != -1 && m_pHoverItem->pStrVal) {
+                const std::wstring& clickedOpt = m_pHoverItem->options[clickedIdx];
+                std::wstring currentStr = *m_pHoverItem->pStrVal;
+                std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
+                
+                auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
+                if (it != activeItems.end()) {
+                    activeItems.erase(it);
+                } else {
+                    if ((int)activeItems.size() < kInfoPanelLiteMaxItems) {
+                        activeItems.push_back(clickedOpt);
+                    } else {
+                        m_pHoverItem->statusText = L"Limit reached (max 8 items)";
+                        m_pHoverItem->statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
+                        m_pHoverItem->statusSetTime = GetTickCount();
+                    }
+                }
+                
+                std::wstring newStr;
+                for (size_t i = 0; i < activeItems.size(); ++i) {
+                    if (i > 0) newStr += L",";
+                    newStr += activeItems[i];
+                }
+                *m_pHoverItem->pStrVal = newStr;
+                
+                if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+                return SettingsAction::RepaintAll;
             }
             return SettingsAction::RepaintStatic;
         }

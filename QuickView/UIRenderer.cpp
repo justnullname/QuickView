@@ -1,5 +1,11 @@
 #include "UIRenderer.h"
+#include "StringUtils.h"
 #include "AppStrings.h"
+#include <Shlwapi.h>
+#pragma comment(lib, "Shlwapi.lib")
+#include "SupportedExtensions.h"
+#include <filesystem>
+#include <optional>
 #include "CompareController.h"
 #include "DebugMetrics.h"
 #include "DialogController.h"
@@ -50,6 +56,11 @@ static bool PointInRect(float x, float y, const D2D1_RECT_F& rect) {
 }
 
 namespace {
+// Delegate to shared StringUtils
+static std::vector<std::wstring> SplitString(const std::wstring& str, wchar_t delim) {
+    return QuickView::SplitAndTrimCSV(str, delim);
+}
+
 static std::wstring FormatHdrNits(float nits);
 static std::wstring FormatHdrStops(float stops);
 static bool IsHdrLikeContent(const CImageLoader::ImageMetadata& metadata);
@@ -356,8 +367,10 @@ float UIRenderer::MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* 
     if (!layout) return 0.0f;
     
     DWRITE_TEXT_METRICS metrics;
-    layout->GetMetrics(&metrics);
-    return metrics.width;
+    if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+        return metrics.widthIncludingTrailingWhitespace;
+    }
+    return 0.0f;
 }
 
 float UIRenderer::MeasureTextHeight(const std::wstring& text, IDWriteTextFormat* format, float maxWidth) {
@@ -2148,6 +2161,256 @@ namespace {
                                              const std::wstring& highMeaning,
                                              const std::wstring& lowMeaning,
                                              const std::wstring& reference);
+    static std::optional<std::wstring> FormatLiteField(
+        const std::wstring& key,
+        const CImageLoader::ImageMetadata& meta,
+        const std::wstring& path,
+        const CImageLoader::ImageMetadata* other,
+        float s,
+        UIRenderer* renderer);
+    static void QueryFilePosition(const std::wstring& path, int& outIndex, size_t& outCount);
+}
+
+namespace {
+    static std::optional<std::wstring> FormatLiteField(
+        const std::wstring& key,
+        const CImageLoader::ImageMetadata& meta,
+        const std::wstring& path,
+        const CImageLoader::ImageMetadata* other,
+        float s,
+        UIRenderer* renderer)
+    {
+        if (key == L"Zoom") {
+            return std::to_wstring(GetCurrentZoomPercent()) + L"%";
+        }
+        else if (key == L"Progress") {
+            int idx = -1;
+            size_t total = 0;
+            std::wstring p = path.empty() ? meta.SourcePath : path;
+            if (!p.empty()) {
+                QueryFilePosition(p, idx, total);
+            }
+            if (idx >= 0 && total > 0) {
+                return std::to_wstring(idx + 1) + L"/" + std::to_wstring(total);
+            } else if (g_navigator.Count() > 0) {
+                return std::to_wstring(g_navigator.Index() + 1) + L"/" + std::to_wstring(g_navigator.Count());
+            }
+            return std::nullopt;
+        }
+        else if (key == L"File") {
+            std::wstring p = path.empty() ? meta.SourcePath : path;
+            if (p.empty()) return std::nullopt;
+            std::wstring fname = p.substr(p.find_last_of(L"\\/") + 1);
+            float maxW = (other != nullptr) ? 150.0f * s : 200.0f * s;
+            return renderer->MakeMiddleEllipsis(maxW, fname);
+        }
+        else if (key == L"Size") {
+            if (meta.Width > 0) {
+                wchar_t sz[64];
+                swprintf_s(sz, L"%u\u00d7%u", meta.Width, meta.Height);
+                return sz;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Disk") {
+            if (meta.FileSize > 0) {
+                wchar_t sz[64];
+                if (other != nullptr) {
+                    swprintf_s(sz, L"%.2fMB", meta.FileSize / (1024.0 * 1024.0));
+                } else {
+                    UINT64 bytes = meta.FileSize;
+                    if (bytes >= 1024 * 1024) {
+                        swprintf_s(sz, L"%.2fMB", bytes / (1024.0 * 1024.0));
+                    } else if (bytes >= 1024) {
+                        swprintf_s(sz, L"%.2fKB", bytes / 1024.0);
+                    } else {
+                        swprintf_s(sz, L"%lluB", bytes);
+                    }
+                }
+                return sz;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Format") {
+            std::wstring fmtStr;
+            if (!meta.FormatDetails.empty()) {
+                std::wstring compactDetails = StripQualityFromFormatDetails(meta.FormatDetails);
+                if (!compactDetails.empty()) {
+                    fmtStr = L"[" + compactDetails + L"]";
+                }
+            }
+            if (IsHdrLikeContent(meta)) {
+                const std::wstring dynamicRange = BuildDynamicRangeLabel(meta);
+                if (!dynamicRange.empty()) {
+                    if (!fmtStr.empty()) fmtStr += L" ";
+                    fmtStr += L"[" + dynamicRange + L"]";
+                }
+            }
+            if (!fmtStr.empty()) {
+                return fmtStr;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Sharp") {
+            if (meta.HasSharpness) {
+                wchar_t sz[64];
+                swprintf_s(sz, L"S:%.0f", meta.Sharpness);
+                return sz;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Ent") {
+            if (meta.HasEntropy) {
+                wchar_t sz[64];
+                swprintf_s(sz, L"E:%.2f", meta.Entropy);
+                return sz;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"BPP") {
+            if (meta.Width > 0 && meta.Height > 0 && meta.FileSize > 0) {
+                double bppValue = (double)(meta.FileSize * 8) / ((double)meta.Width * meta.Height);
+                wchar_t sz[64];
+                swprintf_s(sz, L"%.2fbpp", bppValue);
+                return sz;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Camera") {
+            std::wstring camera = meta.Make;
+            if (!meta.Model.empty()) {
+                if (!camera.empty()) camera += L" ";
+                camera += meta.Model;
+            }
+            if (!camera.empty()) return camera;
+            return std::nullopt;
+        }
+        else if (key == L"Exp") {
+            if (!meta.ISO.empty()) {
+                std::wstring exp = L"ISO " + meta.ISO + L"  " + meta.Aperture + L"  " + meta.Shutter;
+                if (!meta.ExposureBias.empty()) {
+                    exp += L" " + meta.ExposureBias;
+                }
+                return exp;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Lens") {
+            if (!meta.Lens.empty()) return meta.Lens;
+            return std::nullopt;
+        }
+        else if (key == L"Focal") {
+            if (!meta.Focal.empty()) return meta.Focal;
+            return std::nullopt;
+        }
+        else if (key == L"Date") {
+            if (!meta.Date.empty()) return meta.Date;
+            return std::nullopt;
+        }
+        else if (key == L"Flash") {
+            if (!meta.Flash.empty()) return meta.Flash;
+            return std::nullopt;
+        }
+        else if (key == L"GPS") {
+            if (meta.HasGPS) {
+                wchar_t gpsBuf[64];
+                swprintf_s(gpsBuf, L"GPS: %.5f, %.5f", meta.Latitude, meta.Longitude);
+                return gpsBuf;
+            }
+            return std::nullopt;
+        }
+        else if (key == L"Profile") {
+            std::wstring colorText = meta.ColorSpace;
+            if (IsHdrLikeContent(meta) &&
+                (colorText.empty() ||
+                 colorText == L"sRGB" ||
+                 colorText == L"Embedded Profile" ||
+                 colorText == L"Uncalibrated")) {
+                const wchar_t* primaries = QuickView::ToString(
+                    meta.colorInfo.primaries != QuickView::ColorPrimaries::Unknown
+                        ? meta.colorInfo.primaries
+                        : meta.hdrMetadata.primaries);
+                if (primaries && wcscmp(primaries, L"Unknown") != 0) {
+                    colorText = primaries;
+                }
+            }
+            if (colorText.empty()) {
+                const wchar_t* primaries = QuickView::ToString(meta.hdrMetadata.primaries);
+                if (primaries && wcscmp(primaries, L"Unknown") != 0) {
+                    colorText = primaries;
+                }
+            }
+            if (!colorText.empty()) {
+                if (meta.HasEmbeddedColorProfile.has_value()) {
+                    colorText += (*meta.HasEmbeddedColorProfile) ? L" [ICC]" : L" (Untagged)";
+                }
+                return colorText;
+            }
+            return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
+    static void QueryFilePosition(const std::wstring& path, int& outIndex, size_t& outCount) {
+        outIndex = -1;
+        outCount = 0;
+        if (path.empty()) return;
+        
+        // 1. Check if the path is active in the primary navigator
+        int idx = g_navigator.FindIndex(path);
+        if (idx != -1) {
+            outIndex = idx;
+            outCount = g_navigator.Count();
+            return;
+        }
+        
+        // 2. Parse virtual path if it's within archive
+        std::wstring archivePath;
+        size_t entryIndex = (size_t)-1;
+        if (FileNavigator::ParseVirtualPath(path, archivePath, entryIndex)) {
+            if (archivePath == g_navigator.m_archivePath) {
+                outIndex = (int)entryIndex;
+                outCount = g_navigator.Count();
+            }
+            return;
+        }
+        
+        // 3. Scan directory
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::path p(path);
+        if (!fs::exists(p, ec) || fs::is_directory(p, ec)) return;
+        
+        fs::path dir = p.parent_path();
+        if (dir.empty()) return;
+        
+        std::vector<std::wstring> files;
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (entry.is_regular_file(ec)) {
+                std::wstring ext = entry.path().extension().wstring();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
+                bool isArchiveExt = (ext == L".cbz" || ext == L".zip" || ext == L".cbr" || ext == L".rar");
+                if (isArchiveExt) continue;
+                
+                for (const auto& supp : QuickView::SUPPORTED_EXTENSIONS) {
+                    if (ext == supp) {
+                        files.push_back(entry.path().wstring());
+                        break;
+                    }
+                }
+            }
+        }
+        
+        std::sort(files.begin(), files.end(), [](const std::wstring& a, const std::wstring& b) {
+            return StrCmpLogicalW(a.c_str(), b.c_str()) < 0;
+        });
+        
+        auto it = std::find(files.begin(), files.end(), path);
+        if (it != files.end()) {
+            outIndex = (int)std::distance(files.begin(), it);
+            outCount = files.size();
+        }
+    }
 }
 
 // ============================================================================
@@ -2177,50 +2440,33 @@ D2D1_SIZE_F UIRenderer::GetRequiredInfoPanelSize() const {
         // Add 32 padding for right/bottom margin + 152 to avoid window controls
         return D2D1::SizeF(16.0f * s + width + 32.0f * s + 152.0f * s, 32.0f * s + height + 32.0f * s);
     } else if (g_runtime.ShowInfoPanel && !g_runtime.InfoPanelExpanded) {
-        std::wstring info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
-        if (g_currentMetadata.Width > 0) {
-            wchar_t sz[64]; swprintf_s(sz, L"   %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
-            info += sz;
-            if (g_currentMetadata.FileSize > 0) {
-                double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
-                swprintf_s(sz, L"   %.2f MB", mb);
-                info += sz;
-            }
-        }
-        std::wstring meta = g_currentMetadata.GetCompactString();
-        if (!meta.empty()) info += L"   " + meta;
-        if (!g_currentMetadata.FormatDetails.empty()) {
-            std::wstring compactDetails = StripQualityFromFormatDetails(g_currentMetadata.FormatDetails);
-            if (!compactDetails.empty()) info += L"   [" + compactDetails + L"]";
-        }
+        std::wstring info = BuildCompactInfoText();
         float textW = m_panelFormat ? MeasureTextWidth(info) : 400.0f;
         // Padding(16) + text + Gap(6) + ExpandBtn(24) + Gap(4) + CloseBtn(24) + RightPad(32) + WindowControls(152)
-     /*
-#if 0
-static std::wstring FormatBytesWithCommas(UINT64 bytes) {
-    wchar_t buf[128];
-    NUMBERFMTW fmt = { 0 };
-    fmt.NumDigits = 0;
-    fmt.LeadingZero = 1;
-    fmt.Grouping = 3;
-    fmt.lpDecimalSep = (LPWSTR)L".";
-    fmt.lpThousandSep = (LPWSTR)L",";
-    fmt.NegativeOrder = 1;
-
-    wchar_t val[64];
-    swprintf_s(val, L"%llu", bytes);
-    if (GetNumberFormatW(LOCALE_USER_DEFAULT, 0, val, &fmt, buf, 128) > 0) {
-        return buf;
-    }
-    return val;
-}
-#endif
-*/
         float totalW = textW + 106.0f * s + 152.0f * s;
         return D2D1::SizeF(totalW, 45.0f * s);
     }
 
     return D2D1::SizeF(0, 0);
+}
+
+std::wstring UIRenderer::BuildCompactInfoText() const {
+    std::vector<std::wstring> items = SplitString(g_config.InfoPanelLiteItemsNormal, L',');
+    std::vector<std::wstring> parts;
+    for (const auto& itemKey : items) {
+        auto valOpt = FormatLiteField(itemKey, g_currentMetadata, g_imagePath, nullptr, m_uiScale, const_cast<UIRenderer*>(this));
+        if (valOpt.has_value()) {
+            parts.push_back(*valOpt);
+        }
+    }
+    std::wstring info;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) {
+            info += g_config.InfoPanelLiteSeparator;
+        }
+        info += parts[i];
+    }
+    return info;
 }
 
 /*
@@ -2246,20 +2492,37 @@ UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) co
     return { L"", L"", L"", L"" };
 }
 
-std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced) const {
+std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced, int positionIndex, size_t positionTotal) const {
     std::vector<InfoRow> rows;
     if (imagePath.empty()) return rows;
 
     // Row 1: Filename
-    std::wstring filename = imagePath.substr(imagePath.find_last_of(L"\\/") + 1);
+    std::wstring displayPath = imagePath;
+    if ((imagePath == L"Left" || imagePath == L"Right") && !metadata.SourcePath.empty()) {
+        displayPath = metadata.SourcePath;
+    }
+    std::wstring filename = displayPath.substr(displayPath.find_last_of(L"\\/") + 1);
     rows.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
+
+    // Position: Folder progress (e.g. 33/999) (Disabled in compare mode via showAdvanced flag)
+    if (!showAdvanced) {
+        if (positionIndex >= 0 && positionTotal > 0) {
+            wchar_t progBuf[64];
+            swprintf_s(progBuf, L"%d/%zu", positionIndex + 1, positionTotal);
+            rows.push_back({L"\U0001F4C1", L"Position", progBuf, L"", L"", TruncateMode::None, false});
+        } else if (g_navigator.Count() > 0) {
+            wchar_t progBuf[64];
+            swprintf_s(progBuf, L"%d/%zu", g_navigator.Index() + 1, g_navigator.Count());
+            rows.push_back({L"\U0001F4C1", L"Position", progBuf, L"", L"", TruncateMode::None, false});
+        }
+    }
 
     // Row 2: Dimensions + Megapixels + Zoom
     if (metadata.Width > 0) {
         UINT64 totalPixels = (UINT64)metadata.Width * metadata.Height;
         double megapixels = totalPixels / 1000000.0;
         wchar_t dimBuf[64];
-        swprintf_s(dimBuf, L"%ux%u", metadata.Width, metadata.Height);
+        swprintf_s(dimBuf, L"%u\u00d7%u", metadata.Width, metadata.Height);
         wchar_t mpBuf[48];
         int zoomPct = GetCurrentZoomPercent();
         swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, zoomPct);
@@ -3035,6 +3298,7 @@ void UIRenderer::DrawCompareHistogram(ID2D1DeviceContext* dc, D2D1_RECT_F rect, 
 }
 
 void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
+    if (IsCompareModeActive()) return;
     if (g_imagePath.empty() || !m_panelFormat) return;
     const float s = m_uiScale;
     std::wstring info;
@@ -3048,13 +3312,13 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
         
         std::wstring fileName = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
         if (m_animState.TotalFrames > 0) {
-            swprintf_s(frameBuf, L"%u / %u   |   %u ms   |   %s   |   %u x %u   |   %s",
+            swprintf_s(frameBuf, L"%u / %u   |   %u ms   |   %s   |   %u\u00d7%u   |   %s",
                 m_animState.CurrentFrameIndex + 1, m_animState.TotalFrames,
                 m_animState.CurrentFrameDelayTime, dispName,
                 g_currentMetadata.Width, g_currentMetadata.Height,
                 fileName.c_str());
         } else {
-            swprintf_s(frameBuf, L"%u / ?   |   %u ms   |   %s   |   %u x %u   |   %s",
+            swprintf_s(frameBuf, L"%u / ?   |   %u ms   |   %s   |   %u\u00d7%u   |   %s",
                 m_animState.CurrentFrameIndex + 1,
                 m_animState.CurrentFrameDelayTime, dispName,
                 g_currentMetadata.Width, g_currentMetadata.Height,
@@ -3062,50 +3326,9 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
         }
         info = frameBuf;
     } else {
-        info = g_imagePath.substr(g_imagePath.find_last_of(L"\\/") + 1);
-
-        // Add Comic Page Info if in Archive
-        if (g_navigator.GetArchive() != nullptr) {
-            int currentPage = g_navigator.Index() + 1;
-            size_t totalPages = g_navigator.Count();
-            if (totalPages > 0) {
-                wchar_t sz[64]; swprintf_s(sz, L"   [%d / %zu]", currentPage, totalPages);
-                info += sz;
-            }
-        }
-    
-        // Add Size
-        if (g_currentMetadata.Width > 0) {
-            wchar_t sz[64]; swprintf_s(sz, L"  %u x %u", g_currentMetadata.Width, g_currentMetadata.Height);
-            info += sz;
-            
-            if (g_currentMetadata.FileSize > 0) {
-                double mb = g_currentMetadata.FileSize / (1024.0 * 1024.0);
-                swprintf_s(sz, L"  %.2f MB", mb);
-                info += sz;
-            }
-        }
-    
-        // Add Compact EXIF
-        std::wstring meta = g_currentMetadata.GetCompactString();
-        if (!meta.empty()) info += L"  " + meta;
-
-        if (!g_currentMetadata.FormatDetails.empty()) {
-            std::wstring compactDetails = StripQualityFromFormatDetails(g_currentMetadata.FormatDetails);
-            if (!compactDetails.empty()) {
-                info += L"   [" + compactDetails + L"]";
-            }
-        }
-
-        if (IsHdrLikeContent(g_currentMetadata)) {
-            const std::wstring dynamicRange = BuildDynamicRangeLabel(g_currentMetadata);
-            if (!dynamicRange.empty()) {
-                info += L"   [";
-                info += dynamicRange;
-                info += L"]";
-            }
-        }
+        info = BuildCompactInfoText();
     }
+
     
     float textW = MeasureTextWidth(info);
     
@@ -3937,51 +4160,34 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
             bool isWinner = false;
         };
 
-        auto buildMetrics = [&](const CImageLoader::ImageMetadata& m, const CImageLoader::ImageMetadata& other) {
+        auto buildMetrics = [&](const CImageLoader::ImageMetadata& m, const std::wstring& path, const CImageLoader::ImageMetadata& other) {
             std::vector<LiteMetric> v;
-            // File (No highlight)
-            std::wstring fname = m.SourcePath.substr(m.SourcePath.find_last_of(L"\\/") + 1);
-            v.push_back({ L"", MakeMiddleEllipsis(150.0f * s, fname, m_panelFormat.Get()), false });
+            std::vector<std::wstring> configItems = SplitString(g_config.InfoPanelLiteItemsCompare, L',');
 
-            // Size
-            if (m.Width > 0) {
-                wchar_t sz[64]; swprintf_s(sz, L"%ux%u", m.Width, m.Height);
-                bool win = (m.Width * m.Height) > (other.Width * other.Height);
-                v.push_back({ L"", sz, win });
-            }
-            // Disk
-            if (m.FileSize > 0) {
-                wchar_t sz[64]; swprintf_s(sz, L"%.2fMB", m.FileSize / (1024.0 * 1024.0));
-                bool win = m.FileSize > other.FileSize;
-                v.push_back({ L"", sz, win });
-            }
-            // Sharp
-            if (m.HasSharpness) {
-                wchar_t sz[64]; swprintf_s(sz, L"S:%.0f", m.Sharpness);
-                bool win = m.HasSharpness && other.HasSharpness && (m.Sharpness > other.Sharpness);
-                v.push_back({ L"", sz, win });
-            }
-            // Ent
-            if (m.HasEntropy) {
-                wchar_t sz[64]; swprintf_s(sz, L"E:%.2f", m.Entropy);
-                bool win = m.HasEntropy && other.HasEntropy && (m.Entropy > other.Entropy);
-                v.push_back({ L"", sz, win });
-            }
-            // BPP
-            if (m.Width > 0 && m.Height > 0 && m.FileSize > 0) {
-                double bppValue = (double)(m.FileSize * 8) / ((double)m.Width * m.Height);
-                wchar_t sz[64]; swprintf_s(sz, L"%.2fbpp", bppValue);
-                v.push_back({ L"", sz, false });
-            }
-            // Date
-            if (!m.Date.empty()) {
-                v.push_back({ L"", m.Date, false });
+            for (const auto& itemKey : configItems) {
+                auto valOpt = FormatLiteField(itemKey, m, path, &other, s, this);
+                if (valOpt.has_value()) {
+                    bool win = false;
+                    if (itemKey == L"Size") {
+                        win = (m.Width * m.Height) > (other.Width * other.Height);
+                    }
+                    else if (itemKey == L"Disk") {
+                        win = m.FileSize > other.FileSize;
+                    }
+                    else if (itemKey == L"Sharp") {
+                        win = m.HasSharpness && other.HasSharpness && (m.Sharpness > other.Sharpness);
+                    }
+                    else if (itemKey == L"Ent") {
+                        win = m.HasEntropy && other.HasEntropy && (m.Entropy > other.Entropy);
+                    }
+                    v.push_back({ L"", *valOpt, win });
+                }
             }
             return v;
         };
 
-        auto leftMetrics = buildMetrics(leftMeta, rightMeta);
-        auto rightMetrics = buildMetrics(rightMeta, leftMeta);
+        auto leftMetrics = buildMetrics(leftMeta, leftMeta.SourcePath, rightMeta);
+        auto rightMetrics = buildMetrics(rightMeta, rightMeta.SourcePath, leftMeta);
 
         // Layout and Geometry (Synced with DrawCompactInfo)
         float y = 16.0f * s;
@@ -3996,12 +4202,22 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         float btnTop = y + 3.0f * s;
         float btnBottom = btnTop + 16.0f * s;
 
-        float leftTotalW = 0.0f;
-        for (const auto& m : leftMetrics) leftTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
-        if (leftTotalW > 0.0f) leftTotalW -= gap;
-        float rightTotalW = 0.0f;
-        for (const auto& m : rightMetrics) rightTotalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
-        if (rightTotalW > 0.0f) rightTotalW -= gap;
+        float sepW = g_config.InfoPanelLiteSeparator.empty() ? 0.0f : MeasureTextWidth(g_config.InfoPanelLiteSeparator, m_panelFormat.Get());
+        
+        auto GetMetricsTotalWidth = [&](const std::vector<LiteMetric>& metrics) -> float {
+            if (metrics.empty()) return 0.0f;
+            float total = 0.0f;
+            for (size_t i = 0; i < metrics.size(); ++i) {
+                total += MeasureTextWidth(metrics[i].val, m_panelFormat.Get());
+                if (i < metrics.size() - 1) {
+                    total += g_config.InfoPanelLiteSeparator.empty() ? gap : sepW;
+                }
+            }
+            return total;
+        };
+
+        float leftTotalW = GetMetricsTotalWidth(leftMetrics);
+        float rightTotalW = GetMetricsTotalWidth(rightMetrics);
 
         // Calculate panel dimensions
         float leftTextStart = splitX - centerGap - leftTotalW;
@@ -4094,25 +4310,36 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.9f, 0.4f), &rightWinBrush);
         dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.7f, 0.0f, 1.0f), &rightYellowBrush);
         dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f), &rightRedBrush);
+        m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        m_panelFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
         auto DrawMetrics = [&](const std::vector<LiteMetric>& metrics, float startX, bool alignRight,
                                ID2D1SolidColorBrush* textBrush,
                                ID2D1SolidColorBrush* winBrush) {
             float currentX = startX;
+            float totalW = GetMetricsTotalWidth(metrics);
             if (alignRight) {
-                // Calculate total width first
-                float totalW = 0;
-                for (const auto& m : metrics) totalW += MeasureTextWidth(m.val, m_panelFormat.Get()) + gap;
-                currentX = startX - totalW + gap;
+                currentX = startX - totalW;
             }
 
-            for (const auto& m : metrics) {
+            for (size_t i = 0; i < metrics.size(); ++i) {
+                const auto& m = metrics[i];
                 float tw = MeasureTextWidth(m.val, m_panelFormat.Get());
                 D2D1_RECT_F r = D2D1::RectF(currentX, y + paddingTop, currentX + tw, y + paddingTop + itemHeight);
                 ID2D1SolidColorBrush* b = m.isWinner ? winBrush : textBrush;
                 
                 dc->DrawText(m.val.c_str(), (UINT32)m.val.length(), m_panelFormat.Get(), r, b);
-                currentX += tw + gap;
+                currentX += tw;
+
+                if (i < metrics.size() - 1) {
+                    if (!g_config.InfoPanelLiteSeparator.empty()) {
+                        D2D1_RECT_F sepRect = D2D1::RectF(currentX, y + paddingTop, currentX + sepW, y + paddingTop + itemHeight);
+                        dc->DrawText(g_config.InfoPanelLiteSeparator.c_str(), (UINT32)g_config.InfoPanelLiteSeparator.length(), m_panelFormat.Get(), sepRect, textBrush);
+                        currentX += sepW;
+                    } else {
+                        currentX += gap;
+                    }
+                }
             }
         };
 
@@ -4134,8 +4361,13 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     // Use centralized row building
     // Note: We need some context for these (like path) if we want tooltips to work fully
     // But for comparison, labeling is key.
-    auto leftRows = BuildGridRows(leftMeta, L"Left", true);
-    auto rightRows = BuildGridRows(rightMeta, L"Right", true);
+    int leftIndex = -1; size_t leftTotal = 0;
+    QueryFilePosition(leftMeta.SourcePath, leftIndex, leftTotal);
+    int rightIndex = -1; size_t rightTotal = 0;
+    QueryFilePosition(rightMeta.SourcePath, rightIndex, rightTotal);
+
+    auto leftRows = BuildGridRows(leftMeta, leftMeta.SourcePath, true, leftIndex, leftTotal);
+    auto rightRows = BuildGridRows(rightMeta, rightMeta.SourcePath, true, rightIndex, rightTotal);
 
     // --- Smart Logic (Quality Assessment) ---
     auto GetQualityTag = [](const CImageLoader::ImageMetadata& meta, int& outColor) -> std::wstring {

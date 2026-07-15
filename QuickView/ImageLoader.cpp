@@ -6051,7 +6051,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
     UINT w = 0, h = 0;
     (*ppBitmap)->GetSize(&w, &h);
     wchar_t buf[32];
-    swprintf_s(buf, L" [%ux%u]", w, h);
+    swprintf_s(buf, L" [%u\u00d7%u]", w, h);
     *pLoaderName += buf;
   }
 
