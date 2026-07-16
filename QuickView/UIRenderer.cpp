@@ -245,6 +245,11 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
             return result;
         }
         
+        if (PointInRect(x, y, m_panelToggleRect)) {
+            result.type = UIHitResult::HudToggleLite;
+            return result;
+        }
+
         if (PointInRect(x, y, m_panelCloseRect)) {
             result.type = UIHitResult::PanelClose;
             return result;
@@ -2255,7 +2260,11 @@ namespace {
             if (p.empty()) return std::nullopt;
             std::wstring fname = p.substr(p.find_last_of(L"\\/") + 1);
             float maxW = (other != nullptr) ? 150.0f * s : 200.0f * s;
-            return renderer->MakeMiddleEllipsis(maxW, fname);
+            std::wstring displayFname = renderer->MakeMiddleEllipsis(maxW, fname);
+            if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(p))) {
+                displayFname += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
+            }
+            return displayFname;
         }
         else if (key == L"Size") {
             if (meta.Width > 0) {
@@ -2518,11 +2527,6 @@ std::wstring UIRenderer::BuildCompactInfoText() const {
             info += g_config.InfoPanelLiteSeparator;
         }
         info += parts[i];
-    }
-    
-    // [RAW+JPEG Pairing] Must match the draw path so the measured width fits
-    if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(g_imagePath))) {
-        info += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
     }
     
     return info;

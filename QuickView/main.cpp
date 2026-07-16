@@ -8709,12 +8709,11 @@ SKIP_EDGE_NAV:;
                       } else {
                           g_runtime.ShowInfoPanel = false;
                           g_toolbar.SetExifState(false);
-                      }
-                      
-                      if (g_runtime.ShowInfoPanel) {
-                          AdjustWindowForOverlay(hwnd, false);
-                      } else {
-                          AdjustWindowForOverlay(hwnd, true);
+                          if (g_runtime.ShowInfoPanel) {
+                              AdjustWindowForOverlay(hwnd, false);
+                          } else {
+                              AdjustWindowForOverlay(hwnd, true);
+                          }
                       }
 
                       RequestRepaint(PaintLayer::All);
