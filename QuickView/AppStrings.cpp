@@ -44,6 +44,7 @@ const wchar_t *Checkbox_NeverConfirmDelete = nullptr;
 const wchar_t *Context_UndoDelete = nullptr;
 const wchar_t *Context_UndoRename = nullptr;
 const wchar_t *Context_UndoTransform = nullptr;
+const wchar_t *Context_Undo = nullptr; // New
 const wchar_t *OSD_UndoRenameSuccess = nullptr;
 const wchar_t *OSD_UndoRenameFailed = nullptr;
 const wchar_t *OSD_UndoTransformSuccess = nullptr;
@@ -644,6 +645,7 @@ struct LanguageTable {
     const wchar_t *Context_UndoDelete;
     const wchar_t *Context_UndoRename;
     const wchar_t *Context_UndoTransform;
+    const wchar_t *Context_Undo;
     const wchar_t *Context_SortBy;
     const wchar_t *Context_NavOrder;
     const wchar_t *Context_SortAscending;
@@ -1114,7 +1116,7 @@ static const LanguageTable Table_EN = {
     L"Sort Order", // Settings_Label_SortOrder
     L"Descending", // Settings_Label_SortDescending
     L"Always sort archives by name", // Settings_Label_SortArchivesByNameAscending
-    L"Confirm Delete", // Settings_Label_ConfirmDel
+    L"Confirm Before Delete", // Settings_Label_ConfirmDel
     L"Portable Mode / Cleanup", // Settings_Label_Portable
     L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application directory instead of AppData.", // Settings_Tooltip_Portable
     L"Span Displays", // Settings_Label_SpanDisplays
@@ -1162,6 +1164,7 @@ static const LanguageTable Table_EN = {
     L"Undo Delete\tCtrl+Z", // Context_UndoDelete
     L"Undo Rename\tCtrl+Z", // Context_UndoRename
     L"Undo Rotate/Flip\tCtrl+Z", // Context_UndoTransform
+    L"Undo\tCtrl+Z", // Context_Undo
     L"Sort By", // Context_SortBy
     L"Navigation Order", // Context_NavOrder
     L"Ascending", // Context_SortAscending
@@ -1632,7 +1635,7 @@ static const LanguageTable Table_CN = {
     L"列表排序方式", // Settings_Label_SortOrder
     L"降序", // Settings_Label_SortDescending
     L"始终以文件名升序浏览存档文件", // Settings_Label_SortArchivesByNameAscending
-    L"删除确认", // Settings_Label_ConfirmDel
+    L"删除前确认", // Settings_Label_ConfirmDel
     L"便携模式 / 清理", // Settings_Label_Portable
     L"便携模式与注册表清理：\n开启后，QuickView " L"将以便携方式运行。程序将自动清理已有的注册表关联，并禁用自动注册表修改功" L"能。同时，配置文件将存放在程序所在目录而非 AppData 目录。", // Settings_Tooltip_Portable
     L"跨屏模式 (电视墙)", // Settings_Label_SpanDisplays
@@ -1680,6 +1683,7 @@ static const LanguageTable Table_CN = {
     L"撤销删除\tCtrl+Z", // Context_UndoDelete
     L"撤销重命名\tCtrl+Z", // Context_UndoRename
     L"撤销旋转/翻转\tCtrl+Z", // Context_UndoTransform
+    L"撤销\tCtrl+Z", // Context_Undo
     L"排序方式", // Context_SortBy
     L"导航顺序", // Context_NavOrder
     L"升序", // Context_SortAscending
@@ -2150,7 +2154,7 @@ static const LanguageTable Table_TW = {
     L"排序方式", // Settings_Label_SortOrder
     L"降冪", // Settings_Label_SortDescending
     L"始終以檔名升序瀏覽封存檔案", // Settings_Label_SortArchivesByNameAscending
-    L"刪除確認", // Settings_Label_ConfirmDel
+    L"刪除前確認", // Settings_Label_ConfirmDel
     L"可攜式模式 / 清理", // Settings_Label_Portable
     L"可攜式模式與登錄檔清理：\n開啟後，QuickView " L"將以可攜式方式執行。程式将自動清理已有的登錄檔關聯，並禁用自動登錄檔修改功" L"能。同時，設定檔將存放在程式所在目錄而非 AppData 目錄。", // Settings_Tooltip_Portable
     L"跨屏模式 (電視牆)", // Settings_Label_SpanDisplays
@@ -2198,6 +2202,7 @@ static const LanguageTable Table_TW = {
     L"撤銷刪除\tCtrl+Z", // Context_UndoDelete
     L"撤銷重命名\tCtrl+Z", // Context_UndoRename
     L"撤銷旋轉/翻轉\tCtrl+Z", // Context_UndoTransform
+    L"撤銷\tCtrl+Z", // Context_Undo
     L"排序方式", // Context_SortBy
     L"導覽順序", // Context_NavOrder
     L"升冪", // Context_SortAscending
@@ -2668,7 +2673,7 @@ static const LanguageTable Table_JA = {
     L"並べ替え順序", // Settings_Label_SortOrder
     L"降順", // Settings_Label_SortDescending
     L"常にアーカイブ内を名前順で表示", // Settings_Label_SortArchivesByNameAscending
-    L"削除確認", // Settings_Label_ConfirmDel
+    L"削除前に確認", // Settings_Label_ConfirmDel
     L"ポータブルモード / クリーンアップ", // Settings_Label_Portable
     L"ポータブルモードとレジストリのクリーンアップ：\n有効にすると、QuickView " L"はポータブルモードで動作します。既存のレジストリ関連付けを自動的にクリー" L"ンアップし、レジストリの自動変更を無効にします。また、設定ファイルは AppData " L"ではなくアプリケーションディレクトリに保存されます。", // Settings_Tooltip_Portable
     L"Span Displays (Video Wall)", // Settings_Label_SpanDisplays
@@ -2716,6 +2721,7 @@ static const LanguageTable Table_JA = {
     L"削除を取り消す\tCtrl+Z", // Context_UndoDelete
     L"名前の変更を取り消す\tCtrl+Z", // Context_UndoRename
     L"回転・反転を取り消す\tCtrl+Z", // Context_UndoTransform
+    L"元に戻す\tCtrl+Z", // Context_Undo
     L"並べ替え", // Context_SortBy
     L"ナビゲーション順序", // Context_NavOrder
     L"昇順", // Context_SortAscending
@@ -3186,7 +3192,7 @@ static const LanguageTable Table_RU = {
     L"Порядок сортировки", // Settings_Label_SortOrder
     L"По убыванию", // Settings_Label_SortDescending
     L"Всегда сортировать архивы по имени", // Settings_Label_SortArchivesByNameAscending
-    L"Подтверждение удаления", // Settings_Label_ConfirmDel
+    L"Подтверждать перед удалением", // Settings_Label_ConfirmDel
     L"Портативный режим / Очистка", // Settings_Label_Portable
     L"Портативный режим и очистка реестра:\nПри включении QuickView работает в " L"портативном режиме. Будут автоматически очищены имеющиеся ассоциации в " L"реестре, отключено автоизменение реестра, а файлы конфигурации " L"будут храниться не в AppData, а в папке приложения.", // Settings_Tooltip_Portable
     L"Распределять по мониторам (видеостена)", // Settings_Label_SpanDisplays
@@ -3234,6 +3240,7 @@ static const LanguageTable Table_RU = {
     L"Отменить удаление\tCtrl+Z", // Context_UndoDelete
     L"Отменить переименование\tCtrl+Z", // Context_UndoRename
     L"Отменить поворот/отражение\tCtrl+Z", // Context_UndoTransform
+    L"Отменить\tCtrl+Z", // Context_Undo
     L"Сортировка", // Context_SortBy
     L"Навигация", // Context_NavOrder
     L"По возрастанию", // Context_SortAscending
@@ -3704,7 +3711,7 @@ static const LanguageTable Table_DE = {
     L"Sortierreihenfolge", // Settings_Label_SortOrder
     L"Absteigend", // Settings_Label_SortDescending
     L"Archive immer nach Namen sortieren", // Settings_Label_SortArchivesByNameAscending
-    L"Löschen bestätigen", // Settings_Label_ConfirmDel
+    L"Vor dem Löschen bestätigen", // Settings_Label_ConfirmDel
     L"Portabler Modus / Bereinigung", // Settings_Label_Portable
     L"Portabler Modus und Registry-Bereinigung:\nWenn aktiviert, wird QuickView im " L"portablen Modus ausgeführt. Es bereinigt automatisch vorhandene " L"Registry-Verknüpfungen, deaktiviert automatische Registry-Änderungen und " L"speichert Konfigurationsdateien im Anwendungsverzeichnis anstatt in AppData.", // Settings_Tooltip_Portable
     L"Span Displays (Video Wall)", // Settings_Label_SpanDisplays
@@ -3752,6 +3759,7 @@ static const LanguageTable Table_DE = {
     L"Löschen rückgängig machen\tCtrl+Z", // Context_UndoDelete
     L"Umbenennen rückgängig machen\tCtrl+Z", // Context_UndoRename
     L"Drehung/Spiegelung rückgängig machen\tCtrl+Z", // Context_UndoTransform
+    L"Rückgängig machen\tCtrl+Z", // Context_Undo
     L"Sortieren nach", // Context_SortBy
     L"Navigationsreihenfolge", // Context_NavOrder
     L"Aufsteigend", // Context_SortAscending
@@ -4222,7 +4230,7 @@ static const LanguageTable Table_ES = {
     L"Orden de clasificación", // Settings_Label_SortOrder
     L"Descendente", // Settings_Label_SortDescending
     L"Ordenar archivos siempre por nombre", // Settings_Label_SortArchivesByNameAscending
-    L"Confirmar eliminación", // Settings_Label_ConfirmDel
+    L"Confirmar antes de eliminar", // Settings_Label_ConfirmDel
     L"Modo portátil / Limpieza", // Settings_Label_Portable
     L"Modo portátil y limpieza del registro:\nCuando está habilitado, QuickView se " L"ejecuta en modo portátil. Limpiará automáticamente las asociaciones de " L"registro existentes, deshabilitará la modificación automática del registro y " L"almacenará los archivos de configuración en el directorio de la aplicación en " L"lugar de AppData.", // Settings_Tooltip_Portable
     L"Span Displays (Video Wall)", // Settings_Label_SpanDisplays
@@ -4270,6 +4278,7 @@ static const LanguageTable Table_ES = {
     L"Deshacer eliminación\tCtrl+Z", // Context_UndoDelete
     L"Deshacer cambio de nombre\tCtrl+Z", // Context_UndoRename
     L"Deshacer rotar/voltear\tCtrl+Z", // Context_UndoTransform
+    L"Deshacer\tCtrl+Z", // Context_Undo
     L"Ordenar por", // Context_SortBy
     L"Orden de navegación", // Context_NavOrder
     L"Ascendente", // Context_SortAscending
@@ -4740,7 +4749,7 @@ static const LanguageTable Table_FR = {
     L"Sort Order", // Settings_Label_SortOrder
     L"Descending", // Settings_Label_SortDescending
     L"Toujours trier les archives par nom", // Settings_Label_SortArchivesByNameAscending
-    L"Confirm Delete", // Settings_Label_ConfirmDel
+    L"Confirm Before Delete", // Settings_Label_ConfirmDel
     L"Portable Mode / Cleanup", // Settings_Label_Portable
     L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application directory instead of AppData.", // Settings_Tooltip_Portable
     L"Span Displays", // Settings_Label_SpanDisplays
@@ -4788,6 +4797,7 @@ static const LanguageTable Table_FR = {
     L"Annuler la suppression\tCtrl+Z", // Context_UndoDelete
     L"Annuler le renommage\tCtrl+Z", // Context_UndoRename
     L"Annuler la rotation/retournement\tCtrl+Z", // Context_UndoTransform
+    L"Annuler\tCtrl+Z", // Context_Undo
     L"Sort By", // Context_SortBy
     L"Navigation Order", // Context_NavOrder
     L"Ascending", // Context_SortAscending
@@ -5306,6 +5316,7 @@ void Apply(const LanguageTable& t) {
   Context_UndoDelete = t.Context_UndoDelete;
   Context_UndoRename = t.Context_UndoRename;
   Context_UndoTransform = t.Context_UndoTransform;
+  Context_Undo = t.Context_Undo;
   Context_SortBy = t.Context_SortBy;
   Context_NavOrder = t.Context_NavOrder;
   Context_SortAscending = t.Context_SortAscending;
@@ -6278,6 +6289,9 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         }
         break;
     }
+    case HotkeyAction::Undo:
+        raw = AppStrings::Context_Undo;
+        break;
     default:
         needsCleaning = false;
         raw = L"None";

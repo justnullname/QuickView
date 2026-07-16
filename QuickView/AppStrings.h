@@ -100,6 +100,7 @@ namespace AppStrings {
     extern const wchar_t* Context_UndoDelete;
     extern const wchar_t* Context_UndoRename;
     extern const wchar_t* Context_UndoTransform;
+    extern const wchar_t* Context_Undo; // New
     extern const wchar_t* Context_SortBy;
     extern const wchar_t* Context_NavOrder;
     extern const wchar_t* Context_SortAscending;

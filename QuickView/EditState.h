@@ -164,7 +164,7 @@ enum class HotkeyAction : uint8_t {
     OverlayTogglePassthrough, // Toggle Passthrough Mode
     Help,              // Toggle Help Overlay
     Exit,              // Exit App / Restore Screen
-    UndoDelete,        // Undo last delete operation (Ctrl+Z)
+    Undo,              // Undo last operation (Ctrl+Z)
     PanUp,
     PanDown,
     PanLeft,
@@ -224,7 +224,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
         case HotkeyAction::Exit: return L"Exit";
         case HotkeyAction::Loupe: return L"Loupe";
-        case HotkeyAction::UndoDelete: return L"UndoDelete";
+        case HotkeyAction::Undo: return L"Undo";
         case HotkeyAction::PanUp: return L"PanUp";
         case HotkeyAction::PanDown: return L"PanDown";
         case HotkeyAction::PanLeft: return L"PanLeft";
@@ -280,7 +280,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ToggleSlideshow") return HotkeyAction::ToggleSlideshow;
     if (sv == L"Exit") return HotkeyAction::Exit;
     if (sv == L"Loupe") return HotkeyAction::Loupe;
-    if (sv == L"UndoDelete") return HotkeyAction::UndoDelete;
+    if (sv == L"Undo") return HotkeyAction::Undo;
     if (sv == L"PanUp") return HotkeyAction::PanUp;
     if (sv == L"PanDown") return HotkeyAction::PanDown;
     if (sv == L"PanLeft") return HotkeyAction::PanLeft;

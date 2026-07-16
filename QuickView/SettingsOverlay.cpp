@@ -828,6 +828,7 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         pRT->CreateSolidColorBrush(palette.border, &m_brushBorder);
         pRT->CreateSolidColorBrush(palette.success, &m_brushSuccess);
         pRT->CreateSolidColorBrush(palette.error, &m_brushError);
+        pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushWhite);
     }
 
     if (m_brushBg) {
@@ -862,16 +863,22 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     }
 
-    if (!m_textFormatHeader || !m_textFormatItem) {
+    if (!m_textFormatHeader || !m_textFormatItem || !m_textFormatBadge) {
         float scaledHeader = fontSizeHeader * m_uiScale;
         float scaledItem = fontSizeItem * m_uiScale;
+        float scaledBadge = 7.5f * m_uiScale; // Micro font size for NEW badge
         m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledHeader, AppStrings::CurrentLocale, &m_textFormatHeader);
         m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledItem, AppStrings::CurrentLocale, &m_textFormatItem);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledBadge, AppStrings::CurrentLocale, &m_textFormatBadge);
     }
 
     if (m_textFormatItem) {
         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+    if (m_textFormatBadge) {
+        m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     }
 
     // Load App Icon from Resource removed (refactored to native Vector D2D)
@@ -994,6 +1001,7 @@ void SettingsOverlay::BuildMenu() {
     itemUpdateChannel.pIntVal = &g_config.UpdateChannel;
     itemUpdateChannel.options = { AppStrings::Settings_Option_UpdateStable, AppStrings::Settings_Option_UpdatePreRelease };
     itemUpdateChannel.tooltipText = AppStrings::Settings_Tooltip_PreRelease;
+    itemUpdateChannel.isNewOption = true;
     tabGeneral.items.push_back(itemUpdateChannel);
     
     // Pro Habits
@@ -1037,8 +1045,6 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
     };
     tabGeneral.items.push_back(itemSortArchives);
-
-    tabGeneral.items.push_back({ AppStrings::Settings_Label_ConfirmDel, OptionType::Toggle, &g_config.ConfirmDelete });
     
     // [Phase 2] Cross-Monitor
     SettingsItem itemCrossMon = { AppStrings::Settings_Label_SpanDisplays, OptionType::Toggle, &g_config.EnableCrossMonitor };
@@ -1336,6 +1342,7 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
         if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, NULL, FALSE);
     };
+    itemStroke.isNewOption = true;
     tabTheme.items.push_back(itemStroke);
 
     // Glass Tint Profile (Base Color)
@@ -1518,6 +1525,7 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Toggle, &g_config.ShowBorderIndicator });
 
     SettingsItem itemShowNavigator = { AppStrings::Settings_Label_ShowNavigator, OptionType::Segment, nullptr, nullptr, &g_config.ShowNavigator, nullptr, 0, 0, {AppStrings::Settings_Option_NavigatorAuto, AppStrings::Settings_Option_NavigatorOn, AppStrings::Settings_Option_NavigatorOff} };
+    itemShowNavigator.isNewOption = true;
     tabVisuals.items.push_back(itemShowNavigator);
 
     // Open FullScreen Mode & FullScreen Zoom Mode (Moved to Window Category Bottom)
@@ -1597,7 +1605,9 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back({ AppStrings::Settings_Label_ToolbarInfoDefault, OptionType::Segment, nullptr, nullptr, &g_config.ToolbarInfoDefault, nullptr, 0, 0, {AppStrings::Settings_Option_Lite, AppStrings::Settings_Option_Full} });
     
     // Custom Lite Info Panel Section (Group Header + Cloud Lists + Presets)
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_CustomLiteInfoPanel, OptionType::Header });
+    SettingsItem headerCustomLite = { AppStrings::Settings_Label_CustomLiteInfoPanel, OptionType::Header };
+    headerCustomLite.isNewOption = true;
+    tabVisuals.items.push_back(headerCustomLite);
     
     SettingsItem tagCloudNormal;
     tagCloudNormal.label = AppStrings::Settings_Label_ItemsInNormalMode;
@@ -1605,6 +1615,7 @@ void SettingsOverlay::BuildMenu() {
     tagCloudNormal.pStrVal = &g_config.InfoPanelLiteItemsNormal;
     tagCloudNormal.options = { L"Zoom", L"Progress", L"File", L"Size", L"Disk", L"Format", L"Camera", L"Exp", L"Lens", L"Focal", L"Date", L"Flash", L"GPS", L"Profile" };
     tagCloudNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tagCloudNormal.isNewOption = true;
     tabVisuals.items.push_back(tagCloudNormal);
 
     SettingsItem tagCloudCompare;
@@ -1613,6 +1624,7 @@ void SettingsOverlay::BuildMenu() {
     tagCloudCompare.pStrVal = &g_config.InfoPanelLiteItemsCompare;
     tagCloudCompare.options = { L"File", L"Size", L"Disk", L"Sharp", L"Ent", L"BPP", L"Date", L"Progress", L"Zoom", L"Format", L"Camera", L"Exp", L"Lens", L"Focal", L"Flash", L"GPS", L"Profile" };
     tagCloudCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tagCloudCompare.isNewOption = true;
     tabVisuals.items.push_back(tagCloudCompare);
 
     SettingsItem separatorPreset;
@@ -1683,6 +1695,7 @@ void SettingsOverlay::BuildMenu() {
     SettingsItem itemUseFixedZoom = { AppStrings::Settings_Label_UseFixedZoom, OptionType::Toggle, &g_config.UseFixedZoom };
     itemUseFixedZoom.tooltipText = AppStrings::Settings_Tooltip_UseFixedZoom;
     itemUseFixedZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    itemUseFixedZoom.isNewOption = true;
     tabControl.items.push_back(itemUseFixedZoom);
     
     // Fixed Zoom Levels Input
@@ -1749,10 +1762,12 @@ void SettingsOverlay::BuildMenu() {
     
     SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 100.0f, {}, L"%.0f px" };
     itemPanNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    itemPanNormal.isNewOption = true;
     tabControl.items.push_back(itemPanNormal);
 
     SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 500.0f, {}, L"%.0f px" };
     itemPanFast.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    itemPanFast.isNewOption = true;
     tabControl.items.push_back(itemPanFast);
 
     tabControl.items.push_back({ AppStrings::Settings_Header_Edge, OptionType::Header });
@@ -1806,6 +1821,9 @@ void SettingsOverlay::BuildMenu() {
         if (action == HotkeyAction::Help || action == HotkeyAction::Exit || action == HotkeyAction::ToggleDebugHud) {
             continue; // Exclude F1, Esc, and F12 from customization
         }
+        if (action == HotkeyAction::Undo) {
+            continue; // Placed manually under EditFile
+        }
 
         // Category Group Headers
         if (action == HotkeyAction::NavNext) {
@@ -1832,6 +1850,24 @@ void SettingsOverlay::BuildMenu() {
         item.label = name;
         item.type = OptionType::HotkeyBindRow;
         item.hotkeyAction = action;
+        
+        // Add NEW badge for specified hotkey actions
+        if (action == HotkeyAction::ZoomFitWindow ||
+            action == HotkeyAction::ZoomFill ||
+            action == HotkeyAction::Loupe ||
+            action == HotkeyAction::RenderRaw ||
+            action == HotkeyAction::ToggleCompare ||
+            action == HotkeyAction::ComparePair ||
+            action == HotkeyAction::PanUp ||
+            action == HotkeyAction::PanDown ||
+            action == HotkeyAction::PanLeft ||
+            action == HotkeyAction::PanRight ||
+            action == HotkeyAction::PanUpFast ||
+            action == HotkeyAction::PanDownFast ||
+            action == HotkeyAction::PanLeftFast ||
+            action == HotkeyAction::PanRightFast) {
+            item.isNewOption = true;
+        }
  
         // Apply pending conflict status if any
         if (m_lastConflictAction == action && GetTickCount() - m_lastConflictTime < 3000) {
@@ -1841,6 +1877,23 @@ void SettingsOverlay::BuildMenu() {
         }
         
         tabKeys.items.push_back(item);
+
+        // Manually insert "Undo" (HotkeyAction::Undo) directly under "Edit" (HotkeyAction::EditFile)
+        if (action == HotkeyAction::EditFile) {
+            std::wstring undoName = AppStrings::GetHotkeyActionName(HotkeyAction::Undo);
+            SettingsItem undoItem;
+            undoItem.label = undoName;
+            undoItem.type = OptionType::HotkeyBindRow;
+            undoItem.hotkeyAction = HotkeyAction::Undo;
+            undoItem.isNewOption = true;
+            
+            if (m_lastConflictAction == HotkeyAction::Undo && GetTickCount() - m_lastConflictTime < 3000) {
+                undoItem.statusText = m_lastConflictMsg;
+                undoItem.statusColor = D2D1::ColorF(D2D1::ColorF::Red);
+                undoItem.statusSetTime = m_lastConflictTime;
+            }
+            tabKeys.items.push_back(undoItem);
+        }
     }
     m_tabs.push_back(tabKeys);
 
@@ -1890,6 +1943,7 @@ void SettingsOverlay::BuildMenu() {
         SaveConfig();
         ApplyPairRawJpegSetting(g_mainHwnd);
     };
+    itemPairRaw.isNewOption = true;
     tabImage.items.push_back(itemPairRaw);
 
     // --- 2. Color Management (CMS) Group ---
@@ -2166,6 +2220,9 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back(itemDesatStrength);
     
     tabImage.items.push_back({ AppStrings::Settings_Header_Prompts, OptionType::Header });
+    SettingsItem itemConfirmDel = { AppStrings::Settings_Label_ConfirmDel, OptionType::Toggle, &g_config.ConfirmDelete };
+    itemConfirmDel.isNewOption = true;
+    tabImage.items.push_back(itemConfirmDel);
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossless, OptionType::Toggle, &g_config.AlwaysSaveLossless });
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveEdgeAdapted, OptionType::Toggle, &g_config.AlwaysSaveEdgeAdapted });
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossy, OptionType::Toggle, &g_config.AlwaysSaveLossy });
@@ -2750,9 +2807,47 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 }
 
                 // Header text
+                float headerTextH = 30.0f * s;
                 D2D1_RECT_F headerRect = D2D1::RectF(contentX, contentY + 10.0f * s, contentX + contentW, contentY + 40.0f * s);
                 m_textFormatHeader->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(), headerRect, m_brushText.Get());
+
+                if (item.isNewOption) {
+                    // Measure header text width
+                    float textW = 100.0f * s; // Fallback
+                    ComPtr<IDWriteTextLayout> headerLayout;
+                    if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                            item.label.c_str(), (UINT32)item.label.length(), m_textFormatHeader.Get(),
+                            contentW, headerTextH, &headerLayout))) {
+                        DWRITE_TEXT_METRICS metrics = {};
+                        if (SUCCEEDED(headerLayout->GetMetrics(&metrics))) {
+                            textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                        }
+                    }
+
+                    // Render NEW badge for Header
+                    float badgeW = 24.0f * s;
+                    float badgeH = 11.0f * s;
+                    float maxBadgeX = contentX + contentW - badgeW;
+                    float badgeX = std::min(contentX + textW + 6.0f * s, maxBadgeX);
+                    // Align visually with header text center
+                    float badgeY = contentY + 10.0f * s + (headerTextH - badgeH) / 2.0f;
+                    D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
+                    D2D1_ROUNDED_RECT roundedBadge = D2D1::RoundedRect(badgeRect, 2.0f * s, 2.0f * s);
+                    
+                    // Draw Capsule Background (Accent color with slight transparency)
+                    float origOpacity = m_brushAccent->GetOpacity();
+                    m_brushAccent->SetOpacity(origOpacity * 0.85f);
+                    pRT->FillRoundedRectangle(roundedBadge, m_brushAccent.Get());
+                    m_brushAccent->SetOpacity(origOpacity); // Restore
+                    
+                    // Draw Micro text "NEW" (Force white text on blue background)
+                    D2D1_RECT_F textRect = badgeRect;
+                    textRect.top += 0.5f * s; // Visual vertical alignment refinement
+                    textRect.bottom += 0.5f * s;
+                    pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), textRect, m_brushWhite.Get());
+                }
+
                 contentY += 50.0f * s; // More spacing for header
                 
                 m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
@@ -3179,21 +3274,49 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + labelWidth, contentY + rowHeight);
             pRT->DrawText(item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(), labelRect, m_brushTextDim.Get());
 
+            // Measure Text Width for Badge and Tooltip positioning
+            float textW = 100.0f * s; // Fallback
+            ComPtr<IDWriteTextLayout> layout;
+            if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
+                    item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
+                    labelWidth, rowHeight, &layout))) {
+                DWRITE_TEXT_METRICS metrics = {};
+                if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                    textW = ceilf(metrics.widthIncludingTrailingWhitespace);
+                }
+            }
+
+            float badgeW = 0.0f;
+            if (item.isNewOption) {
+                badgeW = 24.0f * s;
+                float badgeH = 11.0f * s;
+                float maxBadgeX = contentX + labelWidth - badgeW;
+                float badgeX = std::min(contentX + textW + 5.0f * s, maxBadgeX);
+                float badgeY = contentY + (rowHeight - badgeH) / 2.0f;
+                D2D1_RECT_F badgeRect = D2D1::RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH);
+                D2D1_ROUNDED_RECT roundedBadge = D2D1::RoundedRect(badgeRect, 2.0f * s, 2.0f * s);
+                
+                // Draw Capsule Background (Accent color with slight transparency)
+                float origOpacity = m_brushAccent->GetOpacity();
+                m_brushAccent->SetOpacity(origOpacity * 0.85f);
+                pRT->FillRoundedRectangle(roundedBadge, m_brushAccent.Get());
+                m_brushAccent->SetOpacity(origOpacity); // Restore
+                
+                // Draw Micro text "NEW" (Force white text on blue background)
+                D2D1_RECT_F textRect = badgeRect;
+                textRect.top += 0.5f * s; // Visual vertical alignment refinement
+                textRect.bottom += 0.5f * s;
+                pRT->DrawText(L"NEW", 3, m_textFormatBadge.Get(), textRect, m_brushWhite.Get());
+            }
+
             // Tooltip Icon (?)
             if (!item.tooltipText.empty()) {
-                float textW = 100.0f * s; // Fallback
-                ComPtr<IDWriteTextLayout> layout;
-                if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                        item.label.c_str(), (UINT32)item.label.length(), m_textFormatItem.Get(),
-                        labelWidth, rowHeight, &layout))) {
-                    DWRITE_TEXT_METRICS metrics = {};
-                    if (SUCCEEDED(layout->GetMetrics(&metrics))) {
-                        textW = ceilf(metrics.widthIncludingTrailingWhitespace);
-                    }
-                }
-
                 float iconX = contentX + textW + 8.0f * s;
+                if (item.isNewOption) {
+                    iconX += badgeW + 6.0f * s;
+                }
                 float iconSize = 24.0f * s;
+                iconX = std::min(iconX, contentX + labelWidth - iconSize);
                 float iconY = contentY + (rowHeight - iconSize) / 2.0f;
                 item.tooltipIconRect = D2D1::RectF(iconX, iconY, iconX + iconSize, iconY + iconSize);
 

@@ -85,6 +85,7 @@ struct SettingsItem {
     
     HotkeyAction hotkeyAction = HotkeyAction::None;
     std::vector<D2D1_RECT_F> optionRects = {}; 
+    bool isNewOption = false; // Flag to indicate if this is a newly added option in this version
 };
 
 struct SettingsTab {
@@ -191,10 +192,12 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushBorder;
     ComPtr<ID2D1SolidColorBrush> m_brushSuccess;
     ComPtr<ID2D1SolidColorBrush> m_brushError;
+    ComPtr<ID2D1SolidColorBrush> m_brushWhite;
     
     ComPtr<IDWriteFactory> m_dwriteFactory;
     ComPtr<IDWriteTextFormat> m_textFormatHeader;
     ComPtr<IDWriteTextFormat> m_textFormatItem;
+    ComPtr<IDWriteTextFormat> m_textFormatBadge;
 
     std::wstring m_debugInfo;
 

@@ -335,7 +335,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::OverlayTogglePassthrough, KeyCombo{ VK_ESCAPE, 2 }, KeyCombo{ VK_ESCAPE, 2 } }, // Shift + Esc
     HotkeyBinding{ HotkeyAction::Help, KeyCombo{ VK_F1, 0 }, KeyCombo{ VK_F1, 0 } },
     HotkeyBinding{ HotkeyAction::Exit, KeyCombo{ VK_ESCAPE, 0 }, KeyCombo{ VK_ESCAPE, 0 } },
-    HotkeyBinding{ HotkeyAction::UndoDelete, KeyCombo{ 'Z', 1 }, KeyCombo{ 'Z', 1 } },
+    HotkeyBinding{ HotkeyAction::Undo, KeyCombo{ 'Z', 1 }, KeyCombo{ 'Z', 1 } },
     HotkeyBinding{ HotkeyAction::PanUp, KeyCombo{ VK_UP, 1 }, KeyCombo{ VK_UP, 1 } },
     HotkeyBinding{ HotkeyAction::PanDown, KeyCombo{ VK_DOWN, 1 }, KeyCombo{ VK_DOWN, 1 } },
     HotkeyBinding{ HotkeyAction::PanLeft, KeyCombo{ VK_LEFT, 1 }, KeyCombo{ VK_LEFT, 1 } },
@@ -9875,7 +9875,7 @@ SKIP_EDGE_NAV:;
             break;
         }
         case IDM_UNDO: {
-            HandleHotkeyAction(hwnd, HotkeyAction::UndoDelete);
+            HandleHotkeyAction(hwnd, HotkeyAction::Undo);
             break;
         }
         case IDM_OPEN: {
@@ -14369,7 +14369,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         return true;
 
-    case HotkeyAction::UndoDelete: {
+    case HotkeyAction::Undo: {
         bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
         EditState& state = isLeft ? GetPaneContext(PaneSlot::Left).editState : GetPaneContext(PaneSlot::Primary).editState;
         if (!state.PendingTransforms.empty()) {
