@@ -4242,6 +4242,7 @@ void SaveConfig() {
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
     WritePrivateProfileStringW(L"Controls", L"LoupeEnabled", g_config.LoupeEnabled ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"LoupeShape", std::to_wstring(g_config.LoupeShape).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"LoupeSizeRatio", std::to_wstring(g_config.LoupeSizeRatio).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"LoupeZoom", std::to_wstring(g_config.LoupeZoom).c_str(), iniPath.c_str());
     
@@ -4535,6 +4536,7 @@ void LoadConfig() {
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
     g_config.LoupeEnabled = GetPrivateProfileIntW(L"Controls", L"LoupeEnabled", 1, iniPath.c_str()) != 0;
+    g_config.LoupeShape = GetPrivateProfileIntW(L"Controls", L"LoupeShape", 0, iniPath.c_str());
     GetPrivateProfileStringW(L"Controls", L"LoupeSizeRatio", L"0.25", buf, 64, iniPath.c_str());
     g_config.LoupeSizeRatio = std::clamp((float)_wtof(buf), 0.1f, 0.5f);
     GetPrivateProfileStringW(L"Controls", L"LoupeZoom", L"1.0", buf, 64, iniPath.c_str());

@@ -904,10 +904,11 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
     const float fracX = imgPt.x / hovRaw.width;
     const float fracY = imgPt.y / hovRaw.height;
 
-    // Reusable brushes (crisp white border, dark backing).
-    ComPtr<ID2D1SolidColorBrush> borderBrush, backBrush;
+    // Reusable brushes (crisp white border, dark backing, high contrast border shadow).
+    ComPtr<ID2D1SolidColorBrush> borderBrush, backBrush, borderShadowBrush;
     dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.9f), &borderBrush);
     dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.85f), &backBrush);
+    dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &borderShadowBrush);
 
     D2D1_MATRIX_3X2_F identity; dc->GetTransform(&identity);
 
@@ -946,21 +947,68 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
         const D2D1_POINT_2F p = L0.TransformPoint(tImgPt);
         D2D1::Matrix3x2F L = L0 * D2D1::Matrix3x2F::Translation(cx - p.x, cy - p.y);
 
-        // Dark backing (covers regions outside the image near edges).
-        dc->FillRectangle(box, backBrush.Get());
+        // Create Rounded Rectangle Geometry (covers both rounded square and circle)
+        ComPtr<ID2D1RoundedRectangleGeometry> geometry;
+        D2D1_ROUNDED_RECT roundedBox = {};
+        roundedBox.rect = box;
+        if (g_config.LoupeShape == 1) {
+            // Circle
+            roundedBox.radiusX = half;
+            roundedBox.radiusY = half;
+        } else {
+            // Rounded Square (standard window corner radius: 8.0f scaled, clamped)
+            roundedBox.radiusX = std::min(8.0f * uiScale, half);
+            roundedBox.radiusY = roundedBox.radiusX;
+        }
 
-        // Magnified patch, clipped to the box, drawn with the loupe transform.
-        dc->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED);
-        dc->SetTransform(L * identity);
-        dc->DrawBitmap(pane.resource.bitmap.Get(),
-                       D2D1::RectF(0.0f, 0.0f, rawT.width, rawT.height),
-                       1.0f,
-                       D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-        dc->SetTransform(identity);
-        dc->PopAxisAlignedClip();
+        ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        HRESULT hr = factory->CreateRoundedRectangleGeometry(&roundedBox, &geometry);
 
-        // Border.
-        dc->DrawRectangle(box, borderBrush.Get(), 1.5f * uiScale);
+        ComPtr<ID2D1Layer> clipLayer;
+        HRESULT hrLayer = dc->CreateLayer(&clipLayer);
+
+        if (SUCCEEDED(hr) && SUCCEEDED(hrLayer)) {
+            D2D1_LAYER_PARAMETERS params = D2D1::LayerParameters();
+            params.contentBounds = box;
+            params.geometricMask = geometry.Get();
+            params.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
+            dc->PushLayer(params, clipLayer.Get());
+
+            // Dark backing (covers regions outside the image near edges).
+            dc->FillRectangle(box, backBrush.Get());
+
+            // Magnified patch, clipped to the box, drawn with the loupe transform.
+            dc->SetTransform(L * identity);
+            dc->DrawBitmap(pane.resource.bitmap.Get(),
+                           D2D1::RectF(0.0f, 0.0f, rawT.width, rawT.height),
+                           1.0f,
+                           D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+            dc->SetTransform(identity);
+
+            dc->PopLayer();
+        } else {
+            // Fallback (Axis aligned rectangular clip)
+            dc->FillRectangle(box, backBrush.Get());
+            dc->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED);
+            dc->SetTransform(L * identity);
+            dc->DrawBitmap(pane.resource.bitmap.Get(),
+                           D2D1::RectF(0.0f, 0.0f, rawT.width, rawT.height),
+                           1.0f,
+                           D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+            dc->SetTransform(identity);
+            dc->PopAxisAlignedClip();
+        }
+
+        // Border
+        if (g_config.LoupeShape == 1) {
+            D2D1_ELLIPSE ell = D2D1::Ellipse(D2D1::Point2F(cx, cy), half, half);
+            dc->DrawEllipse(ell, borderShadowBrush.Get(), 3.0f * uiScale);
+            dc->DrawEllipse(ell, borderBrush.Get(), 1.5f * uiScale);
+        } else {
+            dc->DrawRoundedRectangle(roundedBox, borderShadowBrush.Get(), 3.0f * uiScale);
+            dc->DrawRoundedRectangle(roundedBox, borderBrush.Get(), 1.5f * uiScale);
+        }
     }
 }
 

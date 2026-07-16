@@ -606,6 +606,7 @@ struct AppConfig {
     // --- Loupe (hold-key magnifier; e.g. for checking focus while culling) ---
     // The activation key is the rebindable HotkeyAction::Loupe binding.
     bool LoupeEnabled = true;             // Master toggle for the loupe
+    int LoupeShape = 0;                   // Magnifier shape: 0 = Square (with rounded corners), 1 = Circle
     float LoupeSizeRatio = 0.25f;         // Loupe box edge as a fraction of the viewport's short side (resolution-adaptive)
     float LoupeZoom = 1.0f;               // Magnification vs actual image pixels (1.0 = 100%)
     MouseAction LeftDragAction = MouseAction::WindowDrag;

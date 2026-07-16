@@ -199,6 +199,10 @@ const wchar_t *Settings_Option_MemOnDemand = nullptr;
 const wchar_t *Settings_Tooltip_MemoryReclaim = nullptr;
 const wchar_t *Settings_Label_ShowDirtyRect = nullptr;
 const wchar_t *Settings_Tooltip_ShowDirtyRect = nullptr;
+const wchar_t *Settings_Label_LoupeShape = nullptr;
+const wchar_t *Settings_Option_LoupeShapeSquare = nullptr;
+const wchar_t *Settings_Option_LoupeShapeCircle = nullptr;
+const wchar_t *Settings_Tooltip_LoupeHotkey = nullptr;
 const wchar_t *OSD_Copied = nullptr;
 const wchar_t *OSD_CoordinatesCopied = nullptr;
 const wchar_t *OSD_FilePathCopied = nullptr;
@@ -1054,6 +1058,10 @@ struct LanguageTable {
     const wchar_t *Settings_Label_SeparatorPreset;
     const wchar_t *Settings_Option_SlideshowNormal;
     const wchar_t *Settings_Option_SlideshowSpotlight;
+    const wchar_t *Settings_Label_LoupeShape;
+    const wchar_t *Settings_Option_LoupeShapeSquare;
+    const wchar_t *Settings_Option_LoupeShapeCircle;
+    const wchar_t *Settings_Tooltip_LoupeHotkey;
 };
 
 // ----------------------------------------------------------------
@@ -1573,6 +1581,10 @@ static const LanguageTable Table_EN = {
     L"Separator preset", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Spotlight", // Settings_Option_SlideshowSpotlight
+    L"Magnifier Shape", // Settings_Label_LoupeShape
+    L"Square", // Settings_Option_LoupeShapeSquare
+    L"Circle", // Settings_Option_LoupeShapeCircle
+    L"Hold the shortcut key and scroll the mouse wheel to adjust the magnifier size.", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -2092,6 +2104,10 @@ static const LanguageTable Table_CN = {
     L"分隔符预设", // Settings_Label_SeparatorPreset
     L"普通", // Settings_Option_SlideshowNormal
     L"聚光灯", // Settings_Option_SlideshowSpotlight
+    L"放大镜形状", // Settings_Label_LoupeShape
+    L"正方形", // Settings_Option_LoupeShapeSquare
+    L"圆形", // Settings_Option_LoupeShapeCircle
+    L"按住快捷键并滚动鼠标滚轮可调节放大镜尺寸。", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -2611,6 +2627,10 @@ static const LanguageTable Table_TW = {
     L"分隔符預設", // Settings_Label_SeparatorPreset
     L"普通", // Settings_Option_SlideshowNormal
     L"聚光燈", // Settings_Option_SlideshowSpotlight
+    L"放大鏡形狀", // Settings_Label_LoupeShape
+    L"正方形", // Settings_Option_LoupeShapeSquare
+    L"圓形", // Settings_Option_LoupeShapeCircle
+    L"按住快捷鍵並滾動滑鼠滾輪可調節放大鏡尺寸。", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -3130,6 +3150,10 @@ static const LanguageTable Table_JA = {
     L"区切り文字プリセット", // Settings_Label_SeparatorPreset
     L"通常", // Settings_Option_SlideshowNormal
     L"スポットライト", // Settings_Option_SlideshowSpotlight
+    L"ルーペの形状", // Settings_Label_LoupeShape
+    L"正方形", // Settings_Option_LoupeShapeSquare
+    L"円形", // Settings_Option_LoupeShapeCircle
+    L"ショートカットキーを押しながらマウスホイールをスクロールすると、ルーペのサイズを調整できます。", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -3649,6 +3673,10 @@ static const LanguageTable Table_RU = {
     L"Шаблон разделителя", // Settings_Label_SeparatorPreset
     L"Обычный", // Settings_Option_SlideshowNormal
     L"Прожектор", // Settings_Option_SlideshowSpotlight
+    L"Форма экранной лупы", // Settings_Label_LoupeShape
+    L"Квадрат", // Settings_Option_LoupeShapeSquare
+    L"Круг", // Settings_Option_LoupeShapeCircle
+    L"Удерживайте сочетание клавиш и прокручивайте колесико мыши, чтобы настроить размер лупы.", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -4168,6 +4196,10 @@ static const LanguageTable Table_DE = {
     L"Trennzeichen-Vorlage", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Spotlight", // Settings_Option_SlideshowSpotlight
+    L"Lupenform", // Settings_Label_LoupeShape
+    L"Quadrat", // Settings_Option_LoupeShapeSquare
+    L"Kreis", // Settings_Option_LoupeShapeCircle
+    L"Halten Sie die Tastenkombination gedrückt und scrollen Sie mit dem Mausrad, um die Lupengröße anzupassen.", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -4687,6 +4719,10 @@ static const LanguageTable Table_ES = {
     L"Preajuste de separador", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Foco", // Settings_Option_SlideshowSpotlight
+    L"Forma de la lupa", // Settings_Label_LoupeShape
+    L"Cuadrado", // Settings_Option_LoupeShapeSquare
+    L"Círculo", // Settings_Option_LoupeShapeCircle
+    L"Mantenga presionada la tecla de acceso rápido y gire la rueda del mouse para ajustar el tamaño de la lupa.", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -5206,6 +5242,10 @@ static const LanguageTable Table_FR = {
     L"Séparateur prédéfini", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Projecteur", // Settings_Option_SlideshowSpotlight
+    L"Forme de la loupe", // Settings_Label_LoupeShape
+    L"Carré", // Settings_Option_LoupeShapeSquare
+    L"Cercle", // Settings_Option_LoupeShapeCircle
+    L"Maintenez la touche de raccourci enfoncée et faites défiler la molette de la souris pour ajuster la taille de la loupe.", // Settings_Tooltip_LoupeHotkey
 };
 
 // ----------------------------------------------------------------
@@ -5395,6 +5435,10 @@ void Apply(const LanguageTable& t) {
   Settings_Tooltip_MemoryReclaim = t.Settings_Tooltip_MemoryReclaim;
   Settings_Label_ShowDirtyRect = t.Settings_Label_ShowDirtyRect;
   Settings_Tooltip_ShowDirtyRect = t.Settings_Tooltip_ShowDirtyRect;
+  Settings_Label_LoupeShape = t.Settings_Label_LoupeShape;
+  Settings_Option_LoupeShapeSquare = t.Settings_Option_LoupeShapeSquare;
+  Settings_Option_LoupeShapeCircle = t.Settings_Option_LoupeShapeCircle;
+  Settings_Tooltip_LoupeHotkey = t.Settings_Tooltip_LoupeHotkey;
   OSD_Copied = t.OSD_Copied;
   OSD_CoordinatesCopied = t.OSD_CoordinatesCopied;
   OSD_FilePathCopied = t.OSD_FilePathCopied;

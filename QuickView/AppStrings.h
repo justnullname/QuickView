@@ -618,6 +618,10 @@ namespace AppStrings {
     extern const wchar_t* Settings_Header_Professional;
     extern const wchar_t* Settings_Label_ShowDirtyRect;
     extern const wchar_t* Settings_Tooltip_ShowDirtyRect;
+    extern const wchar_t* Settings_Label_LoupeShape;
+    extern const wchar_t* Settings_Option_LoupeShapeSquare;
+    extern const wchar_t* Settings_Option_LoupeShapeCircle;
+    extern const wchar_t* Settings_Tooltip_LoupeHotkey;
 
     extern const wchar_t* Settings_Tab_Theme;
     extern const wchar_t* Settings_Label_ThemeMode;

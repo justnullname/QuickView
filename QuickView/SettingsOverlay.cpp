@@ -1674,6 +1674,11 @@ void SettingsOverlay::BuildMenu() {
     itemShowDirtyRect.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
     tabVisuals.items.push_back(itemShowDirtyRect);
 
+    SettingsItem itemLoupeShape = { AppStrings::Settings_Label_LoupeShape, OptionType::Segment, nullptr, nullptr, &g_config.LoupeShape, nullptr, 0, 0, { AppStrings::Settings_Option_LoupeShapeSquare, AppStrings::Settings_Option_LoupeShapeCircle } };
+    itemLoupeShape.isNewOption = true;
+    itemLoupeShape.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tabVisuals.items.push_back(itemLoupeShape);
+
     m_tabs.push_back(tabVisuals);
 
     // --- 3. Controls ---
@@ -1850,6 +1855,10 @@ void SettingsOverlay::BuildMenu() {
         item.label = name;
         item.type = OptionType::HotkeyBindRow;
         item.hotkeyAction = action;
+        
+        if (action == HotkeyAction::Loupe) {
+            item.tooltipText = AppStrings::Settings_Tooltip_LoupeHotkey;
+        }
         
         // Add NEW badge for specified hotkey actions
         if (action == HotkeyAction::ZoomFitWindow ||
