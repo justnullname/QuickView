@@ -2538,7 +2538,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         } else if (pairedRaw->size > 0) {
             swprintf_s(rawSizeBuf, L"%I64u KB", pairedRaw->size / 1024);
         }
-        rows.push_back({L"\U0001F517", L"RAW", rawName, rawSizeBuf, L"", TruncateMode::Middle, false});
+        rows.push_back({L"\U0001F517", L"RAW", rawName, rawSizeBuf, L"", TruncateMode::MiddleEllipsis, false});
     } else if (std::wstring rendered = g_navigator.GetResolvedPath(imagePath); rendered != imagePath) {
         // Viewing the RAW side of a pair: point back at the rendered sibling.
         // Label = its concrete format (JPG/HEIC...), value = its file name.

@@ -13477,6 +13477,8 @@ static void UndoLastMemoryTransform(HWND hwnd, EditState& state) {
         else if (type == TransformType::FlipVertical) msg += AppStrings::Action_FlipV;
     }
     g_osd.Show(hwnd, msg, false, false, state.GetQualityColor());
+}
+
 // [RAW+JPEG Pairing] Enter compare mode with the two files of one pair side
 // by side: rendered image on the left, RAW (full decode) on the right.
 // [RAW+JPEG Pairing] Track the given pair and force full decode for its RAW
