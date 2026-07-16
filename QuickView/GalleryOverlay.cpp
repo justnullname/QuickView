@@ -59,8 +59,8 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
     m_targetGridProgress = (targetMode == GalleryMode::FullGrid) ? 1.0f : 0.0f;
     m_selectedIndex = currentIndex;
     
-    // Save and hide Info Panel
-    if (g_runtime.ShowInfoPanel) {
+    // Save and hide Info Panel (Only for FullGrid, keep open for Filmstrip)
+    if (targetMode == GalleryMode::FullGrid && g_runtime.ShowInfoPanel) {
         m_restoreInfoPanel = true;
         g_runtime.ShowInfoPanel = false;
         g_toolbar.SetExifState(false);
@@ -1143,10 +1143,11 @@ bool GalleryOverlay::OnLButtonDown(int x, int y) {
     // Check filmstrip left/right arrows
     if (m_gridProgress < 0.2f) {
         float arrowCy = (PADDING + FILM_CELL_SIZE / 2.0f) * g_uiScale;
-        float arrowR = (g_config.NavIndicator == 0) ? 22.0f * g_uiScale : 60.0f * g_uiScale;
-        float arrowW = (g_config.NavIndicator == 0) ? 36.0f * g_uiScale : 48.0f * g_uiScale;
+        float arrowR = (g_config.NavIndicator == 0) ? 44.0f * g_uiScale : 60.0f * g_uiScale;
+        float arrowW = (g_config.NavIndicator == 0) ? 64.0f * g_uiScale : 80.0f * g_uiScale;
+        bool isLeftPinZone = (fx >= 10.0f * g_uiScale && fx <= 38.0f * g_uiScale && fy >= 10.0f * g_uiScale && fy <= 38.0f * g_uiScale);
         
-        if (fx < arrowW && fabsf(fy - arrowCy) < arrowR) {
+        if (fx < arrowW && fabsf(fy - arrowCy) < arrowR && !isLeftPinZone) {
             if (m_targetScrollLeft < 0.0f) m_targetScrollLeft = m_scrollLeft;
             m_targetScrollLeft = std::max(0.0f, m_targetScrollLeft - 300.0f);
             RequestRepaint(QuickView::PaintLayer::Gallery);
@@ -1197,9 +1198,10 @@ bool GalleryOverlay::OnMouseMove(int x, int y) {
     // Update arrow hover states (filmstrip mode)
     if (m_gridProgress < 0.2f) {
         float arrowCy = (PADDING + FILM_CELL_SIZE / 2.0f) * g_uiScale;
-        float arrowR = (g_config.NavIndicator == 0) ? 22.0f * g_uiScale : 60.0f * g_uiScale;
-        float arrowW = (g_config.NavIndicator == 0) ? 36.0f * g_uiScale : 48.0f * g_uiScale;
-        bool leftHover = (fx < arrowW && fabsf(fy - arrowCy) < arrowR);
+        float arrowR = (g_config.NavIndicator == 0) ? 44.0f * g_uiScale : 60.0f * g_uiScale;
+        float arrowW = (g_config.NavIndicator == 0) ? 64.0f * g_uiScale : 80.0f * g_uiScale;
+        bool isLeftPinZone = (fx >= 10.0f * g_uiScale && fx <= 38.0f * g_uiScale && fy >= 10.0f * g_uiScale && fy <= 38.0f * g_uiScale);
+        bool leftHover = (fx < arrowW && fabsf(fy - arrowCy) < arrowR && !isLeftPinZone);
         bool rightHover = (fx > m_lastSize.width - arrowW && fabsf(fy - arrowCy) < arrowR);
         if (leftHover != m_arrowLeftHover || rightHover != m_arrowRightHover) {
             m_arrowLeftHover = leftHover;

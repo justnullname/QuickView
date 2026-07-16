@@ -743,7 +743,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
 
     bool isFullGridGallery = g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid;
     bool isAnyOverlayActive = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || isFullGridGallery;
-    bool isAnyGalleryOrOverlay = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible();
+
 
     // Compare Selected Pane Indicator
     DrawComparePaneIndicator(dc, hwnd);
@@ -756,7 +756,10 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo;
 
     // Info Panel or HUD - Hide when gallery (any mode) or settings/help is visible
-    if ((g_runtime.ShowInfoPanel || hudVisible) && !isAnyGalleryOrOverlay) {
+    // However, keep the Info Panel visible if we are in Filmstrip mode.
+    bool isFilmstripActive = g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::Filmstrip;
+    bool hideInfoPanel = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || (g_gallery.IsVisible() && !isFilmstripActive);
+    if ((g_runtime.ShowInfoPanel || hudVisible) && !hideInfoPanel) {
         // [v5.3] Lazy Metadata Trigger (Split Strategy)
         // If panel or HUD is visible, ensure we have full metadata (Async)
         // [v5.3] Debounce now handled by ImageEngine

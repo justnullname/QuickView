@@ -214,6 +214,8 @@ void ShowGalleryContextMenu(HWND hwnd, POINT pt) {
     std::vector<MI> items;
     items.push_back(MI::Normal(IDM_GALLERY_OPEN_COMPARE, AppStrings::Context_GalleryOpenCompare, GeekIcons::Compare));
     items.push_back(MI::Normal(IDM_GALLERY_OPEN_NEW_WINDOW, AppStrings::Context_GalleryOpenNewWindow, GeekIcons::Open));
+    items.push_back(MI::Sep());
+    items.push_back(MI::Normal(IDM_GALLERY_DELETE, AppStrings::Context_Delete, GeekIcons::Delete));
 
     GeekContextMenu::ShowMenu(hwnd, pt.x, pt.y, {}, std::move(items));
 }

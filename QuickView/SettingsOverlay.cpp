@@ -2235,50 +2235,6 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossless, OptionType::Toggle, &g_config.AlwaysSaveLossless });
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveEdgeAdapted, OptionType::Toggle, &g_config.AlwaysSaveEdgeAdapted });
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossy, OptionType::Toggle, &g_config.AlwaysSaveLossy });
-    
-    tabImage.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
-    SettingsItem itemFileAssoc = { AppStrings::Settings_Label_AddToOpenWith, OptionType::ActionButton };
-    itemFileAssoc.buttonText = AppStrings::Settings_Action_Add;
-    itemFileAssoc.buttonActivatedText = AppStrings::Settings_Action_Added;
-    
-    // Disable in Portable Mode (cannot write to registry)
-    if (g_config.PortableMode) {
-        itemFileAssoc.isDisabled = true;
-        itemFileAssoc.disabledText = AppStrings::Settings_Status_DisabledInPortable;
-    } else {
-        itemFileAssoc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            SettingsOverlay::RegisterAssociations();
-        };
-    }
-    tabImage.items.push_back(itemFileAssoc);
-
-    SettingsItem itemCustomEditor = { AppStrings::Settings_Label_CustomEditor, OptionType::ActionButton };
-    itemCustomEditor.buttonText = AppStrings::Context_SelectEditor;
-    if (!g_config.CustomEditorPath.empty()) {
-        std::wstring filename = g_config.CustomEditorPath.substr(g_config.CustomEditorPath.find_last_of(L"/\\") + 1);
-        itemCustomEditor.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
-    }
-    itemCustomEditor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        extern HWND g_mainHwnd;
-        wchar_t filename[MAX_PATH] = { 0 };
-        OPENFILENAMEW ofn;
-        ZeroMemory(&ofn, sizeof(ofn));
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = g_mainHwnd;
-        ofn.lpstrFilter = L"Executable Files (*.exe;*.bat;*.cmd)\0*.exe;*.bat;*.cmd\0All Files (*.*)\0*.*\0";
-        ofn.lpstrFile = filename;
-        ofn.nMaxFile = MAX_PATH;
-        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-        if (GetOpenFileNameW(&ofn)) {
-            g_config.CustomEditorPath = filename;
-            SaveConfig();
-            extern SettingsOverlay g_settingsOverlay;
-            g_settingsOverlay.RebuildMenu();
-        }
-    };
-    tabImage.items.push_back(itemCustomEditor);
-
     m_tabs.push_back(tabImage);
 
     // --- 5. Advanced ---
@@ -2349,6 +2305,48 @@ void SettingsOverlay::BuildMenu() {
     
     // System Helpers
     tabAdvanced.items.push_back({ AppStrings::Settings_Header_System, OptionType::Header });
+    
+    SettingsItem itemFileAssoc = { AppStrings::Settings_Label_AddToOpenWith, OptionType::ActionButton };
+    itemFileAssoc.buttonText = AppStrings::Settings_Action_Add;
+    itemFileAssoc.buttonActivatedText = AppStrings::Settings_Action_Added;
+    
+    // Disable in Portable Mode (cannot write to registry)
+    if (g_config.PortableMode) {
+        itemFileAssoc.isDisabled = true;
+        itemFileAssoc.disabledText = AppStrings::Settings_Status_DisabledInPortable;
+    } else {
+        itemFileAssoc.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            SettingsOverlay::RegisterAssociations();
+        };
+    }
+    tabAdvanced.items.push_back(itemFileAssoc);
+
+    SettingsItem itemCustomEditor = { AppStrings::Settings_Label_CustomEditor, OptionType::ActionButton };
+    itemCustomEditor.buttonText = AppStrings::Context_SelectEditor;
+    if (!g_config.CustomEditorPath.empty()) {
+        std::wstring filename = g_config.CustomEditorPath.substr(g_config.CustomEditorPath.find_last_of(L"/\\") + 1);
+        itemCustomEditor.buttonText = filename.length() > 20 ? (filename.substr(0, 17) + L"...") : filename;
+    }
+    itemCustomEditor.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern HWND g_mainHwnd;
+        wchar_t filename[MAX_PATH] = { 0 };
+        OPENFILENAMEW ofn;
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = g_mainHwnd;
+        ofn.lpstrFilter = L"Executable Files (*.exe;*.bat;*.cmd)\0*.exe;*.bat;*.cmd\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (GetOpenFileNameW(&ofn)) {
+            g_config.CustomEditorPath = filename;
+            SaveConfig();
+            extern SettingsOverlay g_settingsOverlay;
+            g_settingsOverlay.RebuildMenu();
+        }
+    };
+    tabAdvanced.items.push_back(itemCustomEditor);
     
     // Reset Settings
     SettingsItem itemReset = { AppStrings::Settings_Label_Reset, OptionType::ActionButton };

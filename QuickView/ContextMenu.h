@@ -49,6 +49,7 @@ enum ContextMenuCommand : UINT {
     // [Gallery] Group
     IDM_GALLERY_OPEN_COMPARE,
     IDM_GALLERY_OPEN_NEW_WINDOW,
+    IDM_GALLERY_DELETE,
 
 
     // [Transform] Group

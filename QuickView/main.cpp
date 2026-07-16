@@ -491,9 +491,10 @@ static void ReturnToPairFaceAfterCompareExit(HWND hwnd);
 static void ArmPairRawFullDecode(const std::wstring& renderedPath, const std::wstring& rawPath);
 // [RAW+JPEG Pairing] Delete handling for a folded pair (three-way choice) and
 // the shared refresh of the not-per-frame pair indicators (title + toolbar).
-static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath);
+static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath, bool isCurrentViewing);
 static void HandlePairedRename(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath);
 static void RefreshCurrentPairIndicators(HWND hwnd);
+static bool RecycleFiles(const std::vector<std::wstring>& paths);
 
 bool HandleHotkeyAction(HWND hwnd, HotkeyAction action);
 bool g_preserveViewStateOnNextLoad = false;
@@ -5440,7 +5441,9 @@ static D2D1_COLOR_F ResolveCanvasColor() {
 // Calculates correct Zoom/Pan/Centering based on Visual Dimensions (Rotated)
 void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool animate) {
     if (!g_compEngine || !g_compEngine->IsInitialized()) return;
-    if (winW <= 0 || winH <= 0) return;
+    // [DComp Barrier] Block transient layout garbage frames during sleep-restore or DPI scaling.
+    // Viewports below 200px are always invalid system transients and must not pollute image scale.
+    if (winW <= 200.0f || winH <= 200.0f) return;
 
     // 1. Update Background (Independent of image state)
     D2D1_COLOR_F bgColor = ResolveCanvasColor();
@@ -9875,6 +9878,73 @@ SKIP_EDGE_NAV:;
             }
             break;
         }
+        case IDM_GALLERY_DELETE: {
+            if (g_galleryContextMenuIndex >= 0 && g_galleryContextMenuIndex < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
+                std::wstring recycleTarget = GetPaneContext(PaneSlot::Primary).navigator.GetFile(g_galleryContextMenuIndex);
+                if (!recycleTarget.empty()) {
+                    // Check RAW+JPEG Pairing for the target gallery item using direct ImageID
+                    std::wstring renderedPath, rawPath;
+                    auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+                    ImageID targetId = nav.GetImageID(g_galleryContextMenuIndex);
+                    if (const auto* pr = nav.GetPairedRaw(targetId)) {
+                        renderedPath = recycleTarget;
+                        rawPath = pr->path;
+                    }
+
+                    bool isViewingTarget = (g_galleryContextMenuIndex == nav.Index());
+
+                    if (!rawPath.empty()) {
+                        // --- CASE 1: Paired File (Let HandlePairedDelete show its own 4-button dialog directly) ---
+                        if (isViewingTarget) {
+                            SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
+                        } else {
+                            HandlePairedDelete(hwnd, recycleTarget, rawPath, false);
+                        }
+                    } else {
+                        // --- CASE 2: Single File (Show the standard 2-button confirmation if enabled) ---
+                        bool confirmed = true;
+                        size_t lastSlash = recycleTarget.find_last_of(L"\\/");
+                        std::wstring filename = (lastSlash != std::wstring::npos) ? recycleTarget.substr(lastSlash + 1) : recycleTarget;
+
+                        if (g_config.ConfirmDelete) {
+                            std::wstring dlgMessage = L"Move to Recycle Bin?";
+                            std::vector<DialogButton> dlgButtons;
+                            dlgButtons.emplace_back(DialogResult::Yes, L"Delete");
+                            dlgButtons.emplace_back(DialogResult::Cancel, L"Cancel");
+                            
+                            DialogResult dlgResult = AppContext::GetInstance().DialogCtrl->ShowDialog(hwnd, filename.c_str(), dlgMessage.c_str(),
+                                                                         D2D1::ColorF(0.85f, 0.25f, 0.25f), dlgButtons, true, AppStrings::Checkbox_NeverConfirmDelete, L"");
+                            confirmed = (dlgResult == DialogResult::Yes);
+                            if (confirmed && AppContext::GetInstance().Dialog.IsChecked) {
+                                g_config.ConfirmDelete = false;
+                                SaveConfig();
+                            }
+                        }
+
+                        if (confirmed) {
+                            if (isViewingTarget) {
+                                SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
+                            } else {
+                                std::vector<std::wstring> victims = { recycleTarget };
+                                if (RecycleFiles(victims)) {
+                                    g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
+                                    g_undoManager.PushDelete(recycleTarget, false);
+                                    
+                                    // Refresh current navigator
+                                    std::wstring currentPath = GetPaneContext(PaneSlot::Primary).path;
+                                    GetPaneContext(PaneSlot::Primary).navigator.Initialize(currentPath, hwnd);
+                                    
+                                    // Force gallery to refresh cache and repaint
+                                    g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
+                                    RequestRepaint(PaintLayer::All);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
         case IDM_UNDO: {
             HandleHotkeyAction(hwnd, HotkeyAction::Undo);
             break;
@@ -10289,7 +10359,7 @@ SKIP_EDGE_NAV:;
                 auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
                 const std::wstring cur = GetPaneContext(PaneSlot::Primary).path;
                 std::wstring renderedPath, rawPath;
-                if (const auto* pr = nav.GetPairedRaw(FileNavigator::PathToImageID(cur))) {
+                if (const auto* pr = nav.GetPairedRaw(nav.GetImageID(nav.Index()))) {
                     renderedPath = cur;                       // viewing the rendered face
                     rawPath = pr->path;
                 } else if (!g_pairViewRawPath.empty() && cur == g_pairViewRawPath &&
@@ -10298,7 +10368,7 @@ SKIP_EDGE_NAV:;
                     renderedPath = g_pairViewRenderedPath;
                 }
                 if (!renderedPath.empty() && !rawPath.empty()) {
-                    HandlePairedDelete(hwnd, renderedPath, rawPath);
+                    HandlePairedDelete(hwnd, renderedPath, rawPath, true);
                     break;
                 }
             }
@@ -10833,7 +10903,7 @@ SKIP_EDGE_NAV:;
 
 
 void OnResize(HWND hwnd, UINT width, UINT height) {
-    if ((height < 450 || width < 600) && g_gallery.IsVisible()) {
+    if ((height < 450 || width < 600) && g_gallery.IsVisible() && !g_gallery.IsPinned()) {
         g_gallery.Close();
         RestoreOverlayWindowState(hwnd);
         RequestRepaint(PaintLayer::All);
@@ -13599,7 +13669,7 @@ static bool RecycleFiles(const std::vector<std::wstring>& paths) {
 
 // [RAW+JPEG Pairing] Ask which file(s) of a folded pair to recycle and carry it
 // out. renderedPath is the visible (JPEG/HEIF) half, rawPath the hidden RAW.
-static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath) {
+static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath, bool isCurrentViewing) {
     auto& pane = GetPaneContext(PaneSlot::Primary);
     auto& nav = pane.navigator;
 
@@ -13643,63 +13713,89 @@ static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, cons
     const bool delRendered = (res == DialogResult::Yes || res == DialogResult::Custom1);
     const bool delRaw      = (res == DialogResult::Yes || res == DialogResult::Custom2);
 
-    // --- RAW only: the rendered file stays; the pair just un-folds ---
-    if (delRaw && !delRendered) {
-        const bool onRawFace = (pane.path != renderedPath); // showing the RAW via D
-        if (onRawFace) ReleaseImageResources();             // unlock the shown RAW first
-        if (!RecycleFiles({ rawPath })) return;
+    if (isCurrentViewing) {
+        // --- RAW only: the rendered file stays; the pair just un-folds ---
+        if (delRaw && !delRendered) {
+            const bool onRawFace = (pane.path != renderedPath); // showing the RAW via D
+            if (onRawFace) ReleaseImageResources();             // unlock the shown RAW first
+            if (!RecycleFiles({ rawPath })) return;
+            g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
+            g_undoManager.PushDelete(rawPath, false);
+            g_pairViewRawPath.clear();
+            g_pairViewRenderedPath.clear();
+            nav.RescanDirectory();
+            if (onRawFace) {
+                const int idx = nav.FindIndex(renderedPath);
+                if (idx >= 0) nav.SetIndex(idx);
+                LoadImageAsync(hwnd, renderedPath.c_str()); // StartNavigation resets ForceRawDecode
+            } else {
+                RefreshCurrentPairIndicators(hwnd); // clear the "(+CR3)" title/toolbar in place
+            }
+            return;
+        }
+
+        // --- Rendered only, or the whole pair: the visible entry goes away ---
+        std::wstring nextPath = nav.PeekNext();
+        if (nextPath == renderedPath || nextPath == rawPath) nextPath = nav.PeekPrevious();
+        // Only this pair was in the folder (nav-loop wraps Peek back to it): fall
+        // through to the empty-folder path rather than reloading a deleted file.
+        if (nextPath == renderedPath || nextPath == rawPath) nextPath.clear();
+
+        std::vector<std::wstring> victims;
+        if (delRaw) victims.push_back(rawPath);
+        if (delRendered) victims.push_back(renderedPath);
+
+        ReleaseImageResources();
+        if (!RecycleFiles(victims)) return;
         g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
-        g_undoManager.PushDelete(rawPath, false);
+
+        if (delRaw && delRendered) {
+            g_undoManager.PushDeletePair(renderedPath, rawPath, false);
+        } else if (delRendered) {
+            g_undoManager.PushDelete(renderedPath, false);
+        }
+
         g_pairViewRawPath.clear();
         g_pairViewRenderedPath.clear();
-        nav.RescanDirectory();
-        if (onRawFace) {
-            const int idx = nav.FindIndex(renderedPath);
-            if (idx >= 0) nav.SetIndex(idx);
-            LoadImageAsync(hwnd, renderedPath.c_str()); // StartNavigation resets ForceRawDecode
+        pane.editState.Reset();
+        pane.view.Reset();
+        pane.resource.Reset();
+
+        // Rendered only: the RAW survives and now stands alone -- land on it.
+        if (delRendered && !delRaw) nextPath = rawPath;
+
+        if (!nextPath.empty()) {
+            nav.Initialize(nextPath, hwnd);
+            LoadImageAsync(hwnd, nav.GetResolvedPath(nextPath).c_str());
         } else {
-            RefreshCurrentPairIndicators(hwnd); // clear the "(+CR3)" title/toolbar in place
+            nav.Initialize(L"", hwnd); // folder emptied
         }
-        return;
-    }
-
-    // --- Rendered only, or the whole pair: the visible entry goes away ---
-    std::wstring nextPath = nav.PeekNext();
-    if (nextPath == renderedPath || nextPath == rawPath) nextPath = nav.PeekPrevious();
-    // Only this pair was in the folder (nav-loop wraps Peek back to it): fall
-    // through to the empty-folder path rather than reloading a deleted file.
-    if (nextPath == renderedPath || nextPath == rawPath) nextPath.clear();
-
-    std::vector<std::wstring> victims;
-    if (delRaw) victims.push_back(rawPath);
-    if (delRendered) victims.push_back(renderedPath);
-
-    ReleaseImageResources();
-    if (!RecycleFiles(victims)) return;
-    g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
-
-    if (delRaw && delRendered) {
-        g_undoManager.PushDeletePair(renderedPath, rawPath, false);
-    } else if (delRendered) {
-        g_undoManager.PushDelete(renderedPath, false);
-    }
-
-    g_pairViewRawPath.clear();
-    g_pairViewRenderedPath.clear();
-    pane.editState.Reset();
-    pane.view.Reset();
-    pane.resource.Reset();
-
-    // Rendered only: the RAW survives and now stands alone -- land on it.
-    if (delRendered && !delRaw) nextPath = rawPath;
-
-    if (!nextPath.empty()) {
-        nav.Initialize(nextPath, hwnd);
-        LoadImageAsync(hwnd, nav.GetResolvedPath(nextPath).c_str());
+        RequestRepaint(PaintLayer::All);
     } else {
-        nav.Initialize(L"", hwnd); // folder emptied
+        // --- Non-Current Viewing Background Deletion Case ---
+        std::vector<std::wstring> victims;
+        if (delRaw) victims.push_back(rawPath);
+        if (delRendered) victims.push_back(renderedPath);
+
+        if (!RecycleFiles(victims)) return;
+        g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
+
+        if (delRaw && delRendered) {
+            g_undoManager.PushDeletePair(renderedPath, rawPath, false);
+        } else if (delRendered) {
+            g_undoManager.PushDelete(renderedPath, false);
+        } else if (delRaw) {
+            g_undoManager.PushDelete(rawPath, false);
+        }
+
+        // Refresh current navigator
+        std::wstring currentPath = GetPaneContext(PaneSlot::Primary).path;
+        nav.Initialize(currentPath, hwnd);
+        
+        // Force gallery to refresh cache and repaint
+        g_gallery.Initialize(&g_thumbMgr, &nav);
+        RequestRepaint(PaintLayer::All);
     }
-    RequestRepaint(PaintLayer::All);
 }
 
 // [RAW+JPEG Pairing] Ask which file(s) of a folded pair to rename, perform it,
