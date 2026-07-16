@@ -146,6 +146,7 @@ enum class HotkeyAction : uint8_t {
     ToggleFullscreen,  // Toggle Fullscreen
     ToggleSpan,        // Toggle Span Displays
     ToggleSlideshow,   // Toggle Slideshow Mode
+    RenderRaw,         // Toggle RAW decode / switch to the paired RAW
     OpenFile,          // Open File Dialog
     EditFile,          // Edit with External Editor
     RenameFile,        // Rename File Dialog
@@ -153,6 +154,7 @@ enum class HotkeyAction : uint8_t {
     CopyImage,         // Copy Image to Clipboard
     CopyPath,          // Copy Path to Clipboard
     ToggleCompare,     // Toggle Compare Mode
+    ComparePair,       // Compare a pair: rendered vs RAW side by side
     AlwaysOnTop,       // Toggle Always on Top
     ToggleDebugHud,    // Toggle Debug Performance HUD
     Print,             // Print Image
@@ -194,6 +196,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::RotateCCW: return L"RotateCCW";
         case HotkeyAction::FlipH: return L"FlipH";
         case HotkeyAction::FlipV: return L"FlipV";
+        case HotkeyAction::RenderRaw: return L"RenderRaw";
         case HotkeyAction::ToggleAnimation: return L"ToggleAnimation";
         case HotkeyAction::AnimNextFrame: return L"AnimNextFrame";
         case HotkeyAction::AnimPrevFrame: return L"AnimPrevFrame";
@@ -209,6 +212,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::CopyImage: return L"CopyImage";
         case HotkeyAction::CopyPath: return L"CopyPath";
         case HotkeyAction::ToggleCompare: return L"ToggleCompare";
+        case HotkeyAction::ComparePair: return L"ComparePair";
         case HotkeyAction::AlwaysOnTop: return L"AlwaysOnTop";
         case HotkeyAction::ToggleDebugHud: return L"ToggleDebugHud";
         case HotkeyAction::Print: return L"Print";
@@ -248,6 +252,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"RotateCCW") return HotkeyAction::RotateCCW;
     if (sv == L"FlipH") return HotkeyAction::FlipH;
     if (sv == L"FlipV") return HotkeyAction::FlipV;
+    if (sv == L"RenderRaw") return HotkeyAction::RenderRaw;
     if (sv == L"ToggleAnimation") return HotkeyAction::ToggleAnimation;
     if (sv == L"AnimNextFrame") return HotkeyAction::AnimNextFrame;
     if (sv == L"AnimPrevFrame") return HotkeyAction::AnimPrevFrame;
@@ -263,6 +268,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"CopyImage") return HotkeyAction::CopyImage;
     if (sv == L"CopyPath") return HotkeyAction::CopyPath;
     if (sv == L"ToggleCompare") return HotkeyAction::ToggleCompare;
+    if (sv == L"ComparePair") return HotkeyAction::ComparePair;
     if (sv == L"AlwaysOnTop") return HotkeyAction::AlwaysOnTop;
     if (sv == L"ToggleDebugHud") return HotkeyAction::ToggleDebugHud;
     if (sv == L"Print") return HotkeyAction::Print;
@@ -669,11 +675,15 @@ struct AppConfig {
     // Default States (User Preference)
     bool ShowInfoPanel = false;          
     bool InfoPanelExpanded = false;      
-    bool ForceRawDecode = false;         
+    bool ForceRawDecode = false;
     bool RenderRAW = false;
     float PanStepNormal = 20.0f;
     float PanStepFast = 100.0f;
     
+    // [RAW+JPEG Pairing] Merge a same-name RAW + camera-rendered JPEG/HEIF into
+    // one logical photo (the RAW is hidden from the list). Default off so
+    // behavior is identical to stock unless the user opts in.
+    bool PairRawJpeg = false;
     /// <summary>
     bool IsAdvancedColorEnabled(bool isSystemHdrActive) const {
         return AdvancedColorMode == 1 || (AdvancedColorMode == 2 && isSystemHdrActive);

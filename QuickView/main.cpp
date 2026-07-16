@@ -317,6 +317,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ToggleFullscreen, KeyCombo{ VK_F11, 0 }, KeyCombo{ VK_F11, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleSpan, KeyCombo{ VK_F11, 1 }, KeyCombo{ VK_F11, 1 } }, // Ctrl + F11
     HotkeyBinding{ HotkeyAction::ToggleSlideshow, KeyCombo{ VK_F10, 0 }, KeyCombo{ VK_F10, 0 } },
+    HotkeyBinding{ HotkeyAction::RenderRaw, KeyCombo{ 'D', 0 }, KeyCombo{ 'D', 0 } }, // Decode RAW / switch to paired RAW
     HotkeyBinding{ HotkeyAction::OpenFile, KeyCombo{ 'O', 0 }, KeyCombo{ 'O', 0 } },
     HotkeyBinding{ HotkeyAction::EditFile, KeyCombo{ 'E', 0 }, KeyCombo{ 'E', 0 } },
     HotkeyBinding{ HotkeyAction::RenameFile, KeyCombo{ VK_F2, 0 }, KeyCombo{ VK_F2, 0 } },
@@ -324,6 +325,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::CopyImage, KeyCombo{ 'C', 1 }, KeyCombo{ 'C', 1 } }, // Ctrl + C
     HotkeyBinding{ HotkeyAction::CopyPath, KeyCombo{ 'C', 5 }, KeyCombo{ 'C', 5 } },  // Ctrl + Alt + C (1 | 4 = 5)
     HotkeyBinding{ HotkeyAction::ToggleCompare, KeyCombo{ 'C', 0 }, KeyCombo{ 'C', 0 } },
+    HotkeyBinding{ HotkeyAction::ComparePair, KeyCombo{ 'C', 2 }, KeyCombo{ 'C', 2 } }, // Shift + C: rendered vs RAW
     HotkeyBinding{ HotkeyAction::AlwaysOnTop, KeyCombo{ 'T', 1 }, KeyCombo{ 'T', 1 } }, // Ctrl + T
     HotkeyBinding{ HotkeyAction::ToggleDebugHud, KeyCombo{ VK_F12, 0 }, KeyCombo{ VK_F12, 0 } },
     HotkeyBinding{ HotkeyAction::Print, KeyCombo{ 'P', 1 }, KeyCombo{ 'P', 1 } }, // Ctrl + P
@@ -346,7 +348,6 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
 RuntimeConfig g_runtime;
 UndoManager g_undoManager;
 SlideshowState g_slideshowState;
-
 static bool RestoreDeletedFile(HWND hwnd, const std::wstring& targetPath) {
     if (targetPath.empty()) return false;
 
@@ -476,6 +477,23 @@ static bool RestoreDeletedFile(HWND hwnd, const std::wstring& targetPath) {
     if (coInit && hr != RPC_E_CHANGED_MODE) CoUninitialize();
     return success;
 }
+// [RAW+JPEG Pairing] The pair currently being viewed through the RAW switch
+// (IDM_RENDER_RAW on a paired item). Tracked explicitly so switching back to
+// the rendered file works even if a rescan unfolds the pair meanwhile, and so
+// the load pipeline treats the switch as "same photo" (temporary state such
+// as ForceRawDecode survives). Cleared when navigating anywhere else.
+static std::wstring g_pairViewRawPath;
+static std::wstring g_pairViewRenderedPath;
+// [RAW+JPEG Pairing] True while a pair-compare session (Shift+C) is active;
+// exiting compare then returns to the pair's rendered face.
+static bool g_pairCompareSession = false;
+static void ReturnToPairFaceAfterCompareExit(HWND hwnd);
+static void ArmPairRawFullDecode(const std::wstring& renderedPath, const std::wstring& rawPath);
+// [RAW+JPEG Pairing] Delete handling for a folded pair (three-way choice) and
+// the shared refresh of the not-per-frame pair indicators (title + toolbar).
+static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath);
+static void RefreshCurrentPairIndicators(HWND hwnd);
+
 bool HandleHotkeyAction(HWND hwnd, HotkeyAction action);
 bool g_preserveViewStateOnNextLoad = false;
 
@@ -735,7 +753,6 @@ static constexpr int HOTKEY_ID_ALPHA_DOWN = 0x0003;
 static void SetDialogCenter(float x, float y);
 static void ClearDialogCenter();
 
-bool IsRawFile(const std::wstring& path); // Forward declaration
 
 
 
@@ -2599,23 +2616,6 @@ bool FileExists(LPCWSTR path) {
     return (dwAttrib != INVALID_FILE_ATTRIBUTES && !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 
-bool IsRawFile(const std::wstring& path) {
-    size_t dot = path.find_last_of(L'.');
-    if (dot == std::wstring::npos) return false;
-    std::wstring ext = path.substr(dot);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-    
-    static const wchar_t* rawExts[] = { 
-        L".3fr", L".ari", L".arw", L".bay", L".braw", L".cr2", L".cr3", L".cap", L".data", L".dcs", L".dcr", 
-        L".dng", L".drf", L".eip", L".erf", L".fff", L".gpr", L".iiq", L".k25", L".kdc", L".mdc", L".mef", 
-        L".mos", L".mrw", L".nef", L".nrw", L".obm", L".orf", L".pef", L".ptx", L".pxn", L".r3d", L".raf", 
-        L".raw", L".rwl", L".rw2", L".rwz", L".sr2", L".srf", L".srw", L".sti", L".x3f"
-    };
-    for (const auto* e : rawExts) {
-        if (ext == e) return true;
-    }
-    return false;
-}
 
 void ReleaseImageResources() {
     GetPaneContext(PaneSlot::Primary).resource.Reset();
@@ -2627,7 +2627,19 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     DialogLayout layout;
     const float s = g_uiScale;
     float dlgW = 350.0f * s;
-    
+
+    // Widen the box when the button row is wider than the default width (e.g.
+    // the RAW+JPEG pair-delete dialog's four buttons). Dialogs with up to three
+    // 95px buttons stay at 350px, so existing dialogs are unaffected.
+    {
+        const float btnW0 = 95.0f * s, btnGap0 = 12.0f * s;
+        const size_t nb = AppContext::GetInstance().Dialog.Buttons.size();
+        if (nb > 0) {
+            const float row = nb * btnW0 + (nb - 1) * btnGap0 + 40.0f * s; // 20px margin each side
+            if (row > dlgW) dlgW = row;
+        }
+    }
+
     // Calculate required height based on content
     // Title line: ~30px, Message lines: estimate based on length, Buttons: 50px, Padding: 40px
     float titleHeight = 30.0f * s;
@@ -3929,8 +3941,9 @@ static constexpr FormatExtRule g_formatRules[] = {
     { L"ppm",  L".ppm", L".pnm", L".pgm", L".pbm" },
     { L"pbm",  L".pbm", L".pnm", L".pgm", L".ppm" },
     
-    // [v10.1] New: Support all RAW formats in extension check
-    { L"raw",  L".dng", L".arw", L".nef", L".cr2", L".cr3", L".raf" },
+    // [v10.1] RAW: any extension in QuickView::RAW_EXTENSIONS is accepted
+    // (special-cased in CheckExtensionMismatch); .dng stays the rename target.
+    { L"raw",  L".dng" },
     { L"dds",  L".dds" },
 };
 
@@ -3966,6 +3979,8 @@ bool CheckExtensionMismatch(std::wstring_view path, std::wstring_view format) {
     
     for (const auto& rule : g_formatRules) {
         if (fmt == rule.format || fmt.contains(rule.format)) {
+            // RAW covers 40+ extensions; defer to the central classification list
+            if (rule.format == L"raw" && QuickView::IsRawExtension(ext)) return false;
             if (ext == rule.primary) return false;
             if (!rule.alt1.empty() && ext == rule.alt1) return false;
             if (!rule.alt2.empty() && ext == rule.alt2) return false;
@@ -4258,6 +4273,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Image", L"GamutWarningColorB", std::to_wstring(g_config.GamutWarningColorB).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"CustomEditorPath", g_config.CustomEditorPath.c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
+    WritePrivateProfileStringW(L"Image", L"PairRawJpeg", g_config.PairRawJpeg ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossy", g_config.AlwaysSaveLossy ? L"1" : L"0", iniPath.c_str());
@@ -4589,6 +4605,7 @@ void LoadConfig() {
     g_config.CustomEditorPath = customEditorPath;
 
     g_config.ForceRawDecode = GetPrivateProfileIntW(L"Image", L"ForceRawDecode", 0, iniPath.c_str()) != 0;
+    g_config.PairRawJpeg = GetPrivateProfileIntW(L"Image", L"PairRawJpeg", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossless = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossless", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveEdgeAdapted = GetPrivateProfileIntW(L"Image", L"AlwaysSaveEdgeAdapted", 0, iniPath.c_str()) != 0;
     g_config.AlwaysSaveLossy = GetPrivateProfileIntW(L"Image", L"AlwaysSaveLossy", 0, iniPath.c_str()) != 0;
@@ -5988,6 +6005,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     LoadConfig();
     AppStrings::Init();
     AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+
+    // [RAW+JPEG Pairing] Capture-time fallback reader (LibRaw for RAW, WIC
+    // for HEIF etc.; lives in ImageLoader.cpp -- FileNavigator itself must
+    // stay LibRaw/WIC-free for the unit-test binary)
+    extern int64_t ReadCaptureTimeFallback(const wchar_t* filePath);
+    FileNavigator::SetCaptureTimeFallbackReader(&ReadCaptureTimeFallback);
 
     // Now safe to start ETW
     EtwScope etwScope;
@@ -8998,6 +9021,7 @@ SKIP_EDGE_NAV:;
                 case ToolbarButtonID::CompareToggle:
                     if (IsCompareModeActive()) {
                         AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+                        ReturnToPairFaceAfterCompareExit(hwnd);
                     } else {
                         AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
                     }
@@ -9011,6 +9035,7 @@ SKIP_EDGE_NAV:;
                     break;
                 case ToolbarButtonID::CompareExit:
                     AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+                    ReturnToPairFaceAfterCompareExit(hwnd);
                     RequestRepaint(PaintLayer::All);
                     break;
                 case ToolbarButtonID::OverlayAlphaUp:
@@ -9100,7 +9125,7 @@ SKIP_EDGE_NAV:;
                     if (IsCompareModeActive()) {
                         bool isLeft = (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
                         const std::wstring& selPath = isLeft ? GetPaneContext(PaneSlot::Left).path : GetPaneContext(PaneSlot::Primary).path;
-                        if (!IsRawFile(selPath)) break; // Selected pane is not RAW, ignore
+                        if (!QuickView::IsRawPath(selPath)) break; // Selected pane is not RAW, ignore
                         // Point context to selected pane, then delegate to IDM_RENDER_RAW
                         AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().Compare.selectedPane;
                         SendMessage(hwnd, WM_COMMAND, IDM_RENDER_RAW, 0);
@@ -9746,7 +9771,11 @@ SKIP_EDGE_NAV:;
 
         if (hasImage && !targetPath.empty()) {
              extensionFixNeeded = CheckExtensionMismatch(targetPath, targetFmt);
-             isRaw = IsRawFile(targetPath);
+             isRaw = QuickView::IsRawPath(targetPath);
+             // [RAW+JPEG Pairing] "Render RAW" also switches a paired item
+             if (!isRaw && !IsCompareModeActive()) {
+                 isRaw = GetPaneContext(PaneSlot::Primary).navigator.HasPairedRaw(FileNavigator::PathToImageID(targetPath));
+             }
         }
         
         bool isPixelArtMode = GetCurrentPixelArtState(hwnd);
@@ -10222,6 +10251,34 @@ SKIP_EDGE_NAV:;
                 break;
             }
 
+            // [RAW+JPEG Pairing] Deleting a folded pair is a three-way choice
+            // (whole pair / RAW only / rendered only) -- it must never silently
+            // recycle both, per the #201 discussion. Shown for a folded pair in
+            // single view whether the rendered face or the RAW face (via D) is
+            // on screen; the choice IS the confirmation, so it appears even when
+            // Confirm-on-Delete is off (the target is otherwise ambiguous).
+            // An in-progress edit (IsDirty -- OriginalFilePath is set on every
+            // clean load, so it is not the edit-mode signal) falls through to
+            // the edit-aware path below.
+            if (!IsCompareModeActive() &&
+                !GetPaneContext(PaneSlot::Primary).editState.IsDirty) {
+                auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+                const std::wstring cur = GetPaneContext(PaneSlot::Primary).path;
+                std::wstring renderedPath, rawPath;
+                if (const auto* pr = nav.GetPairedRaw(FileNavigator::PathToImageID(cur))) {
+                    renderedPath = cur;                       // viewing the rendered face
+                    rawPath = pr->path;
+                } else if (!g_pairViewRawPath.empty() && cur == g_pairViewRawPath &&
+                           !g_pairViewRenderedPath.empty()) {
+                    rawPath = cur;                            // viewing the RAW face
+                    renderedPath = g_pairViewRenderedPath;
+                }
+                if (!renderedPath.empty() && !rawPath.empty()) {
+                    HandlePairedDelete(hwnd, renderedPath, rawPath);
+                    break;
+                }
+            }
+
             // [v9.9 Fix] Handle Deletion during Edit/Transform
             // Determine actual target to recycle and temp file to map
             std::wstring recycleTarget = GetPaneContext(PaneSlot::Primary).path;
@@ -10364,6 +10421,7 @@ SKIP_EDGE_NAV:;
         case IDM_COMPARE_MODE: {
             if (IsCompareModeActive()) {
                 AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+                ReturnToPairFaceAfterCompareExit(hwnd);
             } else {
                 AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
             }
@@ -10437,6 +10495,49 @@ SKIP_EDGE_NAV:;
         case IDM_FLIP_V:     PerformTransform(hwnd, TransformType::FlipVertical); break;
 
         case IDM_RENDER_RAW: {
+             // [RAW+JPEG Pairing] For a paired item in single view this action
+             // switches the DISPLAYED FILE: rendered JPG <-> hidden RAW (full
+             // decode -- the RAW's embedded preview is essentially the JPG).
+             if (!contextLeft && !IsCompareModeActive() && !contextPath.empty()) {
+                 const auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+                 const FileNavigator::PairedRaw* pairedRaw = nav.GetPairedRaw(FileNavigator::PathToImageID(contextPath));
+                 std::wstring renderedBack;
+                 if (!pairedRaw) {
+                     if (!g_pairViewRawPath.empty() && contextPath == g_pairViewRawPath) {
+                         // Currently viewing the RAW side (tracked state: robust
+                         // even if a rescan unfolded the pair meanwhile)
+                         renderedBack = g_pairViewRenderedPath;
+                     } else {
+                         std::wstring r = nav.GetResolvedPath(contextPath);
+                         if (r != contextPath) renderedBack = std::move(r);
+                     }
+                 }
+                 if (pairedRaw || !renderedBack.empty()) {
+                     const bool toRaw = (pairedRaw != nullptr);
+                     // Remember the pair BEFORE loading: the load pipeline uses
+                     // this to treat the switch as "same photo" (preserves
+                     // ForceRawDecode and other temporary state)
+                     g_pairViewRawPath = toRaw ? pairedRaw->path : contextPath;
+                     g_pairViewRenderedPath = toRaw ? contextPath : renderedBack;
+
+                     g_runtime.ForceRawDecode = toRaw;
+                     g_toolbar.SetRawState(true, toRaw, true);
+                     if (g_imageEngine) {
+                         g_imageEngine->UpdateConfig(g_runtime);
+                         // No SetForceRefresh: the two sides are different
+                         // files, and the engine's RAW quality check decides
+                         // between a cached frame and a re-decode.
+                     }
+                     g_preservedViewState = GetPaneContext(PaneSlot::Primary).view;
+                     g_preserveViewStateOnNextLoad = true;
+                     ReleaseImageResources();
+                     LoadImageAsync(hwnd, toRaw ? g_pairViewRawPath.c_str() : g_pairViewRenderedPath.c_str());
+                     g_osd.Show(hwnd, toRaw ? L"Paired RAW (Full Decode)" : L"Paired Rendered Image", false);
+                     RequestRepaint(PaintLayer::All);
+                     break;
+                 }
+             }
+
              // [Fix] Toggle Force RAW Decode based on the selected pane's ACTUAL decode state.
              // This prevents "double click required" bugs when switching panes with mismatched states.
              bool isFullDecode = contextLeft ? GetPaneContext(PaneSlot::Left).metadata.IsRawFullDecode : GetPaneContext(PaneSlot::Primary).metadata.IsRawFullDecode;
@@ -10873,18 +10974,24 @@ void ProcessEngineEvents(HWND hwnd) {
             if (evt.imageId != currentId) {
                 wchar_t idLog[128];
                 swprintf_s(idLog, L"[Main] ID Mismatch: Evt=%llu Cur=%llu\n", evt.imageId, currentId);
-                break; 
+                break;
             }
 
             bool isPreview = (evt.type == EventType::PreviewReady);
-            
-            // [Texture Promotion] 
+
+            // [Texture Promotion]
             // - If we are at Level 2 (Full), ignore Level 1 (Preview).
             if (g_imageQualityLevel >= 2 && isPreview) break;
 
+            // [Fix] A genuine RAW full decode may replace a resident frame
+            // that is not one (e.g. an embedded preview applied as final
+            // before a pending full decode completes) -- it is always an
+            // upgrade for the same image.
+            const bool rawFullUpgrade = evt.metadata.IsRawFullDecode &&
+                !GetPaneContext(PaneSlot::Primary).metadata.IsRawFullDecode;
 
             // - If we are at Level 2 (Full), ignore another Level 2 (no upgrade path).
-            if (g_imageQualityLevel >= 2 && !isPreview) break;
+            if (g_imageQualityLevel >= 2 && !isPreview && !rawFullUpgrade) break;
 
             ComPtr<ID2D1Bitmap> bitmap;
             HRESULT hr = E_FAIL;
@@ -10985,6 +11092,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 g_isBlurry = isPreview;
                 g_imageQualityLevel = isPreview ? 1 : 2;
                 GetPaneContext(PaneSlot::Primary).path = evt.filePath;
+
                 
                 // Metadata
                 // [v5.4 Fix] Race Condition: Prevent FullReady (Basic) from overwriting Async EXIF
@@ -11208,14 +11316,17 @@ void ProcessEngineEvents(HWND hwnd) {
                 // UI Text Logic
                 wchar_t titleBuf[2048];
                 if (isPreview) {
-                    swprintf_s(titleBuf, L"Loading... %s - %s", 
-                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
+                    swprintf_s(titleBuf, L"Loading... %s - %s",
+                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(),
                         g_szWindowTitle);
                 } else {
-                     swprintf_s(titleBuf, L"%s - %s", 
-                        evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1).c_str(), 
-                        g_szWindowTitle);
-                     
+                     // [RAW+JPEG Pairing] Flag the hidden RAW in the title, e.g. "IMG_001.JPG (+CR3)"
+                     std::wstring titleName = evt.filePath.substr(evt.filePath.find_last_of(L"\\/") + 1);
+                     if (const auto* pairedRaw = GetPaneContext(PaneSlot::Primary).navigator.GetPairedRaw(FileNavigator::PathToImageID(evt.filePath))) {
+                         titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
+                     }
+                     swprintf_s(titleBuf, L"%s - %s", titleName.c_str(), g_szWindowTitle);
+
                      g_isImageScaled = evt.isScaled;
                 }
                 SetWindowTextW(hwnd, titleBuf);
@@ -12003,7 +12114,17 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     
     // [Fix] Only reset Runtime State if loading a NEW file.
     // If reloading the same file (e.g. RAW Toggle), preserve g_runtime.ForceRawDecode.
-    if (GetPaneContext(PaneSlot::Primary).path != path) {
+    const bool pairViewSwitch = !g_pairViewRawPath.empty() &&
+        (path == g_pairViewRawPath || path == g_pairViewRenderedPath);
+    if (pairViewSwitch) {
+        g_runtime.ForceRawDecode = (path == g_pairViewRawPath);
+        if (g_imageEngine) g_imageEngine->UpdateConfig(g_runtime);
+    } else if (!g_pairViewRawPath.empty() &&
+        GetPaneContext(PaneSlot::Primary).path != path) {
+        g_pairViewRawPath.clear();
+        g_pairViewRenderedPath.clear();
+    }
+    if (GetPaneContext(PaneSlot::Primary).path != path && !pairViewSwitch) {
         AppContext::GetInstance().Minimaps[0].ResetLayout();
         AppContext::GetInstance().Minimaps[1].ResetLayout();
         g_runtime.ForceRawDecode = g_config.ForceRawDecode;
@@ -12086,7 +12207,14 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     
     // Update Toolbar State for RAW
     // [Fix] Ensure RAW button visibility is updated immediately on navigation
-    g_toolbar.SetRawState(IsRawFile(path), g_runtime.ForceRawDecode);
+    // [RAW+JPEG Pairing] The button also switches a paired item to its RAW
+    {
+        const bool navHasPairedRaw = GetPaneContext(PaneSlot::Primary).navigator.HasPairedRaw(FileNavigator::PathToImageID(path));
+        const bool isPairedView = navHasPairedRaw
+            || (!g_pairViewRawPath.empty() && path == g_pairViewRawPath);
+        g_toolbar.SetRawState(QuickView::IsRawPath(path) || navHasPairedRaw,
+                              g_runtime.ForceRawDecode, isPairedView);
+    }
     if (IsCompareModeActive()) {
         RefreshCompareRawUI(hwnd);
     }
@@ -12339,6 +12467,53 @@ void NavigateEdge(HWND hwnd, bool toLast) {
 void Navigate(HWND hwnd, int direction) {
     if (GetPaneContext(PaneSlot::Primary).navigator.Count() <= 0) return;
     if (!CheckUnsavedChanges(hwnd)) return;
+
+    // [RAW+JPEG Pairing] Pair-compare session: the arrows move BOTH panes to
+    // the neighboring paired photo (left = rendered, right = RAW at full
+    // decode), regardless of pane focus. Items without a pair are skipped.
+    if (IsCompareModeActive() && g_pairCompareSession) {
+        auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+        const int count = (int)nav.Count();
+        int cur = nav.FindIndex(g_pairViewRenderedPath);
+        if (cur < 0) cur = nav.Index();
+
+        int idx = cur;
+        const FileNavigator::PairedRaw* nextRaw = nullptr;
+        for (int step = 0; step < count; ++step) {
+            idx += direction;
+            if (idx < 0 || idx >= count) {
+                if (!g_runtime.NavLoop) break;
+                idx = (idx < 0) ? count - 1 : 0;
+            }
+            if (idx == cur) break; // came full circle: no other paired photo
+            if (const FileNavigator::PairedRaw* pr = nav.GetPairedRaw(nav.GetImageID(idx))) {
+                nextRaw = pr;
+                break;
+            }
+        }
+        if (!nextRaw) {
+            g_osd.Show(hwnd, std::wstring(direction > 0 ? AppStrings::OSD_LastImage : AppStrings::OSD_FirstImage), false);
+            return;
+        }
+
+        const std::wstring rendered = nav.GetFile(idx);
+        const std::wstring raw = nextRaw->path;
+        nav.SetIndex(idx);
+        GetPaneContext(PaneSlot::Primary).editState.Reset();
+        if (!g_preserveViewStateOnNextLoad) {
+            GetPaneContext(PaneSlot::Primary).view.Reset();
+        }
+
+        ArmPairRawFullDecode(rendered, raw);
+        AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, rendered, [hwnd, raw](bool success) {
+            if (success) {
+                MarkCompareDirty();
+            }
+            LoadImageAsync(hwnd, raw.c_str());
+            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+        });
+        return;
+    }
 
     if (IsCompareModeActive() && g_toolbar.IsComicMode()) {
         int currentIndex = GetPaneContext(PaneSlot::Primary).navigator.Index();
@@ -13302,6 +13477,243 @@ static void UndoLastMemoryTransform(HWND hwnd, EditState& state) {
         else if (type == TransformType::FlipVertical) msg += AppStrings::Action_FlipV;
     }
     g_osd.Show(hwnd, msg, false, false, state.GetQualityColor());
+// [RAW+JPEG Pairing] Enter compare mode with the two files of one pair side
+// by side: rendered image on the left, RAW (full decode) on the right.
+// [RAW+JPEG Pairing] Track the given pair and force full decode for its RAW
+// side: the pair's own navigation (StartNavigation) re-asserts the flag, so
+// interleaved loads cannot strip it before the decode worker reads it.
+static void ArmPairRawFullDecode(const std::wstring& renderedPath, const std::wstring& rawPath) {
+    g_pairViewRawPath = rawPath;
+    g_pairViewRenderedPath = renderedPath;
+    g_runtime.ForceRawDecode = true;
+    if (g_imageEngine) {
+        g_imageEngine->UpdateConfig(g_runtime);
+    }
+    // No SetForceRefresh here: the engine's RAW cache check already reloads a
+    // cached preview when full decode is wanted, and a cached FULL frame
+    // should be served instantly when navigating back to a visited pair.
+}
+
+// [RAW+JPEG Pairing] After a pair-compare session ends, land on the pair's
+// rendered face (also realigning the navigator index), not on the RAW that
+// occupied the right pane.
+static void ReturnToPairFaceAfterCompareExit(HWND hwnd) {
+    const bool wasPairSession = g_pairCompareSession;
+    g_pairCompareSession = false;
+    if (!wasPairSession || g_pairViewRawPath.empty()) return;
+    if (GetPaneContext(PaneSlot::Primary).path != g_pairViewRawPath) return;
+    const int idx = GetPaneContext(PaneSlot::Primary).navigator.FindIndex(g_pairViewRenderedPath);
+    if (idx >= 0) {
+        GetPaneContext(PaneSlot::Primary).navigator.SetIndex(idx);
+    }
+    LoadImageAsync(hwnd, g_pairViewRenderedPath.c_str());
+}
+
+// [RAW+JPEG Pairing] Refresh the pair indicators that are NOT recomputed each
+// frame -- the window-title "(+CR3)" suffix and the toolbar RAW button -- for
+// the current primary image. (The gallery badge, info panel and EXIF row are
+// per-frame and only need a repaint.) Compare mode routes through the existing
+// RefreshCompareRawUI instead.
+static void RefreshCurrentPairIndicators(HWND hwnd) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    const std::wstring cur = pane.path;
+    if (!cur.empty()) {
+        const bool navHasPairedRaw = pane.navigator.HasPairedRaw(FileNavigator::PathToImageID(cur));
+        const bool isPairedView = navHasPairedRaw
+            || (!g_pairViewRawPath.empty() && cur == g_pairViewRawPath);
+        g_toolbar.SetRawState(QuickView::IsRawPath(cur) || navHasPairedRaw,
+                              g_runtime.ForceRawDecode, isPairedView);
+        if (IsCompareModeActive()) {
+            RefreshCompareRawUI(hwnd);
+        } else {
+            // Rebuild the title the way the load pipeline writes it.
+            std::wstring titleName = cur.substr(cur.find_last_of(L"\\/") + 1);
+            if (const auto* pairedRaw = pane.navigator.GetPairedRaw(FileNavigator::PathToImageID(cur))) {
+                titleName += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
+            }
+            wchar_t titleBuf[2048];
+            swprintf_s(titleBuf, L"%s - %s", titleName.c_str(), g_szWindowTitle);
+            SetWindowTextW(hwnd, titleBuf);
+        }
+    }
+    RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+    if (g_gallery.IsVisible()) {
+        RequestRepaint(PaintLayer::Gallery);
+    }
+}
+
+// [RAW+JPEG Pairing] The Settings toggle flipped: re-apply pairing to the open
+// folder right away and refresh the indicators. Called from SettingsOverlay.
+void ApplyPairRawJpegSetting(HWND hwnd) {
+    if (!g_config.PairRawJpeg) {
+        // With pairing off no pair-view exists; drop stale tracking so a later
+        // navigation onto a former pair member cannot re-assert ForceRawDecode.
+        g_pairViewRawPath.clear();
+        g_pairViewRenderedPath.clear();
+    }
+    GetPaneContext(PaneSlot::Primary).navigator.RescanDirectory();
+    RefreshCurrentPairIndicators(hwnd);
+}
+
+// [RAW+JPEG Pairing] Recycle one or more files in a single Shell operation
+// (double-null-terminated path list). Returns true on success.
+static bool RecycleFiles(const std::vector<std::wstring>& paths) {
+    if (paths.empty()) return false;
+    std::wstring buf;
+    for (const auto& p : paths) { buf.append(p); buf.push_back(L'\0'); }
+    buf.push_back(L'\0'); // final double-null terminator
+    SHFILEOPSTRUCTW op = {};
+    op.wFunc = FO_DELETE;
+    op.pFrom = buf.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+    return SHFileOperationW(&op) == 0;
+}
+
+// [RAW+JPEG Pairing] Ask which file(s) of a folded pair to recycle and carry it
+// out. renderedPath is the visible (JPEG/HEIF) half, rawPath the hidden RAW.
+static void HandlePairedDelete(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    auto& nav = pane.navigator;
+
+    auto baseName = [](const std::wstring& p) {
+        size_t slash = p.find_last_of(L"\\/");
+        return slash == std::wstring::npos ? p : p.substr(slash + 1);
+    };
+    auto extLabel = [](const std::wstring& p) {
+        std::wstring l;
+        std::wstring_view e = QuickView::ExtensionOf(p);
+        if (!e.empty()) e.remove_prefix(1); // drop the dot
+        for (wchar_t c : e) l += (wchar_t)std::towupper(c);
+        return l;
+    };
+    const std::wstring rLabel = extLabel(renderedPath); // e.g. JPG
+    const std::wstring wLabel = extLabel(rawPath);      // e.g. CR3
+
+    // Three explicit choices + Cancel -- never silently bind delete to both.
+    // Labels stay short so they fit the button width; English-only to match the
+    // surrounding delete dialog (its strings are not localized either).
+    const std::wstring btnPair = rLabel + L" + " + wLabel; // both
+    const std::wstring btnRaw  = wLabel + L" only";        // RAW only
+    const std::wstring btnJpg  = rLabel + L" only";        // rendered only
+    std::vector<DialogButton> btns;
+    btns.emplace_back(DialogResult::Yes, btnPair.c_str());
+    btns.emplace_back(DialogResult::Custom2, btnRaw.c_str());
+    btns.emplace_back(DialogResult::Custom1, btnJpg.c_str());
+    btns.emplace_back(DialogResult::Cancel, L"Cancel");
+
+    const DialogResult res = AppContext::GetInstance().DialogCtrl->ShowDialog(
+        hwnd, baseName(renderedPath), L"Delete which files?",
+        D2D1::ColorF(0.85f, 0.25f, 0.25f), btns, false, L"", L"");
+
+    if (res != DialogResult::Yes && res != DialogResult::Custom1 && res != DialogResult::Custom2) {
+        return; // Cancel / Esc
+    }
+    const bool delRendered = (res == DialogResult::Yes || res == DialogResult::Custom1);
+    const bool delRaw      = (res == DialogResult::Yes || res == DialogResult::Custom2);
+
+    // --- RAW only: the rendered file stays; the pair just un-folds ---
+    if (delRaw && !delRendered) {
+        const bool onRawFace = (pane.path != renderedPath); // showing the RAW via D
+        if (onRawFace) ReleaseImageResources();             // unlock the shown RAW first
+        if (!RecycleFiles({ rawPath })) return;
+        g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
+        g_pairViewRawPath.clear();
+        g_pairViewRenderedPath.clear();
+        nav.RescanDirectory();
+        if (onRawFace) {
+            const int idx = nav.FindIndex(renderedPath);
+            if (idx >= 0) nav.SetIndex(idx);
+            LoadImageAsync(hwnd, renderedPath.c_str()); // StartNavigation resets ForceRawDecode
+        } else {
+            RefreshCurrentPairIndicators(hwnd); // clear the "(+CR3)" title/toolbar in place
+        }
+        return;
+    }
+
+    // --- Rendered only, or the whole pair: the visible entry goes away ---
+    std::wstring nextPath = nav.PeekNext();
+    if (nextPath == renderedPath || nextPath == rawPath) nextPath = nav.PeekPrevious();
+    // Only this pair was in the folder (nav-loop wraps Peek back to it): fall
+    // through to the empty-folder path rather than reloading a deleted file.
+    if (nextPath == renderedPath || nextPath == rawPath) nextPath.clear();
+
+    std::vector<std::wstring> victims;
+    if (delRaw) victims.push_back(rawPath);
+    if (delRendered) victims.push_back(renderedPath);
+
+    ReleaseImageResources();
+    if (!RecycleFiles(victims)) return;
+    g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
+    g_pairViewRawPath.clear();
+    g_pairViewRenderedPath.clear();
+    pane.editState.Reset();
+    pane.view.Reset();
+    pane.resource.Reset();
+
+    // Rendered only: the RAW survives and now stands alone -- land on it.
+    if (delRendered && !delRaw) nextPath = rawPath;
+
+    if (!nextPath.empty()) {
+        nav.Initialize(nextPath, hwnd);
+        LoadImageAsync(hwnd, nav.GetResolvedPath(nextPath).c_str());
+    } else {
+        nav.Initialize(L"", hwnd); // folder emptied
+    }
+    RequestRepaint(PaintLayer::All);
+}
+
+static void ComparePairSideBySide(HWND hwnd, const std::wstring& renderedPath, const std::wstring& rawPath) {
+    const bool viewingRaw = (GetPaneContext(PaneSlot::Primary).path == rawPath);
+
+    // Track the pair so the load pipeline treats both sides as one photo
+    // (ForceRawDecode survives the cross-file loads)
+    g_pairViewRawPath = rawPath;
+    g_pairViewRenderedPath = renderedPath;
+    g_runtime.ForceRawDecode = true;
+
+    // EnterMode captures the CURRENT image into the left pane
+    AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
+    if (!IsCompareModeActive()) return; // refused (no resource / Titan image)
+    g_pairCompareSession = true;
+
+    // Armed immediately before each RAW load (by value: outlives the helper
+    // in async callbacks): a load interleaved by EnterMode's message pumping
+    // may have cleared the pair tracking.
+    auto armRawFullDecode = [renderedPath, rawPath]() {
+        ArmPairRawFullDecode(renderedPath, rawPath);
+    };
+
+    if (viewingRaw) {
+        // Left pane captured the RAW -- replace it with the rendered sibling,
+        // then reload the right pane as RAW at full decode. Unconditionally:
+        // stale metadata may claim full decode while the resident pixels are
+        // an upscaled preview; a genuine full frame re-hits the cache instantly.
+        AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, renderedPath, [hwnd, rawPath, armRawFullDecode](bool success) {
+            if (success) {
+                MarkCompareDirty();
+            }
+            armRawFullDecode();
+            LoadImageAsync(hwnd, rawPath.c_str());
+            RequestRepaint(PaintLayer::Image | PaintLayer::Static);
+        });
+    } else {
+        // Left pane captured the rendered image -- load the RAW on the right
+        armRawFullDecode();
+        LoadImageAsync(hwnd, rawPath.c_str());
+    }
+
+    // Concrete-format OSD labels, e.g. "JPG | CR3"
+    auto extLabel = [](const std::wstring& p) {
+        std::wstring label;
+        std::wstring_view ext = QuickView::ExtensionOf(p);
+        if (!ext.empty()) ext.remove_prefix(1);
+        for (wchar_t c : ext) label += (wchar_t)std::towupper(c);
+        return label;
+    };
+    const std::wstring leftLabel = extLabel(renderedPath);
+    const std::wstring rightLabel = extLabel(rawPath);
+    g_osd.ShowCompare(hwnd, leftLabel.c_str(), rightLabel.c_str(), D2D1::ColorF(D2D1::ColorF::White), 2000);
+    RequestRepaint(PaintLayer::All);
 }
 
 bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
@@ -13457,6 +13869,26 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         PerformTransform(hwnd, TransformType::FlipVertical);
         return true;
 
+    case HotkeyAction::RenderRaw:
+        if (IsCompareModeActive()) {
+            // Same routing as the compare toolbar RAW button
+            bool selIsRaw = false, selFull = false;
+            if (AppContext::GetInstance().CompareCtrl->GetPaneRawState(AppContext::GetInstance().Compare.selectedPane, selIsRaw, selFull) && selIsRaw) {
+                AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().Compare.selectedPane;
+                SendMessage(hwnd, WM_COMMAND, IDM_RENDER_RAW, 0);
+                RefreshCompareRawUI(hwnd);
+            }
+        } else {
+            const std::wstring& curPath = GetPaneContext(PaneSlot::Primary).path;
+            const bool applicable = !curPath.empty() &&
+                (QuickView::IsRawPath(curPath)
+                 || GetPaneContext(PaneSlot::Primary).navigator.HasPairedRaw(FileNavigator::PathToImageID(curPath)));
+            if (applicable) {
+                SendMessage(hwnd, WM_COMMAND, IDM_RENDER_RAW, 0);
+            }
+        }
+        return true;
+
     case HotkeyAction::ToggleAnimation:
         if (g_slideshowState.IsActive) {
             ToggleSlideshowPlayback(hwnd);
@@ -13605,11 +14037,39 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
     case HotkeyAction::ToggleCompare:
         if (IsCompareModeActive()) {
             AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
+            ReturnToPairFaceAfterCompareExit(hwnd);
         } else {
             AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
         }
         RequestRepaint(PaintLayer::All);
         return true;
+
+    case HotkeyAction::ComparePair: {
+        if (IsCompareModeActive()) return true;
+        const std::wstring& curPath = GetPaneContext(PaneSlot::Primary).path;
+        if (curPath.empty()) return true;
+        const auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+
+        // Resolve the pair from either side of it
+        std::wstring renderedPath, rawPath;
+        if (const auto* pairedRaw = nav.GetPairedRaw(FileNavigator::PathToImageID(curPath))) {
+            renderedPath = curPath;
+            rawPath = pairedRaw->path;
+        } else if (!g_pairViewRawPath.empty() && curPath == g_pairViewRawPath) {
+            renderedPath = g_pairViewRenderedPath;
+            rawPath = curPath;
+        } else {
+            std::wstring r = nav.GetResolvedPath(curPath);
+            if (r != curPath) {
+                renderedPath = std::move(r);
+                rawPath = curPath;
+            }
+        }
+        if (!rawPath.empty()) {
+            ComparePairSideBySide(hwnd, renderedPath, rawPath);
+        }
+        return true;
+    }
 
     case HotkeyAction::AlwaysOnTop:
         SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0);

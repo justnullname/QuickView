@@ -144,6 +144,239 @@ TEST(FileNavigatorTest, SortEntries_VirtualPaths_ByType) {
 }
 
 
+// ============================================================================
+// [RAW+JPEG Pairing] Unit tests for the pairing pass (pure, no disk I/O)
+// ============================================================================
+
+static FileNavigator::SortEntry MakeEntry(const std::wstring& path, uintmax_t size = 100) {
+    FileNavigator::SortEntry e;
+    e.p = path;
+    e.s = size;
+    std::filesystem::path fsPath(path);
+    e.t = fsPath.extension().wstring();
+    std::transform(e.t.begin(), e.t.end(), e.t.begin(), [](wchar_t c){ return std::towlower(c); });
+    return e;
+}
+
+TEST(RawJpegPairingTest, StrictOneToOnePairs) {
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\IMG_001.JPG"),
+        MakeEntry(L"C:\\p\\IMG_001.CR3"),
+        MakeEntry(L"C:\\p\\IMG_002.JPG"),
+    };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+
+    ASSERT_EQ(entries.size(), 2u); // CR3 folded away
+    EXPECT_EQ(entries[0].p, L"C:\\p\\IMG_001.JPG");
+    EXPECT_EQ(entries[1].p, L"C:\\p\\IMG_002.JPG");
+
+    ASSERT_EQ(paired.size(), 1u);
+    const auto* raw = &paired.at(ComputePathHash(L"C:\\p\\IMG_001.JPG"));
+    EXPECT_EQ(raw->path, L"C:\\p\\IMG_001.CR3");
+    EXPECT_EQ(raw->id, ComputePathHash(L"C:\\p\\IMG_001.CR3"));
+}
+
+TEST(RawJpegPairingTest, CaseInsensitiveStemAndExtension) {
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\dsc_0007.nef"),
+        MakeEntry(L"C:\\p\\DSC_0007.JPG"),
+    };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 1u);
+    EXPECT_EQ(paired.size(), 1u);
+}
+
+TEST(RawJpegPairingTest, AmbiguousGroupsStayVisible) {
+    // Two rendered stills against one RAW -> no pair, everything visible
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\IMG_001.JPG"),
+        MakeEntry(L"C:\\p\\IMG_001.HEIC"),
+        MakeEntry(L"C:\\p\\IMG_001.CR3"),
+    };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 3u);
+    EXPECT_TRUE(paired.empty());
+
+    // Two RAWs against one rendered -> same
+    entries = {
+        MakeEntry(L"C:\\p\\IMG_002.JPG"),
+        MakeEntry(L"C:\\p\\IMG_002.CR3"),
+        MakeEntry(L"C:\\p\\IMG_002.DNG"),
+    };
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 3u);
+    EXPECT_TRUE(paired.empty());
+}
+
+TEST(RawJpegPairingTest, NonWhitelistedNeitherPairsNorBlocks) {
+    // A same-stem .png (not camera-written, origin unknown) or .tif
+    // (RAW-derived export) must not become the visible half, and must not
+    // break the JPG+RAW pair.
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\IMG_001.JPG"),
+        MakeEntry(L"C:\\p\\IMG_001.CR3"),
+        MakeEntry(L"C:\\p\\IMG_001.png"),
+        MakeEntry(L"C:\\p\\IMG_001.tif"),
+    };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    ASSERT_EQ(entries.size(), 3u); // only the CR3 folded
+    EXPECT_EQ(paired.size(), 1u);
+
+    // RAW + only a .tif sibling -> nothing pairs, RAW stays visible
+    entries = {
+        MakeEntry(L"C:\\p\\IMG_003.tif"),
+        MakeEntry(L"C:\\p\\IMG_003.ARW"),
+    };
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 2u);
+    EXPECT_TRUE(paired.empty());
+}
+
+TEST(RawJpegPairingTest, EarlyExitWhenNoMix) {
+    // Only rendered files -> untouched
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\a.jpg"), MakeEntry(L"C:\\p\\b.jpg"),
+    };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 2u);
+    EXPECT_TRUE(paired.empty());
+
+    // Only RAWs -> untouched
+    entries = { MakeEntry(L"C:\\p\\a.cr3"), MakeEntry(L"C:\\p\\b.nef") };
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 2u);
+    EXPECT_TRUE(paired.empty());
+}
+
+TEST(RawJpegPairingTest, MultiDotStemsMatchExactly) {
+    // "photo.bak.jpg" pairs only with "photo.bak.cr3", not "photo.cr3"
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\photo.bak.jpg"),
+        MakeEntry(L"C:\\p\\photo.cr3"),
+    };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired);
+    EXPECT_EQ(entries.size(), 2u);
+    EXPECT_TRUE(paired.empty());
+}
+
+TEST(RawJpegPairingTest, ParseExifDateTime) {
+    const int64_t a = FileNavigator::ParseExifDateTime("2026:07:09 14:30:45");
+    const int64_t b = FileNavigator::ParseExifDateTime("2026:07:09 14:30:45");
+    const int64_t c = FileNavigator::ParseExifDateTime("2026:07:09 14:30:48");
+    ASSERT_NE(a, 0);
+    EXPECT_EQ(a, b);            // deterministic
+    EXPECT_EQ(c - a, 3);        // second-level arithmetic
+    // Unparsable inputs
+    EXPECT_EQ(FileNavigator::ParseExifDateTime(""), 0);
+    EXPECT_EQ(FileNavigator::ParseExifDateTime("not a date"), 0);
+    EXPECT_EQ(FileNavigator::ParseExifDateTime("2026-07-09 14:30:45"), 0); // wrong separator
+    EXPECT_EQ(FileNavigator::ParseExifDateTime("1899:01:01 00:00:00"), 0); // pre-epoch
+}
+
+TEST(RawJpegPairingTest, PairVerificationIsStrict) {
+    // One shutter actuation writes the identical DateTimeOriginal into both
+    // files: only an exact match passes.
+    EXPECT_FALSE(FileNavigator::PairVerificationFails(1000, 1000));
+    // Any difference splits the pair, even one second
+    EXPECT_TRUE(FileNavigator::PairVerificationFails(1000, 1001));
+    EXPECT_TRUE(FileNavigator::PairVerificationFails(1001, 1000));
+    EXPECT_TRUE(FileNavigator::PairVerificationFails(1000, 5000));
+    // An unreadable side fails verification: a same-name file without a
+    // readable capture time is likely not the camera's output of this shot
+    EXPECT_TRUE(FileNavigator::PairVerificationFails(0, 0));
+    EXPECT_TRUE(FileNavigator::PairVerificationFails(0, 1000));
+    EXPECT_TRUE(FileNavigator::PairVerificationFails(1000, 0));
+}
+
+TEST(RawJpegPairingTest, VerifiedMismatchBlacklistPreventsFold) {
+    std::vector<FileNavigator::SortEntry> entries = {
+        MakeEntry(L"C:\\p\\IMG_001.JPG"),
+        MakeEntry(L"C:\\p\\IMG_001.CR3"),
+        MakeEntry(L"C:\\p\\IMG_002.JPG"),
+        MakeEntry(L"C:\\p\\IMG_002.NEF"),
+    };
+    // IMG_001's capture times were verified as mismatching
+    std::unordered_set<ImageID> skip = { ComputePathHash(L"C:\\p\\IMG_001.JPG") };
+    std::unordered_map<ImageID, FileNavigator::PairedRaw> paired;
+    FileNavigator::ApplyRawJpegPairing(entries, paired, &skip);
+
+    // IMG_001 stays split; IMG_002 still folds
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(paired.size(), 1u);
+    EXPECT_TRUE(paired.count(ComputePathHash(L"C:\\p\\IMG_002.JPG")) == 1);
+    EXPECT_TRUE(std::any_of(entries.begin(), entries.end(),
+        [](const auto& e) { return e.p == L"C:\\p\\IMG_001.CR3"; }));
+}
+
+// Integration: pairing through FileNavigator::Initialize on a real directory
+TEST(RawJpegPairingTest, InitializePairsAndRedirectsRawOpen) {
+    namespace fs = std::filesystem;
+    const bool oldPair = g_config.PairRawJpeg;
+    const int oldSortOrder = g_runtime.SortOrder;
+    const bool oldSortDesc = g_runtime.SortDescending;
+    g_runtime.SortOrder = 1;
+    g_runtime.SortDescending = false;
+
+    fs::path tempDir = fs::current_path() / "test_pairing_dir";
+    std::error_code ec;
+    fs::create_directory(tempDir, ec);
+    ASSERT_FALSE(ec);
+
+    fs::path jpg1 = tempDir / "IMG_001.JPG";
+    fs::path raw1 = tempDir / "IMG_001.CR3";
+    fs::path jpg2 = tempDir / "IMG_002.JPG";
+    std::ofstream(jpg1).close();
+    std::ofstream(raw1).close();
+    std::ofstream(jpg2).close();
+
+    // Flag off: stock behavior, all three visible
+    g_config.PairRawJpeg = false;
+    {
+        FileNavigator nav;
+        nav.Initialize(jpg1.wstring(), nullptr);
+        EXPECT_EQ(nav.Count(), 3u);
+        EXPECT_EQ(nav.PairedRawCount(), 0u);
+    }
+
+    // Flag on: pair folds, metadata queryable via the rendered file's ImageID
+    g_config.PairRawJpeg = true;
+    {
+        FileNavigator nav;
+        nav.Initialize(jpg1.wstring(), nullptr);
+        ASSERT_EQ(nav.Count(), 2u);
+        EXPECT_EQ(nav.GetFile(0), jpg1.wstring());
+        EXPECT_EQ(nav.GetFile(1), jpg2.wstring());
+
+        const ImageID jpgId = nav.GetImageID(0);
+        ASSERT_TRUE(nav.HasPairedRaw(jpgId));
+        EXPECT_EQ(nav.GetPairedRaw(jpgId)->path, raw1.wstring());
+        EXPECT_FALSE(nav.HasPairedRaw(nav.GetImageID(1)));
+
+        // Opening the hidden RAW itself lands on its rendered sibling: both
+        // the navigator index and the path the viewer should actually load
+        // (GetResolvedPath is what main.cpp feeds to LoadImageAsync).
+        FileNavigator nav2;
+        nav2.Initialize(raw1.wstring(), nullptr);
+        ASSERT_EQ(nav2.Count(), 2u);
+        EXPECT_EQ(nav2.Index(), 0);
+        EXPECT_EQ(nav2.GetFile(nav2.Index()), jpg1.wstring());
+        EXPECT_EQ(nav2.GetResolvedPath(raw1.wstring()), jpg1.wstring());
+        // Non-hidden paths resolve to themselves
+        EXPECT_EQ(nav2.GetResolvedPath(jpg2.wstring()), jpg2.wstring());
+    }
+
+    fs::remove_all(tempDir, ec);
+    g_config.PairRawJpeg = oldPair;
+    g_runtime.SortOrder = oldSortOrder;
+    g_runtime.SortDescending = oldSortDesc;
+}
+
 // Helper to create a valid uncompressed Zip archive programmatically
 static bool CreateMockZip(const std::wstring& zipPath, const std::string& entryName) {
     std::ofstream fs(zipPath, std::ios::binary);

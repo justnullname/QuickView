@@ -505,6 +505,11 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
   case ToolbarButtonID::Exif:
     return AppStrings::Toolbar_Tooltip_Info;
   case ToolbarButtonID::RawToggle:
+    // [RAW+JPEG Pairing] On a paired item the button switches the displayed
+    // file rather than the decode quality
+    if (btn.isPaired)
+      return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawPairBack
+                           : AppStrings::Toolbar_Tooltip_RawPairView;
     return btn.isToggled ? AppStrings::Toolbar_Tooltip_RawFull
                          : AppStrings::Toolbar_Tooltip_RawPreview;
   case ToolbarButtonID::CompareRawToggle:
@@ -1141,8 +1146,8 @@ void Toolbar::SetExifState(bool open) {
   for (auto &btn : m_buttons) { if (btn.id == ToolbarButtonID::Exif) { btn.isToggled = open; } }
 }
 
-void Toolbar::SetRawState(bool isRaw, bool isFullDecode) {
-  for (auto &btn : m_buttons) { if (btn.id == ToolbarButtonID::RawToggle) { btn.isEnabled = isRaw; if (isRaw) { btn.isToggled = isFullDecode; } } }
+void Toolbar::SetRawState(bool isRaw, bool isFullDecode, bool isPaired) {
+  for (auto &btn : m_buttons) { if (btn.id == ToolbarButtonID::RawToggle) { btn.isEnabled = isRaw; btn.isPaired = isRaw && isPaired; if (isRaw) { btn.isToggled = isFullDecode; } } }
 }
 
 void Toolbar::SetExtensionWarning(bool hasMismatch) {

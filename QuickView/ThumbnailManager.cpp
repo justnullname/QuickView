@@ -297,21 +297,15 @@ void ThumbnailManager::QueueRequest(size_t imageId, LPCWSTR path, int priority) 
     }
 
     // Detect format for Lane Selection
-    std::wstring ext = path;
-    size_t dot = ext.find_last_of(L'.');
-    bool isFast = false;
-    if (dot != std::wstring::npos) {
-        std::wstring e = ext.substr(dot);
-        std::transform(e.begin(), e.end(), e.begin(), ::towlower);
-        // Fast Lane: JPEG (Optimized) + RAW/HEIC/PSD (Embedded Preview) + WebP (Scaled)
-        if (e == L".jpg" || e == L".jpeg" || e == L".jpe" || e == L".jfif" ||
-            e == L".arw" || e == L".cr2" || e == L".nef" || e == L".dng" || e == L".orf" || e == L".rw2" || e == L".raf" ||
-            e == L".heic" || e == L".heif" || e == L".hif" || e == L".avif" ||
-            e == L".psd" || e == L".psb" ||
-            e == L".webp") { 
-            isFast = true;
-        }
-    }
+    // Fast Lane: JPEG (Optimized) + RAW/HEIC/PSD (Embedded Preview) + WebP (Scaled)
+    const std::wstring_view e = QuickView::ExtensionOf(path);
+    const bool isFast =
+        QuickView::ExtEqualsIgnoreCase(e, L".jpg") || QuickView::ExtEqualsIgnoreCase(e, L".jpeg") ||
+        QuickView::ExtEqualsIgnoreCase(e, L".jpe") || QuickView::ExtEqualsIgnoreCase(e, L".jfif") ||
+        QuickView::IsRawExtension(e) || QuickView::IsHeifExtension(e) ||
+        QuickView::ExtEqualsIgnoreCase(e, L".avif") ||
+        QuickView::ExtEqualsIgnoreCase(e, L".psd") || QuickView::ExtEqualsIgnoreCase(e, L".psb") ||
+        QuickView::ExtEqualsIgnoreCase(e, L".webp");
     t.isFastLane = isFast;
 
     if (isFast) {

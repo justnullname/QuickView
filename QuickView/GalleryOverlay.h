@@ -178,6 +178,7 @@ private:
     ComPtr<IDWriteTextFormat> m_textFormat; // For Grid cells (Title)
     ComPtr<IDWriteTextFormat> m_textFormatStats; // For stats
     ComPtr<IDWriteTextFormat> m_textFormatOSD; // For global stats
+    ComPtr<IDWriteTextFormat> m_textFormatBadge; // For the "+RAW" pairing badge
 
     // GeekGlass Support
     QuickView::UI::GeekGlass::GeekGlassEngine m_geekGlass;

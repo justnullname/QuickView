@@ -130,6 +130,8 @@ namespace AppStrings {
     extern const wchar_t* Toolbar_Tooltip_Info;
     extern const wchar_t* Toolbar_Tooltip_RawPreview; // Fast
     extern const wchar_t* Toolbar_Tooltip_RawFull;    // Full
+    extern const wchar_t* Toolbar_Tooltip_RawPairView; // Paired item: switch to the RAW
+    extern const wchar_t* Toolbar_Tooltip_RawPairBack; // Paired RAW view: back to rendered
     extern const wchar_t* Toolbar_Tooltip_FixExtension;
     extern const wchar_t* Toolbar_Tooltip_Pin;
     extern const wchar_t* Toolbar_Tooltip_Unpin;
@@ -448,6 +450,8 @@ namespace AppStrings {
     extern const wchar_t* Context_SoftProofCustom;
     extern const wchar_t* Settings_Value_ComingSoon;
     extern const wchar_t* Settings_Label_ForceRaw;
+    extern const wchar_t* Settings_Label_PairRawJpeg;
+    extern const wchar_t* Settings_Tooltip_PairRawJpeg;
     extern const wchar_t* Settings_Label_Exposure;
     extern const wchar_t* Settings_Tooltip_Exposure;
     extern const wchar_t* Settings_Label_AddToOpenWith;

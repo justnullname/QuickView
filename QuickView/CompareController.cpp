@@ -7,6 +7,7 @@
 #include "OSDState.h"
 #include "ImageTypes.h"
 #include "ImageResource.h"
+#include "SupportedExtensions.h"
 
 
 extern bool g_isLeftPaneDecoding;
@@ -55,7 +56,6 @@ extern Toolbar g_toolbar;
 extern std::unique_ptr<CRenderEngine> g_renderEngine;
 extern std::unique_ptr<UIRenderer> g_uiRenderer;
 extern void AdjustWindowToImage(HWND hwnd);
-extern bool IsRawFile(const std::wstring& path);
 
 CompareController::CompareController(AppContext& context) : m_context(context) {}
 
@@ -218,8 +218,8 @@ bool CompareController::IsNearCompareDivider(HWND hwnd, POINT ptClient, float th
 }
 
 void CompareController::UpdateRawButton() {
-    bool leftIsRaw = !GetPaneContext(PaneSlot::Left).path.empty() && IsRawFile(GetPaneContext(PaneSlot::Left).path);
-    bool rightIsRaw = !GetPaneContext(PaneSlot::Primary).path.empty() && IsRawFile(GetPaneContext(PaneSlot::Primary).path);
+    bool leftIsRaw = !GetPaneContext(PaneSlot::Left).path.empty() && QuickView::IsRawPath(GetPaneContext(PaneSlot::Left).path);
+    bool rightIsRaw = !GetPaneContext(PaneSlot::Primary).path.empty() && QuickView::IsRawPath(GetPaneContext(PaneSlot::Primary).path);
     bool anyRaw = leftIsRaw || rightIsRaw;
     bool selectedIsRaw = (m_context.Compare.selectedPane == ComparePane::Left) ? leftIsRaw : rightIsRaw;
     
@@ -741,12 +741,12 @@ bool CompareController::GetPaneRawState(ComparePane pane, bool& isRaw, bool& isF
     }
 
     if (pane == ComparePane::Left) {
-        isRaw = !GetPaneContext(PaneSlot::Left).path.empty() && IsRawFile(GetPaneContext(PaneSlot::Left).path);
+        isRaw = !GetPaneContext(PaneSlot::Left).path.empty() && QuickView::IsRawPath(GetPaneContext(PaneSlot::Left).path);
         isFullDecode = isRaw && GetPaneContext(PaneSlot::Left).metadata.IsRawFullDecode;
         return GetPaneContext(PaneSlot::Left).valid;
     }
 
-    isRaw = !GetPaneContext(PaneSlot::Primary).path.empty() && IsRawFile(GetPaneContext(PaneSlot::Primary).path);
+    isRaw = !GetPaneContext(PaneSlot::Primary).path.empty() && QuickView::IsRawPath(GetPaneContext(PaneSlot::Primary).path);
     isFullDecode = isRaw && GetPaneContext(PaneSlot::Primary).metadata.IsRawFullDecode;
     return static_cast<bool>(GetPaneContext(PaneSlot::Primary).resource);
 }

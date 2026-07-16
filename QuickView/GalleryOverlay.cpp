@@ -474,6 +474,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
         m_textFormat.Reset();
         m_textFormatStats.Reset();
         m_textFormatOSD.Reset();
+        m_textFormatBadge.Reset();
         lastScale = g_uiScale;
     }
     if (!m_dwriteFactory) {
@@ -483,6 +484,11 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
         m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormat);
         m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatStats);
         m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 20.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatOSD);
+        m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 9.0f * g_uiScale, AppStrings::CurrentLocale, &m_textFormatBadge);
+        if (m_textFormatBadge) {
+            m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
     }
     
     size_t count = m_pNav->Count();
@@ -641,6 +647,26 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
                 m_pThumbMgr->QueueRequest(imgId, path.c_str(), prio);
             }
         }
+        // [RAW+JPEG Pairing] "+CR3"-style badge: this item carries a hidden
+        // RAW. Theme-independent dark chip so it reads on any photo content.
+        if (const FileNavigator::PairedRaw* pairedRaw = m_pNav->GetPairedRaw(imgId)) {
+            const std::wstring badgeText = FileNavigator::PairedRawLabel(*pairedRaw);
+            const float bw = (8.0f + 6.5f * (float)badgeText.length()) * g_uiScale;
+            const float bh = 15.0f * g_uiScale;
+            const float bm = 5.0f * g_uiScale;
+            const float br = 3.5f * g_uiScale;
+            D2D1_RECT_F badge = D2D1::RectF(cellRect.right - bm - bw, cellRect.top + bm, cellRect.right - bm, cellRect.top + bm + bh);
+            m_brushBg->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
+            m_brushBg->SetOpacity(m_transitionProgress);
+            pDC->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), m_brushBg.Get());
+
+            D2D1_COLOR_F prevBadgeTxt = m_brushText->GetColor();
+            m_brushText->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+            m_brushText->SetOpacity(m_transitionProgress * 0.95f);
+            pDC->DrawText(badgeText.c_str(), (UINT32)badgeText.length(), m_textFormatBadge.Get(), badge, m_brushText.Get());
+            m_brushText->SetColor(prevBadgeTxt);
+            m_brushText->SetOpacity(1.0f);
+        }
     };
     
     // Phase 1: Draw all standard (non-selected, non-hovered) thumbnails first
@@ -683,6 +709,11 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
                 }
             } else {
                 swprintf_s(statsBuf, L"Loading...");
+            }
+            // [RAW+JPEG Pairing] Flag the hidden RAW in the hover stats
+            if (const FileNavigator::PairedRaw* pairedRaw = m_pNav->GetPairedRaw(imgId); pairedRaw && !info.isFailed) {
+                wcscat_s(statsBuf, L"  •  ");
+                wcscat_s(statsBuf, FileNavigator::PairedRawLabel(*pairedRaw).c_str());
             }
 
             // [UX Fix] Auto-fit width based on content (filename and info text) using DWrite text layout measurements

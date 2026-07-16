@@ -2470,6 +2470,12 @@ std::wstring UIRenderer::BuildCompactInfoText() const {
         }
         info += parts[i];
     }
+    
+    // [RAW+JPEG Pairing] Must match the draw path so the measured width fits
+    if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(g_imagePath))) {
+        info += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
+    }
+    
     return info;
 }
 
@@ -2519,6 +2525,36 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
             swprintf_s(progBuf, L"%d/%zu", g_navigator.Index() + 1, g_navigator.Count());
             rows.push_back({L"\U0001F4C1", L"Position", progBuf, L"", L"", TruncateMode::None, false});
         }
+    }
+    
+    // [RAW+JPEG Pairing] Hidden RAW sibling of this photo. Icon: link
+    // (U+1F517) = "file paired with this photo"; the film-frames icon is
+    // already taken by the Format row.
+    if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(imagePath))) {
+        std::wstring rawName = pairedRaw->path.substr(pairedRaw->path.find_last_of(L"\\/") + 1);
+        wchar_t rawSizeBuf[32] = L"";
+        if (pairedRaw->size >= 1024 * 1024) {
+            swprintf_s(rawSizeBuf, L"%.2f MB", pairedRaw->size / (1024.0 * 1024.0));
+        } else if (pairedRaw->size > 0) {
+            swprintf_s(rawSizeBuf, L"%I64u KB", pairedRaw->size / 1024);
+        }
+        rows.push_back({L"\U0001F517", L"RAW", rawName, rawSizeBuf, L"", TruncateMode::Middle, false});
+    } else if (std::wstring rendered = g_navigator.GetResolvedPath(imagePath); rendered != imagePath) {
+        // Viewing the RAW side of a pair: point back at the rendered sibling.
+        // Label = its concrete format (JPG/HEIC...), value = its file name.
+        std::wstring rname = rendered.substr(rendered.find_last_of(L"\\/") + 1);
+        std::wstring rlabel;
+        std::wstring_view rext = QuickView::ExtensionOf(rendered);
+        if (!rext.empty()) rext.remove_prefix(1);
+        for (wchar_t c : rext) rlabel += (wchar_t)std::towupper(c);
+        const int ridx = g_navigator.FindIndex(rendered);
+        wchar_t rSizeBuf[32] = L"";
+        if (const uintmax_t rsize = g_navigator.GetFileSize(ridx); rsize >= 1024 * 1024) {
+            swprintf_s(rSizeBuf, L"%.2f MB", rsize / (1024.0 * 1024.0));
+        } else if (g_navigator.GetFileSize(ridx) > 0) {
+            swprintf_s(rSizeBuf, L"%.2f KB", g_navigator.GetFileSize(ridx) / 1024.0);
+        }
+        rows.push_back({L"\U0001F517", rlabel.empty() ? L"Pair" : rlabel, rname, rSizeBuf, rname, TruncateMode::MiddleEllipsis, false});
     }
 
     // Row 2: Dimensions + Megapixels + Zoom
@@ -3331,6 +3367,7 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
         info = frameBuf;
     } else {
         info = BuildCompactInfoText();
+
     }
 
     

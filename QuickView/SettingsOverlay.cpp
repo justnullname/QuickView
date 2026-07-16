@@ -1880,6 +1880,18 @@ void SettingsOverlay::BuildMenu() {
     itemRaw.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { g_runtime.ForceRawDecode = g_config.ForceRawDecode; };
     tabImage.items.push_back(itemRaw);
 
+    // [RAW+JPEG Pairing] Fold same-name RAW+JPEG shots into one photo
+    SettingsItem itemPairRaw = { AppStrings::Settings_Label_PairRawJpeg, OptionType::Toggle, &g_config.PairRawJpeg };
+    itemPairRaw.tooltipText = AppStrings::Settings_Tooltip_PairRawJpeg;
+    itemPairRaw.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern void SaveConfig();
+        extern HWND g_mainHwnd;
+        extern void ApplyPairRawJpegSetting(HWND hwnd);
+        SaveConfig();
+        ApplyPairRawJpegSetting(g_mainHwnd);
+    };
+    tabImage.items.push_back(itemPairRaw);
+
     // --- 2. Color Management (CMS) Group ---
     tabImage.items.push_back({ AppStrings::Settings_Label_CMS, OptionType::Header });
 

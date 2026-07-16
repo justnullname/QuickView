@@ -158,6 +158,8 @@ const wchar_t *Toolbar_Tooltip_Gallery = nullptr;
 const wchar_t *Toolbar_Tooltip_Info = nullptr;
 const wchar_t *Toolbar_Tooltip_RawPreview = nullptr;
 const wchar_t *Toolbar_Tooltip_RawFull = nullptr;
+const wchar_t *Toolbar_Tooltip_RawPairView = nullptr;
+const wchar_t *Toolbar_Tooltip_RawPairBack = nullptr;
 const wchar_t *Toolbar_Tooltip_FixExtension = nullptr;
 const wchar_t *Toolbar_Tooltip_Pin = nullptr;
 const wchar_t *Toolbar_Tooltip_Unpin = nullptr;
@@ -367,6 +369,8 @@ const wchar_t *Context_SoftProofProfile = nullptr;
 const wchar_t *Context_SoftProofCustom = nullptr;
 const wchar_t *Settings_Value_ComingSoon = nullptr;
 const wchar_t *Settings_Label_ForceRaw = nullptr;
+const wchar_t *Settings_Label_PairRawJpeg = nullptr;
+const wchar_t *Settings_Tooltip_PairRawJpeg = nullptr;
 const wchar_t *Settings_Label_Exposure = nullptr;
 const wchar_t *Settings_Tooltip_Exposure = nullptr;
 const wchar_t *Settings_Label_AddToOpenWith = nullptr;
@@ -678,6 +682,8 @@ struct LanguageTable {
     const wchar_t *Toolbar_Tooltip_Info;
     const wchar_t *Toolbar_Tooltip_RawPreview;
     const wchar_t *Toolbar_Tooltip_RawFull;
+    const wchar_t *Toolbar_Tooltip_RawPairView;
+    const wchar_t *Toolbar_Tooltip_RawPairBack;
     const wchar_t *Toolbar_Tooltip_FixExtension;
     const wchar_t *Toolbar_Tooltip_Pin;
     const wchar_t *Toolbar_Tooltip_Unpin;
@@ -884,6 +890,8 @@ struct LanguageTable {
     const wchar_t *Context_SoftProofCustom;
     const wchar_t *Settings_Value_ComingSoon;
     const wchar_t *Settings_Label_ForceRaw;
+    const wchar_t *Settings_Label_PairRawJpeg;
+    const wchar_t *Settings_Tooltip_PairRawJpeg;
     const wchar_t *Settings_Label_Exposure;
     const wchar_t *Settings_Tooltip_Exposure;
     const wchar_t *Settings_Label_AddToOpenWith;
@@ -1192,6 +1200,8 @@ static const LanguageTable Table_EN = {
     L"Info Panel", // Toolbar_Tooltip_Info
     L"RAW: Preview (Click for Full)", // Toolbar_Tooltip_RawPreview
     L"RAW: Full Decode (Click for Preview)", // Toolbar_Tooltip_RawFull
+    L"RAW: View paired RAW (Full Decode)", // Toolbar_Tooltip_RawPairView
+    L"RAW: Back to paired image", // Toolbar_Tooltip_RawPairBack
     L"Extension Mismatch (Fix)", // Toolbar_Tooltip_FixExtension
     L"Pin Toolbar", // Toolbar_Tooltip_Pin
     L"Unpin Toolbar", // Toolbar_Tooltip_Unpin
@@ -1398,6 +1408,8 @@ static const LanguageTable Table_EN = {
     L"Custom...", // Context_SoftProofCustom
     L"Coming Soon", // Settings_Value_ComingSoon
     L"Force RAW Decode", // Settings_Label_ForceRaw
+    L"RAW+JPEG Pairing", // Settings_Label_PairRawJpeg
+    L"Show a RAW file and its same-name camera image (JPEG/HEIF) as one photo.\nOnly the rendered image stays in the list, marked with the RAW format (e.g. +CR3); capture times are verified in the background and mismatched pairs are split.\nSwitch between the camera image and the RAW decode with the RAW toolbar button or its hotkey, or view both with the pair-compare hotkey.", // Settings_Tooltip_PairRawJpeg
     L"Exposure (Brightness)", // Settings_Label_Exposure
     L"Adjust image brightness (Exposure Compensation). Range: 0.18x to 10.0x.", // Settings_Tooltip_Exposure
     L"Add to Open With", // Settings_Label_AddToOpenWith
@@ -1706,6 +1718,8 @@ static const LanguageTable Table_CN = {
     L"信息面板", // Toolbar_Tooltip_Info
     L"RAW: 快速预览 (点击切换完整)", // Toolbar_Tooltip_RawPreview
     L"RAW: 完整解码 (点击切换预览)", // Toolbar_Tooltip_RawFull
+    L"RAW: 查看配对 RAW (完整解码)", // Toolbar_Tooltip_RawPairView
+    L"RAW: 返回配对图像", // Toolbar_Tooltip_RawPairBack
     L"扩展名不匹配 (修复)", // Toolbar_Tooltip_FixExtension
     L"固定工具栏", // Toolbar_Tooltip_Pin
     L"取消固定工具栏", // Toolbar_Tooltip_Unpin
@@ -1912,6 +1926,8 @@ static const LanguageTable Table_CN = {
     L"自定义...", // Context_SoftProofCustom
     L"敬请期待", // Settings_Value_ComingSoon
     L"强制 RAW 解码", // Settings_Label_ForceRaw
+    L"RAW+JPEG 配对", // Settings_Label_PairRawJpeg
+    L"将 RAW 与同名的相机直出图 (JPEG/HEIF) 显示为同一张照片。\n列表中仅保留直出图，并标注 RAW 格式（如 +CR3）；后台会校验两者拍摄时间，不一致的配对自动拆开。\n可用 RAW 工具栏按钮或其热键切换相机直出和本机渲染，也可用配对对比热键并排查看。", // Settings_Tooltip_PairRawJpeg
     L"曝光度 (亮度)", // Settings_Label_Exposure
     L"调节图像亮度 (曝光补偿)。范围: 0.18x 至 10.0x。", // Settings_Tooltip_Exposure
     L"添加到打开方式", // Settings_Label_AddToOpenWith
@@ -2220,6 +2236,8 @@ static const LanguageTable Table_TW = {
     L"資訊面板", // Toolbar_Tooltip_Info
     L"RAW: 快速預覽 (點選切換完整)", // Toolbar_Tooltip_RawPreview
     L"RAW: 完整解碼 (點選切換預覽)", // Toolbar_Tooltip_RawFull
+    L"RAW: 檢視配對 RAW (完整解碼)", // Toolbar_Tooltip_RawPairView
+    L"RAW: 返回配對圖像", // Toolbar_Tooltip_RawPairBack
     L"副檔名不符 (修復)", // Toolbar_Tooltip_FixExtension
     L"固定工具列", // Toolbar_Tooltip_Pin
     L"取消固定工具列", // Toolbar_Tooltip_Unpin
@@ -2426,6 +2444,8 @@ static const LanguageTable Table_TW = {
     L"自訂...", // Context_SoftProofCustom
     L"敬請期待", // Settings_Value_ComingSoon
     L"強制 RAW 解碼", // Settings_Label_ForceRaw
+    L"RAW+JPEG 配對", // Settings_Label_PairRawJpeg
+    L"將 RAW 與同名的相機直出圖 (JPEG/HEIF) 顯示為同一張照片。\n清單中僅保留直出圖，並標註 RAW 格式（如 +CR3）；背景會校驗兩者拍攝時間，不一致的配對自動拆開。\n可用 RAW 工具列按鈕或其快速鍵切換相機直出與本機渲染，也可用配對比較快速鍵並排檢視。", // Settings_Tooltip_PairRawJpeg
     L"曝光度 (亮度)", // Settings_Label_Exposure
     L"調節圖像亮度 (曝光補償)。範圍: 0.18x 至 10.0x。", // Settings_Tooltip_Exposure
     L"新增至開啟方式", // Settings_Label_AddToOpenWith
@@ -2734,6 +2754,8 @@ static const LanguageTable Table_JA = {
     L"情報パネル", // Toolbar_Tooltip_Info
     L"RAW: プレビュー (クリックでフル)", // Toolbar_Tooltip_RawPreview
     L"RAW: フルデコード (クリックでプレビュー)", // Toolbar_Tooltip_RawFull
+    L"RAW: ペアのRAWを表示 (フルデコード)", // Toolbar_Tooltip_RawPairView
+    L"RAW: ペア画像に戻る", // Toolbar_Tooltip_RawPairBack
     L"拡張子不一致 (修正)", // Toolbar_Tooltip_FixExtension
     L"ツールバーを固定", // Toolbar_Tooltip_Pin
     L"ツールバーの固定を解除", // Toolbar_Tooltip_Unpin
@@ -2940,6 +2962,8 @@ static const LanguageTable Table_JA = {
     L"カスタム...", // Context_SoftProofCustom
     L"近日公開", // Settings_Value_ComingSoon
     L"RAW強制デコード", // Settings_Label_ForceRaw
+    L"RAW+JPEG ペアリング", // Settings_Label_PairRawJpeg
+    L"RAW と同名のカメラ撮って出し画像 (JPEG/HEIF) を 1 枚の写真として表示します。\n一覧には撮って出し画像のみが残り、RAW 形式 (+CR3 など) が表示されます。撮影時刻はバックグラウンドで照合され、一致しないペアは解除されます。\nRAW ツールバーボタンまたはそのホットキーで撮って出しと RAW デコード表示を切り替え、ペア比較ホットキーで並べて確認できます。", // Settings_Tooltip_PairRawJpeg
     L"露出 (明るさ)", // Settings_Label_Exposure
     L"画像の明るさを調整します (露出補正)。範囲: 0.18x ~ 10.0x。", // Settings_Tooltip_Exposure
     L"プログラムから開くに追加", // Settings_Label_AddToOpenWith
@@ -3248,6 +3272,8 @@ static const LanguageTable Table_RU = {
     L"Информационная панель", // Toolbar_Tooltip_Info
     L"RAW: Предпросмотр (нажмите для полного)", // Toolbar_Tooltip_RawPreview
     L"RAW: Полное декодирование (нажмите для предпросмотра)", // Toolbar_Tooltip_RawFull
+    L"RAW: Показать парный RAW (полное декодирование)", // Toolbar_Tooltip_RawPairView
+    L"RAW: Вернуться к парному изображению", // Toolbar_Tooltip_RawPairBack
     L"Несоответствие расширения (исправить)", // Toolbar_Tooltip_FixExtension
     L"Закрепить панель", // Toolbar_Tooltip_Pin
     L"Открепить панель", // Toolbar_Tooltip_Unpin
@@ -3454,6 +3480,8 @@ static const LanguageTable Table_RU = {
     L"Свой...", // Context_SoftProofCustom
     L"Скоро", // Settings_Value_ComingSoon
     L"Принудительное декодирование RAW", // Settings_Label_ForceRaw
+    L"Связывание RAW+JPEG", // Settings_Label_PairRawJpeg
+    L"Показывать RAW и одноимённый снимок камеры (JPEG/HEIF) как одну фотографию.\nВ списке остаётся только готовое изображение с пометкой формата RAW (например, +CR3); время съёмки проверяется в фоне, несовпадающие пары разделяются.\nКнопка RAW на панели или её горячая клавиша переключает между снимком камеры и декодированным RAW; горячая клавиша парного сравнения показывает обе версии рядом.", // Settings_Tooltip_PairRawJpeg
     L"Экспозиция (яркость)", // Settings_Label_Exposure
     L"Регулировка яркости изображения (компенсация экспозиции). Диапазон: 0.18x - 10.0x.", // Settings_Tooltip_Exposure
     L"Добавить в 'Открыть с помощью'", // Settings_Label_AddToOpenWith
@@ -3762,6 +3790,8 @@ static const LanguageTable Table_DE = {
     L"Info-Panel", // Toolbar_Tooltip_Info
     L"RAW: Vorschau (Klick für Voll)", // Toolbar_Tooltip_RawPreview
     L"RAW: Volle Dekodierung (Klick für Vorschau)", // Toolbar_Tooltip_RawFull
+    L"RAW: Gepaartes RAW anzeigen (volle Dekodierung)", // Toolbar_Tooltip_RawPairView
+    L"RAW: Zurück zum gepaarten Bild", // Toolbar_Tooltip_RawPairBack
     L"Erweiterung stimmt nicht (Reparieren)", // Toolbar_Tooltip_FixExtension
     L"Symbolleiste anheften", // Toolbar_Tooltip_Pin
     L"Symbolleiste lösen", // Toolbar_Tooltip_Unpin
@@ -3968,6 +3998,8 @@ static const LanguageTable Table_DE = {
     L"Benutzerdefiniert...", // Context_SoftProofCustom
     L"Demnächst", // Settings_Value_ComingSoon
     L"RAW erzwingen", // Settings_Label_ForceRaw
+    L"RAW+JPEG-Paarung", // Settings_Label_PairRawJpeg
+    L"Eine RAW-Datei und das gleichnamige Kamerabild (JPEG/HEIF) als ein Foto anzeigen.\nIn der Liste bleibt nur das gerenderte Bild, markiert mit dem RAW-Format (z. B. +CR3); Aufnahmezeiten werden im Hintergrund geprüft, abweichende Paare werden getrennt.\nMit dem RAW-Button oder seinem Hotkey zwischen Kamerabild und RAW-Dekodierung wechseln, mit dem Paarvergleich-Hotkey beide nebeneinander ansehen.", // Settings_Tooltip_PairRawJpeg
     L"Belichtung (Helligkeit)", // Settings_Label_Exposure
     L"Passt die Bildhelligkeit an (Belichtungskorrektur). Bereich: 0.18x bis 10.0x.", // Settings_Tooltip_Exposure
     L"Zu Öffnen mit hinzufügen", // Settings_Label_AddToOpenWith
@@ -4276,6 +4308,8 @@ static const LanguageTable Table_ES = {
     L"Panel de información", // Toolbar_Tooltip_Info
     L"RAW: Vista previa (Clic para completo)", // Toolbar_Tooltip_RawPreview
     L"RAW: Decodificación completa (Clic para vista previa)", // Toolbar_Tooltip_RawFull
+    L"RAW: Ver RAW emparejado (decodificación completa)", // Toolbar_Tooltip_RawPairView
+    L"RAW: Volver a la imagen emparejada", // Toolbar_Tooltip_RawPairBack
     L"Extensión no coincide (Reparar)", // Toolbar_Tooltip_FixExtension
     L"Fijar barra de herramientas", // Toolbar_Tooltip_Pin
     L"Soltar barra de herramientas", // Toolbar_Tooltip_Unpin
@@ -4482,6 +4516,8 @@ static const LanguageTable Table_ES = {
     L"Personalizado...", // Context_SoftProofCustom
     L"Próximamente", // Settings_Value_ComingSoon
     L"Forzar decodificación RAW", // Settings_Label_ForceRaw
+    L"Emparejamiento RAW+JPEG", // Settings_Label_PairRawJpeg
+    L"Mostrar un archivo RAW y la imagen de cámara del mismo nombre (JPEG/HEIF) como una sola foto.\nEn la lista solo queda la imagen revelada, marcada con el formato RAW (p. ej. +CR3); las horas de captura se verifican en segundo plano y las parejas discordantes se separan.\nCambie entre la imagen de cámara y la decodificación RAW con el botón RAW o su atajo, o vea ambas con el atajo de comparación de pareja.", // Settings_Tooltip_PairRawJpeg
     L"Exposición (Brillo)", // Settings_Label_Exposure
     L"Ajusta el brillo de la imagen (compensación de exposición). Rango: 0.18x - 10.0x.", // Settings_Tooltip_Exposure
     L"Añadir a Abrir con", // Settings_Label_AddToOpenWith
@@ -4790,6 +4826,8 @@ static const LanguageTable Table_FR = {
     L"Info Panel", // Toolbar_Tooltip_Info
     L"RAW: Preview (Click for Full)", // Toolbar_Tooltip_RawPreview
     L"RAW: Full Decode (Click for Preview)", // Toolbar_Tooltip_RawFull
+    L"RAW : Voir le RAW associé (décodage complet)", // Toolbar_Tooltip_RawPairView
+    L"RAW : Revenir à l'image associée", // Toolbar_Tooltip_RawPairBack
     L"Extension Mismatch (Fix)", // Toolbar_Tooltip_FixExtension
     L"Pin Toolbar", // Toolbar_Tooltip_Pin
     L"Unpin Toolbar", // Toolbar_Tooltip_Unpin
@@ -4996,6 +5034,8 @@ static const LanguageTable Table_FR = {
     L"Personnalisé...", // Context_SoftProofCustom
     L"Bientôt disponible", // Settings_Value_ComingSoon
     L"Forcer le décodage RAW", // Settings_Label_ForceRaw
+    L"Appairage RAW+JPEG", // Settings_Label_PairRawJpeg
+    L"Afficher un fichier RAW et l'image boîtier du même nom (JPEG/HEIF) comme une seule photo.\nSeule l'image rendue reste dans la liste, marquée du format RAW (ex. +CR3) ; les heures de prise de vue sont vérifiées en arrière-plan et les paires discordantes sont séparées.\nBasculez entre l'image boîtier et le décodage RAW avec le bouton RAW ou son raccourci, ou affichez les deux avec le raccourci de comparaison de paire.", // Settings_Tooltip_PairRawJpeg
     L"Exposition (Luminosité)", // Settings_Label_Exposure
     L"Ajuste la luminosité de l'image (compensation d'exposition). Plage : 0.18x - 10.0x.", // Settings_Tooltip_Exposure
     L"Ajouter à 'Ouvrir avec'", // Settings_Label_AddToOpenWith
@@ -5304,6 +5344,8 @@ void Apply(const LanguageTable& t) {
   Toolbar_Tooltip_Info = t.Toolbar_Tooltip_Info;
   Toolbar_Tooltip_RawPreview = t.Toolbar_Tooltip_RawPreview;
   Toolbar_Tooltip_RawFull = t.Toolbar_Tooltip_RawFull;
+  Toolbar_Tooltip_RawPairView = t.Toolbar_Tooltip_RawPairView;
+  Toolbar_Tooltip_RawPairBack = t.Toolbar_Tooltip_RawPairBack;
   Toolbar_Tooltip_FixExtension = t.Toolbar_Tooltip_FixExtension;
   Toolbar_Tooltip_Pin = t.Toolbar_Tooltip_Pin;
   Toolbar_Tooltip_Unpin = t.Toolbar_Tooltip_Unpin;
@@ -5510,6 +5552,8 @@ void Apply(const LanguageTable& t) {
   Context_SoftProofCustom = t.Context_SoftProofCustom;
   Settings_Value_ComingSoon = t.Settings_Value_ComingSoon;
   Settings_Label_ForceRaw = t.Settings_Label_ForceRaw;
+  Settings_Label_PairRawJpeg = t.Settings_Label_PairRawJpeg;
+  Settings_Tooltip_PairRawJpeg = t.Settings_Tooltip_PairRawJpeg;
   Settings_Label_Exposure = t.Settings_Label_Exposure;
   Settings_Tooltip_Exposure = t.Settings_Tooltip_Exposure;
   Settings_Label_AddToOpenWith = t.Settings_Label_AddToOpenWith;
@@ -6007,6 +6051,23 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::FlipV:
         raw = AppStrings::Context_FlipV;
         break;
+    case HotkeyAction::RenderRaw:
+        raw = AppStrings::Context_RenderRAW;
+        break;
+    case HotkeyAction::ComparePair: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"配对对比 (直出 vs RAW)"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"配對對比 (直出 vs RAW)"; break;
+        case AppStrings::Language::Japanese:           raw = L"ペア比較 (撮って出し vs RAW)"; break;
+        case AppStrings::Language::Russian:            raw = L"Сравнение пары (камерный снимок и RAW)"; break;
+        case AppStrings::Language::German:             raw = L"Paarvergleich (Kamerabild vs. RAW)"; break;
+        case AppStrings::Language::Spanish:            raw = L"Comparar par (imagen de cámara vs RAW)"; break;
+        case AppStrings::Language::French:             raw = L"Comparer la paire (image boîtier vs RAW)"; break;
+        default:                                       raw = L"Compare Pair (Rendered vs RAW)"; break;
+        }
+        break;
+    }
     case HotkeyAction::ToggleAnimation: {
         // Special case: returns concatenated string
         std::wstring play = CleanLabel(AppStrings::Toolbar_Tooltip_AnimPlay);

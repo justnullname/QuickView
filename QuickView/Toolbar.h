@@ -53,6 +53,7 @@ struct ToolbarButton {
     bool isToggled = false; // For Lock/Exif/Raw
     bool isWarning = false; // For FixExtension
     bool isHovered = false;
+    bool isPaired = false;  // [RAW+JPEG Pairing] RawToggle switches a pair
 };
 
 // Responsive hide: a group of buttons hidden together at the same priority level
@@ -92,7 +93,7 @@ public:
     // State Setters
     void SetLockState(bool locked);
     void SetExifState(bool open);
-    void SetRawState(bool isRaw, bool isFullDecode);
+    void SetRawState(bool isRaw, bool isFullDecode, bool isPaired = false);
     void SetExtensionWarning(bool hasMismatch);
     void SetGamutWarningAvailable(bool available);
     void SetGamutWarningActive(bool active);
