@@ -147,6 +147,8 @@ struct MinimapState {
     POINT dragAnchor = { 0, 0 };
     float dragStartOffsetX = 0.0f;
     float dragStartOffsetY = 0.0f;
+    float dragStartMinimapX = 0.0f;
+    float dragStartMinimapY = 0.0f;
     float dragStartPanX = 0.0f;
     float dragStartPanY = 0.0f;
     D2D1_RECT_F layoutRect = { 0.0f, 0.0f, 0.0f, 0.0f };

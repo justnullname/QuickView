@@ -179,6 +179,7 @@ public:
 
     // ===== Info Panel Rendering Helpers =====
     D2D1_SIZE_F GetRequiredInfoPanelSize() const; // Calculate required dimensions
+    D2D1_RECT_F GetLastInfoPanelRect() const { return m_lastInfoPanelRect; }
 
 private:
     struct AdaptiveUiPalette {

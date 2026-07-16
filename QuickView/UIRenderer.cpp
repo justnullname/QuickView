@@ -3336,15 +3336,33 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
     
     float textW = MeasureTextWidth(info);
     
-    float startX = g_runtime.InfoPanelX * s;
-    float startY = g_runtime.InfoPanelY * s;
+    float startX = 0.0f;
+    float panelW = 70.0f * s + textW;
+    float panelH = 22.0f * s;
     
-    // Push info panel down if it overlaps with the top filmstrip overlay
+    if (g_runtime.InfoPanelAlignX == 0) {
+        startX = g_runtime.InfoPanelX * s;
+    } else {
+        startX = (float)m_width - panelW - g_runtime.InfoPanelX * s;
+    }
+    
+    float startY = 0.0f;
+    float topBoundary = 0.0f;
     extern GalleryOverlay g_gallery;
     float galleryH = g_gallery.IsVisible() ? g_gallery.GetVisualHeight((float)m_height) : 0.0f;
-    if (galleryH > 0.0f && startY < galleryH + 12.0f * s) {
-        startY = galleryH + 12.0f * s;
+    if (galleryH > 0.0f) {
+        topBoundary = galleryH;
     }
+    
+    if (g_runtime.InfoPanelAlignY == 0) {
+        startY = topBoundary + g_runtime.InfoPanelY * s;
+    } else {
+        startY = (float)m_height - panelH - g_runtime.InfoPanelY * s;
+    }
+    
+    float margin = 8.0f * s;
+    startX = std::clamp(startX, margin, (std::max)(margin, (float)m_width - panelW - margin));
+    startY = std::clamp(startY, topBoundary + margin, (std::max)(topBoundary + margin, (float)m_height - panelH - margin));
     
     // Layout and Geometry
     float paddingLeft = 12.0f * s;
@@ -3645,15 +3663,30 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     }
     width = (std::clamp)(width, 220.0f * s, 300.0f * s);
     float height = 26.0f * s + (float)m_infoGrid.size() * GRID_ROW_HEIGHT * s + 14.0f * s;
-    float startX = g_runtime.InfoPanelX * s;
-    float startY = g_runtime.InfoPanelY * s;
+    float startX = 0.0f;
+    if (g_runtime.InfoPanelAlignX == 0) {
+        startX = g_runtime.InfoPanelX * s;
+    } else {
+        startX = (float)m_width - width - g_runtime.InfoPanelX * s;
+    }
     
-    // Push info panel down if it overlaps with the top filmstrip overlay
+    float startY = 0.0f;
+    float topBoundary = 0.0f;
     extern GalleryOverlay g_gallery;
     float galleryH = g_gallery.IsVisible() ? g_gallery.GetVisualHeight((float)m_height) : 0.0f;
-    if (galleryH > 0.0f && startY < galleryH + 12.0f * s) {
-        startY = galleryH + 12.0f * s;
+    if (galleryH > 0.0f) {
+        topBoundary = galleryH;
     }
+    
+    if (g_runtime.InfoPanelAlignY == 0) {
+        startY = topBoundary + g_runtime.InfoPanelY * s;
+    } else {
+        startY = (float)m_height - height - g_runtime.InfoPanelY * s;
+    }
+    
+    float margin = 8.0f * s;
+    startX = std::clamp(startX, margin, (std::max)(margin, (float)m_width - width - margin));
+    startY = std::clamp(startY, topBoundary + margin, (std::max)(topBoundary + margin, (float)m_height - height - margin));
     
     if (g_currentMetadata.HasGPS) height += 50.0f * s;
     if (g_runtime.InfoPanelExpanded && !g_currentMetadata.HistL.empty()) height += 100.0f * s;
@@ -5397,14 +5430,36 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         minimapW = (std::max)(minimapW, 40.0f * s);
         minimapH = (std::max)(minimapH, 40.0f * s);
         
-        float defaultX = vpRect.right - minimapW - 12.0f * s;
-        float defaultY = vpRect.top + 12.0f * s;
-        if (vpRect.right >= (float)m_width - 1.0f && m_showControls) {
-            defaultY = vpRect.top + 44.0f * s;
+        // Horizontal position
+        float minimapX = 0.0f;
+        if (g_config.NavigatorAlignX == 0) {
+            minimapX = vpRect.left + g_config.NavigatorOffsetX * s;
+        } else {
+            minimapX = vpRect.right - minimapW - g_config.NavigatorOffsetX * s;
         }
         
-        float minimapX = defaultX + g_config.NavigatorOffsetX * s;
-        float minimapY = defaultY + g_config.NavigatorOffsetY * s;
+        // Vertical position
+        float topOffset = vpRect.top;
+        if (vpRect.right >= (float)m_width - 1.0f && m_showControls) {
+            topOffset += 32.0f * s;
+        }
+        
+        float minimapY = 0.0f;
+        if (g_config.NavigatorAlignY == 0) {
+            minimapY = topOffset + g_config.NavigatorOffsetY * s;
+        } else {
+            minimapY = vpRect.bottom - minimapH - g_config.NavigatorOffsetY * s;
+        }
+        
+        // Clamp to keep it fully within the viewport
+        float margin = 8.0f * s;
+        float minX = vpRect.left + margin;
+        float maxX = vpRect.right - minimapW - margin;
+        float minY = topOffset + margin;
+        float maxY = vpRect.bottom - minimapH - margin;
+        
+        minimapX = std::clamp(minimapX, minX, (std::max)(minX, maxX));
+        minimapY = std::clamp(minimapY, minY, (std::max)(minY, maxY));
         
         minimap.layoutRect = D2D1::RectF(minimapX, minimapY, minimapX + minimapW, minimapY + minimapH);
         

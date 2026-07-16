@@ -547,12 +547,16 @@ struct AppConfig {
 
     bool ShowBorderIndicator = true;
     int ShowNavigator = 0; // 0=Auto, 1=On, 2=Off
-    float NavigatorOffsetX = 0.0f;
-    float NavigatorOffsetY = 0.0f;
+    float NavigatorOffsetX = 12.0f;
+    float NavigatorOffsetY = 12.0f;
+    int NavigatorAlignX = 1; // 0=Left, 1=Right
+    int NavigatorAlignY = 0; // 0=Top, 1=Bottom
 
     // --- Info Panel Position ---
     float InfoPanelX = 16.0f;
     float InfoPanelY = 32.0f;
+    int InfoPanelAlignX = 0; // 0=Left, 1=Right
+    int InfoPanelAlignY = 0; // 0=Top, 1=Bottom
 
     // --- Control ---
     bool EnableCrossFade = true;        // Enable cross-fade animation when changing images
@@ -900,6 +904,8 @@ struct RuntimeConfig {
 
     float InfoPanelX = 16.0f;
     float InfoPanelY = 32.0f;
+    int InfoPanelAlignX = 0; // 0=Left, 1=Right
+    int InfoPanelAlignY = 0; // 0=Top, 1=Bottom
 
     // Overlay (Tracing) Mode
     OverlayState OverlayModeState = OverlayState::Normal;
@@ -942,6 +948,8 @@ struct RuntimeConfig {
         SortDescending = cfg.SortDescending;
         InfoPanelX = cfg.InfoPanelX;
         InfoPanelY = cfg.InfoPanelY;
+        InfoPanelAlignX = cfg.InfoPanelAlignX;
+        InfoPanelAlignY = cfg.InfoPanelAlignY;
     }
 };
 

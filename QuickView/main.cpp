@@ -1505,6 +1505,10 @@ static void SetRightCompareView(const CompareView& view) {
 static CompareView g_rightDragZoomStartLeftView{};
 static CompareView g_rightDragZoomStartRightView{};
 static bool g_hasRightDragZoomStartViews = false;
+static float g_infoPanelDragStartStartX = 0.0f;
+static float g_infoPanelDragStartStartY = 0.0f;
+static float g_infoPanelDragStartWidth = 0.0f;
+static float g_infoPanelDragStartHeight = 0.0f;
 
 static float ComputeZoomStep(float wheelDelta) {
     float factor = 1.0f + (g_config.WheelZoomSpeed / 100.0f);
@@ -4160,6 +4164,13 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"View", L"ShowNavigator", std::to_wstring(g_config.ShowNavigator).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"NavigatorOffsetX", std::to_wstring(g_config.NavigatorOffsetX).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"View", L"NavigatorOffsetY", std::to_wstring(g_config.NavigatorOffsetY).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"NavigatorAlignX", std::to_wstring(g_config.NavigatorAlignX).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"NavigatorAlignY", std::to_wstring(g_config.NavigatorAlignY).c_str(), iniPath.c_str());
+
+    WritePrivateProfileStringW(L"View", L"InfoPanelX", std::to_wstring(g_config.InfoPanelX).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"InfoPanelY", std::to_wstring(g_config.InfoPanelY).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"InfoPanelAlignX", std::to_wstring(g_config.InfoPanelAlignX).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"View", L"InfoPanelAlignY", std::to_wstring(g_config.InfoPanelAlignY).c_str(), iniPath.c_str());
 
     // Window Size Limits
     WritePrivateProfileStringW(L"View", L"WindowMinSize", std::to_wstring(g_config.WindowMinSize).c_str(), iniPath.c_str());
@@ -4418,10 +4429,20 @@ void LoadConfig() {
     g_config.ShowBorderIndicator = GetPrivateProfileIntW(L"View", L"ShowBorderIndicator", 1, iniPath.c_str()) != 0;
     g_config.ShowNavigator = GetPrivateProfileIntW(L"View", L"ShowNavigator", 0, iniPath.c_str());
     wchar_t bufNavX[32], bufNavY[32];
-    GetPrivateProfileStringW(L"View", L"NavigatorOffsetX", L"0.0", bufNavX, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"View", L"NavigatorOffsetX", L"12.0", bufNavX, 32, iniPath.c_str());
     g_config.NavigatorOffsetX = (float)_wtof(bufNavX);
-    GetPrivateProfileStringW(L"View", L"NavigatorOffsetY", L"0.0", bufNavY, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"View", L"NavigatorOffsetY", L"12.0", bufNavY, 32, iniPath.c_str());
     g_config.NavigatorOffsetY = (float)_wtof(bufNavY);
+    g_config.NavigatorAlignX = GetPrivateProfileIntW(L"View", L"NavigatorAlignX", 1, iniPath.c_str());
+    g_config.NavigatorAlignY = GetPrivateProfileIntW(L"View", L"NavigatorAlignY", 0, iniPath.c_str());
+
+    wchar_t bufInfoX[32], bufInfoY[32];
+    GetPrivateProfileStringW(L"View", L"InfoPanelX", L"16.0", bufInfoX, 32, iniPath.c_str());
+    g_config.InfoPanelX = (float)_wtof(bufInfoX);
+    GetPrivateProfileStringW(L"View", L"InfoPanelY", L"32.0", bufInfoY, 32, iniPath.c_str());
+    g_config.InfoPanelY = (float)_wtof(bufInfoY);
+    g_config.InfoPanelAlignX = GetPrivateProfileIntW(L"View", L"InfoPanelAlignX", 0, iniPath.c_str());
+    g_config.InfoPanelAlignY = GetPrivateProfileIntW(L"View", L"InfoPanelAlignY", 0, iniPath.c_str());
 
     // Window Size Limits
     wchar_t bufMin[32], bufMax[32];
@@ -7394,9 +7415,68 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
               if (minimap.isDraggingWindow) {
                   int dx = pt.x - minimap.dragAnchor.x;
                   int dy = pt.y - minimap.dragAnchor.y;
+                  float currentMinimapX = minimap.dragStartMinimapX + dx;
+                  float currentMinimapY = minimap.dragStartMinimapY + dy;
+                  
+                  RECT rcClient; GetClientRect(hwnd, &rcClient);
+                  float winW = (float)(rcClient.right - rcClient.left);
+                  float winH = (float)(rcClient.bottom - rcClient.top);
+                  
+                  bool isCompare = IsCompareModeActive();
+                  int numPanes = 1;
+                  if (isCompare && g_toolbar.IsComicMode()) numPanes = 2;
+                  else if (isCompare && AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) numPanes = 2;
+                  
+                  float vpW = winW;
+                  float vpH = winH;
+                  float vpLeft = 0.0f;
+                  if (numPanes == 2) {
+                      vpW = winW * 0.5f;
+                      if (idx == 1) {
+                          vpLeft = 0.0f;
+                      } else {
+                          vpLeft = winW * 0.5f;
+                      }
+                  }
+                  
+                  float minimapW = minimap.layoutRect.right - minimap.layoutRect.left;
+                  float minimapH = minimap.layoutRect.bottom - minimap.layoutRect.top;
                   float s = g_uiScale;
-                  g_config.NavigatorOffsetX = minimap.dragStartOffsetX + dx / s;
-                  g_config.NavigatorOffsetY = minimap.dragStartOffsetY + dy / s;
+                  if (minimapW <= 0.0f) minimapW = 150.0f * s;
+                  if (minimapH <= 0.0f) minimapH = 150.0f * s;
+                  
+                  float topOffset = 0.0f;
+                  if (vpLeft + vpW >= winW - 1.0f && g_showControls) {
+                      topOffset += 32.0f * s;
+                  }
+                  
+                  // Clamp to keep it fully within the viewport
+                  float margin = 8.0f * s;
+                  float minX = vpLeft + margin;
+                  float maxX = vpLeft + vpW - minimapW - margin;
+                  float minY = topOffset + margin;
+                  float maxY = vpH - minimapH - margin;
+                  
+                  float clampedX = std::clamp(currentMinimapX, minX, (std::max)(minX, maxX));
+                  float clampedY = std::clamp(currentMinimapY, minY, (std::max)(minY, maxY));
+                  
+                  // Dynamically determine closest anchor and update config
+                  if (clampedX + minimapW * 0.5f < vpLeft + vpW * 0.5f) {
+                      g_config.NavigatorAlignX = 0; // Left
+                      g_config.NavigatorOffsetX = (clampedX - vpLeft) / s;
+                  } else {
+                      g_config.NavigatorAlignX = 1; // Right
+                      g_config.NavigatorOffsetX = (vpLeft + vpW - (clampedX + minimapW)) / s;
+                  }
+                  
+                  if (clampedY + minimapH * 0.5f < topOffset + (vpH - topOffset) * 0.5f) {
+                      g_config.NavigatorAlignY = 0; // Top
+                      g_config.NavigatorOffsetY = (clampedY - topOffset) / s;
+                  } else {
+                      g_config.NavigatorAlignY = 1; // Bottom
+                      g_config.NavigatorOffsetY = (vpH - (clampedY + minimapH)) / s;
+                  }
+                  
                   RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
                   isMinimapInteracting = true;
                   g_currentCursor = LoadCursor(nullptr, IDC_SIZEALL);
@@ -7481,17 +7561,52 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
               int dy = pt.y - GetPaneContext(PaneSlot::Primary).view.InfoPanelDragAnchor.y;
 
               if (dx != 0 || dy != 0) {
-                  float s = g_uiRenderer ? g_uiRenderer->GetUIScale() : 1.0f;
-                  g_runtime.InfoPanelX += dx / s;
-                  g_runtime.InfoPanelY += dy / s;
-
-                  // Keep it visible on screen (approx boundaries)
-                  g_runtime.InfoPanelX = std::max(0.0f, std::min(g_runtime.InfoPanelX, winW / s - 50.0f));
-                  g_runtime.InfoPanelY = std::max(0.0f, std::min(g_runtime.InfoPanelY, winH / s - 50.0f));
-
-                  GetPaneContext(PaneSlot::Primary).view.InfoPanelDragAnchor = pt;
+                  float s = g_uiScale;
+                  float panelW = g_infoPanelDragStartWidth;
+                  float panelH = g_infoPanelDragStartHeight;
+                  if (panelW <= 0.0f) panelW = 200.0f * s;
+                  if (panelH <= 0.0f) panelH = 22.0f * s;
+                  
+                  float currentStartX = g_infoPanelDragStartStartX + dx;
+                  float currentStartY = g_infoPanelDragStartStartY + dy;
+                  
+                  float topBoundary = 0.0f;
+                  extern GalleryOverlay g_gallery;
+                  float galleryH = g_gallery.IsVisible() ? g_gallery.GetVisualHeight(winH) : 0.0f;
+                  if (galleryH > 0.0f) {
+                      topBoundary = galleryH;
+                  }
+                  
+                  // Clamp to keep it fully within the viewport
+                  float margin = 8.0f * s;
+                  float minX = margin;
+                  float maxX = winW - panelW - margin;
+                  float minY = topBoundary + margin;
+                  float maxY = winH - panelH - margin;
+                  
+                  float clampedX = std::clamp(currentStartX, minX, (std::max)(minX, maxX));
+                  float clampedY = std::clamp(currentStartY, minY, (std::max)(minY, maxY));
+                  
+                  // Dynamically determine closest anchor and update config/runtime
+                  if (clampedX + panelW * 0.5f < winW * 0.5f) {
+                      g_runtime.InfoPanelAlignX = 0; // Left
+                      g_runtime.InfoPanelX = clampedX / s;
+                  } else {
+                      g_runtime.InfoPanelAlignX = 1; // Right
+                      g_runtime.InfoPanelX = (winW - (clampedX + panelW)) / s;
+                  }
+                  
+                  if (clampedY + panelH * 0.5f < topBoundary + (winH - topBoundary) * 0.5f) {
+                      g_runtime.InfoPanelAlignY = 0; // Top
+                      g_runtime.InfoPanelY = (clampedY - topBoundary) / s;
+                  } else {
+                      g_runtime.InfoPanelAlignY = 1; // Bottom
+                      g_runtime.InfoPanelY = (winH - (clampedY + panelH)) / s;
+                  }
+                  
                   RequestRepaint(PaintLayer::Static);
               }
+              SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
               return 0; // Handled
           }
 
@@ -7921,7 +8036,11 @@ SKIP_EDGE_NAV:;
               auto hit = g_uiRenderer->HitTest(mx, my);
               
               if (hit.type != UIHitResult::None && !(hit.type == UIHitResult::InfoRow && hit.rowIndex == -2)) {
-                  g_currentCursor = LoadCursor(nullptr, IDC_HAND);
+                  if (hit.type == UIHitResult::InfoPanelDrag) {
+                      g_currentCursor = LoadCursor(nullptr, IDC_SIZEALL);
+                  } else {
+                      g_currentCursor = LoadCursor(nullptr, IDC_HAND);
+                  }
               }
               
               // Repaint on hover state change (type OR row index)
@@ -8364,8 +8483,8 @@ SKIP_EDGE_NAV:;
             } else if (miniHit.isEdge) {
                 minimap.isDraggingWindow = true;
                 minimap.dragAnchor = pt;
-                minimap.dragStartOffsetX = g_config.NavigatorOffsetX;
-                minimap.dragStartOffsetY = g_config.NavigatorOffsetY;
+                minimap.dragStartMinimapX = minimap.layoutRect.left;
+                minimap.dragStartMinimapY = minimap.layoutRect.top;
                 SetCapture(hwnd);
                 return 0;
             } else if (miniHit.isInner) {
@@ -8515,10 +8634,17 @@ SKIP_EDGE_NAV:;
                      SendMessageW(hwnd, WM_COMMAND, IDM_OPEN_FOLDER, 0);
                      return 0;
                  case UIHitResult::InfoPanelDrag:
-                     GetPaneContext(PaneSlot::Primary).view.IsDraggingInfoPanel = true;
-                     GetPaneContext(PaneSlot::Primary).view.InfoPanelDragAnchor = pt;
-                     SetCapture(hwnd);
-                     return 0;
+                      GetPaneContext(PaneSlot::Primary).view.IsDraggingInfoPanel = true;
+                      GetPaneContext(PaneSlot::Primary).view.InfoPanelDragAnchor = pt;
+                      if (g_uiRenderer) {
+                          D2D1_RECT_F panelRect = g_uiRenderer->GetLastInfoPanelRect();
+                          g_infoPanelDragStartStartX = panelRect.left;
+                          g_infoPanelDragStartStartY = panelRect.top;
+                          g_infoPanelDragStartWidth = panelRect.right - panelRect.left;
+                          g_infoPanelDragStartHeight = panelRect.bottom - panelRect.top;
+                      }
+                      SetCapture(hwnd);
+                      return 0;
 
                  case UIHitResult::PanelToggle:
                      g_runtime.InfoPanelExpanded = !g_runtime.InfoPanelExpanded;
@@ -8743,6 +8869,8 @@ SKIP_EDGE_NAV:;
             ReleaseCapture();
             g_config.InfoPanelX = g_runtime.InfoPanelX;
             g_config.InfoPanelY = g_runtime.InfoPanelY;
+            g_config.InfoPanelAlignX = g_runtime.InfoPanelAlignX;
+            g_config.InfoPanelAlignY = g_runtime.InfoPanelAlignY;
             SaveConfig();
             return 0;
         }
