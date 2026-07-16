@@ -6477,7 +6477,8 @@ static void UpdatePanFromMinimapClick(int idx, POINT pt, HWND hwnd) {
         vpW = winW * 0.5f;
     }
     
-    int exifOrientation = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+    int baseExif = (slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
+    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
     D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
     if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) return;
     
