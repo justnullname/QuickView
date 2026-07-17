@@ -5677,7 +5677,7 @@ HRESULT CImageLoader::LoadToMemory(LPCWSTR filePath, IWICBitmap **ppBitmap,
       if (SUCCEEDED(hr) && decodeRes.success && decodeRes.pixels) {
         const UINT cb = static_cast<UINT>(decodeRes.stride * decodeRes.height);
         hr = CreateWICBitmapFromMemory(
-            decodeRes.width, decodeRes.height, GUID_WICPixelFormat32bppBGRA,
+            decodeRes.width, decodeRes.height, GUID_WICPixelFormat32bppPBGRA,
             decodeRes.stride, cb, decodeRes.pixels, ppBitmap);
         decodeCtx.freeFunc(decodeRes.pixels);
         if (SUCCEEDED(hr)) {
@@ -8497,14 +8497,11 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
       }
     }
 
-    const size_t totalPixels = static_cast<size_t>(outW) * outH;
-    const size_t threshold =
-        (std::max)(static_cast<size_t>(100), totalPixels / 10000);
     bool hasTransparency = false;
-    if (zeroAlphaCount >= threshold) {
+    if (zeroAlphaCount > 0) {
       const size_t maxLeak =
-          (std::max)(static_cast<size_t>(50), zeroAlphaCount / 100);
-      if (zeroAlphaButNotEmptyCount < maxLeak) {
+          (std::max)(static_cast<size_t>(50), zeroAlphaCount / 50);
+      if (zeroAlphaButNotEmptyCount <= maxLeak) {
         hasTransparency = true;
       }
     }
@@ -8517,6 +8514,10 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
           row[x * 4 + 3] = 255;
         }
       }
+    } else {
+      // In-place premultiply straight RGB by Alpha because Direct2D renders
+      // BGRA8888 in D2D1_ALPHA_MODE_PREMULTIPLIED mode.
+      ImageLoaderSimd::PremultiplyAlpha(pixels, outW, outH, stride);
     }
   }
 
@@ -8599,6 +8600,11 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         rowDst[x] =
             ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
       }
+    }
+
+    // In-place premultiply straight BGRA by Alpha for Direct2D
+    if (c == 4) {
+      ImageLoaderSimd::PremultiplyAlpha(pixels, w, h, stride);
     }
 
     result.pixels = pixels;

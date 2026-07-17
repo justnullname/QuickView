@@ -5446,8 +5446,9 @@ static D2D1_COLOR_F ResolveCanvasColor() {
 void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool animate) {
     if (!g_compEngine || !g_compEngine->IsInitialized()) return;
     // [DComp Barrier] Block transient layout garbage frames during sleep-restore or DPI scaling.
-    // Viewports below 200px are always invalid system transients and must not pollute image scale.
-    if (winW <= 200.0f || winH <= 200.0f) return;
+    // Viewports below 16px are always invalid system transients and must not pollute image scale.
+    // We also reject minimized (iconic) windows.
+    if (winW <= 16.0f || winH <= 16.0f || (hwnd && ::IsIconic(hwnd))) return;
 
     // 1. Update Background (Independent of image state)
     D2D1_COLOR_F bgColor = ResolveCanvasColor();
