@@ -1,43 +1,57 @@
-# QuickView v6.8.0 - Dynamic Island, Filmstrip Gallery, Custom Hotkeys & Size Optimization
-**Release Date**: 2026-06-14
+# QuickView v6.22.3 - RAW+JPEG Folding, Interactive Minimap, Loupe & Performance Boost
+**Release Date**: 2026-07-17
 
-QuickView v6.8.0 introduces redesigned window controls, an interactive filmstrip gallery, dual-mode slideshows, fully customizable hotkeys, and substantial binary size optimizations.
+> [!IMPORTANT]
+> **Introducing Pre-release Update Channel**
+> Starting from this version, we have introduced a new **Pre-release** update channel. You can now toggle this option in the **Settings** menu. By switching to the Pre-release channel, you will receive our latest bleeding-edge updates first, allowing you to help us test new features and provide early feedback. 
+> To ensure software stability, public Stable versions will be released shortly after a Pre-release version has undergone a testing period without any new bug reports.
 
-### 🏝️ Floating 'Dynamic Island' Window Controls
-The window controls have been redesigned for a cleaner interface.
-- **Floating Capsule Pill (#199)**: Replaces traditional window controls with a floating pill-shaped widget in the top-right corner. Includes hover glow transitions.
-- **Compact Size**: Reduced the size of caption buttons to maximize screen space for images.
+Welcome to QuickView v6.22.3! This release introduces highly requested features designed to declutter your photo-culling workflow, check image sharpness with ease, and experience a massive speed boost when viewing large images.
 
-### 🎞️ Interactive Filmstrip Gallery
-The filmstrip gallery has been redesigned with improved controls and animations.
-- **Top-Hover Trigger**: Hover near the top edge to expand the filmstrip gallery. The trigger mode can be set to Hover, Pinned, or Disabled via the Settings menu.
-- **Auto-Centering Scroll**: Selecting a thumbnail triggers a smooth scrolling animation that aligns the item to the center of the bar.
-- **Visual Refinements**: Corrected visual gaps when pinned, fixed zoom anchor offsets, and restored smooth horizontal auto-scrolling.
+---
 
-### 📺 Dual-Mode Slideshow (#198)
-- **Spotlight Mode**: Added a slideshow mode inspired by Picasa Spotlight, which dims the background and focuses on the active image.
-- **Normal Mode**: Standard fullscreen slideshow functionality.
+### 📸 Clean Up Your Gallery: RAW+JPEG Pairing & Folding (#201)
+*Contributed by Zhou Ying (@zorange)*
+If you shoot in RAW+JPEG dual formats, your gallery can quickly get cluttered with duplicate images. This version introduces smart folding to keep your workspace clean.
+- **Unified Photo Grid**: Automatically folds same-name RAW and JPEG (or other rendered) images into a single item in the gallery. No more duplicates!
+- **How to Enable**: This feature is **disabled by default**. Go to **Settings > Image** and check the option to enable RAW+JPEG pairing.
+- **Instantly Swap Formats**: Once enabled, you can quickly swap the visible layer of a photo to its RAW file by pressing the RAW toggle button on the toolbar or using your custom shortcut.
+- **Side-by-Side Comparison**: Want to see how the camera's JPEG processing compares to the RAW sensor data? Press `Shift + C` to compare the two components of a paired image side-by-side.
+- **Flexible Deletion**: When you delete a folded pair, QuickView will ask if you want to delete only the JPEG, only the RAW file, or both together.
 
-### ⌨️ Fully Customizable Hotkeys
-- **Custom Keyboard Mapping**: Added support for completely customizing and rebinding all core keyboard shortcuts and navigation hotkeys directly within the Settings menu.
+### 🔍 Check Focus Instantly: Detail Loupe (#201, #216)
+*Contributed by Zhou Ying (@zorange) & Core Team*
+A precision tool built specifically for photographers to cull photos and quickly check sharpness.
+- **Press-and-Hold Magnifier**: When an image is zoomed out (smaller than its original size), simply **press and hold the `L` key** (customizable) to pop up a local magnifier showing the pixels under your cursor at 100% size. Release the key to hide it instantly.
+- **Live Resize**: Need a larger inspection window? While **holding down the `L` key, scroll your mouse wheel** to dynamically resize the magnifier box.
+- **Synced Comparison**: When comparing two images side-by-side, activating the Loupe will magnify the exact same area on both panes simultaneously.
+- **Visual Options**: Customize your magnifier's shape (Circle or Square) and enjoy a high-contrast border that makes it easy to spot even on dark photos.
 
-### 📐 UI/UX Adjustments & Window Snapping
-- **Magnetic Snapping (#90)**: Window borders now snap to screen edges (100% magnetic snap) when resized.
-- **Responsive Toolbar (#194)**: Toolbar buttons automatically hide based on the window width and active mode.
-- **Timeline Scrubbing**: Implemented debounced asynchronous seeking for animated formats, providing smooth scrubbing without timeline lag. Fixed frame count and distortion issues on large GIF seeking (#197).
-- **Extended Mouse Mapping (#191)**: Added support for mapping multi-function mouse side buttons in settings.
-- **Archive Sorting (#193)**: Added an option to always sort archives by name ascending.
+### 🗺️ Navigate Large Images: Interactive Minimap (#215, #216)
+- **Navigator Map**: When you zoom deep into an image, a miniature overview map will appear in the top corner of the screen. 
+- **Drag-to-Pan**: Simply click and drag the highlighted viewport box inside the Minimap to quickly slide and pan across different sections of your image, eliminating the need for tedious manual scrolling.
+- **Improved UI**: Added high-contrast borders and a soft shadow under the close button to ensure the Minimap remains legible on any image background.
 
-### ⚡ Footprint Compression & Size Optimizations
-We reduced the binary size of the standalone executable by removing redundant templates and dependencies.
-- **C++ Stream Elimination**: Removed `<iostream>` dependencies, saving approximately 18.5 KB.
-- **Localization Deduplication**: Consolidated localization string tables, saving 10.5 KB by preventing template duplication.
-- **Vector Icon Compression**: Compressed static vector icon coordinates to 16-bit integers, saving 54 KB.
-- **Code Devirtualization**: Replaced `std::function` callbacks with C-style function pointers and devirtualized core controllers to reduce overhead.
-- **LTO Debug Fix**: Removed obsolete compiler flags (`/MERGE:.rdata=.text`) from Link-Time Optimization (LTO) builds to fix minidump crash debugging.
+### 🔄 Safer File Actions & Multi-Level Undo (#216)
+- **Mistake-Friendly Actions**: You can now undo file renaming, image rotations, and mirror flips.
+- **Recycle Bin Confirmation**: Added a setting to toggle the Recycle Bin delete confirmation prompt on or off.
+- **Gallery Deletion**: Right-click any thumbnail directly in the filmstrip gallery to delete the file immediately.
 
-### 🐛 Decoding & Memory Fixes
-- **Hybrid Allocation**: Implemented a hybrid memory allocator to balance preloading and tile rendering.
-- **Access Violations**: Fixed crashes when rapidly switching images.
-- **HDR in Archives**: Resolved an issue where HDR images decoded from ZIP/RAR archives lost their peak luminance metadata or failed to render in float format.
-- **WebP, AVIF & JXL (#195)**: Fixed shadow transparency glitches in WebP/AVIF and image distortion in JPEG XL.
+### 🎨 Better Colors & Photoshop PSD/PSB Support (#214, #144)
+- **Flawless PSD/PSB View**: Completely fixed transparency bugs when viewing Photoshop PSD/PSB files. Say goodbye to weird color noise or background grid leaks (#214).
+- **Accurate Colors**: Upgraded color profile management to read modern multi-language color profiles (#144). QuickView now accurately displays the native bit-depth and color gamut of AVIF, JXL, and RAW files without losing fidelity.
+
+### ⚡ Blazing Fast Speeds & Smoother Animations (#206, #212, #205, #144, #209, #202)
+- **Turbocharged RAW Loading**: Rewrote the core image decoding loop to leverage modern processor instructions. Loading RAW files from high-end cameras is now up to several times faster.
+- **Low Memory Usage**: Loading very large TIFF images now consumes significantly less memory (#206).
+- **Stutter-Free Gallery**: Fixed an issue where the filmstrip gallery would stutter or freeze during slideshows (#201). Transitions and auto-scrolling are now butter-smooth.
+- **System Integration**: Fixed taskbar title truncation bugs (#202) and resolved hotkey conflicts when typing with input methods (IME) (#209).
+- **Dynamic Localization**: Resolves Japanese fallback glyph issues on non-English locales (#212).
+- **Russian Translation Update**: *Contributed by Dmitry Yerokhin (@Dimmitrius)* (#205).
+
+---
+
+### ❤️ Special Thanks
+This release wouldn't be possible without our amazing contributors:
+- **Zhou Ying (@zorange)** for designing and implementing the RAW+JPEG folding system, the detail Loupe, and standardizing extension classifications.
+- **Dmitry Yerokhin (@Dimmitrius)** for updating and correcting the Russian localizations.

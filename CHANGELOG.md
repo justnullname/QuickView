@@ -1,5 +1,69 @@
 # Changelog
 
+## [6.22.3] - RAW+JPEG Folding, Minimap & Performance Optimization
+**Release Date**: 2026-07-17
+
+### ✨ Features & UX
+- **RAW+JPEG Intelligent Pairing & Folding (#201)**:
+  - Folded same-name RAW+rendered (JPEG/TIFF/etc.) images into single gallery items.
+  - Implemented asynchronous, background EXIF capture-time matching and verification to prevent false pairing.
+  - Integrated RAW visibility toggle to hot-swap visible layers in gallery, title, and info panels.
+  - Supported side-by-side comparison of active pair components with `Shift + C` shortcut.
+  - Implemented three-way deletion handling (delete rendered, delete RAW, or delete both) with Undo support.
+  - Introduced configurable whitelists and toggle switch `PairRawJpeg` under `[Image]` section in ini settings.
+- **Detail Loupe (Detail Magnifier) (#201, #216)**:
+  - Added press-and-hold magnifier (default `L`) using nearest-neighbor rendering.
+  - Enabled live magnifier resizing via mouse wheel.
+  - Synchronized Loupe viewports across both panes in Compare mode.
+  - Added options for circular/square magnifier shapes and high-contrast borders.
+  - Resolved coordinate offset mapping issues under EXIF rotation and scaling.
+- **Interactive Minimap (Navigation Map) (#215, #216)**:
+  - Implemented standalone Minimap window overlays with viewport region tracking.
+  - Enabled drag-to-pan viewport controls mapping back to main image.
+  - Added high-contrast borders, shadow effects for the close button, and dynamic edge tooltips.
+  - Synchronized Minimap viewport scaling and dragging coordinates with EXIF rotations.
+- **Multi-Level Undo & Trash Actions (#216)**:
+  - Implemented multi-level Undo history for rename, rotate, and flip actions.
+  - Added optional Recycle Bin confirmation dialog checkbox.
+  - Integrated delete commands directly within the filmstrip gallery context menus.
+- **Window Scaling & Keyboard Pan (#215, #216)**:
+  - Added hotkey bindings for panning via keyboard with configurable step sizes.
+  - Added Fit Window and Fill Window scale options.
+  - Blocked Alt+Wheel zoom-bypass edge cases.
+- **Gallery & Info Panel Enhancements (#216, #203, #144)**:
+  - Added a compact minimal bottom toolbar with a clickable auto-stretch button in FullGrid mode.
+  - Added dark background overlay layer to Info Panel Lite with customizable tag-cloud layouts.
+  - Restored expand (+) and close (x) contrast colors on Compare HUD overlays and implemented overlap avoidance.
+
+### ⚡ Performance & Architecture
+- **SIMD RAW Decoding Loop Optimization**:
+  - Rewrote LibRaw RGB-to-BGRA conversion loops using Google Highway SIMD vector instructions.
+  - Applied OpenMP static loop scheduling to maximize CPU core utilization on high-MP RAW decodes.
+- **Memory-Mapped WIC Pipeline (#206)**:
+  - Implemented memory-mapped IStream loaders for WIC-decoded large TIFF/RAW images to bypass standard disk I/O bottlenecks.
+- **Exts Classification Centralization (#201)**:
+  - Extracted and centralized RAW/Archive/Image extension metadata into `SupportedExtensions.h` using constexpr list concatenation.
+  - Devirtualized metadata probes and fast-path thumbnail checkers using allocation-free string views.
+- **DPI-Aware Gallery Hotspots (#144)**:
+  - Scaled hover triggers and thumbnail buffer caches dynamically with `g_uiScale`.
+
+### 🐛 Bug Fixes & Decoders
+- **PSD/PSB Transparency Rendering (#214)**:
+  - Fixed color noise and incorrect background bleeding in alpha-blended composite PSD layers by enforcing premultiplied alpha math.
+  - Resolved UI locks caused by extreme aspect ratios in large PSB canvas decodes.
+  - Added zero-alpha RGB fallback heuristics to determine layer transparency.
+- **Gallery Stutter & Freeze Fixes (#201)**:
+  - Replaced floating-point timers in slideshow filmstrip autoscrolling with system uptime (`GetTickCount`) to prevent autoscroll freezing during main thread idle.
+- **Metadata & ICC Profile Integrity (#144, #35601b9)**:
+  - Extended ICC metadata parsing for modern multi-language strings (`mluc`/`text`).
+  - Prevented WIC fallback decoders from overriding native AVIF/JXL/RAW bit-depth reports.
+  - Fixed JXL embedded profile extraction and normalized metadata suffix detections.
+- **Windows System Integration (#202, #209)**:
+  - Enforced Unicode Win32 APIs across sub-process spawns and resolved taskbar title truncation.
+  - Fixed IME shortcut stealing issues and restored rename dialog layout.
+- **CI Pipelines**:
+  - Implemented Ninja generator and configured vcpkg cache directories for Windows CI runner.
+
 ## [6.8.0] - The Dynamic Island, Filmstrip Evolution & Footprint Shrink
 **Release Date**: 2026-06-14
 
