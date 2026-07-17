@@ -620,6 +620,8 @@ struct AppConfig {
     bool DisableEdgeNavInCompare = true;
     int NavIndicator = 0;               // 0=Arrow
     int GalleryTriggerMode = 1;         // 0=Hover Auto, 1=Hover Hotspot Delay, 2=Click Hotspot
+    int GalleryThumbnailSize = 0;       // 0=Auto(140px), 80~300=explicit pixel size
+    int GalleryFilmstripSize = 1;       // 0=Small(110px), 1=Medium(140px), 2=Large(170px)
     int PrefetchGear = 1;               // 0=Off, 1=Auto, 2=Eco, 3=Balanced, 4=Ultra
     int MemoryReclaimStrategy = 0;      // 0=Smart, 1=Aggressive, 2=OnDemand
     

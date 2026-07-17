@@ -18,6 +18,7 @@ extern float g_uiScale;
 extern Toolbar g_toolbar;
 extern RuntimeConfig g_runtime;
 extern std::wstring& g_imagePath;
+extern void SaveConfig();
 
 
 // Helper to center crop
@@ -46,9 +47,18 @@ GalleryOverlay::GalleryOverlay() {}
 
 GalleryOverlay::~GalleryOverlay() {}
 
+float GalleryOverlay::GetFilmCellSize() const {
+    if (g_config.GalleryFilmstripSize == 0) return 110.0f;
+    if (g_config.GalleryFilmstripSize == 2) return 170.0f;
+    return 140.0f;
+}
+
 void GalleryOverlay::Initialize(ThumbnailManager* pThumbMgr, FileNavigator* pNav) {
     m_pThumbMgr = pThumbMgr;
     m_pNav = pNav;
+    // Restore persistent thumbnail size from config
+    if (g_config.GalleryThumbnailSize > 0)
+        m_preferredCellWidth = (float)std::clamp(g_config.GalleryThumbnailSize, 80, 300);
 }
 
 void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
@@ -75,6 +85,7 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
     m_velocityX = 0.0f;
     m_lastUserScrollTime = 0;
     m_recenterPending = false;
+    m_needsEnsureVisible = true;
     m_dragYOffset = 0.0f;
     m_dismissalTimer = 0.0f;
     m_hoverDelayTimer = 0.0f;
@@ -90,6 +101,7 @@ void GalleryOverlay::Close(bool keepSelection) {
     m_targetGridProgress = 0.0f;
     m_mode = GalleryMode::Hidden;
     m_expandHoverTimer = 0.0f;
+    m_gridSliderDragging = false;
     if (!keepSelection) {
         m_selectedIndex = -1;
     }
@@ -192,6 +204,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
         m_zoomDebounceTimer -= deltaTime;
         if (m_zoomDebounceTimer <= 0.0f) {
             m_isZooming = false;
+            SaveConfig(); // Persist changes once the user stops zooming
         }
         if (m_cols != m_targetCols) {
             m_cols = m_targetCols;
@@ -241,7 +254,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
         float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
         float targetH = (m_mode == GalleryMode::FullGrid || m_targetGridProgress > 0.5f)
             ? height
-            : ((FILM_CELL_SIZE + 2.0f * PADDING) * scale);
+            : ((GetFilmCellSize() + 2.0f * PADDING) * scale);
             
         float tolerance = 40.0f * scale;
             
@@ -316,7 +329,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
 
 float GalleryOverlay::GetVisualHeight(float winH) const {
     float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
-    float filmstripH = (PADDING + FILM_CELL_SIZE + PADDING) * scale; // Adjust for DPI
+    float filmstripH = (PADDING + GetFilmCellSize() + PADDING) * scale; // Adjust for DPI
     float gridH = winH;
     float currentH = filmstripH + (gridH - filmstripH) * m_gridProgress;
     return currentH * m_transitionProgress;
@@ -327,7 +340,7 @@ bool GalleryOverlay::HitTestArea(int x, int y, float winW, float winH) const {
     float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
     float targetH = (m_mode == GalleryMode::FullGrid || m_targetGridProgress > 0.5f)
         ? winH
-        : ((FILM_CELL_SIZE + 2.0f * PADDING) * scale);
+        : ((GetFilmCellSize() + 2.0f * PADDING) * scale);
     // Outer bounds tolerance zone scaled by DPI to prevent mistriggering auto-hide at edges
     float tolerance = 40.0f * scale;
     return (x >= -(int)tolerance && x <= (int)(winW + tolerance) && y >= -(int)tolerance && y <= (int)(targetH + tolerance));
@@ -342,7 +355,12 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
     float availWidth = size.width - currentPadding * 2;
     float gapRatio = 0.10f;
     float prefCellW = m_preferredCellWidth * scale;
-    m_cols = std::clamp((int)std::round((availWidth / prefCellW + gapRatio) / (1.0f + gapRatio)), 3, 12);
+    
+    // Dynamic column limits to allow reaching physical min (80px) and max (300px) at all aspect ratios / resolutions
+    int minCols = std::clamp((int)(availWidth / (300.0f * scale + 1e-5f)), 2, 12);
+    int maxCols = std::clamp((int)(availWidth / (80.0f * scale + 1e-5f)), minCols, 32);
+    
+    m_cols = std::clamp((int)std::round((availWidth / prefCellW + gapRatio) / (1.0f + gapRatio)), minCols, maxCols);
     m_targetCols = m_cols;
     
     bool sizeChanged = (m_lastSize.width != size.width || m_lastSize.height != size.height);
@@ -507,7 +525,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
     float gridCellW = availWidth / (gridCols + (gridCols - 1) * gapRatio);
     float gridGap = gridCellW * gapRatio;
     
-    float filmCellW = FILM_CELL_SIZE * scale;
+    float filmCellW = GetFilmCellSize() * scale;
     float filmGap = filmCellW * gapRatio;
     
     float currentGap = filmGap + (gridGap - filmGap) * m_gridProgress;
@@ -515,14 +533,16 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
     m_cellHeight = gridCellH;
     
     int gridRows = (int)((count + gridCols - 1) / gridCols);
-    m_maxScroll = std::max(0.0f, currentPadding * 2 + gridRows * (gridCellH + currentGap) - currentGap - size.height);
+    float barPadding = (m_gridProgress > 0.5f) ? BOTTOM_BAR_HEIGHT * scale : 0.0f;
+    m_maxScroll = std::max(0.0f, currentPadding * 2 + gridRows * (gridCellH + currentGap) - currentGap + barPadding - size.height);
     
     float filmLeftMargin = 48.0f * scale;
     m_maxScrollLeft = std::max(0.0f, filmLeftMargin * 2.0f + count * (filmCellW + currentGap) - currentGap - size.width);
     
-    // If target scroll was uninitialized (e.g. newly opened), calculate it now with the correct max scroll
-    if (m_targetScrollLeft < 0.0f && m_selectedIndex >= 0) {
+    // If newly opened or size changed, ensure selection is visible (centered)
+    if (m_needsEnsureVisible && m_selectedIndex >= 0) {
         EnsureVisible(m_selectedIndex, size, false);
+        m_needsEnsureVisible = false;
     }
     
     // Keep scroll offsets in bounds
@@ -903,10 +923,12 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
         D2D1_COLOR_F borderClr = isLight ? D2D1::ColorF(0.70f, 0.75f, 0.85f, 0.60f) : D2D1::ColorF(0.35f, 0.40f, 0.52f, 0.50f);
         D2D1_COLOR_F arrowClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(0.96f, 0.98f, 1.0f, 1.0f);
 
+        float filmLeftMargin = 48.0f * scale;
+
         // Left Arrow
         if (m_arrowLeftAlpha > 0.01f) {
-            float cx = 20.0f * g_uiScale;
-            float cy = (PADDING + FILM_CELL_SIZE / 2.0f) * scale;
+            float cx = filmLeftMargin / 2.0f;
+            float cy = (PADDING + GetFilmCellSize() / 2.0f) * scale;
             D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(cx, cy), btnRadius, btnRadius);
             
             m_brushBg->SetColor(fillClr);
@@ -925,8 +947,8 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
         
         // Right Arrow
         if (m_arrowRightAlpha > 0.01f) {
-            float cx = size.width - 20.0f * g_uiScale;
-            float cy = (PADDING + FILM_CELL_SIZE / 2.0f) * scale;
+            float cx = size.width - filmLeftMargin / 2.0f;
+            float cy = (PADDING + GetFilmCellSize() / 2.0f) * scale;
             D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(cx, cy), btnRadius, btnRadius);
             
             m_brushBg->SetColor(fillClr);
@@ -973,6 +995,130 @@ void GalleryOverlay::Render(ID2D1DeviceContext* pDC, const D2D1_SIZE_F& size, ID
             QuickView::UI::GeekIconRenderer::DrawVectorIcon(pDC, icon, pinRect, pPinBrush);
         }
         m_brushSelection->SetOpacity(1.0f); // Reset opacity
+    }
+    
+    // 7. FullGrid bottom toolbar (thumbnail size slider + close button)
+    if (m_gridProgress > 0.5f) {
+        float barH = BOTTOM_BAR_HEIGHT * scale;
+        float barY = galleryH - barH;
+        float barAlpha = (m_gridProgress - 0.5f) * 2.0f; // Fade in as grid expands (0.5→1.0 → 0→1)
+        D2D1_RECT_F barRect = D2D1::RectF(0.0f, barY, size.width, galleryH);
+        
+        // Bar background
+        D2D1_COLOR_F barBgClr = isLight
+            ? D2D1::ColorF(0.96f, 0.96f, 0.98f, 0.88f)
+            : D2D1::ColorF(0.06f, 0.06f, 0.08f, 0.88f);
+        m_brushBg->SetColor(barBgClr);
+        m_brushBg->SetOpacity(barAlpha * m_transitionProgress);
+        pDC->FillRectangle(barRect, m_brushBg.Get());
+        
+        // Top separator line
+        D2D1_COLOR_F sepClr = isLight
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
+        m_brushOverlay->SetColor(sepClr);
+        m_brushOverlay->SetOpacity(barAlpha * m_transitionProgress);
+        pDC->DrawLine(D2D1::Point2F(0.0f, barY), D2D1::Point2F(size.width, barY), m_brushOverlay.Get(), 1.0f);
+        
+        float barCenterY = barY + barH / 2.0f;
+        float opacityFinal = barAlpha * m_transitionProgress;
+        
+        // --- Slider ---
+        float sliderW = 120.0f * scale;
+        float sliderCx = size.width / 2.0f;
+        float sliderLeft = sliderCx - sliderW / 2.0f;
+        float sliderRight = sliderCx + sliderW / 2.0f;
+        float trackH = 2.0f * scale;
+        
+        // Thumb position: map m_preferredCellWidth strictly to [80px, 300px] using discrete snapping
+        bool isAutoMode = (g_config.GalleryThumbnailSize == 0);
+        
+        // Recalculate columns dynamic limits in Render Bottom Bar
+        int minCols = std::clamp((int)(availWidth / (300.0f * scale + 1e-5f)), 2, 12);
+        int maxCols = std::clamp((int)(availWidth / (80.0f * scale + 1e-5f)), minCols, 32);
+        
+        float normalized = 0.5f;
+        if (maxCols > minCols) {
+            normalized = std::clamp((float)(maxCols - m_cols) / (float)(maxCols - minCols), 0.0f, 1.0f);
+        }
+        
+        float thumbX = sliderLeft + normalized * sliderW;
+        float thumbR = (m_gridSliderHover || m_gridSliderDragging) ? 6.5f * scale : 5.5f * scale;
+        
+        // Draw track background
+        D2D1_COLOR_F trackBgClr = isLight
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+        m_brushOverlay->SetColor(trackBgClr);
+        m_brushOverlay->SetOpacity(opacityFinal);
+        D2D1_RECT_F trackRect = D2D1::RectF(sliderLeft, barCenterY - trackH / 2.0f, sliderRight, barCenterY + trackH / 2.0f);
+        pDC->FillRoundedRectangle(D2D1::RoundedRect(trackRect, trackH / 2.0f, trackH / 2.0f), m_brushOverlay.Get());
+        
+        // Draw filled portion (accent tint) - only in manual mode
+        if (!isAutoMode && normalized > 0.001f) {
+            D2D1_RECT_F filledRect = D2D1::RectF(sliderLeft, barCenterY - trackH / 2.0f, thumbX, barCenterY + trackH / 2.0f);
+            m_brushSelection->SetOpacity(opacityFinal * 0.5f);
+            pDC->FillRoundedRectangle(D2D1::RoundedRect(filledRect, trackH / 2.0f, trackH / 2.0f), m_brushSelection.Get());
+        }
+        
+        // Draw thumb circle (gray in auto mode, accent high-light in manual mode)
+        D2D1_COLOR_F thumbClr = isAutoMode ? txtClr : accClr;
+        float thumbOpacity = isAutoMode ? 0.35f : 1.0f;
+        m_brushText->SetColor(thumbClr);
+        m_brushText->SetOpacity(opacityFinal * thumbOpacity);
+        pDC->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, barCenterY), thumbR, thumbR), m_brushText.Get());
+        
+        // "auto" label button at left end of slider (accent in auto mode, gray and interactive in manual mode)
+        if (m_textFormatStats) {
+            float labelOpacity = isAutoMode ? 1.0f : (m_gridAutoHover ? 0.75f : 0.45f); // Interactive hover state feedback
+            D2D1_COLOR_F labelClr = isAutoMode ? accClr : txtClr;
+            m_brushText->SetColor(labelClr);
+            m_brushText->SetOpacity(opacityFinal * labelOpacity);
+            
+            // Set trailing alignment for perfect right-alignment matching the slider gap
+            m_textFormatStats->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            
+            D2D1_RECT_F labelRect = D2D1::RectF(sliderLeft - 100.0f * scale, barCenterY - 8.0f * scale, sliderLeft - 8.0f * scale, barCenterY + 8.0f * scale);
+            pDC->DrawText(L"auto", 4, m_textFormatStats.Get(), labelRect, m_brushText.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                
+            // Restore default leading alignment
+            m_textFormatStats->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
+        
+        // "+" label at right end of slider
+        if (m_textFormatStats) {
+            m_brushText->SetColor(txtClr);
+            m_brushText->SetOpacity(opacityFinal * 0.45f);
+            
+            // Make sure leading alignment is active for the "+" label
+            m_textFormatStats->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            
+            D2D1_RECT_F plusRect = D2D1::RectF(sliderRight + 8.0f * scale, barCenterY - 8.0f * scale, sliderRight + 108.0f * scale, barCenterY + 8.0f * scale);
+            pDC->DrawText(L"+", 1, m_textFormatStats.Get(), plusRect, m_brushText.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        }
+        
+        // --- Close button ---
+        float closeSize = 14.0f * scale;
+        float closeX = size.width - 20.0f * scale - closeSize;
+        float closeY = barCenterY - closeSize / 2.0f;
+        D2D1_RECT_F closeRect = D2D1::RectF(closeX, closeY, closeX + closeSize, closeY + closeSize);
+        
+        if (m_gridCloseHover) {
+            m_brushSelection->SetOpacity(opacityFinal);
+            QuickView::UI::GeekIconRenderer::DrawVectorIcon(pDC, GeekIcons::CloseVector, closeRect, m_brushSelection.Get());
+        } else {
+            D2D1_COLOR_F closeClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.65f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.65f);
+            m_brushText->SetColor(closeClr);
+            m_brushText->SetOpacity(opacityFinal);
+            QuickView::UI::GeekIconRenderer::DrawVectorIcon(pDC, GeekIcons::CloseVector, closeRect, m_brushText.Get());
+        }
+        
+        // Reset brush states
+        m_brushText->SetColor(txtClr);
+        m_brushText->SetOpacity(1.0f);
+        m_brushSelection->SetOpacity(1.0f);
     }
     
     pDC->PopAxisAlignedClip(); // Pop panelRect
@@ -1098,6 +1244,11 @@ bool GalleryOverlay::OnMouseWheel(int delta) {
         // Ctrl+Wheel: zoom preferred cell size
         float step = 15.0f; // 15 logical pixels per wheel notch
         m_preferredCellWidth = std::clamp(m_preferredCellWidth + (delta > 0 ? step : -step), 80.0f, 300.0f);
+        
+        // Cancel Auto mode on scroll zoom and persist immediately
+        g_config.GalleryThumbnailSize = std::clamp((int)m_preferredCellWidth, 80, 300);
+        SaveConfig();
+        
         m_isZooming = true;
         m_zoomDebounceTimer = 0.15f; // 150ms debounce
         return true;
@@ -1142,18 +1293,19 @@ bool GalleryOverlay::OnLButtonDown(int x, int y) {
     
     // Check filmstrip left/right arrows
     if (m_gridProgress < 0.2f) {
-        float arrowCy = (PADDING + FILM_CELL_SIZE / 2.0f) * g_uiScale;
-        float arrowR = (g_config.NavIndicator == 0) ? 44.0f * g_uiScale : 60.0f * g_uiScale;
-        float arrowW = (g_config.NavIndicator == 0) ? 64.0f * g_uiScale : 80.0f * g_uiScale;
-        bool isLeftPinZone = (fx >= 10.0f * g_uiScale && fx <= 38.0f * g_uiScale && fy >= 10.0f * g_uiScale && fy <= 38.0f * g_uiScale);
+        float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+        float filmLeftMargin = 48.0f * scale;
+        float galleryH = GetVisualHeight(m_lastSize.height);
+        bool isLeftPinZone = (fx >= 10.0f * scale && fx <= 38.0f * scale && fy >= 10.0f * scale && fy <= 38.0f * scale);
+        bool inYRange = (fy >= 2.0f * scale && fy <= galleryH - 2.0f * scale);
         
-        if (fx < arrowW && fabsf(fy - arrowCy) < arrowR && !isLeftPinZone) {
+        if (inYRange && (fx >= 2.0f * scale && fx <= filmLeftMargin - 2.0f * scale) && !isLeftPinZone) {
             if (m_targetScrollLeft < 0.0f) m_targetScrollLeft = m_scrollLeft;
             m_targetScrollLeft = std::max(0.0f, m_targetScrollLeft - 300.0f);
             RequestRepaint(QuickView::PaintLayer::Gallery);
             return true;
         }
-        if (fx > m_lastSize.width - arrowW && fabsf(fy - arrowCy) < arrowR) {
+        if (inYRange && (fx >= m_lastSize.width - filmLeftMargin + 2.0f * scale && fx <= m_lastSize.width - 2.0f * scale)) {
             if (m_targetScrollLeft < 0.0f) m_targetScrollLeft = m_scrollLeft;
             m_targetScrollLeft = std::min(m_maxScrollLeft, m_targetScrollLeft + 300.0f);
             RequestRepaint(QuickView::PaintLayer::Gallery);
@@ -1170,6 +1322,79 @@ bool GalleryOverlay::OnLButtonDown(int x, int y) {
         if (fabsf(fx - handleCx) < hitW && fabsf(fy - handleCy) < hitH && m_gridProgress < 0.2f) {
             SetMode(GalleryMode::FullGrid);
             return true;
+        }
+    }
+    
+    // FullGrid bottom bar interaction (close + slider)
+    if (m_gridProgress > 0.5f) {
+        float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+        float barH = BOTTOM_BAR_HEIGHT * scale;
+        float barY = galleryH - barH;
+        
+        if (fy >= barY) {
+            // Close button
+            float closeSize = 14.0f * scale;
+            float closeX = m_lastSize.width - 20.0f * scale - closeSize;
+            float closeCY = barY + barH / 2.0f;
+            float closeHitR = 16.0f * scale;
+            if (fabsf(fx - (closeX + closeSize / 2.0f)) < closeHitR && fabsf(fy - closeCY) < closeHitR) {
+                Close();
+                return true;
+            }
+            
+            // Slider: click-to-jump or drag start
+            float sliderW = 120.0f * scale;
+            float sliderCx = m_lastSize.width / 2.0f;
+            float sliderLeft = sliderCx - sliderW / 2.0f;
+            float sliderRight = sliderCx + sliderW / 2.0f;
+            float sliderHitH = 14.0f * scale; // Generous vertical hit area
+            float barCenterY = barY + barH / 2.0f;
+            
+            // 1. Check auto button hit (independent of slider bounds check)
+            float autoLeft = sliderLeft - 42.0f * scale;
+            float autoRight = sliderLeft - 8.0f * scale;
+            if (fx >= autoLeft && fx <= autoRight && fabsf(fy - barCenterY) < 10.0f * scale) {
+                bool isAuto = (g_config.GalleryThumbnailSize == 0);
+                if (isAuto) {
+                    // Switch to manual mode
+                    g_config.GalleryThumbnailSize = std::clamp((int)m_preferredCellWidth, 80, 300);
+                } else {
+                    // Switch to auto mode
+                    g_config.GalleryThumbnailSize = 0;
+                    m_preferredCellWidth = 140.0f;
+                }
+                SaveConfig();
+                RequestRepaint(QuickView::PaintLayer::Gallery);
+                return true;
+            }
+            
+            // 2. Check slider hit (discrete snap mapping 80px ~ 300px)
+            if (fx >= sliderLeft - 8.0f * scale && fx <= sliderRight + 8.0f * scale &&
+                fabsf(fy - barCenterY) < sliderHitH) {
+                m_gridSliderDragging = true;
+                
+                float currentPadding = PADDING * scale;
+                float availWidth = m_lastSize.width - currentPadding * 2;
+                int minCols = std::clamp((int)(availWidth / (300.0f * scale + 1e-5f)), 2, 12);
+                int maxCols = std::clamp((int)(availWidth / (80.0f * scale + 1e-5f)), minCols, 32);
+                
+                float t = std::clamp((fx - sliderLeft) / sliderW, 0.0f, 1.0f);
+                int cols = maxCols;
+                if (maxCols > minCols) {
+                    cols = maxCols - (int)std::round(t * (maxCols - minCols));
+                }
+                m_preferredCellWidth = (availWidth / (cols * 1.10f - 0.10f)) / scale;
+                
+                // Clicking the slider cancels Auto mode
+                g_config.GalleryThumbnailSize = std::clamp((int)m_preferredCellWidth, 80, 300);
+                
+                m_isZooming = true;
+                m_zoomDebounceTimer = 0.15f;
+                RequestRepaint(QuickView::PaintLayer::Gallery);
+                return true;
+            }
+            
+            return true; // Consume click on bar area (prevent thumbnail drag)
         }
     }
     
@@ -1197,12 +1422,13 @@ bool GalleryOverlay::OnMouseMove(int x, int y) {
     
     // Update arrow hover states (filmstrip mode)
     if (m_gridProgress < 0.2f) {
-        float arrowCy = (PADDING + FILM_CELL_SIZE / 2.0f) * g_uiScale;
-        float arrowR = (g_config.NavIndicator == 0) ? 44.0f * g_uiScale : 60.0f * g_uiScale;
-        float arrowW = (g_config.NavIndicator == 0) ? 64.0f * g_uiScale : 80.0f * g_uiScale;
-        bool isLeftPinZone = (fx >= 10.0f * g_uiScale && fx <= 38.0f * g_uiScale && fy >= 10.0f * g_uiScale && fy <= 38.0f * g_uiScale);
-        bool leftHover = (fx < arrowW && fabsf(fy - arrowCy) < arrowR && !isLeftPinZone);
-        bool rightHover = (fx > m_lastSize.width - arrowW && fabsf(fy - arrowCy) < arrowR);
+        float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+        float filmLeftMargin = 48.0f * scale;
+        float galleryH = GetVisualHeight(m_lastSize.height);
+        bool isLeftPinZone = (fx >= 10.0f * scale && fx <= 38.0f * scale && fy >= 10.0f * scale && fy <= 38.0f * scale);
+        bool inYRange = (fy >= 2.0f * scale && fy <= galleryH - 2.0f * scale);
+        bool leftHover = inYRange && (fx >= 2.0f * scale && fx <= filmLeftMargin - 2.0f * scale) && !isLeftPinZone;
+        bool rightHover = inYRange && (fx >= m_lastSize.width - filmLeftMargin + 2.0f * scale && fx <= m_lastSize.width - 2.0f * scale);
         if (leftHover != m_arrowLeftHover || rightHover != m_arrowRightHover) {
             m_arrowLeftHover = leftHover;
             m_arrowRightHover = rightHover;
@@ -1232,6 +1458,77 @@ bool GalleryOverlay::OnMouseMove(int x, int y) {
         bool hintHover = (fabsf(fx - handleCx) < hitW && fabsf(fy - handleCy) < hitH);
         if (hintHover != m_bottomHintHover) {
             m_bottomHintHover = hintHover;
+            changed = true;
+        }
+    }
+    
+    // FullGrid bottom bar hover + slider drag
+    if (m_gridProgress > 0.5f) {
+        float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+        float galleryH = GetVisualHeight(m_lastSize.height);
+        float barH = BOTTOM_BAR_HEIGHT * scale;
+        float barY = galleryH - barH;
+        float barCenterY = barY + barH / 2.0f;
+        
+        // Close button hover
+        float closeSize = 14.0f * scale;
+        float closeX = m_lastSize.width - 20.0f * scale - closeSize;
+        float closeHitR = 16.0f * scale;
+        bool closeHover = (fabsf(fx - (closeX + closeSize / 2.0f)) < closeHitR && fabsf(fy - barCenterY) < closeHitR && fy >= barY);
+        if (closeHover != m_gridCloseHover) {
+            m_gridCloseHover = closeHover;
+            changed = true;
+        }
+        
+        // Slider hover
+        float sliderW = 120.0f * scale;
+        float sliderCx = m_lastSize.width / 2.0f;
+        float sliderLeft = sliderCx - sliderW / 2.0f;
+        float sliderRight = sliderCx + sliderW / 2.0f;
+        float sliderHitH = 14.0f * scale;
+        bool sliderHover = (fx >= sliderLeft - 10.0f * scale && fx <= sliderRight + 10.0f * scale && fabsf(fy - barCenterY) < sliderHitH && fy >= barY);
+        if (sliderHover != m_gridSliderHover) {
+            m_gridSliderHover = sliderHover;
+            changed = true;
+        }
+        
+        // Auto button hover
+        float autoLeft = sliderLeft - 42.0f * scale;
+        float autoRight = sliderLeft - 8.0f * scale;
+        bool autoHover = (fx >= autoLeft && fx <= autoRight && fabsf(fy - barCenterY) < 10.0f * scale && fy >= barY);
+        if (autoHover != m_gridAutoHover) {
+            m_gridAutoHover = autoHover;
+            changed = true;
+        }
+        
+        // Slider drag tracking
+        if (m_gridSliderDragging) {
+            float t = std::clamp((fx - sliderLeft) / sliderW, 0.0f, 1.0f);
+            
+            float currentPadding = PADDING * scale;
+            float availWidth = m_lastSize.width - currentPadding * 2;
+            int minCols = std::clamp((int)(availWidth / (300.0f * scale + 1e-5f)), 2, 12);
+            int maxCols = std::clamp((int)(availWidth / (80.0f * scale + 1e-5f)), minCols, 32);
+            
+            int cols = maxCols;
+            if (maxCols > minCols) {
+                cols = maxCols - (int)std::round(t * (maxCols - minCols));
+            }
+            m_preferredCellWidth = (availWidth / (cols * 1.10f - 0.10f)) / scale;
+            
+            // Dragging the slider cancels Auto mode
+            g_config.GalleryThumbnailSize = std::clamp((int)m_preferredCellWidth, 80, 300);
+            
+            m_isZooming = true;
+            m_zoomDebounceTimer = 0.15f;
+            changed = true;
+        }
+    } else {
+        // Reset hover states when not in FullGrid
+        if (m_gridCloseHover || m_gridSliderHover || m_gridAutoHover) {
+            m_gridCloseHover = false;
+            m_gridSliderHover = false;
+            m_gridAutoHover = false;
             changed = true;
         }
     }
@@ -1297,6 +1594,16 @@ bool GalleryOverlay::OnMouseMove(int x, int y) {
 bool GalleryOverlay::OnLButtonUp(int x, int y, int& outSelectedIndex) {
     if (!IsVisible()) return false;
     
+    // Finalize slider drag → persist to config
+    if (m_gridSliderDragging) {
+        m_gridSliderDragging = false;
+        // Persistence was already updated continuously in OnMouseMove / OnLButtonDown.
+        // We now just finalize by calling SaveConfig() on mouse release.
+        SaveConfig();
+        RequestRepaint(QuickView::PaintLayer::Gallery);
+        return true;
+    }
+    
     bool wasDragging = m_isLButtonDown;
     m_isLButtonDown = false;
     
@@ -1340,7 +1647,7 @@ void GalleryOverlay::EnsureVisible(int index, const D2D1_SIZE_F& size, bool smoo
     float gridCellW = availWidth / (m_cols + (m_cols - 1) * gapRatio);
     float gridGap = gridCellW * gapRatio;
     
-    float filmCellW = FILM_CELL_SIZE * scale;
+    float filmCellW = GetFilmCellSize() * scale;
     float filmGap = filmCellW * gapRatio;
     
     float currentGap = filmGap + (gridGap - filmGap) * m_gridProgress;
@@ -1357,7 +1664,7 @@ void GalleryOverlay::EnsureVisible(int index, const D2D1_SIZE_F& size, bool smoo
             m_scrollTop = itemBottom - size.height;
         }
     } else {
-        float cellW = FILM_CELL_SIZE * scale;
+        float cellW = GetFilmCellSize() * scale;
         float filmLeftMargin = 48.0f * scale;
         float itemLeft = filmLeftMargin + index * (cellW + currentGap);
         
@@ -1388,14 +1695,14 @@ D2D1_RECT_F GalleryOverlay::GetItemRect(int index, float winW) const {
     float gridCellW = availWidth / (gridCols + (gridCols - 1) * gapRatio);
     float gridGap = gridCellW * gapRatio;
     
-    float filmCellW = FILM_CELL_SIZE * scale;
+    float filmCellW = GetFilmCellSize() * scale;
     float filmGap = filmCellW * gapRatio;
     
     float currentGap = filmGap + (gridGap - filmGap) * m_gridProgress;
     
     float gridCellH = gridCellW;
     
-    float filmCellH = FILM_CELL_SIZE * scale;
+    float filmCellH = GetFilmCellSize() * scale;
     float filmLeftMargin = 48.0f * scale;
     
     float fx = filmLeftMargin + index * (filmCellW + currentGap) - m_scrollLeft;

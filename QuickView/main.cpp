@@ -4239,6 +4239,8 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"MiddleClickAction", std::to_wstring((int)g_config.MiddleClickAction).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"GalleryTriggerMode", std::to_wstring(g_config.GalleryTriggerMode).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"GalleryThumbnailSize", std::to_wstring(g_config.GalleryThumbnailSize).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"GalleryFilmstripSize", std::to_wstring(g_config.GalleryFilmstripSize).c_str(), iniPath.c_str());
     // NavIndicator moved to View section
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
@@ -4533,6 +4535,8 @@ void LoadConfig() {
     g_config.MiddleClickIndex = (g_config.MiddleClickAction == MouseAction::ExitApp) ? 1 : 0;
     g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
     g_config.GalleryTriggerMode = GetPrivateProfileIntW(L"Controls", L"GalleryTriggerMode", 1, iniPath.c_str());
+    g_config.GalleryThumbnailSize = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"GalleryThumbnailSize", 0, iniPath.c_str()), 0, 300);
+    g_config.GalleryFilmstripSize = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"GalleryFilmstripSize", 1, iniPath.c_str()), 0, 2);
     // NavIndicator moved to View section
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)

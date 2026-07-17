@@ -137,12 +137,16 @@ private:
 
     
     int m_selectedIndex = -1;
+    bool m_needsEnsureVisible = false;
     int m_hoverIndex = -1;
     
     // Constants
     static constexpr float GAP = 12.0f;
     static constexpr float PADDING = 24.0f;
     static constexpr float FILM_CELL_SIZE = 140.0f;
+    static constexpr float BOTTOM_BAR_HEIGHT = 32.0f;
+    
+    float GetFilmCellSize() const;
 
     
     // Navigation arrows at ends of Filmstrip
@@ -163,6 +167,11 @@ private:
     bool m_bottomHintHover = false;
     float m_bottomHintAlpha = 0.0f;
     
+    bool m_gridCloseHover = false;
+    bool m_gridSliderHover = false;
+    bool m_gridSliderDragging = false;
+    bool m_gridAutoHover = false;
+
     // D2D Resources
     ComPtr<ID2D1SolidColorBrush> m_brushBg;
     ComPtr<ID2D1SolidColorBrush> m_brushSelection;

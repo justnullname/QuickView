@@ -521,6 +521,10 @@ const wchar_t *Settings_Option_GalleryTriggerDelay = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerClick = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerDisable = nullptr;
 const wchar_t *Settings_Tooltip_GalleryTrigger = nullptr;
+const wchar_t *Settings_Label_GalleryFilmstripSize = nullptr;
+const wchar_t *Settings_Option_FilmstripSizeSmall = nullptr;
+const wchar_t *Settings_Option_FilmstripSizeMedium = nullptr;
+const wchar_t *Settings_Option_FilmstripSizeLarge = nullptr;
 const wchar_t *OSD_SlideshowStarted = nullptr;
 const wchar_t *OSD_SlideshowStopped = nullptr;
 const wchar_t *OSD_SlideshowResumed = nullptr;
@@ -1043,6 +1047,10 @@ struct LanguageTable {
     const wchar_t *Settings_Option_GalleryTriggerClick;
     const wchar_t *Settings_Option_GalleryTriggerDisable;
     const wchar_t *Settings_Tooltip_GalleryTrigger;
+    const wchar_t *Settings_Label_GalleryFilmstripSize;
+    const wchar_t *Settings_Option_FilmstripSizeSmall;
+    const wchar_t *Settings_Option_FilmstripSizeMedium;
+    const wchar_t *Settings_Option_FilmstripSizeLarge;
     const wchar_t *OSD_SlideshowStarted;
     const wchar_t *OSD_SlideshowStopped;
     const wchar_t *OSD_SlideshowResumed;
@@ -1566,6 +1574,10 @@ static const LanguageTable Table_EN = {
     L"Click Hotspot", // Settings_Option_GalleryTriggerClick
     L"Disabled", // Settings_Option_GalleryTriggerDisable
     L"This feature is automatically disabled when the window is smaller than 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Filmstrip Size", // Settings_Label_GalleryFilmstripSize
+    L"Small (110px)", // Settings_Option_FilmstripSizeSmall
+    L"Medium (140px)", // Settings_Option_FilmstripSizeMedium
+    L"Large (170px)", // Settings_Option_FilmstripSizeLarge
     L"Slideshow Started", // OSD_SlideshowStarted
     L"Slideshow Stopped", // OSD_SlideshowStopped
     L"Slideshow Resumed", // OSD_SlideshowResumed
@@ -2089,6 +2101,10 @@ static const LanguageTable Table_CN = {
     L"点击热点", // Settings_Option_GalleryTriggerClick
     L"停用", // Settings_Option_GalleryTriggerDisable
     L"该功能在窗口小于 600x450 时将自动禁用。", // Settings_Tooltip_GalleryTrigger
+    L"胶片带缩略图", // Settings_Label_GalleryFilmstripSize
+    L"小 (110px)", // Settings_Option_FilmstripSizeSmall
+    L"中 (140px)", // Settings_Option_FilmstripSizeMedium
+    L"大 (170px)", // Settings_Option_FilmstripSizeLarge
     L"开始播放幻灯片", // OSD_SlideshowStarted
     L"停止播放幻灯片", // OSD_SlideshowStopped
     L"继续播放幻灯片", // OSD_SlideshowResumed
@@ -2612,6 +2628,10 @@ static const LanguageTable Table_TW = {
     L"點擊熱點", // Settings_Option_GalleryTriggerClick
     L"停用", // Settings_Option_GalleryTriggerDisable
     L"該功能在視窗小於 600x450 時將自動禁用。", // Settings_Tooltip_GalleryTrigger
+    L"膠片帶縮略圖", // Settings_Label_GalleryFilmstripSize
+    L"小 (110px)", // Settings_Option_FilmstripSizeSmall
+    L"中 (140px)", // Settings_Option_FilmstripSizeMedium
+    L"大 (170px)", // Settings_Option_FilmstripSizeLarge
     L"開始播放幻燈片", // OSD_SlideshowStarted
     L"停止播放幻燈片", // OSD_SlideshowStopped
     L"繼續播放幻燈片", // OSD_SlideshowResumed
@@ -3135,6 +3155,10 @@ static const LanguageTable Table_JA = {
     L"ホットスポットクリック", // Settings_Option_GalleryTriggerClick
     L"無効", // Settings_Option_GalleryTriggerDisable
     L"ウィンドウが600x450より小さい場合、この機能は自動的に無効になります。", // Settings_Tooltip_GalleryTrigger
+    L"フィルムサイズ", // Settings_Label_GalleryFilmstripSize
+    L"小 (110px)", // Settings_Option_FilmstripSizeSmall
+    L"中 (140px)", // Settings_Option_FilmstripSizeMedium
+    L"大 (170px)", // Settings_Option_FilmstripSizeLarge
     L"スライドショー開始", // OSD_SlideshowStarted
     L"スライドショー停止", // OSD_SlideshowStopped
     L"スライドショー再開", // OSD_SlideshowResumed
@@ -3658,6 +3682,10 @@ static const LanguageTable Table_RU = {
     L"Щелчок по точке", // Settings_Option_GalleryTriggerClick
     L"Отключено", // Settings_Option_GalleryTriggerDisable
     L"Эта функция автоматически отключается, если размер окна меньше 600x450 пкс.", // Settings_Tooltip_GalleryTrigger
+    L"Размер ленты", // Settings_Label_GalleryFilmstripSize
+    L"Малый (110px)", // Settings_Option_FilmstripSizeSmall
+    L"Средний (140px)", // Settings_Option_FilmstripSizeMedium
+    L"Большой (170px)", // Settings_Option_FilmstripSizeLarge
     L"Слайд-шоу запущено", // OSD_SlideshowStarted
     L"Слайд-шоу остановлено", // OSD_SlideshowStopped
     L"Слайд-шоу возобновлено", // OSD_SlideshowResumed
@@ -4181,6 +4209,10 @@ static const LanguageTable Table_DE = {
     L"Hotspot-Klick", // Settings_Option_GalleryTriggerClick
     L"Deaktiviert", // Settings_Option_GalleryTriggerDisable
     L"Diese Funktion wird automatisch deaktiviert, wenn das Fenster kleiner als 600x450 ist.", // Settings_Tooltip_GalleryTrigger
+    L"Filmstreifengröße", // Settings_Label_GalleryFilmstripSize
+    L"Klein (110px)", // Settings_Option_FilmstripSizeSmall
+    L"Mittel (140px)", // Settings_Option_FilmstripSizeMedium
+    L"Groß (170px)", // Settings_Option_FilmstripSizeLarge
     L"Diashow gestartet", // OSD_SlideshowStarted
     L"Diashow gestoppt", // OSD_SlideshowStopped
     L"Diashow fortgesetzt", // OSD_SlideshowResumed
@@ -4704,6 +4736,10 @@ static const LanguageTable Table_ES = {
     L"Clic en punto caliente", // Settings_Option_GalleryTriggerClick
     L"Deshabilitado", // Settings_Option_GalleryTriggerDisable
     L"Esta función se desactiva automáticamente cuando la ventana es menor de 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Tamaño de cinta", // Settings_Label_GalleryFilmstripSize
+    L"Pequeño (110px)", // Settings_Option_FilmstripSizeSmall
+    L"Mediano (140px)", // Settings_Option_FilmstripSizeMedium
+    L"Grande (170px)", // Settings_Option_FilmstripSizeLarge
     L"Presentación iniciada", // OSD_SlideshowStarted
     L"Presentación detenida", // OSD_SlideshowStopped
     L"Presentación reanudada", // OSD_SlideshowResumed
@@ -5227,6 +5263,10 @@ static const LanguageTable Table_FR = {
     L"Clic sur le point chaud", // Settings_Option_GalleryTriggerClick
     L"Désactivé", // Settings_Option_GalleryTriggerDisable
     L"Cette fonctionnalité est automatiquement désactivée lorsque la fenêtre est plus petite que 600x450.", // Settings_Tooltip_GalleryTrigger
+    L"Taille de pellicule", // Settings_Label_GalleryFilmstripSize
+    L"Petit (110px)", // Settings_Option_FilmstripSizeSmall
+    L"Moyen (140px)", // Settings_Option_FilmstripSizeMedium
+    L"Grand (170px)", // Settings_Option_FilmstripSizeLarge
     L"Diaporama démarré", // OSD_SlideshowStarted
     L"Diaporama arrêté", // OSD_SlideshowStopped
     L"Diaporama repris", // OSD_SlideshowResumed
@@ -5754,6 +5794,10 @@ void Apply(const LanguageTable& t) {
   Settings_Option_GalleryTriggerClick = t.Settings_Option_GalleryTriggerClick;
   Settings_Option_GalleryTriggerDisable = t.Settings_Option_GalleryTriggerDisable;
   Settings_Tooltip_GalleryTrigger = t.Settings_Tooltip_GalleryTrigger;
+  Settings_Label_GalleryFilmstripSize = t.Settings_Label_GalleryFilmstripSize;
+  Settings_Option_FilmstripSizeSmall = t.Settings_Option_FilmstripSizeSmall;
+  Settings_Option_FilmstripSizeMedium = t.Settings_Option_FilmstripSizeMedium;
+  Settings_Option_FilmstripSizeLarge = t.Settings_Option_FilmstripSizeLarge;
   OSD_SlideshowStarted = t.OSD_SlideshowStarted;
   OSD_SlideshowStopped = t.OSD_SlideshowStopped;
   OSD_SlideshowResumed = t.OSD_SlideshowResumed;

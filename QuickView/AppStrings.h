@@ -252,6 +252,10 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_GalleryTriggerClick;
     extern const wchar_t* Settings_Option_GalleryTriggerDisable;
     extern const wchar_t* Settings_Tooltip_GalleryTrigger;
+    extern const wchar_t* Settings_Label_GalleryFilmstripSize;
+    extern const wchar_t* Settings_Option_FilmstripSizeSmall;
+    extern const wchar_t* Settings_Option_FilmstripSizeMedium;
+    extern const wchar_t* Settings_Option_FilmstripSizeLarge;
     
     extern const wchar_t* Settings_Group_Foundation;
     extern const wchar_t* Settings_Group_Startup;
