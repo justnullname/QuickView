@@ -693,7 +693,6 @@ static HRESULT LoadHdr(const uint8_t *data, size_t size,
                        const DecodeContext &ctx, DecodeResult &result);
 } // namespace Stb
 namespace PsdComposite {
-static bool IsPSB(const uint8_t *data, size_t size);
 static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
                     DecodeResult &result);
 } // namespace PsdComposite
@@ -709,7 +708,6 @@ struct IWICBitmap;
 namespace QuickView {
 namespace Codec {
 namespace PsdComposite {
-static bool IsPSB(const uint8_t *data, size_t size);
 static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
                     DecodeResult &result);
 } // namespace PsdComposite
@@ -1110,18 +1108,17 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
       return S_OK;
     }
   } else if (fmt == L"PSD") {
-    const bool isPsb = PsdComposite::IsPSB(mappedData, mappedSize);
-    if (isPsb) {
-      HRESULT hr = PsdComposite::Load(mappedData, mappedSize, ctx, result);
-      if (hr == E_ABORT || hr == E_OUTOFMEMORY)
-        return hr;
-      if (SUCCEEDED(hr))
-        return S_OK;
-    } else {
-      HRESULT hr = Stb::Load(mappedData, mappedSize, ctx, result);
-      if (SUCCEEDED(hr)) {
-        return S_OK;
-      }
+    // Prefer native PsdComposite::Load (handles 8-bit & 16-bit RGB/Gray PSD/PSB cleanly)
+    HRESULT hr = PsdComposite::Load(mappedData, mappedSize, ctx, result);
+    if (hr == E_ABORT || hr == E_OUTOFMEMORY)
+      return hr;
+    if (SUCCEEDED(hr))
+      return S_OK;
+
+    // Fallback to Stb::Load if native composite fails
+    hr = Stb::Load(mappedData, mappedSize, ctx, result);
+    if (SUCCEEDED(hr)) {
+      return S_OK;
     }
 
     PreviewExtractor::ExtractedData exData;
@@ -8139,6 +8136,7 @@ struct HeaderInfo {
   uint16_t colorMode = 0;   // 1=Gray, 3=RGB supported
   uint16_t compression = 0; // 0=Raw, 1=RLE
   size_t imageDataOffset = 0;
+  bool hasTransparency = false;
 };
 
 static inline uint16_t ReadBE16(const uint8_t *p) {
@@ -8200,6 +8198,52 @@ static bool ParseHeader(const uint8_t *data, size_t size, HeaderInfo &out) {
   off += 4;
   if (!FitsRange(off, imageResLen, size))
     return false;
+
+  // Parse Image Resources to locate Alpha Channel Names (ID 1006)
+  const uint8_t *resPtr = data + off;
+  const uint8_t *resEnd = resPtr + imageResLen;
+  int alphaNamesCount = 0;
+  bool hasAlphaNamesResource = false;
+  while (resPtr + 12 <= resEnd) {
+    if (std::memcmp(resPtr, "8BIM", 4) != 0 && std::memcmp(resPtr, "MeSa", 4) != 0) {
+      break;
+    }
+    uint16_t id = ReadBE16(resPtr + 4);
+    uint8_t nameLen = resPtr[6];
+    size_t nameBlockLen = (nameLen + 1 + 1) & ~1;
+    if (resPtr + 6 + nameBlockLen + 4 > resEnd)
+      break;
+    uint32_t dataSize = ReadBE32(resPtr + 6 + nameBlockLen);
+    size_t dataBlockLen = (dataSize + 1) & ~1;
+    const uint8_t *dataPtr = resPtr + 6 + nameBlockLen + 4;
+    if (dataPtr + dataBlockLen > resEnd)
+      break;
+
+    if (id == 1006) {
+      hasAlphaNamesResource = true;
+      const uint8_t *pName = dataPtr;
+      const uint8_t *pNameEnd = dataPtr + dataSize;
+      while (pName < pNameEnd) {
+        uint8_t len = *pName++;
+        if (len > 0) {
+          alphaNamesCount++;
+        }
+        pName += len;
+      }
+    }
+    resPtr = dataPtr + dataBlockLen;
+  }
+
+  if (out.channels > 3) {
+    if (hasAlphaNamesResource) {
+      out.hasTransparency = (alphaNamesCount < (out.channels - 3));
+    } else {
+      out.hasTransparency = true;
+    }
+  } else {
+    out.hasTransparency = false;
+  }
+
   off += static_cast<size_t>(imageResLen);
 
   uint64_t layerMaskLen = 0;
@@ -8226,10 +8270,7 @@ static bool ParseHeader(const uint8_t *data, size_t size, HeaderInfo &out) {
   return true;
 }
 
-static bool IsPSB(const uint8_t *data, size_t size) {
-  HeaderInfo header;
-  return ParseHeader(data, size, header) && header.version == 2;
-}
+
 
 static bool DecodePackBitsRow(const uint8_t *src, size_t srcSize, uint8_t *dst,
                               size_t dstSize) {
@@ -8262,12 +8303,12 @@ static bool DecodePackBitsRow(const uint8_t *src, size_t srcSize, uint8_t *dst,
   return di == dstSize;
 }
 
-static inline uint8_t SampleTo8Bit(const uint8_t *row, uint32_t srcX,
-                                   uint16_t depth) {
-  if (depth == 16) {
-    return row[static_cast<size_t>(srcX) * 2]; // use high byte
-  }
-  return row[srcX];
+static inline uint8_t Sample16To8Bit(const uint8_t *row, uint32_t srcX) {
+  const size_t offset = static_cast<size_t>(srcX) * 2;
+  uint32_t val = (static_cast<uint32_t>(row[offset]) << 8) | row[offset + 1];
+  if (val > 32768) val = 32768;
+  // Map [0, 32768] -> [0, 255] with rounding
+  return static_cast<uint8_t>((val * 255 + 16384) / 32768);
 }
 
 static void WriteChannelToBgraRow(uint8_t *dstRow,
@@ -8276,28 +8317,49 @@ static void WriteChannelToBgraRow(uint8_t *dstRow,
                                   uint16_t colorMode, uint16_t channelIndex) {
   const size_t outW = srcXForOut.size();
   if (colorMode == 3) {
-    for (size_t ox = 0; ox < outW; ++ox) {
-      const uint8_t v = SampleTo8Bit(srcRow, srcXForOut[ox], depth);
-      uint8_t *px = dstRow + ox * 4;
-      if (channelIndex == 0)
-        px[2] = v; // R
-      else if (channelIndex == 1)
-        px[1] = v; // G
-      else if (channelIndex == 2)
-        px[0] = v; // B
-      else if (channelIndex == 3)
-        px[3] = v; // A
+    if (depth == 16) {
+      if (channelIndex == 0) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 2] = Sample16To8Bit(srcRow, srcXForOut[ox]);
+      } else if (channelIndex == 1) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 1] = Sample16To8Bit(srcRow, srcXForOut[ox]);
+      } else if (channelIndex == 2) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 0] = Sample16To8Bit(srcRow, srcXForOut[ox]);
+      } else if (channelIndex == 3) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 3] = Sample16To8Bit(srcRow, srcXForOut[ox]);
+      }
+    } else {
+      if (channelIndex == 0) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 2] = srcRow[srcXForOut[ox]];
+      } else if (channelIndex == 1) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 1] = srcRow[srcXForOut[ox]];
+      } else if (channelIndex == 2) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 0] = srcRow[srcXForOut[ox]];
+      } else if (channelIndex == 3) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 3] = srcRow[srcXForOut[ox]];
+      }
     }
   } else if (colorMode == 1) {
-    for (size_t ox = 0; ox < outW; ++ox) {
-      const uint8_t v = SampleTo8Bit(srcRow, srcXForOut[ox], depth);
-      uint8_t *px = dstRow + ox * 4;
+    if (depth == 16) {
       if (channelIndex == 0) {
-        px[0] = v;
-        px[1] = v;
-        px[2] = v;
+        for (size_t ox = 0; ox < outW; ++ox) {
+          uint8_t v = Sample16To8Bit(srcRow, srcXForOut[ox]);
+          dstRow[ox * 4 + 0] = v;
+          dstRow[ox * 4 + 1] = v;
+          dstRow[ox * 4 + 2] = v;
+        }
       } else if (channelIndex == 1) {
-        px[3] = v; // gray alpha if present
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 3] = Sample16To8Bit(srcRow, srcXForOut[ox]);
+      }
+    } else {
+      if (channelIndex == 0) {
+        for (size_t ox = 0; ox < outW; ++ox) {
+          uint8_t v = srcRow[srcXForOut[ox]];
+          dstRow[ox * 4 + 0] = v;
+          dstRow[ox * 4 + 1] = v;
+          dstRow[ox * 4 + 2] = v;
+        }
+      } else if (channelIndex == 1) {
+        for (size_t ox = 0; ox < outW; ++ox) dstRow[ox * 4 + 3] = srcRow[srcXForOut[ox]];
       }
     }
   }
@@ -8383,9 +8445,9 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
 
   const auto isRelevantChannel = [&](uint16_t c) -> bool {
     if (header.colorMode == 3)
-      return c < 4; // RGB + optional alpha
+      return c < (header.hasTransparency ? 4 : 3);
     if (header.colorMode == 1)
-      return c < 2; // Gray + optional alpha
+      return c < (header.hasTransparency ? 2 : 1);
     return false;
   };
 
