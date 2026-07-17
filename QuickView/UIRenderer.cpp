@@ -5622,7 +5622,9 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         ComPtr<ID2D1SolidColorBrush> bgBrush;
         dc->CreateSolidColorBrush(D2D1::ColorF(0.05f, 0.05f, 0.05f, 0.75f), &bgBrush);
         ComPtr<ID2D1SolidColorBrush> borderBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f), &borderBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.9f), &borderBrush);
+        ComPtr<ID2D1SolidColorBrush> borderShadowBrush;
+        dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.5f), &borderShadowBrush);
         
         dc->FillRoundedRectangle(roundedRect, bgBrush.Get());
         
@@ -5727,6 +5729,17 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         dc->DrawLine(
             D2D1::Point2F(r.left + padding, r.top + padding),
             D2D1::Point2F(r.right - padding, r.bottom - padding),
+            borderShadowBrush.Get(), 3.0f * s
+        );
+        dc->DrawLine(
+            D2D1::Point2F(r.right - padding, r.top + padding),
+            D2D1::Point2F(r.left + padding, r.bottom - padding),
+            borderShadowBrush.Get(), 3.0f * s
+        );
+        
+        dc->DrawLine(
+            D2D1::Point2F(r.left + padding, r.top + padding),
+            D2D1::Point2F(r.right - padding, r.bottom - padding),
             xBrush.Get(), 1.5f * s
         );
         dc->DrawLine(
@@ -5738,6 +5751,7 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         dc->PopLayer();
         dc->SetTransform(oldTransform);
         
-        dc->DrawRoundedRectangle(roundedRect, borderBrush.Get(), 1.0f * s);
+        dc->DrawRoundedRectangle(roundedRect, borderShadowBrush.Get(), 3.0f * s);
+        dc->DrawRoundedRectangle(roundedRect, borderBrush.Get(), 1.5f * s);
     }
 }

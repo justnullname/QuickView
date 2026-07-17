@@ -305,6 +305,7 @@ const wchar_t *Settings_Label_LockToolbar = nullptr;
 const wchar_t *Settings_Label_WindowMinSize = nullptr;
 const wchar_t *Settings_Label_WindowMaxSizePercent = nullptr;
 const wchar_t *Settings_Label_ShowBorderIndicator = nullptr;
+const wchar_t *Settings_Tooltip_ShowBorderIndicator = nullptr;
 const wchar_t *Settings_Label_ShowNavigator = nullptr;
 const wchar_t *Settings_Option_NavigatorAuto = nullptr;
 const wchar_t *Settings_Option_NavigatorOn = nullptr;
@@ -834,6 +835,7 @@ struct LanguageTable {
     const wchar_t *Settings_Label_WindowMinSize;
     const wchar_t *Settings_Label_WindowMaxSizePercent;
     const wchar_t *Settings_Label_ShowBorderIndicator;
+    const wchar_t *Settings_Tooltip_ShowBorderIndicator;
     const wchar_t *Settings_Label_ShowNavigator;
     const wchar_t *Settings_Option_NavigatorAuto;
     const wchar_t *Settings_Option_NavigatorOn;
@@ -1361,6 +1363,7 @@ static const LanguageTable Table_EN = {
     L"Minimum Window Width", // Settings_Label_WindowMinSize
     L"Maximum Start Size (%)", // Settings_Label_WindowMaxSizePercent
     L"Show Edge Indicators", // Settings_Label_ShowBorderIndicator
+    L"Shows a blue indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
     L"Show Minimap", // Settings_Label_ShowNavigator
     L"Auto", // Settings_Option_NavigatorAuto
     L"On", // Settings_Option_NavigatorOn
@@ -1888,6 +1891,7 @@ static const LanguageTable Table_CN = {
     L"默认最小窗口宽度", // Settings_Label_WindowMinSize
     L"默认最大启动尺寸 (%)", // Settings_Label_WindowMaxSizePercent
     L"显示边界指示器", // Settings_Label_ShowBorderIndicator
+    L"在图片超出窗口边框的方向上显示蓝色提示线条。", // Settings_Tooltip_ShowBorderIndicator
     L"显示缩略导航图", // Settings_Label_ShowNavigator
     L"自动", // Settings_Option_NavigatorAuto
     L"开启", // Settings_Option_NavigatorOn
@@ -2415,6 +2419,7 @@ static const LanguageTable Table_TW = {
     L"預設最小視窗寬度", // Settings_Label_WindowMinSize
     L"預設最大啟動尺寸 (%)", // Settings_Label_WindowMaxSizePercent
     L"顯示邊界指示器", // Settings_Label_ShowBorderIndicator
+    L"在圖片超出視窗邊框的方向上顯示藍色提示線條。", // Settings_Tooltip_ShowBorderIndicator
     L"顯示縮略導航圖", // Settings_Label_ShowNavigator
     L"自動", // Settings_Option_NavigatorAuto
     L"開啟", // Settings_Option_NavigatorOn
@@ -2942,6 +2947,7 @@ static const LanguageTable Table_JA = {
     L"最小ウィンドウ幅", // Settings_Label_WindowMinSize
     L"最大起動サイズ (%)", // Settings_Label_WindowMaxSizePercent
     L"エッジインジケーターを表示", // Settings_Label_ShowBorderIndicator
+    L"画像がウィンドウ境界を超えている方向に青いインジケーターラインを表示します。", // Settings_Tooltip_ShowBorderIndicator
     L"ミニマップを表示", // Settings_Label_ShowNavigator
     L"自動", // Settings_Option_NavigatorAuto
     L"オン", // Settings_Option_NavigatorOn
@@ -3469,6 +3475,7 @@ static const LanguageTable Table_RU = {
     L"Мин. ширина окна", // Settings_Label_WindowMinSize
     L"Макс. начальный размер (%)", // Settings_Label_WindowMaxSizePercent
     L"Показывать индикаторы границ", // Settings_Label_ShowBorderIndicator
+    L"Показывает синюю индикаторную линию в направлении, где изображение выходит за границы окна.", // Settings_Tooltip_ShowBorderIndicator
     L"Показывать мини-карту", // Settings_Label_ShowNavigator
     L"Авто", // Settings_Option_NavigatorAuto
     L"Вкл", // Settings_Option_NavigatorOn
@@ -3996,6 +4003,7 @@ static const LanguageTable Table_DE = {
     L"Minimale Fensterbreite", // Settings_Label_WindowMinSize
     L"Maximale Startgröße (%)", // Settings_Label_WindowMaxSizePercent
     L"Randindikatoren anzeigen", // Settings_Label_ShowBorderIndicator
+    L"Zeigt eine blaue Indikatorlinie in der Richtung an, in der das Bild die Fenstergrenzen überschreitet.", // Settings_Tooltip_ShowBorderIndicator
     L"Minimap anzeigen", // Settings_Label_ShowNavigator
     L"Auto", // Settings_Option_NavigatorAuto
     L"An", // Settings_Option_NavigatorOn
@@ -4523,6 +4531,7 @@ static const LanguageTable Table_ES = {
     L"Anchura mínima de ventana", // Settings_Label_WindowMinSize
     L"Tamaño máximo de inicio (%)", // Settings_Label_WindowMaxSizePercent
     L"Mostrar indicadores de borde", // Settings_Label_ShowBorderIndicator
+    L"Muestra una línea indicadora azul en la dirección donde la imagen excede los límites de la ventana.", // Settings_Tooltip_ShowBorderIndicator
     L"Mostrar minimapa", // Settings_Label_ShowNavigator
     L"Auto", // Settings_Option_NavigatorAuto
     L"Activar", // Settings_Option_NavigatorOn
@@ -5050,6 +5059,7 @@ static const LanguageTable Table_FR = {
     L"Minimum Window Width", // Settings_Label_WindowMinSize
     L"Maximum Start Size (%)", // Settings_Label_WindowMaxSizePercent
     L"Show Edge Indicators", // Settings_Label_ShowBorderIndicator
+    L"Shows a blue indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
     L"Show Minimap", // Settings_Label_ShowNavigator
     L"Auto", // Settings_Option_NavigatorAuto
     L"On", // Settings_Option_NavigatorOn
@@ -5581,6 +5591,7 @@ void Apply(const LanguageTable& t) {
   Settings_Label_WindowMinSize = t.Settings_Label_WindowMinSize;
   Settings_Label_WindowMaxSizePercent = t.Settings_Label_WindowMaxSizePercent;
   Settings_Label_ShowBorderIndicator = t.Settings_Label_ShowBorderIndicator;
+  Settings_Tooltip_ShowBorderIndicator = t.Settings_Tooltip_ShowBorderIndicator;
   Settings_Label_ShowNavigator = t.Settings_Label_ShowNavigator;
   Settings_Option_NavigatorAuto = t.Settings_Option_NavigatorAuto;
   Settings_Option_NavigatorOn = t.Settings_Option_NavigatorOn;
