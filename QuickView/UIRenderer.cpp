@@ -867,23 +867,71 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
     auto computeForward = [&](const LoupeTarget& t, D2D1::Matrix3x2F& outM, D2D1_SIZE_F& outRaw) -> bool {
         PaneContext& pane = GetPaneContext(t.slot);
         if (!pane.resource.bitmap) return false;
-        outRaw = pane.resource.GetSize();
+
+        // Resolve original image dimension (use Metadata if available for large images/Titan)
+        bool isTitan = (pane.metadata.Width > 8192 || pane.metadata.Height > 8192);
+        if (isTitan && pane.metadata.Width > 0 && pane.metadata.Height > 0) {
+            outRaw = D2D1::SizeF((float)pane.metadata.Width, (float)pane.metadata.Height);
+        } else {
+            outRaw = pane.resource.GetSize();
+        }
         if (outRaw.width <= 0.0f || outRaw.height <= 0.0f) return false;
 
         // [Loupe Fix] In Single View mode, use CompositionEngine's exact screen transform.
         // This ensures 100% alignment with DComp rendering (animations, downscaling, gallery pin offsets).
         if (!compare && m_compEngine && m_compEngine->IsInitialized()) {
             D2D1_MATRIX_3X2_F st = m_compEngine->GetScreenTransform();
-            outM = D2D1::Matrix3x2F(st._11, st._12, st._21, st._22, st._31, st._32);
             UINT w = 0, h = 0;
             m_compEngine->GetLayerSpecs(m_compEngine->GetActiveLayerIndex(), &w, &h);
             if (w > 0 && h > 0) {
-                outRaw = D2D1::SizeF((float)w, (float)h);
+                const D2D1_SIZE_F rawT = pane.resource.GetSize();
+                // [Loupe Alignment Fix] Adjust for letterbox offsets and DComp surface scaling on large standard images
+                if (!pane.resource.isSvg && !isTitan && rawT.width > 0.0f && rawT.height > 0.0f &&
+                    ((float)w != rawT.width || (float)h != rawT.height))
+                {
+                    int orientation = g_renderExifOrientation;
+                    if (!g_config.AutoRotate) orientation = 1;
+
+                    float imgW = rawT.width;
+                    float imgH = rawT.height;
+
+                    float scaleCalcW = imgW;
+                    float scaleCalcH = imgH;
+                    if (orientation >= 5 && orientation <= 8) {
+                        std::swap(scaleCalcW, scaleCalcH);
+                    }
+
+                    float drawScaleX = (float)w / scaleCalcW;
+                    float drawScaleY = (float)h / scaleCalcH;
+                    float drawScale = std::min(drawScaleX, drawScaleY);
+
+                    // Reconstruct the exact GPU pre-rotation and centering transform applied in RenderImageToDComp
+                    D2D1::Matrix3x2F fitM = D2D1::Matrix3x2F::Translation(-imgW / 2.0f, -imgH / 2.0f);
+                    switch (orientation) {
+                        case 2: fitM = fitM * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f); break;
+                        case 3: fitM = fitM * D2D1::Matrix3x2F::Rotation(180.0f); break;
+                        case 4: fitM = fitM * D2D1::Matrix3x2F::Scale(1.0f, -1.0f); break;
+                        case 5: fitM = fitM * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f) * D2D1::Matrix3x2F::Rotation(270.0f); break;
+                        case 6: fitM = fitM * D2D1::Matrix3x2F::Rotation(90.0f); break;
+                        case 7: fitM = fitM * D2D1::Matrix3x2F::Scale(-1.0f, 1.0f) * D2D1::Matrix3x2F::Rotation(90.0f); break;
+                        case 8: fitM = fitM * D2D1::Matrix3x2F::Rotation(270.0f); break;
+                        default: break;
+                    }
+                    fitM = fitM * D2D1::Matrix3x2F::Scale(drawScale, drawScale);
+                    fitM = fitM * D2D1::Matrix3x2F::Translation((float)w / 2.0f, (float)h / 2.0f);
+
+                    st = fitM * st;
+                    outRaw = rawT;
+                } else {
+                    outRaw = D2D1::SizeF((float)w, (float)h);
+                }
+                outM = D2D1::Matrix3x2F(st._11, st._12, st._21, st._22, st._31, st._32);
                 return true;
             }
         }
 
-        const int effExif = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+        const int baseExif = (t.slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
+        const int effExif = GetEffectiveExifOrientation(baseExif, pane.editState);
         const D2D1_SIZE_F osz = orientedSize(outRaw, effExif);
         const float vpW = t.viewport.right - t.viewport.left;
         const float vpH = t.viewport.bottom - t.viewport.top;
@@ -950,7 +998,8 @@ void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
         const D2D1_RECT_F box = D2D1::RectF(cx - half, cy - half, cx + half, cy + half);
 
         // Loupe transform: native bitmap -> magnified, centered so tImgPt lands at box center.
-        const int effExif = GetEffectiveExifOrientation(pane.view.ExifOrientation, pane.editState);
+        const int baseExif = (targets[i].slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
+        const int effExif = GetEffectiveExifOrientation(baseExif, pane.editState);
         D2D1::Matrix3x2F L0 = buildForward(rawT, effExif, loupeZoom, cx, cy);
         const D2D1_POINT_2F p = L0.TransformPoint(tImgPt);
         D2D1::Matrix3x2F L = L0 * D2D1::Matrix3x2F::Translation(cx - p.x, cy - p.y);
