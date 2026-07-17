@@ -8136,7 +8136,6 @@ struct HeaderInfo {
   uint16_t colorMode = 0;   // 1=Gray, 3=RGB supported
   uint16_t compression = 0; // 0=Raw, 1=RLE
   size_t imageDataOffset = 0;
-  bool hasTransparency = false;
 };
 
 static inline uint16_t ReadBE16(const uint8_t *p) {
@@ -8198,52 +8197,6 @@ static bool ParseHeader(const uint8_t *data, size_t size, HeaderInfo &out) {
   off += 4;
   if (!FitsRange(off, imageResLen, size))
     return false;
-
-  // Parse Image Resources to locate Alpha Channel Names (ID 1006)
-  const uint8_t *resPtr = data + off;
-  const uint8_t *resEnd = resPtr + imageResLen;
-  int alphaNamesCount = 0;
-  bool hasAlphaNamesResource = false;
-  while (resPtr + 12 <= resEnd) {
-    if (std::memcmp(resPtr, "8BIM", 4) != 0 && std::memcmp(resPtr, "MeSa", 4) != 0) {
-      break;
-    }
-    uint16_t id = ReadBE16(resPtr + 4);
-    uint8_t nameLen = resPtr[6];
-    size_t nameBlockLen = (nameLen + 1 + 1) & ~1;
-    if (resPtr + 6 + nameBlockLen + 4 > resEnd)
-      break;
-    uint32_t dataSize = ReadBE32(resPtr + 6 + nameBlockLen);
-    size_t dataBlockLen = (dataSize + 1) & ~1;
-    const uint8_t *dataPtr = resPtr + 6 + nameBlockLen + 4;
-    if (dataPtr + dataBlockLen > resEnd)
-      break;
-
-    if (id == 1006) {
-      hasAlphaNamesResource = true;
-      const uint8_t *pName = dataPtr;
-      const uint8_t *pNameEnd = dataPtr + dataSize;
-      while (pName < pNameEnd) {
-        uint8_t len = *pName++;
-        if (len > 0) {
-          alphaNamesCount++;
-        }
-        pName += len;
-      }
-    }
-    resPtr = dataPtr + dataBlockLen;
-  }
-
-  if (out.channels > 3) {
-    if (hasAlphaNamesResource) {
-      out.hasTransparency = (alphaNamesCount < (out.channels - 3));
-    } else {
-      out.hasTransparency = true;
-    }
-  } else {
-    out.hasTransparency = false;
-  }
-
   off += static_cast<size_t>(imageResLen);
 
   uint64_t layerMaskLen = 0;
@@ -8445,9 +8398,9 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
 
   const auto isRelevantChannel = [&](uint16_t c) -> bool {
     if (header.colorMode == 3)
-      return c < (header.hasTransparency ? 4 : 3);
+      return c < 4; // Always decode alpha to inspect its transparency details at runtime
     if (header.colorMode == 1)
-      return c < (header.hasTransparency ? 2 : 1);
+      return c < 2;
     return false;
   };
 
@@ -8513,6 +8466,56 @@ static HRESULT Load(const uint8_t *data, size_t size, const DecodeContext &ctx,
         }
 
         compPtr += packedLen;
+      }
+    }
+  }
+
+  // Evaluate true transparency using zero-alpha RGB check heuristic to avoid showing
+  // checkerboard grids in dark shadow regions where a custom alpha channel name is saved.
+  if (header.channels >= (header.colorMode == 3 ? 4u : 2u)) {
+    size_t zeroAlphaCount = 0;
+    size_t zeroAlphaButNotEmptyCount = 0;
+    const bool isRgb = (header.colorMode == 3);
+
+    for (uint32_t y = 0; y < outH; ++y) {
+      uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+      for (uint32_t x = 0; x < outW; ++x) {
+        uint8_t a = row[x * 4 + 3];
+        if (a == 0) {
+          zeroAlphaCount++;
+          if (isRgb) {
+            if (row[x * 4 + 2] != 255 || row[x * 4 + 1] != 255 ||
+                row[x * 4 + 0] != 255) {
+              zeroAlphaButNotEmptyCount++;
+            }
+          } else {
+            if (row[x * 4 + 0] != 255) {
+              zeroAlphaButNotEmptyCount++;
+            }
+          }
+        }
+      }
+    }
+
+    const size_t totalPixels = static_cast<size_t>(outW) * outH;
+    const size_t threshold =
+        (std::max)(static_cast<size_t>(100), totalPixels / 10000);
+    bool hasTransparency = false;
+    if (zeroAlphaCount >= threshold) {
+      const size_t maxLeak =
+          (std::max)(static_cast<size_t>(50), zeroAlphaCount / 100);
+      if (zeroAlphaButNotEmptyCount < maxLeak) {
+        hasTransparency = true;
+      }
+    }
+
+    if (!hasTransparency) {
+#pragma omp parallel for schedule(dynamic, 64)
+      for (int y = 0; y < static_cast<int>(outH); ++y) {
+        uint8_t *row = pixels + static_cast<size_t>(y) * stride;
+        for (uint32_t x = 0; x < outW; ++x) {
+          row[x * 4 + 3] = 255;
+        }
       }
     }
   }
