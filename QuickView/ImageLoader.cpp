@@ -44,6 +44,7 @@ using namespace QuickView;
 #include "TinyExrLoader.h"
 #include <shobjidl.h> // [Add] for IShellItemImageFactory
 #include <thread>
+#include "MiniTiff.h"
 
 extern FileNavigator& g_navigator;
 
@@ -532,67 +533,6 @@ void CImageLoader::ReleaseJxlRunner() {
 namespace QuickView {
 namespace Codec {
 
-struct DecodeContext {
-  // Memory Allocator: Returns pointer to allocated memory.
-  // Caller (Codec) calculates 'totalSize' based on aligned stride and height.
-  QuickView::AllocatorCallback allocator;
-  QuickView::FreeCallback freeFunc;
-
-  // Runtime Control
-  QuickView::SimplePredicate checkCancel;
-  std::stop_token stopToken;
-
-  // Parameters
-  int targetWidth = 0; // 0 = Full
-  int targetHeight = 0;
-  PixelFormat format = PixelFormat::BGRA8888; // Preferred Output Format
-  bool forcePreview = false; // Force fast preview (e.g. JXL/Embedded Thumb)
-  float targetHdrHeadroomStops = -1.0f; // < 0 = codec default
-
-  // [v5.3] Telemetry Output - backward compatible
-  std::wstring *pLoaderName = nullptr;
-  std::wstring *pFormatDetails = nullptr;
-
-  // [v5.3] Unified metadata pointer (optional - if set, loaders will populate)
-  CImageLoader::ImageMetadata *pMetadata = nullptr;
-
-  // [v10] Fallback control for Titan Base Layer
-  bool forceRenderFull = false;
-
-  // [v10.1] Override to prevent 1x1 Fake Base generation (e.g. for specific
-  // LODs)
-  bool allowFakeBase = true;
-  bool isTitanMode = false;
-
-  // [v6.2.5.3] Flag to preserve FP16/FP32 data (bypassing CPU SDR reduction).
-  // True for main viewport rendering.
-  bool preserveFloat = false;
-
-  // [Async Gain Map] Callback to post AuxLayer back to main engine
-  QuickView::AuxLayerCallback onAuxLayerReady;
-};
-
-struct DecodeResult {
-  uint8_t *pixels = nullptr;
-  int width = 0;
-  int height = 0;
-  int stride = 0; // Must be 16/64 byte aligned for SIMD/GPU
-  PixelFormat format = PixelFormat::BGRA8888;
-  bool success = false;
-
-  // [v5.3] Unified metadata (includes loader name, format details, EXIF, etc.)
-  CImageLoader::ImageMetadata metadata;
-
-  // [GPU Pipeline] Multi-layer composition asset package
-  GpuBlendOp blendOp = GpuBlendOp::None;
-  std::unique_ptr<AuxLayer> auxLayer;
-  GpuShaderPayload shaderPayload;
-
-  // [v10.5] Animation Decoder Payload
-  std::shared_ptr<QuickView::IAnimationDecoder> animator;
-  QuickView::AnimationFrameMeta frameMeta; // Transport for first frame meta
-};
-
 // File I/O Helpers
 // ------------------------------------------------------------------------
 
@@ -842,7 +782,8 @@ bool IsUnifiedBufferCodec(const std::wstring &fmt) {
   return fmt == L"JPEG" || fmt == L"WebP" || fmt == L"PNG" || fmt == L"GIF" ||
          fmt == L"BMP" || fmt == L"JXL" || fmt == L"AVIF" || fmt == L"QOI" ||
          fmt == L"TGA" || fmt == L"PNM" || fmt == L"WBMP" || fmt == L"PSD" ||
-         fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX" || fmt == L"EXR";
+         fmt == L"HDR" || fmt == L"PIC" || fmt == L"PCX" || fmt == L"EXR" ||
+         fmt == L"TIFF";
 }
 
 bool ShouldProbeAnimatedBufferCodec(const std::wstring &fmt) {
@@ -2817,6 +2758,78 @@ HRESULT CImageLoader::LoadRegionToFrame(
     return LoadWebPRegionToFrame(filePath, srcRect, scale, outFrame,
                                  tileManager, arena, checkCancel, targetWidth,
                                  targetHeight);
+  }
+
+  // --- Strategy 1c: MiniTIFF Region Decoding ---
+  if (format == L"TIFF") {
+    int origWidth = 0, origHeight = 0;
+    if (SUCCEEDED(GetImageSize(filePath, (UINT*)&origWidth, (UINT*)&origHeight))) {
+      RegionScalePlan plan{};
+      if (BuildRegionScalePlan(srcRect, origWidth, origHeight, scale, targetWidth, targetHeight, &plan)) {
+        QuickView::MappedFile mapping(filePath);
+        if (mapping.IsValid()) {
+          outFrame->width = plan.frameW;
+          outFrame->height = plan.frameH;
+          outFrame->stride = CalculateAlignedStride(plan.frameW, 4);
+          outFrame->format = PixelFormat::BGRA8888;
+          size_t totalSize = outFrame->GetBufferSize();
+          if (tileManager && totalSize <= TILE_SLAB_SIZE) {
+            outFrame->pixels = (uint8_t *)tileManager->Allocate();
+            if (outFrame->pixels) {
+              outFrame->memoryDeleter.ctx = tileManager;
+              outFrame->memoryDeleter.pfn = [](uint8_t *p, void *ctx) {
+                static_cast<QuickView::TileMemoryManager *>(ctx)->Free(p);
+              };
+            }
+          }
+          if (!outFrame->pixels) {
+            outFrame->pixels = (uint8_t *)_aligned_malloc(totalSize, 64);
+            outFrame->memoryDeleter = QuickView::MemoryDeleter::FromAlignedFree();
+          }
+          if (!outFrame->pixels) {
+            return E_OUTOFMEMORY;
+          }
+          if (plan.contentH < plan.frameH || plan.contentW < plan.frameW) {
+            memset(outFrame->pixels, 0, totalSize);
+          }
+
+          QuickView::Codec::DecodeContext tiffCtx;
+          tiffCtx.allocator.ctx = nullptr;
+          tiffCtx.allocator.pfn = [](void*, size_t s) -> uint8_t* {
+            return static_cast<uint8_t*>(_aligned_malloc(s, 64));
+          };
+          tiffCtx.checkCancel = checkCancel;
+
+          QuickView::Codec::DecodeResult roiResult;
+          HRESULT hrRegion = QuickView::MiniTiff::LoadRegion(
+              mapping.data(), mapping.size(), tiffCtx, roiResult,
+              plan.cropX, plan.cropY, plan.cropW, plan.cropH
+          );
+
+          if (SUCCEEDED(hrRegion)) {
+            ImageLoaderSimd::ResizeBilinear(
+                roiResult.pixels, plan.cropW, plan.cropH, roiResult.stride,
+                outFrame->pixels, plan.contentW, plan.contentH, outFrame->stride
+            );
+            if (roiResult.pixels) {
+              _aligned_free(roiResult.pixels);
+            }
+            if (pLoaderName) {
+              *pLoaderName = L"MiniTIFF Region";
+            }
+            return S_OK;
+          } else {
+            outFrame->Release();
+            if (hrRegion == E_NOTIMPL) {
+              return LoadRegionGeneric_StrategyB(filePath, srcRect, scale, outFrame,
+                                                 tileManager, arena, checkCancel,
+                                                 targetWidth, targetHeight);
+            }
+            return hrRegion;
+          }
+        }
+      }
+    }
   }
 
   // --- Strategy 2: Strategy B (Load Full & Crop/Resize) ---
@@ -9178,6 +9191,17 @@ HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath,
         return hrErr;
       return hr; // Returns libavif error if WIC error was generic
     } else {
+      if (fmt == L"TIFF") {
+        HRESULT hr = QuickView::MiniTiff::Load(mappedData, mappedSize, ctx, result);
+        if (SUCCEEDED(hr)) {
+          return S_OK;
+        }
+        if (hr == E_OUTOFMEMORY || hr == E_ABORT) {
+          return hr;
+        }
+        return hr; // Returns E_NOTIMPL to fallback, other to fail
+      }
+
       HRESULT hr = LoadBufferUnified(mappedData, mappedSize, fmt, ctx, result);
       if (hr == E_OUTOFMEMORY || hr == E_ABORT)
         return hr;

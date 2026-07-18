@@ -514,3 +514,54 @@ private:
   // Custom PCX Decoder
   HRESULT LoadPCX(LPCWSTR filePath, IWICBitmap **ppBitmap);
 };
+
+namespace QuickView {
+namespace Codec {
+
+struct DecodeContext {
+  QuickView::AllocatorCallback allocator;
+  QuickView::FreeCallback freeFunc;
+
+  QuickView::SimplePredicate checkCancel;
+  std::stop_token stopToken;
+
+  int targetWidth = 0;
+  int targetHeight = 0;
+  PixelFormat format = PixelFormat::BGRA8888;
+  bool forcePreview = false;
+  float targetHdrHeadroomStops = -1.0f;
+
+  std::wstring *pLoaderName = nullptr;
+  std::wstring *pFormatDetails = nullptr;
+
+  ::CImageLoader::ImageMetadata *pMetadata = nullptr;
+
+  bool forceRenderFull = false;
+  bool allowFakeBase = true;
+  bool isTitanMode = false;
+  bool preserveFloat = false;
+
+  QuickView::AuxLayerCallback onAuxLayerReady;
+};
+
+struct DecodeResult {
+  uint8_t *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  int stride = 0;
+  PixelFormat format = PixelFormat::BGRA8888;
+  bool success = false;
+
+  ::CImageLoader::ImageMetadata metadata;
+
+  GpuBlendOp blendOp = GpuBlendOp::None;
+  std::unique_ptr<AuxLayer> auxLayer;
+  GpuShaderPayload shaderPayload;
+
+  std::shared_ptr<QuickView::IAnimationDecoder> animator;
+  QuickView::AnimationFrameMeta frameMeta;
+};
+
+} // namespace Codec
+} // namespace QuickView
+
