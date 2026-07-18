@@ -1247,7 +1247,9 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     const float s = m_uiScale;
     // Background brushes
     ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
-    D2D1_COLOR_F bgColor = IsLightThemeActive() ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 0.85f * m_osdOpacity) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.7f * m_osdOpacity);
+    // Directly map GlassOsdOpacity (0-100%) to OSD background alpha in traditional mode.
+    float osdAlpha = (g_config.GlassOsdOpacity / 100.0f) * m_osdOpacity;
+    D2D1_COLOR_F bgColor = IsLightThemeActive() ? D2D1::ColorF(0.95f, 0.95f, 0.95f, osdAlpha) : D2D1::ColorF(0.0f, 0.0f, 0.0f, osdAlpha);
     dc->CreateSolidColorBrush(bgColor, &bgBrush);
     
     // [Fix] Theme-aware OSD Text: Automatically flip White text to Dark Grey in Light Mode
@@ -1306,7 +1308,13 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                     float density = g_config.GlassOsdOpacity / 100.0f;
                     config.shadowOpacity = g_config.GlassShadowOpacity * density;
 
-                    // Material Booster Layer (Theme-Aware and Full Range)
+                    config.pBackgroundCommandList = m_bgCommandList.Get();
+                    config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
+                    
+                    // Draw blurred background first
+                    geekGlass.DrawGeekGlassPanel(dc, config);
+
+                    // Material Booster Layer (Theme-Aware and Full Range) - Draw on top of blurred background
                     ComPtr<ID2D1SolidColorBrush> boosterBrush;
                     bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
                     D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.04f, 0.04f, 0.04f, 1.0f);
@@ -1315,9 +1323,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                     dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
                     dc->FillRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s), boosterBrush.Get());
                     
-                    config.pBackgroundCommandList = m_bgCommandList.Get();
-                    config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
-                    geekGlass.DrawGeekGlassPanel(dc, config);
+                    // Draw reflections and borders last
                     geekGlass.DrawGeekGlassToppings(dc, config);
                     glassDrawn = true;
                 }
@@ -1398,7 +1404,13 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             float density = g_config.GlassOsdOpacity / 100.0f;
             config.shadowOpacity = g_config.GlassShadowOpacity * density;
 
-            // Material Booster Layer (Theme-Aware and Full Range)
+            config.pBackgroundCommandList = m_bgCommandList.Get();
+            config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
+            
+            // Draw blurred background first
+            geekGlass.DrawGeekGlassPanel(dc, config);
+
+            // Material Booster Layer (Theme-Aware and Full Range) - Draw on top of blurred background
             ComPtr<ID2D1SolidColorBrush> boosterBrush;
             bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
             D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.04f, 0.04f, 0.04f, 1.0f);
@@ -1407,9 +1419,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
             dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, 8.0f * s, 8.0f * s), boosterBrush.Get());
 
-            config.pBackgroundCommandList = m_bgCommandList.Get();
-            config.backgroundTransform = m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity();
-            geekGlass.DrawGeekGlassPanel(dc, config);
+            // Draw reflections and borders last
             geekGlass.DrawGeekGlassToppings(dc, config);
             glassDrawnMain = true;
         }
