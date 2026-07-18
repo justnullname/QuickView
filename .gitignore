@@ -106,6 +106,8 @@ scratch/
 
 .agent/
 .agents/
+.cursorignore
+.aiignore
 
 # VCPKG intermediates
 vcpkg_installed/
