@@ -8,6 +8,7 @@
 #include "DialogController.h"
 #include "OSDState.h"
 #include <algorithm>
+#include <cmath>
 #include <Shlobj.h>
 #include <commdlg.h>
 #include <functional>
@@ -250,7 +251,7 @@ std::wstring SettingsOverlay::GetRealWindowsVersion() {
     return L"Windows (Unknown)"; 
 }
 
-void SettingsOverlay::AutoSwitchToCustom() {
+void SettingsOverlay::AutoSwitchToCustom(bool save) {
     if (g_config.ThemeMode != 3) {
         // [UX Fix] If moving from a fixed preset (Dark/Light), capture its current tint 
         // into custom slots to prevent the UI from jumping to Dark base (system default)
@@ -270,7 +271,7 @@ void SettingsOverlay::AutoSwitchToCustom() {
         else m_needsLayoutRebuild = true;
     }
     g_config.EnforceGlassSafetyLimits();
-    SaveConfig();
+    if (save) SaveConfig();
     if (m_hwnd) InvalidateRect(m_hwnd, NULL, FALSE);
 }
 
@@ -1285,7 +1286,7 @@ void SettingsOverlay::BuildMenu() {
     itemBlur.minVal = 1.0f;
     itemBlur.maxVal = 40.0f;
     itemBlur.displayFormat = L"%.0f px";
-    itemBlur.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemBlur.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     if (glassDisabled) {
         itemBlur.isDisabled = true;
         itemBlur.pFloatVal = &fZero;
@@ -1298,7 +1299,7 @@ void SettingsOverlay::BuildMenu() {
     itemTintAlpha.maxVal = 1.0f;
     itemTintAlpha.displayFormat = L"%.0f %%";
     itemTintAlpha.tooltipText = AppStrings::Settings_Tooltip_TintDensity;
-    itemTintAlpha.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemTintAlpha.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     // [Fix] Keep TintAlpha enabled in Traditional Mode to allow background density control
     tabTheme.items.push_back(itemTintAlpha);
 
@@ -1307,7 +1308,7 @@ void SettingsOverlay::BuildMenu() {
     itemSpecular.maxVal = 0.50f;
     itemSpecular.displayFormat = L"%.0f %%";
     itemSpecular.tooltipText = AppStrings::Settings_Tooltip_SpecularOpacity;
-    itemSpecular.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemSpecular.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     if (glassDisabled) {
         itemSpecular.isDisabled = true;
         itemSpecular.pFloatVal = &fZero;
@@ -1319,7 +1320,7 @@ void SettingsOverlay::BuildMenu() {
     itemShadow.maxVal = 1.0f;
     itemShadow.displayFormat = L"%.0f %%";
     itemShadow.tooltipText = AppStrings::Settings_Tooltip_ShadowIntensity;
-    itemShadow.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemShadow.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     if (glassDisabled) {
         itemShadow.isDisabled = true;
         itemShadow.pFloatVal = &fZero;
@@ -1383,25 +1384,25 @@ void SettingsOverlay::BuildMenu() {
     SettingsItem itemOsd = { AppStrings::Settings_Label_OsdDensity, OptionType::Slider, nullptr, &g_config.GlassOsdOpacity };
     itemOsd.minVal = 0.0f; itemOsd.maxVal = 100.0f; itemOsd.displayFormat = L"%.0f %%";
     itemOsd.tooltipText = AppStrings::Settings_Tooltip_OsdDensity;
-    itemOsd.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemOsd.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     tabTheme.items.push_back(itemOsd);
 
     SettingsItem itemPanels = { AppStrings::Settings_Label_PanelsDensity, OptionType::Slider, nullptr, &g_config.GlassPanelsOpacity };
     itemPanels.minVal = 0.0f; itemPanels.maxVal = 100.0f; itemPanels.displayFormat = L"%.0f %%";
     itemPanels.tooltipText = AppStrings::Settings_Tooltip_PanelsDensity;
-    itemPanels.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemPanels.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     tabTheme.items.push_back(itemPanels);
 
     SettingsItem itemModals = { AppStrings::Settings_Label_ModalsDensity, OptionType::Slider, nullptr, &g_config.GlassModalsOpacity };
     itemModals.minVal = 0.0f; itemModals.maxVal = 100.0f; itemModals.displayFormat = L"%.0f %%";
     itemModals.tooltipText = AppStrings::Settings_Tooltip_ModalsDensity;
-    itemModals.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemModals.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     tabTheme.items.push_back(itemModals);
 
     SettingsItem itemMenus = { AppStrings::Settings_Label_MenusDensity, OptionType::Slider, nullptr, &g_config.GlassMenusOpacity };
     itemMenus.minVal = 0.0f; itemMenus.maxVal = 100.0f; itemMenus.displayFormat = L"%.0f %%";
     itemMenus.tooltipText = AppStrings::Settings_Tooltip_MenusDensity;
-    itemMenus.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(); };
+    itemMenus.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { overlay->AutoSwitchToCustom(false); };
     tabTheme.items.push_back(itemMenus);
 
 
@@ -1512,6 +1513,7 @@ void SettingsOverlay::BuildMenu() {
         g_config.WindowMinSize = itemMinSize.minVal;
     }
     itemMinSize.maxVal = 800.0f;
+    itemMinSize.step = 1.0f;
     itemMinSize.displayFormat = L"%.0f px";
     tabVisuals.items.push_back(itemMinSize);
 
@@ -1654,9 +1656,10 @@ void SettingsOverlay::BuildMenu() {
     static float s_slideshowSecs = g_config.SlideshowIntervalMs / 1000.0f;
     s_slideshowSecs = g_config.SlideshowIntervalMs / 1000.0f;
     itemSlideInterval.pFloatVal = &s_slideshowSecs;
-    itemSlideInterval.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+    itemSlideInterval.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         g_config.SlideshowIntervalMs = (int)(s_slideshowSecs * 1000.0f);
-        SaveConfig();
+    };
+    itemSlideInterval.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         if (g_slideshowState.IsActive && g_slideshowState.IsPlaying) {
             HWND hwnd = GetActiveWindow();
             int interval = (int)(g_config.SlideshowIntervalMs / g_toolbar.GetAnimSpeedMult());
@@ -1768,12 +1771,11 @@ void SettingsOverlay::BuildMenu() {
     tabControl.items.push_back({ AppStrings::Settings_Header_KeyboardPan, OptionType::Header });
     
     SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 100.0f, {}, L"%.0f px" };
-    itemPanNormal.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
     itemPanNormal.isNewOption = true;
     tabControl.items.push_back(itemPanNormal);
 
     SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 500.0f, {}, L"%.0f px" };
-    itemPanFast.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    itemPanFast.step = 1.0f;
     itemPanFast.isNewOption = true;
     tabControl.items.push_back(itemPanFast);
 
@@ -2098,12 +2100,12 @@ void SettingsOverlay::BuildMenu() {
     itemExposure.minVal = 0.18f;
     itemExposure.maxVal = 10.0f;
     itemExposure.displayFormat = L"%.2fx";
-    itemExposure.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+    itemExposure.step = 0.01f;
+    itemExposure.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
       extern HWND g_mainHwnd;
       extern void RefreshImageDisplay(HWND hwnd);
       RefreshImageDisplay(g_mainHwnd);
-      SaveConfig();
-    };
+      };
     itemExposure.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
       g_config.Exposure = 1.0f;
       SaveConfig();
@@ -2138,8 +2140,7 @@ void SettingsOverlay::BuildMenu() {
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
-    itemHdrSplineKnee.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        SaveConfig();
+    itemHdrSplineKnee.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         extern HWND g_mainHwnd;
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
@@ -2160,12 +2161,12 @@ void SettingsOverlay::BuildMenu() {
     itemHdrPeak.minVal = 0.0f;
     itemHdrPeak.maxVal = 2000.0f;
     itemHdrPeak.displayFormat = L"%.0f nits";
-    itemHdrPeak.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+    itemHdrPeak.step = 1.0f;
+    itemHdrPeak.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         extern void RefreshHdrOverrideSettings(HWND hwnd);
         extern HWND g_mainHwnd;
         RefreshHdrOverrideSettings(g_mainHwnd);
-        SaveConfig();
-    };
+        };
     tabImage.items.push_back(itemHdrPeak);
 
     // HDR Peak Percentile (mpv behavior)
@@ -2196,12 +2197,11 @@ void SettingsOverlay::BuildMenu() {
     itemDesatRange.minVal = 0.0f;
     itemDesatRange.maxVal = 1.0f;
     itemDesatRange.displayFormat = L"%.2f";
-    itemDesatRange.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+    itemDesatRange.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
       extern HWND g_mainHwnd;
       extern void RefreshImageDisplay(HWND hwnd);
       RefreshImageDisplay(g_mainHwnd);
-      SaveConfig();
-    };
+      };
     itemDesatRange.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
       g_config.HdrDesatThreshold = 0.18f;
       SaveConfig();
@@ -2217,12 +2217,11 @@ void SettingsOverlay::BuildMenu() {
     itemDesatStrength.minVal = 0.0f;
     itemDesatStrength.maxVal = 1.0f;
     itemDesatStrength.displayFormat = L"%.2f";
-    itemDesatStrength.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+    itemDesatStrength.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
       extern HWND g_mainHwnd;
       extern void RefreshImageDisplay(HWND hwnd);
       RefreshImageDisplay(g_mainHwnd);
-      SaveConfig();
-    };
+      };
     itemDesatStrength.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
       g_config.HdrMaxDesat = 0.75f;
       SaveConfig();
@@ -2541,6 +2540,9 @@ void SettingsOverlay::SetVisible(bool visible) {
         }
     } else {
         // ... (Cleanup if needed)
+        extern void SaveConfig();
+        SaveConfig();
+        
         if (m_hwnd) {
              extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
              if (!m_showUpdateToast) AdjustWindowForOverlay(m_hwnd, true);
@@ -3845,11 +3847,26 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
 
     // 1. Slider adjustment via scroll wheel
     if (m_pHoverItem && m_pHoverItem->type == OptionType::Slider && !m_pHoverItem->isDisabled && m_pHoverItem->pFloatVal) {
-        *m_pHoverItem->pFloatVal += delta * 0.01f;
+        float stepSize = m_pHoverItem->step;
+        if (stepSize == 0.0f) {
+            float rawStep = (m_pHoverItem->maxVal - m_pHoverItem->minVal) * 0.01f;
+            // Inspect display format to determine appropriate rounding for integers vs floats
+            if (m_pHoverItem->displayFormat.find(L"%.0f") != std::wstring::npos) {
+                if (m_pHoverItem->maxVal <= 1.05f && m_pHoverItem->displayFormat.find(L"%%") != std::wstring::npos) {
+                    stepSize = 0.01f; // 1% for percentage representation
+                } else {
+                    stepSize = (std::max)(1.0f, std::round(rawStep));
+                }
+            } else {
+                stepSize = rawStep;
+            }
+        }
+        *m_pHoverItem->pFloatVal += delta * stepSize;
         if (*m_pHoverItem->pFloatVal < m_pHoverItem->minVal) *m_pHoverItem->pFloatVal = m_pHoverItem->minVal;
         if (*m_pHoverItem->pFloatVal > m_pHoverItem->maxVal) *m_pHoverItem->pFloatVal = m_pHoverItem->maxVal;
-        if (m_pHoverItem->onChange) {
-            m_pHoverItem->onChange(this, m_pHoverItem);
+        
+        if (m_pHoverItem->onLiveUpdate) {
+            m_pHoverItem->onLiveUpdate(this, m_pHoverItem);
         }
         return true;
     }
@@ -4123,7 +4140,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         float newVal = m_pActiveSlider->minVal + t * (m_pActiveSlider->maxVal - m_pActiveSlider->minVal);
         if (*m_pActiveSlider->pFloatVal != newVal) {
             *m_pActiveSlider->pFloatVal = newVal;
-            if (m_pActiveSlider->onChange) m_pActiveSlider->onChange(this, m_pActiveSlider);
+            if (m_pActiveSlider->onLiveUpdate) m_pActiveSlider->onLiveUpdate(this, m_pActiveSlider);
         }
         return SettingsAction::RepaintStatic;
     }
@@ -4556,10 +4573,15 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
 SettingsAction SettingsOverlay::OnLButtonUp([[maybe_unused]] float x, [[maybe_unused]] float y) {
     if (m_pActiveSlider) {
+        SettingsItem* activeSlider = m_pActiveSlider;
         m_pActiveSlider = nullptr;
         
         // [Performance Fix] Sliders generate 60+ onChange events per second during dragging.
         // We debounce the massive disk I/O of saving the .ini config by only committing on drag release.
+        if (activeSlider->onChange) {
+            activeSlider->onChange(this, activeSlider);
+        }
+        
         extern void SaveConfig();
         SaveConfig();
         

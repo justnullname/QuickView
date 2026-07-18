@@ -58,8 +58,9 @@ struct SettingsItem {
     std::vector<std::wstring> options = {}; 
     std::wstring displayFormat = L"";        
     
-    void (*onChange)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;
-    void (*onChange2)(SettingsOverlay* overlay, SettingsItem* item) = nullptr; 
+    void (*onChange)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;       // Final commit callback (e.g., SaveConfig)
+    void (*onChange2)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;      // Secondary action for DualActionButton
+    void (*onLiveUpdate)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;   // Live update during drag/scroll (No heavy I/O)
     void (*onReset)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;
 
     D2D1_RECT_F rect = {}; 
@@ -86,6 +87,7 @@ struct SettingsItem {
     HotkeyAction hotkeyAction = HotkeyAction::None;
     std::vector<D2D1_RECT_F> optionRects = {}; 
     bool isNewOption = false; // Flag to indicate if this is a newly added option in this version
+    float step = 0.0f; // If 0.0f, defaults to 1% of the (maxVal - minVal) range.
 };
 
 struct SettingsTab {
@@ -207,7 +209,7 @@ private:
     bool m_isHoveringCopyright = false;
     
     std::wstring GetRealWindowsVersion();
-    void AutoSwitchToCustom();
+    void AutoSwitchToCustom(bool save = true);
 
     bool m_showUpdateToast = false;
     std::wstring m_updateVersion;
