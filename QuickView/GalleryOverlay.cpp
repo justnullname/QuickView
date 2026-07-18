@@ -19,6 +19,7 @@ extern Toolbar g_toolbar;
 extern RuntimeConfig g_runtime;
 extern std::wstring& g_imagePath;
 extern void SaveConfig();
+extern D2D1_SIZE_F GetVisualImageSize();
 
 
 // Helper to center crop
@@ -48,9 +49,44 @@ GalleryOverlay::GalleryOverlay() {}
 GalleryOverlay::~GalleryOverlay() {}
 
 float GalleryOverlay::GetFilmCellSize() const {
-    if (g_config.GalleryFilmstripSize == 0) return 110.0f;
-    if (g_config.GalleryFilmstripSize == 2) return 170.0f;
-    return 140.0f;
+    float preferredH = g_config.GalleryFilmstripHeight;
+    
+    if (!m_pNav || m_pNav->Count() == 0) return preferredH;
+    
+    // Get visual size of current image
+    D2D1_SIZE_F imgSize = GetVisualImageSize();
+    if (imgSize.width <= 0.0f || imgSize.height <= 0.0f) return preferredH;
+    
+    // Read window size from current context
+    float winW = m_lastSize.width;
+    float winH = m_lastSize.height;
+    if (winW <= 0.0f || winH <= 0.0f) return preferredH;
+    
+    float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+    float preferredStripH = (2.0f * PADDING + preferredH) * scale;
+    
+    float effWinH = winH - preferredStripH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
+    
+    float scaleW = winW / imgSize.width;
+    float scaleH = effWinH / imgSize.height;
+    
+    // Only yield if height-constrained (narrow image)
+    if (scaleH < scaleW) {
+        // We want the image to occupy at least 55% of winH if possible
+        float targetImgH = winH * 0.55f;
+        // The remaining height for the filmstrip is winH - targetImgH
+        float maxAllowedStripH = winH - targetImgH;
+        
+        // Convert to cell size
+        float maxAllowedCellH = maxAllowedStripH / scale - 2.0f * PADDING;
+        
+        // Clamp between physical limit (80px) and preferred height
+        float adaptiveH = (std::max)(80.0f, (std::min)(preferredH, maxAllowedCellH));
+        return adaptiveH;
+    }
+    
+    return preferredH;
 }
 
 void GalleryOverlay::Initialize(ThumbnailManager* pThumbMgr, FileNavigator* pNav) {
@@ -279,9 +315,10 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
             }
         }
         
-        if (!m_mouseInGallery && !m_isPinned && !g_imagePath.empty() && m_mode != GalleryMode::FullGrid && m_targetGridProgress < 0.5f) {
+        extern bool g_isDraggingFilmstrip;
+        if (!m_mouseInGallery && !m_isPinned && !g_isDraggingFilmstrip && !g_imagePath.empty() && m_mode != GalleryMode::FullGrid && m_targetGridProgress < 0.5f) {
             m_dismissalTimer += deltaTime;
-            if (m_dismissalTimer >= 0.3f) {
+            if (m_dismissalTimer >= 0.8f) {
                 Close(true);
                 m_dismissalTimer = 0.0f;
             }
@@ -1725,6 +1762,14 @@ int GalleryOverlay::HitTest(float x, float y) {
     size_t count = m_pNav ? m_pNav->Count() : 0;
     if (count == 0) return -1;
     
+    if (m_gridProgress < 0.2f) {
+        float scale = g_uiScale > 0.0f ? g_uiScale : 1.0f;
+        float filmLeftMargin = 48.0f * scale;
+        if (x < filmLeftMargin || x > m_lastSize.width - filmLeftMargin) {
+            return -1;
+        }
+    }
+
     for (size_t i = 0; i < count; ++i) {
         D2D1_RECT_F rect = GetItemRect((int)i, m_lastSize.width);
         if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {

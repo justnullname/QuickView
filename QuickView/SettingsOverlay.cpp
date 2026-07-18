@@ -1796,19 +1796,7 @@ void SettingsOverlay::BuildMenu() {
         itemGalleryTrigger.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
         tabControl.items.push_back(itemGalleryTrigger);
 
-        // Gallery Filmstrip Size setting with 'new' indicator
-        SettingsItem itemFilmstripSize = { AppStrings::Settings_Label_GalleryFilmstripSize, OptionType::Segment, nullptr, nullptr, &g_config.GalleryFilmstripSize };
-        itemFilmstripSize.options = {
-            AppStrings::Settings_Option_FilmstripSizeSmall,
-            AppStrings::Settings_Option_FilmstripSizeMedium,
-            AppStrings::Settings_Option_FilmstripSizeLarge
-        };
-        itemFilmstripSize.isNewOption = true;
-        itemFilmstripSize.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            SaveConfig();
-            RequestRepaint(QuickView::PaintLayer::All);
-        };
-        tabControl.items.push_back(itemFilmstripSize);
+
     }
     m_tabs.push_back(tabControl);
 

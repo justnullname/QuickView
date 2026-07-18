@@ -1217,6 +1217,15 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
                 pIconBrush = m_whiteBrush.Get();
             }
             if (pIconBrush) {
+                // Draw drop shadow for readability on light backgrounds
+                float shadowOffset = 1.0f * m_uiScale;
+                D2D1_RECT_F shadowRect = D2D1::RectF(iconRect.left + shadowOffset, iconRect.top + shadowOffset, iconRect.right + shadowOffset, iconRect.bottom + shadowOffset);
+                float oldBlackOpacity = m_blackBrush->GetOpacity();
+                m_blackBrush->SetOpacity(0.45f);
+                QuickView::UI::GeekIconRenderer::DrawVectorIcon(dc, GeekIcons::GalleryVector, shadowRect, m_blackBrush.Get());
+                m_blackBrush->SetOpacity(oldBlackOpacity);
+
+                // Draw main icon
                 QuickView::UI::GeekIconRenderer::DrawVectorIcon(dc, GeekIcons::GalleryVector, iconRect, pIconBrush);
             }
             

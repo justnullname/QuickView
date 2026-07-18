@@ -159,6 +159,7 @@ static InputController g_inputController;  // Quantum Stream: Input state machin
 CRenderEngine* g_pRenderEngine = nullptr; // Global raw alias for linker compatibility
 
 bool g_isDraggingAnimSeek = false;
+bool g_isDraggingFilmstrip = false;
 bool g_windowSizeRestoredFromConfig = false;
 static WINDOWPLACEMENT g_savedWindowPlacement = { sizeof(WINDOWPLACEMENT), 0, 0, {0,0}, {0,0}, {0,0,0,0} };
 
@@ -784,7 +785,7 @@ static RECT ExpandWindowRectToTargetWithinBounds(const RECT& currentRect, int ta
 
 
 static D2D1_SIZE_F GetLogicalImageSize();
-static D2D1_SIZE_F GetVisualImageSize();
+D2D1_SIZE_F GetVisualImageSize();
 VisualState GetVisualState();
 
 void ApplyFullScreenZoomMode(HWND hwnd) {
@@ -3142,7 +3143,7 @@ static D2D1_SIZE_F GetLogicalImageSize() {
 // [Fix] Robust Size Calculation using Renderer Metrics
 // Recovers the VISUAL (Rotated) dimensions from the DComp surface.
 // Bypasses complex/fragile Exif parsing.
-static D2D1_SIZE_F GetVisualImageSize() {
+D2D1_SIZE_F GetVisualImageSize() {
     // Primary: Reconstruction Logic
     D2D1_SIZE_F result = GetLogicalImageSize();
     
@@ -4240,7 +4241,7 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick ? L"1" : L"0", iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"GalleryTriggerMode", std::to_wstring(g_config.GalleryTriggerMode).c_str(), iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"GalleryThumbnailSize", std::to_wstring(g_config.GalleryThumbnailSize).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"GalleryFilmstripSize", std::to_wstring(g_config.GalleryFilmstripSize).c_str(), iniPath.c_str());
+    WritePrivateProfileStringW(L"Controls", L"GalleryFilmstripHeight", std::to_wstring(g_config.GalleryFilmstripHeight).c_str(), iniPath.c_str());
     // NavIndicator moved to View section
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
@@ -4536,7 +4537,16 @@ void LoadConfig() {
     g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
     g_config.GalleryTriggerMode = GetPrivateProfileIntW(L"Controls", L"GalleryTriggerMode", 1, iniPath.c_str());
     g_config.GalleryThumbnailSize = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"GalleryThumbnailSize", 0, iniPath.c_str()), 0, 300);
-    g_config.GalleryFilmstripSize = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"GalleryFilmstripSize", 1, iniPath.c_str()), 0, 2);
+    GetPrivateProfileStringW(L"Controls", L"GalleryFilmstripHeight", L"-1.0", buf, 64, iniPath.c_str());
+    {
+        float loadedH = (float)_wtof(buf);
+        if (loadedH < 0.0f) {
+            int legacySize = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"GalleryFilmstripSize", 1, iniPath.c_str()), 0, 2);
+            g_config.GalleryFilmstripHeight = (legacySize == 0) ? 110.0f : (legacySize == 2 ? 170.0f : 140.0f);
+        } else {
+            g_config.GalleryFilmstripHeight = std::clamp(loadedH, 80.0f, 300.0f);
+        }
+    }
     // NavIndicator moved to View section
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
@@ -7817,6 +7827,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                   g_gallery.IsArrowLeftHovered() || g_gallery.IsArrowRightHovered()) {
                   g_currentCursor = LoadCursor(nullptr, IDC_HAND);
               }
+              
+              // Handle interactive border dragging for Filmstrip
+              if (g_gallery.GetMode() == GalleryMode::Filmstrip) {
+                  RECT rcClient; GetClientRect(hwnd, &rcClient);
+                  float winH = (float)(rcClient.bottom - rcClient.top);
+                  float filmstripH = g_gallery.GetVisualHeight(winH);
+                  float borderTolerance = 5.0f * g_uiScale;
+                  bool nearBorder = (pt.y >= filmstripH - borderTolerance && pt.y <= filmstripH + borderTolerance);
+                  
+                  if (nearBorder || g_isDraggingFilmstrip) {
+                      g_currentCursor = LoadCursor(nullptr, IDC_SIZENS);
+                  }
+                  
+                  if (g_isDraggingFilmstrip) {
+                      float newHeight = (float)pt.y / g_uiScale - 48.0f; // Subtract 2 * PADDING (24.0f)
+                      newHeight = (std::max)(80.0f, (std::min)(300.0f, newHeight));
+                      if (g_config.GalleryFilmstripHeight != newHeight) {
+                          g_config.GalleryFilmstripHeight = newHeight;
+                          RequestRepaint(PaintLayer::All);
+                      }
+                  }
+              }
           }
           
             // Edge Navigation Hover Detection
@@ -8628,6 +8660,20 @@ SKIP_EDGE_NAV:;
             }
         }
         
+        if (g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::Filmstrip) {
+            RECT rcClient; GetClientRect(hwnd, &rcClient);
+            float winH = (float)(rcClient.bottom - rcClient.top);
+            float filmstripH = g_gallery.GetVisualHeight(winH);
+            float borderTolerance = 5.0f * g_uiScale;
+            if (pt.y >= filmstripH - borderTolerance && pt.y <= filmstripH + borderTolerance) {
+                g_isDraggingFilmstrip = true;
+                SetCapture(hwnd);
+                g_currentCursor = LoadCursor(nullptr, IDC_SIZENS);
+                SetCursor(g_currentCursor);
+                return 0; // Consume event to prevent thumbnails from receiving click
+            }
+        }
+
         if (g_gallery.IsVisible()) {
             RECT rcClient; GetClientRect(hwnd, &rcClient);
             float winW = (float)(rcClient.right - rcClient.left);
@@ -8668,6 +8714,9 @@ SKIP_EDGE_NAV:;
                     }
                 }
                 return 0;
+            } else if (!g_gallery.IsPinned()) {
+                g_gallery.Close(true);
+                RequestRepaint(PaintLayer::All);
             }
         }
         
@@ -8936,6 +8985,14 @@ SKIP_EDGE_NAV:;
              return 0; // Consume event (prevent fallthrough to Image Repaint)
         }
         
+        if (g_isDraggingFilmstrip) {
+            g_isDraggingFilmstrip = false;
+            ReleaseCapture();
+            SaveConfig();
+            RequestRepaint(PaintLayer::All);
+            return 0;
+        }
+
         // Gallery Interaction (Fix: Handle Click)
         if (g_gallery.IsVisible()) {
             RECT rcClient; GetClientRect(hwnd, &rcClient);
@@ -9497,6 +9554,8 @@ SKIP_EDGE_NAV:;
         return 0;
     }
     case WM_CAPTURECHANGED:
+        extern bool g_isDraggingFilmstrip;
+        g_isDraggingFilmstrip = false;
         if ((HWND)lParam != hwnd) {
             g_winCtrlPressedState = -1;
         }
