@@ -5,6 +5,7 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "CompositionEngine.h"
 #include "QuickView.h"
 #include "RenderEngine.h"
+#include "PrintManager.h"
 #include "ImageLoader.h"
 #include "ImageEngine.h"
 #include "MappedFile.h"
@@ -157,6 +158,7 @@ CompositionEngine* g_compEngine = nullptr; // [Fix] Raw pointer to avoid unique_
 static std::unique_ptr<UIRenderer> g_uiRenderer;  // Independent UI layer renderer
 static InputController g_inputController;  // Quantum Stream: Input state machine
 CRenderEngine* g_pRenderEngine = nullptr; // Global raw alias for linker compatibility
+CImageLoader* g_pImageLoader = nullptr; // Global raw alias for linker compatibility
 
 bool g_isDraggingAnimSeek = false;
 bool g_isDraggingFilmstrip = false;
@@ -6189,6 +6191,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
         return 0;
     }
     g_imageLoader = std::make_unique<CImageLoader>(); g_imageLoader->Initialize(g_renderEngine->GetWICFactory());
+    g_pImageLoader = g_imageLoader.get();
     g_imageEngine = std::make_unique<ImageEngine>(g_imageLoader.get());
     g_pImageEngine = g_imageEngine.get(); // [v3.1] Init Global Accessor
     g_imageEngine->SetWindow(hwnd);
@@ -10150,11 +10153,14 @@ SKIP_EDGE_NAV:;
         case IDM_PRINT: {
             if (!CheckUnsavedChanges(hwnd)) break;
             if (!contextPath.empty()) {
-                // Windows 10/11: Use "print" verb directly - Windows handles the print dialog
-                // This works for most image formats via Windows photo printing
-                HINSTANCE result = ShellExecuteW(hwnd, L"print", contextPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                std::wstring proofIcc = L"";
+                const auto& pane = GetPaneContext(PaneSlot::Primary);
+                if (pane.EnableSoftProofing && !pane.SoftProofProfilePath.empty()) {
+                    proofIcc = pane.SoftProofProfilePath;
+                }
                 
-                if ((intptr_t)result <= 32) {
+                HRESULT hr = QuickView::PrintManager::GetInstance().PrintImage(hwnd, contextPath, proofIcc);
+                if (FAILED(hr)) {
                     // Fallback: Open in default app and show OSD instructions
                     ShellExecuteW(hwnd, L"open", contextPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                     g_osd.Show(hwnd, AppStrings::OSD_PrintInstruction, false);
