@@ -4099,6 +4099,33 @@ void ParseFixedZoomLevels() {
     );
 }
 
+static void WriteConfigInt(const wchar_t* section, const wchar_t* key, int value, const wchar_t* iniPath) {
+    wchar_t buf[32];
+    _itow_s(value, buf, 10);
+    WritePrivateProfileStringW(section, key, buf, iniPath);
+}
+
+static void WriteConfigFloat(const wchar_t* section, const wchar_t* key, float value, const wchar_t* iniPath) {
+    if (std::isnan(value) || std::isinf(value)) {
+        value = 0.0f;
+    }
+    wchar_t buf[64];
+    static _locale_t c_locale = _create_locale(LC_ALL, "C");
+    _swprintf_s_l(buf, 64, L"%.6f", c_locale, value);
+    size_t len = wcslen(buf);
+    while (len > 0 && buf[len - 1] == L'0') {
+        buf[--len] = L'\0';
+    }
+    if (len > 0 && buf[len - 1] == L'.') {
+        buf[--len] = L'\0';
+    }
+    WritePrivateProfileStringW(section, key, buf, iniPath);
+}
+
+static void WriteConfigBool(const wchar_t* section, const wchar_t* key, bool value, const wchar_t* iniPath) {
+    WritePrivateProfileStringW(section, key, value ? L"1" : L"0", iniPath);
+}
+
 void SaveConfig() {
     std::wstring iniPath;
     
@@ -4124,137 +4151,137 @@ void SaveConfig() {
     }
 
     // General
-    WritePrivateProfileStringW(L"General", L"Language", std::to_wstring(g_config.Language).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"SingleInstance", g_config.SingleInstance ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"CheckUpdates", g_config.CheckUpdates ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"UpdateChannel", std::to_wstring(g_config.UpdateChannel).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"NavLoop", g_config.NavLoop ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"NavTraverse", g_config.NavTraverse ? L"1" : L"0", iniPath.c_str());
+    WriteConfigInt(L"General", L"Language", g_config.Language, iniPath.c_str());
+    WriteConfigBool(L"General", L"SingleInstance", g_config.SingleInstance, iniPath.c_str());
+    WriteConfigBool(L"General", L"CheckUpdates", g_config.CheckUpdates, iniPath.c_str());
+    WriteConfigInt(L"General", L"UpdateChannel", g_config.UpdateChannel, iniPath.c_str());
+    WriteConfigBool(L"General", L"NavLoop", g_config.NavLoop, iniPath.c_str());
+    WriteConfigBool(L"General", L"NavTraverse", g_config.NavTraverse, iniPath.c_str());
     WritePrivateProfileStringW(L"General", L"LoopNavigation", nullptr, iniPath.c_str()); // [Clean] Remove legacy key
     WritePrivateProfileStringW(L"General", L"NavLoopMode", nullptr, iniPath.c_str());   // [Clean] Remove legacy key
-    WritePrivateProfileStringW(L"General", L"SortOrder", std::to_wstring(g_config.SortOrder).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"SortDescending", g_config.SortDescending ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"SortArchivesByNameAscending", g_config.SortArchivesByNameAscending ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"ConfirmDelete", g_config.ConfirmDelete ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"PortableMode", g_config.PortableMode ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"UIScalePreset", std::to_wstring(g_config.UIScalePreset).c_str(), iniPath.c_str());
+    WriteConfigInt(L"General", L"SortOrder", g_config.SortOrder, iniPath.c_str());
+    WriteConfigBool(L"General", L"SortDescending", g_config.SortDescending, iniPath.c_str());
+    WriteConfigBool(L"General", L"SortArchivesByNameAscending", g_config.SortArchivesByNameAscending, iniPath.c_str());
+    WriteConfigBool(L"General", L"ConfirmDelete", g_config.ConfirmDelete, iniPath.c_str());
+    WriteConfigBool(L"General", L"PortableMode", g_config.PortableMode, iniPath.c_str());
+    WriteConfigInt(L"General", L"UIScalePreset", g_config.UIScalePreset, iniPath.c_str());
     // Backward compatibility for older builds that only understand Auto/Manual.
     WritePrivateProfileStringW(L"General", L"UIScaleMode", (g_config.UIScalePreset == 0) ? L"0" : L"1", iniPath.c_str());
 
     // Theme & Geek Glass
-    WritePrivateProfileStringW(L"Theme", L"ThemeMode", std::to_wstring(g_config.ThemeMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Theme", L"CustomAccentR", std::to_wstring(g_config.ThemeCustomAccentR).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Theme", L"CustomAccentG", std::to_wstring(g_config.ThemeCustomAccentG).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Theme", L"CustomAccentB", std::to_wstring(g_config.ThemeCustomAccentB).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Theme", L"CustomTextR", std::to_wstring(g_config.ThemeCustomTextR).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Theme", L"CustomTextG", std::to_wstring(g_config.ThemeCustomTextG).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Theme", L"CustomTextB", std::to_wstring(g_config.ThemeCustomTextB).c_str(), iniPath.c_str());
+    WriteConfigInt(L"Theme", L"ThemeMode", g_config.ThemeMode, iniPath.c_str());
+    WriteConfigFloat(L"Theme", L"CustomAccentR", g_config.ThemeCustomAccentR, iniPath.c_str());
+    WriteConfigFloat(L"Theme", L"CustomAccentG", g_config.ThemeCustomAccentG, iniPath.c_str());
+    WriteConfigFloat(L"Theme", L"CustomAccentB", g_config.ThemeCustomAccentB, iniPath.c_str());
+    WriteConfigFloat(L"Theme", L"CustomTextR", g_config.ThemeCustomTextR, iniPath.c_str());
+    WriteConfigFloat(L"Theme", L"CustomTextG", g_config.ThemeCustomTextG, iniPath.c_str());
+    WriteConfigFloat(L"Theme", L"CustomTextB", g_config.ThemeCustomTextB, iniPath.c_str());
 
-    WritePrivateProfileStringW(L"GeekGlass", L"EnableGeekGlass", g_config.EnableGeekGlass ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassShowBorders", g_config.GlassShowBorders ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassUIAnimations", g_config.GlassUIAnimations ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassBlurSigma", std::to_wstring(g_config.GlassBlurSigma).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassTintAlpha", std::to_wstring(g_config.GlassTintAlpha).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassSpecularOpacity", std::to_wstring(g_config.GlassSpecularOpacity).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassShadowOpacity", std::to_wstring(g_config.GlassShadowOpacity).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassOsdOpacity", std::to_wstring(g_config.GlassOsdOpacity).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassPanelsOpacity", std::to_wstring(g_config.GlassPanelsOpacity).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassModalsOpacity", std::to_wstring(g_config.GlassModalsOpacity).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassMenusOpacity", std::to_wstring(g_config.GlassMenusOpacity).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassVectorStrokeWeightIndex", std::to_wstring(g_config.GlassVectorStrokeWeightIndex).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassTintProfile", std::to_wstring(g_config.GlassTintProfile).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassCustomTintR", std::to_wstring(g_config.GlassCustomTintR).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassCustomTintG", std::to_wstring(g_config.GlassCustomTintG).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassCustomTintB", std::to_wstring(g_config.GlassCustomTintB).c_str(), iniPath.c_str());
+    WriteConfigBool(L"GeekGlass", L"EnableGeekGlass", g_config.EnableGeekGlass, iniPath.c_str());
+    WriteConfigBool(L"GeekGlass", L"GlassShowBorders", g_config.GlassShowBorders, iniPath.c_str());
+    WriteConfigBool(L"GeekGlass", L"GlassUIAnimations", g_config.GlassUIAnimations, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassBlurSigma", g_config.GlassBlurSigma, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassTintAlpha", g_config.GlassTintAlpha, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassSpecularOpacity", g_config.GlassSpecularOpacity, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassShadowOpacity", g_config.GlassShadowOpacity, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassOsdOpacity", g_config.GlassOsdOpacity, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassPanelsOpacity", g_config.GlassPanelsOpacity, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassModalsOpacity", g_config.GlassModalsOpacity, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassMenusOpacity", g_config.GlassMenusOpacity, iniPath.c_str());
+    WriteConfigInt(L"GeekGlass", L"GlassVectorStrokeWeightIndex", g_config.GlassVectorStrokeWeightIndex, iniPath.c_str());
+    WriteConfigInt(L"GeekGlass", L"GlassTintProfile", g_config.GlassTintProfile, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassCustomTintR", g_config.GlassCustomTintR, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassCustomTintG", g_config.GlassCustomTintG, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassCustomTintB", g_config.GlassCustomTintB, iniPath.c_str());
 
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassBlurSigmaBackup", std::to_wstring(g_config.GlassBlurSigmaBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassTintAlphaBackup", std::to_wstring(g_config.GlassTintAlphaBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassSpecularOpacityBackup", std::to_wstring(g_config.GlassSpecularOpacityBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassShadowOpacityBackup", std::to_wstring(g_config.GlassShadowOpacityBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassOsdOpacityBackup", std::to_wstring(g_config.GlassOsdOpacityBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassPanelsOpacityBackup", std::to_wstring(g_config.GlassPanelsOpacityBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassModalsOpacityBackup", std::to_wstring(g_config.GlassModalsOpacityBackup).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"GeekGlass", L"GlassMenusOpacityBackup", std::to_wstring(g_config.GlassMenusOpacityBackup).c_str(), iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassBlurSigmaBackup", g_config.GlassBlurSigmaBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassTintAlphaBackup", g_config.GlassTintAlphaBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassSpecularOpacityBackup", g_config.GlassSpecularOpacityBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassShadowOpacityBackup", g_config.GlassShadowOpacityBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassOsdOpacityBackup", g_config.GlassOsdOpacityBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassPanelsOpacityBackup", g_config.GlassPanelsOpacityBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassModalsOpacityBackup", g_config.GlassModalsOpacityBackup, iniPath.c_str());
+    WriteConfigFloat(L"GeekGlass", L"GlassMenusOpacityBackup", g_config.GlassMenusOpacityBackup, iniPath.c_str());
 
-    WritePrivateProfileStringW(L"GeekGlass", L"EnableAmbientDimmer", g_config.EnableAmbientDimmer ? L"1" : L"0", iniPath.c_str());
+    WriteConfigBool(L"GeekGlass", L"EnableAmbientDimmer", g_config.EnableAmbientDimmer, iniPath.c_str());
 
     // View
-    WritePrivateProfileStringW(L"View", L"ThemeMode", std::to_wstring(g_config.ThemeMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"CanvasColor", std::to_wstring(g_config.CanvasColor).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"CanvasCustomR", std::to_wstring(g_config.CanvasCustomR).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"CanvasCustomG", std::to_wstring(g_config.CanvasCustomG).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"CanvasCustomB", std::to_wstring(g_config.CanvasCustomB).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"CanvasShowGrid", g_config.CanvasShowGrid ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"AlwaysOnTop", g_config.AlwaysOnTop ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"OpenFullScreenMode", std::to_wstring(g_config.OpenFullScreenMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"FullScreenZoomMode", std::to_wstring(g_config.FullScreenZoomMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"LockWindowSize", g_config.LockWindowSize ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"ShowBorderIndicator", g_config.ShowBorderIndicator ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"ShowNavigator", std::to_wstring(g_config.ShowNavigator).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"NavigatorOffsetX", std::to_wstring(g_config.NavigatorOffsetX).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"NavigatorOffsetY", std::to_wstring(g_config.NavigatorOffsetY).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"NavigatorAlignX", std::to_wstring(g_config.NavigatorAlignX).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"NavigatorAlignY", std::to_wstring(g_config.NavigatorAlignY).c_str(), iniPath.c_str());
+    WriteConfigInt(L"View", L"ThemeMode", g_config.ThemeMode, iniPath.c_str());
+    WriteConfigInt(L"View", L"CanvasColor", g_config.CanvasColor, iniPath.c_str());
+    WriteConfigFloat(L"View", L"CanvasCustomR", g_config.CanvasCustomR, iniPath.c_str());
+    WriteConfigFloat(L"View", L"CanvasCustomG", g_config.CanvasCustomG, iniPath.c_str());
+    WriteConfigFloat(L"View", L"CanvasCustomB", g_config.CanvasCustomB, iniPath.c_str());
+    WriteConfigBool(L"View", L"CanvasShowGrid", g_config.CanvasShowGrid, iniPath.c_str());
+    WriteConfigBool(L"View", L"AlwaysOnTop", g_config.AlwaysOnTop, iniPath.c_str());
+    WriteConfigInt(L"View", L"OpenFullScreenMode", g_config.OpenFullScreenMode, iniPath.c_str());
+    WriteConfigInt(L"View", L"FullScreenZoomMode", g_config.FullScreenZoomMode, iniPath.c_str());
+    WriteConfigBool(L"View", L"LockWindowSize", g_config.LockWindowSize, iniPath.c_str());
+    WriteConfigBool(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls, iniPath.c_str());
+    WriteConfigBool(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar, iniPath.c_str());
+    WriteConfigBool(L"View", L"ShowBorderIndicator", g_config.ShowBorderIndicator, iniPath.c_str());
+    WriteConfigInt(L"View", L"ShowNavigator", g_config.ShowNavigator, iniPath.c_str());
+    WriteConfigInt(L"View", L"NavigatorOffsetX", g_config.NavigatorOffsetX, iniPath.c_str());
+    WriteConfigInt(L"View", L"NavigatorOffsetY", g_config.NavigatorOffsetY, iniPath.c_str());
+    WriteConfigInt(L"View", L"NavigatorAlignX", g_config.NavigatorAlignX, iniPath.c_str());
+    WriteConfigInt(L"View", L"NavigatorAlignY", g_config.NavigatorAlignY, iniPath.c_str());
 
-    WritePrivateProfileStringW(L"View", L"InfoPanelX", std::to_wstring(g_config.InfoPanelX).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"InfoPanelY", std::to_wstring(g_config.InfoPanelY).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"InfoPanelAlignX", std::to_wstring(g_config.InfoPanelAlignX).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"InfoPanelAlignY", std::to_wstring(g_config.InfoPanelAlignY).c_str(), iniPath.c_str());
+    WriteConfigInt(L"View", L"InfoPanelX", g_config.InfoPanelX, iniPath.c_str());
+    WriteConfigInt(L"View", L"InfoPanelY", g_config.InfoPanelY, iniPath.c_str());
+    WriteConfigInt(L"View", L"InfoPanelAlignX", g_config.InfoPanelAlignX, iniPath.c_str());
+    WriteConfigInt(L"View", L"InfoPanelAlignY", g_config.InfoPanelAlignY, iniPath.c_str());
 
     // Window Size Limits
-    WritePrivateProfileStringW(L"View", L"WindowMinSize", std::to_wstring(g_config.WindowMinSize).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"WindowMaxSizePercent", std::to_wstring(g_config.WindowMaxSizePercent).c_str(), iniPath.c_str());
+    WriteConfigInt(L"View", L"WindowMinSize", g_config.WindowMinSize, iniPath.c_str());
+    WriteConfigFloat(L"View", L"WindowMaxSizePercent", g_config.WindowMaxSizePercent, iniPath.c_str());
 
     // Window Lock Behaviors
-    WritePrivateProfileStringW(L"View", L"KeepWindowSizeOnNav", g_config.KeepWindowSizeOnNav ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"RememberLastWindowSizeAndPosition", g_config.RememberLastWindowSizeAndPosition ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"UpscaleSmallImagesWhenLocked", g_config.UpscaleSmallImagesWhenLocked ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"SlideshowIntervalMs", std::to_wstring(g_config.SlideshowIntervalMs).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"SlideshowImmersiveMode", std::to_wstring(g_config.SlideshowImmersiveMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"SlideshowTransitionMode", std::to_wstring(g_config.SlideshowTransitionMode).c_str(), iniPath.c_str());
+    WriteConfigBool(L"View", L"KeepWindowSizeOnNav", g_config.KeepWindowSizeOnNav, iniPath.c_str());
+    WriteConfigBool(L"View", L"RememberLastWindowSizeAndPosition", g_config.RememberLastWindowSizeAndPosition, iniPath.c_str());
+    WriteConfigBool(L"View", L"UpscaleSmallImagesWhenLocked", g_config.UpscaleSmallImagesWhenLocked, iniPath.c_str());
+    WriteConfigInt(L"View", L"SlideshowIntervalMs", g_config.SlideshowIntervalMs, iniPath.c_str());
+    WriteConfigInt(L"View", L"SlideshowImmersiveMode", g_config.SlideshowImmersiveMode, iniPath.c_str());
+    WriteConfigInt(L"View", L"SlideshowTransitionMode", g_config.SlideshowTransitionMode, iniPath.c_str());
 
-    WritePrivateProfileStringW(L"View", L"ExifPanelMode", std::to_wstring(g_config.ExifPanelMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"ToolbarInfoDefault", std::to_wstring(g_config.ToolbarInfoDefault).c_str(), iniPath.c_str());
+    WriteConfigInt(L"View", L"ExifPanelMode", g_config.ExifPanelMode, iniPath.c_str());
+    WriteConfigInt(L"View", L"ToolbarInfoDefault", g_config.ToolbarInfoDefault, iniPath.c_str());
     // Redundant Alphas Removed (Unified to Geek Glass)
-    WritePrivateProfileStringW(L"View", L"NavIndicator", std::to_wstring(g_config.NavIndicator).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"EnableCrossMonitor", g_config.EnableCrossMonitor ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"RoundedCorners", g_config.RoundedCorners ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"View", L"EnableSmoothScaling", g_config.EnableSmoothScaling ? L"1" : L"0", iniPath.c_str());
+    WriteConfigInt(L"View", L"NavIndicator", g_config.NavIndicator, iniPath.c_str());
+    WriteConfigBool(L"View", L"EnableCrossMonitor", g_config.EnableCrossMonitor, iniPath.c_str());
+    WriteConfigBool(L"View", L"RoundedCorners", g_config.RoundedCorners, iniPath.c_str());
+    WriteConfigBool(L"View", L"EnableSmoothScaling", g_config.EnableSmoothScaling, iniPath.c_str());
 
     // Control
-    WritePrivateProfileStringW(L"Controls", L"EnableCrossFade", g_config.EnableCrossFade ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"ZoomModeIn", std::to_wstring(g_config.ZoomModeIn).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"ZoomModeOut", std::to_wstring(g_config.ZoomModeOut).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"InvertWheel", g_config.InvertWheel ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"WheelActionMode", std::to_wstring(g_config.WheelActionMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"ThumbWheelMode", std::to_wstring(g_config.ThumbWheelMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"InvertXButton", g_config.InvertXButton ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"EnableZoomSnapDamping", g_config.EnableZoomSnapDamping ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"MouseAnchoredWindowZoom", g_config.MouseAnchoredWindowZoom ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"RightButtonDragZoom", g_config.RightButtonDragZoom ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"WheelZoomSpeed", std::to_wstring(g_config.WheelZoomSpeed).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"RightDragZoomSpeed", std::to_wstring(g_config.RightDragZoomSpeed).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"PanStepNormal", std::to_wstring(g_config.PanStepNormal).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"PanStepFast", std::to_wstring(g_config.PanStepFast).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"LeftDragAction", std::to_wstring((int)g_config.LeftDragAction).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"MiddleDragAction", std::to_wstring((int)g_config.MiddleDragAction).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"MiddleClickAction", std::to_wstring((int)g_config.MiddleClickAction).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"GalleryTriggerMode", std::to_wstring(g_config.GalleryTriggerMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"GalleryThumbnailSize", std::to_wstring(g_config.GalleryThumbnailSize).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"GalleryFilmstripHeight", std::to_wstring(g_config.GalleryFilmstripHeight).c_str(), iniPath.c_str());
+    WriteConfigBool(L"Controls", L"EnableCrossFade", g_config.EnableCrossFade, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"ZoomModeIn", g_config.ZoomModeIn, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"ZoomModeOut", g_config.ZoomModeOut, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"InvertWheel", g_config.InvertWheel, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"WheelActionMode", g_config.WheelActionMode, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"ThumbWheelMode", g_config.ThumbWheelMode, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"InvertXButton", g_config.InvertXButton, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"EnableZoomSnapDamping", g_config.EnableZoomSnapDamping, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"MouseAnchoredWindowZoom", g_config.MouseAnchoredWindowZoom, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"RightButtonDragZoom", g_config.RightButtonDragZoom, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"WheelZoomSpeed", g_config.WheelZoomSpeed, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"RightDragZoomSpeed", g_config.RightDragZoomSpeed, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"PanStepNormal", g_config.PanStepNormal, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"PanStepFast", g_config.PanStepFast, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"LeftDragAction", (int)g_config.LeftDragAction, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"MiddleDragAction", (int)g_config.MiddleDragAction, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"MiddleClickAction", (int)g_config.MiddleClickAction, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"GalleryTriggerMode", g_config.GalleryTriggerMode, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"GalleryThumbnailSize", g_config.GalleryThumbnailSize, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"GalleryFilmstripHeight", g_config.GalleryFilmstripHeight, iniPath.c_str());
     // NavIndicator moved to View section
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
-    WritePrivateProfileStringW(L"Controls", L"LoupeEnabled", g_config.LoupeEnabled ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"LoupeShape", std::to_wstring(g_config.LoupeShape).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"LoupeSizeRatio", std::to_wstring(g_config.LoupeSizeRatio).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Controls", L"LoupeZoom", std::to_wstring(g_config.LoupeZoom).c_str(), iniPath.c_str());
+    WriteConfigBool(L"Controls", L"LoupeEnabled", g_config.LoupeEnabled, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"LoupeShape", g_config.LoupeShape, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"LoupeSizeRatio", g_config.LoupeSizeRatio, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"LoupeZoom", g_config.LoupeZoom, iniPath.c_str());
     
     // Fixed Zoom Levels
-    WritePrivateProfileStringW(L"Controls", L"UseFixedZoom", g_config.UseFixedZoom ? L"1" : L"0", iniPath.c_str());
+    WriteConfigBool(L"Controls", L"UseFixedZoom", g_config.UseFixedZoom, iniPath.c_str());
     WritePrivateProfileStringW(L"Controls", L"FixedZoomLevels", g_config.FixedZoomLevels.c_str(), iniPath.c_str());
 
     // Customizable Info Panel Lite
@@ -4264,42 +4291,42 @@ void SaveConfig() {
     WritePrivateProfileStringW(L"Controls", L"InfoPanelLiteSeparator", wrappedSeparator.c_str(), iniPath.c_str());
 
     // Image
-    WritePrivateProfileStringW(L"Image", L"AutoRotate", std::to_wstring(g_config.AutoRotate).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"ColorManagement", g_config.ColorManagement ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"AdvancedColorMode", std::to_wstring(g_config.AdvancedColorMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"CmsDefaultFallback", std::to_wstring(g_config.CmsDefaultFallback).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"CmsRenderingIntent", std::to_wstring(g_config.CmsRenderingIntent).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"HdrToneMappingMode", std::to_wstring(g_config.HdrToneMappingMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"HdrSplineKnee", std::to_wstring(g_config.HdrSplineKnee).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"HdrPeakNitsOverride", std::to_wstring(g_config.HdrPeakNitsOverride).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"HdrPeakPercentile", std::to_wstring(g_config.HdrPeakPercentile).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"Exposure", std::to_wstring(g_config.Exposure).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"HdrDesatThreshold", std::to_wstring(g_config.HdrDesatThreshold).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"HdrMaxDesat", std::to_wstring(g_config.HdrMaxDesat).c_str(), iniPath.c_str());
+    WriteConfigInt(L"Image", L"AutoRotate", g_config.AutoRotate, iniPath.c_str());
+    WriteConfigBool(L"Image", L"ColorManagement", g_config.ColorManagement, iniPath.c_str());
+    WriteConfigInt(L"Image", L"AdvancedColorMode", g_config.AdvancedColorMode, iniPath.c_str());
+    WriteConfigInt(L"Image", L"CmsDefaultFallback", g_config.CmsDefaultFallback, iniPath.c_str());
+    WriteConfigInt(L"Image", L"CmsRenderingIntent", g_config.CmsRenderingIntent, iniPath.c_str());
+    WriteConfigInt(L"Image", L"HdrToneMappingMode", g_config.HdrToneMappingMode, iniPath.c_str());
+    WriteConfigFloat(L"Image", L"HdrSplineKnee", g_config.HdrSplineKnee, iniPath.c_str());
+    WriteConfigFloat(L"Image", L"HdrPeakNitsOverride", g_config.HdrPeakNitsOverride, iniPath.c_str());
+    WriteConfigFloat(L"Image", L"HdrPeakPercentile", g_config.HdrPeakPercentile, iniPath.c_str());
+    WriteConfigFloat(L"Image", L"Exposure", g_config.Exposure, iniPath.c_str());
+    WriteConfigFloat(L"Image", L"HdrDesatThreshold", g_config.HdrDesatThreshold, iniPath.c_str());
+    WriteConfigFloat(L"Image", L"HdrMaxDesat", g_config.HdrMaxDesat, iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"CustomSoftProofProfile", g_config.CustomSoftProofProfile.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"GamutWarningMode", std::to_wstring(g_config.GamutWarningMode).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"GamutWarningAutoPrompt", g_config.GamutWarningAutoPrompt ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"GamutWarningColorR", std::to_wstring(g_config.GamutWarningColorR).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"GamutWarningColorG", std::to_wstring(g_config.GamutWarningColorG).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"GamutWarningColorB", std::to_wstring(g_config.GamutWarningColorB).c_str(), iniPath.c_str());
+    WriteConfigInt(L"Image", L"GamutWarningMode", g_config.GamutWarningMode, iniPath.c_str());
+    WriteConfigBool(L"Image", L"GamutWarningAutoPrompt", g_config.GamutWarningAutoPrompt, iniPath.c_str());
+    WriteConfigInt(L"Image", L"GamutWarningColorR", g_config.GamutWarningColorR, iniPath.c_str());
+    WriteConfigInt(L"Image", L"GamutWarningColorG", g_config.GamutWarningColorG, iniPath.c_str());
+    WriteConfigInt(L"Image", L"GamutWarningColorB", g_config.GamutWarningColorB, iniPath.c_str());
     WritePrivateProfileStringW(L"Image", L"CustomEditorPath", g_config.CustomEditorPath.c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"ForceRawDecode", g_config.ForceRawDecode ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"PairRawJpeg", g_config.PairRawJpeg ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Image", L"AlwaysSaveLossy", g_config.AlwaysSaveLossy ? L"1" : L"0", iniPath.c_str());
+    WriteConfigBool(L"Image", L"ForceRawDecode", g_config.ForceRawDecode, iniPath.c_str());
+    WriteConfigBool(L"Image", L"PairRawJpeg", g_config.PairRawJpeg, iniPath.c_str());
+    WriteConfigBool(L"Image", L"AlwaysSaveLossless", g_config.AlwaysSaveLossless, iniPath.c_str());
+    WriteConfigBool(L"Image", L"AlwaysSaveEdgeAdapted", g_config.AlwaysSaveEdgeAdapted, iniPath.c_str());
+    WriteConfigBool(L"Image", L"AlwaysSaveLossy", g_config.AlwaysSaveLossy, iniPath.c_str());
 
     // Advanced / Debug
-    WritePrivateProfileStringW(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"Advanced", L"PrefetchGear", std::to_wstring((int)g_config.PrefetchGear).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Advanced", L"MemoryReclaimStrategy", std::to_wstring((int)g_config.MemoryReclaimStrategy).c_str(), iniPath.c_str());
-    WritePrivateProfileStringW(L"Advanced", L"ShowDirtyRectButton", g_config.ShowDirtyRectButton ? L"1" : L"0", iniPath.c_str());
+    WriteConfigBool(L"Advanced", L"EnableDebugFeatures", g_config.EnableDebugFeatures, iniPath.c_str());
+    WriteConfigInt(L"Advanced", L"PrefetchGear", (int)g_config.PrefetchGear, iniPath.c_str());
+    WriteConfigInt(L"Advanced", L"MemoryReclaimStrategy", (int)g_config.MemoryReclaimStrategy, iniPath.c_str());
+    WriteConfigBool(L"Advanced", L"ShowDirtyRectButton", g_config.ShowDirtyRectButton, iniPath.c_str());
     
     // Internal / Navigation
-    WritePrivateProfileStringW(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"AutoSaveOnSwitch", g_config.AutoSaveOnSwitch ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"NavLoop", g_config.NavLoop ? L"1" : L"0", iniPath.c_str());
-    WritePrivateProfileStringW(L"General", L"NavTraverse", g_config.NavTraverse ? L"1" : L"0", iniPath.c_str());
+    WriteConfigBool(L"General", L"ShowSavePrompt", g_config.ShowSavePrompt, iniPath.c_str());
+    WriteConfigBool(L"General", L"AutoSaveOnSwitch", g_config.AutoSaveOnSwitch, iniPath.c_str());
+    WriteConfigBool(L"General", L"NavLoop", g_config.NavLoop, iniPath.c_str());
+    WriteConfigBool(L"General", L"NavTraverse", g_config.NavTraverse, iniPath.c_str());
 
     // Registry / Associations persistence
     WritePrivateProfileStringW(L"Registry", L"RegVer", g_config.LastRegisteredVersion.c_str(), iniPath.c_str());

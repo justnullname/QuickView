@@ -38,22 +38,6 @@ std::unique_ptr<GeekContextMenu> GeekContextMenu::s_root;
 bool GeekContextMenu::s_classRegistered = false;
 
 // ============================================================
-// Tab Shortcut Cleanup
-// ============================================================
-static void CleanupTabShortcuts(std::vector<GeekMenuItem>& items) {
-    for (auto& item : items) {
-        auto tab = item.text.find(L'\t');
-        if (tab != std::wstring::npos) {
-            if (item.shortcut.empty())
-                item.shortcut = item.text.substr(tab + 1);
-            item.text = item.text.substr(0, tab);
-        }
-        if (!item.submenu.empty())
-            CleanupTabShortcuts(item.submenu);
-    }
-}
-
-// ============================================================
 // Constructor / Destructor
 // ============================================================
 GeekContextMenu::~GeekContextMenu() {
@@ -88,13 +72,6 @@ void GeekContextMenu::ShowMenu(HWND parent, int sx, int sy,
                                 bool isTouch) {
     DismissAll();
     EnsureClassRegistered();
-
-    CleanupTabShortcuts(items);
-    for (auto& a : actions) {
-        auto tab = a.label.find(L'\t');
-        if (tab != std::wstring::npos)
-            a.label = a.label.substr(0, tab);
-    }
 
     auto menu = std::make_unique<GeekContextMenu>();
     menu->m_parentAppHwnd = parent;
@@ -585,10 +562,15 @@ void GeekContextMenu::RenderActionRow() {
         }
 
         // Label
-        if (m_actionFont) {
+        if (m_actionFont && btn.label) {
             D2D1_RECT_F labR = D2D1::RectF(r.left, iconY + icoSz + 3, r.right, r.bottom);
             ID2D1Brush* tb = btn.isEnabled ? m_textBrush.Get() : m_disabledBrush.Get();
-            m_rt->DrawText(btn.label.c_str(), (UINT32)btn.label.size(), m_actionFont.Get(), labR, tb);
+            const wchar_t* tab = wcschr(btn.label, L'\t');
+            if (tab) {
+                m_rt->DrawText(btn.label, (UINT32)(tab - btn.label), m_actionFont.Get(), labR, tb);
+            } else {
+                m_rt->DrawText(btn.label, (UINT32)wcslen(btn.label), m_actionFont.Get(), labR, tb);
+            }
         }
     }
 }
@@ -688,18 +670,35 @@ void GeekContextMenu::RenderItem(const GeekMenuItem& item, int index) {
         GeekIconRenderer::DrawVectorIcon(m_rt.Get(), *item.iconGlyph, iconR, tb);
     }
 
-    // Text
-    if (m_itemFont) {
-        D2D1_RECT_F textR = D2D1::RectF(r.left + TEXT_LEFT, r.top, r.right - TEXT_RIGHT - 24, r.bottom);
-        m_rt->DrawText(item.text.c_str(), (UINT32)item.text.size(), m_itemFont.Get(), textR, tb);
-    }
+    // Text and Shortcut (Split by \t dynamically if present)
+    if (m_itemFont && item.text) {
+        const wchar_t* tab = wcschr(item.text, L'\t');
+        if (tab) {
+            // Draw left label
+            D2D1_RECT_F textR = D2D1::RectF(r.left + TEXT_LEFT, r.top, r.right - TEXT_RIGHT - 24, r.bottom);
+            m_rt->DrawText(item.text, (UINT32)(tab - item.text), m_itemFont.Get(), textR, tb);
 
-    // Shortcut
-    if (!item.shortcut.empty() && m_shortcutFont) {
-        D2D1_RECT_F scR = D2D1::RectF(r.right - TEXT_RIGHT - 90, r.top, r.right - TEXT_RIGHT, r.bottom);
-        m_shortcutFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        m_rt->DrawText(item.shortcut.c_str(), (UINT32)item.shortcut.size(), m_shortcutFont.Get(), scR, m_dimBrush.Get());
-        m_shortcutFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            // Draw right shortcut
+            if (m_shortcutFont) {
+                const wchar_t* sc = tab + 1;
+                D2D1_RECT_F scR = D2D1::RectF(r.right - TEXT_RIGHT - 90, r.top, r.right - TEXT_RIGHT, r.bottom);
+                m_shortcutFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                m_rt->DrawText(sc, (UINT32)wcslen(sc), m_shortcutFont.Get(), scR, m_dimBrush.Get());
+                m_shortcutFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            }
+        } else {
+            // Draw normal text
+            D2D1_RECT_F textR = D2D1::RectF(r.left + TEXT_LEFT, r.top, r.right - TEXT_RIGHT - 24, r.bottom);
+            m_rt->DrawText(item.text, (UINT32)wcslen(item.text), m_itemFont.Get(), textR, tb);
+
+            // Draw normal shortcut if provided
+            if (item.shortcut && item.shortcut[0] != L'\0' && m_shortcutFont) {
+                D2D1_RECT_F scR = D2D1::RectF(r.right - TEXT_RIGHT - 90, r.top, r.right - TEXT_RIGHT, r.bottom);
+                m_shortcutFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                m_rt->DrawText(item.shortcut, (UINT32)wcslen(item.shortcut), m_shortcutFont.Get(), scR, m_dimBrush.Get());
+                m_shortcutFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            }
+        }
     }
 
     // Submenu chevron

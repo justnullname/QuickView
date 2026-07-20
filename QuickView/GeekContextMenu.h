@@ -44,8 +44,8 @@ enum class MenuItemType {
 struct GeekMenuItem {
     MenuItemType type = MenuItemType::Normal;
     UINT commandId = 0;
-    std::wstring text;
-    std::wstring shortcut;
+    const wchar_t* text = nullptr;
+    const wchar_t* shortcut = nullptr;
     GeekIcons::IconGlyph iconGlyph = nullptr;
     bool isEnabled = true;
     bool isChecked = false;
@@ -61,7 +61,7 @@ struct GeekMenuItem {
         GeekMenuItem m;
         m.type = MenuItemType::Normal; m.commandId = id; m.text = text;
         m.iconGlyph = icon; m.isDanger = danger;
-        if (shortcut) m.shortcut = shortcut;
+        m.shortcut = shortcut;
         return m;
     }
     static GeekMenuItem Sep() { GeekMenuItem m; m.type = MenuItemType::Separator; return m; }
@@ -75,7 +75,7 @@ struct GeekMenuItem {
         GeekMenuItem m;
         m.type = MenuItemType::CheckBox; m.commandId = id; m.text = text;
         m.isChecked = checked; m.iconGlyph = icon;
-        if (shortcut) m.shortcut = shortcut;
+        m.shortcut = shortcut;
         return m;
     }
     GeekMenuItem& Enabled(bool e) { isEnabled = e; return *this; }
@@ -84,7 +84,7 @@ struct GeekMenuItem {
 
 struct ActionButton {
     UINT commandId = 0;
-    std::wstring label;
+    const wchar_t* label = nullptr;
     GeekIcons::IconGlyph iconGlyph = nullptr;
     bool isEnabled = true;
     bool isDanger = false;

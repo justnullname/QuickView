@@ -41,8 +41,8 @@ enum class TruncateMode {
 };
 
 struct InfoRow {
-    std::wstring icon = L"";       // Emoji icon (e.g., "📄")
-    std::wstring label = L"";      // Label (e.g., "文件")
+    const wchar_t* icon = nullptr; // Emoji icon (e.g., L"📄")
+    const wchar_t* label = nullptr; // Label (e.g., L"File")
     std::wstring valueMain = L"";  // Main value (e.g., "f/1.6")
     std::wstring valueSub = L"";   // Secondary value in gray (e.g., "(1,138,997 B)")
     std::wstring fullText = L"";   // Full text for tooltip
@@ -221,7 +221,7 @@ private:
     
     std::wstring BuildCompactInfoText() const;
     std::vector<InfoRow> BuildGridRows(const CImageLoader::ImageMetadata& metadata, const std::wstring& imagePath, bool showAdvanced = false, int positionIndex = -1, size_t positionTotal = 0) const;
-    TooltipInfo GetTooltipInfo(const std::wstring& label) const;
+    TooltipInfo GetTooltipInfo(std::wstring_view label) const;
     
 private:
     InfoRow m_hoverInfoRow; // Cached row for HUD tooltips
@@ -244,10 +244,10 @@ private:
 
 public:
     // ===== Text Measurement Helpers =====
-    float MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format = nullptr) const;
-    float MeasureTextHeight(const std::wstring& text, IDWriteTextFormat* format = nullptr, float maxWidth = 2000.0f);
-    std::wstring MakeMiddleEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format = nullptr);
-    std::wstring MakeEndEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format = nullptr);
+    float MeasureTextWidth(std::wstring_view text, IDWriteTextFormat* format = nullptr) const;
+    float MeasureTextHeight(std::wstring_view text, IDWriteTextFormat* format = nullptr, float maxWidth = 2000.0f);
+    std::wstring MakeMiddleEllipsis(float maxWidth, std::wstring_view text, IDWriteTextFormat* format = nullptr);
+    std::wstring MakeEndEllipsis(float maxWidth, std::wstring_view text, IDWriteTextFormat* format = nullptr);
 
 private:
     // Dirty Rects calculation

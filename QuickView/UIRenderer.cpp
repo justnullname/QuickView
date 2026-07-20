@@ -329,7 +329,7 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
                 
                 const auto& row = m_infoGrid[i];
                 // Determine what to copy
-                if (row.label == L"File") {
+                if (row.label && wcscmp(row.label, L"File") == 0) {
                     result.payload = g_imagePath;
                 } else if (!row.fullText.empty()) {
                     result.payload = row.fullText;
@@ -361,13 +361,13 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
 // Text Measurement Helpers
 // ============================================================================
 
-float UIRenderer::MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* format) const {
+float UIRenderer::MeasureTextWidth(std::wstring_view text, IDWriteTextFormat* format) const {
     IDWriteTextFormat* useFormat = format ? format : m_panelFormat.Get();
     if (text.empty() || !useFormat || !m_dwriteFactory) return 0.0f;
     
     ComPtr<IDWriteTextLayout> layout;
     m_dwriteFactory->CreateTextLayout(
-        text.c_str(), (UINT32)text.length(),
+        text.data(), (UINT32)text.length(),
         useFormat, 2000.0f, 100.0f, &layout
     );
     
@@ -380,53 +380,47 @@ float UIRenderer::MeasureTextWidth(const std::wstring& text, IDWriteTextFormat* 
     return 0.0f;
 }
 
-float UIRenderer::MeasureTextHeight(const std::wstring& text, IDWriteTextFormat* format, float maxWidth) {
+float UIRenderer::MeasureTextHeight(std::wstring_view text, IDWriteTextFormat* format, float maxWidth) {
     IDWriteTextFormat* useFormat = format ? format : m_panelFormat.Get();
     if (text.empty() || !useFormat || !m_dwriteFactory) return 0.0f;
     
     ComPtr<IDWriteTextLayout> layout;
     m_dwriteFactory->CreateTextLayout(
-        text.c_str(), (UINT32)text.length(),
+        text.data(), (UINT32)text.length(),
         useFormat, maxWidth, 1000.0f, &layout
     );
     
     if (!layout) return 0.0f;
     
     DWRITE_TEXT_METRICS metrics;
-    layout->GetMetrics(&metrics);
-    return metrics.height;
+    if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+        return metrics.height;
+    }
+    return 0.0f;
 }
 
-std::wstring UIRenderer::MakeMiddleEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format) {
-    if (text.empty()) return text;
+std::wstring UIRenderer::MakeMiddleEllipsis(float maxWidth, std::wstring_view text, IDWriteTextFormat* format) {
+    if (text.empty()) return std::wstring(text);
     
     // Quick check full text
     float fullWidth = MeasureTextWidth(text, format);
-    if (fullWidth <= maxWidth) return text;
+    if (fullWidth <= maxWidth) return std::wstring(text);
     
     float ellipsisWidth = MeasureTextWidth(L"...", format);
     float availWidth = maxWidth - ellipsisWidth;
     if (availWidth <= 0) return L"...";
     
     // Binary Search for Maximum 'Keep Characters'
-    // We want to maximize 'len' such that width( text[0..left] + "..." + text[end-right..end] ) <= maxWidth
-    // where left + right = len.
-    
     size_t minLen = 2; // At least 1 char on each side
     size_t maxLen = text.length() - 1; 
-    std::wstring bestResult = text.substr(0, 1) + L"..." + text.substr(text.length() - 1); // Baseline fallback
+    std::wstring bestResult = std::wstring(text.substr(0, 1)) + L"..." + std::wstring(text.substr(text.length() - 1)); // Baseline fallback
     
     while (minLen <= maxLen) {
         size_t mid = minLen + (maxLen - minLen) / 2;
-        
-        // Split mid characters: prioritize end for filenames (often extension is important)?
-        // Actually for filenames: Start...End is standard.
-        // Let's split roughly even, maybe favor start slightly?
-        // text: "Microsoft Word.lnk" -> "Micro...lnk"
         size_t keepEnd = mid / 2;
         size_t keepStart = mid - keepEnd;
         
-        std::wstring candidate = text.substr(0, keepStart) + L"..." + text.substr(text.length() - keepEnd);
+        std::wstring candidate = std::wstring(text.substr(0, keepStart)) + L"..." + std::wstring(text.substr(text.length() - keepEnd));
         float w = MeasureTextWidth(candidate, format);
         
         if (w <= maxWidth) {
@@ -440,11 +434,11 @@ std::wstring UIRenderer::MakeMiddleEllipsis(float maxWidth, const std::wstring& 
     return bestResult;
 }
 
-std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, const std::wstring& text, IDWriteTextFormat* format) {
-    if (text.empty()) return text;
+std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, std::wstring_view text, IDWriteTextFormat* format) {
+    if (text.empty()) return std::wstring(text);
     
     float fullWidth = MeasureTextWidth(text, format);
-    if (fullWidth <= maxWidth) return text;
+    if (fullWidth <= maxWidth) return std::wstring(text);
     
     float ellipsisWidth = MeasureTextWidth(L"...", format);
     float availWidth = maxWidth - ellipsisWidth;
@@ -459,7 +453,7 @@ std::wstring UIRenderer::MakeEndEllipsis(float maxWidth, const std::wstring& tex
         else hi = mid - 1;
     }
     
-    return text.substr(0, lo) + L"...";
+    return std::wstring(text.substr(0, lo)) + L"...";
 }
 
 void UIRenderer::SetOSD(const std::wstring& text, float opacity, D2D1_COLOR_F color, OSDPosition pos) {
@@ -2623,7 +2617,7 @@ static std::wstring FormatBytesWithCommas(UINT64 bytes) {
 */
 
  
-UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(const std::wstring& label) const {
+UIRenderer::TooltipInfo UIRenderer::GetTooltipInfo(std::wstring_view label) const {
     if (label == L"Sharp") return { AppStrings::HUD_Tip_Sharp_Desc, AppStrings::HUD_Tip_Sharp_High, AppStrings::HUD_Tip_Sharp_Low, AppStrings::HUD_Tip_Sharp_Ref };
     if (label == L"Ent") return { AppStrings::HUD_Tip_Ent_Desc, AppStrings::HUD_Tip_Ent_High, AppStrings::HUD_Tip_Ent_Low, AppStrings::HUD_Tip_Ent_Ref };
     if (label == L"BPP") return { AppStrings::HUD_Tip_BPP_Desc, AppStrings::HUD_Tip_BPP_High, AppStrings::HUD_Tip_BPP_Low, AppStrings::HUD_Tip_BPP_Ref };
@@ -2672,10 +2666,24 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         // Viewing the RAW side of a pair: point back at the rendered sibling.
         // Label = its concrete format (JPG/HEIC...), value = its file name.
         std::wstring rname = rendered.substr(rendered.find_last_of(L"\\/") + 1);
-        std::wstring rlabel;
+        const wchar_t* rlabel = L"Pair";
         std::wstring_view rext = QuickView::ExtensionOf(rendered);
-        if (!rext.empty()) rext.remove_prefix(1);
-        for (wchar_t c : rext) rlabel += (wchar_t)std::towupper(c);
+        if (!rext.empty()) {
+            rext.remove_prefix(1);
+            if (_wcsnicmp(rext.data(), L"jpg", rext.length()) == 0 || _wcsnicmp(rext.data(), L"jpeg", rext.length()) == 0) rlabel = L"JPG";
+            else if (_wcsnicmp(rext.data(), L"png", rext.length()) == 0) rlabel = L"PNG";
+            else if (_wcsnicmp(rext.data(), L"webp", rext.length()) == 0) rlabel = L"WEBP";
+            else if (_wcsnicmp(rext.data(), L"bmp", rext.length()) == 0) rlabel = L"BMP";
+            else if (_wcsnicmp(rext.data(), L"gif", rext.length()) == 0) rlabel = L"GIF";
+            else if (_wcsnicmp(rext.data(), L"tif", rext.length()) == 0 || _wcsnicmp(rext.data(), L"tiff", rext.length()) == 0) rlabel = L"TIFF";
+            else {
+                thread_local static wchar_t s_extCache[16];
+                size_t len = (std::min)(rext.length(), (size_t)14);
+                for (size_t i = 0; i < len; ++i) s_extCache[i] = (wchar_t)std::towupper(rext[i]);
+                s_extCache[len] = L'\0';
+                rlabel = s_extCache;
+            }
+        }
         const int ridx = g_navigator.FindIndex(rendered);
         wchar_t rSizeBuf[32] = L"";
         if (const uintmax_t rsize = g_navigator.GetFileSize(ridx); rsize >= 1024 * 1024) {
@@ -2683,7 +2691,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         } else if (g_navigator.GetFileSize(ridx) > 0) {
             swprintf_s(rSizeBuf, L"%.2f KB", g_navigator.GetFileSize(ridx) / 1024.0);
         }
-        rows.push_back({L"\U0001F517", rlabel.empty() ? L"Pair" : rlabel, rname, rSizeBuf, rname, TruncateMode::MiddleEllipsis, false});
+        rows.push_back({L"\U0001F517", rlabel, rname, rSizeBuf, rname, TruncateMode::MiddleEllipsis, false});
     }
 
     // Row 2: Dimensions + Megapixels + Zoom
@@ -2919,7 +2927,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
 
     // Add extra tooltips based on label
     for (auto& row : rows) {
-        TooltipInfo info = GetTooltipInfo(row.label);
+        TooltipInfo info = row.label ? GetTooltipInfo(row.label) : TooltipInfo{ L"", L"", L"", L"" };
         if (!info.description.empty()) {
             const std::wstring helpText = BuildTooltipHelpText(
                 info.description,
@@ -2927,7 +2935,7 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
                 info.lowMeaning,
                 info.reference);
             if (row.fullText.empty()) {
-                row.fullText = row.label + L": " + row.valueMain;
+                row.fullText = std::wstring(row.label ? row.label : L"") + L": " + row.valueMain;
                 if (!row.valueSub.empty()) row.fullText += L" " + row.valueSub;
             }
             row.fullText += L"\n\n";
@@ -3213,7 +3221,7 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         
         // Calculate hit rect
         row.hitRect = D2D1::RectF(startX, y, startX + width, y + rowH);
-        if (row.label == L"HDR Pro") {
+        if (row.label && wcscmp(row.label, L"HDR Pro") == 0) {
             m_hdrDetailsToggleRect = row.hitRect;
         }
         
@@ -3224,13 +3232,15 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         
         // Icon column
         D2D1_RECT_F iconRect = D2D1::RectF(startX, y, startX + iconW, y + rowH);
-        dc->DrawText(row.icon.c_str(), (UINT32)row.icon.length(), m_panelFormat.Get(), iconRect, brushMain.Get());
+        if (row.icon) {
+            dc->DrawText(row.icon, (UINT32)wcslen(row.icon), m_panelFormat.Get(), iconRect, brushMain.Get());
+        }
         
         // Label column (theme-aware dim)
         D2D1_RECT_F labelRect = D2D1::RectF(startX + iconW, y, valueColStart, y + rowH);
         const float labelMaxWidth = (labelW > 6.0f * s) ? (labelW - 6.0f * s) : labelW;
-        const std::wstring displayLabel = MakeEndEllipsis(labelMaxWidth, row.label);
-        const bool labelTruncated = (displayLabel != row.label);
+        const std::wstring displayLabel = MakeEndEllipsis(labelMaxWidth, row.label ? row.label : L"");
+        const bool labelTruncated = row.label ? (displayLabel != row.label) : false;
         dc->DrawText(displayLabel.c_str(), (UINT32)displayLabel.length(), m_panelFormat.Get(), labelRect, brushDim.Get());
         
         // Value column - apply truncation
@@ -3268,7 +3278,7 @@ void UIRenderer::DrawInfoGrid(ID2D1DeviceContext* dc, float startX, float startY
         row.isTruncated = (row.displayText != row.valueMain) || (displaySub != row.valueSub) || labelTruncated;
 
         if (row.fullText.empty()) {
-            row.fullText = row.label + L": " + row.valueMain;
+            row.fullText = std::wstring(row.label ? row.label : L"") + L": " + row.valueMain;
             if (!row.valueSub.empty()) {
                 row.fullText += L" " + row.valueSub;
             }
@@ -4613,24 +4623,26 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 	    if (!m_panelFormat) return;
 	
 	    // --- Dynamic Height Calculation ---
-	    std::vector<std::wstring> labels;
+	    std::vector<std::wstring_view> labels;
     auto addLabels = [&](const std::vector<InfoRow>& r) {
         for (const auto& row : r) {
-            if (std::find(labels.begin(), labels.end(), row.label) == labels.end())
-                labels.push_back(row.label);
+            if (row.label) {
+                if (std::find(labels.begin(), labels.end(), row.label) == labels.end())
+                    labels.push_back(row.label);
+            }
         }
     };
     addLabels(leftRows);
     addLabels(rightRows);
 
 	    struct Group {
-	        std::wstring name;
-	        std::vector<std::wstring> labels;
+	        std::wstring_view name;
+	        std::vector<std::wstring_view> labels;
 		    };
 		    std::vector<Group> hudGroups;
 			    auto GetHudRowText = [](const InfoRow* row) -> std::wstring {
 			        if (!row) return L"";
-			        if (row->label == L"Size") return row->valueMain + row->valueSub;
+			        if (row->label && wcscmp(row->label, L"Size") == 0) return row->valueMain + row->valueSub;
 			        if (row->valueSub.empty()) return row->valueMain;
 			        if (row->valueMain.empty()) return row->valueSub;
 			        return row->valueMain + L" " + row->valueSub;
@@ -4662,8 +4674,8 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 			    float desiredValW = 120.0f * s;
 			    const InfoRow* leftSizeRow = nullptr;
 			    const InfoRow* rightSizeRow = nullptr;
-			    for (const auto& r : leftRows) if (r.label == L"Size") { leftSizeRow = &r; break; }
-			    for (const auto& r : rightRows) if (r.label == L"Size") { rightSizeRow = &r; break; }
+			    for (const auto& r : leftRows) if (r.label && wcscmp(r.label, L"Size") == 0) { leftSizeRow = &r; break; }
+			    for (const auto& r : rightRows) if (r.label && wcscmp(r.label, L"Size") == 0) { rightSizeRow = &r; break; }
 			    std::wstring leftSizeText = GetHudRowText(leftSizeRow);
 			    std::wstring rightSizeText = GetHudRowText(rightSizeRow);
 			    float sizeArrowReserve = MeasureTextWidth(L" ↑", m_panelFormat.Get()) + 4.0f * s;
@@ -4696,8 +4708,8 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 if (hudMode < 2 && l != L"File") {
                     const InfoRow* lRow = nullptr;
                     const InfoRow* rRow = nullptr;
-                    for (const auto& r : leftRows) if (r.label == l) { lRow = &r; break; }
-                    for (const auto& r : rightRows) if (r.label == l) { rRow = &r; break; }
+                    for (const auto& r : leftRows) if (r.label && r.label == l) { lRow = &r; break; }
+                    for (const auto& r : rightRows) if (r.label && r.label == l) { rRow = &r; break; }
 	                    if (lRow && rRow && GetHudRowText(lRow) == GetHudRowText(rRow)) {
 	                        continue; // Skip identical data
 	                    }
@@ -4803,8 +4815,8 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 if (hudMode < 2 && l != L"File") {
                     const InfoRow* lRow = nullptr;
                     const InfoRow* rRow = nullptr;
-                    for (const auto& r : leftRows) if (r.label == l) { lRow = &r; break; }
-                    for (const auto& r : rightRows) if (r.label == l) { rRow = &r; break; }
+                    for (const auto& r : leftRows) if (r.label && r.label == l) { lRow = &r; break; }
+                    for (const auto& r : rightRows) if (r.label && r.label == l) { rRow = &r; break; }
 	                    if (lRow && rRow && GetHudRowText(lRow) == GetHudRowText(rRow)) continue;
                 }
                 groupHasData = true; 
@@ -4816,7 +4828,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         // Draw Group Header
         if (hudMode != 0) { // Don't draw group header in Lite mode to save space
             D2D1_RECT_F groupRect = D2D1::RectF(panelX + padding, y + 4*s, panelX + panelW - padding, y + rowH);
-            dc->DrawText(group.name.c_str(), (UINT32)group.name.length(), m_panelFormat.Get(), groupRect, brushLabel.Get());
+            dc->DrawText(group.name.data(), (UINT32)group.name.length(), m_panelFormat.Get(), groupRect, brushLabel.Get());
             dc->DrawLine(D2D1::Point2F(panelX + padding, y + rowH - 2*s), D2D1::Point2F(panelX + panelW - padding, y + rowH - 2*s), brushLabel.Get(), 0.5f * s);
             y += rowH;
         }
@@ -4827,8 +4839,8 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
             // Find corresponding rows
             const InfoRow* lRow = nullptr;
             const InfoRow* rRow = nullptr;
-            for (const auto& r : leftRows) if (r.label == label) { lRow = &r; break; }
-            for (const auto& r : rightRows) if (r.label == label) { rRow = &r; break; }
+            for (const auto& r : leftRows) if (r.label && r.label == label) { lRow = &r; break; }
+            for (const auto& r : rightRows) if (r.label && r.label == label) { rRow = &r; break; }
 
 	            // In Lite(0) and Normal(1) mode, hide identical metrics (except File)
 	            if (hudMode < 2 && label != L"File") {
@@ -4855,7 +4867,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
             }
 
             // Draw Label + Icon
-            std::wstring icon = lRow ? lRow->icon : (rRow ? rRow->icon : L"");
+            const wchar_t* icon = lRow ? lRow->icon : (rRow ? rRow->icon : nullptr);
             
             // Reset text alignment to LEADING to prevent state leak from previous row's DrawValue (e.g. when right value is missing)
             m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -4866,8 +4878,10 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
             D2D1_RECT_F nameRect = D2D1::RectF(labelX + iconSize, y, labelX + labelW, y + rowH);
             
             // Use brushText (basePalette.foreground) for icons, and m_panelFormat for better fallback support
-            dc->DrawText(icon.c_str(), (UINT32)icon.length(), m_panelFormat.Get(), iconRect, brushText.Get());
-            dc->DrawText(label.c_str(), (UINT32)label.length(), m_panelFormat.Get(), nameRect, brushLabel.Get());
+            if (icon) {
+                dc->DrawText(icon, (UINT32)wcslen(icon), m_panelFormat.Get(), iconRect, brushText.Get());
+            }
+            dc->DrawText(label.data(), (UINT32)label.length(), m_panelFormat.Get(), nameRect, brushLabel.Get());
 
             // Draw Values
 	            auto DrawValue = [&](const InfoRow* row, float x, float w, bool isLeft) {
@@ -4886,7 +4900,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                     brush = brushGood.Get(); 
                     
                     // Winning logic (Higher/Quality is better)
-                    auto IsBetter = [&](const std::wstring& lbl, const std::wstring& val1, const std::wstring& val2) -> bool {
+                    auto IsBetter = [&](std::wstring_view lbl, const std::wstring& val1, const std::wstring& val2) -> bool {
                         if (lbl == L"Disk") return leftMeta.FileSize > rightMeta.FileSize;
                         if (lbl == L"Size") return (leftMeta.Width * leftMeta.Height) > (rightMeta.Width * rightMeta.Height);
                     if (val1.empty() || val2.empty()) return false;

@@ -87,11 +87,35 @@ void HelpOverlay::CreateResources(ID2D1RenderTarget* pRT) {
 void HelpOverlay::RebuildList() {
     m_items.clear();
 
-    // Context Scope Tip (Top)
+    // 1. Prepare dynamic localized strings in class-level caches
+    m_strCtrlLeft = L"Ctrl + " + std::wstring(AppStrings::Settings_Label_LeftDrag);
+    
+    m_strHudText = AppStrings::Context_HUDGallery;
+    size_t tabPos = m_strHudText.find(L'\t');
+    if (tabPos != std::wstring::npos) {
+        m_strHudText = m_strHudText.substr(0, tabPos);
+    }
+    
+    m_strHudTopCombined = m_strHudText + L" / " + AppStrings::Settings_Label_AlwaysOnTop;
+    
+    m_strOverlayText = AppStrings::Context_OverlayMode;
+    size_t oTab = m_strOverlayText.find(L'\t');
+    if (oTab != std::wstring::npos) {
+        m_strOverlayText = m_strOverlayText.substr(0, oTab);
+    }
+    
+    m_strOverlayAlpha = std::wstring(AppStrings::Toolbar_Tooltip_OverlayAlphaUp) + L" / " + AppStrings::Toolbar_Tooltip_OverlayAlphaDown;
+    
+    m_strOpenText = AppStrings::Context_Open;
+    size_t openTab = m_strOpenText.find(L'\t');
+    if (openTab != std::wstring::npos) {
+        m_strOpenText = m_strOpenText.substr(0, openTab);
+    }
+
+    // 2. Build list with safe pointer assignments
     m_items.push_back({ false, AppStrings::Help_Tip_ContextScope, L"" });
 
-    // Section: Navigation
-    m_items.push_back({ true, AppStrings::Help_Header_Mouse, L"" }); // "Mouse Actions"
+    m_items.push_back({ true, AppStrings::Help_Header_Mouse, L"" });
     m_items.push_back({ false, L"\x2190 / \x2192 (Space)", AppStrings::Help_Action_NextPrev });
     m_items.push_back({ false, L"Home / End", AppStrings::Help_Item_FirstLast });
     bool wheelPrimaryNavigate = (g_config.WheelActionMode == 1);
@@ -102,72 +126,49 @@ void HelpOverlay::RebuildList() {
     m_items.push_back({ false, AppStrings::Help_Mouse_Right, AppStrings::Help_Action_ContextMenu });
     m_items.push_back({ false, AppStrings::Settings_Label_LeftDrag, AppStrings::Help_Action_MoveWindow });
     m_items.push_back({ false, AppStrings::Settings_Label_MiddleDrag, AppStrings::Help_Action_PanImage });
-    // Ctrl+Left Drag = Middle Drag (Pan)
-    std::wstring ctrlLeft = L"Ctrl + " + std::wstring(AppStrings::Settings_Label_LeftDrag);
-    m_items.push_back({ false, ctrlLeft, L"Same as Middle Drag" });
+    m_items.push_back({ false, m_strCtrlLeft.c_str(), L"Same as Middle Drag" });
     
-    // Double Click = Smart Zoom (Fit/100%)
     m_items.push_back({ false, L"Double Click", AppStrings::Help_Action_SmartZoom });
     m_items.push_back({ false, L"Middle Click", AppStrings::Help_Item_Close });
 
-    // Section: View
     m_items.push_back({ true, AppStrings::Context_View, L"" });
     m_items.push_back({ false, L"F1", L"Help" });
     m_items.push_back({ false, L"F11 / Enter", AppStrings::Help_Item_Fullscreen });
     m_items.push_back({ false, L"F12", L"Debug HUD (Enable in Settings)" });
     
-    // Clean "T" text (Remove \t...)
-    std::wstring hudText = AppStrings::Context_HUDGallery;
-    size_t tabPos = hudText.find(L'\t');
-    if (tabPos != std::wstring::npos) hudText = hudText.substr(0, tabPos);
-    
-    std::wstring topText = AppStrings::Settings_Label_AlwaysOnTop; // Usually plain
-    
-    m_items.push_back({ false, L"T / Ctrl+T", hudText + L" / " + topText });
+    m_items.push_back({ false, L"T / Ctrl+T", m_strHudTopCombined.c_str() });
     m_items.push_back({ false, L"1 / Z", AppStrings::OSD_Zoom100 });
     m_items.push_back({ false, L"0 / F", AppStrings::OSD_ZoomFit });
     m_items.push_back({ false, L"+ (\x2191) / - (\x2193)", L"Zoom (+/- 10%)" });
     m_items.push_back({ false, L"Ctrl + (+/-)", L"Zoom (+/- 1%)" });
     
-    std::wstring i_desc = std::wstring(AppStrings::Toolbar_Tooltip_Info);
     m_items.push_back({ false, L"I / Tab", L"Info Panel (Full / Lite)" });
     m_items.push_back({ false, L"C", AppStrings::Help_Item_Compare });
     m_items.push_back({ false, L"Ctrl + F11", AppStrings::Settings_Label_SpanDisplays });
 
-    // Section: Overlay Mode
-    std::wstring overlayText = AppStrings::Context_OverlayMode;
-    size_t oTab = overlayText.find(L'\t');
-    if (oTab != std::wstring::npos) overlayText = overlayText.substr(0, oTab);
-
-    m_items.push_back({ true, overlayText, L"" });
-    m_items.push_back({ false, L"Ctrl + Shift + O", overlayText });
-    m_items.push_back({ false, L"Alt + \x2191 / \x2193", std::wstring(AppStrings::Toolbar_Tooltip_OverlayAlphaUp) + L" / " + AppStrings::Toolbar_Tooltip_OverlayAlphaDown });
+    m_items.push_back({ true, m_strOverlayText.c_str(), L"" });
+    m_items.push_back({ false, L"Ctrl + Shift + O", m_strOverlayText.c_str() });
+    m_items.push_back({ false, L"Alt + \x2191 / \x2193", m_strOverlayAlpha.c_str() });
     m_items.push_back({ false, L"Shift + Esc", AppStrings::Menu_ExitPassthrough });
 
-    // Section: File Operations
     m_items.push_back({ true, L"File Operations", L"" });
-    std::wstring openText = AppStrings::Context_Open;
-    if ((tabPos = openText.find(L'\t')) != std::wstring::npos) openText = openText.substr(0, tabPos);
     
-    m_items.push_back({ false, L"O / Ctrl+O", openText });
+    m_items.push_back({ false, L"O / Ctrl+O", m_strOpenText.c_str() });
     m_items.push_back({ false, L"F2", L"Rename" });
     m_items.push_back({ false, L"Del", L"Delete" });
     m_items.push_back({ false, L"Ctrl + C", AppStrings::Help_Desc_Copy });
     m_items.push_back({ false, L"Ctrl+Alt+C", L"Copy File Path" });
     m_items.push_back({ false, L"Ctrl+P", L"Print" });
 
-    // Section: Edit
     m_items.push_back({ true, AppStrings::Context_Transform, L"" });
     m_items.push_back({ false, L"R / Shift+R", L"Rotate 90\u00B0 CW / CCW" });
     m_items.push_back({ false, L"H", L"Flip Horizontal" });
     m_items.push_back({ false, L"V", L"Flip Vertical" });
     m_items.push_back({ false, L"E", AppStrings::Help_Desc_Edit });
 
-    // Section: Interface
     m_items.push_back({ true, L"Interface", L"" });
     m_items.push_back({ false, L"Esc", AppStrings::Help_Item_Close });
 
-    // Section: Tips & Glossary
     m_items.push_back({ true, AppStrings::Help_Header_Tips, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_Rotation, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_VideoWall, L"" });
@@ -307,21 +308,23 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     pRT->PushAxisAlignedClip(D2D1::RectF(x, contentTop, x + panelW, contentBottom), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     for (const auto& item : m_items) {
+        const wchar_t* kStr = item.key ? item.key : L"";
+        UINT32 kLen = (UINT32)wcslen(kStr);
+        bool isDescEmpty = (!item.desc || item.desc[0] == L'\0');
+
         if (item.isHeader) {
             contentY += 20;
-            pRT->DrawText(item.key.c_str(), (UINT32)item.key.length(), m_fmtHeader.Get(), D2D1::RectF(x + 24.0f * s, contentY, x + panelW - 24.0f * s, contentY + 30.0f * s), m_brushHeader.Get());
+            pRT->DrawText(kStr, kLen, m_fmtHeader.Get(), D2D1::RectF(x + 24.0f * s, contentY, x + panelW - 24.0f * s, contentY + 30.0f * s), m_brushHeader.Get());
             contentY += 28.0f * s;
         } 
-        else if (item.desc.empty()) {
+        else if (isDescEmpty) {
             // Full Width Text (Tip)
             ComPtr<IDWriteTextLayout> layout;
-            const wchar_t* pStr = item.key.c_str();
-            UINT32 sLen = (UINT32)item.key.length();
             IDWriteTextFormat* pFmt = m_fmtTip.Get();
             FLOAT maxWidth = (WIDTH - 48.0f) * s; // Account for left and right padding (24.0f * 2)
             FLOAT maxHeight = 1000.0f;
             
-            HRESULT hr = m_dwriteFactory->CreateTextLayout(pStr, sLen, pFmt, maxWidth, maxHeight, layout.GetAddressOf());
+            HRESULT hr = m_dwriteFactory->CreateTextLayout(kStr, kLen, pFmt, maxWidth, maxHeight, layout.GetAddressOf());
             
             if (SUCCEEDED(hr)) {
                 DWRITE_TEXT_METRICS metrics;
@@ -335,7 +338,7 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             // Key - Value Pair
             float keyW = 180.0f * s;
             // Key (Left Aligned in Col 1)
-            pRT->DrawText(item.key.c_str(), (UINT32)item.key.length(), m_fmtKey.Get(), D2D1::RectF(x + 40.0f * s, contentY, x + 40.0f * s + keyW, contentY + rowH), m_brushKey.Get());
+            pRT->DrawText(kStr, kLen, m_fmtKey.Get(), D2D1::RectF(x + 40.0f * s, contentY, x + 40.0f * s + keyW, contentY + rowH), m_brushKey.Get());
             
             // Value
             ComPtr<IDWriteTextLayout> layout;
@@ -343,8 +346,11 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
             FLOAT maxWidth = x + panelW - 24.0f * s - descX;
             FLOAT maxHeight = 1000.0f;
 
+            const wchar_t* dStr = item.desc;
+            UINT32 dLen = (UINT32)wcslen(dStr);
+
             HRESULT hr = m_dwriteFactory->CreateTextLayout(
-                item.desc.c_str(), (UINT32)item.desc.length(), m_fmtDesc.Get(),
+                dStr, dLen, m_fmtDesc.Get(),
                 maxWidth, maxHeight, layout.GetAddressOf()
             );
 
@@ -358,7 +364,7 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
                 }
             } else {
                 // fallback
-                pRT->DrawText(item.desc.c_str(), (UINT32)item.desc.length(), m_fmtDesc.Get(), D2D1::RectF(descX, contentY, descX + maxWidth, contentY + rowH), m_brushText.Get());
+                pRT->DrawText(dStr, dLen, m_fmtDesc.Get(), D2D1::RectF(descX, contentY, descX + maxWidth, contentY + rowH), m_brushText.Get());
             }
             
             contentY += itemHeight;

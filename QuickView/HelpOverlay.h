@@ -6,8 +6,8 @@
 
 struct HelpItem {
     bool isHeader = false;
-    std::wstring key;   // Left column (e.g. "Ctrl+O")
-    std::wstring desc;  // Right column (e.g. "Open File")
+    const wchar_t* key = nullptr;   // Left column (e.g. "Ctrl+O")
+    const wchar_t* desc = nullptr;  // Right column (e.g. "Open File")
 };
 
 class HelpOverlay {
@@ -77,4 +77,12 @@ private:
     QuickView::UI::GeekGlass::GeekGlassEngine m_geekGlass;
     ID2D1CommandList* m_bgCmdList = nullptr;
     D2D1_MATRIX_3X2_F m_bgTransform = D2D1::Matrix3x2F::Identity();
+
+    // Cache dynamic i18n strings to prevent dangling pointers for const wchar_t* fields
+    std::wstring m_strCtrlLeft;
+    std::wstring m_strHudText;
+    std::wstring m_strOverlayText;
+    std::wstring m_strOpenText;
+    std::wstring m_strOverlayAlpha;
+    std::wstring m_strHudTopCombined;
 };

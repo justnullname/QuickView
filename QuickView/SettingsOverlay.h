@@ -55,8 +55,8 @@ struct SettingsItem {
 
     float minVal = 0.0f;
     float maxVal = 100.0f;
-    std::vector<std::wstring> options = {}; 
-    std::wstring displayFormat = L"";        
+    std::vector<std::wstring_view> options = {}; 
+    const wchar_t* displayFormat = nullptr;        
     
     void (*onChange)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;       // Final commit callback (e.g., SaveConfig)
     void (*onChange2)(SettingsOverlay* overlay, SettingsItem* item) = nullptr;      // Secondary action for DualActionButton
@@ -71,12 +71,12 @@ struct SettingsItem {
     
     bool isDisabled = false;
     std::wstring disabledText = L""; 
-    std::wstring tooltipText = L"";
+    const wchar_t* tooltipText = nullptr;
     D2D1_RECT_F tooltipIconRect = {};
     
     std::wstring buttonText = L"Select";  
-    std::wstring buttonText2 = L"";       
-    std::wstring buttonActivatedText = L"";     
+    const wchar_t* buttonText2 = nullptr;       
+    const wchar_t* buttonActivatedText = nullptr;     
     bool isActivated = false;             
     bool isDestructive = false;           
 
@@ -157,12 +157,12 @@ private:
     void DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered);
     void DrawSlider(ID2D1DeviceContext *pRT, const D2D1_RECT_F &rect, float val,
                     float minV, float maxV, bool isHovered,
-                    const std::wstring &format = L"", bool isDisabled = false);
-    std::vector<float> CalculateSegmentWidths(const std::vector<std::wstring>& options, float totalW);
+                    const wchar_t* format = nullptr, bool isDisabled = false);
+    std::vector<float> CalculateSegmentWidths(const std::vector<std::wstring_view>& options, float totalW);
     void DrawSegment(ID2D1DeviceContext *pRT, const D2D1_RECT_F &rect,
-                     int selectedIdx, const std::vector<std::wstring> &options,
+                     int selectedIdx, const std::vector<std::wstring_view> &options,
                      bool isDisabled = false);
-    void DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isOpen);
+    void DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring_view>& options, bool isOpen);
     void DrawComboDropdown(ID2D1DeviceContext* pRT); 
     D2D1_RECT_F GetComboDropdownRect(const SettingsItem* item) const;
     void RenderUpdateToast(ID2D1DeviceContext* pRT, float hudX, float hudY, float hudW, float hudH);

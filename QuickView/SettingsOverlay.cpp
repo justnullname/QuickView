@@ -3070,7 +3070,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     if (m_dwriteFactory && m_textFormatItem) {
                         ComPtr<IDWriteTextLayout> layout;
                         if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(
-                            opt.c_str(),
+                            opt.data(),
                             (UINT32)opt.length(),
                             m_textFormatItem.Get(),
                             2000.0f,
@@ -3098,7 +3098,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
 
                     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    pRT->DrawText(opt.c_str(), (UINT32)opt.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
+                    pRT->DrawText(opt.data(), (UINT32)opt.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
 
                     badgeX += badgeW + badgeGapX;
                 }
@@ -3140,9 +3140,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     int activeIndex = isActive ? (int)(std::distance(activeItems.begin(), it) + 1) : 0;
 
                     // Build display string
-                    std::wstring displayText = opt;
+                    std::wstring displayText(opt);
                     if (isActive) {
-                        displayText = std::to_wstring(activeIndex) + L". " + opt;
+                        displayText = std::to_wstring(activeIndex) + L". " + std::wstring(opt);
                     }
 
                     float textW = 0.0f;
@@ -3323,7 +3323,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             }
 
             // Tooltip Icon (?)
-            if (!item.tooltipText.empty()) {
+            if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
                 float iconX = contentX + textW + 8.0f * s;
                 if (item.isNewOption) {
                     iconX += badgeW + 6.0f * s;
@@ -3580,7 +3580,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      D2D1_COLOR_F statusColor = item.statusColor;
                      
                      if (statusToShow.empty() && item.isActivated) {
-                         statusToShow = item.buttonActivatedText.empty() ? L"Added" : item.buttonActivatedText;
+                         statusToShow = (item.buttonActivatedText == nullptr || item.buttonActivatedText[0] == L'\0') ? L"Added" : item.buttonActivatedText;
                          statusColor = D2D1::ColorF(0.2f, 0.8f, 0.3f);
                      }
 
@@ -3610,10 +3610,12 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                       const float btnRadius = 4.0f * s;
                       const float gap = 8.0f * s;
 
-                      auto drawBtn = [&](const std::wstring& text, D2D1_RECT_F& outRect, bool hovered) {
+                      auto drawBtn = [&](const wchar_t* text, D2D1_RECT_F& outRect, bool hovered) {
+                          if (text == nullptr || text[0] == L'\0') return;
                           float textW = 0.0f;
+                          size_t len = wcslen(text);
                           ComPtr<IDWriteTextLayout> layout;
-                          if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(text.c_str(), (UINT32)text.length(), m_textFormatItem.Get(), 500.0f*s, 100.0f*s, &layout))) {
+                          if (SUCCEEDED(m_dwriteFactory->CreateTextLayout(text, (UINT32)len, m_textFormatItem.Get(), 500.0f*s, 100.0f*s, &layout))) {
                               DWRITE_TEXT_METRICS m = {};
                               layout->GetMetrics(&m);
                               textW = ceilf(m.widthIncludingTrailingWhitespace);
@@ -3631,7 +3633,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                           pRT->FillRoundedRectangle(D2D1::RoundedRect(outRect, btnRadius, btnRadius), brush.Get());
                           
                           m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                          pRT->DrawText(text.c_str(), (UINT32)text.length(), m_textFormatItem.Get(), outRect, m_brushText.Get());
+                          pRT->DrawText(text, (UINT32)len, m_textFormatItem.Get(), outRect, m_brushText.Get());
                           m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                       };
 
@@ -3640,7 +3642,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                       drawBtn(item.buttonText2, item.interactRect2, item.isHovered2);
 
                       item.interactRect = D2D1::RectF(item.interactRect2.left - gap, 0, 0, 0);
-                      drawBtn(item.buttonText, item.interactRect, item.isHovered);
+                      drawBtn(item.buttonText.c_str(), item.interactRect, item.isHovered);
                       break;
                  }
                  case OptionType::CustomColorRow: {
@@ -3851,8 +3853,8 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
         if (stepSize == 0.0f) {
             float rawStep = (m_pHoverItem->maxVal - m_pHoverItem->minVal) * 0.01f;
             // Inspect display format to determine appropriate rounding for integers vs floats
-            if (m_pHoverItem->displayFormat.find(L"%.0f") != std::wstring::npos) {
-                if (m_pHoverItem->maxVal <= 1.05f && m_pHoverItem->displayFormat.find(L"%%") != std::wstring::npos) {
+            if (m_pHoverItem->displayFormat && wcsstr(m_pHoverItem->displayFormat, L"%.0f") != nullptr) {
+                if (m_pHoverItem->maxVal <= 1.05f && wcsstr(m_pHoverItem->displayFormat, L"%%") != nullptr) {
                     stepSize = 0.01f; // 1% for percentage representation
                 } else {
                     stepSize = (std::max)(1.0f, std::round(rawStep));
@@ -3916,7 +3918,7 @@ void SettingsOverlay::DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     pRT->FillEllipse(knob, m_brushText.Get());
 }
 
-void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered, const std::wstring& format, bool isDisabled) {
+void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered, const wchar_t* format, bool isDisabled) {
     const float s = m_uiScale;
     // Width 150, Height 4 (Scaled), with 12px right padding to prevent knob clipping
     const float padding = 12.0f * s;
@@ -3952,15 +3954,15 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     
     // Optional: Draw Value Text next to slider?
     wchar_t buf[32];
-    if (format.empty()) {
+    if (format == nullptr || format[0] == L'\0') {
         swprintf_s(buf, L"%.1f", val);
     } else {
         // Smart scaling: if format is percentage and maxVal is 1.0 (internal float scale), multiply by 100 for display
         float displayVal = val;
-        if (maxV <= 1.05f && format.find(L"%%") != std::wstring::npos) {
+        if (maxV <= 1.05f && wcsstr(format, L"%%") != nullptr) {
             displayVal *= 100.0f;
         }
-        swprintf_s(buf, format.c_str(), displayVal);
+        swprintf_s(buf, format, displayVal);
     }
 
     // Adjust right bounds based on format length to avoid clipping
@@ -3969,14 +3971,14 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     pRT->DrawText(buf, (UINT32)wcslen(buf), m_textFormatItem.Get(), valRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
 }
 
-std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std::wstring>& options, float totalW) {
+std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std::wstring_view>& options, float totalW) {
     std::vector<float> widths;
     if (options.empty()) return widths;
 
     float totalTextW = 0.0f;
     for (const auto& opt : options) {
         bool isAllSpaces = !opt.empty() && std::all_of(opt.begin(), opt.end(), [](wchar_t c) { return c == L' '; });
-        std::wstring dispText = isAllSpaces ? L"Space" : opt;
+        std::wstring dispText = isAllSpaces ? L"Space" : std::wstring(opt);
         float textW = 0.0f;
         if (m_dwriteFactory && m_textFormatItem) {
             ComPtr<IDWriteTextLayout> layout;
@@ -4016,7 +4018,7 @@ std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std
     return widths;
 }
 
-void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring>& options, bool isDisabled) {
+void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring_view>& options, bool isDisabled) {
     if (options.empty()) return;
 
     // Distribute remaining width
@@ -4044,7 +4046,7 @@ void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& re
         D2D1_RECT_F tRect = D2D1::RectF(currentX, rect.top, currentX + itemWidths[i], rect.bottom);
         
         bool isAllSpaces = !options[i].empty() && std::all_of(options[i].begin(), options[i].end(), [](wchar_t c) { return c == L' '; });
-        std::wstring dispText = isAllSpaces ? L"Space" : options[i];
+        std::wstring dispText = isAllSpaces ? L"Space" : std::wstring(options[i]);
 
         // Draw Divider (if not first and not selected/adjacent) - simplified: just text
         pRT->DrawText(dispText.c_str(), (UINT32)dispText.length(), m_textFormatItem.Get(), tRect, isDisabled ? m_brushTextDim.Get() : m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
@@ -4168,7 +4170,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
             // Must be within visible vertical bounds (accounting for clip rect)
             if (y >= hudY && y <= hudBottom) {
                 // Tooltip Hit Testing (Takes priority over general item interaction if small icon clicked)
-                if (!item.tooltipText.empty()) {
+                if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
                     if (x >= item.tooltipIconRect.left && x <= item.tooltipIconRect.right &&
                         y >= item.tooltipIconRect.top && y <= item.tooltipIconRect.bottom) {
                         m_pHoverTooltipItem = &item;
@@ -4455,7 +4457,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             }
             
             if (clickedIdx != -1 && m_pHoverItem->pStrVal) {
-                const std::wstring& clickedOpt = m_pHoverItem->options[clickedIdx];
+                std::wstring_view clickedOpt = m_pHoverItem->options[clickedIdx];
                 std::wstring currentStr = *m_pHoverItem->pStrVal;
                 std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
                 
@@ -4464,7 +4466,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                     activeItems.erase(it);
                 } else {
                     if ((int)activeItems.size() < kInfoPanelLiteMaxItems) {
-                        activeItems.push_back(clickedOpt);
+                        activeItems.push_back(std::wstring(clickedOpt));
                     } else {
                         m_pHoverItem->statusText = L"Limit reached (max 8 items)";
                         m_pHoverItem->statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
@@ -4618,7 +4620,7 @@ void SettingsOverlay::OpenTab(int index) {
     }
 }
 
-void SettingsOverlay::DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, [[maybe_unused]] int selectedIdx, const std::vector<std::wstring>& options, bool isOpen) {
+void SettingsOverlay::DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, [[maybe_unused]] int selectedIdx, const std::vector<std::wstring_view>& options, bool isOpen) {
     
     D2D1_RECT_F boxRect = rect;
     
@@ -4629,14 +4631,14 @@ void SettingsOverlay::DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& r
     } 
 
     // Text
-    std::wstring text = L"";
+    std::wstring_view text = L"";
     if (selectedIdx >= 0 && selectedIdx < (int)options.size()) {
         text = options[selectedIdx];
     }
     
     D2D1_RECT_F textRect = D2D1::RectF(boxRect.left + 10, boxRect.top, boxRect.right - 30, boxRect.bottom);
     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    pRT->DrawText(text.c_str(), (UINT32)text.length(), m_textFormatItem.Get(), textRect, m_brushText.Get());
+    pRT->DrawText(text.data(), (UINT32)text.length(), m_textFormatItem.Get(), textRect, m_brushText.Get());
     
     // Arrow
     D2D1_RECT_F arrowRect = D2D1::RectF(boxRect.right - 30, boxRect.top, boxRect.right, boxRect.bottom);
@@ -4721,7 +4723,7 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
         // Text
         D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 10, itemRect.top, itemRect.right - 10, itemRect.bottom);
         m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        pRT->DrawText(m_pActiveCombo->options[idx].c_str(), (UINT32)m_pActiveCombo->options[idx].length(), 
+        pRT->DrawText(m_pActiveCombo->options[idx].data(), (UINT32)m_pActiveCombo->options[idx].length(), 
                        m_textFormatItem.Get(), textRect, m_brushText.Get());
     }
     
@@ -4730,7 +4732,7 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
 
 
 void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
-    if (!m_pHoverTooltipItem || m_pHoverTooltipItem->tooltipText.empty()) return;
+    if (!m_pHoverTooltipItem || m_pHoverTooltipItem->tooltipText == nullptr || m_pHoverTooltipItem->tooltipText[0] == L'\0') return;
     const auto palette = GetSettingsThemePalette();
 
     float s = m_uiScale;
@@ -4744,8 +4746,8 @@ void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
 
     ComPtr<IDWriteTextLayout> layout;
     HRESULT hr = m_dwriteFactory->CreateTextLayout(
-        m_pHoverTooltipItem->tooltipText.c_str(),
-        (UINT32)m_pHoverTooltipItem->tooltipText.length(),
+        m_pHoverTooltipItem->tooltipText,
+        (UINT32)wcslen(m_pHoverTooltipItem->tooltipText),
         m_textFormatItem.Get(),
         maxW,
         5000.0f,
