@@ -56,6 +56,8 @@ public:
 
     UINT Width = 0;
     UINT Height = 0;
+    double DpiX = 96.0;         // [v10.5] Embedded Physical Resolution
+    double DpiY = 96.0;
     UINT64 FileSize = 0;
     std::wstring Format;        // e.g. "JPEG", "RAW (ARW)"
     std::wstring FormatDetails; // e.g. "4:2:0", "10-bit", "Lossy"

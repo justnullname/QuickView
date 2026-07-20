@@ -14,6 +14,7 @@
 #include "HelpOverlay.h"
 #include "ImageLoaderSimd.h"
 #include "SettingsOverlay.h"
+#include "PrintPreviewUI.h"
 #include "Toolbar.h"
 #include <algorithm>
 #include <cmath>
@@ -789,6 +790,10 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     if (g_settingsOverlay.IsVisible()) {
         g_settingsOverlay.SetGeekGlassData(m_bgCommandList.Get(), m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity());
         g_settingsOverlay.Render(dc, (float)m_width, (float)m_height);
+    }
+    
+    if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+        QuickView::PrintPreviewUI::GetInstance().Render(dc, (float)m_width, (float)m_height);
     }
     
     // Help Overlay (Top of Static Layer)

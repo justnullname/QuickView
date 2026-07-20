@@ -6,6 +6,7 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "QuickView.h"
 #include "RenderEngine.h"
 #include "PrintManager.h"
+#include "PrintPreviewUI.h"
 #include "ImageLoader.h"
 #include "ImageEngine.h"
 #include "MappedFile.h"
@@ -6792,6 +6793,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
+    // Print job finished
+    case WM_APP + 98: {
+        g_osd.Show(hwnd, AppStrings::OSD_PrintJobFinished, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
+        return 0;
+    }
 
     // [HEIC] HEVC Video Extensions missing — prompt user to install
     case WM_APP + 99: {
@@ -7472,6 +7478,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
      case WM_MOUSEMOVE: {
           g_currentCursor = LoadCursor(nullptr, IDC_ARROW);
           POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+
+          if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+              if (QuickView::PrintPreviewUI::GetInstance().OnMouseMove(pt.x, pt.y)) return 0;
+          }
 
           bool isMinimapInteracting = false;
           for (int idx : {0, 1}) {
@@ -8187,7 +8197,7 @@ SKIP_EDGE_NAV:;
         float winW = (float)(rcClient.right - rcClient.left);
         float winH = (float)(rcClient.bottom - rcClient.top);
         bool insideGallery = g_gallery.IsVisible() && g_gallery.HitTestArea(pt.x, pt.y, winW, winH);
-        if (insideGallery || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) return 0;
+        if (insideGallery || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || QuickView::PrintPreviewUI::GetInstance().IsVisible()) return 0;
         if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
             return 0;
         }
@@ -8558,6 +8568,10 @@ SKIP_EDGE_NAV:;
 
     case WM_LBUTTONDOWN: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+
+        if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+            if (QuickView::PrintPreviewUI::GetInstance().OnLButtonDown(pt.x, pt.y)) return 0;
+        }
 
         auto miniHit = HitTestMinimaps(pt);
         if (miniHit.minimapIdx != -1) {
@@ -8932,6 +8946,16 @@ SKIP_EDGE_NAV:;
     }
     case WM_LBUTTONUP: {
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+
+        if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+            bool wasPrintVisible = true;
+            if (QuickView::PrintPreviewUI::GetInstance().OnLButtonUp(pt.x, pt.y)) {
+                if (wasPrintVisible && !QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+                    RestoreOverlayWindowState(hwnd);
+                }
+                return 0;
+            }
+        }
 
         bool wasMinimapDragging = false;
         for (int idx : {0, 1}) {
@@ -9411,6 +9435,10 @@ SKIP_EDGE_NAV:;
     }
 
     case WM_MOUSEWHEEL: {
+        if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+            return 0;
+        }
+
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
 
         // [Loupe] While the loupe is held, the wheel resizes the loupe box
@@ -9599,6 +9627,15 @@ SKIP_EDGE_NAV:;
 
     case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
+        if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+            bool wasPrintVisible = true;
+            if (QuickView::PrintPreviewUI::GetInstance().OnKeyDown(wParam)) {
+                if (wasPrintVisible && !QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
+                    RestoreOverlayWindowState(hwnd);
+                }
+                return 0;
+            }
+        }
         // Verification Control (Phase 5 - Ctrl+1..5)
         if (GetKeyState(VK_CONTROL) & 0x8000) {
             bool handled = false;
@@ -10153,19 +10190,41 @@ SKIP_EDGE_NAV:;
         case IDM_PRINT: {
             if (!CheckUnsavedChanges(hwnd)) break;
             if (!contextPath.empty()) {
+                SaveOverlayWindowState(hwnd);
+                
+                int targetW = 900 * g_uiScale;
+                int targetH = 650 * g_uiScale;
+                
+                RECT rcWin, bounds;
+                GetWindowRect(hwnd, &rcWin);
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = {};
+                mi.cbSize = sizeof(mi);
+                GetMonitorInfo(hMon, &mi);
+                bounds = mi.rcWork;
+                
+                if ((rcWin.right - rcWin.left < targetW) || (rcWin.bottom - rcWin.top < targetH)) {
+                    RECT newRect = ExpandWindowRectToTargetWithinBounds(rcWin, targetW, targetH, bounds);
+                    SetWindowPos(hwnd, nullptr, newRect.left, newRect.top, 
+                                 newRect.right - newRect.left, newRect.bottom - newRect.top,
+                                 SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+
                 std::wstring proofIcc = L"";
                 const auto& pane = GetPaneContext(PaneSlot::Primary);
                 if (pane.EnableSoftProofing && !pane.SoftProofProfilePath.empty()) {
                     proofIcc = pane.SoftProofProfilePath;
                 }
                 
-                HRESULT hr = QuickView::PrintManager::GetInstance().PrintImage(hwnd, contextPath, proofIcc);
-                if (FAILED(hr)) {
-                    // Fallback: Open in default app and show OSD instructions
-                    ShellExecuteW(hwnd, L"open", contextPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                    g_osd.Show(hwnd, AppStrings::OSD_PrintInstruction, false);
-                    RequestRepaint(PaintLayer::Dynamic);
+                float pw = (float)pane.metadata.Width;
+                float ph = (float)pane.metadata.Height;
+                if (pw == 0 || ph == 0) {
+                    auto rsize = pane.resource.GetSize();
+                    pw = rsize.width;
+                    ph = rsize.height;
                 }
+                QuickView::PrintPreviewUI::GetInstance().Show(hwnd, contextPath, pw, ph);
+                RequestRepaint(PaintLayer::All);
             }
             break;
         }

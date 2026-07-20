@@ -371,6 +371,10 @@ struct RawImageFrame {
     int srcWidth = 0;
     int srcHeight = 0;
 
+    // [v10.5] Physical Resolution (DPI)
+    double dpiX = 96.0;
+    double dpiY = 96.0;
+
     // [D2D Native] SVG Specific Data (Used only when format == SVG_XML)
     // Use unique_ptr to ensure zero overhead for non-SVG paths
     struct SvgData {

@@ -209,6 +209,8 @@ namespace AppStrings {
     extern const wchar_t* OSD_SlideshowPaused;
     extern const wchar_t* OSD_ImmersiveSpotlight;
     extern const wchar_t* OSD_ImmersiveNormal;
+    extern const wchar_t* OSD_PrintJobStarted;
+    extern const wchar_t* OSD_PrintJobFinished;
 
     extern const wchar_t* Context_ColorSpace;
     

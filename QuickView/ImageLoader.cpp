@@ -1621,6 +1621,13 @@ static void ProbeNativeWicFrameInfo(IWICBitmapFrameDecode *frame,
   if (!frame || !metadata)
     return;
 
+  double dpiX = 96.0;
+  double dpiY = 96.0;
+  if (SUCCEEDED(frame->GetResolution(&dpiX, &dpiY))) {
+      if (dpiX > 0.0) metadata->DpiX = dpiX;
+      if (dpiY > 0.0) metadata->DpiY = dpiY;
+  }
+
   WICPixelFormatGUID srcFormat = {};
   if (SUCCEEDED(frame->GetPixelFormat(&srcFormat))) {
     PopulateHdrInfoFromWicPixelFormat(srcFormat, metadata);
@@ -13371,6 +13378,8 @@ HRESULT CImageLoader::LoadToFrame(
       outFrame->srcWidth = (int)res.metadata.Width;
       outFrame->srcHeight = (int)res.metadata.Height;
     }
+    outFrame->dpiX = res.metadata.DpiX;
+    outFrame->dpiY = res.metadata.DpiY;
 
     // [GPU Pipeline] Bridge multi-layer composition data
     if (res.blendOp != GpuBlendOp::None && res.auxLayer) {
