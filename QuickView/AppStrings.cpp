@@ -1582,7 +1582,7 @@ static const LanguageTable Table_EN = {
     L"Slideshow Paused", // OSD_SlideshowPaused
     L"Immersive: Spotlight", // OSD_ImmersiveSpotlight
     L"Immersive: Normal", // OSD_ImmersiveNormal
-    L"Processing print job in background. You can browse normally, but do not exit.", // OSD_PrintJobStarted
+    L"Print job submitted. You can continue browsing.", // OSD_PrintJobStarted
     L"Print job sent successfully.", // OSD_PrintJobFinished
     L"Slideshow Mode", // Context_SlideshowMode
     L"Interval (seconds)", // Settings_Label_SlideshowInterval
@@ -2109,7 +2109,7 @@ static const LanguageTable Table_CN = {
     L"幻灯片已暂停", // OSD_SlideshowPaused
     L"沉浸模式: 聚光灯", // OSD_ImmersiveSpotlight
     L"沉浸模式: 普通", // OSD_ImmersiveNormal
-    L"正在后台处理打印任务，可以正常浏览，但不要退出。", // OSD_PrintJobStarted
+    L"打印任务已发送，您可以继续浏览。", // OSD_PrintJobStarted
     L"打印任务已发送完毕。", // OSD_PrintJobFinished
     L"幻灯片模式", // Context_SlideshowMode
     L"切换间隔 (秒)", // Settings_Label_SlideshowInterval
@@ -2636,7 +2636,7 @@ static const LanguageTable Table_TW = {
     L"幻燈片已暫停", // OSD_SlideshowPaused
     L"沉浸模式: 聚光燈", // OSD_ImmersiveSpotlight
     L"沉浸模式: 普通", // OSD_ImmersiveNormal
-    L"正在后台处理打印任务，可以正常浏览，但不要退出。", // OSD_PrintJobStarted
+    L"打印任務已發送，您可以繼續瀏覽。", // OSD_PrintJobStarted
     L"打印任务已发送完毕。", // OSD_PrintJobFinished
     L"幻燈片模式", // Context_SlideshowMode
     L"切換間隔 (秒)", // Settings_Label_SlideshowInterval
@@ -3163,7 +3163,7 @@ static const LanguageTable Table_JA = {
     L"スライドショー一時停止", // OSD_SlideshowPaused
     L"イマーシブ: スポットライト", // OSD_ImmersiveSpotlight
     L"イマーシブ: 通常", // OSD_ImmersiveNormal
-    L"バックグラウンドで印刷ジョブを処理しています。通常のブラウジングは可能ですが、終了しないでください。", // OSD_PrintJobStarted
+    L"印刷ジョブが送信されました。閲覧を続けることができます。", // OSD_PrintJobStarted
     L"印刷ジョブが正常に送信されました。", // OSD_PrintJobFinished
     L"スライドショーモード", // Context_SlideshowMode
     L"切り替え間隔 (秒)", // Settings_Label_SlideshowInterval
@@ -3690,7 +3690,7 @@ static const LanguageTable Table_RU = {
     L"Слайд-шоу на паузе", // OSD_SlideshowPaused
     L"Эффект: Прожектор", // OSD_ImmersiveSpotlight
     L"Эффект: Обычный", // OSD_ImmersiveNormal
-    L"Фоновая обработка задания на печать. Вы можете продолжать просмотр, но не закрывайте приложение.", // OSD_PrintJobStarted
+    L"Задание на печать отправлено. Вы можете продолжить просмотр.", // OSD_PrintJobStarted
     L"Задание на печать успешно отправлено.", // OSD_PrintJobFinished
     L"Режим слайд-шоу", // Context_SlideshowMode
     L"Интервал (сек)", // Settings_Label_SlideshowInterval
@@ -4217,7 +4217,7 @@ static const LanguageTable Table_DE = {
     L"Diashow pausiert", // OSD_SlideshowPaused
     L"Immersiv: Spotlight", // OSD_ImmersiveSpotlight
     L"Immersiv: Normal", // OSD_ImmersiveNormal
-    L"Druckauftrag wird im Hintergrund verarbeitet. Sie können normal weitersurfen, aber bitte nicht beenden.", // OSD_PrintJobStarted
+    L"Druckauftrag übermittelt. Sie können weiterblättern.", // OSD_PrintJobStarted
     L"Druckauftrag erfolgreich gesendet.", // OSD_PrintJobFinished
     L"Diashow-Modus", // Context_SlideshowMode
     L"Intervall (Sekunden)", // Settings_Label_SlideshowInterval
@@ -4744,7 +4744,7 @@ static const LanguageTable Table_ES = {
     L"Presentación pausada", // OSD_SlideshowPaused
     L"Inmersivo: Foco", // OSD_ImmersiveSpotlight
     L"Inmersivo: Normal", // OSD_ImmersiveNormal
-    L"Procesando el trabajo de impresión en segundo plano. Puede navegar normalmente, pero no salga.", // OSD_PrintJobStarted
+    L"Trabajo de impresión enviado. Puede seguir navegando.", // OSD_PrintJobStarted
     L"Trabajo de impresión enviado con éxito.", // OSD_PrintJobFinished
     L"Modo de presentación", // Context_SlideshowMode
     L"Intervalo (segundos)", // Settings_Label_SlideshowInterval
@@ -5271,7 +5271,7 @@ static const LanguageTable Table_FR = {
     L"Diaporama en pause", // OSD_SlideshowPaused
     L"Immersif : Projecteur", // OSD_ImmersiveSpotlight
     L"Immersif : Normal", // OSD_ImmersiveNormal
-    L"Traitement de la tâche d'impression en arrière-plan. Vous pouvez naviguer normalement, mais ne quittez pas.", // OSD_PrintJobStarted
+    L"Tâche d'impression envoyée. Vous pouvez continuer à naviguer.", // OSD_PrintJobStarted
     L"Tâche d'impression envoyée avec succès.", // OSD_PrintJobFinished
     L"Mode diaporama", // Context_SlideshowMode
     L"Intervalle (secondes)", // Settings_Label_SlideshowInterval

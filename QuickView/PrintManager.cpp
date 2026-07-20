@@ -6,7 +6,7 @@
 #include <thread>
 #include <cmath>
 #include <algorithm>
-#include <d2d1effects.h>
+#include <wincodec.h>
 
 #pragma comment(lib, "winspool.lib")
 
@@ -490,139 +490,60 @@ std::expected<void, HRESULT> PrintManager::ExecutePrintJob(const PrintJobSetting
         return std::unexpected(HRESULT_FROM_WIN32(GetLastError()));
     }
 
-    // 1. Evaluate source dimensions to downscale during decoding if needed (OOM Defense)
-    CImageLoader::ImageHeaderInfo headerInfo = g_pImageLoader->PeekHeader(settings.imagePath.c_str());
-    int targetW = 0;
-    int targetH = 0;
-    const int printableWidth = (int)std::lround(metrics.printableWidthPx);
-    const int printableHeight = (int)std::lround(metrics.printableHeightPx);
-    if (headerInfo.width > 16384 || headerInfo.height > 16384) {
-        // Only downscale if the image is astronomically large to prevent memory overflow
-        float scale = 16384.0f / std::max(headerInfo.width, headerInfo.height);
-        targetW = static_cast<int>(headerInfo.width * scale);
-        targetH = static_cast<int>(headerInfo.height * scale);
-    }
-
-    // 2. Decode image file to a clean RawImageFrame
-    QuickView::RawImageFrame rawFrame;
-    HRESULT hr = g_pImageLoader->LoadToFrame(settings.imagePath.c_str(), &rawFrame, nullptr, targetW, targetH);
-    if (FAILED(hr)) {
-        ::EndDoc(hdcPrint);
-        ::DeleteDC(hdcPrint);
-        return std::unexpected(hr);
-    }
-    
-    // Apply grayscale manually to guarantee it works on all printers
-    if (settings.grayscale && rawFrame.pixels && rawFrame.format == QuickView::PixelFormat::BGRA8888) {
-        size_t pixelCount = (size_t)rawFrame.width * rawFrame.height;
-        uint32_t* p32 = reinterpret_cast<uint32_t*>(rawFrame.pixels);
-        for (size_t i = 0; i < pixelCount; ++i) {
-            uint32_t c = p32[i];
-            uint32_t b = c & 0xFF;
-            uint32_t g = (c >> 8) & 0xFF;
-            uint32_t r = (c >> 16) & 0xFF;
-            uint32_t a = c & 0xFF000000;
-            uint32_t gray = (r * 77 + g * 150 + b * 29) >> 8;
-            p32[i] = a | (gray << 16) | (gray << 8) | gray;
-        }
-    }
-
-    // 3. Setup Memory DC and DIB Section for offscreen rendering
-    // D2D cannot reliably BindDC directly to a Printer DC (causes blank output).
-    // We render to a Memory DIB first, then BitBlt to the printer.
-    HDC hMemDC = ::CreateCompatibleDC(nullptr);
-    BITMAPINFO bmi = {};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = printableWidth;
-    bmi.bmiHeader.biHeight = -printableHeight; // Top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    
-    void* pDibPixels = nullptr;
-    HBITMAP hDib = ::CreateDIBSection(hMemDC, &bmi, DIB_RGB_COLORS, &pDibPixels, nullptr, 0);
-    if (!hDib) {
-        rawFrame.Release();
-        ::DeleteDC(hMemDC);
-        ::EndDoc(hdcPrint);
-        ::DeleteDC(hdcPrint);
-        return std::unexpected(E_OUTOFMEMORY);
-    }
-    HGDIOBJ hOldBmp = ::SelectObject(hMemDC, hDib);
-
-    ComPtr<ID2D1Factory> d2dFactory;
-    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory), &d2dFactory);
-
-    ComPtr<ID2D1DCRenderTarget> dcTarget;
-    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_DEFAULT,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-        0, 0,
-        D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE
-    );
-    hr = d2dFactory->CreateDCRenderTarget(&props, &dcTarget);
-    if (FAILED(hr)) {
-        rawFrame.Release();
-        ::SelectObject(hMemDC, hOldBmp);
-        ::DeleteObject(hDib);
-        ::DeleteDC(hMemDC);
-        ::EndDoc(hdcPrint);
-        ::DeleteDC(hdcPrint);
-        return std::unexpected(hr);
-    }
-
-    RECT rcBind = {0, 0, printableWidth, printableHeight};
-    hr = dcTarget->BindDC(hMemDC, &rcBind);
-    if (FAILED(hr)) {
-        rawFrame.Release();
-        ::SelectObject(hMemDC, hOldBmp);
-        ::DeleteObject(hDib);
-        ::DeleteDC(hMemDC);
-        ::EndDoc(hdcPrint);
-        ::DeleteDC(hdcPrint);
-        return std::unexpected(hr);
-    }
-
-    // 4. Create source D2D bitmap
-    // DC render targets only support B8G8R8A8_UNORM. For non-BGRA sources,
-    // we still create with BGRA (WIC LoadToFrame typically outputs BGRA).
-    ComPtr<ID2D1Bitmap> rawBitmap;
-    D2D1_BITMAP_PROPERTIES bmpProps = D2D1::BitmapProperties(
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)
-    );
-    hr = dcTarget->CreateBitmap(
-        D2D1::SizeU(rawFrame.width, rawFrame.height),
-        rawFrame.pixels,
-        rawFrame.stride,
-        bmpProps,
-        &rawBitmap
+    // Initialize thread-local WIC imaging factory
+    ComPtr<IWICImagingFactory> wicFactory;
+    HRESULT hr = ::CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&wicFactory)
     );
     if (FAILED(hr)) {
-        rawFrame.Release();
-        ::SelectObject(hMemDC, hOldBmp);
-        ::DeleteObject(hDib);
-        ::DeleteDC(hMemDC);
         ::EndDoc(hdcPrint);
         ::DeleteDC(hdcPrint);
         return std::unexpected(hr);
     }
 
-    // 5. Layout uses locked source geometry from the preview dialog when available.
-    //    Falls back to decoded frame (and its DPI) so standalone jobs still work.
-    //    When decode downscales (>16384), draw into logical source rect so layout stays exact.
+    // Load decoder for target image file
+    ComPtr<IWICBitmapDecoder> decoder;
+    hr = wicFactory->CreateDecoderFromFilename(
+        settings.imagePath.c_str(),
+        nullptr,
+        GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,
+        &decoder
+    );
+    if (FAILED(hr)) {
+        ::EndDoc(hdcPrint);
+        ::DeleteDC(hdcPrint);
+        return std::unexpected(hr);
+    }
+
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) {
+        ::EndDoc(hdcPrint);
+        ::DeleteDC(hdcPrint);
+        return std::unexpected(hr);
+    }
+
+    uint32_t rawW = 0, rawH = 0;
+    frame->GetSize(&rawW, &rawH);
+
+    double dpiX = 96.0, dpiY = 96.0;
+    frame->GetResolution(&dpiX, &dpiY);
+
     PrintJobSettings layoutSettings = settings;
-    float layoutW = settings.sourceWidthPx > 0.0f ? settings.sourceWidthPx : (float)rawFrame.width;
-    float layoutH = settings.sourceHeightPx > 0.0f ? settings.sourceHeightPx : (float)rawFrame.height;
+    float layoutW = settings.sourceWidthPx > 0.0f ? settings.sourceWidthPx : static_cast<float>(rawW);
+    float layoutH = settings.sourceHeightPx > 0.0f ? settings.sourceHeightPx : static_cast<float>(rawH);
     if (layoutSettings.imageDpiX <= 0.0) {
-        layoutSettings.imageDpiX = rawFrame.dpiX > 0.0 ? rawFrame.dpiX : 96.0;
+        layoutSettings.imageDpiX = dpiX > 0.0 ? dpiX : 96.0;
     }
     if (layoutSettings.imageDpiY <= 0.0) {
-        layoutSettings.imageDpiY = rawFrame.dpiY > 0.0 ? rawFrame.dpiY : 96.0;
+        layoutSettings.imageDpiY = dpiY > 0.0 ? dpiY : 96.0;
     }
     if (layoutSettings.exifOrientation < 1 || layoutSettings.exifOrientation > 8) {
-        // Prefer orientation from the decoded frame when settings did not lock it
-        int frameExif = rawFrame.exifOrientation;
-        layoutSettings.exifOrientation = (frameExif >= 1 && frameExif <= 8) ? frameExif : 1;
+        layoutSettings.exifOrientation = 1;
     }
 
     D2D1_SIZE_F imageSize = { layoutW, layoutH };
@@ -634,93 +555,252 @@ std::expected<void, HRESULT> PrintManager::ExecutePrintJob(const PrintJobSetting
     float pageHPx = 0;
     
     D2D1::Matrix3x2F m = CalculatePrintTransform(metrics, imageSize, layoutSettings, &cols, &rows, &marginRect, &pageWPx, &pageHPx);
-
     int totalPages = cols * rows;
 
-    for (int p = 0; p < totalPages; ++p) {
-        if (settings.printMultiPage) {
-            if (settings.disabledPages.count(p) > 0) continue;
-        }
+    // Build the core WIC transformation pipeline
+    ComPtr<IWICBitmapSource> currentSource = frame;
 
-        ::StartPage(hdcPrint);
-        
-        dcTarget->BeginDraw();
-        dcTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
-
-        D2D1::Matrix3x2F pageTransform = m;
-        if (settings.printMultiPage) {
-            int row = p / cols;
-            int col = p % cols;
-            pageTransform = m * D2D1::Matrix3x2F::Translation(-col * pageWPx, -row * pageHPx);
-        }
-
-        // Ensure transform is identity before pushing clip, as D2D retains state across frames
-        dcTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-        
-        // 强行剪裁到安全边距内，确保拼贴海报边缘绝对清晰，不会溢出到打印机物理死区或相邻纸张
-        dcTarget->PushAxisAlignedClip(marginRect, D2D1_ANTIALIAS_MODE_ALIASED);
-        
-        dcTarget->SetTransform(pageTransform);
-
-        // Draw into logical source pixel rect so downscaled decodes still match layout size
-        dcTarget->DrawBitmap(
-            rawBitmap.Get(),
-            D2D1::RectF(0.0f, 0.0f, layoutW, layoutH),
-            1.0f,
-            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR
-        );
-
-        dcTarget->PopAxisAlignedClip();
-
-        hr = dcTarget->EndDraw();
-        
-        // Blast the memory DC to the actual printer DC
-        ::BitBlt(hdcPrint, 0, 0, printableWidth, printableHeight, hMemDC, 0, 0, SRCCOPY);
-        
-        ::EndPage(hdcPrint);
+    // 1. EXIF Orientation correction
+    WICBitmapTransformOptions exifOpt = WICBitmapTransformRotate0;
+    switch (layoutSettings.exifOrientation) {
+    case 2: exifOpt = WICBitmapTransformFlipHorizontal; break;
+    case 3: exifOpt = WICBitmapTransformRotate180; break;
+    case 4: exifOpt = WICBitmapTransformFlipVertical; break;
+    case 5: exifOpt = static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90 | WICBitmapTransformFlipHorizontal); break;
+    case 6: exifOpt = WICBitmapTransformRotate90; break;
+    case 7: exifOpt = static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270 | WICBitmapTransformFlipHorizontal); break;
+    case 8: exifOpt = WICBitmapTransformRotate270; break;
+    default: break;
     }
-    
-    // Cleanup Memory DC
-    ::SelectObject(hMemDC, hOldBmp);
-    ::DeleteObject(hDib);
-    ::DeleteDC(hMemDC);
-
-    // 7. Spooler complete
-    ::EndDoc(hdcPrint);
-    ::DeleteDC(hdcPrint);
-    rawFrame.Release();
-
-    return {};
-}
-
-HRESULT PrintManager::CreatePrinterColorContext(
-    ID2D1DeviceContext* d2dContext,
-    HDC printerDC,
-    const std::wstring& customPrinterIcc,
-    ID2D1ColorContext** outColorContext
-) {
-    if (!outColorContext) return E_INVALIDARG;
-    *outColorContext = nullptr;
-
-    if (!customPrinterIcc.empty()) {
-        const HRESULT hr = d2dContext->CreateColorContextFromFilename(customPrinterIcc.c_str(), outColorContext);
-        if (SUCCEEDED(hr)) return hr;
-    }
-
-    if (printerDC) {
-        DWORD dwLen = 0;
-        GetICMProfileW(printerDC, &dwLen, nullptr);
-        if (dwLen > 0) {
-            std::wstring profilePath(dwLen, L'\0');
-            if (GetICMProfileW(printerDC, &dwLen, &profilePath[0])) {
-                profilePath.resize(dwLen - 1);
-                const HRESULT hr = d2dContext->CreateColorContextFromFilename(profilePath.c_str(), outColorContext);
-                if (SUCCEEDED(hr)) return hr;
+    if (exifOpt != WICBitmapTransformRotate0) {
+        ComPtr<IWICBitmapFlipRotator> rotator;
+        hr = wicFactory->CreateBitmapFlipRotator(&rotator);
+        if (SUCCEEDED(hr)) {
+            hr = rotator->Initialize(currentSource.Get(), exifOpt);
+            if (SUCCEEDED(hr)) {
+                currentSource = rotator;
             }
         }
     }
 
-    return E_FAIL;
+    // 2. User-configured custom rotation
+    WICBitmapTransformOptions userOpt = WICBitmapTransformRotate0;
+    if (settings.rotationAngle == 90) userOpt = WICBitmapTransformRotate90;
+    else if (settings.rotationAngle == 180) userOpt = WICBitmapTransformRotate180;
+    else if (settings.rotationAngle == 270) userOpt = WICBitmapTransformRotate270;
+
+    if (userOpt != WICBitmapTransformRotate0) {
+        ComPtr<IWICBitmapFlipRotator> rotator;
+        hr = wicFactory->CreateBitmapFlipRotator(&rotator);
+        if (SUCCEEDED(hr)) {
+            hr = rotator->Initialize(currentSource.Get(), userOpt);
+            if (SUCCEEDED(hr)) {
+                currentSource = rotator;
+            }
+        }
+    }
+
+    // 3. High fidelity ICC color profile translation
+    UINT colorContextCount = 0;
+    frame->GetColorContexts(0, nullptr, &colorContextCount);
+    if (colorContextCount > 0) {
+        std::vector<ComPtr<IWICColorContext>> sourceColorContexts(colorContextCount);
+        for (UINT i = 0; i < colorContextCount; ++i) {
+            wicFactory->CreateColorContext(&sourceColorContexts[i]);
+        }
+        if (SUCCEEDED(frame->GetColorContexts(colorContextCount, reinterpret_cast<IWICColorContext**>(sourceColorContexts.data()), &colorContextCount))) {
+            std::wstring printerIccPath;
+            DWORD dwLen = 0;
+            ::GetICMProfileW(hdcPrint, &dwLen, nullptr);
+            if (dwLen > 0) {
+                printerIccPath.resize(dwLen);
+                if (::GetICMProfileW(hdcPrint, &dwLen, &printerIccPath[0])) {
+                    printerIccPath.resize(dwLen > 0 ? dwLen - 1 : 0);
+                }
+            }
+            if (!printerIccPath.empty()) {
+                ComPtr<IWICColorContext> destContext;
+                if (SUCCEEDED(wicFactory->CreateColorContext(&destContext))) {
+                    if (SUCCEEDED(destContext->InitializeFromFilename(printerIccPath.c_str()))) {
+                        ComPtr<IWICColorTransform> colorTransform;
+                        if (SUCCEEDED(wicFactory->CreateColorTransformer(&colorTransform))) {
+                            if (SUCCEEDED(colorTransform->Initialize(currentSource.Get(), sourceColorContexts[0].Get(), destContext.Get(), GUID_WICPixelFormat32bppBGRA))) {
+                                currentSource = colorTransform;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Grayscale processing (BGR -> 8bppGray -> BGR to avoid GDI palettes)
+    if (settings.grayscale) {
+        ComPtr<IWICFormatConverter> grayConverter;
+        hr = wicFactory->CreateFormatConverter(&grayConverter);
+        if (SUCCEEDED(hr)) {
+            hr = grayConverter->Initialize(
+                currentSource.Get(),
+                GUID_WICPixelFormat8bppGray,
+                WICBitmapDitherTypeNone,
+                nullptr,
+                0.0f,
+                WICBitmapPaletteTypeCustom
+            );
+            if (SUCCEEDED(hr)) {
+                currentSource = grayConverter;
+            }
+        }
+    }
+
+    // 5. Unify output format to BGRA
+    ComPtr<IWICFormatConverter> finalBgraConverter;
+    hr = wicFactory->CreateFormatConverter(&finalBgraConverter);
+    if (FAILED(hr)) {
+        ::EndDoc(hdcPrint);
+        ::DeleteDC(hdcPrint);
+        return std::unexpected(hr);
+    }
+    hr = finalBgraConverter->Initialize(
+        currentSource.Get(),
+        GUID_WICPixelFormat32bppBGRA,
+        WICBitmapDitherTypeNone,
+        nullptr,
+        0.0f,
+        WICBitmapPaletteTypeCustom
+    );
+    if (FAILED(hr)) {
+        ::EndDoc(hdcPrint);
+        ::DeleteDC(hdcPrint);
+        return std::unexpected(hr);
+    }
+    currentSource = finalBgraConverter;
+
+    uint32_t orientedW = 0, orientedH = 0;
+    currentSource->GetSize(&orientedW, &orientedH);
+
+    // Query printer capabilities to determine whether to copy pages manually
+    int copyCount = 1;
+    DWORD maxCopies = ::DeviceCapabilitiesW(settings.printerName.c_str(), nullptr, DC_COPIES, nullptr, nullptr);
+    if (maxCopies <= 1) {
+        copyCount = settings.copies > 0 ? settings.copies : 1;
+    }
+
+    for (int c = 0; c < copyCount; ++c) {
+        // Render page by page
+        for (int p = 0; p < totalPages; ++p) {
+            if (settings.printMultiPage) {
+                if (settings.disabledPages.count(p) > 0) continue;
+            }
+
+            D2D1::Matrix3x2F pageTransform = m;
+            if (settings.printMultiPage) {
+                int row = p / cols;
+                int col = p % cols;
+                pageTransform = m * D2D1::Matrix3x2F::Translation(-col * pageWPx, -row * pageHPx);
+            }
+
+            // Map oriented dimensions to printer device pixels
+            D2D1_POINT_2F p1 = pageTransform.TransformPoint(D2D1::Point2F(0.0f, 0.0f));
+            D2D1_POINT_2F p2 = pageTransform.TransformPoint(D2D1::Point2F(layoutW, 0.0f));
+            D2D1_POINT_2F p3 = pageTransform.TransformPoint(D2D1::Point2F(0.0f, layoutH));
+            D2D1_POINT_2F p4 = pageTransform.TransformPoint(D2D1::Point2F(layoutW, layoutH));
+
+            float minX = std::min({ p1.x, p2.x, p3.x, p4.x });
+            float maxX = std::max({ p1.x, p2.x, p3.x, p4.x });
+            float minY = std::min({ p1.y, p2.y, p3.y, p4.y });
+            float maxY = std::max({ p1.y, p2.y, p3.y, p4.y });
+
+            float destWidth = maxX - minX;
+            float destHeight = maxY - minY;
+            float destX = minX;
+            float destY = minY;
+
+            if (destWidth <= 0.1f || destHeight <= 0.1f) {
+                continue;
+            }
+
+            ComPtr<IWICBitmapSource> pageSource = currentSource;
+            uint32_t finalW = orientedW;
+            uint32_t finalH = orientedH;
+
+            // Downscale protective scaling for massive pictures to defend memory
+            bool needScale = false;
+            if (orientedW > static_cast<uint32_t>(destWidth) || orientedH > static_cast<uint32_t>(destHeight)) {
+                needScale = true;
+                finalW = static_cast<uint32_t>(std::round(destWidth));
+                finalH = static_cast<uint32_t>(std::round(destHeight));
+                if (finalW == 0) finalW = 1;
+                if (finalH == 0) finalH = 1;
+            }
+
+            if (needScale) {
+                ComPtr<IWICBitmapScaler> scaler;
+                if (SUCCEEDED(wicFactory->CreateBitmapScaler(&scaler))) {
+                    if (SUCCEEDED(scaler->Initialize(pageSource.Get(), finalW, finalH, WICBitmapInterpolationModeFant))) {
+                        pageSource = scaler;
+                    }
+                }
+            }
+
+            // Copy raw pixel stream
+            uint32_t stride = finalW * 4;
+            size_t bufferSize = static_cast<size_t>(stride) * finalH;
+            std::vector<uint8_t> pixelBuffer(bufferSize);
+            hr = pageSource->CopyPixels(nullptr, stride, static_cast<UINT>(bufferSize), pixelBuffer.data());
+            if (FAILED(hr)) {
+                continue;
+            }
+
+            ::StartPage(hdcPrint);
+
+            // Apply native GDI clipping boundary
+            HRGN hClipRgn = ::CreateRectRgn(
+                static_cast<int>(std::round(marginRect.left)),
+                static_cast<int>(std::round(marginRect.top)),
+                static_cast<int>(std::round(marginRect.right)),
+                static_cast<int>(std::round(marginRect.bottom))
+            );
+            ::SelectClipRgn(hdcPrint, hClipRgn);
+
+            // Configure stretching and alignment characteristics
+            ::SetStretchBltMode(hdcPrint, HALFTONE);
+            ::SetBrushOrgEx(hdcPrint, 0, 0, nullptr);
+
+            BITMAPINFO bmi = {};
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = static_cast<LONG>(finalW);
+            bmi.bmiHeader.biHeight = -static_cast<LONG>(finalH); // Top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+
+            ::StretchDIBits(
+                hdcPrint,
+                static_cast<int>(std::round(destX)),
+                static_cast<int>(std::round(destY)),
+                static_cast<int>(std::round(destWidth)),
+                static_cast<int>(std::round(destHeight)),
+                0, 0,
+                static_cast<int>(finalW),
+                static_cast<int>(finalH),
+                pixelBuffer.data(),
+                &bmi,
+                DIB_RGB_COLORS,
+                SRCCOPY
+            );
+
+            ::SelectClipRgn(hdcPrint, nullptr);
+            ::DeleteObject(hClipRgn);
+
+            ::EndPage(hdcPrint);
+        }
+    }
+
+    ::EndDoc(hdcPrint);
+    ::DeleteDC(hdcPrint);
+
+    return {};
 }
 
 } // namespace QuickView

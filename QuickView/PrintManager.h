@@ -23,6 +23,7 @@
 #include <vector>
 #include <expected>
 #include <set>
+#include <atomic>
 #include <d2d1_1.h>
 #include <windows.h>
 #include <winspool.h>
@@ -165,12 +166,18 @@ public:
         float* outPageHPx = nullptr
     );
 
+    bool HasActiveJobs() const { return m_activeJobs.load() > 0; }
+    void IncrementActiveJobs() { m_activeJobs++; }
+    void DecrementActiveJobs() { m_activeJobs--; }
+
 private:
     PrintManager() = default;
     ~PrintManager() = default;
 
     PrintManager(const PrintManager&) = delete;
     PrintManager& operator=(const PrintManager&) = delete;
+
+    std::atomic<int> m_activeJobs{0};
 
     static bool BuildConfiguredDevMode(
         const PrintJobSettings& settings,

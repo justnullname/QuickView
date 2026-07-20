@@ -926,14 +926,19 @@ bool PrintPreviewUI::OnLButtonUp(float x, float y) {
     } else if (PointInRect(x, y, m_ui.btnPrint)) {
         Hide();
         
-        g_osd.Show(m_hwnd, AppStrings::OSD_PrintJobStarted, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 3600000);
+        g_osd.Show(m_hwnd, AppStrings::OSD_PrintJobStarted, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
 
+        PrintManager::GetInstance().IncrementActiveJobs();
         std::thread([settings = m_settings, hwnd = m_hwnd]() {
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            (void)PrintManager::GetInstance().ExecutePrintJob(settings);
+            HRESULT hr = S_OK;
+            auto result = PrintManager::GetInstance().ExecutePrintJob(settings);
+            if (!result.has_value()) {
+                hr = result.error();
+            }
             CoUninitialize();
-            
-            PostMessage(hwnd, WM_APP + 98, 0, 0); // WM_PRINT_FINISHED
+            PrintManager::GetInstance().DecrementActiveJobs();
+            PostMessage(hwnd, WM_APP + 98, static_cast<WPARAM>(hr), 0); // WM_PRINT_FINISHED
         }).detach();
     } else if (PointInRect(x, y, m_ui.rectCombo)) {
         m_isComboOpen = true;

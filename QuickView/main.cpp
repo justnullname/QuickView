@@ -5962,6 +5962,7 @@ static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
 
 // [Phase 0] Master flag - true if this process runs the pipe server.
 static bool g_isMasterProcess = false;
+static bool g_isExitingWithPrintJobs = false;
 
 // Helper to force window to foreground and take focus
 static void ForceForegroundWindow(HWND hwnd) {
@@ -6795,7 +6796,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     // Print job finished
     case WM_APP + 98: {
-        g_osd.Show(hwnd, AppStrings::OSD_PrintJobFinished, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
+        HRESULT hrPrint = static_cast<HRESULT>(wParam);
+        if (!g_isExitingWithPrintJobs) {
+            if (SUCCEEDED(hrPrint)) {
+                g_osd.Show(hwnd, AppStrings::OSD_PrintJobFinished, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 5000);
+            } else {
+                g_osd.Show(hwnd, L"Print Job Failed", false, false, D2D1::ColorF(D2D1::ColorF::Red), OSDPosition::Bottom, 5000);
+            }
+        }
+
+        if (g_isExitingWithPrintJobs && !QuickView::PrintManager::GetInstance().HasActiveJobs()) {
+            if (g_isMasterProcess && QuickView::ProcessRouter::HasActiveChildren()) {
+                QuickView::ProcessRouter::SetMasterWindowClosed(GetCurrentThreadId());
+            }
+            DestroyWindow(hwnd);
+        }
         return 0;
     }
 
@@ -6828,6 +6843,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_ROUTED_OPEN: {
         auto* pathStr = reinterpret_cast<std::wstring*>(lParam);
         if (pathStr && !pathStr->empty()) {
+            g_isExitingWithPrintJobs = false; // Revive process from keep-alive exit state
+            ShowWindow(hwnd, SW_SHOW);        // Restore window visibility
             OpenPathOrDirectory(hwnd, *pathStr);
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
             ForceForegroundWindow(hwnd);
@@ -7462,6 +7479,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     }
                 }
             }
+        }
+
+        if (QuickView::PrintManager::GetInstance().HasActiveJobs()) {
+            g_isExitingWithPrintJobs = true;
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
         }
 
         // [Phase 0] Master lifecycle: if child viewers are alive, hide our window
