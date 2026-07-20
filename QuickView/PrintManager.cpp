@@ -28,23 +28,24 @@ std::vector<PrinterInfo> PrintManager::EnumLocalPrinters() const {
 
     std::vector<uint8_t> buffer(cbNeeded);
     if (::EnumPrintersW(flags, nullptr, 4, buffer.data(), cbNeeded, &cbNeeded, &cReturned)) {
+        std::wstring defPrinter;
+        DWORD defaultCb = 0;
+        ::GetDefaultPrinterW(nullptr, &defaultCb);
+        if (defaultCb > 0) {
+            defPrinter.resize(defaultCb);
+            if (::GetDefaultPrinterW(&defPrinter[0], &defaultCb)) {
+                defPrinter.resize(defaultCb > 0 ? defaultCb - 1 : 0);
+            } else {
+                defPrinter.clear();
+            }
+        }
+
         PRINTER_INFO_4W* pInfo = reinterpret_cast<PRINTER_INFO_4W*>(buffer.data());
         for (DWORD i = 0; i < cReturned; ++i) {
             PrinterInfo info;
             info.name = pInfo[i].pPrinterName;
-            
-            // Check if default (can use GetDefaultPrinterW for precision)
-            DWORD defaultCb = 0;
-            ::GetDefaultPrinterW(nullptr, &defaultCb);
-            if (defaultCb > 0) {
-                std::wstring defPrinter(defaultCb, L'\0');
-                if (::GetDefaultPrinterW(defPrinter.data(), &defaultCb)) {
-                    // Remove null terminator added by GetDefaultPrinterW
-                    defPrinter.resize(defaultCb > 0 ? defaultCb - 1 : 0);
-                    if (info.name == defPrinter) {
-                        info.isDefault = true;
-                    }
-                }
+            if (!defPrinter.empty() && info.name == defPrinter) {
+                info.isDefault = true;
             }
             printers.push_back(info);
         }
@@ -123,7 +124,6 @@ bool PrintManager::BuildConfiguredDevMode(
     }
 
     DEVMODEW* pDevMode = reinterpret_cast<DEVMODEW*>(outBuf.data());
-    ::ClosePrinter(hPrinter);
 
     // Keep preview and print on the same DEVMODE fields.
     pDevMode->dmFields |= DM_COPIES;
@@ -604,11 +604,12 @@ std::expected<void, HRESULT> PrintManager::ExecutePrintJob(const PrintJobSetting
     UINT colorContextCount = 0;
     frame->GetColorContexts(0, nullptr, &colorContextCount);
     if (colorContextCount > 0) {
-        std::vector<ComPtr<IWICColorContext>> sourceColorContexts(colorContextCount);
-        for (UINT i = 0; i < colorContextCount; ++i) {
-            wicFactory->CreateColorContext(&sourceColorContexts[i]);
-        }
-        if (SUCCEEDED(frame->GetColorContexts(colorContextCount, reinterpret_cast<IWICColorContext**>(sourceColorContexts.data()), &colorContextCount))) {
+        std::vector<IWICColorContext*> rawContexts(colorContextCount, nullptr);
+        if (SUCCEEDED(frame->GetColorContexts(colorContextCount, rawContexts.data(), &colorContextCount))) {
+            std::vector<ComPtr<IWICColorContext>> sourceColorContexts(colorContextCount);
+            for (UINT i = 0; i < colorContextCount; ++i) {
+                sourceColorContexts[i].Attach(rawContexts[i]);
+            }
             std::wstring printerIccPath;
             DWORD dwLen = 0;
             ::GetICMProfileW(hdcPrint, &dwLen, nullptr);
