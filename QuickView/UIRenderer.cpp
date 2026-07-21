@@ -1257,7 +1257,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
     // Directly map GlassOsdOpacity (0-100%) to OSD background alpha in traditional mode.
     float osdAlpha = (g_config.GlassOsdOpacity / 100.0f) * m_osdOpacity;
-    D2D1_COLOR_F bgColor = IsLightThemeActive() ? D2D1::ColorF(0.95f, 0.95f, 0.95f, osdAlpha) : D2D1::ColorF(0.0f, 0.0f, 0.0f, osdAlpha);
+    D2D1_COLOR_F bgColor = IsLightThemeActive() ? D2D1::ColorF(0.95f, 0.95f, 0.97f, osdAlpha) : D2D1::ColorF(0.08f, 0.08f, 0.10f, osdAlpha);
     dc->CreateSolidColorBrush(bgColor, &bgBrush);
     
     // [Fix] Theme-aware OSD Text: Automatically flip White text to Dark Grey in Light Mode
@@ -1325,7 +1325,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                     // Material Booster Layer (Theme-Aware and Full Range) - Draw on top of blurred background
                     ComPtr<ID2D1SolidColorBrush> boosterBrush;
                     bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
-                    D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.04f, 0.04f, 0.04f, 1.0f);
+                    D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
                     float baseAlpha = (g_config.GlassOsdOpacity / 100.0f);
                     D2D1_COLOR_F boosterColor = D2D1::ColorF(fillerBase.r, fillerBase.g, fillerBase.b, baseAlpha);
                     dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
@@ -1421,7 +1421,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             // Material Booster Layer (Theme-Aware and Full Range) - Draw on top of blurred background
             ComPtr<ID2D1SolidColorBrush> boosterBrush;
             bool isLight = (config.theme == QuickView::UI::GeekGlass::ThemeMode::Light);
-            D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.04f, 0.04f, 0.04f, 1.0f);
+            D2D1_COLOR_F fillerBase = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
             float baseAlpha = (g_config.GlassOsdOpacity / 100.0f);
             D2D1_COLOR_F boosterColor = D2D1::ColorF(fillerBase.r, fillerBase.g, fillerBase.b, baseAlpha);
             dc->CreateSolidColorBrush(boosterColor, &boosterBrush);

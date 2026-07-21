@@ -585,7 +585,7 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
   CreateResources(pRT);
 
   bool isLight = IsLightThemeActive();
-  m_brushBg->SetColor(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f));
+  m_brushBg->SetColor(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f));
   m_brushIcon->SetColor(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White));
   m_brushIconActive->SetColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f));
   m_brushIconDisabled->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.3f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f));

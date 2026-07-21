@@ -113,7 +113,7 @@ struct ThemePreset {
 
 // Built-in presets (Synchronized defaults: Blur 3px, Tint 65%, Spec 15%, Shadow 45%)
 inline constexpr ThemePreset PRESET_DARK  = { {0.06f, 0.06f, 0.08f, 1.0f}, {0.92f, 0.92f, 0.95f, 1.0f}, {0.0f, 0.6f, 1.0f, 1.0f},  0.65f, 3.0f, 0.15f, 0.45f, 15.0f, 45.0f, 55.0f, 15.0f };
-inline constexpr ThemePreset PRESET_LIGHT = { {0.95f, 0.95f, 0.95f, 1.0f}, {0.1f, 0.1f, 0.12f, 1.0f},  {0.0f, 0.45f, 0.9f, 1.0f}, 0.65f, 3.0f, 0.15f, 0.45f,  8.0f, 40.0f, 40.0f, 15.0f };
+inline constexpr ThemePreset PRESET_LIGHT = { {0.95f, 0.95f, 0.97f, 1.0f}, {0.1f, 0.1f, 0.12f, 1.0f},  {0.0f, 0.45f, 0.9f, 1.0f}, 0.65f, 3.0f, 0.15f, 0.45f,  8.0f, 40.0f, 40.0f, 15.0f };
 
 // ============================================================================
 // Hotkey Customization System

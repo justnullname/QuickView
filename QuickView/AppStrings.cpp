@@ -1588,8 +1588,8 @@ static const LanguageTable Table_EN = {
     L"Interval (seconds)", // Settings_Label_SlideshowInterval
     L"Immersive Mode", // Settings_Label_SlideshowImmersive
     L"Custom Lite Info Panel", // Settings_Label_CustomLiteInfoPanel
-    L"items in Normal mode", // Settings_Label_ItemsInNormalMode
-    L"items in Compare mode", // Settings_Label_ItemsInCompareMode
+    L"Items in Normal Mode", // Settings_Label_ItemsInNormalMode
+    L"Items in Compare Mode", // Settings_Label_ItemsInCompareMode
     L"Separator preset", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Spotlight", // Settings_Option_SlideshowSpotlight

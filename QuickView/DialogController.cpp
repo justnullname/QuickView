@@ -113,7 +113,7 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         geekGlass.DrawGeekGlassToppings(context, config);
     } else {
         ComPtr<ID2D1SolidColorBrush> pBgBrush;
-        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.18f, 1.0f);
+        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
         context->CreateSolidColorBrush(D2D1::ColorF(bgClr.r, bgClr.g, bgClr.b, g_config.GlassModalsOpacity / 100.0f), &pBgBrush);
         context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBgBrush.Get());
     }
