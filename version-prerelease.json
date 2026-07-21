@@ -1,10 +1,10 @@
 {
-  "version": "6.24.0.0",
-  "url": "https://github.com/justnullname/QuickView/releases/download/v6.24.0.0/QuickView_v6.24.0_X64.zip",
-  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.24.0.0/QuickView_v6.24.0_X64.zip",
-  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.24.0.0/QuickView_v6.24.0_ARM64.zip",
-  "sha256_x64": "2368dbe390987bf94a4b8c9194e032322f4a2648d44d1f2e2ead49545b1b6b4f",
-  "sha256_arm64": "eb155e72469e64021346c933d56a94de0c205cedc15c1329042bc0f34ec22def",
-  "date": "2026-07-18",
-  "changelog": "QuickView pre-release v6.24.0.0\r\n\r\n- Replaced WIC TIFF decoding with a custom mini-TIFF parser. In practical tests, the decoding time for a 12.8MP TIFF has improved significantly from 1.9s to 360ms. Note: To keep the application size small, no third-party TIFF decoding libraries were used. The custom decoder might not cover all edge cases, so if you encounter any display anomalies, please report a bug.\r\n\r\n- Added drag-to-resize functionality for the filmstrip.\r\n\r\n- Fixed an issue where the OSD (On-Screen Display) transparency was incorrect\r\n\r\n\r\n**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.22.3...v6.24.0.0"
+  "version": "6.25.2.1",
+  "url": "https://github.com/justnullname/QuickView/releases/download/v6.25.2.1/QuickView_v6.25.2.1_X64.zip",
+  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.25.2.1/QuickView_v6.25.2.1_X64.zip",
+  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.25.2.1/QuickView_v6.25.2.1_ARM64.zip",
+  "sha256_x64": "6702ba4acbc47e683bab95e269840e4b8a955916d866c8ddf50a10cee659c3c9",
+  "sha256_arm64": "f5a5af230c2a3e31aa40eb98783d552323bdc168c61120c71646375caa78bbf8",
+  "date": "2026-07-21",
+  "changelog": "QuickView pre-release v6.25.2.1\r\n\r\n* Introduced a custom print dialog to replace the native Windows Photo Printing Wizard.\r\n* Added support for grayscale and poster tiling modes. (#220)\r\n* Optimized binary size.\r\n\r\n**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.24.0.0...v6.25.2.1"
 }
