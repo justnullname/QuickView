@@ -21,6 +21,12 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
                      bool isCrossMonitor, bool isCompareMode, bool isPixelArtMode,
                      int cmsMode, bool enableSoftProofing, const std::wstring& softProofProfilePath) {
 
+    std::vector<std::unique_ptr<std::wstring>> menuStrings;
+    auto cacheStr = [&](std::wstring s) -> const wchar_t* {
+        menuStrings.push_back(std::make_unique<std::wstring>(std::move(s)));
+        return menuStrings.back()->c_str();
+    };
+
     // ========================================================
     // Top Action Row (4 buttons)
     // ========================================================
@@ -120,7 +126,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
             case 5: cmsLabel += AppStrings::Settings_Option_CmsGray; break;
             case 6: cmsLabel += AppStrings::Settings_Option_CmsProPhoto; break;
         }
-        items.push_back(MI::Sub(cmsLabel.c_str(), GeekIcons::Color, std::move(cmsItems)));
+        items.push_back(MI::Sub(cacheStr(cmsLabel), GeekIcons::Color, std::move(cmsItems)));
     }
 
     // --- Soft Proofing Submenu ---
@@ -149,16 +155,16 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
             std::wstring name = g_config.CustomSoftProofProfile.substr(
                 g_config.CustomSoftProofProfile.find_last_of(L"/\\") + 1);
             bool sel = (softProofProfilePath == g_config.CustomSoftProofProfile);
-            proofItems.push_back(MI::Check(IDM_SOFT_PROOF_CUSTOM, (L"[*] " + name).c_str(), sel));
+            proofItems.push_back(MI::Check(IDM_SOFT_PROOF_CUSTOM, cacheStr(L"[*] " + name), sel));
             proofItems.push_back(MI::Sep());
         }
 
         for (int i = 0; i < (int)profiles.size(); i++) {
             std::wstring fn = profiles[i].substr(profiles[i].find_last_of(L"/\\") + 1);
             bool sel = (softProofProfilePath == profiles[i]);
-            proofItems.push_back(MI::Check(IDM_SOFT_PROOF_BASE + i, fn.c_str(), sel));
+            proofItems.push_back(MI::Check(IDM_SOFT_PROOF_BASE + i, cacheStr(fn), sel));
         }
-        items.push_back(MI::Sub(proofLabel.c_str(), GeekIcons::SoftProof, std::move(proofItems)).Checked(enableSoftProofing));
+        items.push_back(MI::Sub(cacheStr(proofLabel), GeekIcons::SoftProof, std::move(proofItems)).Checked(enableSoftProofing));
     }
 
     // --- Wallpaper Submenu ---
@@ -204,7 +210,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     // ========================================================
     // Show the Geek Glass menu
     // ========================================================
-    GeekContextMenu::ShowMenu(hwnd, pt.x, pt.y, std::move(actions), std::move(items));
+    GeekContextMenu::ShowMenu(hwnd, pt.x, pt.y, std::move(actions), std::move(items), false, std::move(menuStrings));
 }
 
 // ============================================================

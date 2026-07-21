@@ -69,7 +69,8 @@ void GeekContextMenu::EnsureClassRegistered() {
 void GeekContextMenu::ShowMenu(HWND parent, int sx, int sy,
                                 std::vector<ActionButton> actions,
                                 std::vector<GeekMenuItem> items,
-                                bool isTouch) {
+                                bool isTouch,
+                                std::vector<std::unique_ptr<std::wstring>> stringCache) {
     DismissAll();
     EnsureClassRegistered();
 
@@ -77,6 +78,7 @@ void GeekContextMenu::ShowMenu(HWND parent, int sx, int sy,
     menu->m_parentAppHwnd = parent;
     menu->m_actions = std::move(actions);
     menu->m_items = std::move(items);
+    menu->m_stringCache = std::move(stringCache);
     menu->m_isLight = IsLightThemeActive();
     menu->m_isTouch = isTouch;
     menu->m_originPt = { sx, sy };

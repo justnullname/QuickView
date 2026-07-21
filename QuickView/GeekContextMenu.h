@@ -103,7 +103,8 @@ public:
     static void ShowMenu(HWND parent, int screenX, int screenY,
                          std::vector<ActionButton> actions,
                          std::vector<GeekMenuItem> items,
-                         bool isTouch = false);
+                         bool isTouch = false,
+                         std::vector<std::unique_ptr<std::wstring>> stringCache = {});
     static void ShowSubmenuPopup(HWND parent, int screenX, int screenY,
                                  std::vector<GeekMenuItem> items,
                                  GeekContextMenu* parentMenu);
@@ -220,6 +221,7 @@ private:
     float m_scrollOffset = 0.0f;
     float m_maxBodyH = 0.0f;
     float m_totalBodyH = 0.0f;
+    std::vector<std::unique_ptr<std::wstring>> m_stringCache;
 
     // --- Static ---
     static std::unique_ptr<GeekContextMenu> s_root;
