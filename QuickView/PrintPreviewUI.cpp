@@ -7,6 +7,7 @@
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <wrl/client.h>
+#include <d2d1effects.h>
 #include <algorithm>
 #include <string>
 #include <thread>
@@ -572,7 +573,18 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
                                 D2D1::Matrix3x2F::Translation(cellLeft, cellTop);
 
                 ctx->SetTransform(cellTransform * oldTransform);
-                ctx->DrawBitmap(pane.resource.bitmap.Get(), D2D1::RectF(0, 0, m_imageWidth, m_imageHeight));
+                if (m_settings.grayscale) {
+                    ComPtr<ID2D1Effect> grayscaleEffect;
+                    if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Grayscale, &grayscaleEffect))) {
+                        grayscaleEffect->SetInput(0, pane.resource.bitmap.Get());
+                        D2D1_RECT_F srcRect = D2D1::RectF(0.0f, 0.0f, m_imageWidth, m_imageHeight);
+                        ctx->DrawImage(grayscaleEffect.Get(), nullptr, &srcRect);
+                    } else {
+                        ctx->DrawBitmap(pane.resource.bitmap.Get(), D2D1::RectF(0, 0, m_imageWidth, m_imageHeight));
+                    }
+                } else {
+                    ctx->DrawBitmap(pane.resource.bitmap.Get(), D2D1::RectF(0, 0, m_imageWidth, m_imageHeight));
+                }
                 ctx->SetTransform(oldTransform);
 
                 ctx->PopAxisAlignedClip();
