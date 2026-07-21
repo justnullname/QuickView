@@ -8906,9 +8906,25 @@ using namespace QuickView::Codec;
 // ============================================================================
 // [v4.2] Unified Image Dispatcher
 // ============================================================================
+#ifndef STATUS_IN_PAGE_ERROR
+#define STATUS_IN_PAGE_ERROR ((DWORD)0xC0000006L)
+#endif
+
 HRESULT CImageLoader::LoadImageUnified(LPCWSTR filePath,
                                        const DecodeContext &ctx,
                                        DecodeResult &result) {
+  __try {
+    return LoadImageUnifiedInternal(filePath, ctx, result);
+  }
+  __except (GetExceptionCode() == STATUS_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+    // [Stability Fix] Capture STATUS_IN_PAGE_ERROR (0xc0000006) safely.
+    return HRESULT_FROM_WIN32(ERROR_SWAPERROR);
+  }
+}
+
+HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
+                                               const DecodeContext &ctx,
+                                               DecodeResult &result) {
   if (!filePath)
     return E_INVALIDARG;
 

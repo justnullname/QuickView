@@ -455,6 +455,10 @@ public:
   static void ReleaseJxlRunner();
 
 private:
+  HRESULT LoadImageUnifiedInternal(LPCWSTR filePath,
+                                   const QuickView::Codec::DecodeContext &ctx,
+                                   QuickView::Codec::DecodeResult &result);
+
   // Windows Shell Thumbnail Extractor
   HRESULT LoadShellThumbnail(LPCWSTR filePath, int targetSize,
                              ThumbData *pData);

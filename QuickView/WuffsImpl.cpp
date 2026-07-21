@@ -962,6 +962,15 @@ private:
     };
     
     void BackgroundIndexer(std::stop_token st) {
+        __try {
+            BackgroundIndexerInternal(st);
+        }
+        __except (GetExceptionCode() == STATUS_IN_PAGE_ERROR ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+            // [Stability Fix] Safely exit if MMF page fault fails (e.g. temporary file deleted, disk removed).
+        }
+    }
+
+    void BackgroundIndexerInternal(std::stop_token st) {
         wuffs_gif__decoder bgGifDec;
         wuffs_png__decoder bgPngDec;
         wuffs_base__io_buffer bgSrc = m_src; // Copy initial io_buffer state
