@@ -2654,72 +2654,72 @@ static const LanguageTable Table_TW = {
 };
 
 // ----------------------------------------------------------------
-// JA Table
+// JP Table
 // ----------------------------------------------------------------
 static const LanguageTable Table_JA = {
     L"画像が読み込まれていません", // OSD_NoImage
     L"ロスレス", // OSD_Lossless
     L"再エンコード (ロスレス)", // OSD_ReencodedLossless
-    L"エッジ最適化", // OSD_EdgeAdapted
-    L"再エンコード", // OSD_Reencoded
-    L"アクセス拒否 - ファイルが使用中または読み取り専用", // OSD_ReadOnly
-    L"変換が不完全 (エッジ最適化済み)", // OSD_NotPerfect
-    L"Video Wall: ON", // OSD_SpanOn
-    L"Video Wall: OFF", // OSD_SpanOff
-    L"校正前 (元画像)", // OSD_CompareBefore
-    L"校正後 (プロファイル適用)", // OSD_CompareAfter
-    L"削除が取り消されました", // OSD_UndoDeleteSuccess
+    L"クロップ済み", // OSD_EdgeAdapted
+    L"非可逆", // OSD_Reencoded
+    L"アクセスが拒否されました - ファイルが使用中か読み取り専用の可能性があります", // OSD_ReadOnly
+    L"完全な変換ではありません (エッジ最適化済み)", // OSD_NotPerfect
+    L"ビデオウォール : オン", // OSD_SpanOn
+    L"ビデオウォール : オフ", // OSD_SpanOff
+    L"変更前 (オリジナル)", // OSD_CompareBefore
+    L"変更後 (校正済み)", // OSD_CompareAfter
+    L"削除の取り消しに成功しました", // OSD_UndoDeleteSuccess
     L"削除の取り消しに失敗しました", // OSD_UndoDeleteFailed
-    L"名前の変更を取り消しました", // OSD_UndoRenameSuccess
+    L"名前の変更の取り消しに成功しました", // OSD_UndoRenameSuccess
     L"名前の変更の取り消しに失敗しました", // OSD_UndoRenameFailed
-    L"回転・反転を取り消しました", // OSD_UndoTransformSuccess
-    L"回転・反転の取り消しに失敗しました", // OSD_UndoTransformFailed
+    L"回転/反転の取り消しに成功しました", // OSD_UndoTransformSuccess
+    L"回転/反転の取り消しに失敗しました", // OSD_UndoTransformFailed
     L"色域外の色を検出しました", // OSD_GamutDetected
-    L"色域: 互換性のないプロファイル", // OSD_GamutIncompatible
-    L"色域: 解析に失敗しました", // OSD_GamutFailed
-    L"時計回りに90\x00B0回転", // Action_RotateCW
-    L"反時計回りに90\x00B0回転", // Action_RotateCCW
+    L"色域 : 互換性のないプロファイルか解析に失敗しました", // OSD_GamutIncompatible
+    L"色域 : 解析に失敗しました", // OSD_GamutFailed
+    L"右に90\x00B0回転", // Action_RotateCW
+    L"左に90\x00B0回転", // Action_RotateCCW
     L"180\x00B0回転", // Action_Rotate180
-    L"水平反転", // Action_FlipH
-    L"垂直反転", // Action_FlipV
-    L"変更を保存しますか?", // Dialog_SaveTitle
-    L"画像が変更されました。変更を保存しますか?", // Dialog_SaveContent
+    L"左右反転", // Action_FlipH
+    L"上下反転", // Action_FlipV
+    L"変更を保存しますか？", // Dialog_SaveTitle
+    L"画像が変更されています。変更を保存しますか？", // Dialog_SaveContent
     L"保存", // Dialog_ButtonSave
     L"名前を付けて保存...", // Dialog_ButtonSaveAs
     L"破棄", // Dialog_ButtonDiscard
     L"続行", // Dialog_ButtonContinue
-    L"ロスレス変換を常に保存", // Checkbox_AlwaysSaveLossless
-    L"エッジ最適化を常に保存", // Checkbox_AlwaysSaveEdgeAdapted
-    L"再エンコードを常に保存", // Checkbox_AlwaysSaveLossy
-    L"確認なしで直接ごみ箱に移動", // Checkbox_NeverConfirmDelete
-    L"HEICをデコードできません - HEVC拡張機能をインストールしてください", // OSD_HEICCodecMissing
-    L"HEICをデコードできません", // Dialog_HEICTitle
-    L"システムにHEVC拡張機能がありません。\\nQuickViewは最高のパフォーマンス" L"のためにハードウェアアクセラレーションを使用します。", // Dialog_HEICContent
+    L"常にロスレス変換で保存する", // Checkbox_AlwaysSaveLossless
+    L"常にエッジ最適化で保存する", // Checkbox_AlwaysSaveEdgeAdapted
+    L"常に再エンコードして保存する", // Checkbox_AlwaysSaveLossy
+    L"確認なしで直接ゴミ箱へ移動する", // Checkbox_NeverConfirmDelete
+    L"HEIC をデコードできません - HEVCビデオ拡張機能をインストールしてください", // OSD_HEICCodecMissing
+    L"HEIC をデコードできません", // Dialog_HEICTitle
+    L"システムに HEVC ビデオ拡張機能がありません。\nQuickView は最高のパフォーマンスを得るために" L"システムのハードウェアアクセラレーションを使用します。", // Dialog_HEICContent
     L"拡張機能を取得 (無料)", // Dialog_HEICGetExtension
     L"キャンセル", // Dialog_Cancel
-    L"一般", // Settings_Tab_General
-    L"情報", // Settings_Tab_About
-    L"基本", // Settings_Group_Foundation
-    L"起動", // Settings_Group_Startup
-    L"習慣", // Settings_Group_Habits
+    L"全般", // Settings_Tab_General
+    L"QuickView について", // Settings_Tab_About
+    L"基本設定", // Settings_Group_Foundation
+    L"スタートアップ", // Settings_Group_Startup
+    L"操作習慣", // Settings_Group_Habits
     L"言語", // Settings_Label_Language
     L"単一インスタンス", // Settings_Label_SingleInstance
-    L"更新確認", // Settings_Label_CheckUpdates
-    L"アップデートチャンネル", // Settings_Label_UpdateChannel
+    L"更新を確認", // Settings_Label_CheckUpdates
+    L"更新チャンネル", // Settings_Label_UpdateChannel
     L"安定版", // Settings_Option_UpdateStable
-    L"プレリリース (Pre-release)", // Settings_Option_UpdatePreRelease
-    L"安定版: プレリリース版が一定期間安定して動作した後に公開されます。\nプレリリース: 最新の変更をいち早くお届けし、フィードバックを収集します。これらの変更は厳密なテストを受けていないことにご注意ください。", // Settings_Tooltip_PreRelease
-    L"ループナビゲーション", // Settings_Label_NavLoopMode
+    L"プレリリース版", // Settings_Option_UpdatePreRelease
+    L"安定版 : プレビュー版の安定性が確認された後に配信されます。\nプレリリース版: フィードバック収集のため最新のコード変更を即座に提供します。注 : 厳密なテストは行われていません。", // Settings_Tooltip_PreRelease
+    L"ループ再生", // Settings_Label_NavLoopMode
     L"並べ替え順序", // Settings_Label_SortOrder
     L"降順", // Settings_Label_SortDescending
-    L"常にアーカイブ内を名前順で表示", // Settings_Label_SortArchivesByNameAscending
-    L"削除前に確認", // Settings_Label_ConfirmDel
+    L"アーカイブ内は常に名前順(昇順)で並べ替える", // Settings_Label_SortArchivesByNameAscending
+    L"削除前に確認する", // Settings_Label_ConfirmDel
     L"ポータブルモード / クリーンアップ", // Settings_Label_Portable
-    L"ポータブルモードとレジストリのクリーンアップ：\n有効にすると、QuickView " L"はポータブルモードで動作します。既存のレジストリ関連付けを自動的にクリー" L"ンアップし、レジストリの自動変更を無効にします。また、設定ファイルは AppData " L"ではなくアプリケーションディレクトリに保存されます。", // Settings_Tooltip_Portable
-    L"Span Displays (Video Wall)", // Settings_Label_SpanDisplays
+    L"ポータブルモード / レジストリクリーンアップ:\n有効にすると、QuickViewは" L"ポータブルモードで動作します。既存のレジストリ関連付けを自動的にクリーンアップし、" L"自動レジストリ変更を無効化して、設定ファイルをAppDataではなく" L"アプリケーションディレクトリに保存します。", // Settings_Tooltip_Portable
+    L"マルチディスプレイ展開", // Settings_Label_SpanDisplays
     L"UI スケール", // Settings_Label_UIScale
-    L"再起動が必要", // Settings_Status_RestartRequired
-    L"書き込み権限なし!", // Settings_Status_NoWritePerm
+    L"再起動が必要です", // Settings_Status_RestartRequired
+    L"書き込み権限がありません！", // Settings_Status_NoWritePerm
     L"有効", // Settings_Status_Enabled
     L"Powered by", // Settings_Header_PoweredBy
     L"開く...\tCtrl+O", // Context_Open
@@ -2730,86 +2730,86 @@ static const LanguageTable Table_JA = {
     L"画像をコピー\tCtrl+C", // Context_CopyImage
     L"パスをコピー\tCtrl+Alt+C", // Context_CopyPath
     L"印刷\tCtrl+P", // Context_Print
-    L"時計回りに90\x00B0回転\tR", // Context_RotateCW
-    L"反時計回りに90\x00B0回転\tShift+R", // Context_RotateCCW
-    L"水平反転\tH", // Context_FlipH
-    L"垂直反転\tV", // Context_FlipV
-    L"変換", // Context_Transform
-    L"実際のサイズ (100%)\t1 / Z", // Context_ActualSize
+    L"右に90\x00B0回転\tR", // Context_RotateCW
+    L"左に90\x00B0回転\tShift+R", // Context_RotateCCW
+    L"左右反転\tH", // Context_FlipH
+    L"上下反転\tV", // Context_FlipV
+    L"変形", // Context_Transform
+    L"原寸大 (100%)\t1 / Z", // Context_ActualSize
     L"画面に合わせる\t0 / F", // Context_FitToScreen
     L"ウィンドウに合わせる", // Context_FitWindow
-    L"ウィンドウにフィット", // Context_FillWindow
+    L"ウィンドウを埋める", // Context_FillWindow
     L"拡大\t+ / Ctrl +", // Context_ZoomIn
     L"縮小\t- / Ctrl -", // Context_ZoomOut
-    L"ウィンドウをロック", // Context_LockWindow
+    L"ウィンドウを固定", // Context_LockWindow
     L"常に手前に表示\tCtrl+T", // Context_AlwaysOnTop
-    L"HUDギャラリー\tT", // Context_HUDGallery
+    L"HUD ギャラリー\tT", // Context_HUDGallery
     L"簡易情報パネル\tTab", // Context_LiteInfoPanel
     L"詳細情報パネル\tI", // Context_FullInfoPanel
-    L"RAWをレンダリング", // Context_RenderRAW
+    L"RAW レンダリング", // Context_RenderRAW
     L"ピクセルアートモード", // Context_PixelArtMode
-    L"カラースペース", // Context_ColorSpace
-    L"全画面\tF11", // Context_Fullscreen
+    L"色空間", // Context_ColorSpace
+    L"全画面表示\tF11", // Context_Fullscreen
     L"表示", // Context_View
-    L"塗りつぶし", // Context_WallpaperFill
-    L"フィット", // Context_WallpaperFit
-    L"タイル", // Context_WallpaperTile
-    L"壁紙に設定", // Context_SetAsWallpaper
+    L"全画面表示(壁紙)", // Context_WallpaperFill
+    L"サイズ変更(壁紙)", // Context_WallpaperFit
+    L"並べて表示(壁紙)", // Context_WallpaperTile
+    L"デスクトップの背景に設定", // Context_SetAsWallpaper
     L"名前の変更\tF2", // Context_Rename
     L"拡張子を修正", // Context_FixExtension
     L"削除\tDel", // Context_Delete
     L"削除を取り消す\tCtrl+Z", // Context_UndoDelete
     L"名前の変更を取り消す\tCtrl+Z", // Context_UndoRename
-    L"回転・反転を取り消す\tCtrl+Z", // Context_UndoTransform
+    L"回転/反転を取り消す\tCtrl+Z", // Context_UndoTransform
     L"元に戻す\tCtrl+Z", // Context_Undo
     L"並べ替え", // Context_SortBy
-    L"ナビゲーション順序", // Context_NavOrder
+    L"移動順序", // Context_NavOrder
     L"昇順", // Context_SortAscending
     L"降順", // Context_SortDescending
     L"設定...", // Context_Settings
     L"比較モード\tC", // Context_CompareMode
-    L"トレースモード\tCtrl+Shift+O", // Context_OverlayMode
+    L"オーバーレイモード\tCtrl+Shift+O", // Context_OverlayMode
     L"比較モードで開く", // Context_GalleryOpenCompare
     L"新しいウィンドウで開く", // Context_GalleryOpenNewWindow
     L"終了\tMButton/Esc", // Context_Exit
-    L"マウススルーを解除", // Menu_ExitPassthrough
+    L"マウススルーモードを解除", // Menu_ExitPassthrough
     L"マウススルーモード", // Dialog_PassthroughTitle
-    L"マウス操作が下のウィンドウに透過されます。\n解除するにはグローバルショートカット (Shift+Esc) またはタスクバーメニューを使用してください。\n\n続行しますか？", // Dialog_PassthroughContent
-    L"マウスクリック透過: ON (Shift+Esc で解除)", // OSD_PassthroughOn
-    L"マウスクリック透過: OFF", // OSD_PassthroughOff
-    L"トレースモード: ON", // OSD_OverlayModeOn
-    L"トレースモード: OFF", // OSD_OverlayModeOff
+    L"マウスイベントが下のウィンドウに透過されます。\nグローバルショートカット (Shift+Esc) またはタスクバーメニューからのみこのモードを解除できます。\n\n続行しますか？", // Dialog_PassthroughContent
+    L"クリックスルー : オン (Shift+Esc で解除)", // OSD_PassthroughOn
+    L"クリックスルー : オフ", // OSD_PassthroughOff
+    L"オーバーレイモード : オン", // OSD_OverlayModeOn
+    L"オーバーレイモード : オフ", // OSD_OverlayModeOff
     L"不透明度", // OSD_Opacity
-    L"拡大 (トレース)", // Toolbar_Tooltip_OverlayZoomIn
-    L"縮小 (トレース)", // Toolbar_Tooltip_OverlayZoomOut
+    L"拡大 (オーバーレイ)", // Toolbar_Tooltip_OverlayZoomIn
+    L"縮小 (オーバーレイ)", // Toolbar_Tooltip_OverlayZoomOut
     L"不透明度を上げる", // Toolbar_Tooltip_OverlayAlphaUp
     L"不透明度を下げる", // Toolbar_Tooltip_OverlayAlphaDown
     L"マウススルーを開始", // Toolbar_Tooltip_OverlayPassthroughOn
     L"マウススルーを解除", // Toolbar_Tooltip_OverlayPassthroughOff
-    L"トレースモードを終了", // Toolbar_Tooltip_OverlayExit
+    L"オーバーレイモードを終了", // Toolbar_Tooltip_OverlayExit
     L"エラー", // Message_SaveErrorTitle
-    L"ファイルの保存に失敗しました。ファイルがロックされていませんか?", // Message_SaveErrorContent
+    L"ファイルの保存に失敗しました。ファイルがロックされている可能性があります。", // Message_SaveErrorContent
     L"前へ (左)", // Toolbar_Tooltip_Prev
     L"次へ (右)", // Toolbar_Tooltip_Next
-    L"左回転 (Shift+R)", // Toolbar_Tooltip_RotateL
-    L"右回転 (R)", // Toolbar_Tooltip_RotateR
-    L"水平反転 (H)", // Toolbar_Tooltip_FlipH
-    L"ウィンドウをロック(一時的)", // Toolbar_Tooltip_Lock
-    L"ウィンドウ固定を解除", // Toolbar_Tooltip_Unlock
+    L"左に回転 (Shift+R)", // Toolbar_Tooltip_RotateL
+    L"右に回転 (R)", // Toolbar_Tooltip_RotateR
+    L"左右反転 (H)", // Toolbar_Tooltip_FlipH
+    L"ウィンドウを固定 (一時)", // Toolbar_Tooltip_Lock
+    L"ウィンドウの固定を解除", // Toolbar_Tooltip_Unlock
     L"ギャラリー (T)", // Toolbar_Tooltip_Gallery
     L"情報パネル", // Toolbar_Tooltip_Info
-    L"RAW: プレビュー (クリックでフル)", // Toolbar_Tooltip_RawPreview
-    L"RAW: フルデコード (クリックでプレビュー)", // Toolbar_Tooltip_RawFull
-    L"RAW: ペアのRAWを表示 (フルデコード)", // Toolbar_Tooltip_RawPairView
-    L"RAW: ペア画像に戻る", // Toolbar_Tooltip_RawPairBack
-    L"拡張子不一致 (修正)", // Toolbar_Tooltip_FixExtension
-    L"ツールバーを固定", // Toolbar_Tooltip_Pin
-    L"ツールバーの固定を解除", // Toolbar_Tooltip_Unpin
-    L"色域外の色を検出しました", // Toolbar_Tooltip_GamutWarning
-    L"ノーマルモード", // Toolbar_Tooltip_NormalMode
+    L"RAW : プレビュー (クリックで完全デコード)", // Toolbar_Tooltip_RawPreview
+    L"RAW : 完全デコード (クリックでプレビュー)", // Toolbar_Tooltip_RawFull
+    L"RAW : ペアの RAW を表示 (完全デコード)", // Toolbar_Tooltip_RawPairView
+    L"RAW : ペアの画像に戻る", // Toolbar_Tooltip_RawPairBack
+    L"拡張子の不一致 (修正)", // Toolbar_Tooltip_FixExtension
+    L"ツールバーをピン留め", // Toolbar_Tooltip_Pin
+    L"ツールバーのピン留めを解除", // Toolbar_Tooltip_Unpin
+    L"色域外ハイライト領域を表示", // Toolbar_Tooltip_GamutWarning
+    L"通常モード", // Toolbar_Tooltip_NormalMode
     L"比較モード", // Toolbar_Tooltip_CompareMode
-    L"1ページ表示", // Toolbar_Tooltip_SinglePage
-    L"2ページ表示", // Toolbar_Tooltip_DualPage
+    L"単一ページモード", // Toolbar_Tooltip_SinglePage
+    L"見開きページモード", // Toolbar_Tooltip_DualPage
     L"選択範囲に新しい画像を開く", // Toolbar_Tooltip_CompareOpen
     L"左右を入れ替え", // Toolbar_Tooltip_CompareSwap
     L"レイアウトを切り替え", // Toolbar_Tooltip_CompareLayout
@@ -2817,273 +2817,273 @@ static const LanguageTable Table_JA = {
     L"選択した画像を削除", // Toolbar_Tooltip_CompareDelete
     L"拡大 (微調整)", // Toolbar_Tooltip_CompareZoomIn
     L"縮小 (微調整)", // Toolbar_Tooltip_CompareZoomOut
-    L"ズーム同期: オン", // Toolbar_Tooltip_CompareSyncZoomOn
-    L"ズーム同期: オフ", // Toolbar_Tooltip_CompareSyncZoomOff
-    L"移動同期: オン", // Toolbar_Tooltip_CompareSyncPanOn
-    L"移動同期: オフ", // Toolbar_Tooltip_CompareSyncPanOff
-    L"シネマティック スポットライトの切り替え", // Toolbar_Tooltip_SlideshowImmersiveToggle
-    L"スライドショーモードの終了", // Toolbar_Tooltip_SlideshowExit
-    L"比較を終了", // Toolbar_Tooltip_CompareExit
-    L"アニメーション再生", // Toolbar_Tooltip_AnimPlay
-    L"アニメーション一時停止", // Toolbar_Tooltip_AnimPause
+    L"ズーム同期 : オン", // Toolbar_Tooltip_CompareSyncZoomOn
+    L"ズーム同期 : オフ", // Toolbar_Tooltip_CompareSyncZoomOff
+    L"パン同期 : オン", // Toolbar_Tooltip_CompareSyncPanOn
+    L"パン同期 : オフ", // Toolbar_Tooltip_CompareSyncPanOff
+    L"イマーシブスポットライトの切り替え", // Toolbar_Tooltip_SlideshowImmersiveToggle
+    L"スライドショーモードを終了", // Toolbar_Tooltip_SlideshowExit
+    L"比較モードを終了", // Toolbar_Tooltip_CompareExit
+    L"アニメーションを再生", // Toolbar_Tooltip_AnimPlay
+    L"アニメーションを一時停止", // Toolbar_Tooltip_AnimPause
     L"前のフレーム", // Toolbar_Tooltip_AnimPrev
     L"次のフレーム", // Toolbar_Tooltip_AnimNext
-    L"ダーティ領域デバッグ: オン", // Toolbar_Tooltip_AnimDirtyOn
-    L"ダーティ領域デバッグ: オフ", // Toolbar_Tooltip_AnimDirtyOff
+    L"更新領域デバッグ : オン", // Toolbar_Tooltip_AnimDirtyOn
+    L"更新領域デバッグ : オフ", // Toolbar_Tooltip_AnimDirtyOff
     L"アニメーション速度", // Toolbar_Tooltip_AnimSpeed
     L"パフォーマンス", // Settings_Header_Performance
-    L"プロ向けツール", // Settings_Header_Professional
-    L"Memory Reclaim Strategy:", // Settings_Label_MemoryReclaim
-    L"Smart (Auto)", // Settings_Option_MemSmart
-    L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
-    L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
-    L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
-    L"アニメーションモードで脏矩形ボタンを表示", // Settings_Label_ShowDirtyRect
-    L"アニメーションモードのツールバーにダーティレクタングル（更新領域）のデバッグボタンを表示します。", // Settings_Tooltip_ShowDirtyRect
-    L"コピーしました!", // OSD_Copied
-    L"座標をコピーしました!", // OSD_CoordinatesCopied
-    L"ファイルパスをコピーしました!", // OSD_FilePathCopied
-    L"ズーム: 100%", // OSD_Zoom100
-    L"ズーム: 画面に合わせる", // OSD_ZoomFit
-    L"ズーム: ウィンドウに合わせる", // OSD_ZoomFitWindow
-    L"ズーム: ウィンドウにフィット", // OSD_ZoomFill
-    L"印刷: 開いたアプリでCtrl+Pを使用", // OSD_PrintInstruction
-    L"ごみ箱に移動しました", // OSD_MovedToRecycleBin
-    L"ウィンドウ固定", // OSD_WindowLocked
-    L"ウィンドウ固定解除", // OSD_WindowUnlocked
-    L"常に手前: オン", // OSD_AlwaysOnTopOn
-    L"常に手前: オフ", // OSD_AlwaysOnTopOff
-    L"壁紙を設定しました", // OSD_WallpaperSet
-    L"壁紙の設定に失敗", // OSD_WallpaperFailed
-    L"名前変更完了", // OSD_Renamed
-    L"名前変更失敗", // OSD_RenameFailed
+    L"プロフェッショナルツール", // Settings_Header_Professional
+    L"スマートメモリ管理", // Settings_Label_MemoryReclaim
+    L"スマート", // Settings_Option_MemSmart
+    L"アグレッシブ", // Settings_Option_MemAggressive
+    L"オンデマンド", // Settings_Option_MemOnDemand
+    L"スマート : システムメモリが 4GB 未満の場合のみ自動的にメモリを解放します。\n" L"アグレッシブ : 0ns の即時割り当て速度を維持するためメモリを確保し続けます。\n" L"オンデマンド : 物理メモリを節約するため、常にアイドル状態のメモリを解放します。", // Settings_Tooltip_MemoryReclaim
+    L"アニメーションモードで更新領域ボタンを表示", // Settings_Label_ShowDirtyRect
+    L"フレームのどの部分が再描画されているかを視覚化するため、アニメーションモードで更新領域のデバッグボタンを表示します。", // Settings_Tooltip_ShowDirtyRect
+    L"コピーしました！", // OSD_Copied
+    L"座標をコピーしました！", // OSD_CoordinatesCopied
+    L"ファイルパスをコピーしました！", // OSD_FilePathCopied
+    L"ズーム : 100%", // OSD_Zoom100
+    L"ズーム : 画面に合わせる", // OSD_ZoomFit
+    L"ズーム : ウィンドウに合わせる", // OSD_ZoomFitWindow
+    L"ズーム : ウィンドウを埋める", // OSD_ZoomFill
+    L"印刷 : 開いたアプリで Ctrl+P を使用してください", // OSD_PrintInstruction
+    L"ゴミ箱に移動しました", // OSD_MovedToRecycleBin
+    L"ウィンドウを固定しました", // OSD_WindowLocked
+    L"ウィンドウの固定を解除しました", // OSD_WindowUnlocked
+    L"常に手前に表示 : オン", // OSD_AlwaysOnTopOn
+    L"常に手前に表示 : オフ", // OSD_AlwaysOnTopOff
+    L"壁紙に設定", // OSD_WallpaperSet
+    L"壁紙の設定に失敗しました", // OSD_WallpaperFailed
+    L"名前を変更しました", // OSD_Renamed
+    L"名前の変更に失敗しました", // OSD_RenameFailed
     L"拡張子を修正しました", // OSD_ExtensionFixed
-    L"復元されました", // OSD_Restored
+    L"元に戻しました", // OSD_Restored
     L"最初の画像", // OSD_FirstImage
     L"最後の画像", // OSD_LastImage
     L"HD", // OSD_HD
-    L"ズーム: ", // OSD_ZoomPrefix
+    L"ズーム : ", // OSD_ZoomPrefix
     L"再生中", // OSD_AnimPlaying
-    L"一時停止 (Alt+左右でシーク)", // OSD_AnimPaused
-    L"ダーティ領域: オン", // OSD_AnimDirtyOn
-    L"ダーティ領域: オフ", // OSD_AnimDirtyOff
-    L"Span Displays (Video Wall)\tCtrl+F11", // Context_SpanDisplays
+    L"一時停止中 (インスペクターモード: Alt+Left/Right でシーク)", // OSD_AnimPaused
+    L"更新領域 : オン", // OSD_AnimDirtyOn
+    L"更新領域 : オフ", // OSD_AnimDirtyOff
+    L"マルチディスプレイ展開 (ビデオウォール)\tCtrl+F11", // Context_SpanDisplays
     L"インターフェース", // Settings_Tab_Visuals
     L"操作", // Settings_Tab_Controls
     L"画像", // Settings_Tab_Image
-    L"詳細", // Settings_Tab_Advanced
+    L"詳細設定", // Settings_Tab_Advanced
     L"背景", // Settings_Header_Backdrop
     L"ウィンドウ", // Settings_Header_Window
-    L"ウィンドウロック", // Settings_Header_WindowLock
+    L"ウィンドウ固定", // Settings_Header_WindowLock
     L"パネル", // Settings_Header_Panel
     L"マウス", // Settings_Header_Mouse
-    L"エッジ", // Settings_Header_Edge
+    L"画面端", // Settings_Header_Edge
     L"レンダリング", // Settings_Header_Render
-    L"ハイダイナミックレンジ (HDR)", // Settings_Header_Hdr
-    L"プロンプト", // Settings_Header_Prompts
+    L"HDR", // Settings_Header_Hdr
+    L"確認ダイアログ", // Settings_Header_Prompts
     L"システム", // Settings_Header_System
     L"機能", // Settings_Header_Features
     L"透明度", // Settings_Header_Transparency
-    L"ガラスエンジン (GPU)", // Settings_Header_GeekGlass
-    L"ガラスレンダリング", // Settings_Label_EnableGeekGlass
-    L"アニメーション", // Settings_Label_GlassUIAnimations
-    L"核心マテリアル", // Settings_Header_CoreMaterial
-    L"ぼかし半径", // Settings_Label_BlurSigma
-    L"レンダリング有効時に適用", // Settings_Status_GlassDisabled
-    L"厚み (濃度)", // Settings_Label_TintDensity
-    L"ガラスのベースカラーের深さを制御します。", // Settings_Tooltip_TintDensity
-    L"光沢の反射", // Settings_Label_SpecularOpacity
-    L"ガラスパネルの光沢強度を制御します。", // Settings_Tooltip_SpecularOpacity
-    L"影の強さ", // Settings_Label_ShadowIntensity
-    L"影の強度を調整します。", // Settings_Tooltip_ShadowIntensity
-    L"エッジ", // Settings_Header_VectorAssets
-    L"線幅", // Settings_Label_VectorStrokeWeight
+    L"Glass エンジン (GPU)", // Settings_Header_GeekGlass
+    L"Glass を有効化", // Settings_Label_EnableGeekGlass
+    L"UI アニメーション", // Settings_Label_GlassUIAnimations
+    L"コンポーネント素材", // Settings_Header_CoreMaterial
+    L"Glass ブラー シグマ", // Settings_Label_BlurSigma
+    L"Glass 無効 (システム)", // Settings_Status_GlassDisabled
+    L"色合い層", // Settings_Label_TintDensity
+    L"Glass すりガラス効果の全体的な色の濃さ。", // Settings_Tooltip_TintDensity
+    L"反射 (反射光)", // Settings_Label_SpecularOpacity
+    L"斜めからの照明反射の明るさ。", // Settings_Tooltip_SpecularOpacity
+    L"影の深さ", // Settings_Label_ShadowIntensity
+    L"アンビエントオクルージョン影の強度。", // Settings_Tooltip_ShadowIntensity
+    L"ベクターレンダリング", // Settings_Header_VectorAssets
+    L"アイコンの線の太さ", // Settings_Label_VectorStrokeWeight
     L"標準 (1.5px)", // Settings_Option_StrokeStandard
-    L"極細 (1.0px)", // Settings_Option_StrokeFine
-    L"着色モード", // Settings_Header_GlassTint
-    L"プロファイル", // Settings_Label_TintProfile
-    L"自動", // Settings_Option_TintAuto
-    L"カスタム", // Settings_Option_TintCustom
-    L"カスタム底色", // Settings_Label_GlassCustomColor
-    L"インターフェース密度", // Settings_Header_DensityMatrix
+    L"細線 (1.0px)", // Settings_Option_StrokeFine
+    L"色合いプロファイル", // Settings_Header_GlassTint
+    L"カラーロジック", // Settings_Label_TintProfile
+    L"自動 (適応)", // Settings_Option_TintAuto
+    L"カスタムカラー", // Settings_Option_TintCustom
+    L"手動色合い", // Settings_Label_GlassCustomColor
+    L"操作面の不透明度 (%)", // Settings_Header_DensityMatrix
     L"OSD & HUD", // Settings_Label_OsdDensity
-    L"OSDなどの浮層の厚みを制御します。", // Settings_Tooltip_OsdDensity
-    L"ツールパネル", // Settings_Label_PanelsDensity
-    L"ツールバー、情報パネル、ギャラリー、および右上ウィンドウコントロールの厚みを制御します。", // Settings_Tooltip_PanelsDensity
-    L"モーダルウィンドウ", // Settings_Label_ModalsDensity
-    L"設定、情報、ダイアログの厚みを制御します。", // Settings_Tooltip_ModalsDensity
-    L"右クリックメニュー", // Settings_Label_MenusDensity
-    L"右クリックメニュー、ドロップダウンの厚みを制御します。", // Settings_Tooltip_MenusDensity
+    L"小さなフローティングオーバーレイの透明度。", // Settings_Tooltip_OsdDensity
+    L"ツールバー & サイドバー", // Settings_Label_PanelsDensity
+    L"下部ツールバー、情報パネル、ギャラリー、右上ウィンドウコントロールの透明度。", // Settings_Tooltip_PanelsDensity
+    L"ダイアログ & 設定", // Settings_Label_ModalsDensity
+    L"中央ポップアップの透明度。", // Settings_Tooltip_ModalsDensity
+    L"メニュー", // Settings_Label_MenusDensity
+    L"右クリックコンテキストメニューの透明度。", // Settings_Tooltip_MenusDensity
     L"テーマ", // Settings_Tab_Theme
-    L"モード", // Settings_Label_ThemeMode
+    L"プリセット", // Settings_Label_ThemeMode
     L"システム", // Settings_Option_ThemeAuto
     L"ダーク", // Settings_Option_ThemeDark
     L"ライト", // Settings_Option_ThemeLight
     L"デザイン", // Settings_Option_ThemeCustom
-    L"モーダルディマー", // Settings_Label_AmbientDimmer
-    L"没入型シャドウを追加します。", // Settings_Tooltip_AmbientDimmer
-    L"アクセント色", // Settings_Label_AccentColor
-    L"テキスト色", // Settings_Label_TextColor
+    L"モーダル減光", // Settings_Label_AmbientDimmer
+    L"モーダルや設定ウィンドウが開いているときに背景を暗くします。", // Settings_Tooltip_AmbientDimmer
+    L"アクセントカラー", // Settings_Label_AccentColor
+    L"文字色", // Settings_Label_TextColor
     L"テーマエンジン", // Settings_Header_ThemeManagement
     L"エクスポート", // Settings_Action_ExportTheme
     L"インポート", // Settings_Action_ImportTheme
-    L"キャンバス色", // Settings_Label_CanvasColor
+    L"キャンバスの色", // Settings_Label_CanvasColor
     L"オーバーレイ", // Settings_Label_Overlay
-    L"グリッド表示", // Settings_Label_ShowGrid
-    L"画像の切り替えフェード", // Settings_Label_CrossFade
-    L"常に手前", // Settings_Label_AlwaysOnTop
-    L"ウィンドウをロック", // Settings_Label_LockWindow
-    L"プログラムの起動時にウィンドウの境界線をデフォルトでロックし、画像の拡大縮小に追従させないように制御します。", // Settings_Tooltip_LockWindow
-    L"タイトルバー自動非表示", // Settings_Label_AutoHideTitle
-    L"角丸ウィンドウ", // Settings_Label_RoundedCorners
-    L"UI境界線を表示", // Settings_Label_UIBorders
-    L"ウィンドウとコンテキストメニューの角丸を制御します。Windows 11のみをサポートします。", // Settings_Tooltip_RoundedCorners
-    L"下部ツールバー固定", // Settings_Label_LockToolbar
+    L"グリッドオーバーレイを表示", // Settings_Label_ShowGrid
+    L"画像切り替えのフェード", // Settings_Label_CrossFade
+    L"常に手前に表示", // Settings_Label_AlwaysOnTop
+    L"ウィンドウを固定", // Settings_Label_LockWindow
+    L"起動時に画像の倍率に追従せず、既定でウィンドウ枠を固定するかどうかを制御します。", // Settings_Tooltip_LockWindow
+    L"タイトルバーを自動的に非表示", // Settings_Label_AutoHideTitle
+    L"ウィンドウの角を丸くする", // Settings_Label_RoundedCorners
+    L"UI の境界線を表示", // Settings_Label_UIBorders
+    L"ウィンドウとコンテキストメニューの角の丸みを制御します。Windows 11 が必要です。", // Settings_Tooltip_RoundedCorners
+    L"下部ツールバーを固定", // Settings_Label_LockToolbar
     L"最小ウィンドウ幅", // Settings_Label_WindowMinSize
-    L"最大起動サイズ (%)", // Settings_Label_WindowMaxSizePercent
-    L"エッジインジケーターを表示", // Settings_Label_ShowBorderIndicator
-    L"画像がウィンドウ境界を超えている方向に青いインジケーターラインを表示します。", // Settings_Tooltip_ShowBorderIndicator
+    L"最大初期サイズ (%)", // Settings_Label_WindowMaxSizePercent
+    L"境界インジケーターを表示", // Settings_Label_ShowBorderIndicator
+    L"画像がウィンドウ枠からはみ出している方向に青いインジケーター線を表示します。", // Settings_Tooltip_ShowBorderIndicator
     L"ミニマップを表示", // Settings_Label_ShowNavigator
     L"自動", // Settings_Option_NavigatorAuto
     L"オン", // Settings_Option_NavigatorOn
     L"オフ", // Settings_Option_NavigatorOff
-    L"ナビゲーション時にウィンドウサイズを保持", // Settings_Label_KeepWindowSizeOnNav
-    L"最後のウィンドウの位置とサイズを記憶", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"小さな画像をウィンドウに合わせる", // Settings_Label_UpscaleSmallImagesWhenLocked
-    L"ウィンドウの滑らかなスケーリング (GPU)", // Settings_Label_EnableSmoothScaling
-    L"EXIFパネルモード", // Settings_Label_ExifMode
-    L"ツールバー情報デフォルト", // Settings_Label_ToolbarInfoDefault
-    L"開くときに全画面表示", // Settings_Label_OpenFullScreenMode
+    L"画像移動時にウィンドウサイズを維持", // Settings_Label_KeepWindowSizeOnNav
+    L"前回のウィンドウサイズと位置を記憶", // Settings_Label_RememberLastWindowSizeAndPosition
+    L"小さい画像を拡大適応", // Settings_Label_UpscaleSmallImagesWhenLocked
+    L"スムーズなウィンドウ拡大縮小 (GPU)", // Settings_Label_EnableSmoothScaling
+    L"EXIF パネルモード", // Settings_Label_ExifMode
+    L"ツールバー情報の既定値", // Settings_Label_ToolbarInfoDefault
+    L"全画面で開く", // Settings_Label_OpenFullScreenMode
     L"全画面ズームモード", // Settings_Label_FullScreenZoomMode
     L"画面に合わせる", // Settings_Option_FitScreen
     L"自動", // Settings_Option_AutoFit
-    L"ホイール反転", // Settings_Label_InvertWheel
-    L"100%ズーム吸着ダンピング", // Settings_Label_ZoomSnapDamping
-    L"マウス中心でウィンドウを拡大", // Settings_Label_MouseAnchorZoom
-    L"右ドラッグでズーム", // Settings_Label_RightButtonDragZoom
+    L"ホイールの回転を反転", // Settings_Label_InvertWheel
+    L"100% ズーム吸着ダンピング", // Settings_Label_ZoomSnapDamping
+    L"マウス位置基準のウィンドウズーム", // Settings_Label_MouseAnchorZoom
+    L"右ボタンドラッグでズーム", // Settings_Label_RightButtonDragZoom
     L"ホイールズーム速度", // Settings_Label_WheelZoomSpeed
     L"サムホイール", // Settings_Label_ThumbWheel
     L"右ドラッグズーム速度", // Settings_Label_RightDragZoomSpeed
-    L"ズーム速度(一時的): ", // OSD_WheelZoomSpeed
-    L"一時的にズーム速度を調整", // Help_Action_AdjustZoomSpeed
-    L"ウィンドウのズームを一時的にロック", // Help_Action_LockWindowZoom
-    L"サイドボタン反転", // Settings_Label_InvertButtons
-    L"固定ズーム倍率を使用する", // Settings_Label_UseFixedZoom
-    L"有効にすると、Alt + ホイールはズーム速度の変更ではなく、通常のズームを実行します。", // Settings_Tooltip_UseFixedZoom
+    L"ズーム速度 (一時的): ", // OSD_WheelZoomSpeed
+    L"ズーム速度を一時的に調整", // Help_Action_AdjustZoomSpeed
+    L"ウィンドウズームを一時的に固定", // Help_Action_LockWindowZoom
+    L"サイドボタンを反転", // Settings_Label_InvertButtons
+    L"固定ズーム倍率を使用", // Settings_Label_UseFixedZoom
+    L"有効にすると、Alt + ホイールでズーム速度変更ではなく通常のズームを行います。", // Settings_Tooltip_UseFixedZoom
     L"  └  カスタムズーム倍率", // Settings_Label_FixedZoomLevels
-    L"ズーム倍率の編集", // Dialog_FixedZoomTitle
-    L"カンマ区切りのズーム倍率を入力してください (例: 0.5, 1, 2):", // Dialog_FixedZoomMsg
-    L"ズームインモード", // Settings_Label_ZoomModeIn
-    L"ズームアウトモード", // Settings_Label_ZoomModeOut
+    L"ズーム倍率を編集", // Dialog_FixedZoomTitle
+    L"カンマ区切りでズーム倍率を入力してください (例: 0.5, 1, 2):", // Dialog_FixedZoomMsg
+    L"ズームモード (拡大)", // Settings_Label_ZoomModeIn
+    L"ズームモード (縮小)", // Settings_Label_ZoomModeOut
     L"左ドラッグ", // Settings_Label_LeftDrag
     L"中ドラッグ", // Settings_Label_MiddleDrag
     L"中クリック", // Settings_Label_MiddleClick
-    L"エッジナビクリック", // Settings_Label_EdgeNavClick
-    L"比較モードで無効にする", // Settings_Label_DisableEdgeNavInCompare
-    L"ナビインジケーター", // Settings_Label_NavIndicator
+    L"エッジナビゲーションクリック", // Settings_Label_EdgeNavClick
+    L"比較モードでは無効化", // Settings_Label_DisableEdgeNavInCompare
+    L"ナビゲーションインジケーター", // Settings_Label_NavIndicator
     L"自動回転 (EXIF)", // Settings_Label_AutoRotate
-    L"カラー管理 (CMS)", // Settings_Label_CMS
-    L"高度な色とHDR (scRGB)", // Settings_Label_AdvancedColor
+    L"カラーマネジメント", // Settings_Label_CMS
+    L"高度なカラー (HDR)", // Settings_Label_AdvancedColor
     L"HDR トーンマッピング", // Settings_Label_HdrToneMapping
-    L"Spline Knee Point", // Settings_Label_HdrSplineKnee
-    L"HDR トーンマッピング戦略:\nモニターの限界を超えるHDR画像の表示方法を決定します。\n" L"スプライン:区分スプライン曲線を使用した高忠実度のハイライトロールオフ（推奨）。\n" L"測色: 厳密な輝度マッピング。モニターの限界を超えるハイライトはクリップされます。\n" L"BT.2390 (EETF): ITU-R BT.2390 EETF 曲線による高忠実度なトーンマッピング。", // Settings_Tooltip_HdrToneMapping
-    L"0 = Auto (Calculated based on image luminance).\nThe value represents the ratio of the monitor's peak luminance. Brightness below this knee point maps 1:1, while brightness above is smoothly compressed using a spline curve.\n(Recommended: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
+    L"スプラインニーポイント", // Settings_Label_HdrSplineKnee
+    L"HDR トーンマッピング戦略 :\nHDR 画像がモニターの性能を超える場合の表示方法を決定します。\n" L"Spline: 区分スプラインによる高精度なハイライトロールオフ (推奨)。\n" L"Colorimetric: 厳密な輝度マッピング。モニター上限を超えるハイライトはクリップされます。\n" L"BT.2390 (EETF): 高精度トーンマッピング用 ITU-R BT.2390 EETF 曲線。", // Settings_Tooltip_HdrToneMapping
+    L"0 = 自動 (画像の輝度に基づいて計算)。\n値はモニターのピーク輝度の比率を表します。このニーポイント以下の明るさは 1:1 でマッピングされ、上の明るさはスプライン曲線で滑らかに圧縮されます。\n(推奨: 0.4 - 0.75)", // Settings_Tooltip_HdrSplineKnee
     L"HDR ピーク輝度 (Nits)", // Settings_Label_HdrPeakNitsOverride
-    L"システム検出輝度を使用する場合は0に設定します。", // Settings_Tooltip_HdrPeakNitsOverride
+    L"システム検出の輝度を使用するには 0 に設定します。", // Settings_Tooltip_HdrPeakNitsOverride
     L"HDR ピークパーセンタイル", // Settings_Label_HdrPeakPercentile
-    L"極端に明るいピクセルを除外して全体を明るくします (mpvのデフォルト: 99.995%)", // Settings_Tooltip_HdrPeakPercentile
+    L"全体の明るさを上げるため極端に明るいピクセルを除外します (mpv既定値 : 99.995%)。", // Settings_Tooltip_HdrPeakPercentile
     L"100% (絶対ピーク)", // Settings_Option_HdrPeakPercentile_100
     L"99.995% (安定)", // Settings_Option_HdrPeakPercentile_99995
-    L"99.9% (積極的)", // Settings_Option_HdrPeakPercentile_999
-    L"HDR ハイライト去飽和範囲", // Settings_Label_HdrDesatThreshold
-    L"ハイライト去飽和の開始しきい値。0.0はすべての輝度を去飽和し、1.0は去飽和なしを意味します。推奨デフォルトは0.18です。", // Settings_Tooltip_HdrDesatThreshold
-    L"HDR ハイライト去飽和強度", // Settings_Label_HdrMaxDesat
-    L"極端なハイライトでの去飽和の最大強度。0.0は去飽和なし、1.0は完全に白に去飽和されることを意味します。推奨デフォルトは0.75です。", // Settings_Tooltip_HdrMaxDesat
-    L"測色", // Settings_Option_HdrColorimetric
-    L"スプライン", // Settings_Option_HdrSpline
+    L"99.9% (アグレッシブ)", // Settings_Option_HdrPeakPercentile_999
+    L"HDR ハイライト減色開始範囲", // Settings_Label_HdrDesatThreshold
+    L"ハイライト減色の開始しきい値。0.0 は全輝度を減色、1.0 は減色なし。推奨既定値は 0.18 です。", // Settings_Tooltip_HdrDesatThreshold
+    L"HDR ハイライト減色強度", // Settings_Label_HdrMaxDesat
+    L"極端なハイライトにおける減色の最大強度。0.0 は減色なし、1.0 は完全に白へ減色。推奨既定値は 0.75 です。", // Settings_Tooltip_HdrMaxDesat
+    L"Colorimetric", // Settings_Option_HdrColorimetric
+    L"Spline", // Settings_Option_HdrSpline
     L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
-    L"プロファイルなし画像のフォールバック", // Settings_Label_CmsFallback
+    L"タグなし画像のフォールバック", // Settings_Label_CmsFallback
     L"ソフトプルーフプロファイル (.icc)", // Settings_Label_CustomProof
-    L"ソフトプルーフプレビュー", // Context_SoftProofing
-    L"プルーフプロファイル", // Context_SoftProofProfile
+    L"ソフトプルーフィングプレビュー", // Context_SoftProofing
+    L"校正プロファイル", // Context_SoftProofProfile
     L"カスタム...", // Context_SoftProofCustom
     L"近日公開", // Settings_Value_ComingSoon
-    L"RAW強制デコード", // Settings_Label_ForceRaw
-    L"RAW+JPEG ペアリング", // Settings_Label_PairRawJpeg
-    L"RAW と同名のカメラ撮って出し画像 (JPEG/HEIF) を 1 枚の写真として表示します。\n一覧には撮って出し画像のみが残り、RAW 形式 (+CR3 など) が表示されます。撮影時刻はバックグラウンドで照合され、一致しないペアは解除されます。\nRAW ツールバーボタンまたはそのホットキーで撮って出しと RAW デコード表示を切り替え、ペア比較ホットキーで並べて確認できます。", // Settings_Tooltip_PairRawJpeg
+    L"RAW 強制デコード", // Settings_Label_ForceRaw
+    L"RAW + JPEG ペアリング", // Settings_Label_PairRawJpeg
+    L"RAW ファイルと同名のカメラ画像 (JPEG/HEIF) を1つの写真として表示します。\nレンダリングされた画像のみがリストに残り、RAWフォーマットマーク (例 : +CR3) が付きます。撮影時刻はバックグラウンドで検証され、不一致のペアは分離されます。\nカメラ画像と RAW デコードの切り替えは RAW ツールバーボタンまたはホットキーで行い、ペア比較ホットキーで両方を表示できます。", // Settings_Tooltip_PairRawJpeg
     L"露出 (明るさ)", // Settings_Label_Exposure
-    L"画像の明るさを調整します (露出補正)。範囲: 0.18x ~ 10.0x。", // Settings_Tooltip_Exposure
-    L"プログラムから開くに追加", // Settings_Label_AddToOpenWith
+    L"画像の明るさ (露出補正) を調整します。範囲: 0.18x ～ 10.0x。", // Settings_Tooltip_Exposure
+    L"「アプリで開く」に追加", // Settings_Label_AddToOpenWith
     L"カスタム画像エディタ", // Settings_Label_CustomEditor
     L"エディタを選択", // Context_SelectEditor
     L"エディタの起動に失敗しました。再設定してください。", // OSD_EditorLaunchFailed
     L"追加", // Settings_Action_Add
     L"追加済み", // Settings_Action_Added
     L"ポータブルモードでは無効", // Settings_Status_DisabledInPortable
-    L"デバッグHUD有効 (F12)", // Settings_Label_DebugHUD
-    L"プリフェッチシステム", // Settings_Label_Prefetch
+    L"デバッグ HUD を有効化 (F12)", // Settings_Label_DebugHUD
+    L"先読みシステム", // Settings_Label_Prefetch
     L"情報パネル", // Settings_Label_InfoPanelAlpha
     L"ツールバー", // Settings_Label_ToolbarAlpha
     L"設定", // Settings_Label_SettingsAlpha
     L"すべての設定をリセット", // Settings_Label_Reset
     L"復元", // Settings_Action_Restore
     L"完了", // Settings_Action_Done
-    L"未管理 (高速)", // Settings_Option_CmsUnmanaged
-    L"sRGB (標準)", // Settings_Option_CmssRGB
-    L"Display P3 (広色域)", // Settings_Option_CmsP3
+    L"管理なし", // Settings_Option_CmsUnmanaged
+    L"sRGB", // Settings_Option_CmssRGB
+    L"Display P3", // Settings_Option_CmsP3
     L"Adobe RGB (1998)", // Settings_Option_CmsAdobeRGB
     L"グレースケール (トーン確認)", // Settings_Option_CmsGray
     L"ProPhoto RGB", // Settings_Option_CmsProPhoto
     L"レンダリングインテント", // Settings_Label_CmsIntent
-    L"色域外警告の検出", // Settings_Label_GamutWarning
-    L"色域外領域の分析とハイライト：オフ、ソフトプルーフモードのみ（デフォルト）、またはソフトプルーフとディスプレイ色域の両方。", // Settings_Tooltip_GamutWarning
-    L"色域エラー時の自動プロンプト", // Settings_Label_GamutAutoPrompt
-    L"色域エラーが検出されたときにOSD通知を表示します。ハイライトはツールバーで手動で切り替えられます。", // Settings_Tooltip_GamutAutoPrompt
+    L"色域外警告検出", // Settings_Label_GamutWarning
+    L"色域外の領域を解析してハイライト表示します。オプション: オフ、ソフトプルーフィングモードのみで検出、またはソフトプルーフィングと画面色域の両方で検出。", // Settings_Tooltip_GamutWarning
+    L"色域エラー時の自動提示", // Settings_Label_GamutAutoPrompt
+    L"色域エラーが検出されたときに OSD 通知を表示します。ハイライト表示はツールバーから手動で切り替えることができます。", // Settings_Tooltip_GamutAutoPrompt
     L"色域外警告のハイライト色", // Settings_Label_GamutColor
     L"相対的な色域を維持", // Settings_Option_CmsIntentRelative
     L"知覚的", // Settings_Option_CmsIntentPerceptual
-    L"カラーマネジメントシステム (CMS) を有効にする。\n有効にすると、GPUによる高精度な色空間変換が適用され、正しい色を再現します。\n無効にするとGPUの負荷を減らせますが、広色域ディスプレイでは色が過飽和になる場合があります。", // Settings_Tooltip_CMS
-    L"色空間の変換方法 (レンダリングインテント)。\n知覚的 (Perceptual)：色域外の色を圧縮し、階調とディテールを保持します (写真向け)。\n相対的な色域を維持 (Relative Colorimetric)：色域内の色はそのまま維持し、色域外の色はクリップします (UIやアイコン向け)。\n注意：LUT（ルックアップテーブル）を含む高度なICCプロファイルを使用している場合にのみ視覚的な違いが生じます。標準的なマトリックス型プロファイルでは自動的に相対的な色域を維持にフォールバックされます。", // Settings_Tooltip_CmsIntent
-    L"16-bit浮動小数点レンダリングパイプライン (scRGB) を有効にする。\n有効にすると、HDR対応ディスプレイでSDRの制限を超え、写真のハイライトを完璧に表現します。\n無効にするとSDR出力に強制的にマッピングされます。\n注意: 有効にするとVRAMの使用量が増加します。", // Settings_Tooltip_AdvancedColor
-    L"自動：画像が画面サイズより小さい場合は100%に拡大縮小し、大きい場合は画面サイズに合わせて拡大縮小します。", // Settings_Tooltip_ZoomAuto
+    L"カラーマネジメントシステムを有効にします。\n有効にすると、GPU を介して高精度な色空間変換を適用し、本来の色を復元します。\n無効にすると GPU の負荷は下がりますが、広色域ディスプレイで色が過鮮やかになる場合があります。", // Settings_Tooltip_CMS
+    L"色空間変換のレンダリングインテント。\n知覚的 : 細部やグラデーションを維持するために色域外の色を圧縮します (写真に最適)。\n相対的な色域を維持: 色域内の色を保持し、色域外の色をクリップします (UI やアイコンに最適)。\n注 : 視覚的な違いは、LUT (ルックアップテーブル) を含む高度な ICC プロファイルを使用する場合にのみ発生します。標準的なマトリックスプロファイルは自動的に「相対的な色域を維持」へフォールバックします。", // Settings_Tooltip_CmsIntent
+    L"16ビット浮動小数点レンダリングパイプライン (scRGB) を有効にします。\n有効にすると、SDR の限界を超えて HDR 対応ディスプレイ上で写真のハイライトを完全に描画します。\n無効にすると強制的に SDR 出力へマッピングされます。\n注 : 有効にすると VRAM の使用量が増加します。", // Settings_Tooltip_AdvancedColor
+    L"自動 : 画像が画面より小さい場合は 100% スケール、大きい場合は画面に合わせます。", // Settings_Tooltip_ZoomAuto
     L"更新を確認", // Settings_Action_CheckUpdates
     L"更新を表示", // Settings_Action_ViewUpdate
     L"確認中...", // Settings_Status_Checking
     L"最新です", // Settings_Status_UpToDate
-    L"GitHubリポジトリ", // Settings_Link_GitHub
+    L"GitHub リポジトリ", // Settings_Link_GitHub
     L"問題を報告", // Settings_Link_ReportIssue
-    L"ホットキー", // Settings_Link_Hotkeys
+    L"ヘルプ (F1)", // Settings_Link_Hotkeys
     L"バージョン", // Settings_Label_Version
     L"ビルド", // Settings_Label_Build
-    L"黒", // Settings_Option_Black
-    L"白", // Settings_Option_White
+    L"ブラック", // Settings_Option_Black
+    L"ホワイト", // Settings_Option_White
     L"グリッド", // Settings_Option_Grid
     L"カスタム", // Settings_Option_Custom
     L"オフ", // Settings_Option_Off
     L"オン", // Settings_Option_On
     L"簡易", // Settings_Option_Lite
     L"詳細", // Settings_Option_Full
-    L"大きい画像のみ", // Settings_Option_LargeOnly
+    L"大きなサイズのみ", // Settings_Option_LargeOnly
     L"すべて", // Settings_Option_All
-    L"ソフトプルーフ", // Settings_Option_SoftProofing
+    L"ソフトプルーフィング", // Settings_Option_SoftProofing
     L"ウィンドウ", // Settings_Option_Window
-    L"パン", // Settings_Option_Pan
+    L"パン (移動)", // Settings_Option_Pan
     L"なし", // Settings_Option_None
     L"終了", // Settings_Option_Exit
     L"矢印", // Settings_Option_Arrow
     L"カーソル", // Settings_Option_Cursor
     L"手動", // Settings_Option_Manual
-    L"自動 (エクスプローラー)", // Settings_Option_SortAuto
+    L"自動 (エクスプローラー順)", // Settings_Option_SortAuto
     L"名前", // Settings_Option_SortName
     L"更新日時", // Settings_Option_SortModified
     L"撮影日時 (EXIF)", // Settings_Option_SortDateTaken
     L"サイズ", // Settings_Option_SortSize
     L"種類", // Settings_Option_SortType
-    L"フォルダー内でループ", // Settings_Option_NavLoop
-    L"サブフォルダーを貫通", // Settings_Option_NavThrough
-    L"線形: 基本的な平滑化", // Settings_Option_Linear
-    L"ニアレスト: 極端なシャープネス", // Settings_Option_Nearest
-    L"HQキュービック: 極端な平滑化", // Settings_Option_HighQualityCubic
+    L"ループ", // Settings_Option_NavLoop
+    L"サブフォルダーを含める", // Settings_Option_NavThrough
+    L"バイリニア: 基本的な平滑化", // Settings_Option_Linear
+    L"ニアレストネイバー : 極限の鮮明さ", // Settings_Option_Nearest
+    L"HQ バイキュービック : 高精度な平滑化", // Settings_Option_HighQualityCubic
     L"自動", // Settings_Option_ZoomAuto
     L"自動", // Settings_Option_Auto
     L"エコ", // Settings_Option_Eco
@@ -3091,91 +3091,91 @@ static const LanguageTable Table_JA = {
     L"ウルトラ", // Settings_Option_Ultra
     L"キーボードショートカット", // Help_Header_Shortcuts
     L"マウス操作", // Help_Header_Mouse
-    L"次の/前の画像", // Help_Item_NextPrev
-    L"ズームイン/アウト", // Help_Item_Zoom
-    L"画像をパン", // Help_Item_Pan
+    L"次へ / 前の画像", // Help_Item_NextPrev
+    L"拡大 / 縮小", // Help_Item_Zoom
+    L"画像の移動 (パン)", // Help_Item_Pan
     L"回転", // Help_Item_Rotate
     L"画面に合わせる", // Help_Item_Fit
     L"画像を削除", // Help_Item_Delete
-    L"全画面", // Help_Item_Fullscreen
+    L"全画面表示", // Help_Item_Fullscreen
     L"閉じる", // Help_Item_Close
     L"左ボタン", // Help_Mouse_Left
     L"中ボタン", // Help_Mouse_Middle
     L"ホイール", // Help_Mouse_Wheel
     L"右ボタン", // Help_Mouse_Right
-    L"右ボタン上下ドラッグ", // Help_Mouse_RightVerticalDrag
-    L"ウィンドウ移動 / 全画面終了 / 最大化解除", // Help_Action_MoveWindow
-    L"画像をパン", // Help_Action_PanImage
+    L"右ボタン垂直ドラッグ", // Help_Mouse_RightVerticalDrag
+    L"ウィンドウ移動 / 全画面解除 / 最大化解除", // Help_Action_MoveWindow
+    L"画像を移動 (パン)", // Help_Action_PanImage
     L"コンテキストメニュー", // Help_Action_ContextMenu
-    L"次/前の画像", // Help_Action_NextPrev
+    L"次へ/前の画像", // Help_Action_NextPrev
     L"ズーム", // Help_Action_Zoom
-    L"スマートズーム (100% / ウィンドウに合わせる / 復元)", // Help_Action_SmartZoom
-    L"Copy Image", // Help_Desc_Copy
-    L"Edit", // Help_Desc_Edit
-    L"Tips & Glossary", // Help_Header_Tips
-    L"Note: Shortcuts and context menu actions affect the current process " L"only. Settings are permanent.", // Help_Tip_ContextScope
-    L"Rotation: 'Edge Adapted' means minor cropping to fit block boundaries " L"(lossless data). 'Lossy' means full re-encoding.", // Help_Tip_Rotation
-    L"Video Wall (Ctrl+F11): Spans all monitors. If close button is hidden, " L"double-click to exit.", // Help_Tip_VideoWall
-    L"トレースモード / フィルムモード：有効にすると画像が半透明になり、下の要素が表示されます。サイズや透明度を調整できます。ツールバーのマウスパススルー切り替えをクリックするとパススルーモードになり、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。", // Help_Tip_DesignerMode
-    L"色域警告：ターゲットディスプレイまたはソフトプルーフプロファイルの色域外の色を検出します。モード：オフ、ソフトプルーフのみ、またはすべて（デフォルト：ソフトプルーフ）。ツールバーで切り替え可能。", // Help_Tip_GamutDetection
-    L"RAW Button: QuickView shows embedded preview by default. Click to " L"fully decode (may look different due to rendering parameters).", // Help_Tip_Raw
-    L"JPEG Quality: Estimated Q value (reverse engineered). May differ " L"slightly from save setting due to algorithm variations.", // Help_Tip_JpegQ
-    L"校正設定の比較：校正中に比較モードに入ると、元画像と校正後の画像を自動的に比較します。", // Help_Tip_SoftProofCompare
+    L"スマートズーム (100% / 画面に合わせる / 復元)", // Help_Action_SmartZoom
+    L"画像をコピー", // Help_Desc_Copy
+    L"編集", // Help_Desc_Edit
+    L"ヒントと用語集", // Help_Header_Tips
+    L"注 : ショートカットは現在のウィンドウにのみ適用されます。設定は全体に適用されます。", // Help_Tip_ContextScope
+    L"回転 : 「エッジ適合」はコーデックブロックに合わせるためのわずかなクロップ(ロスレス)を意味します。「非可逆」は再エンコードが必要であることを意味します。", // Help_Tip_Rotation
+    L"ビデオウォール (Ctrl+F11): すべての画面に展開します。閉じるボタンが隠れている場合は、任意の場所をダブルクリックして終了します。", // Help_Tip_VideoWall
+    L"トレースモード / フィルムモード : 有効にすると画像が半透明になり、下の要素が透けて見えます。サイズや透明度を調整できます。ツールバーのマウススルー切替をクリックするとスルーモードに入り、Shift+Esc 以外のすべての入力が無視され、QuickView が透明なオーバーレイになります。", // Help_Tip_DesignerMode
+    L"色域警告 : ターゲットディスプレイまたはソフトプルーフィングプロファイルの色域外の色を検出します。モード : オフ、ソフトプルーフィングのみ、またはすべて (既定 : ソフトプルーフィング)。ツールバーから切り替えます。", // Help_Tip_GamutDetection
+    L"RAW : 速度を優先するため、既定では埋め込みプレビューを表示します。RAW ボタンをクリックすると完全デコードします (色が異なる場合があります)。", // Help_Tip_Raw
+    L"JPEG品質 : 推定値です (例 : Photoshop 100% ≈ 98%)。エンコーダーの差によるものであり、保存設定とわずかに異なる場合がありますが正常です。", // Help_Tip_JpegQ
+    L"ソフトプルーフ比較 : ソフトプルーフィングが有効な状態で比較モードに入ると、オリジナル画像と校正後の画像が自動的に比較されます。", // Help_Tip_SoftProofCompare
     L"新しいバージョンが利用可能です！", // Dialog_UpdateTitle
-    L"v%s is ready.", // Dialog_UpdateContent
-    L"更新内容:", // Dialog_UpdateLogHeader
+    L"v%s の準備ができました。", // Dialog_UpdateContent
+    L"変更履歴", // Dialog_UpdateLogHeader
     L"今すぐ更新", // Dialog_ButtonUpdate
     L"後で", // Dialog_ButtonLater
-    L"GitHubでスター", // Dialog_ButtonStar
-    L"QuickViewは情熱から生まれました", // Dialog_Update_LoveTitle
-    L"私は余暇を使ってQuickViewをメンテナンスしています。Windowsにはもっと高" L"速でクリーンなビューアが必要だと信じているからです。予算もチームもあり" L"ません。もしこの更新を気に入っていただけたら、GitHubでスターを付けるか" L"、友人に共有していただけると最大の支援になります。", // Dialog_Update_LoveMessage
-    L"Compare Mode", // Help_Item_Compare
-    L"最初 / 最後の画像", // Help_Item_FirstLast
-    L"PHYSICAL ATTRIBUTES", // HUD_Group_Physical
-    L"SCIENTIFIC QUALITY", // HUD_Group_Scientific
-    L"OPTICS & ENCODING", // HUD_Group_Encoding
-    L"Edge definition (Laplacian Variance)", // HUD_Tip_Sharp_Desc
-    L"Crisp edges, high detail", // HUD_Tip_Sharp_High
-    L"Soft focus or motion blur", // HUD_Tip_Sharp_Low
-    L"> 500 is very sharp", // HUD_Tip_Sharp_Ref
-    L"Information density (Shannon Entropy)", // HUD_Tip_Ent_Desc
-    L"Complex textures or high noise", // HUD_Tip_Ent_High
-    L"Flat areas or low detail", // HUD_Tip_Ent_Low
-    L"7.0-8.0 is high detail", // HUD_Tip_Ent_Ref
-    L"Bits Per Pixel (Compression Efficiency)", // HUD_Tip_BPP_Desc
-    L"Lower efficiency (more data preserved)", // HUD_Tip_BPP_High
-    L"Higher efficiency (higher compression)", // HUD_Tip_BPP_Low
-    L"24.0 (Raw RGB), ~2.0-3.0 (High JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
-    L"High: ", // HUD_Label_High
-    L"Low: ", // HUD_Label_Low
-    L"Ref: ", // HUD_Label_Ref
-    L"ギャラリーフィルムストリップ（上部ホバー）", // Settings_Header_GalleryTrigger
+    L"GitHub で Star をつける", // Dialog_ButtonStar
+    L"QuickView は愛を込めて開発されています", // Dialog_Update_LoveTitle
+    L"Windowsにはより高速でクリーンなビューアーが必要だと信じているため、" L"余暇を使って QuickView をメンテナンスしています。" L"マーケティング予算もチームもありません。このアップデートを気に入っていただけたら、" L"GitHub で Star をつけるか、友人に共有していただけることが最大の貢献になります。", // Dialog_Update_LoveMessage
+    L"比較モード", // Help_Item_Compare
+    L"最初の画像 / 最後の画像", // Help_Item_FirstLast
+    L"物理的特性", // HUD_Group_Physical
+    L"科学的解析品質", // HUD_Group_Scientific
+    L"光学 & エンコーディング", // HUD_Group_Encoding
+    L"エッジ鮮明度 (ラプラシアン分散)", // HUD_Tip_Sharp_Desc
+    L"くっきりしたエッジ、高い詳細感", // HUD_Tip_Sharp_High
+    L"ソフトフォーカスまたは被写体ぶれ", // HUD_Tip_Sharp_Low
+    L"> 500 は非常に鮮明です", // HUD_Tip_Sharp_Ref
+    L"情報密度 (シャノンエントロピー)", // HUD_Tip_Ent_Desc
+    L"複雑なテクスチャまたは高いノイズ", // HUD_Tip_Ent_High
+    L"単調な領域または低ディテール", // HUD_Tip_Ent_Low
+    L"7.0～8.0 は高ディテール", // HUD_Tip_Ent_Ref
+    L"ピクセルあたりのビット数 (圧縮効率)", // HUD_Tip_BPP_Desc
+    L"低い効率 (より多くのデータが保持される)", // HUD_Tip_BPP_High
+    L"高い効率 (より高い圧縮率)", // HUD_Tip_BPP_Low
+    L"24.0 (Raw RGB), ~2.0-3.0 (高画質 JPEG), ~0.5-1.5 (WebP/AVIF)", // HUD_Tip_BPP_Ref
+    L"高 : ", // HUD_Label_High
+    L"低 : ", // HUD_Label_Low
+    L"参考 : ", // HUD_Label_Ref
+    L"ギャラリー フィルムストリップ (上部ホバー)", // Settings_Header_GalleryTrigger
     L"トリガーモード", // Settings_Label_GalleryTriggerMode
     L"自動ホバー", // Settings_Option_GalleryTriggerAuto
     L"ホットスポットホバー", // Settings_Option_GalleryTriggerDelay
     L"ホットスポットクリック", // Settings_Option_GalleryTriggerClick
     L"無効", // Settings_Option_GalleryTriggerDisable
-    L"ウィンドウが600x450より小さい場合、この機能は自動的に無効になります。", // Settings_Tooltip_GalleryTrigger
+    L"この機能はウィンドウサイズが 600x450 未満の場合、自動的に無効になります。", // Settings_Tooltip_GalleryTrigger
 
-    L"スライドショー開始", // OSD_SlideshowStarted
-    L"スライドショー停止", // OSD_SlideshowStopped
-    L"スライドショー再開", // OSD_SlideshowResumed
-    L"スライドショー一時停止", // OSD_SlideshowPaused
-    L"イマーシブ: スポットライト", // OSD_ImmersiveSpotlight
-    L"イマーシブ: 通常", // OSD_ImmersiveNormal
+    L"スライドショーを開始", // OSD_SlideshowStarted
+    L"スライドショーを停止", // OSD_SlideshowStopped
+    L"スライドショーを再開", // OSD_SlideshowResumed
+    L"スライドショーを一時停止", // OSD_SlideshowPaused
+    L"イマーシブ : スポットライト", // OSD_ImmersiveSpotlight
+    L"イマーシブ : 通常", // OSD_ImmersiveNormal
     L"印刷ジョブが送信されました。閲覧を続けることができます。", // OSD_PrintJobStarted
     L"印刷ジョブが正常に送信されました。", // OSD_PrintJobFinished
     L"スライドショーモード", // Context_SlideshowMode
-    L"切り替え間隔 (秒)", // Settings_Label_SlideshowInterval
+    L"間隔 (秒)", // Settings_Label_SlideshowInterval
     L"イマーシブモード", // Settings_Label_SlideshowImmersive
-    L"簡易情報パネルのカスタマイズ", // Settings_Label_CustomLiteInfoPanel
-    L"通常モードの表示項目", // Settings_Label_ItemsInNormalMode
-    L"比較モードの表示項目", // Settings_Label_ItemsInCompareMode
+    L"カスタム簡易情報パネル", // Settings_Label_CustomLiteInfoPanel
+    L"通常モード時の表示項目", // Settings_Label_ItemsInNormalMode
+    L"比較モード時の表示項目", // Settings_Label_ItemsInCompareMode
     L"区切り文字プリセット", // Settings_Label_SeparatorPreset
     L"通常", // Settings_Option_SlideshowNormal
     L"スポットライト", // Settings_Option_SlideshowSpotlight
     L"ルーペの形状", // Settings_Label_LoupeShape
-    L"正方形", // Settings_Option_LoupeShapeSquare
+    L"四角形", // Settings_Option_LoupeShapeSquare
     L"円形", // Settings_Option_LoupeShapeCircle
     L"ショートカットキーを押しながらマウスホイールをスクロールすると、ルーペのサイズを調整できます。", // Settings_Tooltip_LoupeHotkey
 };
