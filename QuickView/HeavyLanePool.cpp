@@ -2348,6 +2348,10 @@ void HeavyLanePool::GCThreadFunc(std::stop_token st) {
             auto t0 = std::chrono::high_resolution_clock::now();
             int count = (int)localBatch.size();
             
+            // [Fix] Safely join all threads outside of any locks before manipulating the pool
+            for (auto& bag : localBatch) {
+                bag.warmupThread = {};
+            }
             // [MMF Pool] Recovery logic: Relinquish pooled stores instead of deleting them
             for (auto& bag : localBatch) {
                 if (bag.backing.isPooled) {
@@ -2402,6 +2406,9 @@ void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
         if (!localBatch.empty()) {
             QV_LOG("GC_Lifecycle", TraceLoggingString("CRITICAL TrashBacklog SyncRecovery", "Action"));
             for (auto& bag : localBatch) {
+                bag.warmupThread = {};
+            }
+            for (auto& bag : localBatch) {
                 if (bag.backing.isPooled) {
                     RelinquishToPool(std::move(bag.backing));
                 }
@@ -2420,7 +2427,7 @@ void HeavyLanePool::ResetMasterBackingStore() {
     }
 }
 
-void HeavyLanePool::RelinquishToPool(MasterBackingStore&& store) {
+void HeavyLanePool::RelinquishToPool(MasterBackingStore store) {
     // Ownership token is the section (hMap), not the file handle — anonymous fallback has no file.
     if (!store.isPooled || !store.hMap) {
         return; // RAII destroys non-pooled / empty stores
@@ -2485,7 +2492,7 @@ static HRESULT CreateBackingStoreMapping(size_t allocationSize, const wchar_t* p
                 QueryPerformanceCounter(&qpc);
                 guid.Data3 = static_cast<unsigned short>(qpc.QuadPart);
             }
-            swprintf_s(tempPath, L"%sQuickView_%s_%lu_%08lX%04X%04X.bgra",
+            _snwprintf_s(tempPath, _countof(tempPath), _TRUNCATE, L"%sQuickView_%s_%lu_%08lX%04X%04X.bgra",
                 tempDir, prefix, GetCurrentProcessId(), guid.Data1, guid.Data2, guid.Data3);
 
             const DWORD flags = FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_DELETE_ON_CLOSE;
@@ -2690,6 +2697,10 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
             }
 
             if (candidate.view) {
+                // [Fix] Zero the active portion of the recycled MMF to prevent dirty alpha/stride pixels.
+                // Since this physical memory was already faulted in by the previous image, ZeroMemory is very fast.
+                ZeroMemory(candidate.view, requiredBytes);
+
                 {
                     std::lock_guard lock(m_masterBackingMutex);
                     m_masterBacking = std::move(candidate);
@@ -2702,9 +2713,6 @@ HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int s
             }
             // Map failed: destroy candidate (do not re-pool a broken store).
             candidate.isPooled = false;
-        } else if (candidate.hasResources()) {
-            // Too small for this image: return to reserve for a future fit, or destroy.
-            RelinquishToPool(std::move(candidate));
         }
     }
 

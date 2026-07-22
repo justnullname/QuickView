@@ -475,7 +475,7 @@ private:
     static_assert(kTitanPromotionThreshold < kMasterBackingPoolLimit,
         "Pool promotion threshold must be strictly below pool slot capacity");
 
-    void RelinquishToPool(MasterBackingStore&& store);
+    void RelinquishToPool(MasterBackingStore store);
 
 
     // [Phase-2] Background warmup for heavy non-ROI formats (PNG/TIFF/AVIF/HEIC).
