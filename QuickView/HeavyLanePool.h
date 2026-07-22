@@ -388,51 +388,68 @@ private:
         HANDLE hFile = INVALID_HANDLE_VALUE;
         HANDLE hMap = nullptr;
         uint8_t* view = nullptr;
+        // Non-null only for the small-image heap tier. `view` always remains
+        // the pointer consumers use, regardless of its backing type.
+        void* heapBuffer = nullptr;
         size_t sizeBytes = 0;
         int width = 0;
         int height = 0;
         int stride = 0;
         ImageID imageId = 0;
-        std::wstring tempPath;
-        bool isPooled = false; // [MMF Pool] If true, this store belongs to the persistent reserve pool
+        std::wstring tempPath; // only used when not DELETE_ON_CLOSE; usually empty
+        bool isPooled = false; // eligible for m_reservePool reuse
 
-        
-        // [Phase 5] Rule of 5: explicit move semantics to prevent double-free of HANDLEs
+        bool hasResources() const noexcept {
+            return view != nullptr || heapBuffer != nullptr || hMap != nullptr || hFile != INVALID_HANDLE_VALUE;
+        }
+
+        void Release() noexcept {
+            if (view && hMap) UnmapViewOfFile(view);
+            if (heapBuffer) _aligned_free(heapBuffer);
+            if (hMap) CloseHandle(hMap);
+            if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+            if (!tempPath.empty()) DeleteFileW(tempPath.c_str());
+            hFile = INVALID_HANDLE_VALUE;
+            hMap = nullptr;
+            view = nullptr;
+            heapBuffer = nullptr;
+            sizeBytes = 0;
+            width = height = stride = 0;
+            imageId = 0;
+            tempPath.clear();
+            isPooled = false;
+        }
+
+        // Rule of 5: move must transfer isPooled or the reserve pool is dead.
         MasterBackingStore() = default;
         MasterBackingStore(const MasterBackingStore&) = delete;
         MasterBackingStore& operator=(const MasterBackingStore&) = delete;
         MasterBackingStore(MasterBackingStore&& o) noexcept
-            : hFile(o.hFile), hMap(o.hMap), view(o.view)
+            : hFile(o.hFile), hMap(o.hMap), view(o.view), heapBuffer(o.heapBuffer)
             , sizeBytes(o.sizeBytes), width(o.width), height(o.height), stride(o.stride)
-            , imageId(o.imageId), tempPath(std::move(o.tempPath))
+            , imageId(o.imageId), tempPath(std::move(o.tempPath)), isPooled(o.isPooled)
         {
             o.hFile = INVALID_HANDLE_VALUE;
             o.hMap = nullptr;
             o.view = nullptr;
+            o.heapBuffer = nullptr;
             o.sizeBytes = 0; o.width = 0; o.height = 0; o.stride = 0; o.imageId = 0;
+            o.isPooled = false;
         }
         MasterBackingStore& operator=(MasterBackingStore&& o) noexcept {
             if (this != &o) {
-                // Release our own resources first
-                if (view) UnmapViewOfFile(view);
-                if (hMap) CloseHandle(hMap);
-                if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
-                if (!tempPath.empty()) DeleteFileW(tempPath.c_str());
-                // Steal from other
-                hFile = o.hFile; hMap = o.hMap; view = o.view;
+                Release();
+                hFile = o.hFile; hMap = o.hMap; view = o.view; heapBuffer = o.heapBuffer;
                 sizeBytes = o.sizeBytes; width = o.width; height = o.height; stride = o.stride;
-                imageId = o.imageId; tempPath = std::move(o.tempPath);
-                // Nullify other
-                o.hFile = INVALID_HANDLE_VALUE; o.hMap = nullptr; o.view = nullptr;
+                imageId = o.imageId; tempPath = std::move(o.tempPath); isPooled = o.isPooled;
+                o.hFile = INVALID_HANDLE_VALUE; o.hMap = nullptr; o.view = nullptr; o.heapBuffer = nullptr;
                 o.sizeBytes = 0; o.width = 0; o.height = 0; o.stride = 0; o.imageId = 0;
+                o.isPooled = false;
             }
             return *this;
         }
         ~MasterBackingStore() {
-            if (view) UnmapViewOfFile(view);
-            if (hMap) CloseHandle(hMap);
-            if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
-            if (!tempPath.empty()) DeleteFileW(tempPath.c_str());
+            Release();
         }
     };
     MasterBackingStore m_masterBacking;
@@ -447,11 +464,16 @@ private:
                                    std::unique_lock<std::mutex>& outLock);
 
     // [MMF Pool] Infrastructure
+    // At most two exact-size file-backed masters are retained for reuse.  We
+    // never preallocate a 512MB slot for a smaller image and never pool huge
+    // masters: both policies avoid needless address-space and disk pressure.
     std::mutex m_mmfPoolMutex;
     std::vector<MasterBackingStore> m_reservePool;
-    static constexpr size_t kMasterBackingPoolLimit = 5ULL * 1024 * 1024 * 1024; // 5GB buffer per slot
-    static constexpr size_t kMasterPoolCapacity = 2; // Keep at most 2 heavyweight buffers
-    static constexpr size_t kTitanPromotionThreshold = 100ULL * 1024 * 1024; // >100MB required to trigger pooling
+    static constexpr size_t kMasterBackingPoolLimit = 512ULL * 1024 * 1024; // largest poolable exact-size master
+    static constexpr size_t kMasterPoolCapacity = 2;                        // at most 2 heavyweight buffers
+    static constexpr size_t kTitanPromotionThreshold = 100ULL * 1024 * 1024; // pool if (100MB, 512MB]
+    static_assert(kTitanPromotionThreshold < kMasterBackingPoolLimit,
+        "Pool promotion threshold must be strictly below pool slot capacity");
 
     void RelinquishToPool(MasterBackingStore&& store);
 

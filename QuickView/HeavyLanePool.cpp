@@ -2413,24 +2413,24 @@ void HeavyLanePool::EnqueueTrash(TrashBag&& bag) {
 
 void HeavyLanePool::ResetMasterBackingStore() {
     std::lock_guard lock(m_masterBackingMutex);
-    if (m_masterBacking.hFile != INVALID_HANDLE_VALUE) {
-        // [MMF Pool] Relinquish to pool if possible, otherwise RAII handles cleanup
+    // Must cover anonymous sections (hFile == INVALID_HANDLE_VALUE) as well as file-backed.
+    if (m_masterBacking.hasResources()) {
+        // RelinquishToPool returns to reserve when eligible; otherwise RAII destroys.
         RelinquishToPool(std::move(m_masterBacking));
     }
-    // m_masterBacking was moved, it's now in empty state
 }
 
 void HeavyLanePool::RelinquishToPool(MasterBackingStore&& store) {
-    if (!store.isPooled || store.hFile == INVALID_HANDLE_VALUE) {
-        // Not a pooled object, let RAII naturally destroy (handle/delete)
-        return;
+    // Ownership token is the section (hMap), not the file handle — anonymous fallback has no file.
+    if (!store.isPooled || !store.hMap) {
+        return; // RAII destroys non-pooled / empty stores
     }
 
-    // [Safety] DO NOT UnmapViewOfFile here. 
-    // m_masterWarmupThread (libjxl runner) might still be writing to this view 
+    // [Safety] DO NOT UnmapViewOfFile here.
+    // m_masterWarmupThread (libjxl runner) might still be writing to this view
     // even after we've signaled it to stop. Unmapping would cause a crash (0xc0000005).
-    // Keeping it mapped is safe and makes reuse faster.
-    
+    // Keeping it mapped is safe and makes reuse faster (no remapping on hit).
+
     std::lock_guard lock(m_mmfPoolMutex);
     if (m_reservePool.size() < kMasterPoolCapacity) {
         m_reservePool.push_back(std::move(store));
@@ -2438,6 +2438,104 @@ void HeavyLanePool::RelinquishToPool(MasterBackingStore&& store) {
     } else {
         QV_LOG("MMFPool_Route", TraceLoggingString("ReserveFullDestroying", "Action"));
     }
+}
+
+// The fast path is deliberately conservative: a full decoded image also needs
+// decoder scratch, tile output, and the rest of the application.  Below this
+// size Heap has the lowest latency and never writes a temporary image file.
+static bool ShouldUseHeapBacking(size_t allocationSize) {
+    constexpr size_t kHeapFastPathLimit = 512ULL * 1024 * 1024;
+    if (allocationSize == 0 || allocationSize > kHeapFastPathLimit) return false;
+
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof(ms);
+    if (!GlobalMemoryStatusEx(&ms)) return false;
+
+    // Keep a 3x headroom for decode scratch, tile buffers, and concurrent UI.
+    return allocationSize <= static_cast<size_t>(ms.ullAvailPhys / 3);
+}
+
+// Create a PAGE_READWRITE section for master BGRA pixels.
+// Priority 1: Sparse temp-file MMF (no full commit charge; works with pagefile disabled).
+// Priority 2: Anonymous pagefile-backed section (last resort when temp volume fails).
+// On success: outMap always set; outFile may be INVALID_HANDLE_VALUE for anonymous.
+// DELETE_ON_CLOSE owns temp-file lifetime — outTempPath is left empty.
+static HRESULT CreateBackingStoreMapping(size_t allocationSize, const wchar_t* prefix,
+                                         HANDLE& outFile, HANDLE& outMap) {
+    outFile = INVALID_HANDLE_VALUE;
+    outMap = nullptr;
+    if (allocationSize == 0) return E_INVALIDARG;
+
+    wchar_t tempDir[MAX_PATH] = {};
+    const DWORD tempLen = GetTempPathW(MAX_PATH, tempDir);
+    if (tempLen > 0 && tempLen < MAX_PATH) {
+        ULARGE_INTEGER available{};
+        constexpr ULONGLONG kFileSafetyReserve = 256ULL * 1024 * 1024;
+        const bool hasFreeSpace = GetDiskFreeSpaceExW(tempDir, &available, nullptr, nullptr)
+            && available.QuadPart >= allocationSize
+            && (available.QuadPart - allocationSize) >= kFileSafetyReserve;
+
+        if (hasFreeSpace) {
+            wchar_t tempPath[MAX_PATH] = {};
+            GUID guid{};
+            if (FAILED(CoCreateGuid(&guid))) {
+                guid.Data1 = static_cast<unsigned long>(GetTickCount64() ^ GetCurrentProcessId());
+                guid.Data2 = static_cast<unsigned short>(GetCurrentThreadId());
+                LARGE_INTEGER qpc{};
+                QueryPerformanceCounter(&qpc);
+                guid.Data3 = static_cast<unsigned short>(qpc.QuadPart);
+            }
+            swprintf_s(tempPath, L"%sQuickView_%s_%lu_%08lX%04X%04X.bgra",
+                tempDir, prefix, GetCurrentProcessId(), guid.Data1, guid.Data2, guid.Data3);
+
+            const DWORD flags = FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_DELETE_ON_CLOSE;
+            HANDLE hFile = CreateFileW(tempPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                                       nullptr, CREATE_ALWAYS, flags, nullptr);
+            if (hFile != INVALID_HANDLE_VALUE) {
+                DWORD dwTemp = 0;
+                if (!DeviceIoControl(hFile, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &dwTemp, nullptr)) {
+                    QV_LOG("MMFPool_Route", TraceLoggingString("FSCTL_SET_SPARSE Failed", "Action"),
+                        TraceLoggingUInt32(GetLastError(), "Win32Error"));
+                }
+
+                LARGE_INTEGER liSize{};
+                liSize.QuadPart = static_cast<LONGLONG>(allocationSize);
+                if (SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) && SetEndOfFile(hFile)) {
+                    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+                    if (hMap) {
+                        outFile = hFile;
+                        outMap = hMap;
+                        return S_OK;
+                    }
+                }
+                CloseHandle(hFile);
+            }
+        } else {
+            QV_LOG("MMFPool_Route", TraceLoggingString("TempVolumeInsufficient", "Action"),
+                TraceLoggingUInt64(allocationSize / (1024 * 1024), "RequiredMB"),
+                TraceLoggingUInt64(available.QuadPart / (1024 * 1024), "AvailableMB"));
+        }
+    }
+
+    // Fallback: full allocationSize is charged against the process commit limit.
+    const DWORD sizeHigh = static_cast<DWORD>(allocationSize >> 32);
+    const DWORD sizeLow = static_cast<DWORD>(allocationSize & 0xFFFFFFFFu);
+    HANDLE hMapAnon = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                                         sizeHigh, sizeLow, nullptr);
+    if (hMapAnon) {
+        outFile = INVALID_HANDLE_VALUE;
+        outMap = hMapAnon;
+        QV_LOG("MMFPool_Route", TraceLoggingString("AnonymousSectionFallback", "Action"),
+            TraceLoggingUInt64(allocationSize / (1024 * 1024), "SizeMB"));
+        return S_OK;
+    }
+
+    return HRESULT_FROM_WIN32(GetLastError());
+}
+
+static void CloseMappingHandles(HANDLE hFile, HANDLE hMap) {
+    if (hMap) CloseHandle(hMap);
+    if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
 }
 
 HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width, int height, int stride, ImageID imageId) {
@@ -2448,50 +2546,37 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
 
     ResetMasterBackingStore();
 
-    wchar_t tempDir[MAX_PATH] = {};
-    if (GetTempPathW(MAX_PATH, tempDir) == 0) return HRESULT_FROM_WIN32(GetLastError());
+    if (ShouldUseHeapBacking(totalBytes)) {
+        void* heap = _aligned_malloc(totalBytes, 64);
+        if (!heap) return E_OUTOFMEMORY;
+        memcpy(heap, pixels, totalBytes);
 
-    // [Phase 5] GUID-based temp path to avoid naming conflicts during rapid switching
-    wchar_t tempPath[MAX_PATH] = {};
-    GUID guid;
-    CoCreateGuid(&guid);
-    swprintf_s(tempPath, L"%sQuickView_master_%lu_%08lX%04X%04X.bgra",
-        tempDir, GetCurrentProcessId(),
-        guid.Data1, guid.Data2, guid.Data3);
-
-    HANDLE hFile = CreateFileW(
-        tempPath,
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ,
-        nullptr,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_SEQUENTIAL_SCAN,
-        nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
-
-    LARGE_INTEGER liSize;
-    liSize.QuadPart = static_cast<LONGLONG>(totalBytes);
-    if (!SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) || !SetEndOfFile(hFile)) {
-        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hFile);
-        DeleteFileW(tempPath);
-        return hr;
+        MasterBackingStore store;
+        store.heapBuffer = heap;
+        store.view = static_cast<uint8_t*>(heap);
+        store.sizeBytes = totalBytes;
+        store.width = width;
+        store.height = height;
+        store.stride = stride;
+        store.imageId = imageId;
+        {
+            std::lock_guard lock(m_masterBackingMutex);
+            m_masterBacking = std::move(store);
+        }
+        QV_LOG("MasterBacking_Route", TraceLoggingString("Heap", "Action"),
+            TraceLoggingUInt64(totalBytes / (1024 * 1024), "SizeMB"));
+        return S_OK;
     }
 
-    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
-    if (!hMap) {
-        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hFile);
-        DeleteFileW(tempPath);
-        return hr;
-    }
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+    HANDLE hMap = nullptr;
+    HRESULT hrMap = CreateBackingStoreMapping(totalBytes, L"master", hFile, hMap);
+    if (FAILED(hrMap)) return hrMap;
 
     uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, totalBytes));
     if (!view) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hMap);
-        CloseHandle(hFile);
-        DeleteFileW(tempPath);
+        CloseMappingHandles(hFile, hMap);
         return hr;
     }
 
@@ -2500,20 +2585,21 @@ HRESULT HeavyLanePool::BuildMasterBackingStore(const uint8_t* pixels, int width,
         uint8_t* dstRow = view + (size_t)y * (size_t)stride;
         memcpy(dstRow, srcRow, (size_t)stride);
     }
-    // [Optimization] FlushViewOfFile(view, totalBytes) REMOVED.
-    // Let the OS Lazy Writer handle disk persistence in the background to maximize write throughput.
+
+    MasterBackingStore store;
+    store.hFile = hFile;
+    store.hMap = hMap;
+    store.view = view;
+    store.sizeBytes = totalBytes;
+    store.width = width;
+    store.height = height;
+    store.stride = stride;
+    store.imageId = imageId;
+    store.isPooled = false;
 
     {
         std::lock_guard lock(m_masterBackingMutex);
-        m_masterBacking.hFile = hFile;
-        m_masterBacking.hMap = hMap;
-        m_masterBacking.view = view;
-        m_masterBacking.sizeBytes = totalBytes;
-        m_masterBacking.width = width;
-        m_masterBacking.height = height;
-        m_masterBacking.stride = stride;
-        m_masterBacking.imageId = imageId;
-        m_masterBacking.tempPath = tempPath;
+        m_masterBacking = std::move(store); // move-assign releases any prior resources
     }
 
     return S_OK;
@@ -2541,116 +2627,120 @@ bool HeavyLanePool::AcquireMasterBackingView(ImageID imageId, const uint8_t** ou
 HRESULT HeavyLanePool::BuildMasterBackingStoreEmpty(int width, int height, int stride, [[maybe_unused]] ImageID imageId) {
     if (width <= 0 || height <= 0 || stride <= 0) return E_INVALIDARG;
 
-    // [Optimization] Return previous buffer to pool FIRST, ensuring we can grab it back in Step 0
+    // Return previous buffer to pool FIRST so Step 0 can reclaim it immediately.
     ResetMasterBackingStore();
 
     size_t requiredBytes = (size_t)stride * (size_t)height;
     if (requiredBytes == 0) return E_FAIL;
 
-    // [MMF Pool] Step 0: Try to grab from pool if it's a heavyweight request
-    bool usePool = (requiredBytes > kTitanPromotionThreshold);
+    if (ShouldUseHeapBacking(requiredBytes)) {
+        void* heap = _aligned_malloc(requiredBytes, 64);
+        if (!heap) return E_OUTOFMEMORY;
+
+        MasterBackingStore store;
+        store.heapBuffer = heap;
+        store.view = static_cast<uint8_t*>(heap);
+        store.sizeBytes = requiredBytes;
+        store.width = width;
+        store.height = height;
+        store.stride = stride;
+        store.imageId = 0; // Sentinel: decoder has not completed.
+        {
+            std::lock_guard lock(m_masterBackingMutex);
+            m_masterBacking = std::move(store);
+        }
+        QV_LOG("MasterBacking_Route", TraceLoggingString("Heap", "Action"),
+            TraceLoggingUInt64(requiredBytes / (1024 * 1024), "SizeMB"));
+        return S_OK;
+    }
+
+    // Reuse only medium-size file mappings. Large images are always exact-size
+    // allocations, never oversized pool slots.
+    const bool usePool = (requiredBytes > kTitanPromotionThreshold)
+                      && (requiredBytes <= kMasterBackingPoolLimit);
+
     if (usePool) {
-        std::lock_guard lock(m_mmfPoolMutex);
-        if (!m_reservePool.empty()) {
-            m_masterBacking = std::move(m_reservePool.back());
-            m_reservePool.pop_back();
-
-            if (m_masterBacking.sizeBytes >= requiredBytes) {
-                m_masterBacking.width = width;
-                m_masterBacking.height = height;
-                m_masterBacking.stride = stride;
-                m_masterBacking.imageId = 0; // Sentinel: NOT ready for reading
-
-                // [Optimization] If it's already mapped, reuse it!
-                if (!m_masterBacking.view) {
-                    m_masterBacking.view = static_cast<uint8_t*>(MapViewOfFile(
-                        m_masterBacking.hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, requiredBytes));
-                }
-
-                if (m_masterBacking.view) {
-                    // [Optimization] Only clear the ACTIVE area needed for the current image.
-                    // Do NOT clear the entire 5GB buffer to save ~100-300ms of CPU time.
-                    ZeroMemory(m_masterBacking.view, requiredBytes);
-                    
-                    QV_LOG("MMFPool_Reuse",
-                        TraceLoggingString("BlackboardSuccess", "Action"),
-                        TraceLoggingUInt64(requiredBytes / (1024*1024), "SizeMB"));
-                    return S_OK;
+        MasterBackingStore candidate;
+        {
+            std::lock_guard lock(m_mmfPoolMutex);
+            auto best = m_reservePool.end();
+            for (auto it = m_reservePool.begin(); it != m_reservePool.end(); ++it) {
+                if (it->hMap && it->sizeBytes >= requiredBytes
+                    && (best == m_reservePool.end() || it->sizeBytes < best->sizeBytes)) {
+                    best = it;
                 }
             }
-            // If mapping failed or too small, let destruction happen via m_masterBacking assignment below
+            if (best != m_reservePool.end()) {
+                candidate = std::move(*best);
+                m_reservePool.erase(best);
+            }
+        }
+
+        if (candidate.hMap && candidate.sizeBytes >= requiredBytes) {
+            candidate.width = width;
+            candidate.height = height;
+            candidate.stride = stride;
+            candidate.imageId = 0; // Sentinel: NOT ready for reading
+            candidate.isPooled = true;
+
+            // Keep full-capacity mapping when present (fastest reuse path).
+            if (!candidate.view) {
+                candidate.view = static_cast<uint8_t*>(MapViewOfFile(
+                    candidate.hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, candidate.sizeBytes));
+            }
+
+            if (candidate.view) {
+                {
+                    std::lock_guard lock(m_masterBackingMutex);
+                    m_masterBacking = std::move(candidate);
+                }
+
+                QV_LOG("MMFPool_Reuse",
+                    TraceLoggingString("BlackboardSuccess", "Action"),
+                    TraceLoggingUInt64(requiredBytes / (1024 * 1024), "SizeMB"));
+                return S_OK;
+            }
+            // Map failed: destroy candidate (do not re-pool a broken store).
+            candidate.isPooled = false;
+        } else if (candidate.hasResources()) {
+            // Too small for this image: return to reserve for a future fit, or destroy.
+            RelinquishToPool(std::move(candidate));
         }
     }
 
-    wchar_t tempDir[MAX_PATH] = {};
-    if (GetTempPathW(MAX_PATH, tempDir) == 0) return HRESULT_FROM_WIN32(GetLastError());
-    wchar_t tempPath[MAX_PATH] = {};
-    GUID guid;
-    CoCreateGuid(&guid);
-    swprintf_s(tempPath, L"%sQuickView_TitanPool_%lu_%08lX.bgra", tempDir, GetCurrentProcessId(), guid.Data1);
+    const size_t allocationSize = requiredBytes;
+    const size_t mapSize = allocationSize;
 
-    // [Reef #2] FILE_FLAG_DELETE_ON_CLOSE: Auto-delete on crash/exit
-    DWORD flags = FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_DELETE_ON_CLOSE;
-    HANDLE hFile = CreateFileW(tempPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, flags, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+    HANDLE hMap = nullptr;
+    HRESULT hrMap = CreateBackingStoreMapping(allocationSize, L"TitanPool", hFile, hMap);
+    if (FAILED(hrMap)) return hrMap;
 
-    size_t allocationSize = usePool ? kMasterBackingPoolLimit : requiredBytes;
-    
-    // [Optimization] Step 1: Mark as Sparse File to make creation instantaneous
-    DWORD dwTemp = 0;
-    if (!DeviceIoControl(hFile, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &dwTemp, NULL)) {
-        // Fallback to normal if sparse fails for some reason (e.g. non-NTFS)
-        QV_LOG("MMFPool_Route", TraceLoggingString("FSCTL_SET_SPARSE Failed", "Action"));
-    }
-
-    // Step 2: Set file size (instantaneous on sparse files)
-    LARGE_INTEGER liSize;
-    liSize.QuadPart = static_cast<LONGLONG>(allocationSize);
-    if (!SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) || !SetEndOfFile(hFile)) {
-        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hFile);
-        return hr;
-    }
-    
-    // SE_MANAGE_VOLUME_NAME / SetFileValidData logic removed (Simplified)
-    QV_LOG("MMFPool_Route", TraceLoggingString("SparseAllocationInit", "Action"));
-
-    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
-    if (!hMap) {
-        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hFile);
-        return hr;
-    }
-
-    // Map the view. For pooled objects, we map the FULL capacity (e.g. 5GB) 
-    // once to ensure stable VAS and avoid remapping.
-    size_t mapSize = usePool ? kMasterBackingPoolLimit : requiredBytes;
     uint8_t* view = static_cast<uint8_t*>(MapViewOfFile(hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, mapSize));
     if (!view) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
-        CloseHandle(hMap); CloseHandle(hFile);
+        CloseMappingHandles(hFile, hMap);
         return hr;
     }
-    // [Optimization] Only clear the ACTIVE area. Sparse files handle the rest.
-    ZeroMemory(view, requiredBytes);
+    MasterBackingStore store;
+    store.hFile = hFile;
+    store.hMap = hMap;
+    store.view = view;
+    store.sizeBytes = allocationSize;
+    store.width = width;
+    store.height = height;
+    store.stride = stride;
+    store.imageId = 0; // Sentinel
+    store.isPooled = usePool;
 
     {
         std::lock_guard lock(m_masterBackingMutex);
-        m_masterBacking.hFile = hFile;
-        m_masterBacking.hMap = hMap;
-        m_masterBacking.view = view;
-        m_masterBacking.sizeBytes = allocationSize;
-        m_masterBacking.width = width;
-        m_masterBacking.height = height;
-        m_masterBacking.stride = stride;
-        m_masterBacking.imageId = 0; // Sentinel
-        m_masterBacking.tempPath = tempPath;
-        m_masterBacking.isPooled = usePool;
+        m_masterBacking = std::move(store);
     }
 
     QV_LOG("MMFPool_Create",
         TraceLoggingBool(usePool, "IsPooled"),
-        TraceLoggingUInt64(allocationSize / (1024*1024), "CapacityMB"),
+        TraceLoggingUInt64(allocationSize / (1024 * 1024), "CapacityMB"),
         TraceLoggingInt32(width, "Width"),
         TraceLoggingInt32(height, "Height"));
     return S_OK;
@@ -3300,11 +3390,13 @@ HRESULT HeavyLanePool::FullDecodeAndCacheLOD(Worker& worker, const JobInfo& job,
                 }
 
                 if (expectsMasterCache) {
+                    const size_t frameBytes = (size_t)fullFrame.stride * (size_t)fullFrame.height;
                     bool shouldBuildBacking =
                         (m_titanFormat.load() == QuickView::TitanFormat::PNG || m_titanFormat.load() == QuickView::TitanFormat::TIFF ||
-                         m_titanFormat.load() == QuickView::TitanFormat::AVIF ||
-                         m_titanFormat.load() == QuickView::TitanFormat::JXL) &&
-                        ((size_t)fullFrame.width >= 8000 || (size_t)fullFrame.height >= 8000);
+                          m_titanFormat.load() == QuickView::TitanFormat::AVIF ||
+                          m_titanFormat.load() == QuickView::TitanFormat::JXL) &&
+                        ((size_t)fullFrame.width >= 8000 || (size_t)fullFrame.height >= 8000) &&
+                        !ShouldUseHeapBacking(frameBytes);
                     bool backedByMmf = false;
                     if (shouldBuildBacking) {
                         if (SUCCEEDED(BuildMasterBackingStore(frameSharedPtr.get(), fullFrame.width, fullFrame.height, fullFrame.stride, job.imageId))) {
