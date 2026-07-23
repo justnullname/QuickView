@@ -1314,6 +1314,9 @@ static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
     g_windowDpi = dpi;
     ApplyUIScale(ResolveUIScale(dpi));
+    if (hwnd && (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible)) {
+        AdjustWindowForOverlay(hwnd, false);
+    }
 }
 
 // [DComp] Render bitmap to DComp Pending Surface and trigger cross-fade
@@ -1345,6 +1348,7 @@ static bool CopyToClipboard(HWND hwnd, const std::wstring& text) {
 // Unified functions for saving/restoring window state when overlays open/close
 
 static void SaveOverlayWindowState(HWND hwnd) {
+    if (g_savedState.isValid) return;
     GetWindowRect(hwnd, &g_savedState.windowRect);
     g_savedState.zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
     g_savedState.panX = GetPaneContext(PaneSlot::Primary).view.PanX;
@@ -1354,6 +1358,7 @@ static void SaveOverlayWindowState(HWND hwnd) {
 
 static void RestoreOverlayWindowState(HWND hwnd) {
     if (!g_savedState.isValid) return;
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) return;
     
     // Restore exact saved state - no recalculation needed
     // The saved Zoom was relative to the saved window size, so they work together
@@ -3541,7 +3546,7 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
                 }
             }
             if (!found) {
-                newRealScale = currentRealScale * (1.0f + step * delta);
+                newRealScale = levels.back();
             }
         } else {
             bool found = false;
@@ -3554,7 +3559,7 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
                 }
             }
             if (!found) {
-                newRealScale = currentRealScale / (1.0f + step * abs(delta));
+                newRealScale = levels.front();
             }
         }
         
@@ -4984,6 +4989,11 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
             return; // Already large enough
         }
     } else {
+        // If another overlay or dialog is still visible, do NOT restore window state yet!
+        if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) {
+            return;
+        }
+
         // Closing overlay: Restore the exact previous window state (position, size, zoom).
         // This bypasses any auto-fitting logic (like the 80% screen limit) to preserve
         // the user's manual layout and zoom levels.
@@ -8671,8 +8681,8 @@ SKIP_EDGE_NAV:;
         if (action == SettingsAction::OpenHelp) {
              // Seamless Handoff: Close Settings -> Open Help
              // Crucial: Do NOT restore window state here. Help Overlay inherits current expanded state.
-             g_settingsOverlay.SetVisible(false);
              g_helpOverlay.SetVisible(true);
+             g_settingsOverlay.SetVisible(false);
              RequestRepaint(PaintLayer::All);
              return 0;
         }
