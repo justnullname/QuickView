@@ -1524,8 +1524,29 @@ void SettingsOverlay::BuildMenu() {
     itemMaxSize.displayFormat = L"%.0f %%";
     tabVisuals.items.push_back(itemMaxSize);
 
-    SettingsItem itemBorderInd = { AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Toggle, &g_config.ShowBorderIndicator };
+    SettingsItem itemBorderInd = { AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Segment, nullptr, &g_config.BorderIndicatorCustomR, &g_config.ShowBorderIndicator, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Custom} };
     itemBorderInd.tooltipText = AppStrings::Settings_Tooltip_ShowBorderIndicator;
+    itemBorderInd.isNewOption = true;
+    itemBorderInd.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (g_config.ShowBorderIndicator == 2) {
+            HWND hwnd = GetActiveWindow();
+            static COLORREF acrCustClr[16];
+            CHOOSECOLOR cc{};
+            cc.lStructSize = sizeof(CHOOSECOLOR);
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = acrCustClr;
+            cc.rgbResult = RGB((int)(g_config.BorderIndicatorCustomR * 255.0f), (int)(g_config.BorderIndicatorCustomG * 255.0f), (int)(g_config.BorderIndicatorCustomB * 255.0f));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+            if (ChooseColor(&cc)) {
+                g_config.BorderIndicatorCustomR = GetRValue(cc.rgbResult) / 255.0f;
+                g_config.BorderIndicatorCustomG = GetGValue(cc.rgbResult) / 255.0f;
+                g_config.BorderIndicatorCustomB = GetBValue(cc.rgbResult) / 255.0f;
+            }
+        }
+        SaveConfig();
+        if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, nullptr, FALSE);
+    };
     tabVisuals.items.push_back(itemBorderInd);
 
     SettingsItem itemShowNavigator = { AppStrings::Settings_Label_ShowNavigator, OptionType::Segment, nullptr, nullptr, &g_config.ShowNavigator, nullptr, 0, 0, {AppStrings::Settings_Option_NavigatorAuto, AppStrings::Settings_Option_NavigatorOn, AppStrings::Settings_Option_NavigatorOff} };
@@ -3492,9 +3513,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     item.interactRect = controlRect;
                     if (item.isDisabled) {
                         // Grayed out segment
-                        DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, true);
+                        DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, true, item.pFloatVal);
                     } else {
-                        DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options);
+                        DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, false, item.pFloatVal);
                     }
                     break;
                 case OptionType::ActionButton: {
@@ -3647,6 +3668,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                  }
                  case OptionType::CustomColorRow: {
                      item.interactRect = controlRect;
+                     const float s = m_uiScale;
                      
                      // Determine color source: pFloatVal points to R channel if set, else use canvas colors
                      bool isCanvasRow = (item.pFloatVal == nullptr);
@@ -3667,33 +3689,46 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      if (isCanvasRow) {
                          // Canvas-specific: Grid Toggle (Left) + Color Button (Right)
                          bool gridOn = g_config.CanvasShowGrid;
-                         float toggleW = 50.0f;
+                         float toggleW = 44.0f * s;
                          D2D1_RECT_F toggleRect = D2D1::RectF(controlRect.left, controlRect.top, controlRect.left + toggleW, controlRect.bottom);
                          DrawToggle(pRT, toggleRect, gridOn, isHovered);
                          
-                         D2D1_RECT_F gridLabelRect = D2D1::RectF(controlRect.left + toggleW + 10.0f, controlRect.top, controlRect.left + 200.0f, controlRect.bottom);
+                         float labelLeft = controlRect.left + toggleW + 8.0f * s;
+                         float labelRight = controlRect.left + 135.0f * s;
+                         D2D1_RECT_F gridLabelRect = D2D1::RectF(labelLeft, controlRect.top, labelRight, controlRect.bottom);
                          pRT->DrawText(L"Show Grid", 9, m_textFormatItem.Get(), gridLabelRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
-                         btnLeft = controlRect.left + 210.0f;
+                         btnLeft = controlRect.left + 140.0f * s;
                      }
                      
                      // Color Swatch Button
                      D2D1_RECT_F btnRect = D2D1::RectF(btnLeft, controlRect.top, controlRect.right, controlRect.bottom);
+                     float minBtnW = 90.0f * s;
+                     if (btnRect.right - btnRect.left < minBtnW) {
+                         btnRect.left = (std::max)(controlRect.left, btnRect.right - minBtnW);
+                     }
                      
                      ComPtr<ID2D1SolidColorBrush> colorBrush;
                      pRT->CreateSolidColorBrush(color, &colorBrush);
-                     pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4, 4), colorBrush.Get());
-                     pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, 4, 4), m_brushBorder.Get());
+                     pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f * s, 4.0f * s), colorBrush.Get());
+                     pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, 4.0f * s, 4.0f * s), m_brushBorder.Get());
                      
-                     float brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000.0f;
-                     ID2D1SolidColorBrush* textBrush = (brightness > 0.6f) ? m_brushBg.Get() : m_brushText.Get();
+                     float luminance = 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
+                     ComPtr<ID2D1SolidColorBrush> textBrush;
+                     if (luminance > 0.5f) {
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.08f, 1.0f), &textBrush);
+                     } else {
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.96f, 0.96f, 0.96f, 1.0f), &textBrush);
+                     }
                      
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                     pRT->DrawText(L"Pick Color...", 13, m_textFormatItem.Get(), btnRect, textBrush); 
+                     m_textFormatItem->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                     pRT->DrawText(L"Pick Color...", 13, m_textFormatItem.Get(), btnRect, textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP); 
+                     m_textFormatItem->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
                      m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                      m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                      break;
-                }
+                 }
                 case OptionType::ComboBox: {
                   // [UX Fix] Align ComboBox width with Sliders (Track + Padding
                   // + Value = 150 + 12 + 80 = 242) This ensures the right-hand
@@ -4018,7 +4053,7 @@ std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std
     return widths;
 }
 
-void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring_view>& options, bool isDisabled) {
+void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring_view>& options, bool isDisabled, const float* customColorRGB) {
     if (options.empty()) return;
 
     // Distribute remaining width
@@ -4029,13 +4064,23 @@ void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& re
     pRT->FillRoundedRectangle(D2D1::RoundedRect(rect, 4.0f, 4.0f), m_brushControlBg.Get());
 
     // Selected Highlight
+    bool isCustomPill = (selectedIdx == 2 && customColorRGB != nullptr && options.size() == 3 && options[2] == AppStrings::Settings_Option_Custom);
+    ComPtr<ID2D1SolidColorBrush> customPillBrush;
+
     if (selectedIdx >= 0 && selectedIdx < (int)options.size()) {
         float selX = rect.left;
         for (int i = 0; i < selectedIdx; ++i) {
             selX += itemWidths[i];
         }
         D2D1_RECT_F selRect = D2D1::RectF(selX + 2, rect.top + 2, selX + itemWidths[selectedIdx] - 2, rect.bottom - 2);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(selRect, 3.0f, 3.0f), isDisabled ? m_brushControlBg.Get() : m_brushAccent.Get());
+        
+        ID2D1SolidColorBrush* fillBrush = isDisabled ? m_brushControlBg.Get() : m_brushAccent.Get();
+        if (!isDisabled && isCustomPill) {
+            D2D1_COLOR_F cClr = D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f);
+            pRT->CreateSolidColorBrush(cClr, &customPillBrush);
+            fillBrush = customPillBrush.Get();
+        }
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(selRect, 3.0f, 3.0f), fillBrush);
     }
 
     // Dividers/Text
@@ -4048,8 +4093,17 @@ void SettingsOverlay::DrawSegment(ID2D1DeviceContext* pRT, const D2D1_RECT_F& re
         bool isAllSpaces = !options[i].empty() && std::all_of(options[i].begin(), options[i].end(), [](wchar_t c) { return c == L' '; });
         std::wstring dispText = isAllSpaces ? L"Space" : std::wstring(options[i]);
 
-        // Draw Divider (if not first and not selected/adjacent) - simplified: just text
-        pRT->DrawText(dispText.c_str(), (UINT32)dispText.length(), m_textFormatItem.Get(), tRect, isDisabled ? m_brushTextDim.Get() : m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
+        ID2D1SolidColorBrush* textBrush = isDisabled ? m_brushTextDim.Get() : m_brushText.Get();
+        if (!isDisabled && (int)i == selectedIdx) {
+            if (isCustomPill) {
+                float lum = 0.2126f * customColorRGB[0] + 0.7152f * customColorRGB[1] + 0.0722f * customColorRGB[2];
+                textBrush = (lum > 0.5f) ? m_brushText.Get() : m_brushWhite.Get();
+            } else {
+                textBrush = m_brushWhite.Get();
+            }
+        }
+
+        pRT->DrawText(dispText.c_str(), (UINT32)dispText.length(), m_textFormatItem.Get(), tRect, textBrush, D2D1_DRAW_TEXT_OPTIONS_NONE); 
         currentX += itemWidths[i];
     }
     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING); // Restore Default
@@ -4546,7 +4600,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
              
              if (isCanvasRow) {
                  // Canvas row: split into grid toggle (left) and color button (right)
-                 if (x < controlX + 200.0f) {
+                 if (x < controlX + 140.0f * s) {
                      g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
                  } else {
                      if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);

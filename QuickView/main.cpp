@@ -4223,7 +4223,10 @@ void SaveConfig() {
     WriteConfigBool(L"View", L"LockWindowSize", g_config.LockWindowSize, iniPath.c_str());
     WriteConfigBool(L"View", L"AutoHideWindowControls", g_config.AutoHideWindowControls, iniPath.c_str());
     WriteConfigBool(L"View", L"LockBottomToolbar", g_config.LockBottomToolbar, iniPath.c_str());
-    WriteConfigBool(L"View", L"ShowBorderIndicator", g_config.ShowBorderIndicator, iniPath.c_str());
+    WriteConfigInt(L"View", L"ShowBorderIndicator", g_config.ShowBorderIndicator, iniPath.c_str());
+    WriteConfigFloat(L"View", L"BorderIndicatorCustomR", g_config.BorderIndicatorCustomR, iniPath.c_str());
+    WriteConfigFloat(L"View", L"BorderIndicatorCustomG", g_config.BorderIndicatorCustomG, iniPath.c_str());
+    WriteConfigFloat(L"View", L"BorderIndicatorCustomB", g_config.BorderIndicatorCustomB, iniPath.c_str());
     WriteConfigInt(L"View", L"ShowNavigator", g_config.ShowNavigator, iniPath.c_str());
     WriteConfigInt(L"View", L"NavigatorOffsetX", g_config.NavigatorOffsetX, iniPath.c_str());
     WriteConfigInt(L"View", L"NavigatorOffsetY", g_config.NavigatorOffsetY, iniPath.c_str());
@@ -4495,7 +4498,14 @@ void LoadConfig() {
     }
     g_config.AutoHideWindowControls = GetPrivateProfileIntW(L"View", L"AutoHideWindowControls", 1, iniPath.c_str()) != 0;
     g_config.LockBottomToolbar = GetPrivateProfileIntW(L"View", L"LockBottomToolbar", 0, iniPath.c_str()) != 0;
-    g_config.ShowBorderIndicator = GetPrivateProfileIntW(L"View", L"ShowBorderIndicator", 1, iniPath.c_str()) != 0;
+    g_config.ShowBorderIndicator = GetPrivateProfileIntW(L"View", L"ShowBorderIndicator", 1, iniPath.c_str());
+    wchar_t bufBICR[32], bufBICG[32], bufBICB[32];
+    GetPrivateProfileStringW(L"View", L"BorderIndicatorCustomR", L"0.2", bufBICR, 32, iniPath.c_str());
+    g_config.BorderIndicatorCustomR = (float)_wtof(bufBICR);
+    GetPrivateProfileStringW(L"View", L"BorderIndicatorCustomG", L"0.6", bufBICG, 32, iniPath.c_str());
+    g_config.BorderIndicatorCustomG = (float)_wtof(bufBICG);
+    GetPrivateProfileStringW(L"View", L"BorderIndicatorCustomB", L"1.0", bufBICB, 32, iniPath.c_str());
+    g_config.BorderIndicatorCustomB = (float)_wtof(bufBICB);
     g_config.ShowNavigator = GetPrivateProfileIntW(L"View", L"ShowNavigator", 0, iniPath.c_str());
     wchar_t bufNavX[32], bufNavY[32];
     GetPrivateProfileStringW(L"View", L"NavigatorOffsetX", L"12.0", bufNavX, 32, iniPath.c_str());

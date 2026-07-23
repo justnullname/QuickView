@@ -575,7 +575,10 @@ struct AppConfig {
     bool RememberLastWindowSizeAndPosition = false;
     bool UpscaleSmallImagesWhenLocked = false;
 
-    bool ShowBorderIndicator = true;
+    int ShowBorderIndicator = 1; // 0=Off, 1=On (Accent Color), 2=Custom Color
+    float BorderIndicatorCustomR = 0.20f;
+    float BorderIndicatorCustomG = 0.60f;
+    float BorderIndicatorCustomB = 1.00f;
     int ShowNavigator = 0; // 0=Auto, 1=On, 2=Off
     float NavigatorOffsetX = 12.0f;
     float NavigatorOffsetY = 12.0f;

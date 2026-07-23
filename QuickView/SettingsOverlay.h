@@ -161,7 +161,7 @@ private:
     std::vector<float> CalculateSegmentWidths(const std::vector<std::wstring_view>& options, float totalW);
     void DrawSegment(ID2D1DeviceContext *pRT, const D2D1_RECT_F &rect,
                      int selectedIdx, const std::vector<std::wstring_view> &options,
-                     bool isDisabled = false);
+                     bool isDisabled = false, const float* customColorRGB = nullptr);
     void DrawComboBox(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, int selectedIdx, const std::vector<std::wstring_view>& options, bool isOpen);
     void DrawComboDropdown(ID2D1DeviceContext* pRT); 
     D2D1_RECT_F GetComboDropdownRect(const SettingsItem* item) const;

@@ -772,7 +772,7 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     }
     
     // Border Indicators
-    if (g_config.ShowBorderIndicator && !isAnyOverlayActive) {
+    if (g_config.ShowBorderIndicator != 0 && !isAnyOverlayActive) {
         DrawBorderIndicators(dc);
     }
 
@@ -1890,8 +1890,15 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
 
     if (!drawLeft && !drawRight && !drawTop && !drawBottom) return;
 
+    D2D1_COLOR_F indicatorClr;
+    if (g_config.ShowBorderIndicator == 2) {
+        indicatorClr = D2D1::ColorF(g_config.BorderIndicatorCustomR, g_config.BorderIndicatorCustomG, g_config.BorderIndicatorCustomB, 1.0f);
+    } else {
+        indicatorClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    }
+
     ComPtr<ID2D1SolidColorBrush> borderBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.8f), &borderBrush); // Distinct accent color
+    dc->CreateSolidColorBrush(indicatorClr, &borderBrush);
 
     float s = m_uiScale;
     float thickness = 4.0f * s; // 4px thick line, scaled
