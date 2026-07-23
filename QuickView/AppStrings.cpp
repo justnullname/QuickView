@@ -2698,7 +2698,7 @@ static const LanguageTable Table_JA = {
     L"拡張機能を取得 (無料)", // Dialog_HEICGetExtension
     L"キャンセル", // Dialog_Cancel
     L"全般", // Settings_Tab_General
-    L"QuickView について", // Settings_Tab_About
+    L"バージョン情報", // Settings_Tab_About
     L"基本設定", // Settings_Group_Foundation
     L"スタートアップ", // Settings_Group_Startup
     L"操作習慣", // Settings_Group_Habits
@@ -2838,7 +2838,7 @@ static const LanguageTable Table_JA = {
     L"アグレッシブ", // Settings_Option_MemAggressive
     L"オンデマンド", // Settings_Option_MemOnDemand
     L"スマート : システムメモリが 4GB 未満の場合のみ自動的にメモリを解放します。\n" L"アグレッシブ : 0ns の即時割り当て速度を維持するためメモリを確保し続けます。\n" L"オンデマンド : 物理メモリを節約するため、常にアイドル状態のメモリを解放します。", // Settings_Tooltip_MemoryReclaim
-    L"アニメーションモードで更新領域ボタンを表示", // Settings_Label_ShowDirtyRect
+    L"アニメーションモードで更新領域ボタン表示", // Settings_Label_ShowDirtyRect
     L"フレームのどの部分が再描画されているかを視覚化するため、アニメーションモードで更新領域のデバッグボタンを表示します。", // Settings_Tooltip_ShowDirtyRect
     L"コピーしました！", // OSD_Copied
     L"座標をコピーしました！", // OSD_CoordinatesCopied
