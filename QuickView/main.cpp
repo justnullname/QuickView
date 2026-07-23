@@ -6010,16 +6010,120 @@ static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
 // [Phase 0] Master flag - true if this process runs the pipe server.
 static bool g_isMasterProcess = false;
 static bool g_isExitingWithPrintJobs = false;
+static HWND g_hPreviousForegroundWindow = nullptr;
+
+static bool IsDesktopWindowHWND(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    wchar_t className[64] = {0};
+    GetClassNameW(hwnd, className, 64);
+    if (wcscmp(className, L"Progman") == 0 || wcscmp(className, L"WorkerW") == 0 ||
+        wcscmp(className, L"SHELLDLL_DefView") == 0 || wcscmp(className, L"SysListView32") == 0) {
+        return true;
+    }
+    return false;
+}
+
+static HWND GetDesktopListViewHWND(HWND* pTopDesktopOut = nullptr) {
+    HWND hProgman = FindWindowW(L"Progman", nullptr);
+    HWND hDefView = FindWindowExW(hProgman, nullptr, L"SHELLDLL_DefView", nullptr);
+    HWND hTop = hProgman;
+
+    if (!hDefView) {
+        HWND hWorkerW = nullptr;
+        while ((hWorkerW = FindWindowExW(nullptr, hWorkerW, L"WorkerW", nullptr)) != nullptr) {
+            hDefView = FindWindowExW(hWorkerW, nullptr, L"SHELLDLL_DefView", nullptr);
+            if (hDefView) {
+                hTop = hWorkerW;
+                break;
+            }
+        }
+    }
+
+    if (pTopDesktopOut) *pTopDesktopOut = hTop;
+
+    if (hDefView) {
+        HWND hListView = FindWindowExW(hDefView, nullptr, L"SysListView32", nullptr);
+        if (hListView) return hListView;
+        return hDefView;
+    }
+    return hProgman;
+}
+
+static void RestorePreviousForegroundWindow() {
+    HWND hTarget = g_hPreviousForegroundWindow;
+    HWND hShell = GetShellWindow();
+    bool isDesktop = false;
+
+    if (!hTarget || !IsWindow(hTarget) || hTarget == hShell || IsDesktopWindowHWND(hTarget)) {
+        isDesktop = true;
+        hTarget = hShell ? hShell : FindWindowW(L"Progman", nullptr);
+    }
+
+    if (hTarget && IsWindow(hTarget)) {
+        DWORD targetPid = 0;
+        DWORD targetThread = GetWindowThreadProcessId(hTarget, &targetPid);
+        
+        // Grant foreground focus permission to target process (e.g. Explorer)
+        AllowSetForegroundWindow(targetPid != 0 ? targetPid : ASFW_ANY);
+
+        DWORD currentThread = GetCurrentThreadId();
+        if (targetThread != 0 && targetThread != currentThread) {
+            AttachThreadInput(currentThread, targetThread, TRUE);
+            SetForegroundWindow(hTarget);
+            BringWindowToTop(hTarget);
+            SetFocus(hTarget);
+            AttachThreadInput(currentThread, targetThread, FALSE);
+        } else {
+            SetForegroundWindow(hTarget);
+            BringWindowToTop(hTarget);
+            SetFocus(hTarget);
+        }
+
+        if (isDesktop) {
+            HWND hTopDesktop = nullptr;
+            HWND hListView = GetDesktopListViewHWND(&hTopDesktop);
+            if (hTopDesktop && hTopDesktop != hTarget) {
+                DWORD topThread = GetWindowThreadProcessId(hTopDesktop, nullptr);
+                if (topThread != 0 && topThread != currentThread) {
+                    AttachThreadInput(currentThread, topThread, TRUE);
+                    SetForegroundWindow(hTopDesktop);
+                    BringWindowToTop(hTopDesktop);
+                    SetFocus(hTopDesktop);
+                    AttachThreadInput(currentThread, topThread, FALSE);
+                } else {
+                    SetForegroundWindow(hTopDesktop);
+                    BringWindowToTop(hTopDesktop);
+                    SetFocus(hTopDesktop);
+                }
+            }
+            if (hListView && IsWindow(hListView)) {
+                DWORD listThread = GetWindowThreadProcessId(hListView, nullptr);
+                if (listThread != 0 && listThread != currentThread) {
+                    AttachThreadInput(currentThread, listThread, TRUE);
+                    SetFocus(hListView);
+                    AttachThreadInput(currentThread, listThread, FALSE);
+                } else {
+                    SetFocus(hListView);
+                }
+            }
+        }
+    }
+    g_hPreviousForegroundWindow = nullptr;
+}
 
 // Helper to force window to foreground and take focus
 static void ForceForegroundWindow(HWND hwnd) {
     if (!hwnd) return;
     
     HWND hForeground = GetForegroundWindow();
+    if (hForeground && hForeground != hwnd) {
+        g_hPreviousForegroundWindow = hForeground;
+    }
+
     DWORD idThreadForeground = GetWindowThreadProcessId(hForeground, NULL);
     DWORD idThreadCurrent = GetCurrentThreadId();
     
-    if (idThreadCurrent != idThreadForeground) {
+    if (idThreadCurrent != idThreadForeground && idThreadForeground != 0) {
         AttachThreadInput(idThreadCurrent, idThreadForeground, TRUE);
         SetForegroundWindow(hwnd);
         SetFocus(hwnd);
@@ -6060,6 +6164,14 @@ HCURSOR g_currentCursor = nullptr;
 int g_initialCmdShow = SW_SHOW;
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCmdLine, int nCmdShow) {
+    // Early capture of foreground window before any QuickView initialization/window creation
+    HWND hEarlyFg = GetForegroundWindow();
+    if (hEarlyFg) {
+        g_hPreviousForegroundWindow = hEarlyFg;
+    } else {
+        g_hPreviousForegroundWindow = GetShellWindow() ? GetShellWindow() : FindWindowW(L"Progman", nullptr);
+    }
+
     // === Priority 0: CMD Parsing & Subprocess dispatch ===
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -6888,15 +7000,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     // [Phase 0] SingleInstance ON: Master receives routed path, replace current image.
     case WM_ROUTED_OPEN: {
-        auto* pathStr = reinterpret_cast<std::wstring*>(lParam);
-        if (pathStr && !pathStr->empty()) {
+        auto* rawPayload = reinterpret_cast<std::wstring*>(lParam);
+        constexpr size_t headerWChars = (sizeof(HWND) + sizeof(wchar_t) - 1) / sizeof(wchar_t);
+        if (rawPayload && rawPayload->size() >= headerWChars) {
+            HWND hFgCaller = nullptr;
+            memcpy(&hFgCaller, rawPayload->data(), sizeof(HWND));
+
+            if (hFgCaller && IsWindow(hFgCaller)) {
+                g_hPreviousForegroundWindow = hFgCaller;
+            }
+
+            const wchar_t* realPath = rawPayload->c_str() + headerWChars;
+
             g_isExitingWithPrintJobs = false; // Revive process from keep-alive exit state
             ShowWindow(hwnd, SW_SHOW);        // Restore window visibility
-            OpenPathOrDirectory(hwnd, *pathStr);
+            OpenPathOrDirectory(hwnd, realPath);
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
             ForceForegroundWindow(hwnd);
         }
-        delete pathStr;
+        delete rawPayload;
         return 0;
     }
 
@@ -7527,6 +7649,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
             }
         }
+
+        RestorePreviousForegroundWindow();
 
         if (QuickView::PrintManager::GetInstance().HasActiveJobs()) {
             g_isExitingWithPrintJobs = true;

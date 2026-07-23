@@ -188,11 +188,17 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
     s_mutex = nullptr;
 
     std::wstring path = ParseImagePath();
-    if (path.empty()) {
-        // No image path to deliver; just activate the Master window.
-        // Still try pipe with empty payload to trigger SetForegroundWindow.
-        path = L"";
-    }
+
+    HWND hFgCaller = GetForegroundWindow();
+    if (!hFgCaller) hFgCaller = GetShellWindow();
+
+    // Zero-bloat binary payload layout: [HWND (8 bytes)][wchar_t path...]
+    const size_t pathWChars = path.length() + 1;
+    const size_t headerWChars = (sizeof(HWND) + sizeof(wchar_t) - 1) / sizeof(wchar_t);
+    std::wstring payload;
+    payload.resize(headerWChars + pathWChars);
+    *reinterpret_cast<HWND*>(payload.data()) = hFgCaller;
+    memcpy(payload.data() + headerWChars, path.c_str(), pathWChars * sizeof(wchar_t));
 
     for (int attempt = 0; attempt < kRouteRetryCount; ++attempt) {
         if (!WaitNamedPipeW(s_pipeName.c_str(), kRouteTimeoutMs)) {
@@ -212,9 +218,9 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
             continue;
         }
 
-        DWORD bytesToWrite = static_cast<DWORD>((path.length() + 1) * sizeof(wchar_t));
+        DWORD bytesToWrite = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
         DWORD written = 0;
-        WriteFile(hPipe, path.c_str(), bytesToWrite, &written, nullptr);
+        WriteFile(hPipe, payload.c_str(), bytesToWrite, &written, nullptr);
         FlushFileBuffers(hPipe);
         CloseHandle(hPipe);
 
