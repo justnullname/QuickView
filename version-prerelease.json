@@ -1,10 +1,10 @@
 {
-  "version": "6.25.2.1",
-  "url": "https://github.com/justnullname/QuickView/releases/download/v6.25.2.1/QuickView_v6.25.2.1_X64.zip",
-  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.25.2.1/QuickView_v6.25.2.1_X64.zip",
-  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.25.2.1/QuickView_v6.25.2.1_ARM64.zip",
-  "sha256_x64": "6702ba4acbc47e683bab95e269840e4b8a955916d866c8ddf50a10cee659c3c9",
-  "sha256_arm64": "f5a5af230c2a3e31aa40eb98783d552323bdc168c61120c71646375caa78bbf8",
-  "date": "2026-07-21",
-  "changelog": "QuickView pre-release v6.25.2.1\r\n\r\n* Introduced a custom print dialog to replace the native Windows Photo Printing Wizard.\r\n* Added support for grayscale and poster tiling modes. (#220)\r\n* Optimized binary size.\r\n\r\n**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.24.0.0...v6.25.2.1"
+  "version": "6.26.1.0",
+  "url": "https://github.com/justnullname/QuickView/releases/download/v6.26.1.0/QuickView_v6.26.1_X64.zip",
+  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.26.1.0/QuickView_v6.26.1_X64.zip",
+  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.26.1.0/QuickView_v6.26.1_ARM64.zip",
+  "sha256_x64": "998623410f0dbf4dc26e9a288210e9bd3b255da11745f88f10084a547ed05f8d",
+  "sha256_arm64": "c91cc7c3c56e81866ed0c883db53b357ae57df4cdb1e0aae5424f9c5b2b2136a",
+  "date": "2026-07-23",
+  "changelog": "QuickView pre-release v6.26.1.0\r\n\r\n## What's Changed\r\n* Update JP Table by @coolvitto in https://github.com/justnullname/QuickView/pull/227\r\n* feat: Add custom color support for edge overflow indicators and fix UI scaling (#223)\r\n* feat(print): implement real-time grayscale print preview (#220)\r\n* fix(ui): resolve window jumping, UI scale clipping, and fixed zoom boundary issues (#144)\r\n* fix: restore desktop foreground and keyboard focus on image exit (#226)\r\n* fix: Implement MasterBackingStore MMF pooling and async GC pipeline(#221)\r\n\r\n##  Special Thanks\r\n* @coolvitto made their first contribution in https://github.com/justnullname/QuickView/pull/227\r\n\r\n**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.25.2.1...v6.26.1.0"
 }
