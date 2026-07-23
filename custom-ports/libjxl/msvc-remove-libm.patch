@@ -1,19 +1,23 @@
 diff --git a/lib/jxl.cmake b/lib/jxl.cmake
-index 404b976..119f49e 100644
+index 8d962e6..fb7e7d9 100644
 --- a/lib/jxl.cmake
 +++ b/lib/jxl.cmake
-@@ -271,10 +271,14 @@ set(JPEGXL_LIBRARY_REQUIRES
- 
+@@ -284,12 +284,16 @@ set(JPEGXL_LIBRARY_REQUIRES
  if (BUILD_SHARED_LIBS)
    set(JPEGXL_REQUIRES_TYPE "Requires.private")
-+  if (NOT MSVC)
-   set(JPEGXL_PRIVATE_LIBS "-lm ${PKGCONFIG_CXX_LIB}")
+   if(NOT MSVC AND NOT APPLE)
+-    set(JPEGXL_PRIVATE_LIBS "-lm ${PKGCONFIG_CXX_LIB}")
++    if (NOT MSVC)
++  set(JPEGXL_PRIVATE_LIBS "-lm ${PKGCONFIG_CXX_LIB}")
 +  endif()
+   endif()
  else()
    set(JPEGXL_REQUIRES_TYPE "Requires")
-+  if (NOT MSVC)
-   set(JPEGXL_PUBLIC_LIBS "-lm ${PKGCONFIG_CXX_LIB}")
+   if(NOT MSVC AND NOT APPLE)
+-    set(JPEGXL_PUBLIC_LIBS "-lm ${PKGCONFIG_CXX_LIB}")
++    if (NOT MSVC)
++  set(JPEGXL_PUBLIC_LIBS "-lm ${PKGCONFIG_CXX_LIB}")
 +  endif()
+   endif()
  endif()
  
- configure_file("${CMAKE_CURRENT_SOURCE_DIR}/jxl/libjxl.pc.in"
