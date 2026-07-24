@@ -7977,7 +7977,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                   }
               }
               
-              if (w >= 300.0f * g_uiScale && h >= 200.0f * g_uiScale && !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2)) {
+              if (w >= 300.0f * g_uiScale && h >= 200.0f * g_uiScale && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2)) {
                   float cx = w / 2.0f;
                   float neckH = 40.0f * g_uiScale;
                   float neckW = 200.0f * g_uiScale;
@@ -8001,7 +8001,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
           }
 
           // Top Hover Gallery Trigger Detection
-          if (w >= 300.0f * g_uiScale && h >= 200.0f * g_uiScale) {
+          if (w >= 300.0f * g_uiScale && h >= 200.0f * g_uiScale && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible()) {
               float cx = w / 2.0f;
               
               bool inGalleryTriggerZone = false;
@@ -8863,7 +8863,7 @@ SKIP_EDGE_NAV:;
         }
         
         // Click Hotspot to trigger Gallery (Trigger Mode 2)
-        if (!g_gallery.IsVisible() && g_config.GalleryTriggerMode == 2) {
+        if (!g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && g_config.GalleryTriggerMode == 2) {
             RECT rcWnd; GetClientRect(hwnd, &rcWnd);
             float winH = (float)(rcWnd.bottom - rcWnd.top);
             float winW = (float)(rcWnd.right - rcWnd.left);

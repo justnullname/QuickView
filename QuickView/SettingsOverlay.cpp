@@ -3,6 +3,7 @@
 #include "SettingsOverlay.h"
 #include "ThemeSystem.h"
 #include "HelpOverlay.h"
+#include "GalleryOverlay.h"
 #include "AppStrings.h"
 #include "ImageEngine.h"
 #include "DialogController.h"
@@ -938,6 +939,10 @@ void SettingsOverlay::RebuildMenu() {
 }
 
 void SettingsOverlay::BuildMenu() {
+    m_pActiveCombo = nullptr;
+    m_comboHoverIdx = -1;
+    m_pActiveSlider = nullptr;
+    m_pHoverItem = nullptr;
     m_tabs.clear();
 
     // Compute active separator preset index
@@ -2540,6 +2545,10 @@ void SettingsOverlay::BuildMenu() {
 
 void SettingsOverlay::SetVisible(bool visible) {
     m_visible = visible;
+    m_pActiveCombo = nullptr;
+    m_comboHoverIdx = -1;
+    m_pActiveSlider = nullptr;
+    m_pHoverItem = nullptr;
     
     // Check for deferred rebuild (Fixes UAF on Reset)
     if (m_pendingRebuild) {
@@ -2551,8 +2560,13 @@ void SettingsOverlay::SetVisible(bool visible) {
         RebuildMenu(); // Ensure strings are up-to-date
         m_opacity = 0.0f;
         
-        // Hide toolbar when settings pop up
+        // Hide toolbar and filmstrip gallery when settings pop up
         g_toolbar.SetVisible(false);
+        extern GalleryOverlay g_gallery;
+        if (g_gallery.IsVisible()) {
+            g_gallery.Close(true);
+        }
+        g_gallery.SetHoveringHotspot(false);
         
         // Auto-Resize if window is too small
         if (m_hwnd) {
@@ -3882,6 +3896,12 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
     // Fallback to Settings Scroll
     if (!m_visible) return false;
 
+    // Auto-collapse open dropdown when scrolling content
+    if (m_pActiveCombo) {
+        m_pActiveCombo = nullptr;
+        m_comboHoverIdx = -1;
+    }
+
     // 1. Slider adjustment via scroll wheel
     if (m_pHoverItem && m_pHoverItem->type == OptionType::Slider && !m_pHoverItem->isDisabled && m_pHoverItem->pFloatVal) {
         float stepSize = m_pHoverItem->step;
@@ -4344,6 +4364,11 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         // Convert to HUD-local Y
         float localY = y - hudY;
 
+        // Any click on sidebar collapses active dropdown/slider
+        m_pActiveCombo = nullptr;
+        m_comboHoverIdx = -1;
+        m_pActiveSlider = nullptr;
+
         // Back Button (Top 50px)
         if (localY < backH) {
             SetVisible(false);
@@ -4354,9 +4379,11 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         float tabY = backH;
         for (int i = 0; i < (int)m_tabs.size(); ++i) {
             if (localY >= tabY && localY <= tabY + tabH) {
-                m_activeTab = i;
-                m_scrollOffset = 0.0f;
-                return SettingsAction::RepaintStatic;
+                if (m_activeTab != i) {
+                    m_activeTab = i;
+                    m_scrollOffset = 0.0f;
+                }
+                return SettingsAction::RepaintAll;
             }
             tabY += tabStep;
         }
@@ -4668,6 +4695,10 @@ void SettingsOverlay::SetItemStatus(const std::wstring& label, const std::wstrin
 
 void SettingsOverlay::OpenTab(int index) {
     if (index >= 0 && index < (int)m_tabs.size()) {
+        m_pActiveCombo = nullptr;
+        m_comboHoverIdx = -1;
+        m_pActiveSlider = nullptr;
+        m_pHoverItem = nullptr;
         m_activeTab = index;
         m_scrollOffset = 0.0f;
         SetVisible(true);

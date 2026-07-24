@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "HelpOverlay.h"
+#include "GalleryOverlay.h"
 #include "AppStrings.h"
 #include "EditState.h"
 #include "GeekIconRenderer.h"
@@ -185,6 +186,11 @@ void HelpOverlay::SetVisible(bool visible) {
         if (visible) {
             RebuildList(); // Refresh text in case language changed
             m_scrollOffset = 0;
+            extern GalleryOverlay g_gallery;
+            if (g_gallery.IsVisible()) {
+                g_gallery.Close(true);
+            }
+            g_gallery.SetHoveringHotspot(false);
             if (m_hwnd) {
                 extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
                 AdjustWindowForOverlay(m_hwnd, false);
