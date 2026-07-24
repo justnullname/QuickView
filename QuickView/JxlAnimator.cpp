@@ -36,6 +36,9 @@ public:
             JxlDecoderStatus st = JxlDecoderProcessInput(m_decoder.get());
             
             if (st == JXL_DEC_ERROR) return nullptr;
+#ifdef JXL_DEC_UNSUPPORTED
+            if (st == JXL_DEC_UNSUPPORTED) return nullptr;
+#endif
             if (st == JXL_DEC_NEED_MORE_INPUT) return nullptr;
             
             if (st == JXL_DEC_COLOR_ENCODING) {
@@ -95,6 +98,11 @@ public:
             memcpy(frame->pixels + (size_t)y * frame->stride, m_accumulationBuffer + (size_t)y * accStride, (size_t)frame->width * 4);
         }
         
+        // Respect libjxl 0.12.0 alpha_premultiplied flag for animation frames
+        if (m_basicInfo.alpha_bits > 0 && !m_basicInfo.alpha_premultiplied) {
+            ImageLoaderSimd::PremultiplyAlpha(frame->pixels, frame->width, frame->height, frame->stride);
+        }
+
         // SIMD Optimized RGBA -> BGRA swizzle
         ImageLoaderSimd::SwizzleRGBAToBGRA(frame->pixels, (size_t)frame->width * frame->height);
         

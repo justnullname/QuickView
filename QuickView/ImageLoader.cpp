@@ -2520,6 +2520,13 @@ HRESULT CImageLoader::FullDecodeToMMF(
       JxlDecoderStatus st = JxlDecoderProcessInput(dec);
       if (st == JXL_DEC_ERROR)
         break;
+#ifdef JXL_DEC_UNSUPPORTED
+      if (st == JXL_DEC_UNSUPPORTED) {
+        QV_LOG("MMF_Decode", TraceLoggingString("JXL Unsupported Feature", "Action"));
+        hr = E_NOTIMPL;
+        break;
+      }
+#endif
       if (st == JXL_DEC_SUCCESS) {
         hr = S_OK;
         break;
@@ -2561,13 +2568,6 @@ HRESULT CImageLoader::FullDecodeToMMF(
         }
         bufferSet = true;
       } else if (st == JXL_DEC_FRAME_PROGRESSION) {
-        // [Progressive DC] libjxl has decoded the DC (1:8) layer.
-        // NOTE: We intentionally do NOT call FlushImage or SwizzleRGBA_to_BGRA
-        // here. Reason: After FlushImage, libjxl continues writing RGBA AC data
-        // into the same MMF buffer, overwriting the BGRA-swizzled DC data. This
-        // causes LOD=3/2 to read a mix of BGRA (unoverwritten DC) and RGBA (new
-        // AC) = color corruption. The safe path: let the full decode complete,
-        // swizzle once at the end.
         size_t ratio = JxlDecoderGetIntendedDownsamplingRatio(dec);
 
         QV_LOG("MMF_Decode",
@@ -2590,9 +2590,12 @@ HRESULT CImageLoader::FullDecodeToMMF(
       return FAILED(hr) ? hr : E_FAIL;
     }
 
-    // Final RGBA → BGRA swizzle for the full-quality image
-    // (DC was already swizzled above, but full decode overwrites with RGBA
-    // again)
+    // Final RGBA → BGRA swizzle for the full-quality image.
+    // Respect libjxl 0.12.0 alpha_premultiplied flag: if bitstream already premultiplied alpha,
+    // skip secondary premultiplication to avoid dark/corrupted transparent edges!
+    if (info.alpha_bits > 0 && !info.alpha_premultiplied) {
+      ImageLoaderSimd::PremultiplyAlpha((uint8_t*)mmfBuf, (int)info.xsize, (int)info.ysize, (int)(info.xsize * 4));
+    }
     ImageLoaderSimd::SwizzleRGBAToBGRA(mmfBuf, (size_t)info.xsize * info.ysize);
 
     *outW = (int)info.xsize;
