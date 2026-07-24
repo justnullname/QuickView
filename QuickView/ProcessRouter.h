@@ -44,7 +44,12 @@ RouteResult TryRoute(bool singleInstanceEnabled);
 // |onNewPath| is invoked on a BACKGROUND THREAD — use PostMessage to
 // marshal to the UI thread if needed.
 //
-using PathCallback = void (*)(std::wstring path, void* context);
+struct RoutePayload {
+    HWND hFgCaller = nullptr;
+    std::wstring path;
+};
+
+using PathCallback = void (*)(RoutePayload payload, void* context);
 void StartMasterServer(PathCallback onNewPath, void* context);
 
 // ─── Step 3: Shutdown (before process exit) ──────────────────────────────────
@@ -57,7 +62,10 @@ void ShutdownMaster();
 
 // Spawn a new QuickView.exe --viewer-child process for |imagePath|.
 // Called from pipe server callback. Thread-safe.
-void SpawnViewer(const std::wstring& imagePath);
+void SpawnViewer(const std::wstring& imagePath, HWND hFgCaller = nullptr);
+
+// Extract foreground caller window passed via command line (--fg-caller <HWND>).
+HWND ParseFgCaller();
 
 // Returns true if any spawned viewer processes are still alive.
 bool HasActiveChildren();

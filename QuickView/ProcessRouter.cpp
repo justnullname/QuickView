@@ -115,18 +115,31 @@ static void ServerLoop(std::stop_token st) {
             }
         }
 
-        // Read the file path (UTF-16, null-terminated).
-        wchar_t buf[4096]{};
+        // Read binary payload: [uint64_t hwndVal][wchar_t path...]
+        alignas(8) char buf[4096]{};
         DWORD bytesRead = 0;
-        BOOL ok = ReadFile(hPipe, buf, sizeof(buf) - sizeof(wchar_t), &bytesRead, nullptr);
+        BOOL ok = ReadFile(hPipe, buf, sizeof(buf), &bytesRead, nullptr);
         DisconnectNamedPipe(hPipe);
         CloseHandle(hPipe);
 
-        if (ok && bytesRead >= sizeof(wchar_t)) {
-            buf[bytesRead / sizeof(wchar_t)] = L'\0';
-            std::wstring path(buf);
-            if (!path.empty() && s_onNewPath) {
-                s_onNewPath(std::move(path), s_onNewPathContext);
+        if (ok && bytesRead >= sizeof(uint64_t) + sizeof(wchar_t)) {
+            uint64_t rawHwnd = 0;
+            memcpy(&rawHwnd, buf, sizeof(uint64_t));
+
+            RoutePayload payload;
+            payload.hFgCaller = reinterpret_cast<HWND>(static_cast<uintptr_t>(rawHwnd));
+
+            const wchar_t* pathStart = reinterpret_cast<const wchar_t*>(buf + sizeof(uint64_t));
+            size_t maxWChars = (bytesRead - sizeof(uint64_t)) / sizeof(wchar_t);
+
+            size_t wlen = 0;
+            while (wlen < maxWChars && pathStart[wlen] != L'\0') {
+                wlen++;
+            }
+            payload.path.assign(pathStart, wlen);
+
+            if (!payload.path.empty() && s_onNewPath) {
+                s_onNewPath(std::move(payload), s_onNewPathContext);
             }
         }
     }
@@ -192,13 +205,12 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
     HWND hFgCaller = GetForegroundWindow();
     if (!hFgCaller) hFgCaller = GetShellWindow();
 
-    // Zero-bloat binary payload layout: [HWND (8 bytes)][wchar_t path...]
-    const size_t pathWChars = path.length() + 1;
-    const size_t headerWChars = (sizeof(HWND) + sizeof(wchar_t) - 1) / sizeof(wchar_t);
-    std::wstring payload;
-    payload.resize(headerWChars + pathWChars);
-    *reinterpret_cast<HWND*>(payload.data()) = hFgCaller;
-    memcpy(payload.data() + headerWChars, path.c_str(), pathWChars * sizeof(wchar_t));
+    // Struct-aligned binary payload buffer: [uint64_t hwndVal (8 bytes)][wchar_t path...]
+    const uint64_t hwndVal = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(hFgCaller));
+    const size_t pathBytes = (path.length() + 1) * sizeof(wchar_t);
+    std::vector<uint8_t> payloadBuf(sizeof(uint64_t) + pathBytes);
+    memcpy(payloadBuf.data(), &hwndVal, sizeof(uint64_t));
+    memcpy(payloadBuf.data() + sizeof(uint64_t), path.c_str(), pathBytes);
 
     for (int attempt = 0; attempt < kRouteRetryCount; ++attempt) {
         if (!WaitNamedPipeW(s_pipeName.c_str(), kRouteTimeoutMs)) {
@@ -218,9 +230,9 @@ RouteResult TryRoute(bool singleInstanceEnabled) {
             continue;
         }
 
-        DWORD bytesToWrite = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
+        DWORD bytesToWrite = static_cast<DWORD>(payloadBuf.size());
         DWORD written = 0;
-        WriteFile(hPipe, payload.c_str(), bytesToWrite, &written, nullptr);
+        WriteFile(hPipe, payloadBuf.data(), bytesToWrite, &written, nullptr);
         FlushFileBuffers(hPipe);
         CloseHandle(hPipe);
 
@@ -286,11 +298,11 @@ void ShutdownMaster() {
     s_onNewPathContext = nullptr;
 }
 
-void SpawnViewer(const std::wstring& imagePath) {
+void SpawnViewer(const std::wstring& imagePath, HWND hFgCaller) {
     wchar_t exePath[MAX_PATH]{};
     if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) == 0) return;
 
-    // Build: "QuickView.exe" --viewer-child "C:\path\to\image.jpg"
+    // Build: "QuickView.exe" --viewer-child "C:\path\to\image.jpg" [--fg-caller <HWND>]
     std::wstring cmdLine;
     cmdLine.reserve(MAX_PATH * 2);
     cmdLine += L'"';
@@ -300,6 +312,13 @@ void SpawnViewer(const std::wstring& imagePath) {
     cmdLine += L" \"";
     cmdLine += imagePath;
     cmdLine += L'"';
+
+    if (hFgCaller && IsWindow(hFgCaller)) {
+        cmdLine += L" --fg-caller 0x";
+        wchar_t hexBuf[32]{};
+        swprintf_s(hexBuf, L"%IX", reinterpret_cast<uintptr_t>(hFgCaller));
+        cmdLine += hexBuf;
+    }
 
     std::vector<wchar_t> buf(cmdLine.begin(), cmdLine.end());
     buf.push_back(L'\0');
@@ -367,6 +386,30 @@ bool IsViewerChild() {
     }
     LocalFree(argv);
     return found;
+}
+
+HWND ParseFgCaller() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return nullptr;
+
+    HWND hResult = nullptr;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (argv[i] && _wcsicmp(argv[i], L"--fg-caller") == 0) {
+            if (argv[i + 1]) {
+                uintptr_t val = 0;
+                if (swscanf_s(argv[i + 1], L"0x%IX", &val) == 1 || swscanf_s(argv[i + 1], L"%IX", &val) == 1) {
+                    HWND h = reinterpret_cast<HWND>(val);
+                    if (h && IsWindow(h)) {
+                        hResult = h;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    LocalFree(argv);
+    return hResult;
 }
 
 std::wstring ParseImagePath() {

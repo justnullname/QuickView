@@ -6012,6 +6012,13 @@ static bool g_isMasterProcess = false;
 static bool g_isExitingWithPrintJobs = false;
 static HWND g_hPreviousForegroundWindow = nullptr;
 
+static HWND GetTopLevelWindow(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return nullptr;
+    HWND hRoot = GetAncestor(hwnd, GA_ROOTOWNER);
+    if (!hRoot) hRoot = GetAncestor(hwnd, GA_ROOT);
+    return hRoot ? hRoot : hwnd;
+}
+
 static bool IsDesktopWindowHWND(HWND hwnd) {
     if (!hwnd || !IsWindow(hwnd)) return false;
     wchar_t className[64] = {0};
@@ -6060,23 +6067,28 @@ static void RestorePreviousForegroundWindow() {
     }
 
     if (hTarget && IsWindow(hTarget)) {
+        HWND hRoot = isDesktop ? hTarget : GetTopLevelWindow(hTarget);
+        if (!hRoot || !IsWindow(hRoot)) hRoot = hTarget;
+
         DWORD targetPid = 0;
-        DWORD targetThread = GetWindowThreadProcessId(hTarget, &targetPid);
+        DWORD targetThread = GetWindowThreadProcessId(hRoot, &targetPid);
         
-        // Grant foreground focus permission to target process (e.g. Explorer)
+        // Grant foreground focus permission to target process (e.g. Explorer, Directory Opus, etc.)
         AllowSetForegroundWindow(targetPid != 0 ? targetPid : ASFW_ANY);
+
+        if (!isDesktop && IsIconic(hRoot)) {
+            ShowWindow(hRoot, SW_RESTORE);
+        }
 
         DWORD currentThread = GetCurrentThreadId();
         if (targetThread != 0 && targetThread != currentThread) {
             AttachThreadInput(currentThread, targetThread, TRUE);
-            SetForegroundWindow(hTarget);
-            BringWindowToTop(hTarget);
-            SetFocus(hTarget);
+            SetForegroundWindow(hRoot);
+            BringWindowToTop(hRoot);
             AttachThreadInput(currentThread, targetThread, FALSE);
         } else {
-            SetForegroundWindow(hTarget);
-            BringWindowToTop(hTarget);
-            SetFocus(hTarget);
+            SetForegroundWindow(hRoot);
+            BringWindowToTop(hRoot);
         }
 
         if (isDesktop) {
@@ -6088,12 +6100,10 @@ static void RestorePreviousForegroundWindow() {
                     AttachThreadInput(currentThread, topThread, TRUE);
                     SetForegroundWindow(hTopDesktop);
                     BringWindowToTop(hTopDesktop);
-                    SetFocus(hTopDesktop);
                     AttachThreadInput(currentThread, topThread, FALSE);
                 } else {
                     SetForegroundWindow(hTopDesktop);
                     BringWindowToTop(hTopDesktop);
-                    SetFocus(hTopDesktop);
                 }
             }
             if (hListView && IsWindow(hListView)) {
@@ -6117,7 +6127,12 @@ static void ForceForegroundWindow(HWND hwnd) {
     
     HWND hForeground = GetForegroundWindow();
     if (hForeground && hForeground != hwnd) {
-        g_hPreviousForegroundWindow = hForeground;
+        HWND hRootFg = GetTopLevelWindow(hForeground);
+        HWND hMyRoot = GetTopLevelWindow(hwnd);
+        // Protect pre-existing captured caller window if valid
+        if (hRootFg && hRootFg != hMyRoot && (!g_hPreviousForegroundWindow || IsDesktopWindowHWND(g_hPreviousForegroundWindow))) {
+            g_hPreviousForegroundWindow = hRootFg;
+        }
     }
 
     DWORD idThreadForeground = GetWindowThreadProcessId(hForeground, NULL);
@@ -6165,11 +6180,16 @@ int g_initialCmdShow = SW_SHOW;
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCmdLine, int nCmdShow) {
     // Early capture of foreground window before any QuickView initialization/window creation
-    HWND hEarlyFg = GetForegroundWindow();
-    if (hEarlyFg) {
-        g_hPreviousForegroundWindow = hEarlyFg;
+    HWND hCmdFg = QuickView::ProcessRouter::ParseFgCaller();
+    if (hCmdFg) {
+        g_hPreviousForegroundWindow = GetTopLevelWindow(hCmdFg);
     } else {
-        g_hPreviousForegroundWindow = GetShellWindow() ? GetShellWindow() : FindWindowW(L"Progman", nullptr);
+        HWND hEarlyFg = GetForegroundWindow();
+        if (hEarlyFg) {
+            g_hPreviousForegroundWindow = GetTopLevelWindow(hEarlyFg);
+        } else {
+            g_hPreviousForegroundWindow = GetShellWindow() ? GetShellWindow() : FindWindowW(L"Progman", nullptr);
+        }
     }
 
     // === Priority 0: CMD Parsing & Subprocess dispatch ===
@@ -6317,17 +6337,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     // SingleInstance ON  -> replace current image in Master's window
     // SingleInstance OFF -> spawn child viewer process (Chrome multi-window)
     if (g_isMasterProcess) {
-        QuickView::ProcessRouter::StartMasterServer([](std::wstring path, void* context) {
+        QuickView::ProcessRouter::StartMasterServer([](QuickView::ProcessRouter::RoutePayload payload, void* context) {
             // Callback runs on pipe server thread.
-            if (path.empty()) return;
+            if (payload.path.empty()) return;
             HWND h = static_cast<HWND>(context);
+            if (payload.hFgCaller && IsWindow(payload.hFgCaller)) {
+                g_hPreviousForegroundWindow = payload.hFgCaller;
+            }
             if (g_config.SingleInstance) {
                 // Replace current image: marshal to UI thread via PostMessage.
-                auto* heapPath = new std::wstring(std::move(path));
+                auto* heapPath = new std::wstring(std::move(payload.path));
                 PostMessageW(h, WM_ROUTED_OPEN, 0, reinterpret_cast<LPARAM>(heapPath));
             } else {
                 // Multi-window: spawn independent child viewer process.
-                QuickView::ProcessRouter::SpawnViewer(path);
+                QuickView::ProcessRouter::SpawnViewer(payload.path);
             }
         }, hwnd);
     }
@@ -7000,25 +7023,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     // [Phase 0] SingleInstance ON: Master receives routed path, replace current image.
     case WM_ROUTED_OPEN: {
-        auto* rawPayload = reinterpret_cast<std::wstring*>(lParam);
-        constexpr size_t headerWChars = (sizeof(HWND) + sizeof(wchar_t) - 1) / sizeof(wchar_t);
-        if (rawPayload && rawPayload->size() >= headerWChars) {
-            HWND hFgCaller = nullptr;
-            memcpy(&hFgCaller, rawPayload->data(), sizeof(HWND));
-
-            if (hFgCaller && IsWindow(hFgCaller)) {
-                g_hPreviousForegroundWindow = hFgCaller;
-            }
-
-            const wchar_t* realPath = rawPayload->c_str() + headerWChars;
-
+        auto* pathStr = reinterpret_cast<std::wstring*>(lParam);
+        if (pathStr && !pathStr->empty()) {
             g_isExitingWithPrintJobs = false; // Revive process from keep-alive exit state
             ShowWindow(hwnd, SW_SHOW);        // Restore window visibility
-            OpenPathOrDirectory(hwnd, realPath);
+            OpenPathOrDirectory(hwnd, *pathStr);
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
             ForceForegroundWindow(hwnd);
         }
-        delete rawPayload;
+        delete pathStr;
         return 0;
     }
 
@@ -7650,18 +7663,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
 
+        // Hide window first so User32 won't wipe out focus during window destruction
+        ShowWindow(hwnd, SW_HIDE);
+
         RestorePreviousForegroundWindow();
 
         if (QuickView::PrintManager::GetInstance().HasActiveJobs()) {
             g_isExitingWithPrintJobs = true;
-            ShowWindow(hwnd, SW_HIDE);
             return 0;
         }
 
-        // [Phase 0] Master lifecycle: if child viewers are alive, hide our window
-        // but keep the process running so the pipe server stays active.
+        // [Phase 0] Master lifecycle: if child viewers are alive, keep process running.
         if (g_isMasterProcess && QuickView::ProcessRouter::HasActiveChildren()) {
             QuickView::ProcessRouter::SetMasterWindowClosed(GetCurrentThreadId());
+            return 0;
         }
         DestroyWindow(hwnd);
         return 0;
