@@ -1,10 +1,10 @@
 {
-  "version": "6.26.1.0",
-  "url": "https://github.com/justnullname/QuickView/releases/download/v6.26.1.0/QuickView_v6.26.1_X64.zip",
-  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.26.1.0/QuickView_v6.26.1_X64.zip",
-  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.26.1.0/QuickView_v6.26.1_ARM64.zip",
-  "sha256_x64": "998623410f0dbf4dc26e9a288210e9bd3b255da11745f88f10084a547ed05f8d",
-  "sha256_arm64": "c91cc7c3c56e81866ed0c883db53b357ae57df4cdb1e0aae5424f9c5b2b2136a",
-  "date": "2026-07-23",
-  "changelog": "QuickView pre-release v6.26.1.0\r\n\r\n## What's Changed\r\n* Update JP Table by @coolvitto in https://github.com/justnullname/QuickView/pull/227\r\n* feat: Add custom color support for edge overflow indicators and fix UI scaling (#223)\r\n* feat(print): implement real-time grayscale print preview (#220)\r\n* fix(ui): resolve window jumping, UI scale clipping, and fixed zoom boundary issues (#144)\r\n* fix: restore desktop foreground and keyboard focus on image exit (#226)\r\n* fix: Implement MasterBackingStore MMF pooling and async GC pipeline(#221)\r\n\r\n##  Special Thanks\r\n* @coolvitto made their first contribution in https://github.com/justnullname/QuickView/pull/227\r\n\r\n**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.25.2.1...v6.26.1.0"
+  "version": "6.29.0.0",
+  "url": "https://github.com/justnullname/QuickView/releases/download/v6.29.0.0/QuickView_v6.29.0_X64.zip",
+  "url_x64": "https://github.com/justnullname/QuickView/releases/download/v6.29.0.0/QuickView_v6.29.0_X64.zip",
+  "url_arm64": "https://github.com/justnullname/QuickView/releases/download/v6.29.0.0/QuickView_v6.29.0_ARM64.zip",
+  "sha256_x64": "fd70b8e353abbb101d4ebdaea836a3612bf0550f2575e5da866e8cd063dfe17f",
+  "sha256_arm64": "e919745e3e1ff33bc977dd69bacc704b7abb970811353459bc9e18cdfb8a85e1",
+  "date": "2026-07-29",
+  "changelog": "QuickView pre-release v6.29.0.0\r\n\r\n- feat(ui): add Windows 11 native Mica effect for window and context menu backdrops (#219)\r\n- feat(settings): add custom left-double-click functionality (#219)\r\n- feat(filmstrip): add trigger height, dwell time, exit delay configs \r\n- feat(ui): add KeepGalleryVisibleOnThumbnailClick setting \r\n- feat(compare): disable edge indicators in compare mode and adapt selection indicator (#223)\r\n- feat(settings): add double-click dropdown mode & minimap hover wheel panning (#219, #224)\r\n- fix: restore explorer view sort order sync via shell COM (#233) \r\n- fix(minimap): resolve full length display and click navigation offset for ultra-long/wide images\r\n- Fix giant 16-bit TIFF loading and rendering\r\n- Fix(#221): Resolve Titan mode missing chunks and high CPU usage via fail count reset & cascaded downsampling\r\n- fix(gallery): refactor D2D device resource lifecycle and fix slideshow mode crash \r\n- fix(svg): unify baseFit zoom calculations for small SVG initial size and scaling (#219)\r\n- style(gallery): refine filmstrip margins, slim navigation arrows, and pin button size (#144)\r\n- fix(ui): hide gallery hotspot when settings or help overlay is visible\r\n- chore(deps): upgrade all third-party dependencies and lock libjxl to v0.12.0 (#288)\r\n\r\n**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.26.1.0...v6.29.0.0"
 }
