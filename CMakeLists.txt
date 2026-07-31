@@ -55,6 +55,8 @@ option(ENABLE_LTO  "Enable Link Time Optimization (ThinLTO)" OFF)
 # ============================================================================
 set(QUICKVIEW_SOURCES
     QuickView/main.cpp
+    QuickView/ImageExporter.cpp
+    QuickView/ExportPanel.cpp
     QuickView/PrintManager.cpp
     QuickView/PrintPreviewUI.cpp
     QuickView/PrintManager.h
@@ -215,6 +217,26 @@ target_compile_definitions(QuickView PRIVATE UNICODE _UNICODE)
 # ============================================================================
 # Dependencies (vcpkg)
 # ============================================================================
+# Ensure CMAKE_PREFIX_PATH includes vcpkg target triplet paths
+if(VCPKG_TARGET_TRIPLET)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}")
+        list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}")
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vcpkg/installed/${VCPKG_TARGET_TRIPLET}")
+        list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vcpkg/installed/${VCPKG_TARGET_TRIPLET}")
+    endif()
+endif()
+
+# libjpeg-turbo (Must be before libavif so libyuv's internal find_dependency(JPEG) succeeds)
+find_package(libjpeg-turbo CONFIG REQUIRED)
+if(NOT TARGET JPEG::JPEG)
+    if(TARGET libjpeg-turbo::turbojpeg-static)
+        add_library(JPEG::JPEG ALIAS libjpeg-turbo::turbojpeg-static)
+    elseif(TARGET libjpeg-turbo::jpeg-static)
+        add_library(JPEG::JPEG ALIAS libjpeg-turbo::jpeg-static)
+    endif()
+endif()
+
 # libavif
 find_package(libavif CONFIG REQUIRED)
 
@@ -224,14 +246,36 @@ find_package(hwy CONFIG REQUIRED)
 # LibRaw
 find_package(libraw CONFIG REQUIRED)
 
+# Ensure _VCPKG_INSTALLED_DIR fallback
+if(NOT _VCPKG_INSTALLED_DIR)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_installed")
+        set(_VCPKG_INSTALLED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_installed")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vcpkg/installed")
+        set(_VCPKG_INSTALLED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vcpkg/installed")
+    endif()
+endif()
+
+set(_VCPKG_SEARCH_PATHS
+    "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vcpkg/installed/${VCPKG_TARGET_TRIPLET}"
+)
+
+# Reset cache entries if previously trapped in -NOTFOUND
+foreach(_VAR JXL_LIB_RELEASE JXL_LIB_DEBUG JXL_THREADS_LIB_RELEASE JXL_THREADS_LIB_DEBUG JXL_CMS_LIB_RELEASE JXL_CMS_LIB_DEBUG BROTLI_COMMON_LIB_RELEASE BROTLI_COMMON_LIB_DEBUG BROTLI_DEC_LIB_RELEASE BROTLI_DEC_LIB_DEBUG DAV1D_LIB_RELEASE DAV1D_LIB_DEBUG)
+    if(${_VAR} MATCHES "-NOTFOUND$")
+        unset(${_VAR} CACHE)
+    endif()
+endforeach()
+
 # libjxl (manual find since vcpkg port lacks config)
-find_library(JXL_LIB_RELEASE NAMES jxl PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib" NO_DEFAULT_PATH)
-find_library(JXL_LIB_DEBUG NAMES jxl PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib" NO_DEFAULT_PATH)
-find_library(JXL_THREADS_LIB_RELEASE NAMES jxl_threads PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib" NO_DEFAULT_PATH)
-find_library(JXL_THREADS_LIB_DEBUG NAMES jxl_threads PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib" NO_DEFAULT_PATH)
-find_library(JXL_CMS_LIB_RELEASE NAMES jxl_cms PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib" NO_DEFAULT_PATH)
-find_library(JXL_CMS_LIB_DEBUG NAMES jxl_cms PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib" NO_DEFAULT_PATH)
-find_path(JXL_INC jxl/decode.h REQUIRED)
+find_library(JXL_LIB_RELEASE NAMES jxl PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(JXL_LIB_DEBUG NAMES jxl PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(JXL_THREADS_LIB_RELEASE NAMES jxl_threads PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(JXL_THREADS_LIB_DEBUG NAMES jxl_threads PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(JXL_CMS_LIB_RELEASE NAMES jxl_cms PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(JXL_CMS_LIB_DEBUG NAMES jxl_cms PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_path(JXL_INC jxl/decode.h PATH_SUFFIXES "include" PATHS ${_VCPKG_SEARCH_PATHS} REQUIRED)
 
 add_library(libjxl::jxl STATIC IMPORTED)
 set_target_properties(libjxl::jxl PROPERTIES
@@ -250,14 +294,14 @@ set_property(TARGET libjxl::jxl_cms PROPERTY IMPORTED_LOCATION_RELEASE "${JXL_CM
 set_property(TARGET libjxl::jxl_cms PROPERTY IMPORTED_LOCATION_DEBUG "${JXL_CMS_LIB_DEBUG}")
 
 # Brotli (required by libjxl)
-find_library(BROTLI_COMMON_LIB_RELEASE NAMES brotlicommon PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib" NO_DEFAULT_PATH)
-find_library(BROTLI_COMMON_LIB_DEBUG NAMES brotlicommon PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib" NO_DEFAULT_PATH)
-find_library(BROTLI_DEC_LIB_RELEASE NAMES brotlidec PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib" NO_DEFAULT_PATH)
-find_library(BROTLI_DEC_LIB_DEBUG NAMES brotlidec PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib" NO_DEFAULT_PATH)
+find_library(BROTLI_COMMON_LIB_RELEASE NAMES brotlicommon PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_COMMON_LIB_DEBUG NAMES brotlicommon PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_DEC_LIB_RELEASE NAMES brotlidec PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(BROTLI_DEC_LIB_DEBUG NAMES brotlidec PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 
 # dav1d (required by avif)
-find_library(DAV1D_LIB_RELEASE NAMES dav1d PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib" NO_DEFAULT_PATH)
-find_library(DAV1D_LIB_DEBUG NAMES dav1d PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib" NO_DEFAULT_PATH)
+find_library(DAV1D_LIB_RELEASE NAMES dav1d PATH_SUFFIXES "lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
+find_library(DAV1D_LIB_DEBUG NAMES dav1d PATH_SUFFIXES "debug/lib" PATHS ${_VCPKG_SEARCH_PATHS} NO_DEFAULT_PATH)
 
 # lcms2
 find_package(lcms2 CONFIG REQUIRED)

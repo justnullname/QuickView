@@ -42,7 +42,12 @@ enum class ToolbarButtonID {
     OverlayExit,
     // Slideshow mode
     SlideshowImmersiveToggle,
-    SlideshowExit
+    SlideshowExit,
+    // Crop mode
+    CropCopy,
+    CropApply,
+    CropSave,
+    CropCancel
 };
 
 struct ToolbarButton {
@@ -125,6 +130,10 @@ public:
     void SetOverlayMode(bool enabled);
     bool IsOverlayMode() const { return m_overlayMode; }
     void SetOverlayAlpha(BYTE alpha) { m_overlayAlphaPercent = (int)(alpha * 100.0f / 255.0f + 0.5f); }
+
+    // [Crop Mode]
+    void SetCropMode(bool enabled);
+    bool IsCropMode() const { return m_cropMode; }
     
     // [Phase 3] Get minimum required width for toolbar
     float GetMinWidth() const { return m_minRequiredWidth > 0.0f ? m_minRequiredWidth : (PADDING_X * 2 + 8 * BUTTON_SIZE + 7 * GAP) * m_uiScale; }
@@ -158,8 +167,9 @@ private:
     bool m_animMode = false;
     bool m_slideshowMode = false;
     bool m_animPlaying = true;
-    bool m_animDirtyRect = false;
     bool m_overlayMode = false;
+    bool m_cropMode = false;
+    bool m_animDirtyRect = false;
     int  m_overlayAlphaPercent = 50;
     float m_animProgress = 0.0f;
     uint32_t m_currentFrame = 0;

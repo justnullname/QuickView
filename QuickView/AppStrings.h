@@ -111,6 +111,7 @@ namespace AppStrings {
     extern const wchar_t* Context_GalleryOpenCompare;
     extern const wchar_t* Context_GalleryOpenNewWindow;
     extern const wchar_t* Context_Exit;
+    extern const wchar_t* Context_Crop;
     
     // Taskbar / System Menu
     extern const wchar_t* Menu_ExitPassthrough;

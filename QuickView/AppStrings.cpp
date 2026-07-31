@@ -3,6 +3,8 @@
 #include <windows.h> // For GetUserDefaultUILanguage
 #include "EditState.h"
 
+extern AppConfig g_config;
+
 namespace AppStrings {
 
 // ----------------------------------------------------------------
@@ -87,6 +89,7 @@ const wchar_t *Settings_Status_NoWritePerm = nullptr;
 const wchar_t *Settings_Status_Enabled = nullptr;
 const wchar_t *Settings_Header_PoweredBy = nullptr;
 const wchar_t *Context_Open = nullptr;
+const wchar_t *Context_Crop = nullptr;
 const wchar_t *Context_OpenWith = nullptr;
 const wchar_t *Context_Edit = nullptr;
 const wchar_t *Context_ShowInExplorer = nullptr;
@@ -5619,6 +5622,8 @@ void Apply(const LanguageTable& t) {
   Settings_Status_Enabled = t.Settings_Status_Enabled;
   Settings_Header_PoweredBy = t.Settings_Header_PoweredBy;
   Context_Open = t.Context_Open;
+  Context_Crop = L"Crop";
+  if (g_config.Language == 2) Context_Crop = L"裁剪";
   Context_OpenWith = t.Context_OpenWith;
   Context_Edit = t.Context_Edit;
   Context_ShowInExplorer = t.Context_ShowInExplorer;
@@ -6523,6 +6528,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::Print:
         raw = AppStrings::Context_Print;
         break;
+    case HotkeyAction::EnterCropMode: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"裁剪模式"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"裁剪模式"; break;
+        case AppStrings::Language::Japanese:           raw = L"クロップモード"; break;
+        case AppStrings::Language::Russian:            raw = L"Режим кадрирования"; break;
+        case AppStrings::Language::German:             raw = L"Zuschneiden-Modus"; break;
+        case AppStrings::Language::Spanish:            raw = L"Modo de recorte"; break;
+        case AppStrings::Language::French:             raw = L"Mode recadrage"; break;
+        default:                                       raw = L"Crop Mode"; break;
+        }
+        break;
+    }
     case HotkeyAction::ToggleOverlay:
         raw = AppStrings::Context_OverlayMode;
         break;

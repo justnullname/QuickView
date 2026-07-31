@@ -34,6 +34,12 @@ struct EditState {
     // [Visual Rotation] Queue of pending operations to be applied on Save
     std::vector<TransformType> PendingTransforms;
 
+    bool HasCrop = false;
+    float CropLeft = 0.0f;
+    float CropTop = 0.0f;
+    float CropRight = 0.0f;
+    float CropBottom = 0.0f;
+
     void Reset() {
         IsDirty = false;
         TempFilePath.clear();
@@ -43,6 +49,8 @@ struct EditState {
         FlippedV = false;
         Quality = EditQuality::Lossless;
         PendingTransforms.clear();
+        HasCrop = false;
+        CropLeft = CropTop = CropRight = CropBottom = 0.0f;
     }
     
     /// <summary>
@@ -159,6 +167,7 @@ enum class HotkeyAction : uint8_t {
     AlwaysOnTop,       // Toggle Always on Top
     ToggleDebugHud,    // Toggle Debug Performance HUD
     Print,             // Print Image
+    EnterCropMode,     // Enter Crop Mode
     ToggleOverlay,     // Toggle Tracing Mode (Overlay Mode)
     OverlayAlphaUp,    // Adjust Overlay Alpha Up
     OverlayAlphaDown,  // Adjust Overlay Alpha Down
@@ -218,6 +227,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::AlwaysOnTop: return L"AlwaysOnTop";
         case HotkeyAction::ToggleDebugHud: return L"ToggleDebugHud";
         case HotkeyAction::Print: return L"Print";
+        case HotkeyAction::EnterCropMode: return L"EnterCropMode";
         case HotkeyAction::ToggleOverlay: return L"ToggleOverlay";
         case HotkeyAction::OverlayAlphaUp: return L"OverlayAlphaUp";
         case HotkeyAction::OverlayAlphaDown: return L"OverlayAlphaDown";
@@ -275,6 +285,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"AlwaysOnTop") return HotkeyAction::AlwaysOnTop;
     if (sv == L"ToggleDebugHud") return HotkeyAction::ToggleDebugHud;
     if (sv == L"Print") return HotkeyAction::Print;
+    if (sv == L"EnterCropMode") return HotkeyAction::EnterCropMode;
     if (sv == L"ToggleOverlay") return HotkeyAction::ToggleOverlay;
     if (sv == L"OverlayAlphaUp") return HotkeyAction::OverlayAlphaUp;
     if (sv == L"OverlayAlphaDown") return HotkeyAction::OverlayAlphaDown;
@@ -791,6 +802,53 @@ struct AppConfig {
         return (GlassVectorStrokeWeightIndex == 1) ? 1.0f : 1.5f;
     }
 };
+
+// ============================================================================
+// Crop State (6.31.0)
+// ============================================================================
+struct CropState {
+    bool IsActive = false;
+    bool IsDragging = false;
+    bool IsQuickActionVisible = false;
+    
+    // Coordinates in FULL IMAGE pixel space
+    float CropLeft = 0.0f;
+    float CropTop = 0.0f;
+    float CropRight = 0.0f;
+    float CropBottom = 0.0f;
+    
+    // UI Interaction states
+    int ActiveHandle = -1; // -1: None, 0: TopLeft, 1: TopRight, 2: BottomLeft, 3: BottomRight, 4: Center (Move)
+    POINT DragStartMousePos = { 0, 0 };
+    float DragStartCropLeft = 0.0f;
+    float DragStartCropTop = 0.0f;
+    float DragStartCropRight = 0.0f;
+    float DragStartCropBottom = 0.0f;
+
+    enum class InputField { None, Width, Height };
+    InputField FocusedField = InputField::None;
+    InputField HoverField = InputField::None;
+    wchar_t InputBuffer[16] = { 0 };
+    int InputLen = 0;
+    D2D1_RECT_F WidthCapsuleRect = {};
+    D2D1_RECT_F HeightCapsuleRect = {};
+
+    void Reset() {
+        IsActive = false;
+        IsDragging = false;
+        IsQuickActionVisible = false;
+        CropLeft = CropTop = CropRight = CropBottom = 0.0f;
+        ActiveHandle = -1;
+        FocusedField = InputField::None;
+        HoverField = InputField::None;
+        InputLen = 0;
+        InputBuffer[0] = L'\0';
+        WidthCapsuleRect = {};
+        HeightCapsuleRect = {};
+    }
+};
+
+extern CropState g_cropState;
 
 /// <summary>
 /// View State (Zoom, Pan, Interaction)

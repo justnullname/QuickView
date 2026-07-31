@@ -2,6 +2,8 @@
 #include "Toolbar.h"
 #include "AppStrings.h"
 #include "EditState.h"
+#include "PaneContext.h"
+#include "AppContext.h"
 #include "GeekIconRenderer.h"
 #include "FileNavigator.h"
 #include "GalleryOverlay.h"
@@ -59,6 +61,11 @@ Toolbar::Toolbar() {
       // Slideshow mode buttons
       {ToolbarButtonID::SlideshowImmersiveToggle, Icons::Eye, {}, true, false},
       {ToolbarButtonID::SlideshowExit,            Icons::ExitToolbar, {}, true, false},
+      // Crop mode buttons
+      {ToolbarButtonID::CropCopy,   Icons::Copy,        {}, true, false},
+      {ToolbarButtonID::CropApply,  Icons::Check,       {}, true, false},
+      {ToolbarButtonID::CropSave,   Icons::Save,        {}, true, false},
+      {ToolbarButtonID::CropCancel, Icons::ExitToolbar, {}, true, false},
       // Pin at the very end
       {ToolbarButtonID::Pin, Icons::Pin, {}, true, false},
   };
@@ -168,7 +175,15 @@ void Toolbar::UpdateLayout(float winW, float winH) {
     return false;
   };
 
-
+  auto isCropButton = [](ToolbarButtonID id) {
+    return id == ToolbarButtonID::RotateL ||
+           id == ToolbarButtonID::RotateR ||
+           id == ToolbarButtonID::FlipH ||
+           id == ToolbarButtonID::CropCopy ||
+           id == ToolbarButtonID::CropSave ||
+           id == ToolbarButtonID::CropApply ||
+           id == ToolbarButtonID::CropCancel;
+  };
 
   [[maybe_unused]] auto isNormalButton = [&](ToolbarButtonID id) {
     return !isCompareButton(id) && id != ToolbarButtonID::AnimPlayPause && id != ToolbarButtonID::AnimPrevFrame && id != ToolbarButtonID::AnimNextFrame && id != ToolbarButtonID::AnimDirtyRect && !isAlwaysVisible(id);
@@ -177,6 +192,13 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   // --- Responsive Hide Priority Tables (per mode) ---
   // Each table lists groups of buttons to hide in order of decreasing priority.
   // The LAST group in each table is the "core" group — if it can't fit, hide the entire toolbar.
+  static constexpr ResponsiveHideGroup kCropHideOrder[] = {
+      {ToolbarButtonID::FlipH},
+      {ToolbarButtonID::RotateL, ToolbarButtonID::RotateR},
+      {ToolbarButtonID::CropCopy},
+      {ToolbarButtonID::CropSave},
+      {ToolbarButtonID::CropApply, ToolbarButtonID::CropCancel},
+  };
   static constexpr ResponsiveHideGroup kNormalHideOrder[] = {
       {ToolbarButtonID::Pin},
       {ToolbarButtonID::FlipH},
@@ -241,7 +263,10 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   // Select the appropriate hide table for the current mode
   const ResponsiveHideGroup* hideOrder = kNormalHideOrder;
   int hideOrderCount = (int)std::size(kNormalHideOrder);
-  if (m_overlayMode) {
+  if (m_cropMode) {
+      hideOrder = kCropHideOrder;
+      hideOrderCount = (int)std::size(kCropHideOrder);
+  } else if (m_overlayMode) {
       hideOrder = kOverlayHideOrder;
       hideOrderCount = (int)std::size(kOverlayHideOrder);
   } else if (m_slideshowMode) {
@@ -265,6 +290,9 @@ void Toolbar::UpdateLayout(float winW, float winH) {
   };
 
   auto isVisibleButton = [&](const ToolbarButton &btn) {
+    if (m_cropMode) {
+      return isCropButton(btn.id);
+    }
     // Responsive hide check (applied on top of mode-based visibility)
     if (isResponsiveHidden(btn.id)) return false;
 
@@ -325,6 +353,12 @@ void Toolbar::UpdateLayout(float winW, float winH) {
 
     if (isCompareButton(btn.id) || isAnimButton(btn.id) || isOverlayButton(btn.id))
       return false;
+    if (btn.id == ToolbarButtonID::CropApply || btn.id == ToolbarButtonID::CropCopy || btn.id == ToolbarButtonID::CropCancel)
+      return false;
+    if (btn.id == ToolbarButtonID::CropSave) {
+      // In normal mode, only show Save button when image has unsaved edits/crop
+      return GetPaneContext(PaneSlot::Primary).editState.IsDirty;
+    }
     if (btn.id == ToolbarButtonID::RawToggle && !btn.isEnabled)
       return false;
     if (btn.id == ToolbarButtonID::CompareRawToggle && !btn.isWarning)
@@ -1118,7 +1152,14 @@ bool Toolbar::HitTest(float x, float y) {
   return false;
 }
 
-void Toolbar::SetVisible(bool visible) { m_targetVisible = visible; }
+void Toolbar::SetVisible(bool visible) {
+  if (m_cropMode) {
+    m_targetVisible = true;
+    m_opacity = 1.0f;
+    return;
+  }
+  m_targetVisible = visible;
+}
 
 bool Toolbar::UpdateAnimation() {
   if (!g_config.GlassUIAnimations) {
@@ -1243,6 +1284,14 @@ void Toolbar::SetAnimationMode(bool enabled, bool playing, bool dirtyRect, bool 
       btn.isToggled = dirtyRect;
       btn.isEnabled = supportsDirtyRect;
     }
+  }
+}
+
+void Toolbar::SetCropMode(bool enabled) {
+  m_cropMode = enabled;
+  if (enabled) {
+    m_targetVisible = true;
+    m_opacity = 1.0f;
   }
 }
 

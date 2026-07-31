@@ -29,6 +29,8 @@ namespace GeekIcons {
 
     // Forward declarations of all icons (defined in GeekIconData.h)
     extern const VectorIcon OpenVector;
+    extern const VectorIcon SaveVector;
+    extern const VectorIcon CropVector;
     extern const VectorIcon RenameVector;
     extern const VectorIcon EditVector;
     extern const VectorIcon DeleteVector;
@@ -111,6 +113,8 @@ namespace GeekIcons {
 
     // --- Legacy Mapping Aliases (now pointing to Vectors) ---
     inline IconGlyph Open        = &OpenVector;
+    inline IconGlyph Save        = &SaveVector;
+    inline IconGlyph Crop        = &CropVector;
     inline IconGlyph Rename      = &RenameVector;
     inline IconGlyph Edit        = &EditVector;
     inline IconGlyph Delete      = &DeleteVector;

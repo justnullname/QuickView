@@ -229,6 +229,7 @@ private:
     
     // Drawing functions
     void DrawOSD(ID2D1DeviceContext* dc, HWND hwnd);
+    void DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd);
     // [Loupe] press-and-hold magnifier overlay (shows the region at actual pixels)
     void DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd);
     void DrawWindowControls(ID2D1DeviceContext* dc, HWND hwnd);

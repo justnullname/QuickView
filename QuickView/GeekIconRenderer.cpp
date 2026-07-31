@@ -22,10 +22,8 @@ static ComPtr<ID2D1PathGeometry> BuildGeometry(ID2D1Factory* factory, const Geek
     ComPtr<ID2D1GeometrySink> sink;
     if (FAILED(geometry->Open(&sink))) return nullptr;
 
-    // TrueType glyph outlines use non-zero winding fill:
-    // Outer contours wind clockwise, inner contours (holes) wind counter-clockwise.
-    // This is CRITICAL for correct rendering of outlined/hollow icon shapes.
-    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+    // Use ALTERNATE fill mode to correctly punch out hollow inner contours/cutouts
+    sink->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
 
     constexpr float InvScale = 1.0f / 30000.0f;
     bool figureOpen = false;

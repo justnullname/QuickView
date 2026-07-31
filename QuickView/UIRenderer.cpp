@@ -15,6 +15,7 @@
 #include "ImageLoaderSimd.h"
 #include "SettingsOverlay.h"
 #include "PrintPreviewUI.h"
+#include "ExportPanel.h"
 #include <functional> // For std::hash
 
 namespace {
@@ -827,10 +828,21 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
     // Compare Selected Pane Indicator
     DrawComparePaneIndicator(dc, hwnd);
     
+    // Crop Overlay Layer (Drawn BEFORE Toolbar, ExportPanel, Window Controls so UI sits on top of mask)
+    if (g_cropState.IsActive) {
+        DrawCropOverlay(dc, hwnd);
+    }
+
     // Toolbar (Hidden if full grid gallery, settings, or help is open; remains visible for filmstrip)
     if (g_toolbar.IsVisible() && !isAnyOverlayActive) {
         g_toolbar.SetGeekGlassData(m_bgCommandList.Get(), m_compEngine ? m_compEngine->GetScreenTransform() : D2D1::Matrix3x2F::Identity());
         g_toolbar.Render(dc);
+    }
+
+    // ExportPanel (Save As Panel - Rendered on top of overlay mask and toolbar)
+    if (QuickView::ExportPanel::GetInstance().IsVisible()) {
+        EnsureTextFormats();
+        QuickView::ExportPanel::GetInstance().Render(dc, (float)m_width, (float)m_height, m_panelFormat.Get());
     }
     bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo;
 
@@ -855,12 +867,13 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         }
     }
     
-    // Border Indicators (disabled in Compare Mode)
-    if (g_config.ShowBorderIndicator != 0 && !isAnyOverlayActive && !IsCompareModeActive()) {
+    // Border Indicators (disabled in Compare Mode and Crop Mode)
+    if (g_config.ShowBorderIndicator != 0 && !isAnyOverlayActive && !IsCompareModeActive() && !g_cropState.IsActive) {
         DrawBorderIndicators(dc);
     }
 
-    if (g_config.ShowNavigator != 2 && !isAnyOverlayActive) {
+    // Minimap / Navigator (disabled in Crop Mode)
+    if (g_config.ShowNavigator != 2 && !isAnyOverlayActive && !g_cropState.IsActive) {
         DrawNavigator(dc);
     }
 
@@ -1249,8 +1262,8 @@ void UIRenderer::RenderDynamicLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         AppContext::GetInstance().DialogCtrl->Render(dc);
     }
 
-    // Draw Top Gallery Hotspot: Vector Icon + Material Ripple (Fix #1)
-    if (!g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && m_width >= 300.0f * m_uiScale && m_height >= 200.0f * m_uiScale) {
+    // Draw Top Gallery Hotspot: Vector Icon + Material Ripple (Disabled in Crop Mode)
+    if (!g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !g_cropState.IsActive && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && m_width >= 300.0f * m_uiScale && m_height >= 200.0f * m_uiScale) {
         float cx = m_width / 2.0f;
         float neckH = 40.0f * m_uiScale;
         float neckW = 200.0f * m_uiScale;
@@ -6110,5 +6123,171 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         
         dc->DrawRoundedRectangle(roundedRect, borderShadowBrush.Get(), 3.0f * s);
         dc->DrawRoundedRectangle(roundedRect, borderBrush.Get(), 1.5f * s);
+    }
+}
+
+// ============================================================================
+// Crop Overlay Layer
+void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
+    if (!g_cropState.IsActive) return;
+
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (!pane.resource) return;
+
+    int baseExif = g_renderExifOrientation;
+    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
+    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
+    if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) return;
+
+    RECT rc; GetClientRect(hwnd, &rc);
+    float vpW = (float)(rc.right - rc.left);
+    float vpH = (float)(rc.bottom - rc.top);
+    
+    float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
+    if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
+        fitScale = 1.0f;
+    }
+    const float clampedZoom = (std::max)(0.02f, pane.view.Zoom);
+    const float totalScale = fitScale * clampedZoom;
+    
+    float imgDrawX = vpW * 0.5f + pane.view.PanX - (orientedSize.width * 0.5f * totalScale);
+    float imgDrawY = vpH * 0.5f + pane.view.PanY - (orientedSize.height * 0.5f * totalScale);
+    
+    float sLeft = g_cropState.CropLeft * totalScale + imgDrawX;
+    float sTop = g_cropState.CropTop * totalScale + imgDrawY;
+    float sRight = g_cropState.CropRight * totalScale + imgDrawX;
+    float sBottom = g_cropState.CropBottom * totalScale + imgDrawY;
+    
+    D2D1_RECT_F cropRect = D2D1::RectF(sLeft, sTop, sRight, sBottom);
+
+    // 1. Darken outside
+    dc->FillRectangle(D2D1::RectF(0, 0, vpW, sTop), m_blackBrush.Get());
+    dc->FillRectangle(D2D1::RectF(0, sBottom, vpW, vpH), m_blackBrush.Get());
+    dc->FillRectangle(D2D1::RectF(0, sTop, sLeft, sBottom), m_blackBrush.Get());
+    dc->FillRectangle(D2D1::RectF(sRight, sTop, vpW, sBottom), m_blackBrush.Get());
+
+    // 2. White border
+    dc->DrawRectangle(cropRect, m_whiteBrush.Get(), 1.5f * m_uiScale);
+
+    // 3. Rule of Thirds
+    float cw = (sRight - sLeft) / 3.0f;
+    float ch = (sBottom - sTop) / 3.0f;
+    ComPtr<ID2D1SolidColorBrush> gridBrush;
+    dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.4f), &gridBrush);
+    
+    dc->DrawLine(D2D1::Point2F(sLeft + cw, sTop), D2D1::Point2F(sLeft + cw, sBottom), gridBrush.Get(), 1.0f * m_uiScale);
+    dc->DrawLine(D2D1::Point2F(sLeft + 2*cw, sTop), D2D1::Point2F(sLeft + 2*cw, sBottom), gridBrush.Get(), 1.0f * m_uiScale);
+    dc->DrawLine(D2D1::Point2F(sLeft, sTop + ch), D2D1::Point2F(sRight, sTop + ch), gridBrush.Get(), 1.0f * m_uiScale);
+    dc->DrawLine(D2D1::Point2F(sLeft, sTop + 2*ch), D2D1::Point2F(sRight, sTop + 2*ch), gridBrush.Get(), 1.0f * m_uiScale);
+
+    // 4. Handles
+    auto drawHandle = [&](float hx, float hy, int handleId) {
+        float hSize = 5.0f * m_uiScale;
+        D2D1_RECT_F hr = D2D1::RectF(hx - hSize, hy - hSize, hx + hSize, hy + hSize);
+        ID2D1SolidColorBrush* b = (g_cropState.ActiveHandle == handleId) ? m_accentBrush.Get() : m_whiteBrush.Get();
+        dc->FillRectangle(hr, b);
+        dc->DrawRectangle(hr, m_blackBrush.Get(), 1.0f);
+    };
+    drawHandle(sLeft, sTop, 0); // TopLeft
+    drawHandle(sRight, sTop, 1); // TopRight
+    drawHandle(sLeft, sBottom, 2); // BottomLeft
+    drawHandle(sRight, sBottom, 3); // BottomRight
+
+    // Edge handles
+    drawHandle(sLeft + cw * 1.5f, sTop, 5); // Top
+    drawHandle(sLeft + cw * 1.5f, sBottom, 6); // Bottom
+    drawHandle(sLeft, sTop + ch * 1.5f, 7); // Left
+    drawHandle(sRight, sTop + ch * 1.5f, 8); // Right
+
+    // 5. Dimension Label Input Badge (Interactive Width & Height Capsules)
+    int cropW = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
+    int cropH = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
+    
+    wchar_t wStr[32], hStr[32];
+    if (g_cropState.FocusedField == CropState::InputField::Width) {
+        swprintf_s(wStr, L"%s|", g_cropState.InputBuffer);
+    } else {
+        swprintf_s(wStr, L"%d", cropW);
+    }
+    
+    if (g_cropState.FocusedField == CropState::InputField::Height) {
+        swprintf_s(hStr, L"%s|", g_cropState.InputBuffer);
+    } else {
+        swprintf_s(hStr, L"%d", cropH);
+    }
+
+    ComPtr<IDWriteTextLayout> wLayout, hLayout, timesLayout, unitLayout;
+    m_dwriteFactory->CreateTextLayout(wStr, (UINT32)wcslen(wStr), m_osdFormat.Get(), 200.0f * m_uiScale, 30.0f * m_uiScale, &wLayout);
+    m_dwriteFactory->CreateTextLayout(hStr, (UINT32)wcslen(hStr), m_osdFormat.Get(), 200.0f * m_uiScale, 30.0f * m_uiScale, &hLayout);
+    m_dwriteFactory->CreateTextLayout(L"×", 1, m_osdFormat.Get(), 50.0f * m_uiScale, 30.0f * m_uiScale, &timesLayout);
+    m_dwriteFactory->CreateTextLayout(L"px", 2, m_osdFormat.Get(), 50.0f * m_uiScale, 30.0f * m_uiScale, &unitLayout);
+
+    if (wLayout && hLayout) {
+        DWRITE_TEXT_METRICS wTm{}, hTm{}, xTm{}, uTm{};
+        wLayout->GetMetrics(&wTm);
+        hLayout->GetMetrics(&hTm);
+        if (timesLayout) timesLayout->GetMetrics(&xTm);
+        if (unitLayout) unitLayout->GetMetrics(&uTm);
+
+        float padH = 8.0f * m_uiScale;
+        float capH = 26.0f * m_uiScale;
+
+        float wCapWidth = (std::max)(36.0f * m_uiScale, wTm.width + padH * 2.0f);
+        float hCapWidth = (std::max)(36.0f * m_uiScale, hTm.width + padH * 2.0f);
+        float timesWidth = xTm.width + 8.0f * m_uiScale;
+        float unitWidth = uTm.width + 8.0f * m_uiScale;
+
+        float startX = sLeft;
+        float startY = sTop - capH - 8.0f * m_uiScale;
+        if (startY < 6.0f * m_uiScale) {
+            startY = sTop + 8.0f * m_uiScale; // Move inside crop box top-left if too close to window top
+        }
+
+        D2D1_RECT_F wRect = D2D1::RectF(startX, startY, startX + wCapWidth, startY + capH);
+        D2D1_RECT_F xRect = D2D1::RectF(wRect.right, startY, wRect.right + timesWidth, startY + capH);
+        D2D1_RECT_F hRect = D2D1::RectF(xRect.right, startY, xRect.right + hCapWidth, startY + capH);
+        D2D1_RECT_F uRect = D2D1::RectF(hRect.right, startY, hRect.right + unitWidth, startY + capH);
+
+        // Store interactive hit test rects in g_cropState
+        g_cropState.WidthCapsuleRect = wRect;
+        g_cropState.HeightCapsuleRect = hRect;
+
+        ComPtr<ID2D1SolidColorBrush> capBgBrush;
+        dc->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.12f, 0.14f, 0.92f), &capBgBrush);
+
+        // 1. Draw Width Capsule
+        D2D1_ROUNDED_RECT wCap = D2D1::RoundedRect(wRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
+        bool wFocused = (g_cropState.FocusedField == CropState::InputField::Width);
+        bool wHovered = (g_cropState.HoverField == CropState::InputField::Width);
+
+        dc->FillRoundedRectangle(wCap, capBgBrush.Get());
+        ID2D1SolidColorBrush* wBorderBrush = wFocused ? m_accentBrush.Get() : (wHovered ? m_whiteBrush.Get() : m_blackBrush.Get());
+        float wBorderThick = (wFocused || wHovered) ? 1.5f * m_uiScale : 1.0f * m_uiScale;
+        dc->DrawRoundedRectangle(wCap, wBorderBrush, wBorderThick);
+
+        float textY = startY + (capH - wTm.height) * 0.5f;
+        dc->DrawTextLayout(D2D1::Point2F(wRect.left + (wCapWidth - wTm.width) * 0.5f, textY), wLayout.Get(), m_whiteBrush.Get());
+
+        // 2. Draw "×"
+        if (timesLayout) {
+            dc->DrawTextLayout(D2D1::Point2F(xRect.left + 4.0f * m_uiScale, startY + (capH - xTm.height) * 0.5f), timesLayout.Get(), m_whiteBrush.Get());
+        }
+
+        // 3. Draw Height Capsule
+        D2D1_ROUNDED_RECT hCap = D2D1::RoundedRect(hRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
+        bool hFocused = (g_cropState.FocusedField == CropState::InputField::Height);
+        bool hHovered = (g_cropState.HoverField == CropState::InputField::Height);
+
+        dc->FillRoundedRectangle(hCap, capBgBrush.Get());
+        ID2D1SolidColorBrush* hBorderBrush = hFocused ? m_accentBrush.Get() : (hHovered ? m_whiteBrush.Get() : m_blackBrush.Get());
+        float hBorderThick = (hFocused || hHovered) ? 1.5f * m_uiScale : 1.0f * m_uiScale;
+        dc->DrawRoundedRectangle(hCap, hBorderBrush, hBorderThick);
+
+        dc->DrawTextLayout(D2D1::Point2F(hRect.left + (hCapWidth - hTm.width) * 0.5f, textY), hLayout.Get(), m_whiteBrush.Get());
+
+        // 4. Draw "px"
+        if (unitLayout) {
+            dc->DrawTextLayout(D2D1::Point2F(uRect.left + 4.0f * m_uiScale, startY + (capH - uTm.height) * 0.5f), unitLayout.Get(), m_whiteBrush.Get());
+        }
     }
 }
