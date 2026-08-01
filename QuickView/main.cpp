@@ -5307,6 +5307,29 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     g_programmaticResize = false;
 }
 
+void UpdateCropStateEdgeReached(HWND hwnd) {
+    if (!g_cropState.IsActive) return;
+    if (IsZoomed(hwnd) || g_isFullScreen) {
+        g_cropState.ReachedEdgeX = true;
+        g_cropState.ReachedEdgeY = true;
+        return;
+    }
+    HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(hMon, &mi);
+    float workW = static_cast<float>(mi.rcWork.right - mi.rcWork.left);
+    float workH = static_cast<float>(mi.rcWork.bottom - mi.rcWork.top);
+
+    RECT rcWin{};
+    GetWindowRect(hwnd, &rcWin);
+    float winW = static_cast<float>(rcWin.right - rcWin.left);
+    float winH = static_cast<float>(rcWin.bottom - rcWin.top);
+
+    g_cropState.ReachedEdgeX = (winW >= workW - 4.0f);
+    g_cropState.ReachedEdgeY = (winH >= workH - 4.0f);
+}
+
 void AdjustCropModeWindowAndZoom(HWND hwnd) {
     if (!g_cropState.IsActive) return;
     auto& pane = GetPaneContext(PaneSlot::Primary);
@@ -5324,41 +5347,89 @@ void AdjustCropModeWindowAndZoom(HWND hwnd) {
     float workW = static_cast<float>(mi.rcWork.right - mi.rcWork.left);
     float workH = static_cast<float>(mi.rcWork.bottom - mi.rcWork.top);
 
-    float marginW = 100.0f * g_uiScale;
-    float marginH = 164.0f * g_uiScale;
+    RECT curWinRc{};
+    GetWindowRect(hwnd, &curWinRc);
+    float curWinW = static_cast<float>(curWinRc.right - curWinRc.left);
+    float curWinH = static_cast<float>(curWinRc.bottom - curWinRc.top);
 
-    float dispW = orientedSize.width;
-    float dispH = orientedSize.height;
+    RECT clientRc{};
+    GetClientRect(hwnd, &clientRc);
+    float winW = static_cast<float>(clientRc.right - clientRc.left);
+    float winH = static_cast<float>(clientRc.bottom - clientRc.top);
+    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = (std::max)(1.0f, winH - galleryH);
 
-    float reqWinW = dispW + marginW;
-    float reqWinH = dispH + marginH;
+    VisualState vs = GetVisualState();
+    float baseFitBefore = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+    float totalScaleBefore = baseFitBefore * pane.view.Zoom;
+
+    float currDrawW = orientedSize.width * totalScaleBefore;
+    float currDrawH = orientedSize.height * totalScaleBefore;
+
+    float baseMargin = 50.0f * g_uiScale;
+    float toolbarHeight = 48.0f * g_uiScale;
+    float padLeft = baseMargin;
+    float padRight = baseMargin;
+    float padTop = baseMargin;
+    float padBottom = baseMargin + toolbarHeight;
+
+    float totalPadW = padLeft + padRight;
+    float totalPadH = padTop + padBottom;
+
+    float reqWinW = currDrawW + totalPadW;
+    float reqWinH = currDrawH + totalPadH;
 
     if (!IsZoomed(hwnd) && !g_isFullScreen) {
-        float targetWinW = (std::min)(reqWinW, workW);
-        float targetWinH = (std::min)(reqWinH, workH);
+        // [Strict Constraint] Screen must accommodate BOTH width and height estimates
+        bool canFitInScreen = (reqWinW <= workW) && (reqWinH <= workH);
 
-        int newW = static_cast<int>(std::ceil(targetWinW));
-        int newH = static_cast<int>(std::ceil(targetWinH));
-        int newX = mi.rcWork.left + (static_cast<int>(workW) - newW) / 2;
-        int newY = mi.rcWork.top + (static_cast<int>(workH) - newH) / 2;
+        if (canFitInScreen) {
+            // [Branch A] Screen can fit estimated size -> Keep image scale 100% unchanged, expand window!
+            int newW = static_cast<int>(std::ceil(reqWinW));
+            int newH = static_cast<int>(std::ceil(reqWinH));
 
-        g_programmaticResize = true;
-        SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
-        g_programmaticResize = false;
+            int newX = curWinRc.left - (newW - static_cast<int>(curWinW)) / 2;
+            int newY = curWinRc.top - (newH - static_cast<int>(curWinH)) / 2;
 
-        float availW = (std::max)(100.0f * g_uiScale, targetWinW - marginW);
-        float availH = (std::max)(100.0f * g_uiScale, targetWinH - marginH);
+            newX = (std::clamp)(newX, static_cast<int>(mi.rcWork.left), static_cast<int>(mi.rcWork.right) - newW);
+            newY = (std::clamp)(newY, static_cast<int>(mi.rcWork.top), static_cast<int>(mi.rcWork.bottom) - newH);
 
-        float availFitScale = (std::min)(availW / orientedSize.width, availH / orientedSize.height);
-        float newFitScale = (std::min)((float)newW / orientedSize.width, (float)newH / orientedSize.height);
+            g_programmaticResize = true;
+            SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
+            g_programmaticResize = false;
 
-        if (availFitScale > 0.0f && newFitScale > 0.0f) {
-            pane.view.Zoom = (availFitScale / newFitScale);
+            g_cropState.ReachedEdgeX = (static_cast<float>(newW) >= workW - 4.0f);
+            g_cropState.ReachedEdgeY = (static_cast<float>(newH) >= workH - 4.0f);
+
+            float newBaseFit = (std::min)((float)newW / orientedSize.width, (float)newH / orientedSize.height);
+            if (newBaseFit > 0.0001f) {
+                pane.view.Zoom = totalScaleBefore / newBaseFit;
+            } else {
+                pane.view.Zoom = 1.0f;
+            }
         } else {
-            pane.view.Zoom = 1.0f;
+            // [Branch B] Screen CANNOT fit estimated size -> Keep window STRICTLY UNCHANGED, downscale image!
+            g_cropState.ReachedEdgeX = (curWinW >= workW - 4.0f);
+            g_cropState.ReachedEdgeY = (curWinH >= workH - 4.0f);
+
+            float availW = (std::max)(100.0f * g_uiScale, winW - totalPadW);
+            float availH = (std::max)(100.0f * g_uiScale, effWinH - totalPadH);
+
+            float availFitScale = (std::min)(availW / orientedSize.width, availH / orientedSize.height);
+            float currentBaseFit = (std::min)(winW / orientedSize.width, effWinH / orientedSize.height);
+
+            if (availFitScale > 0.0f && currentBaseFit > 0.0f) {
+                pane.view.Zoom = (availFitScale / currentBaseFit);
+            } else {
+                pane.view.Zoom = 1.0f;
+            }
         }
+
         pane.view.PanX = 0.0f;
-        pane.view.PanY = -32.0f * g_uiScale; // 50px top margin, 50px bottom margin above toolbar
+        pane.view.PanY = -0.5f * toolbarHeight; // Center image vertically above bottom toolbar
+    } else {
+        g_cropState.ReachedEdgeX = true;
+        g_cropState.ReachedEdgeY = true;
     }
 }
 
@@ -7869,6 +7940,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_SIZE: {
+        UpdateCropStateEdgeReached(hwnd);
         static bool s_wasMinimized = false;
         if (wParam == SIZE_MAXIMIZED) {
              // Force Square Corners when maximized (Standard Windows behavior)

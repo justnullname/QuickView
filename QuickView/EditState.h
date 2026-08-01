@@ -834,11 +834,16 @@ struct CropState {
     D2D1_RECT_F WidthCapsuleRect = {};
     D2D1_RECT_F HeightCapsuleRect = {};
 
+    bool ReachedEdgeX = false;
+    bool ReachedEdgeY = false;
+
     void Reset() {
         IsActive = false;
         IsDragging = false;
         IsQuickActionVisible = false;
         IsInputInvalid = false;
+        ReachedEdgeX = false;
+        ReachedEdgeY = false;
         CropLeft = CropTop = CropRight = CropBottom = 0;
         ActiveHandle = -1;
         FocusedField = InputField::None;
