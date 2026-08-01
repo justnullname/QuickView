@@ -602,6 +602,14 @@ const wchar_t *GetTooltipText(const ToolbarButton &btn) {
     return btn.isToggled ? AppStrings::Toolbar_Tooltip_OverlayPassthroughOff : AppStrings::Toolbar_Tooltip_OverlayPassthroughOn;
   case ToolbarButtonID::OverlayExit:
     return AppStrings::Toolbar_Tooltip_OverlayExit;
+  case ToolbarButtonID::CropCopy:
+    return AppStrings::Toolbar_Tooltip_CropCopy;
+  case ToolbarButtonID::CropSave:
+    return AppStrings::Toolbar_Tooltip_CropSave;
+  case ToolbarButtonID::CropApply:
+    return AppStrings::Toolbar_Tooltip_CropApply;
+  case ToolbarButtonID::CropCancel:
+    return AppStrings::Toolbar_Tooltip_CropCancel;
   default:
     return nullptr;
   }
@@ -625,7 +633,14 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
   bool isLight = IsLightThemeActive();
   m_brushBg->SetColor(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f));
   m_brushIcon->SetColor(isLight ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White));
-  m_brushIconActive->SetColor(D2D1::ColorF(0.4f, 0.6f, 1.0f, 1.0f));
+  
+  D2D1_COLOR_F accentClr;
+  if (g_config.ThemeMode == 3) {
+      accentClr = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+  } else {
+      accentClr = isLight ? D2D1::ColorF(0.0f, 0.478f, 1.0f, 1.0f) : D2D1::ColorF(0.35f, 0.65f, 1.0f, 1.0f);
+  }
+  m_brushIconActive->SetColor(accentClr);
   m_brushIconDisabled->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.3f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f));
   m_brushWarning->SetColor(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f));
   m_brushHover->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f));
@@ -810,6 +825,8 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
       if (btn.id == ToolbarButtonID::AnimPlayPause && m_animPlaying)
         pBrush = m_brushIconActive.Get();
       if (btn.id == ToolbarButtonID::AnimDirtyRect && m_animDirtyRect)
+        pBrush = m_brushIconActive.Get();
+      if (btn.id == ToolbarButtonID::CropSave)
         pBrush = m_brushIconActive.Get();
       if (btn.id == ToolbarButtonID::CropApply && m_brushGreen)
         pBrush = m_brushGreen.Get();

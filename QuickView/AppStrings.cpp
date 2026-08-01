@@ -39,6 +39,19 @@ const wchar_t *Dialog_ButtonSave = nullptr;
 const wchar_t *Dialog_ButtonSaveAs = nullptr;
 const wchar_t *Dialog_ButtonDiscard = nullptr;
 const wchar_t *Dialog_ButtonContinue = nullptr;
+const wchar_t *Dialog_CropUnsavedTitle = nullptr;
+const wchar_t *Dialog_SaveAsTitle = nullptr;
+const wchar_t *Dialog_ExportTitle = nullptr;
+const wchar_t *Dialog_ButtonOverwrite = nullptr;
+const wchar_t *Dialog_EmbedICC = nullptr;
+const wchar_t *Dialog_SizeEstimating = nullptr;
+const wchar_t *Dialog_ExportError = nullptr;
+const wchar_t *Toolbar_Tooltip_CropCopy = nullptr;
+const wchar_t *Toolbar_Tooltip_CropSave = nullptr;
+const wchar_t *Toolbar_Tooltip_CropApply = nullptr;
+const wchar_t *Toolbar_Tooltip_CropCancel = nullptr;
+const wchar_t *OSD_EnterCropMode = nullptr;
+const wchar_t *OSD_CropCopied = nullptr;
 const wchar_t *Checkbox_AlwaysSaveLossless = nullptr;
 const wchar_t *Checkbox_AlwaysSaveEdgeAdapted = nullptr;
 const wchar_t *Checkbox_AlwaysSaveLossy = nullptr;
@@ -610,6 +623,20 @@ struct LanguageTable {
     const wchar_t *Dialog_ButtonSaveAs;
     const wchar_t *Dialog_ButtonDiscard;
     const wchar_t *Dialog_ButtonContinue;
+    const wchar_t *Dialog_CropUnsavedTitle;
+    const wchar_t *Dialog_SaveAsTitle;
+    const wchar_t *Dialog_ExportTitle;
+    const wchar_t *Dialog_ButtonOverwrite;
+    const wchar_t *Dialog_EmbedICC;
+    const wchar_t *Dialog_SizeEstimating;
+    const wchar_t *Dialog_ExportError;
+    const wchar_t *Toolbar_Tooltip_CropCopy;
+    const wchar_t *Toolbar_Tooltip_CropSave;
+    const wchar_t *Toolbar_Tooltip_CropApply;
+    const wchar_t *Toolbar_Tooltip_CropCancel;
+    const wchar_t *OSD_EnterCropMode;
+    const wchar_t *OSD_CropCopied;
+    const wchar_t *Context_Crop;
     const wchar_t *Checkbox_AlwaysSaveLossless;
     const wchar_t *Checkbox_AlwaysSaveEdgeAdapted;
     const wchar_t *Checkbox_AlwaysSaveLossy;
@@ -1163,6 +1190,20 @@ static const LanguageTable Table_EN = {
     L"Save As...", // Dialog_ButtonSaveAs
     L"Discard", // Dialog_ButtonDiscard
     L"Continue", // Dialog_ButtonContinue
+    L"Unsaved crop modifications. Save changes?", // Dialog_CropUnsavedTitle
+    L"Save Image", // Dialog_SaveAsTitle
+    L"Save & Export", // Dialog_ExportTitle
+    L"Overwrite", // Dialog_ButtonOverwrite
+    L"ICC Profile", // Dialog_EmbedICC
+    L"Size: Estimating...", // Dialog_SizeEstimating
+    L"Export Error", // Dialog_ExportError
+    L"Copy Selection (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"Save (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"Apply (Enter)", // Toolbar_Tooltip_CropApply
+    L"Exit (Esc)", // Toolbar_Tooltip_CropCancel
+    L"Entered Crop Mode", // OSD_EnterCropMode
+    L"Copied crop selection", // OSD_CropCopied
+    L"Crop", // Context_Crop
     L"Always save lossless transforms", // Checkbox_AlwaysSaveLossless
     L"Always save edge-adapted", // Checkbox_AlwaysSaveEdgeAdapted
     L"Always save re-encoded", // Checkbox_AlwaysSaveLossy
@@ -1716,6 +1757,20 @@ static const LanguageTable Table_CN = {
     L"另存为...", // Dialog_ButtonSaveAs
     L"放弃", // Dialog_ButtonDiscard
     L"继续", // Dialog_ButtonContinue
+    L"裁剪修改未保存，是否保存更改？", // Dialog_CropUnsavedTitle
+    L"另存图片", // Dialog_SaveAsTitle
+    L"保存与导出", // Dialog_ExportTitle
+    L"覆盖保存", // Dialog_ButtonOverwrite
+    L"嵌入 ICC 配置", // Dialog_EmbedICC
+    L"大小: 估算中...", // Dialog_SizeEstimating
+    L"导出错误", // Dialog_ExportError
+    L"复制选区 (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"保存 (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"应用 (Enter)", // Toolbar_Tooltip_CropApply
+    L"退出 (Esc)", // Toolbar_Tooltip_CropCancel
+    L"已进入裁剪模式", // OSD_EnterCropMode
+    L"已复制裁剪选区", // OSD_CropCopied
+    L"裁剪", // Context_Crop
     L"总是保存无损变换", // Checkbox_AlwaysSaveLossless
     L"总是保存边缘优化结果", // Checkbox_AlwaysSaveEdgeAdapted
     L"总是保存重编码结果", // Checkbox_AlwaysSaveLossy
@@ -2269,6 +2324,20 @@ static const LanguageTable Table_TW = {
     L"另存為...", // Dialog_ButtonSaveAs
     L"放棄", // Dialog_ButtonDiscard
     L"繼續", // Dialog_ButtonContinue
+    L"裁剪修改未儲存，是否儲存變更？", // Dialog_CropUnsavedTitle
+    L"另存圖片", // Dialog_SaveAsTitle
+    L"儲存與匯出", // Dialog_ExportTitle
+    L"覆蓋儲存", // Dialog_ButtonOverwrite
+    L"嵌入 ICC 設定", // Dialog_EmbedICC
+    L"大小: 估算中...", // Dialog_SizeEstimating
+    L"匯出錯誤", // Dialog_ExportError
+    L"複製選區 (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"儲存 (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"應用 (Enter)", // Toolbar_Tooltip_CropApply
+    L"退出 (Esc)", // Toolbar_Tooltip_CropCancel
+    L"已進入裁剪模式", // OSD_EnterCropMode
+    L"已複製裁剪選區", // OSD_CropCopied
+    L"裁剪", // Context_Crop
     L"總是儲存無損變換", // Checkbox_AlwaysSaveLossless
     L"總是儲存邊緣優化結果", // Checkbox_AlwaysSaveEdgeAdapted
     L"總是儲存重新編碼結果", // Checkbox_AlwaysSaveLossy
@@ -2822,6 +2891,20 @@ static const LanguageTable Table_JA = {
     L"名前を付けて保存...", // Dialog_ButtonSaveAs
     L"破棄", // Dialog_ButtonDiscard
     L"続行", // Dialog_ButtonContinue
+    L"クロップの変更が保存されていません。保存しますか？", // Dialog_CropUnsavedTitle
+    L"画像を保存", // Dialog_SaveAsTitle
+    L"保存とエクスポート", // Dialog_ExportTitle
+    L"上書き保存", // Dialog_ButtonOverwrite
+    L"ICCプロファイル", // Dialog_EmbedICC
+    L"サイズ: 計算中...", // Dialog_SizeEstimating
+    L"エクスポートエラー", // Dialog_ExportError
+    L"選択範囲をコピー (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"保存 (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"適用 (Enter)", // Toolbar_Tooltip_CropApply
+    L"終了 (Esc)", // Toolbar_Tooltip_CropCancel
+    L"クロップモードに入りました", // OSD_EnterCropMode
+    L"クロップ範囲をコピーしました", // OSD_CropCopied
+    L"クロップ", // Context_Crop
     L"常にロスレス変換で保存する", // Checkbox_AlwaysSaveLossless
     L"常にエッジ最適化で保存する", // Checkbox_AlwaysSaveEdgeAdapted
     L"常に再エンコードして保存する", // Checkbox_AlwaysSaveLossy
@@ -3375,6 +3458,20 @@ static const LanguageTable Table_RU = {
     L"Сохранить как...", // Dialog_ButtonSaveAs
     L"Отменить", // Dialog_ButtonDiscard
     L"Продолжить", // Dialog_ButtonContinue
+    L"Изменения кадрирования не сохранены. Сохранить?", // Dialog_CropUnsavedTitle
+    L"Сохранить изображение", // Dialog_SaveAsTitle
+    L"Сохранение и экспорт", // Dialog_ExportTitle
+    L"Перезаписать", // Dialog_ButtonOverwrite
+    L"Профиль ICC", // Dialog_EmbedICC
+    L"Размер: Оценка...", // Dialog_SizeEstimating
+    L"Ошибка экспорта", // Dialog_ExportError
+    L"Скопировать выделение (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"Сохранить (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"Применить (Enter)", // Toolbar_Tooltip_CropApply
+    L"Выход (Esc)", // Toolbar_Tooltip_CropCancel
+    L"Режим кадрирования", // OSD_EnterCropMode
+    L"Область кадрирования скопирована", // OSD_CropCopied
+    L"Кадрировать", // Context_Crop
     L"Всегда сохранять без потерь", // Checkbox_AlwaysSaveLossless
     L"Всегда сохранять с оптимизацией краёв", // Checkbox_AlwaysSaveEdgeAdapted
     L"Всегда сохранять перекодированное", // Checkbox_AlwaysSaveLossy
@@ -3928,6 +4025,20 @@ static const LanguageTable Table_DE = {
     L"Speichern unter...", // Dialog_ButtonSaveAs
     L"Verwerfen", // Dialog_ButtonDiscard
     L"Fortfahren", // Dialog_ButtonContinue
+    L"Zuschneide-Änderungen nicht gespeichert. Speichern?", // Dialog_CropUnsavedTitle
+    L"Bild speichern", // Dialog_SaveAsTitle
+    L"Speichern & Exportieren", // Dialog_ExportTitle
+    L"Überschreiben", // Dialog_ButtonOverwrite
+    L"ICC-Profil", // Dialog_EmbedICC
+    L"Größe: Schätzung...", // Dialog_SizeEstimating
+    L"Exportfehler", // Dialog_ExportError
+    L"Auswahl kopieren (Strg+C)", // Toolbar_Tooltip_CropCopy
+    L"Speichern (Strg+S)", // Toolbar_Tooltip_CropSave
+    L"Anwenden (Enter)", // Toolbar_Tooltip_CropApply
+    L"Beenden (Esc)", // Toolbar_Tooltip_CropCancel
+    L"Zuschneiden-Modus aktiv", // OSD_EnterCropMode
+    L"Zuschneide-Auswahl kopiert", // OSD_CropCopied
+    L"Zuschneiden", // Context_Crop
     L"Immer verlustfrei speichern", // Checkbox_AlwaysSaveLossless
     L"Immer kantenoptimiert speichern", // Checkbox_AlwaysSaveEdgeAdapted
     L"Immer neu kodiert speichern", // Checkbox_AlwaysSaveLossy
@@ -4481,6 +4592,20 @@ static const LanguageTable Table_ES = {
     L"Guardar como...", // Dialog_ButtonSaveAs
     L"Descartar", // Dialog_ButtonDiscard
     L"Continuar", // Dialog_ButtonContinue
+    L"Cambios de recorte no guardados. ¿Guardar cambios?", // Dialog_CropUnsavedTitle
+    L"Guardar imagen", // Dialog_SaveAsTitle
+    L"Guardar y exportar", // Dialog_ExportTitle
+    L"Sobrescribir", // Dialog_ButtonOverwrite
+    L"Perfil ICC", // Dialog_EmbedICC
+    L"Tamaño: Calculando...", // Dialog_SizeEstimating
+    L"Error de exportación", // Dialog_ExportError
+    L"Copiar selección (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"Guardar (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"Aplicar (Enter)", // Toolbar_Tooltip_CropApply
+    L"Salir (Esc)", // Toolbar_Tooltip_CropCancel
+    L"Modo de recorte activado", // OSD_EnterCropMode
+    L"Selección de recorte copiada", // OSD_CropCopied
+    L"Recortar", // Context_Crop
     L"Siempre guardar sin pérdida", // Checkbox_AlwaysSaveLossless
     L"Siempre guardar con bordes optimizados", // Checkbox_AlwaysSaveEdgeAdapted
     L"Siempre guardar recodificado", // Checkbox_AlwaysSaveLossy
@@ -5034,6 +5159,20 @@ static const LanguageTable Table_FR = {
     L"Save As...", // Dialog_ButtonSaveAs
     L"Discard", // Dialog_ButtonDiscard
     L"Continuer", // Dialog_ButtonContinue
+    L"Modifications de recadrage non enregistrées. Enregistrer?", // Dialog_CropUnsavedTitle
+    L"Enregistrer l'image", // Dialog_SaveAsTitle
+    L"Enregistrer et exporter", // Dialog_ExportTitle
+    L"Écraser", // Dialog_ButtonOverwrite
+    L"Profil ICC", // Dialog_EmbedICC
+    L"Taille: Estimation...", // Dialog_SizeEstimating
+    L"Erreur d'exportation", // Dialog_ExportError
+    L"Copier la sélection (Ctrl+C)", // Toolbar_Tooltip_CropCopy
+    L"Enregistrer (Ctrl+S)", // Toolbar_Tooltip_CropSave
+    L"Appliquer (Enter)", // Toolbar_Tooltip_CropApply
+    L"Quitter (Esc)", // Toolbar_Tooltip_CropCancel
+    L"Mode recadrage activé", // OSD_EnterCropMode
+    L"Sélection de recadrage copiée", // OSD_CropCopied
+    L"Recadrer", // Context_Crop
     L"Always save lossless transforms", // Checkbox_AlwaysSaveLossless
     L"Always save edge-adapted", // Checkbox_AlwaysSaveEdgeAdapted
     L"Always save re-encoded", // Checkbox_AlwaysSaveLossy
@@ -5587,6 +5726,20 @@ void Apply(const LanguageTable& t) {
   Dialog_ButtonSaveAs = t.Dialog_ButtonSaveAs;
   Dialog_ButtonDiscard = t.Dialog_ButtonDiscard;
   Dialog_ButtonContinue = t.Dialog_ButtonContinue;
+  Dialog_CropUnsavedTitle = t.Dialog_CropUnsavedTitle;
+  Dialog_SaveAsTitle = t.Dialog_SaveAsTitle;
+  Dialog_ExportTitle = t.Dialog_ExportTitle;
+  Dialog_ButtonOverwrite = t.Dialog_ButtonOverwrite;
+  Dialog_EmbedICC = t.Dialog_EmbedICC;
+  Dialog_SizeEstimating = t.Dialog_SizeEstimating;
+  Dialog_ExportError = t.Dialog_ExportError;
+  Toolbar_Tooltip_CropCopy = t.Toolbar_Tooltip_CropCopy;
+  Toolbar_Tooltip_CropSave = t.Toolbar_Tooltip_CropSave;
+  Toolbar_Tooltip_CropApply = t.Toolbar_Tooltip_CropApply;
+  Toolbar_Tooltip_CropCancel = t.Toolbar_Tooltip_CropCancel;
+  OSD_EnterCropMode = t.OSD_EnterCropMode;
+  OSD_CropCopied = t.OSD_CropCopied;
+  Context_Crop = t.Context_Crop;
   Checkbox_AlwaysSaveLossless = t.Checkbox_AlwaysSaveLossless;
   Checkbox_AlwaysSaveEdgeAdapted = t.Checkbox_AlwaysSaveEdgeAdapted;
   Checkbox_AlwaysSaveLossy = t.Checkbox_AlwaysSaveLossy;
@@ -5622,8 +5775,6 @@ void Apply(const LanguageTable& t) {
   Settings_Status_Enabled = t.Settings_Status_Enabled;
   Settings_Header_PoweredBy = t.Settings_Header_PoweredBy;
   Context_Open = t.Context_Open;
-  Context_Crop = L"Crop";
-  if (g_config.Language == 2) Context_Crop = L"裁剪";
   Context_OpenWith = t.Context_OpenWith;
   Context_Edit = t.Context_Edit;
   Context_ShowInExplorer = t.Context_ShowInExplorer;
@@ -6539,6 +6690,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         case AppStrings::Language::Spanish:            raw = L"Modo de recorte"; break;
         case AppStrings::Language::French:             raw = L"Mode recadrage"; break;
         default:                                       raw = L"Crop Mode"; break;
+        }
+        break;
+    }
+    case HotkeyAction::SaveAs: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"另存图片"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"另存圖片"; break;
+        case AppStrings::Language::Japanese:           raw = L"画像を保存"; break;
+        case AppStrings::Language::Russian:            raw = L"Сохранить изображение"; break;
+        case AppStrings::Language::German:             raw = L"Bild speichern"; break;
+        case AppStrings::Language::Spanish:            raw = L"Guardar imagen"; break;
+        case AppStrings::Language::French:             raw = L"Enregistrer l'image"; break;
+        default:                                       raw = L"Save Image"; break;
         }
         break;
     }

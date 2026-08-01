@@ -101,14 +101,24 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
     hr = decoder->GetFrame(0, &frame);
     if (FAILED(hr)) return hr;
 
-    // Extract ICC Color Context if requested
+    // Extract or Create ICC Color Context if requested
     if (options.EmbedIcc) {
-        UINT count = 0;
-        if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
+        if (!options.CustomIccData.empty()) {
             if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                UINT actualCount = 0;
-                IWICColorContext* pContext = outColorContext.Get();
-                frame->GetColorContexts(1, &pContext, &actualCount);
+                outColorContext->InitializeFromMemory(options.CustomIccData.data(), static_cast<UINT>(options.CustomIccData.size()));
+            }
+        } else if (!options.IccProfilePath.empty()) {
+            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                outColorContext->InitializeFromFilename(options.IccProfilePath.c_str());
+            }
+        } else {
+            UINT count = 0;
+            if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
+                if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                    UINT actualCount = 0;
+                    IWICColorContext* pContext = outColorContext.Get();
+                    frame->GetColorContexts(1, &pContext, &actualCount);
+                }
             }
         }
     }

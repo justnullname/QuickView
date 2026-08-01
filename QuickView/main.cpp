@@ -344,6 +344,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ToggleDebugHud, KeyCombo{ VK_F12, 0 }, KeyCombo{ VK_F12, 0 } },
     HotkeyBinding{ HotkeyAction::Print, KeyCombo{ 'P', 1 }, KeyCombo{ 'P', 1 } }, // Ctrl + P
     HotkeyBinding{ HotkeyAction::EnterCropMode, KeyCombo{ 'X', 0 }, KeyCombo{ 'X', 0 } }, // Enter Crop Mode
+    HotkeyBinding{ HotkeyAction::SaveAs, KeyCombo{ 'S', 1 }, KeyCombo{ 'S', 1 } }, // Save As / Export Image (Ctrl + S)
     HotkeyBinding{ HotkeyAction::ToggleOverlay, KeyCombo{ 'O', 3 }, KeyCombo{ 'O', 3 } }, // Ctrl + Shift + O (1 | 2 = 3)
     HotkeyBinding{ HotkeyAction::OverlayAlphaUp, KeyCombo{ VK_UP, 4 }, KeyCombo{ VK_UP, 4 } }, // Alt + Up
     HotkeyBinding{ HotkeyAction::OverlayAlphaDown, KeyCombo{ VK_DOWN, 4 }, KeyCombo{ VK_DOWN, 4 } }, // Alt + Down
@@ -8885,16 +8886,18 @@ SKIP_EDGE_NAV:;
                          return (std::abs(pt.x - hx) <= hTol && std::abs(pt.y - hy) <= hTol);
                      };
 
-                     HCURSOR targetCursor = nullptr;
-                     if (hitPt(sLeft, sTop) || hitPt(sRight, sBottom)) targetCursor = LoadCursor(nullptr, IDC_SIZENWSE);
-                     else if (hitPt(sRight, sTop) || hitPt(sLeft, sBottom)) targetCursor = LoadCursor(nullptr, IDC_SIZENESW);
-                     else if (hitPt(sLeft + cw * 1.5f, sTop) || hitPt(sLeft + cw * 1.5f, sBottom)) targetCursor = LoadCursor(nullptr, IDC_SIZENS);
-                     else if (hitPt(sLeft, sTop + ch * 1.5f) || hitPt(sRight, sTop + ch * 1.5f)) targetCursor = LoadCursor(nullptr, IDC_SIZEWE);
-                     else if (pt.x >= sLeft && pt.x <= sRight && pt.y >= sTop && pt.y <= sBottom) targetCursor = LoadCursor(nullptr, IDC_SIZEALL);
+                     if (!QuickView::ExportPanel::GetInstance().IsVisible()) {
+                         HCURSOR targetCursor = nullptr;
+                         if (hitPt(sLeft, sTop) || hitPt(sRight, sBottom)) targetCursor = LoadCursor(nullptr, IDC_SIZENWSE);
+                         else if (hitPt(sRight, sTop) || hitPt(sLeft, sBottom)) targetCursor = LoadCursor(nullptr, IDC_SIZENESW);
+                         else if (hitPt(sLeft + cw * 1.5f, sTop) || hitPt(sLeft + cw * 1.5f, sBottom)) targetCursor = LoadCursor(nullptr, IDC_SIZENS);
+                         else if (hitPt(sLeft, sTop + ch * 1.5f) || hitPt(sRight, sTop + ch * 1.5f)) targetCursor = LoadCursor(nullptr, IDC_SIZEWE);
+                         else if (pt.x >= sLeft && pt.x <= sRight && pt.y >= sTop && pt.y <= sBottom) targetCursor = LoadCursor(nullptr, IDC_SIZEALL);
 
-                     if (targetCursor) {
-                         SetCursor(targetCursor);
-                         g_currentCursor = targetCursor;
+                         if (targetCursor) {
+                             SetCursor(targetCursor);
+                             g_currentCursor = targetCursor;
+                         }
                      }
                  }
              }
@@ -9283,9 +9286,7 @@ SKIP_EDGE_NAV:;
             // Check if this was a "click" (short duration, minimal movement)
             if (elapsed < 300 && dx < 5 && dy < 5) {
                 if (g_config.MiddleClickAction == MouseAction::ExitApp) {
-                    if (CheckUnsavedChanges(hwnd)) {
-                        PostMessage(hwnd, WM_CLOSE, 0, 0);
-                    }
+                    PostMessage(hwnd, WM_CLOSE, 0, 0);
                 }
             }
             return 0;
@@ -9323,11 +9324,8 @@ SKIP_EDGE_NAV:;
                     RequestRepaint(PaintLayer::Dynamic);  // Only OSD update needed
                     break;
                 case MouseAction::ExitApp:
-                    if (CheckUnsavedChanges(hwnd)) {
-                        PostMessage(hwnd, WM_CLOSE, 0, 0);
-                        return 0;
-                    }
-                    break;
+                    PostMessage(hwnd, WM_CLOSE, 0, 0);
+                    return 0;
                 case MouseAction::FitWindow:
                     // Reset zoom to fit
                     GetPaneContext(PaneSlot::Primary).view.Zoom = 1.0f;
@@ -9423,37 +9421,6 @@ SKIP_EDGE_NAV:;
         }
         if (QuickView::ExportPanel::GetInstance().IsVisible()) {
             if (QuickView::ExportPanel::GetInstance().OnLButtonDown((float)pt.x, (float)pt.y)) return 0;
-        }
-
-        if (g_cropState.IsActive && g_cropState.IsQuickActionVisible && !QuickView::ExportPanel::GetInstance().IsVisible()) {
-            const auto& pane = GetPaneContext(PaneSlot::Primary);
-            int baseExif = g_renderExifOrientation;
-            int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-            D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-            
-            RECT rc; GetClientRect(hwnd, &rc);
-            float vpW = (float)(rc.right - rc.left);
-            float vpH = (float)(rc.bottom - rc.top);
-            
-            float fitScale = (std::min)(vpW / orientedSize.width, vpH / orientedSize.height);
-            if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) fitScale = 1.0f;
-            const float totalScale = fitScale * (std::max)(0.02f, pane.view.Zoom);
-            float imgDrawX = vpW * 0.5f + pane.view.PanX - (orientedSize.width * 0.5f * totalScale);
-            float imgDrawY = vpH * 0.5f + pane.view.PanY - (orientedSize.height * 0.5f * totalScale);
-            
-            float sRight = g_cropState.CropRight * totalScale + imgDrawX;
-            float sBottom = g_cropState.CropBottom * totalScale + imgDrawY;
-            
-            float tbWidth = 160.0f * g_uiScale;
-            float tbHeight = 40.0f * g_uiScale;
-            float tbX = sRight - tbWidth;
-            float tbY = sBottom + 16.0f * g_uiScale;
-            if (tbY + tbHeight > vpH) tbY = sBottom - tbHeight - 16.0f * g_uiScale;
-            if (tbX < 0) tbX = 16.0f * g_uiScale;
-            
-            if (pt.x >= tbX && pt.x <= tbX + tbWidth && pt.y >= tbY && pt.y <= tbY + tbHeight) {
-                return 0; // absorb click
-            }
         }
 
         auto miniHit = HitTestMinimaps(pt);
@@ -9961,70 +9928,6 @@ SKIP_EDGE_NAV:;
 
         if (QuickView::ExportPanel::GetInstance().IsVisible()) {
             if (QuickView::ExportPanel::GetInstance().OnLButtonUp((float)pt.x, (float)pt.y)) return 0;
-        }
-
-        if (g_cropState.IsActive && g_cropState.IsQuickActionVisible && !QuickView::ExportPanel::GetInstance().IsVisible()) {
-            const auto& pane = GetPaneContext(PaneSlot::Primary);
-            int baseExif = g_renderExifOrientation;
-            int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-            D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-            
-            RECT rc; GetClientRect(hwnd, &rc);
-            float vpW = (float)(rc.right - rc.left);
-            float vpH = (float)(rc.bottom - rc.top);
-            
-            float fitScale = (std::min)(vpW / orientedSize.width, vpH / orientedSize.height);
-            if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) fitScale = 1.0f;
-            const float totalScale = fitScale * (std::max)(0.02f, pane.view.Zoom);
-            float imgDrawX = vpW * 0.5f + pane.view.PanX - (orientedSize.width * 0.5f * totalScale);
-            float imgDrawY = vpH * 0.5f + pane.view.PanY - (orientedSize.height * 0.5f * totalScale);
-            
-            float sRight = g_cropState.CropRight * totalScale + imgDrawX;
-            float sBottom = g_cropState.CropBottom * totalScale + imgDrawY;
-            
-            float tbWidth = 160.0f * g_uiScale;
-            float tbHeight = 40.0f * g_uiScale;
-            float tbX = sRight - tbWidth;
-            float tbY = sBottom + 16.0f * g_uiScale;
-            if (tbY + tbHeight > vpH) tbY = sBottom - tbHeight - 16.0f * g_uiScale;
-            if (tbX < 0) tbX = 16.0f * g_uiScale;
-            
-            if (pt.x >= tbX && pt.x <= tbX + tbWidth && pt.y >= tbY && pt.y <= tbY + tbHeight) {
-                int iconIdx = std::clamp((int)((pt.x - tbX) / (tbWidth / 4.0f)), 0, 3);
-                if (iconIdx == 0) {
-                    QuickView::ExportOptions opts;
-                    opts.InputPath = g_imagePath;
-                    opts.CropX = (int)g_cropState.CropLeft;
-                    opts.CropY = (int)g_cropState.CropTop;
-                    opts.CropWidth = (int)(g_cropState.CropRight - g_cropState.CropLeft);
-                    opts.CropHeight = (int)(g_cropState.CropBottom - g_cropState.CropTop);
-                    (void)QuickView::ImageExporter::CopyToClipboard(opts, hwnd);
-                    g_cropState.IsActive = false;
-                    RequestRepaint(PaintLayer::All);
-                } else if (iconIdx == 1) {
-                    // Crop View Focus Action
-                    int targetWidth = (int)(g_cropState.CropRight - g_cropState.CropLeft);
-                    int targetHeight = (int)(g_cropState.CropBottom - g_cropState.CropTop);
-                    if (targetWidth > 0 && targetHeight > 0) {
-                        float fitScale = (std::min)(vpW / (float)targetWidth, vpH / (float)targetHeight);
-                        GetPaneContext(PaneSlot::Primary).view.Zoom = fitScale;
-                        float cropCenterX = g_cropState.CropLeft + targetWidth * 0.5f;
-                        float cropCenterY = g_cropState.CropTop + targetHeight * 0.5f;
-                        GetPaneContext(PaneSlot::Primary).view.PanX = (orientedSize.width * 0.5f - cropCenterX) * fitScale;
-                        GetPaneContext(PaneSlot::Primary).view.PanY = (orientedSize.height * 0.5f - cropCenterY) * fitScale;
-                        RequestRepaint(PaintLayer::All);
-                    }
-                } else if (iconIdx == 2) {
-                    int targetWidth = (int)(g_cropState.CropRight - g_cropState.CropLeft);
-                    int targetHeight = (int)(g_cropState.CropBottom - g_cropState.CropTop);
-                    QuickView::ExportPanel::GetInstance().Show(hwnd, targetWidth, targetHeight, g_imagePath);
-                    RequestRepaint(PaintLayer::All);
-                } else if (iconIdx == 3) {
-                    g_cropState.IsActive = false;
-                    RequestRepaint(PaintLayer::All);
-                }
-                return 0; // absorb click
-            }
         }
 
         bool wasMinimapDragging = false;
@@ -10603,6 +10506,10 @@ SKIP_EDGE_NAV:;
         if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
             return 0;
         }
+        if (QuickView::ExportPanel::GetInstance().IsVisible()) {
+            short rawDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+            if (QuickView::ExportPanel::GetInstance().OnMouseWheel(rawDelta)) return 0;
+        }
 
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
 
@@ -11043,6 +10950,34 @@ SKIP_EDGE_NAV:;
             }
             // [Fix] Intercept all other keydowns when an input capsule has focus so hotkeys (like '0' for ZoomFit) are not triggered!
             return 0;
+        }
+        if (g_cropState.IsActive && !QuickView::ExportPanel::GetInstance().IsVisible()) {
+            if (wParam == VK_RETURN) {
+                int cropW = (int)(g_cropState.CropRight - g_cropState.CropLeft);
+                int cropH = (int)(g_cropState.CropBottom - g_cropState.CropTop);
+                if (cropW > 0 && cropH > 0) {
+                    auto& pane = GetPaneContext(PaneSlot::Primary);
+                    pane.editState.HasCrop = true;
+                    pane.editState.CropLeft = g_cropState.CropLeft;
+                    pane.editState.CropTop = g_cropState.CropTop;
+                    pane.editState.CropRight = g_cropState.CropRight;
+                    pane.editState.CropBottom = g_cropState.CropBottom;
+                    pane.editState.IsDirty = true;
+                    
+                    g_cropState.IsActive = false;
+                    g_toolbar.SetCropMode(false);
+                    
+                    extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade);
+                    RenderImageToDComp(hwnd, pane.resource, false);
+
+                    pane.view.Zoom = 1.0f;
+                    pane.view.PanX = 0.0f;
+                    pane.view.PanY = 0.0f;
+
+                    RequestRepaint(PaintLayer::All);
+                }
+                return 0;
+            }
         }
         if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
             bool wasPrintVisible = true;
@@ -11636,6 +11571,19 @@ SKIP_EDGE_NAV:;
             break;
         }
         case IDM_COPY_IMAGE: {
+            if (g_cropState.IsActive) {
+                QuickView::ExportOptions opts;
+                opts.InputPath = g_imagePath;
+                opts.CropX = (int)g_cropState.CropLeft;
+                opts.CropY = (int)g_cropState.CropTop;
+                opts.CropWidth = (int)(g_cropState.CropRight - g_cropState.CropLeft);
+                opts.CropHeight = (int)(g_cropState.CropBottom - g_cropState.CropTop);
+                auto res = QuickView::ImageExporter::CopyToClipboard(opts, hwnd);
+                if (res.has_value()) {
+                    g_osd.Show(hwnd, AppStrings::OSD_CropCopied, true);
+                }
+                break;
+            }
             if (!CheckUnsavedChanges(hwnd)) break;
             // Copy file to clipboard (can paste in Explorer or other apps)
             if (!contextPath.empty() && OpenClipboard(hwnd)) {
@@ -12516,7 +12464,7 @@ SKIP_EDGE_NAV:;
         }
 
         case IDM_EXIT: {
-            if (CheckUnsavedChanges(hwnd)) PostMessage(hwnd, WM_CLOSE, 0, 0);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
             break;
         }
         // TODO: Implement other menu commands
@@ -16000,9 +15948,15 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
 
                 g_toolbar.SetCropMode(true);
                 AdjustCropModeWindowAndZoom(hwnd);
+                g_osd.Show(hwnd, AppStrings::OSD_EnterCropMode, true);
                 RequestRepaint(PaintLayer::All);
             }
         }
+        return true;
+
+    case HotkeyAction::SaveAs:
+        if (IsCompareModeActive()) AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().Compare.activePane;
+        SendMessage(hwnd, WM_COMMAND, IDM_SAVE_AS, 0);
         return true;
 
 
@@ -16108,7 +16062,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         if (IsZoomed(hwnd)) {
             ShowWindow(hwnd, SW_RESTORE);
         } else {
-            if (CheckUnsavedChanges(hwnd)) PostMessage(hwnd, WM_CLOSE, 0, 0);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
         }
         return true;
 

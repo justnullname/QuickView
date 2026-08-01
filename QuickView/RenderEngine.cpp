@@ -2962,3 +2962,83 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   *outBitmap = rawBitmap.Detach();
   return S_OK;
 }
+
+bool TryLoadProfileBytesForPrimaries(QuickView::ColorPrimaries primaries, std::vector<uint8_t>* outBytes) {
+    if (!outBytes) return false;
+    outBytes->clear();
+
+    cmsHPROFILE hProfile = nullptr;
+    cmsCIExyY whitePoint;
+    cmsCIExyYTRIPLE primariesTriple;
+
+    // Default D65 White Point
+    whitePoint.x = 0.3127;
+    whitePoint.y = 0.3290;
+    whitePoint.Y = 1.0;
+
+    cmsToneCurve* Gamma22 = cmsBuildGamma(nullptr, 2.2);
+    cmsToneCurve* curves[3] = { Gamma22, Gamma22, Gamma22 };
+    const char* profileName = nullptr;
+
+    switch (primaries) {
+    case QuickView::ColorPrimaries::SRGB: {
+        hProfile = cmsCreate_sRGBProfile();
+        profileName = "sRGB IEC61966-2.1";
+        break;
+    }
+    case QuickView::ColorPrimaries::DisplayP3: {
+        primariesTriple.Red.x = 0.680; primariesTriple.Red.y = 0.320; primariesTriple.Red.Y = 1.0;
+        primariesTriple.Green.x = 0.265; primariesTriple.Green.y = 0.690; primariesTriple.Green.Y = 1.0;
+        primariesTriple.Blue.x = 0.150; primariesTriple.Blue.y = 0.060; primariesTriple.Blue.Y = 1.0;
+        hProfile = cmsCreateRGBProfile(&whitePoint, &primariesTriple, curves);
+        profileName = "Display P3";
+        break;
+    }
+    case QuickView::ColorPrimaries::AdobeRGB: {
+        primariesTriple.Red.x = 0.6400; primariesTriple.Red.y = 0.3300; primariesTriple.Red.Y = 1.0;
+        primariesTriple.Green.x = 0.2100; primariesTriple.Green.y = 0.7100; primariesTriple.Green.Y = 1.0;
+        primariesTriple.Blue.x = 0.1500; primariesTriple.Blue.y = 0.0600; primariesTriple.Blue.Y = 1.0;
+        hProfile = cmsCreateRGBProfile(&whitePoint, &primariesTriple, curves);
+        profileName = "Adobe RGB (1998)";
+        break;
+    }
+    case QuickView::ColorPrimaries::ProPhotoRGB: {
+        primariesTriple.Red.x = 0.7347; primariesTriple.Red.y = 0.2653; primariesTriple.Red.Y = 1.0;
+        primariesTriple.Green.x = 0.1596; primariesTriple.Green.y = 0.8404; primariesTriple.Green.Y = 1.0;
+        primariesTriple.Blue.x = 0.0366; primariesTriple.Blue.y = 0.0001; primariesTriple.Blue.Y = 1.0;
+        cmsToneCurve* gamma18 = cmsBuildGamma(nullptr, 1.8);
+        cmsToneCurve* proCurves[3] = { gamma18, gamma18, gamma18 };
+        hProfile = cmsCreateRGBProfile(&whitePoint, &primariesTriple, proCurves);
+        cmsFreeToneCurve(gamma18);
+        profileName = "ProPhoto RGB";
+        break;
+    }
+    default:
+        hProfile = cmsCreate_sRGBProfile();
+        profileName = "sRGB IEC61966-2.1";
+        break;
+    }
+
+    if (Gamma22) cmsFreeToneCurve(Gamma22);
+
+    if (!hProfile) return false;
+
+    if (profileName) {
+        cmsMLU* mlu = cmsMLUalloc(nullptr, 1);
+        if (mlu) {
+            cmsMLUsetASCII(mlu, "en", "US", profileName);
+            cmsWriteTag(hProfile, cmsSigProfileDescriptionTag, mlu);
+            cmsMLUfree(mlu);
+        }
+    }
+
+    cmsUInt32Number bytesNeeded = 0;
+    cmsSaveProfileToMem(hProfile, nullptr, &bytesNeeded);
+    if (bytesNeeded > 0) {
+        outBytes->resize(bytesNeeded);
+        cmsSaveProfileToMem(hProfile, outBytes->data(), &bytesNeeded);
+    }
+
+    cmsCloseProfile(hProfile);
+    return !outBytes->empty();
+}

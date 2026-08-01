@@ -58,6 +58,13 @@ namespace AppStrings {
     extern const wchar_t* Dialog_ButtonSaveAs;
     extern const wchar_t* Dialog_ButtonDiscard;
     extern const wchar_t* Dialog_ButtonContinue;
+    extern const wchar_t* Dialog_CropUnsavedTitle;
+    extern const wchar_t* Dialog_SaveAsTitle;
+    extern const wchar_t* Dialog_ExportTitle;
+    extern const wchar_t* Dialog_ButtonOverwrite;
+    extern const wchar_t* Dialog_EmbedICC;
+    extern const wchar_t* Dialog_SizeEstimating;
+    extern const wchar_t* Dialog_ExportError;
 
     // Context Menu
     extern const wchar_t* Context_Open;
@@ -138,6 +145,10 @@ namespace AppStrings {
     extern const wchar_t* Toolbar_Tooltip_Pin;
     extern const wchar_t* Toolbar_Tooltip_Unpin;
     extern const wchar_t* Toolbar_Tooltip_GamutWarning;
+    extern const wchar_t* Toolbar_Tooltip_CropCopy;
+    extern const wchar_t* Toolbar_Tooltip_CropSave;
+    extern const wchar_t* Toolbar_Tooltip_CropApply;
+    extern const wchar_t* Toolbar_Tooltip_CropCancel;
 
     // Overlay Mode Tooltips
     extern const wchar_t* Toolbar_Tooltip_OverlayAlphaUp;
@@ -212,6 +223,8 @@ namespace AppStrings {
     extern const wchar_t* OSD_ImmersiveNormal;
     extern const wchar_t* OSD_PrintJobStarted;
     extern const wchar_t* OSD_PrintJobFinished;
+    extern const wchar_t* OSD_EnterCropMode;
+    extern const wchar_t* OSD_CropCopied;
 
     extern const wchar_t* Context_ColorSpace;
     

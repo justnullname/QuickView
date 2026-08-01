@@ -168,6 +168,7 @@ enum class HotkeyAction : uint8_t {
     ToggleDebugHud,    // Toggle Debug Performance HUD
     Print,             // Print Image
     EnterCropMode,     // Enter Crop Mode
+    SaveAs,            // Save As / Export Image (Ctrl+S)
     ToggleOverlay,     // Toggle Tracing Mode (Overlay Mode)
     OverlayAlphaUp,    // Adjust Overlay Alpha Up
     OverlayAlphaDown,  // Adjust Overlay Alpha Down
@@ -228,6 +229,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::ToggleDebugHud: return L"ToggleDebugHud";
         case HotkeyAction::Print: return L"Print";
         case HotkeyAction::EnterCropMode: return L"EnterCropMode";
+        case HotkeyAction::SaveAs: return L"SaveAs";
         case HotkeyAction::ToggleOverlay: return L"ToggleOverlay";
         case HotkeyAction::OverlayAlphaUp: return L"OverlayAlphaUp";
         case HotkeyAction::OverlayAlphaDown: return L"OverlayAlphaDown";
@@ -286,6 +288,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ToggleDebugHud") return HotkeyAction::ToggleDebugHud;
     if (sv == L"Print") return HotkeyAction::Print;
     if (sv == L"EnterCropMode") return HotkeyAction::EnterCropMode;
+    if (sv == L"SaveAs") return HotkeyAction::SaveAs;
     if (sv == L"ToggleOverlay") return HotkeyAction::ToggleOverlay;
     if (sv == L"OverlayAlphaUp") return HotkeyAction::OverlayAlphaUp;
     if (sv == L"OverlayAlphaDown") return HotkeyAction::OverlayAlphaDown;

@@ -24,6 +24,8 @@ struct ColorContextCacheKey {
     bool operator<(const ColorContextCacheKey& other) const { return data < other.data; }
 };
 
+bool TryLoadProfileBytesForPrimaries(QuickView::ColorPrimaries primaries, std::vector<uint8_t>* outBytes);
+
 /// <summary>
 /// Direct2D Resource Manager (Pure DComp Backend)
 /// Manages D3D11/D2D Devices and shared resources for DirectComposition.

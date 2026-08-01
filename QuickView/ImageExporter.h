@@ -32,6 +32,7 @@ struct ExportOptions {
     // ICC Profile embedding
     bool EmbedIcc = true;
     std::wstring IccProfilePath;
+    std::vector<uint8_t> CustomIccData;
 };
 
 class ImageExporter {
