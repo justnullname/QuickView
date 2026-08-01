@@ -1406,8 +1406,18 @@ static void RestoreOverlayWindowState(HWND hwnd) {
     g_isImageDirty = true; // Force Image layer recalculation
 }
 
-bool CheckWritePermission(const std::wstring& dir) {
-    std::wstring testFile = dir + L"\\write_test.tmp";
+bool CheckWritePermission(const std::wstring& path) {
+    std::wstring dir = path;
+    DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        size_t lastSlash = path.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) {
+            dir = path.substr(0, lastSlash);
+        }
+    }
+    if (dir.empty()) return true;
+
+    std::wstring testFile = dir + L"\\qv_write_test.tmp";
     HANDLE hFile = CreateFileW(testFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
     CloseHandle(hFile);
@@ -1682,11 +1692,24 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
     const D2D1_SIZE_F rawSize = res.GetSize();
     if (rawSize.width <= 0.0f || rawSize.height <= 0.0f) return;
 
-    const D2D1_SIZE_F orientedSize = GetOrientedSize(res, exifOrientation);
-    if (orientedSize.width <= 0.0f || orientedSize.height <= 0.0f) return;
+    const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+    D2D1_RECT_F srcRect = D2D1::RectF(0.0f, 0.0f, rawSize.width, rawSize.height);
+    D2D1_SIZE_F effectiveSize = GetOrientedSize(res, exifOrientation);
 
-    float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
-    if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
+    if (editState.HasCrop) {
+        float cw = editState.CropRight - editState.CropLeft;
+        float ch = editState.CropBottom - editState.CropTop;
+        if (cw > 0.0f && ch > 0.0f) {
+            srcRect = D2D1::RectF(editState.CropLeft, editState.CropTop, editState.CropRight, editState.CropBottom);
+            bool isRotated = (exifOrientation >= 5 && exifOrientation <= 8);
+            effectiveSize = isRotated ? D2D1::SizeF(ch, cw) : D2D1::SizeF(cw, ch);
+        }
+    }
+
+    if (effectiveSize.width <= 0.0f || effectiveSize.height <= 0.0f) return;
+
+    float fitScale = std::min(vpW / effectiveSize.width, vpH / effectiveSize.height);
+    if (effectiveSize.width < 200.0f && effectiveSize.height < 200.0f && fitScale > 1.0f) {
         fitScale = 1.0f;
     }
 
@@ -1702,8 +1725,8 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
     if (res.isSvg && res.svgDoc) {
         ComPtr<ID2D1DeviceContext5> ctx5;
         if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
-            const float drawW = rawSize.width * totalScale;
-            const float drawH = rawSize.height * totalScale;
+            const float drawW = effectiveSize.width * totalScale;
+            const float drawH = effectiveSize.height * totalScale;
             const float x = centerX - drawW * 0.5f;
             const float y = centerY - drawH * 0.5f;
             D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Scale(totalScale, totalScale) *
@@ -1713,8 +1736,8 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
             ctx5->SetTransform(oldTransform);
         }
     } else if (res.bitmap) {
-        const float imgW = rawSize.width;
-        const float imgH = rawSize.height;
+        const float imgW = effectiveSize.width;
+        const float imgH = effectiveSize.height;
         const bool rotated = (exifOrientation >= 2 && exifOrientation <= 8);
 
         D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(totalScale, imgW, imgH);
@@ -1725,7 +1748,7 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
             const float x = centerX - drawW * 0.5f;
             const float y = centerY - drawH * 0.5f;
             D2D1_RECT_F dest = D2D1::RectF(x, y, x + drawW, y + drawH);
-            ctx->DrawBitmap(res.bitmap.Get(), &dest, 1.0f, interpMode);
+            ctx->DrawBitmap(res.bitmap.Get(), &dest, 1.0f, interpMode, &srcRect);
         } else {
             D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Translation(-imgW * 0.5f, -imgH * 0.5f);
             switch (exifOrientation) {
@@ -1741,8 +1764,7 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
             m = m * D2D1::Matrix3x2F::Scale(totalScale, totalScale);
             m = m * D2D1::Matrix3x2F::Translation(centerX, centerY);
             ctx->SetTransform(m);
-            D2D1_RECT_F src = D2D1::RectF(0.0f, 0.0f, imgW, imgH);
-            ctx->DrawBitmap(res.bitmap.Get(), &src, 1.0f, interpMode);
+            ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, interpMode);
             ctx->SetTransform(oldTransform);
         }
     }
@@ -2272,7 +2294,11 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
 
     float originalW = 0.0f;
     float originalH = 0.0f;
-    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
+    const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+    if (editState.HasCrop) {
+        originalW = (float)(editState.CropRight - editState.CropLeft);
+        originalH = (float)(editState.CropBottom - editState.CropTop);
+    } else if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
         originalW = (float)GetPaneContext(PaneSlot::Primary).metadata.Width;
         originalH = (float)GetPaneContext(PaneSlot::Primary).metadata.Height;
     } else {
@@ -2400,6 +2426,11 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
             
             float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
             float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
+            const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+            if (!res.isSvg && editState.HasCrop) {
+                contentW = (float)(editState.CropRight - editState.CropLeft);
+                contentH = (float)(editState.CropBottom - editState.CropTop);
+            }
 
             // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
             // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
@@ -2589,15 +2620,17 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              // Draw bitmap at its original coordinates. The Transform handles placement.
              const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
              D2D1_RECT_F srcRect = D2D1::RectF(0, 0, imgW, imgH);
+             D2D1_RECT_F destRect = D2D1::RectF(0, 0, imgW, imgH);
              if (editState.HasCrop) {
-                 srcRect = D2D1::RectF(editState.CropLeft, editState.CropTop, editState.CropRight, editState.CropBottom);
+                 srcRect = D2D1::RectF((float)editState.CropLeft, (float)editState.CropTop, (float)editState.CropRight, (float)editState.CropBottom);
+                 destRect = D2D1::RectF(0, 0, (float)(editState.CropRight - editState.CropLeft), (float)(editState.CropBottom - editState.CropTop));
              }
 
              // Use Smart Interpolation
              float absoluteScale = GetPaneContext(PaneSlot::Primary).view.Zoom * scale;
              D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, imgW, imgH);
 
-             ctx->DrawBitmap(res.bitmap.Get(), &srcRect, 1.0f, interpMode);
+             ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, interpMode, &srcRect);
              
              // Reset Transform
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -3209,12 +3242,21 @@ static bool g_showControls = true;
 // --- Helpers for Zoom Consistency [Unification] ---
 
 static D2D1_SIZE_F GetLogicalImageSize() {
-    if (GetPaneContext(PaneSlot::Primary).resource && GetPaneContext(PaneSlot::Primary).resource.isSvg) {
-        if (GetPaneContext(PaneSlot::Primary).resource.svgW > 0.0f && GetPaneContext(PaneSlot::Primary).resource.svgH > 0.0f) {
-            return GetPaneContext(PaneSlot::Primary).resource.GetSize();
+    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    if (primaryPane.editState.HasCrop) {
+        float cropW = primaryPane.editState.CropRight - primaryPane.editState.CropLeft;
+        float cropH = primaryPane.editState.CropBottom - primaryPane.editState.CropTop;
+        if (cropW > 0.0f && cropH > 0.0f) {
+            return D2D1::SizeF(cropW, cropH);
         }
-        if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
-            return D2D1::SizeF((float)GetPaneContext(PaneSlot::Primary).metadata.Width, (float)GetPaneContext(PaneSlot::Primary).metadata.Height);
+    }
+
+    if (primaryPane.resource && primaryPane.resource.isSvg) {
+        if (primaryPane.resource.svgW > 0.0f && primaryPane.resource.svgH > 0.0f) {
+            return primaryPane.resource.GetSize();
+        }
+        if (primaryPane.metadata.Width > 0 && primaryPane.metadata.Height > 0) {
+            return D2D1::SizeF((float)primaryPane.metadata.Width, (float)primaryPane.metadata.Height);
         }
         return D2D1::SizeF(512.0f, 512.0f);
     }
@@ -4936,9 +4978,14 @@ void DiscardChanges() {
         ReloadCurrentImage(GetActiveWindow());
     }
 }
+bool IsImageModified() {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.editState.IsDirty || pane.editState.HasCrop || g_cropState.IsActive) return true;
+    return false;
+}
 
-bool CheckUnsavedChanges(HWND hwnd) {
-    if (!GetPaneContext(PaneSlot::Primary).editState.IsDirty) return true;
+bool CheckUnsavedChanges(HWND hwnd, QuickView::PendingAction pending = QuickView::PendingAction::None) {
+    if (!IsImageModified()) return true;
     if (g_config.ShouldAutoSave(GetPaneContext(PaneSlot::Primary).editState.Quality)) return SaveCurrentImage(false);
     
     // Direct routing to ExportPanel (Save As dialog) for unsaved edits / crop apply
@@ -4951,7 +4998,12 @@ bool CheckUnsavedChanges(HWND hwnd) {
         targetH = (int)rsize.height;
     }
     std::wstring targetPath = !pane.path.empty() ? pane.path : g_imagePath;
-    QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath);
+    
+    if (pending == QuickView::PendingAction::None) {
+        pending = QuickView::PendingAction::ExitCropMode;
+    }
+
+    QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending);
     RequestRepaint(PaintLayer::All);
     return false; // Intercept navigation until user saves or cancels
 }
@@ -5272,65 +5324,47 @@ void AdjustCropModeWindowAndZoom(HWND hwnd) {
     float workW = static_cast<float>(mi.rcWork.right - mi.rcWork.left);
     float workH = static_cast<float>(mi.rcWork.bottom - mi.rcWork.top);
 
-    // Get current window client area
-    RECT rcClient; GetClientRect(hwnd, &rcClient);
-    float clientW = static_cast<float>(rcClient.right - rcClient.left);
-    float clientH = static_cast<float>(rcClient.bottom - rcClient.top);
-    if (clientW <= 1.0f || clientH <= 1.0f) { clientW = 800.0f; clientH = 600.0f; }
+    float marginW = 100.0f * g_uiScale;
+    float marginH = 164.0f * g_uiScale;
 
-    // Current fit scale inside current window client area
-    float currFit = (std::min)(clientW / orientedSize.width, clientH / orientedSize.height);
-    float currentZoom = (std::max)(0.02f, pane.view.Zoom);
-    float targetTotalScale = currFit * currentZoom;
+    float dispW = orientedSize.width;
+    float dispH = orientedSize.height;
 
-    float dispW = orientedSize.width * targetTotalScale;
-    float dispH = orientedSize.height * targetTotalScale;
-
-    // Required window client size to maintain dispW x dispH with 50px margins:
-    // Left 50px, Right 50px = +100px
-    // Top 50px, Bottom 50px above toolbar (48px toolbar + 16px float + 50px margin) = +164px
-    float reqWinW = dispW + 100.0f * g_uiScale;
-    float reqWinH = dispH + 164.0f * g_uiScale;
+    float reqWinW = dispW + marginW;
+    float reqWinH = dispH + marginH;
 
     if (!IsZoomed(hwnd) && !g_isFullScreen) {
-        if (reqWinW <= workW && reqWinH <= workH) {
-            // Expand window size to fit exact 50px margins around image
-            int newW = static_cast<int>(std::ceil(reqWinW));
-            int newH = static_cast<int>(std::ceil(reqWinH));
-            int newX = mi.rcWork.left + (static_cast<int>(workW) - newW) / 2;
-            int newY = mi.rcWork.top + (static_cast<int>(workH) - newH) / 2;
-            SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
+        float targetWinW = (std::min)(reqWinW, workW);
+        float targetWinH = (std::min)(reqWinH, workH);
 
-            // Recompute fit scale in expanded client window to maintain EXACT image scale
-            float newFitScale = (std::min)(reqWinW / orientedSize.width, reqWinH / orientedSize.height);
-            if (newFitScale > 0.0f) {
-                pane.view.Zoom = targetTotalScale / newFitScale;
-            }
-            pane.view.PanX = 0.0f;
-            pane.view.PanY = -32.0f * g_uiScale; // 50px top margin, 50px bottom margin above toolbar
+        int newW = static_cast<int>(std::ceil(targetWinW));
+        int newH = static_cast<int>(std::ceil(targetWinH));
+        int newX = mi.rcWork.left + (static_cast<int>(workW) - newW) / 2;
+        int newY = mi.rcWork.top + (static_cast<int>(workH) - newH) / 2;
+
+        g_programmaticResize = true;
+        SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
+        g_programmaticResize = false;
+
+        float availW = (std::max)(100.0f * g_uiScale, targetWinW - marginW);
+        float availH = (std::max)(100.0f * g_uiScale, targetWinH - marginH);
+
+        float availFitScale = (std::min)(availW / orientedSize.width, availH / orientedSize.height);
+        float newFitScale = (std::min)((float)newW / orientedSize.width, (float)newH / orientedSize.height);
+
+        if (availFitScale > 0.0f && newFitScale > 0.0f) {
+            pane.view.Zoom = (availFitScale / newFitScale);
         } else {
-            // Monitor work area cannot fit full image + 50px margins:
-            int newW = static_cast<int>(workW);
-            int newH = static_cast<int>(workH);
-            int newX = mi.rcWork.left;
-            int newY = mi.rcWork.top;
-            SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
-
-            float targetFit = (std::min)((workW - 100.0f * g_uiScale) / orientedSize.width, (workH - 164.0f * g_uiScale) / orientedSize.height);
-            float newFitScale = (std::min)(workW / orientedSize.width, workH / orientedSize.height);
-            if (targetFit > 0.0f && newFitScale > 0.0f) {
-                pane.view.Zoom = (targetFit / newFitScale);
-                pane.view.PanX = 0.0f;
-                pane.view.PanY = -32.0f * g_uiScale;
-            }
+            pane.view.Zoom = 1.0f;
         }
+        pane.view.PanX = 0.0f;
+        pane.view.PanY = -32.0f * g_uiScale; // 50px top margin, 50px bottom margin above toolbar
     }
 }
 
 void AdjustWindowToImage(HWND hwnd) {
     if (g_cropState.IsActive) {
-        AdjustCropModeWindowAndZoom(hwnd);
-        return;
+        return; // Do NOT auto-resize window or override Zoom during interactive zoom in crop mode
     }
     s_restoredWindowRect = {}; // Clear restored rect so new image sets new initial size
     if (!GetPaneContext(PaneSlot::Primary).resource) return;
@@ -7955,7 +7989,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (IsPassthroughModeActive()) {
             UnregisterHotKey(hwnd, HOTKEY_ID_EXIT_PASSTHROUGH);
         }
-        if (!CheckUnsavedChanges(hwnd)) return 0;
+        if (!CheckUnsavedChanges(hwnd, QuickView::PendingAction::CloseApp)) return 0;
 
         // Save Last Window Size
         if (g_config.RememberLastWindowSizeAndPosition && !IsIconic(hwnd)) {
@@ -10032,8 +10066,8 @@ SKIP_EDGE_NAV:;
         ToolbarButtonID tbId = ToolbarButtonID::None;
         if (g_toolbar.OnClick((float)pt.x, (float)pt.y, tbId)) {
             switch (tbId) {
-                case ToolbarButtonID::Prev: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, -1); break;
-                case ToolbarButtonID::Next: if (CheckUnsavedChanges(hwnd)) Navigate(hwnd, 1); break;
+                case ToolbarButtonID::Prev: if (CheckUnsavedChanges(hwnd, QuickView::PendingAction::NavigatePrev)) Navigate(hwnd, -1); break;
+                case ToolbarButtonID::Next: if (CheckUnsavedChanges(hwnd, QuickView::PendingAction::NavigateNext)) Navigate(hwnd, 1); break;
                 case ToolbarButtonID::RotateL: PerformTransform(hwnd, TransformType::Rotate90CCW); break;
                 case ToolbarButtonID::RotateR: PerformTransform(hwnd, TransformType::Rotate90CW); break;
                 case ToolbarButtonID::FlipH:   PerformTransform(hwnd, TransformType::FlipHorizontal); break;
@@ -10071,9 +10105,9 @@ SKIP_EDGE_NAV:;
                     break;
                 }
                 case ToolbarButtonID::CropApply: {
-                    float cropW = g_cropState.CropRight - g_cropState.CropLeft;
-                    float cropH = g_cropState.CropBottom - g_cropState.CropTop;
-                    if (cropW > 0.0f && cropH > 0.0f) {
+                    int cropW = (int)(g_cropState.CropRight - g_cropState.CropLeft);
+                    int cropH = (int)(g_cropState.CropBottom - g_cropState.CropTop);
+                    if (cropW > 0 && cropH > 0) {
                         auto& pane = GetPaneContext(PaneSlot::Primary);
                         pane.editState.HasCrop = true;
                         pane.editState.CropLeft = g_cropState.CropLeft;
@@ -10085,15 +10119,17 @@ SKIP_EDGE_NAV:;
                         // Exit crop interaction mode
                         g_cropState.IsActive = false;
                         g_toolbar.SetCropMode(false);
+                        
+                        extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade);
+                        RenderImageToDComp(hwnd, pane.resource, false);
 
                         RECT rc; GetClientRect(hwnd, &rc);
                         float vpW = (float)(rc.right - rc.left);
                         float vpH = (float)(rc.bottom - rc.top);
 
-                        float fitScale = (std::min)(vpW / cropW, vpH / cropH);
-                        pane.view.Zoom = fitScale;
+                        pane.view.Zoom = 1.0f;
                         pane.view.PanX = 0.0f;
-                        pane.view.PanY = -16.0f * g_uiScale;
+                        pane.view.PanY = 0.0f;
 
                         g_osd.Show(hwnd, L"裁剪已应用（未保存）", true);
                         SyncDCompState(hwnd, vpW, vpH);
@@ -10109,7 +10145,7 @@ SKIP_EDGE_NAV:;
                     break;
                 }
                 case ToolbarButtonID::CropCancel: {
-                    TryExitCropMode(hwnd, true);
+                    TryExitCropMode(hwnd, false);
                     break;
                 }
                 case ToolbarButtonID::Pin: {
@@ -10706,6 +10742,7 @@ SKIP_EDGE_NAV:;
         // If WheelActionMode is Navigate (1), then Wheel (without Ctrl/Alt) means Navigate.
         // If WheelActionMode is Zoom (0), then Wheel (without Ctrl/Alt) means Smart Zoom.
         bool shouldNavigate = (g_config.WheelActionMode == 1) && !isCtrl && !isAlt;
+        if (g_cropState.IsActive) shouldNavigate = false;
 
         if (IsCompareModeActive()) {
             if (shouldNavigate) {
@@ -10833,16 +10870,35 @@ SKIP_EDGE_NAV:;
             D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
 
             if (wParam >= L'0' && wParam <= L'9') {
-                if (g_cropState.InputLen < 5) {
+                if (g_cropState.InputLen < 6) {
                     g_cropState.InputBuffer[g_cropState.InputLen++] = (wchar_t)wParam;
                     g_cropState.InputBuffer[g_cropState.InputLen] = L'\0';
+                    
                     int val = _wtoi(g_cropState.InputBuffer);
-                    if (val > 0) {
+                    float maxDim = (g_cropState.FocusedField == CropState::InputField::Width) ? orientedSize.width : orientedSize.height;
+                    bool isValid = (g_cropState.InputLen > 0 && val > 0 && (float)val <= maxDim);
+
+                    if (isValid) {
+                        g_cropState.IsInputInvalid = false;
                         if (g_cropState.FocusedField == CropState::InputField::Width) {
-                            g_cropState.CropRight = (std::min)(orientedSize.width, g_cropState.CropLeft + (float)val);
+                            float newRight = g_cropState.CropLeft + (float)val;
+                            if (newRight > orientedSize.width) {
+                                g_cropState.CropLeft = (std::max)(0.0f, orientedSize.width - (float)val);
+                                g_cropState.CropRight = orientedSize.width;
+                            } else {
+                                g_cropState.CropRight = newRight;
+                            }
                         } else if (g_cropState.FocusedField == CropState::InputField::Height) {
-                            g_cropState.CropBottom = (std::min)(orientedSize.height, g_cropState.CropTop + (float)val);
+                            float newBottom = g_cropState.CropTop + (float)val;
+                            if (newBottom > orientedSize.height) {
+                                g_cropState.CropTop = (std::max)(0.0f, orientedSize.height - (float)val);
+                                g_cropState.CropBottom = orientedSize.height;
+                            } else {
+                                g_cropState.CropBottom = newBottom;
+                            }
                         }
+                    } else {
+                        g_cropState.IsInputInvalid = true;
                     }
                     RequestRepaint(PaintLayer::All);
                 }
@@ -10867,16 +10923,36 @@ SKIP_EDGE_NAV:;
                 if (g_cropState.InputLen > 0) {
                     g_cropState.InputBuffer[--g_cropState.InputLen] = L'\0';
                     int val = _wtoi(g_cropState.InputBuffer);
-                    if (val <= 0) val = 1;
-                    if (g_cropState.FocusedField == CropState::InputField::Width) {
-                        g_cropState.CropRight = (std::min)(orientedSize.width, g_cropState.CropLeft + (float)val);
-                    } else if (g_cropState.FocusedField == CropState::InputField::Height) {
-                        g_cropState.CropBottom = (std::min)(orientedSize.height, g_cropState.CropTop + (float)val);
+                    float maxDim = (g_cropState.FocusedField == CropState::InputField::Width) ? orientedSize.width : orientedSize.height;
+                    bool isValid = (g_cropState.InputLen > 0 && val > 0 && (float)val <= maxDim);
+
+                    if (isValid) {
+                        g_cropState.IsInputInvalid = false;
+                        if (g_cropState.FocusedField == CropState::InputField::Width) {
+                            float newRight = g_cropState.CropLeft + (float)val;
+                            if (newRight > orientedSize.width) {
+                                g_cropState.CropLeft = (std::max)(0.0f, orientedSize.width - (float)val);
+                                g_cropState.CropRight = orientedSize.width;
+                            } else {
+                                g_cropState.CropRight = newRight;
+                            }
+                        } else if (g_cropState.FocusedField == CropState::InputField::Height) {
+                            float newBottom = g_cropState.CropTop + (float)val;
+                            if (newBottom > orientedSize.height) {
+                                g_cropState.CropTop = (std::max)(0.0f, orientedSize.height - (float)val);
+                                g_cropState.CropBottom = orientedSize.height;
+                            } else {
+                                g_cropState.CropBottom = newBottom;
+                            }
+                        }
+                    } else {
+                        g_cropState.IsInputInvalid = true;
                     }
                     RequestRepaint(PaintLayer::All);
                 }
                 return 0;
             } else if (wParam == VK_TAB) {
+                g_cropState.IsInputInvalid = false;
                 if (g_cropState.FocusedField == CropState::InputField::Width) {
                     g_cropState.FocusedField = CropState::InputField::Height;
                     swprintf_s(g_cropState.InputBuffer, L"%d", (int)std::round(g_cropState.CropBottom - g_cropState.CropTop));
@@ -10889,9 +10965,12 @@ SKIP_EDGE_NAV:;
                 return 0;
             } else if (wParam == VK_RETURN || wParam == VK_ESCAPE) {
                 g_cropState.FocusedField = CropState::InputField::None;
+                g_cropState.IsInputInvalid = false;
                 RequestRepaint(PaintLayer::All);
                 return 0;
             }
+            // [Fix] Intercept all other keydowns when an input capsule has focus so hotkeys (like '0' for ZoomFit) are not triggered!
+            return 0;
         }
         if (QuickView::PrintPreviewUI::GetInstance().IsVisible()) {
             bool wasPrintVisible = true;
@@ -10904,6 +10983,7 @@ SKIP_EDGE_NAV:;
         }
         if (QuickView::ExportPanel::GetInstance().IsVisible()) {
             if (QuickView::ExportPanel::GetInstance().OnKeyDown(wParam)) return 0;
+            if (QuickView::ExportPanel::GetInstance().IsInputFocused()) return 0; // Natively block all hotkeys when ExportPanel text input is focused!
         }
         // Verification Control (Phase 5 - Ctrl+1..5)
         if (GetKeyState(VK_CONTROL) & 0x8000) {
@@ -14036,8 +14116,10 @@ void NavigateEdge(HWND hwnd, bool toLast) {
 }
 
 void Navigate(HWND hwnd, int direction) {
+    if (g_cropState.IsActive) return; // Natively block any interface-triggered navigation in crop mode
     if (GetPaneContext(PaneSlot::Primary).navigator.Count() <= 0) return;
-    if (!CheckUnsavedChanges(hwnd)) return;
+    QuickView::PendingAction pending = (direction > 0) ? QuickView::PendingAction::NavigateNext : QuickView::PendingAction::NavigatePrev;
+    if (!CheckUnsavedChanges(hwnd, pending)) return;
 
     // [RAW+JPEG Pairing] Pair-compare session: the arrows move BOTH panes to
     // the neighboring paired photo (left = rendered, right = RAW at full
@@ -14622,30 +14704,7 @@ void OnPaint(HWND hwnd) {
 }
 
 // [Refactor] Centralized Zoom Logic
-// Unifies behavior for Mouse Wheel and Keyboard Zoom
-
-
-
 void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, bool forceWindowLock, bool animateDisplay) {
-    if (g_cropState.IsActive) {
-        auto& pane = GetPaneContext(PaneSlot::Primary);
-        int baseExif = g_renderExifOrientation;
-        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-        D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-        if (orientedSize.width > 0.0f && orientedSize.height > 0.0f) {
-            RECT rc; GetClientRect(hwnd, &rc);
-            float vpW = (float)(rc.right - rc.left);
-            float vpH = (float)(rc.bottom - rc.top);
-            float fitScale = (std::min)(vpW / orientedSize.width, vpH / orientedSize.height);
-            if (fitScale > 0.0f) {
-                pane.view.Zoom = std::clamp(newTotalScale / fitScale, 0.02f, 100.0f);
-            }
-            AdjustCropModeWindowAndZoom(hwnd);
-            RequestRepaint(PaintLayer::All);
-            return;
-        }
-    }
-
     // Basic Eligibility Check
     // [Fix] Decouple "Ctrl Key" from "Force Lock". Accept explicit parameter.
     // Mouse Wheel passes 'isCtrl' (True). Keyboard Zoom passes 'False'.
@@ -14682,7 +14741,6 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     int finalWinH = 0;
     bool willResizeWindow = false;
 
-
     RECT bounds = { 0, 0, 0, 0 };
 
     if (canResizeConfig) {
@@ -14696,8 +14754,11 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          int targetW = (int)(vs.VisualSize.width * newTotalScale);
          int targetH = (int)(vs.VisualSize.height * newTotalScale) + (int)galleryH;
          
-         // 200px Minimum logic is now handled in 'Normal Resize' path below
-         // to prevent accidental mode switches that cause UI deadlocks.
+         if (g_cropState.IsActive) {
+             targetW += (int)(100.0f * g_uiScale);
+             targetH += (int)(164.0f * g_uiScale);
+         }
+
          willResizeWindow = true;
          finalWinW = targetW;
          finalWinH = targetH;
@@ -14707,7 +14768,6 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          if (finalWinW > maxW) { finalWinW = maxW; cappedW = true; }
          if (finalWinH > maxH) { finalWinH = maxH; cappedH = true; }
  
-         
          if (finalWinW < (int)GetMinWindowWidth()) finalWinW = (int)GetMinWindowWidth();
          if (finalWinH < (int)GetMinWindowHeight()) finalWinH = (int)GetMinWindowHeight();
          
@@ -16179,28 +16239,20 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
 }
 
 void TryExitCropMode(HWND hwnd, bool forceQuit) {
-    if (!g_cropState.IsActive) return;
+    if (!g_cropState.IsActive && !GetPaneContext(PaneSlot::Primary).editState.IsDirty) return;
 
-    const auto& pane = GetPaneContext(PaneSlot::Primary);
-    if (pane.resource) {
-        int baseExif = g_renderExifOrientation;
-        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
-        D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
-
-        bool isModified = (g_cropState.CropLeft > 0.5f ||
-                           g_cropState.CropTop > 0.5f ||
-                           std::abs(g_cropState.CropRight - orientedSize.width) > 0.5f ||
-                           std::abs(g_cropState.CropBottom - orientedSize.height) > 0.5f);
-
-        if (isModified && !forceQuit) {
-            int targetWidth = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
-            int targetHeight = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
-            QuickView::ExportPanel::GetInstance().Show(hwnd, targetWidth, targetHeight, g_imagePath);
-            return;
+    if (!forceQuit && IsImageModified()) {
+        int targetWidth = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
+        int targetHeight = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
+        if (targetWidth <= 0 || targetHeight <= 0) {
+            const auto& pane = GetPaneContext(PaneSlot::Primary);
+            targetWidth = pane.metadata.Width;
+            targetHeight = pane.metadata.Height;
         }
+        QuickView::ExportPanel::GetInstance().Show(hwnd, targetWidth, targetHeight, g_imagePath, QuickView::PendingAction::ExitCropMode);
+        return;
     }
     g_cropState.IsActive = false;
     g_toolbar.SetCropMode(false);
     RequestRepaint(PaintLayer::All);
 }
-

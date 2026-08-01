@@ -63,8 +63,8 @@ Toolbar::Toolbar() {
       {ToolbarButtonID::SlideshowExit,            Icons::ExitToolbar, {}, true, false},
       // Crop mode buttons
       {ToolbarButtonID::CropCopy,   Icons::Copy,        {}, true, false},
-      {ToolbarButtonID::CropApply,  Icons::Check,       {}, true, false},
       {ToolbarButtonID::CropSave,   Icons::Save,        {}, true, false},
+      {ToolbarButtonID::CropApply,  Icons::Check,       {}, true, false},
       {ToolbarButtonID::CropCancel, Icons::ExitToolbar, {}, true, false},
       // Pin at the very end
       {ToolbarButtonID::Pin, Icons::Pin, {}, true, false},
@@ -98,6 +98,10 @@ void Toolbar::CreateResources(ID2D1RenderTarget *pRT) {
                                &m_brushWarning); // Red for warning
     pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.1f),
                                &m_brushHover); // Hover highlight
+    pRT->CreateSolidColorBrush(D2D1::ColorF(0.2f, 0.85f, 0.4f, 1.0f),
+                               &m_brushGreen); // Green for Apply/Confirm
+    pRT->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.3f, 0.3f, 1.0f),
+                               &m_brushRed);   // Red for Cancel/Close
 
     // Font
     DWriteCreateFactory(
@@ -807,6 +811,10 @@ void Toolbar::Render(ID2D1RenderTarget *pRT) {
         pBrush = m_brushIconActive.Get();
       if (btn.id == ToolbarButtonID::AnimDirtyRect && m_animDirtyRect)
         pBrush = m_brushIconActive.Get();
+      if (btn.id == ToolbarButtonID::CropApply && m_brushGreen)
+        pBrush = m_brushGreen.Get();
+      if (btn.id == ToolbarButtonID::CropCancel && m_brushRed)
+        pBrush = m_brushRed.Get();
 
       // Scale down the vector icon to match original font sizes
       float targetSize = (btn.id == ToolbarButtonID::CompareExit) ? 14.0f * m_uiScale : 16.0f * m_uiScale;

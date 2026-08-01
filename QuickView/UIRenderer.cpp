@@ -2494,9 +2494,16 @@ namespace {
             return displayFname;
         }
         else if (key == L"Size") {
-            if (meta.Width > 0) {
+            const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+            UINT displayW = meta.Width;
+            UINT displayH = meta.Height;
+            if (editState.HasCrop) {
+                displayW = (UINT)std::round(editState.CropRight - editState.CropLeft);
+                displayH = (UINT)std::round(editState.CropBottom - editState.CropTop);
+            }
+            if (displayW > 0 && displayH > 0) {
                 wchar_t sz[64];
-                swprintf_s(sz, L"%u\u00d7%u", meta.Width, meta.Height);
+                swprintf_s(sz, L"%u\u00d7%u", displayW, displayH);
                 return sz;
             }
             return std::nullopt;
@@ -2784,6 +2791,12 @@ std::wstring UIRenderer::BuildCompactInfoText(float maxFileW) const {
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
     CombineHash(stateHash, hasHistR);
+    const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+    CombineHash(stateHash, editState.HasCrop);
+    if (editState.HasCrop) {
+        CombineHash(stateHash, (int)(editState.CropRight - editState.CropLeft));
+        CombineHash(stateHash, (int)(editState.CropBottom - editState.CropTop));
+    }
 
     if (m_lastCompactInfoStateHash == stateHash && !m_lastCompactInfoText.empty()) {
         return m_lastCompactInfoText;
@@ -2910,11 +2923,18 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
     }
 
     // Row 2: Dimensions + Megapixels
-    if (metadata.Width > 0) {
-        UINT64 totalPixels = (UINT64)metadata.Width * metadata.Height;
+    const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+    UINT displayW = metadata.Width;
+    UINT displayH = metadata.Height;
+    if (editState.HasCrop) {
+        displayW = (UINT)std::round(editState.CropRight - editState.CropLeft);
+        displayH = (UINT)std::round(editState.CropBottom - editState.CropTop);
+    }
+    if (displayW > 0 && displayH > 0) {
+        UINT64 totalPixels = (UINT64)displayW * displayH;
         double megapixels = totalPixels / 1000000.0;
         wchar_t dimBuf[64];
-        swprintf_s(dimBuf, L"%u\u00d7%u", metadata.Width, metadata.Height);
+        swprintf_s(dimBuf, L"%u\u00d7%u", displayW, displayH);
         wchar_t mpBuf[48];
         swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, GetCurrentZoomPercent());
         rows.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
@@ -3436,6 +3456,12 @@ void UIRenderer::BuildInfoGrid() {
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
     CombineHash(stateHash, hasHistR);
+    const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
+    CombineHash(stateHash, editState.HasCrop);
+    if (editState.HasCrop) {
+        CombineHash(stateHash, (int)(editState.CropRight - editState.CropLeft));
+        CombineHash(stateHash, (int)(editState.CropBottom - editState.CropTop));
+    }
 
     if (!m_infoGrid.empty() && m_lastInfoStateHash == stateHash) {
         return; // Cache hit
@@ -6252,17 +6278,19 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
         g_cropState.WidthCapsuleRect = wRect;
         g_cropState.HeightCapsuleRect = hRect;
 
-        ComPtr<ID2D1SolidColorBrush> capBgBrush;
+        ComPtr<ID2D1SolidColorBrush> capBgBrush, redBrush;
         dc->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.12f, 0.14f, 0.92f), &capBgBrush);
+        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.25f, 0.25f, 1.0f), &redBrush);
 
         // 1. Draw Width Capsule
         D2D1_ROUNDED_RECT wCap = D2D1::RoundedRect(wRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
         bool wFocused = (g_cropState.FocusedField == CropState::InputField::Width);
         bool wHovered = (g_cropState.HoverField == CropState::InputField::Width);
+        bool wInvalid = wFocused && g_cropState.IsInputInvalid;
 
         dc->FillRoundedRectangle(wCap, capBgBrush.Get());
-        ID2D1SolidColorBrush* wBorderBrush = wFocused ? m_accentBrush.Get() : (wHovered ? m_whiteBrush.Get() : m_blackBrush.Get());
-        float wBorderThick = (wFocused || wHovered) ? 1.5f * m_uiScale : 1.0f * m_uiScale;
+        ID2D1SolidColorBrush* wBorderBrush = wInvalid ? redBrush.Get() : (wFocused ? m_accentBrush.Get() : (wHovered ? m_whiteBrush.Get() : m_blackBrush.Get()));
+        float wBorderThick = (wInvalid || wFocused || wHovered) ? 1.5f * m_uiScale : 1.0f * m_uiScale;
         dc->DrawRoundedRectangle(wCap, wBorderBrush, wBorderThick);
 
         float textY = startY + (capH - wTm.height) * 0.5f;
@@ -6277,10 +6305,11 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
         D2D1_ROUNDED_RECT hCap = D2D1::RoundedRect(hRect, 4.0f * m_uiScale, 4.0f * m_uiScale);
         bool hFocused = (g_cropState.FocusedField == CropState::InputField::Height);
         bool hHovered = (g_cropState.HoverField == CropState::InputField::Height);
+        bool hInvalid = hFocused && g_cropState.IsInputInvalid;
 
         dc->FillRoundedRectangle(hCap, capBgBrush.Get());
-        ID2D1SolidColorBrush* hBorderBrush = hFocused ? m_accentBrush.Get() : (hHovered ? m_whiteBrush.Get() : m_blackBrush.Get());
-        float hBorderThick = (hFocused || hHovered) ? 1.5f * m_uiScale : 1.0f * m_uiScale;
+        ID2D1SolidColorBrush* hBorderBrush = hInvalid ? redBrush.Get() : (hFocused ? m_accentBrush.Get() : (hHovered ? m_whiteBrush.Get() : m_blackBrush.Get()));
+        float hBorderThick = (hInvalid || hFocused || hHovered) ? 1.5f * m_uiScale : 1.0f * m_uiScale;
         dc->DrawRoundedRectangle(hCap, hBorderBrush, hBorderThick);
 
         dc->DrawTextLayout(D2D1::Point2F(hRect.left + (hCapWidth - hTm.width) * 0.5f, textY), hLayout.Get(), m_whiteBrush.Get());

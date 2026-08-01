@@ -209,6 +209,8 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushIconDisabled;
     ComPtr<ID2D1SolidColorBrush> m_brushWarning;
     ComPtr<ID2D1SolidColorBrush> m_brushHover;
+    ComPtr<ID2D1SolidColorBrush> m_brushGreen;
+    ComPtr<ID2D1SolidColorBrush> m_brushRed;
     
     ComPtr<IDWriteTextFormat> m_textFormatUI;
     ComPtr<IDWriteFactory> m_dwriteFactory; // Need factory to create format

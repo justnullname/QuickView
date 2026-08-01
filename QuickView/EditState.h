@@ -35,10 +35,10 @@ struct EditState {
     std::vector<TransformType> PendingTransforms;
 
     bool HasCrop = false;
-    float CropLeft = 0.0f;
-    float CropTop = 0.0f;
-    float CropRight = 0.0f;
-    float CropBottom = 0.0f;
+    int CropLeft = 0;
+    int CropTop = 0;
+    int CropRight = 0;
+    int CropBottom = 0;
 
     void Reset() {
         IsDirty = false;
@@ -810,20 +810,21 @@ struct CropState {
     bool IsActive = false;
     bool IsDragging = false;
     bool IsQuickActionVisible = false;
+    bool IsInputInvalid = false;
     
     // Coordinates in FULL IMAGE pixel space
-    float CropLeft = 0.0f;
-    float CropTop = 0.0f;
-    float CropRight = 0.0f;
-    float CropBottom = 0.0f;
+    int CropLeft = 0;
+    int CropTop = 0;
+    int CropRight = 0;
+    int CropBottom = 0;
     
     // UI Interaction states
     int ActiveHandle = -1; // -1: None, 0: TopLeft, 1: TopRight, 2: BottomLeft, 3: BottomRight, 4: Center (Move)
     POINT DragStartMousePos = { 0, 0 };
-    float DragStartCropLeft = 0.0f;
-    float DragStartCropTop = 0.0f;
-    float DragStartCropRight = 0.0f;
-    float DragStartCropBottom = 0.0f;
+    int DragStartCropLeft = 0;
+    int DragStartCropTop = 0;
+    int DragStartCropRight = 0;
+    int DragStartCropBottom = 0;
 
     enum class InputField { None, Width, Height };
     InputField FocusedField = InputField::None;
@@ -837,7 +838,8 @@ struct CropState {
         IsActive = false;
         IsDragging = false;
         IsQuickActionVisible = false;
-        CropLeft = CropTop = CropRight = CropBottom = 0.0f;
+        IsInputInvalid = false;
+        CropLeft = CropTop = CropRight = CropBottom = 0;
         ActiveHandle = -1;
         FocusedField = InputField::None;
         HoverField = InputField::None;

@@ -18,16 +18,22 @@ extern float g_uiScale;
 extern CropState g_cropState;
 extern RuntimeConfig g_runtime;
 extern AppConfig g_config;
+extern void TryExitCropMode(HWND hwnd, bool forceQuit = false);
+extern void Navigate(HWND hwnd, int direction);
 extern void RequestRepaint(QuickView::PaintLayer layer);
 extern bool IsLightThemeActive();
 extern void DiscardChanges();
 extern void ReloadCurrentImage(HWND hwnd);
+extern bool IsImageModified();
 
 namespace QuickView {
 
-void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath) {
+void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath, PendingAction pending) {
     m_hwnd = hwnd;
     m_isVisible = true;
+    m_pendingAction = pending;
+    m_isModified = IsImageModified();
+    m_exportMode = (pending != PendingAction::None) ? ExportMode::UnsavedLeave : ExportMode::NormalExport;
     m_cropWidth = initialWidth;
     m_cropHeight = initialHeight;
     m_targetWidth = initialWidth;
@@ -52,6 +58,10 @@ void ExportPanel::Hide() {
 
 bool ExportPanel::CanOverwriteOriginal() const {
     if (m_originalPath.empty()) return false;
+    
+    // Do not show overwrite option if there are no unsaved edits (pure "Save As" intent)
+    if (!m_isModified) return false;
+    
     DWORD attr = GetFileAttributesW(m_originalPath.c_str());
     if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_READONLY)) return false;
 
@@ -138,10 +148,15 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             TriggerAsyncEstimate();
             m_focusedState = HoverState::None;
         } else if (m_focusedState == HoverState::CancelBtn) {
+            m_pendingAction = PendingAction::None;
             Hide();
-            g_cropState.IsActive = false;
-            ::DiscardChanges();
             ::RequestRepaint(PaintLayer::All);
+        } else if (m_focusedState == HoverState::DiscardBtn) {
+            Hide();
+            ::DiscardChanges();
+            ::TryExitCropMode(m_hwnd, true);
+            ::RequestRepaint(PaintLayer::All);
+            ExecutePendingAction();
         } else if (m_focusedState == HoverState::OverwriteBtn) {
             CommitSave(true);
         } else if (m_focusedState == HoverState::SaveAsBtn) {
@@ -182,7 +197,7 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         y >= m_panelRect.top && y <= m_panelRect.bottom) {
         
         float s = m_uiScale;
-        float curY = m_panelRect.top + 20.0f * s;
+        float curY = m_panelRect.top + 47.0f * s;
         float centerX = m_panelRect.left + (m_panelRect.right - m_panelRect.left) * 0.5f;
         float panelW = m_panelRect.right - m_panelRect.left;
         
@@ -204,19 +219,34 @@ bool ExportPanel::OnMouseMove(float x, float y) {
 
         curY += 44.0f * s;
         bool canOverwrite = CanOverwriteOriginal();
-        float btnW = canOverwrite ? (panelW - 60.0f*s) / 3.0f : (panelW - 50.0f*s) / 2.0f;
+        bool isUnsavedLeave = (m_exportMode == ExportMode::UnsavedLeave);
 
-        D2D1_RECT_F cancelRect, overwriteRect, saveAsRect;
-        if (canOverwrite) {
-            overwriteRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.left + 20.0f*s + btnW, curY + 36.0f*s };
-            saveAsRect = { overwriteRect.right + 10.0f*s, curY, overwriteRect.right + 10.0f*s + btnW, curY + 36.0f*s };
-            cancelRect = { saveAsRect.right + 10.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 36.0f*s };
+        D2D1_RECT_F cancelRect = {}, overwriteRect = {}, saveAsRect = {}, discardRect = {};
+        if (isUnsavedLeave) {
+            if (canOverwrite) {
+                float btnW = (panelW - 60.0f*s) / 3.0f;
+                overwriteRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.left + 20.0f*s + btnW, curY + 36.0f*s };
+                saveAsRect = { overwriteRect.right + 10.0f*s, curY, overwriteRect.right + 10.0f*s + btnW, curY + 36.0f*s };
+                discardRect = { saveAsRect.right + 10.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 36.0f*s };
+            } else {
+                float btnW = (panelW - 50.0f*s) / 2.0f;
+                saveAsRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.left + 20.0f*s + btnW, curY + 36.0f*s };
+                discardRect = { saveAsRect.right + 10.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 36.0f*s };
+            }
         } else {
-            saveAsRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.left + 20.0f*s + btnW, curY + 36.0f*s };
-            cancelRect = { saveAsRect.right + 10.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 36.0f*s };
+            if (canOverwrite) {
+                float btnW = (panelW - 60.0f*s) / 3.0f;
+                overwriteRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.left + 20.0f*s + btnW, curY + 36.0f*s };
+                saveAsRect = { overwriteRect.right + 10.0f*s, curY, overwriteRect.right + 10.0f*s + btnW, curY + 36.0f*s };
+                cancelRect = { saveAsRect.right + 10.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 36.0f*s };
+            } else {
+                float btnW = (panelW - 50.0f*s) / 2.0f;
+                saveAsRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.left + 20.0f*s + btnW, curY + 36.0f*s };
+                cancelRect = { saveAsRect.right + 10.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 36.0f*s };
+            }
         }
 
-        auto hit = [x,y](const D2D1_RECT_F& r) { return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+        auto hit = [x,y](const D2D1_RECT_F& r) { return r.right > r.left && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
         
         if (hit(widthRect)) newState = HoverState::WidthCapsule;
         else if (hit(heightRect)) newState = HoverState::HeightCapsule;
@@ -229,6 +259,7 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         else if (canOverwrite && hit(overwriteRect)) newState = HoverState::OverwriteBtn;
         else if (hit(saveAsRect)) newState = HoverState::SaveAsBtn;
         else if (hit(cancelRect)) newState = HoverState::CancelBtn;
+        else if (hit(discardRect)) newState = HoverState::DiscardBtn;
     }
 
     if (m_hoverState != newState) {
@@ -247,7 +278,9 @@ bool ExportPanel::OnKeyDown(WPARAM wParam) {
             m_focusedState = HoverState::None;
             m_inputStarted = false;
         } else {
+            m_pendingAction = PendingAction::None;
             Hide();
+            ::RequestRepaint(PaintLayer::All);
         }
         RequestRepaint(PaintLayer::All);
         return true;
@@ -343,7 +376,7 @@ void ExportPanel::CommitSave(bool overwrite) {
 
     auto finalizeSave = [this, &primaryPane](const std::wstring& savePath) {
         Hide();
-        g_cropState.IsActive = false;
+        TryExitCropMode(m_hwnd, true);
         primaryPane.editState.IsDirty = false;
         primaryPane.editState.HasCrop = false;
         if (!savePath.empty()) {
@@ -351,6 +384,7 @@ void ExportPanel::CommitSave(bool overwrite) {
             ::ReloadCurrentImage(m_hwnd);
         }
         ::RequestRepaint(PaintLayer::All);
+        ExecutePendingAction();
     };
 
     if (overwrite) {
@@ -410,7 +444,7 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     float s = m_uiScale;
 
     float panelWidth = 380.0f * s;
-    float panelHeight = 240.0f * s;
+    float panelHeight = 270.0f * s;
     
     float startX = (width - panelWidth) * 0.5f;
     float startY = (height - panelHeight) * 0.5f;
@@ -441,8 +475,29 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
 
     m_geekGlass.DrawGeekGlassToppings(dc, config);
 
-    float curY = startY + 20.0f * s;
+    float curY = startY + 15.0f * s;
     float centerX = startX + panelWidth * 0.5f;
+
+    // Dynamic Title
+    std::wstring titleText;
+    if (m_exportMode == ExportMode::UnsavedLeave) {
+        titleText = L"裁剪修改未保存，是否保存更改？";
+    } else if (!m_isModified) {
+        titleText = L"另存为图片";
+    } else {
+        titleText = L"保存与导出设置";
+    }
+
+    if (textFormat) {
+        ComPtr<ID2D1SolidColorBrush> titleBrush;
+        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.1f, 0.1f, 0.15f, 1.0f) : D2D1::ColorF(0.9f, 0.9f, 0.95f, 1.0f), &titleBrush);
+        D2D1_RECT_F titleRect = { startX, curY, startX + panelWidth, curY + 24.0f*s };
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        dc->DrawText(titleText.c_str(), (UINT32)titleText.length(), textFormat, titleRect, titleBrush.Get());
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+    
+    curY += 32.0f * s;
 
     // Width & Height Capsules
     D2D1_RECT_F widthRect = { startX + 20.0f*s, curY, centerX - 24.0f*s, curY + 36.0f*s };
@@ -482,25 +537,48 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
 
     curY += 44.0f * s;
 
-    // Bottom Action Row [Overwrite] [Save As...] [Cancel]
+    // Bottom Action Row [Overwrite] [Save As...] [Cancel / Discard]
     bool canOverwrite = CanOverwriteOriginal();
-    float btnW = canOverwrite ? (panelWidth - 60.0f*s) / 3.0f : (panelWidth - 50.0f*s) / 2.0f;
+    bool isUnsavedLeave = (m_exportMode == ExportMode::UnsavedLeave);
 
-    if (canOverwrite) {
-        D2D1_RECT_F overwriteRect = { startX + 20.0f*s, curY, startX + 20.0f*s + btnW, curY + 36.0f*s };
-        DrawButton(dc, overwriteRect, L"Overwrite", HoverState::OverwriteBtn, D2D1::ColorF(0.2f, 0.65f, 0.35f, 1.0f), textFormat);
+    if (isUnsavedLeave) {
+        if (canOverwrite) {
+            float btnW = (panelWidth - 60.0f*s) / 3.0f;
+            D2D1_RECT_F overwriteRect = { startX + 20.0f*s, curY, startX + 20.0f*s + btnW, curY + 36.0f*s };
+            DrawButton(dc, overwriteRect, L"Overwrite", HoverState::OverwriteBtn, D2D1::ColorF(0.2f, 0.65f, 0.35f, 1.0f), textFormat);
 
-        D2D1_RECT_F saveAsRect = { overwriteRect.right + 10.0f*s, curY, overwriteRect.right + 10.0f*s + btnW, curY + 36.0f*s };
-        DrawButton(dc, saveAsRect, L"Save As...", HoverState::SaveAsBtn, D2D1::ColorF(0.2f, 0.55f, 0.95f, 1.0f), textFormat);
+            D2D1_RECT_F saveAsRect = { overwriteRect.right + 10.0f*s, curY, overwriteRect.right + 10.0f*s + btnW, curY + 36.0f*s };
+            DrawButton(dc, saveAsRect, L"Save As...", HoverState::SaveAsBtn, D2D1::ColorF(0.2f, 0.55f, 0.95f, 1.0f), textFormat);
 
-        D2D1_RECT_F cancelRect = { saveAsRect.right + 10.0f*s, curY, startX + panelWidth - 20.0f*s, curY + 36.0f*s };
-        DrawButton(dc, cancelRect, L"Cancel", HoverState::CancelBtn, D2D1::ColorF(0.3f, 0.3f, 0.35f, 1.0f), textFormat);
+            D2D1_RECT_F discardRect = { saveAsRect.right + 10.0f*s, curY, startX + panelWidth - 20.0f*s, curY + 36.0f*s };
+            DrawButton(dc, discardRect, L"Discard", HoverState::DiscardBtn, D2D1::ColorF(0.85f, 0.25f, 0.25f, 1.0f), textFormat);
+        } else {
+            float btnW = (panelWidth - 50.0f*s) / 2.0f;
+            D2D1_RECT_F saveAsRect = { startX + 20.0f*s, curY, startX + 20.0f*s + btnW, curY + 36.0f*s };
+            DrawButton(dc, saveAsRect, L"Save As...", HoverState::SaveAsBtn, D2D1::ColorF(0.2f, 0.55f, 0.95f, 1.0f), textFormat);
+
+            D2D1_RECT_F discardRect = { saveAsRect.right + 10.0f*s, curY, startX + panelWidth - 20.0f*s, curY + 36.0f*s };
+            DrawButton(dc, discardRect, L"Discard", HoverState::DiscardBtn, D2D1::ColorF(0.85f, 0.25f, 0.25f, 1.0f), textFormat);
+        }
     } else {
-        D2D1_RECT_F saveAsRect = { startX + 20.0f*s, curY, startX + 20.0f*s + btnW, curY + 36.0f*s };
-        DrawButton(dc, saveAsRect, L"Save As...", HoverState::SaveAsBtn, D2D1::ColorF(0.2f, 0.55f, 0.95f, 1.0f), textFormat);
+        if (canOverwrite) {
+            float btnW = (panelWidth - 60.0f*s) / 3.0f;
+            D2D1_RECT_F overwriteRect = { startX + 20.0f*s, curY, startX + 20.0f*s + btnW, curY + 36.0f*s };
+            DrawButton(dc, overwriteRect, L"Overwrite", HoverState::OverwriteBtn, D2D1::ColorF(0.2f, 0.65f, 0.35f, 1.0f), textFormat);
 
-        D2D1_RECT_F cancelRect = { saveAsRect.right + 10.0f*s, curY, startX + panelWidth - 20.0f*s, curY + 36.0f*s };
-        DrawButton(dc, cancelRect, L"Cancel", HoverState::CancelBtn, D2D1::ColorF(0.3f, 0.3f, 0.35f, 1.0f), textFormat);
+            D2D1_RECT_F saveAsRect = { overwriteRect.right + 10.0f*s, curY, overwriteRect.right + 10.0f*s + btnW, curY + 36.0f*s };
+            DrawButton(dc, saveAsRect, L"Save As...", HoverState::SaveAsBtn, D2D1::ColorF(0.2f, 0.55f, 0.95f, 1.0f), textFormat);
+
+            D2D1_RECT_F cancelRect = { saveAsRect.right + 10.0f*s, curY, startX + panelWidth - 20.0f*s, curY + 36.0f*s };
+            DrawButton(dc, cancelRect, L"Cancel", HoverState::CancelBtn, D2D1::ColorF(0.3f, 0.3f, 0.35f, 1.0f), textFormat);
+        } else {
+            float btnW = (panelWidth - 50.0f*s) / 2.0f;
+            D2D1_RECT_F saveAsRect = { startX + 20.0f*s, curY, startX + 20.0f*s + btnW, curY + 36.0f*s };
+            DrawButton(dc, saveAsRect, L"Save As...", HoverState::SaveAsBtn, D2D1::ColorF(0.2f, 0.55f, 0.95f, 1.0f), textFormat);
+
+            D2D1_RECT_F cancelRect = { saveAsRect.right + 10.0f*s, curY, startX + panelWidth - 20.0f*s, curY + 36.0f*s };
+            DrawButton(dc, cancelRect, L"Cancel", HoverState::CancelBtn, D2D1::ColorF(0.3f, 0.3f, 0.35f, 1.0f), textFormat);
+        }
     }
 }
 
@@ -644,6 +722,21 @@ void ExportPanel::DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, co
     textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     dc->DrawText(text.c_str(), (UINT32)text.length(), textFormat, textRect, textBrush.Get());
     textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+}
+
+void ExportPanel::ExecutePendingAction() {
+    PendingAction act = m_pendingAction;
+    m_pendingAction = PendingAction::None;
+    
+    if (act == PendingAction::NavigateNext) {
+        ::Navigate(m_hwnd, 1);
+    } else if (act == PendingAction::NavigatePrev) {
+        ::Navigate(m_hwnd, -1);
+    } else if (act == PendingAction::ExitCropMode) {
+        ::TryExitCropMode(m_hwnd, true);
+    } else if (act == PendingAction::CloseApp) {
+        ::PostMessage(m_hwnd, WM_CLOSE, 0, 0);
+    }
 }
 
 } // namespace QuickView

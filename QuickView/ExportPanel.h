@@ -9,6 +9,19 @@
 
 namespace QuickView {
 
+enum class ExportMode {
+    NormalExport, // Manual export/save: [Overwrite (if allowed)], [Save As], [Cancel]
+    UnsavedLeave  // Prompt on leave: [Overwrite (if allowed)], [Save As], [Discard]
+};
+
+enum class PendingAction {
+    None,
+    NavigateNext,
+    NavigatePrev,
+    ExitCropMode,
+    CloseApp
+};
+
 class ExportPanel {
 public:
     static ExportPanel& GetInstance() {
@@ -16,9 +29,12 @@ public:
         return instance;
     }
 
-    void Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath);
+    void Show(HWND hwnd, int initialWidth, int initialHeight, const std::wstring& originalPath, PendingAction pending = PendingAction::None);
     void Hide();
     bool IsVisible() const { return m_isVisible; }
+    bool IsInputFocused() const { 
+        return m_isVisible && (m_focusedState == HoverState::WidthCapsule || m_focusedState == HoverState::HeightCapsule); 
+    }
 
     // Input Handling (Returns true if event was consumed)
     bool OnLButtonDown(float x, float y);
@@ -51,6 +67,9 @@ private:
     bool m_lockAspectRatio = true;
     
     std::wstring m_originalPath;
+    ExportMode m_exportMode = ExportMode::NormalExport;
+    PendingAction m_pendingAction = PendingAction::None;
+    bool m_isModified = false;
 
     // UI Input State
     enum class HoverState { 
@@ -65,7 +84,8 @@ private:
         EmbedIccCheckbox,
         OverwriteBtn, 
         SaveAsBtn, 
-        CancelBtn 
+        CancelBtn,
+        DiscardBtn
     };
     HoverState m_hoverState = HoverState::None;
     HoverState m_focusedState = HoverState::None;
@@ -88,6 +108,7 @@ private:
     void CommitSave(bool overwrite);
     void TriggerAsyncEstimate();
     bool CanOverwriteOriginal() const;
+    void ExecutePendingAction();
     void DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat);
     void DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& text, HoverState id, D2D1_COLOR_F baseColor, IDWriteTextFormat* textFormat);
     void DrawSegmentGroup(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, IDWriteTextFormat* textFormat);
