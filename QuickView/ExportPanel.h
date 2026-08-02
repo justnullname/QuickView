@@ -33,11 +33,14 @@ enum class PendingAction {
 struct PanelLayout {
     D2D1_RECT_F panelRect = {};
     D2D1_RECT_F widthRect = {};
+    D2D1_RECT_F widthResetRect = {};
     D2D1_RECT_F lockRect = {};
     D2D1_RECT_F heightRect = {};
+    D2D1_RECT_F heightResetRect = {};
     
-    // Format Selection Dropdown
+    // Format Selection Dropdown & Size Estimate (Same Row)
     D2D1_RECT_F formatDropdownRect = {};
+    D2D1_RECT_F sizeEstimateRect = {};
     D2D1_RECT_F formatPopupRect = {};
     float formatPopupY = 0.0f;
     float formatItemH = 0.0f;
@@ -124,7 +127,9 @@ private:
     enum class HoverState { 
         None, 
         WidthCapsule, 
+        WidthResetBtn,
         HeightCapsule, 
+        HeightResetBtn,
         LockBtn, 
         FormatDropdownBtn,
         FormatDropdownItem,
@@ -167,12 +172,15 @@ private:
     bool m_inputStarted = false;
 
     // Helper methods
+    void CalculateNetTransform(int& outRotation, bool& outFlipH, bool& outFlipV) const;
+    void OnFormatChanged();
     void ApplyInput();
     void CommitSave(bool overwrite);
     void TriggerAsyncEstimate();
     bool CanOverwriteOriginal() const;
     void ExecutePendingAction();
     void DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat);
+    void DrawResetButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, HoverState id, IDWriteTextFormat* textFormat);
     void DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& text, HoverState id, D2D1_COLOR_F baseColor, IDWriteTextFormat* textFormat);
     void DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat);
     void DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const D2D1_RECT_F& trackRect, IDWriteTextFormat* textFormat);

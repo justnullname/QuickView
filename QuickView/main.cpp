@@ -4996,26 +4996,86 @@ bool IsImageModified() {
 
 bool CheckUnsavedChanges(HWND hwnd, QuickView::PendingAction pending = QuickView::PendingAction::None) {
     if (!IsImageModified()) return true;
-    if (g_config.ShouldAutoSave(GetPaneContext(PaneSlot::Primary).editState.Quality)) return SaveCurrentImage(false);
     
-    // Direct routing to ExportPanel (Save As dialog) for unsaved edits / crop apply
-    const auto& pane = GetPaneContext(PaneSlot::Primary);
-    int targetW = pane.metadata.Width;
-    int targetH = pane.metadata.Height;
-    if (targetW <= 0 || targetH <= 0) {
-        auto rsize = pane.resource.GetSize();
-        targetW = (int)rsize.width;
-        targetH = (int)rsize.height;
-    }
-    std::wstring targetPath = !pane.path.empty() ? pane.path : g_imagePath;
-    
-    if (pending == QuickView::PendingAction::None) {
-        pending = QuickView::PendingAction::ExitCropMode;
+    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    if (g_config.ShouldAutoSave(primaryPane.editState.Quality)) return SaveCurrentImage(false);
+
+    // 1. Direct routing to ExportPanel for active Crop Mode or applied Crop modifications
+    if (g_cropState.IsActive || primaryPane.editState.HasCrop) {
+        int targetW = primaryPane.metadata.Width;
+        int targetH = primaryPane.metadata.Height;
+        if (targetW <= 0 || targetH <= 0) {
+            auto rsize = primaryPane.resource.GetSize();
+            targetW = (int)rsize.width;
+            targetH = (int)rsize.height;
+        }
+        std::wstring targetPath = !primaryPane.path.empty() ? primaryPane.path : g_imagePath;
+
+        if (pending == QuickView::PendingAction::None) {
+            pending = QuickView::PendingAction::ExitCropMode;
+        }
+
+        QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending);
+        RequestRepaint(PaintLayer::All);
+        return false; // Intercept navigation until user completes ExportPanel action
     }
 
-    QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending);
-    RequestRepaint(PaintLayer::All);
-    return false; // Intercept navigation until user saves or cancels
+    // 2. Unsaved Lossless/Edge-adapted/Lossy Rotation/Flip transforms -> Prompt with dedicated Save dialog
+    std::vector<DialogButton> buttons = {
+        { DialogResult::Yes, AppStrings::Dialog_ButtonSave, true },
+        { DialogResult::Custom1, AppStrings::Dialog_ButtonSaveAs },
+        { DialogResult::No, AppStrings::Dialog_ButtonDiscard }
+    };
+
+    const wchar_t* checkboxLabel = AppStrings::Checkbox_AlwaysSaveLossless;
+    std::wstring qualityMsg = L"Quality: Lossless";
+    if (primaryPane.editState.Quality == EditQuality::EdgeAdapted) {
+        checkboxLabel = AppStrings::Checkbox_AlwaysSaveEdgeAdapted;
+        qualityMsg = L"Quality: Edge Adapted";
+    } else if (primaryPane.editState.Quality == EditQuality::Lossy) {
+        checkboxLabel = AppStrings::Checkbox_AlwaysSaveLossy;
+        qualityMsg = L"Quality: Lossy Re-encoded";
+    }
+
+    DialogResult result = AppContext::GetInstance().DialogCtrl->ShowDialog(
+        hwnd, AppStrings::Dialog_SaveTitle, AppStrings::Dialog_SaveContent,
+        primaryPane.editState.GetQualityColor(), buttons, true, checkboxLabel, qualityMsg);
+
+    if (result == DialogResult::None || result == DialogResult::Cancel) {
+        return false; // Cancel navigation/exit
+    }
+
+    if (AppContext::GetInstance().Dialog.IsChecked) {
+        if (primaryPane.editState.Quality == EditQuality::EdgeAdapted) g_config.AlwaysSaveEdgeAdapted = true;
+        else if (primaryPane.editState.Quality == EditQuality::Lossy) g_config.AlwaysSaveLossy = true;
+        else g_config.AlwaysSaveLossless = true;
+    }
+
+    if (result == DialogResult::Yes) {
+        return SaveCurrentImage(false);
+    }
+    if (result == DialogResult::Custom1) {
+        int targetW = primaryPane.metadata.Width;
+        int targetH = primaryPane.metadata.Height;
+        if (targetW <= 0 || targetH <= 0) {
+            auto rsize = primaryPane.resource.GetSize();
+            targetW = (int)rsize.width;
+            targetH = (int)rsize.height;
+        }
+        std::wstring targetPath = !primaryPane.path.empty() ? primaryPane.path : g_imagePath;
+        if (pending == QuickView::PendingAction::None) {
+            pending = QuickView::PendingAction::ExitCropMode;
+        }
+        QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending);
+        RequestRepaint(PaintLayer::All);
+        return false; // Handled asynchronously by ExportPanel
+    }
+    if (result == DialogResult::No) {
+        DiscardChanges();
+        return true; // Changes discarded, proceed with navigation/exit
+    }
+
+    return false;
 }
 
 // [Refactor] Single Truth for Visual State (Physical + Rotation)

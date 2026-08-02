@@ -183,6 +183,91 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
     return S_OK;
 }
 
+static bool ProbeAvifEncoderSupport(IWICImagingFactory* factory, const GUID& containerGuid) {
+    if (!factory) return false;
+
+    IStream* pMemStream = nullptr;
+    if (FAILED(CreateStreamOnHGlobal(NULL, TRUE, &pMemStream))) return false;
+    
+    ComPtr<IWICStream> stream;
+    HRESULT hr = factory->CreateStream(&stream);
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+    
+    hr = stream->InitializeFromIStream(pMemStream);
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+
+    ComPtr<IWICBitmapEncoder> encoder;
+    hr = factory->CreateEncoder(containerGuid, nullptr, &encoder);
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+
+    hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+
+    ComPtr<IWICBitmapFrameEncode> frameEncode;
+    ComPtr<IPropertyBag2> props;
+    hr = encoder->CreateNewFrame(&frameEncode, &props);
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+
+    if (props) {
+        PROPBAG2 optM = {};
+        optM.pstrName = (LPOLESTR)L"HeifCompressionMethod";
+        VARIANT varM; VariantInit(&varM);
+        varM.vt = VT_UI1; varM.bVal = 3; // Enforce WICHeifCompressionAV1 (0x3)
+        props->Write(1, &optM, &varM);
+
+        PROPBAG2 optQ = {};
+        optQ.pstrName = (LPOLESTR)L"ImageQuality";
+        VARIANT varQ; VariantInit(&varQ);
+        varQ.vt = VT_R4; varQ.fltVal = 0.9f;
+        props->Write(1, &optQ, &varQ);
+    }
+
+    hr = frameEncode->Initialize(props.Get());
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+
+    ComPtr<IWICBitmap> bitmap;
+    hr = factory->CreateBitmap(1, 1, GUID_WICPixelFormat32bppBGRA, WICBitmapCacheOnLoad, &bitmap);
+    if (FAILED(hr)) {
+        pMemStream->Release();
+        return false;
+    }
+
+    frameEncode->SetSize(1, 1);
+    WICPixelFormatGUID pf = GUID_WICPixelFormat32bppBGRA;
+    frameEncode->SetPixelFormat(&pf);
+    if (FAILED(frameEncode->WriteSource(bitmap.Get(), nullptr))) {
+        pMemStream->Release();
+        return false;
+    }
+
+    if (FAILED(frameEncode->Commit())) {
+        pMemStream->Release();
+        return false;
+    }
+
+    bool success = SUCCEEDED(encoder->Commit());
+    pMemStream->Release();
+    return success;
+}
+
 std::vector<ExportFormatDesc> ImageExporter::GetSupportedExportFormats() {
     std::vector<ExportFormatDesc> result;
 
@@ -230,8 +315,7 @@ std::vector<ExportFormatDesc> ImageExporter::GetSupportedExportFormats() {
                                  _wcsicmp(primaryExt.c_str(), L".jxr") == 0 ||
                                  _wcsicmp(primaryExt.c_str(), L".wdp") == 0 ||
                                  _wcsicmp(primaryExt.c_str(), L".heic") == 0 ||
-                                 _wcsicmp(primaryExt.c_str(), L".heif") == 0 ||
-                                 _wcsicmp(primaryExt.c_str(), L".avif") == 0);
+                                 _wcsicmp(primaryExt.c_str(), L".heif") == 0);
 
         bool supportsQuality = (_wcsicmp(primaryExt.c_str(), L".jpg") == 0 ||
                                 _wcsicmp(primaryExt.c_str(), L".jpeg") == 0 ||
@@ -240,8 +324,7 @@ std::vector<ExportFormatDesc> ImageExporter::GetSupportedExportFormats() {
                                 _wcsicmp(primaryExt.c_str(), L".jxr") == 0 ||
                                 _wcsicmp(primaryExt.c_str(), L".wdp") == 0 ||
                                 _wcsicmp(primaryExt.c_str(), L".heic") == 0 ||
-                                _wcsicmp(primaryExt.c_str(), L".heif") == 0 ||
-                                _wcsicmp(primaryExt.c_str(), L".avif") == 0);
+                                _wcsicmp(primaryExt.c_str(), L".heif") == 0);
 
         ExportFormatDesc desc;
         desc.DisplayName = displayName;
@@ -252,17 +335,30 @@ std::vector<ExportFormatDesc> ImageExporter::GetSupportedExportFormats() {
 
         result.push_back(std::move(desc));
 
-        // If HEIF container is available, expose AVIF (.avif) via WICHeifCompressionAV1 (HeifCompressionMethod = 3)
+        // If HEIF container is available, probe whether TRUE AVIF (.avif) encoding can actually commit via WICHeifCompressionAV1 (3)
         if (_wcsicmp(primaryExt.c_str(), L".heic") == 0 || _wcsicmp(primaryExt.c_str(), L".heif") == 0) {
-            ExportFormatDesc avifDesc;
-            avifDesc.DisplayName = L"AVIF Image (*.avif)";
-            avifDesc.Ext = L".avif";
-            avifDesc.ContainerGuid = containerGuid;
-            avifDesc.SupportsLosslessSwitch = true;
-            avifDesc.SupportsQuality = true;
-            result.push_back(std::move(avifDesc));
+            static bool s_probedAvif = false;
+            static bool s_canEncodeAvif = false;
+            if (!s_probedAvif) {
+                s_canEncodeAvif = ProbeAvifEncoderSupport(factory.Get(), containerGuid);
+                s_probedAvif = true;
+            }
+
+            if (s_canEncodeAvif) {
+                ExportFormatDesc avifDesc;
+                avifDesc.DisplayName = L"AVIF Image (*.avif)";
+                avifDesc.Ext = L".avif";
+                avifDesc.ContainerGuid = containerGuid;
+                avifDesc.SupportsLosslessSwitch = false; // AVIF WIC does not support Lossless=TRUE
+                avifDesc.SupportsQuality = true;         // AVIF WIC supports Quality slider!
+                result.push_back(std::move(avifDesc));
+            }
         }
     }
+
+    std::sort(result.begin(), result.end(), [](const ExportFormatDesc& a, const ExportFormatDesc& b) {
+        return _wcsicmp(a.DisplayName.c_str(), b.DisplayName.c_str()) < 0;
+    });
 
     return result;
 }
@@ -283,17 +379,17 @@ static void ConfigureEncoderProperties(IPropertyBag2* props, const GUID& contain
     if (!props) return;
 
     const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
-    if (ext && _wcsicmp(ext, L".avif") == 0) {
+    bool isAvif = (ext && _wcsicmp(ext, L".avif") == 0);
+
+    if (isAvif) {
         PROPBAG2 optHeif = {};
         optHeif.pstrName = (LPOLESTR)L"HeifCompressionMethod";
-        VARIANT varHeif;
-        VariantInit(&varHeif);
-        varHeif.vt = VT_UI1;
-        varHeif.bVal = 3; // WICHeifCompressionAV1 (0x3)
+        VARIANT varHeif; VariantInit(&varHeif);
+        varHeif.vt = VT_UI1; varHeif.bVal = 3; // Enforce WICHeifCompressionAV1 (0x3)
         props->Write(1, &optHeif, &varHeif);
     }
 
-    if (options.Lossless) {
+    if (options.Lossless && !isAvif) {
         PROPBAG2 optLossless = {};
         optLossless.pstrName = (LPOLESTR)L"Lossless";
         VARIANT varLossless;
@@ -358,7 +454,26 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
         frameEncode->SetColorContexts(1, &pCtx);
     }
 
-    hr = frameEncode->WriteSource(source.Get(), nullptr);
+    UINT w = 0, h = 0;
+    source->GetSize(&w, &h);
+    frameEncode->SetSize(w, h);
+
+    WICPixelFormatGUID pixelFormat = {};
+    source->GetPixelFormat(&pixelFormat);
+    WICPixelFormatGUID origPixelFormat = pixelFormat;
+    frameEncode->SetPixelFormat(&pixelFormat);
+
+    ComPtr<IWICBitmapSource> finalSource = source;
+    if (pixelFormat != origPixelFormat) {
+        ComPtr<IWICFormatConverter> converter;
+        if (SUCCEEDED(factory->CreateFormatConverter(&converter))) {
+            if (SUCCEEDED(converter->Initialize(source.Get(), pixelFormat, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+                finalSource = converter;
+            }
+        }
+    }
+
+    hr = frameEncode->WriteSource(finalSource.Get(), nullptr);
     if (FAILED(hr)) return std::unexpected(L"Failed to write image data.");
 
     hr = frameEncode->Commit();
@@ -414,7 +529,26 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
         frameEncode->SetColorContexts(1, &pCtx);
     }
 
-    hr = frameEncode->WriteSource(source.Get(), nullptr);
+    UINT estW = 0, estH = 0;
+    source->GetSize(&estW, &estH);
+    frameEncode->SetSize(estW, estH);
+
+    WICPixelFormatGUID estPixelFormat = {};
+    source->GetPixelFormat(&estPixelFormat);
+    WICPixelFormatGUID estOrigPixelFormat = estPixelFormat;
+    frameEncode->SetPixelFormat(&estPixelFormat);
+
+    ComPtr<IWICBitmapSource> estFinalSource = source;
+    if (estPixelFormat != estOrigPixelFormat) {
+        ComPtr<IWICFormatConverter> converter;
+        if (SUCCEEDED(factory->CreateFormatConverter(&converter))) {
+            if (SUCCEEDED(converter->Initialize(source.Get(), estPixelFormat, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+                estFinalSource = converter;
+            }
+        }
+    }
+
+    hr = frameEncode->WriteSource(estFinalSource.Get(), nullptr);
     if (FAILED(hr)) return std::unexpected(L"Write error.");
 
     hr = frameEncode->Commit();

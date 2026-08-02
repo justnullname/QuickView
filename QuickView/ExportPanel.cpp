@@ -39,6 +39,7 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     PanelLayout l;
     float s = m_uiScale;
 
+    // Determine active format capabilities
     bool supportsLossless = false;
     bool supportsQuality = false;
     if (!m_availableFormats.empty() && m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
@@ -46,13 +47,19 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
         supportsQuality = m_availableFormats[m_selectedFormatIndex].SupportsQuality;
     }
 
-    l.showLosslessCheckbox = supportsLossless;
-    l.showQualitySlider = supportsQuality && !m_isLossless;
+    bool showLossless = supportsLossless;
+    bool showQuality = supportsQuality && !m_isLossless;
 
-    float panelWidth = 420.0f * s;
-    float baseHeight = 270.0f * s;
-    if (l.showLosslessCheckbox) baseHeight += 38.0f * s;
-    if (l.showQualitySlider) baseHeight += 38.0f * s;
+    float panelWidth = 440.0f * s;
+    float padX = 28.0f * s;
+    float contentW = panelWidth - padX * 2.0f;
+
+    // Dynamic panel height computation:
+    // TopPadding (20) + Title (26) + Gap (12) + WH (28) + Gap (12) + Format (28) + [Lossless/Quality (36)] + ICC (24) + Gap (16) + Buttons (36) + BottomPadding (18)
+    float baseHeight = 232.0f * s;
+    if (showLossless || showQuality) {
+        baseHeight += 36.0f * s;
+    }
 
     float panelHeight = baseHeight;
 
@@ -62,66 +69,91 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     l.panelRect = D2D1::RectF(startX, startY, startX + panelWidth, startY + panelHeight);
 
     float curY = startY + 58.0f * s;
-    float centerX = startX + panelWidth * 0.5f;
 
-    // 1. Width & Height Capsules
-    l.widthRect = D2D1::RectF(startX + 20.0f * s, curY, centerX - 24.0f * s, curY + 32.0f * s);
-    l.lockRect = D2D1::RectF(centerX - 16.0f * s, curY, centerX + 16.0f * s, curY + 32.0f * s);
-    l.heightRect = D2D1::RectF(centerX + 24.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 32.0f * s);
+    // 1. Width & Height Capsules with Reset Buttons (Layout: [↺] [Width] [🔒] [Height] [↺])
+    float capW = 126.0f * s;
+    float btnSize = 24.0f * s;
+    float tightGap = 4.0f * s;
+    float groupWidth = btnSize + tightGap + capW; // 154 * s
+    float majorGap = (contentW - 2.0f * groupWidth - btnSize) * 0.5f; // 26 * s
 
-    // 2. Format Dropdown Row
-    curY += 44.0f * s;
-    l.formatDropdownRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 28.0f * s);
+    float leftX = startX + padX;
+    l.widthResetRect = D2D1::RectF(leftX, curY + 2.0f * s, leftX + btnSize, curY + 26.0f * s);
+    leftX = l.widthResetRect.right + tightGap;
+    l.widthRect = D2D1::RectF(leftX, curY, leftX + capW, curY + 28.0f * s);
+    leftX = l.widthRect.right + majorGap;
+    l.lockRect = D2D1::RectF(leftX, curY + 2.0f * s, leftX + btnSize, curY + 26.0f * s);
+    leftX = l.lockRect.right + majorGap;
+    l.heightRect = D2D1::RectF(leftX, curY, leftX + capW, curY + 28.0f * s);
+    leftX = l.heightRect.right + tightGap;
+    l.heightResetRect = D2D1::RectF(leftX, curY + 2.0f * s, leftX + btnSize, curY + 26.0f * s);
 
-    // 3. Lossless Checkbox (Conditional)
-    if (l.showLosslessCheckbox) {
-        curY += 38.0f * s;
-        l.losslessCheckboxRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 24.0f * s);
-    }
-
-    // 4. Quality Slider (Conditional)
-    if (l.showQualitySlider) {
-        curY += 38.0f * s;
-        l.qualityRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 24.0f * s);
-        l.qualityTrackRect = D2D1::RectF(startX + 85.0f * s, curY + 10.0f * s, startX + panelWidth - 75.0f * s, curY + 14.0f * s);
-    }
-
-    // 5. Embed ICC Checkbox & Dropdown & Size Label
+    // 2. Format Selection Dropdown (Full Width contentW)
     curY += 40.0f * s;
-    l.checkboxRect = D2D1::RectF(startX + 20.0f * s, curY, startX + 145.0f * s, curY + 24.0f * s);
-    l.iccDropdownRect = D2D1::RectF(startX + 148.0f * s, curY + 1.0f * s, startX + 305.0f * s, curY + 23.0f * s);
-    l.sizeRect = D2D1::RectF(startX + 308.0f * s, curY, startX + panelWidth - 15.0f * s, curY + 24.0f * s);
+    l.formatDropdownRect = D2D1::RectF(startX + padX, curY, startX + panelWidth - padX, curY + 28.0f * s);
 
-    // 6. Bottom Action Row Buttons
-    curY += 46.0f * s;
+    // 3. Lossless & Quality Controls (Same Row if both supported, or single row)
+    if (showLossless && showQuality) {
+        curY += 36.0f * s;
+        l.showLosslessCheckbox = true;
+        l.showQualitySlider = true;
+
+        l.losslessCheckboxRect = D2D1::RectF(startX + padX, curY, startX + padX + 130.0f * s, curY + 24.0f * s);
+        l.qualityRect = D2D1::RectF(startX + padX + 135.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
+        l.qualityTrackRect = D2D1::RectF(l.qualityRect.left + 55.0f * s, curY + 10.0f * s, l.qualityRect.right - 47.0f * s, curY + 14.0f * s);
+    } else if (showLossless) {
+        curY += 36.0f * s;
+        l.showLosslessCheckbox = true;
+        l.showQualitySlider = false;
+        l.losslessCheckboxRect = D2D1::RectF(startX + padX, curY, startX + panelWidth - padX, curY + 24.0f * s);
+    } else if (showQuality) {
+        curY += 36.0f * s;
+        l.showLosslessCheckbox = false;
+        l.showQualitySlider = true;
+        l.qualityRect = D2D1::RectF(startX + padX, curY, startX + panelWidth - padX, curY + 24.0f * s);
+        l.qualityTrackRect = D2D1::RectF(l.qualityRect.left + 55.0f * s, curY + 10.0f * s, l.qualityRect.right - 47.0f * s, curY + 14.0f * s);
+    } else {
+        l.showLosslessCheckbox = false;
+        l.showQualitySlider = false;
+    }
+
+    // 4. Embed ICC Checkbox & Dropdown & Size Label
+    curY += 38.0f * s;
+    l.checkboxRect = D2D1::RectF(startX + padX, curY, startX + padX + 120.0f * s, curY + 24.0f * s);
+    l.iccDropdownRect = D2D1::RectF(startX + padX + 122.0f * s, curY + 1.0f * s, startX + padX + 250.0f * s, curY + 23.0f * s);
+    l.sizeRect = D2D1::RectF(startX + padX + 255.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
+
+    // 5. Bottom Action Row Buttons
+    curY += 40.0f * s;
     bool canOverwrite = CanOverwriteOriginal();
     bool isUnsavedLeave = (m_exportMode == ExportMode::UnsavedLeave);
 
+    float btnGap = 10.0f * s;
     if (isUnsavedLeave) {
         if (canOverwrite) {
-            float btnW = (panelWidth - 60.0f * s) / 3.0f;
-            l.overwriteRect = D2D1::RectF(startX + 20.0f * s, curY, startX + 20.0f * s + btnW, curY + 36.0f * s);
-            l.saveAsRect = D2D1::RectF(l.overwriteRect.right + 10.0f * s, curY, l.overwriteRect.right + 10.0f * s + btnW, curY + 36.0f * s);
-            l.discardRect = D2D1::RectF(l.saveAsRect.right + 10.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 36.0f * s);
+            float btnW = (contentW - 2.0f * btnGap) / 3.0f;
+            l.overwriteRect = D2D1::RectF(startX + padX, curY, startX + padX + btnW, curY + 36.0f * s);
+            l.saveAsRect = D2D1::RectF(l.overwriteRect.right + btnGap, curY, l.overwriteRect.right + btnGap + btnW, curY + 36.0f * s);
+            l.discardRect = D2D1::RectF(l.saveAsRect.right + btnGap, curY, startX + panelWidth - padX, curY + 36.0f * s);
         } else {
-            float btnW = (panelWidth - 50.0f * s) / 2.0f;
-            l.saveAsRect = D2D1::RectF(startX + 20.0f * s, curY, startX + 20.0f * s + btnW, curY + 36.0f * s);
-            l.discardRect = D2D1::RectF(l.saveAsRect.right + 10.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 36.0f * s);
+            float btnW = (contentW - btnGap) / 2.0f;
+            l.saveAsRect = D2D1::RectF(startX + padX, curY, startX + padX + btnW, curY + 36.0f * s);
+            l.discardRect = D2D1::RectF(l.saveAsRect.right + btnGap, curY, startX + panelWidth - padX, curY + 36.0f * s);
         }
     } else {
         if (canOverwrite) {
-            float btnW = (panelWidth - 60.0f * s) / 3.0f;
-            l.overwriteRect = D2D1::RectF(startX + 20.0f * s, curY, startX + 20.0f * s + btnW, curY + 36.0f * s);
-            l.saveAsRect = D2D1::RectF(l.overwriteRect.right + 10.0f * s, curY, l.overwriteRect.right + 10.0f * s + btnW, curY + 36.0f * s);
-            l.cancelRect = D2D1::RectF(l.saveAsRect.right + 10.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 36.0f * s);
+            float btnW = (contentW - 2.0f * btnGap) / 3.0f;
+            l.overwriteRect = D2D1::RectF(startX + padX, curY, startX + padX + btnW, curY + 36.0f * s);
+            l.saveAsRect = D2D1::RectF(l.overwriteRect.right + btnGap, curY, l.overwriteRect.right + btnGap + btnW, curY + 36.0f * s);
+            l.cancelRect = D2D1::RectF(l.saveAsRect.right + btnGap, curY, startX + panelWidth - padX, curY + 36.0f * s);
         } else {
-            float btnW = (panelWidth - 50.0f * s) / 2.0f;
-            l.saveAsRect = D2D1::RectF(startX + 20.0f * s, curY, startX + 20.0f * s + btnW, curY + 36.0f * s);
-            l.cancelRect = D2D1::RectF(l.saveAsRect.right + 10.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 36.0f * s);
+            float btnW = (contentW - btnGap) / 2.0f;
+            l.saveAsRect = D2D1::RectF(startX + padX, curY, startX + padX + btnW, curY + 36.0f * s);
+            l.cancelRect = D2D1::RectF(l.saveAsRect.right + padX, curY, startX + panelWidth - padX, curY + 36.0f * s);
         }
     }
 
-    // 7. Format Popup Geometry (Pops DOWNWARDS from dropdown button)
+    // 6. Format Popup Geometry (Pops DOWNWARDS from dropdown button)
     int fmtCount = (int)m_availableFormats.size();
     l.visibleFormatCount = (std::min)(fmtCount, 10);
     l.formatItemH = 26.0f * s;
@@ -129,7 +161,7 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     l.formatPopupY = l.formatDropdownRect.bottom + 2.0f * s;
     l.formatPopupRect = D2D1::RectF(l.formatDropdownRect.left, l.formatPopupY, l.formatDropdownRect.right, l.formatPopupY + fmtPopupH);
 
-    // 8. ICC Popup Geometry (Pops UPWARDS from dropdown button)
+    // 7. ICC Popup Geometry (Pops UPWARDS from dropdown button)
     int count = (int)m_iccProfiles.size();
     l.visibleIccCount = (std::min)(count, 8);
     l.itemH = 24.0f * s;
@@ -160,22 +192,40 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_inputStarted = false;
     m_lockAspectRatio = true;
     
-    // Initialize WIC Formats
+    // Initialize WIC Formats (Sorted Alphabetically)
     m_availableFormats = ImageExporter::GetSupportedExportFormats();
     m_selectedFormatIndex = 0;
     m_formatDropdownOpen = false;
     m_hoverFormatItemIndex = -1;
     m_isLossless = false;
 
+    bool matchedExt = false;
     if (!originalPath.empty()) {
         const wchar_t* origExt = PathFindExtensionW(originalPath.c_str());
         if (origExt && *origExt) {
             for (size_t i = 0; i < m_availableFormats.size(); ++i) {
                 if (_wcsicmp(m_availableFormats[i].Ext.c_str(), origExt) == 0) {
                     m_selectedFormatIndex = (int)i;
+                    matchedExt = true;
                     break;
                 }
             }
+        }
+    }
+
+    if (!matchedExt) {
+        for (size_t i = 0; i < m_availableFormats.size(); ++i) {
+            if (_wcsicmp(m_availableFormats[i].Ext.c_str(), L".jpg") == 0 ||
+                _wcsicmp(m_availableFormats[i].Ext.c_str(), L".jpeg") == 0) {
+                m_selectedFormatIndex = (int)i;
+                break;
+            }
+        }
+    }
+
+    if (m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
+        if (!m_availableFormats[m_selectedFormatIndex].SupportsLosslessSwitch) {
+            m_isLossless = false;
         }
     }
 
@@ -285,6 +335,20 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
         m_selectedIccIndex = (srgbIndex != -1) ? srgbIndex : 0;
     }
     
+    OnFormatChanged();
+}
+
+void ExportPanel::OnFormatChanged() {
+    if (m_availableFormats.empty() || m_selectedFormatIndex < 0 || m_selectedFormatIndex >= (int)m_availableFormats.size()) {
+        return;
+    }
+    const auto& fmt = m_availableFormats[m_selectedFormatIndex];
+    if (!fmt.SupportsLosslessSwitch) {
+        m_isLossless = false;
+    }
+    if (!fmt.SupportsQuality) {
+        m_jpegQuality = 90;
+    }
     TriggerAsyncEstimate();
 }
 
@@ -307,6 +371,33 @@ bool ExportPanel::CanOverwriteOriginal() const {
     return CheckWritePermission(m_originalPath);
 }
 
+void ExportPanel::CalculateNetTransform(int& outRotation, bool& outFlipH, bool& outFlipV) const {
+    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    int baseExif = primaryPane.metadata.ExifOrientation;
+    int baseRot = 0;
+    bool baseFlip = false;
+    switch (baseExif) {
+        case 1: baseRot = 0;   baseFlip = false; break;
+        case 2: baseRot = 0;   baseFlip = true;  break;
+        case 3: baseRot = 180; baseFlip = false; break;
+        case 4: baseRot = 180; baseFlip = true;  break;
+        case 5: baseRot = 270; baseFlip = true;  break;
+        case 6: baseRot = 90;  baseFlip = false; break;
+        case 7: baseRot = 90;  baseFlip = true;  break;
+        case 8: baseRot = 270; baseFlip = false; break;
+        default: baseRot = 0;  baseFlip = false; break;
+    }
+
+    const auto& editState = primaryPane.editState;
+    int netRot = (baseRot + editState.TotalRotation) % 360;
+    bool netFlipH = baseFlip ^ editState.FlippedH;
+    bool netFlipV = editState.FlippedV;
+
+    outRotation = (netRot + 360) % 360;
+    outFlipH = netFlipH;
+    outFlipV = netFlipV;
+}
+
 void ExportPanel::TriggerAsyncEstimate() {
     m_estimatedSizeStr = AppStrings::Dialog_SizeEstimating;
     
@@ -320,7 +411,7 @@ void ExportPanel::TriggerAsyncEstimate() {
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
     opts.Lossless = m_isLossless;
-    opts.Rotation = GetPaneContext(PaneSlot::Primary).editState.TotalRotation;
+    CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -373,7 +464,7 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
     if (m_formatDropdownOpen && hit(layout.formatPopupRect)) {
         if (m_hoverFormatItemIndex >= 0 && m_hoverFormatItemIndex < (int)m_availableFormats.size()) {
             m_selectedFormatIndex = m_hoverFormatItemIndex;
-            TriggerAsyncEstimate();
+            OnFormatChanged();
         }
         m_formatDropdownOpen = false;
         m_focusedState = HoverState::None;
@@ -412,6 +503,26 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
                 m_jpegQuality = std::clamp((int)std::round(1.0f + ratio * 99.0f), 1, 100);
                 TriggerAsyncEstimate();
             }
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+        } else if (m_focusedState == HoverState::WidthResetBtn || hit(layout.widthResetRect)) {
+            m_targetWidth = m_cropWidth;
+            if (m_lockAspectRatio && m_cropWidth > 0 && m_cropHeight > 0) {
+                float aspect = (float)m_cropWidth / (float)m_cropHeight;
+                m_targetHeight = (int)std::round((float)m_targetWidth / aspect);
+            }
+            TriggerAsyncEstimate();
+            m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+        } else if (m_focusedState == HoverState::HeightResetBtn || hit(layout.heightResetRect)) {
+            m_targetHeight = m_cropHeight;
+            if (m_lockAspectRatio && m_cropWidth > 0 && m_cropHeight > 0) {
+                float aspect = (float)m_cropWidth / (float)m_cropHeight;
+                m_targetWidth = (int)std::round((float)m_targetHeight * aspect);
+            }
+            TriggerAsyncEstimate();
+            m_focusedState = HoverState::None;
             m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::WidthCapsule || m_focusedState == HoverState::HeightCapsule) {
@@ -536,7 +647,9 @@ bool ExportPanel::OnMouseMove(float x, float y) {
 
     if (hitInsidePanel && !hitPopup) {
         if (hit(layout.widthRect)) newState = HoverState::WidthCapsule;
+        else if (hit(layout.widthResetRect)) newState = HoverState::WidthResetBtn;
         else if (hit(layout.heightRect)) newState = HoverState::HeightCapsule;
+        else if (hit(layout.heightResetRect)) newState = HoverState::HeightResetBtn;
         else if (hit(layout.lockRect)) newState = HoverState::LockBtn;
         else if (hit(layout.formatDropdownRect)) newState = HoverState::FormatDropdownBtn;
         else if (layout.showLosslessCheckbox && hit(layout.losslessCheckboxRect)) newState = HoverState::LosslessCheckbox;
@@ -698,6 +811,7 @@ void ExportPanel::CommitSave(bool overwrite) {
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
     opts.Lossless = m_isLossless;
+    CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -732,6 +846,19 @@ void ExportPanel::CommitSave(bool overwrite) {
     } else {
         OPENFILENAMEW ofn = {};
         wchar_t szFile[MAX_PATH] = {0};
+
+        if (!m_originalPath.empty()) {
+            const wchar_t* pFileName = PathFindFileNameW(m_originalPath.c_str());
+            if (pFileName && *pFileName) {
+                wcscpy_s(szFile, pFileName);
+                PathRemoveExtensionW(szFile);
+                if (!m_availableFormats.empty() && m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
+                    wcscat_s(szFile, m_availableFormats[m_selectedFormatIndex].Ext.c_str());
+                } else {
+                    wcscat_s(szFile, L".jpg");
+                }
+            }
+        }
 
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = m_hwnd;
@@ -833,8 +960,8 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     dc->CreateSolidColorBrush(accentClr, &pBorderBrush);
     dc->DrawRoundedRectangle(D2D1::RoundedRect(m_panelRect, 10.0f * s, 10.0f * s), pBorderBrush.Get(), 2.0f * s);
 
-    // 4. Panel Title
-    float curY = m_panelRect.top + 18.0f * s;
+    // 4. Panel Title (Bold & Larger Font)
+    float curY = m_panelRect.top + 20.0f * s;
     std::wstring titleText;
     if (m_exportMode == ExportMode::UnsavedLeave) {
         titleText = AppStrings::Dialog_CropUnsavedTitle;
@@ -845,31 +972,52 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     }
 
     if (textFormat) {
+        static ComPtr<IDWriteFactory> pDW;
+        static ComPtr<IDWriteTextFormat> fmtTitle;
+        static float s_lastTitleScale = 0.0f;
+        if (s_lastTitleScale != s) {
+            s_lastTitleScale = s;
+            fmtTitle.Reset();
+        }
+        if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+        if (pDW && !fmtTitle) {
+            pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 17.0f * s, L"zh-CN", &fmtTitle);
+        }
+
         ComPtr<ID2D1SolidColorBrush> titleBrush;
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(0.95f, 0.95f, 0.98f, 1.0f), &titleBrush);
-        D2D1_RECT_F titleRect = { m_panelRect.left + 20.0f*s, curY, m_panelRect.right - 20.0f*s, curY + 28.0f*s };
-        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(titleText.c_str(), (UINT32)titleText.length(), textFormat, titleRect, titleBrush.Get());
+        D2D1_RECT_F titleRect = { m_panelRect.left + 28.0f*s, curY, m_panelRect.right - 28.0f*s, curY + 26.0f*s };
+        IDWriteTextFormat* useTitleFmt = fmtTitle ? fmtTitle.Get() : textFormat;
+        useTitleFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        useTitleFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        dc->DrawText(titleText.c_str(), (UINT32)titleText.length(), useTitleFmt, titleRect, titleBrush.Get());
     }
 
-    // 5. Width & Height Capsules
+    // 5. Width & Height Capsules + Reset Buttons ([↺] [W] [🔒] [H] [↺])
+    DrawResetButton(dc, layout.widthResetRect, HoverState::WidthResetBtn, textFormat);
+
     DrawCapsule(dc, layout.widthRect, L"W", 
         (m_focusedState == HoverState::WidthCapsule) ? m_inputBuf : std::to_wstring(m_targetWidth), 
         HoverState::WidthCapsule, textFormat);
 
+    // Lock button border outline
+    ComPtr<ID2D1SolidColorBrush> lockBorderBrush;
+    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.1f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), &lockBorderBrush);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(layout.lockRect, 4.0f*s, 4.0f*s), lockBorderBrush.Get(), 1.0f*s);
     DrawButton(dc, layout.lockRect, m_lockAspectRatio ? L"🔒" : L"🔓", HoverState::LockBtn, D2D1::ColorF(0.0f,0.0f,0.0f,0.0f), textFormat);
 
     DrawCapsule(dc, layout.heightRect, L"H", 
         (m_focusedState == HoverState::HeightCapsule) ? m_inputBuf : std::to_wstring(m_targetHeight), 
         HoverState::HeightCapsule, textFormat);
 
+    DrawResetButton(dc, layout.heightResetRect, HoverState::HeightResetBtn, textFormat);
+
     // 6. Format Selection Dropdown
     DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
 
     // 6.2 Lossless Checkbox (Conditional)
     if (layout.showLosslessCheckbox) {
-        DrawCheckbox(dc, layout.losslessCheckboxRect, L"Always Save Lossless", m_isLossless, HoverState::LosslessCheckbox, textFormat);
+        DrawCheckbox(dc, layout.losslessCheckboxRect, L"Save Lossless", m_isLossless, HoverState::LosslessCheckbox, textFormat);
     }
 
     // 6.5 Quality Slider (Conditional)
@@ -877,19 +1025,18 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         DrawQualitySlider(dc, layout.qualityRect, layout.qualityTrackRect, textFormat);
     }
 
-    // 7. Embed ICC Checkbox
+    // 7. Embed ICC Checkbox & Size Label
     DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC, m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
 
-    // 8. Size Right Aligned Label
     ComPtr<ID2D1SolidColorBrush> dimTextBrush;
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.4f, 0.4f, 0.45f, 1.0f) : D2D1::ColorF(0.7f, 0.7f, 0.75f, 1.0f), &dimTextBrush);
+    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f), &dimTextBrush);
     if (textFormat) {
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         dc->DrawText(m_estimatedSizeStr.c_str(), (UINT32)m_estimatedSizeStr.length(), textFormat, layout.sizeRect, dimTextBrush.Get());
     }
 
-    // 9. Bottom Action Buttons
+    // 8. Bottom Action Buttons
     D2D1_COLOR_F primaryBtnColor = accentClr;
     D2D1_COLOR_F overwriteBtnColor = isLight ? D2D1::ColorF(0.16f, 0.58f, 0.32f, 1.0f) : D2D1::ColorF(0.20f, 0.65f, 0.36f, 1.0f);
     D2D1_COLOR_F discardBtnColor = isLight ? D2D1::ColorF(0.80f, 0.20f, 0.20f, 1.0f) : D2D1::ColorF(0.85f, 0.25f, 0.25f, 1.0f);
@@ -908,9 +1055,54 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         DrawButton(dc, layout.discardRect, AppStrings::Dialog_ButtonDiscard, HoverState::DiscardBtn, discardBtnColor, textFormat);
     }
 
-    // 10. Floating Dropdown Popups (Rendered last for highest Z-order)
-    DrawIccDropdown(dc, layout.iccDropdownRect, layout, textFormat);
-    DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
+    // 9. Floating Dropdown Popups (Render active popup LAST for topmost Z-order)
+    if (m_iccDropdownOpen) {
+        DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
+        DrawIccDropdown(dc, layout.iccDropdownRect, layout, textFormat);
+    } else {
+        DrawIccDropdown(dc, layout.iccDropdownRect, layout, textFormat);
+        DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
+    }
+}
+
+void ExportPanel::DrawResetButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, HoverState id, IDWriteTextFormat* textFormat) {
+    (void)textFormat;
+    float s = m_uiScale;
+    bool isHovered = (m_hoverState == id);
+    bool isLight = IsLightThemeActive();
+
+    // Draw subtle fill background ONLY when hovered (No border line!)
+    if (isHovered) {
+        ComPtr<ID2D1SolidColorBrush> bgBrush;
+        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
+        dc->CreateSolidColorBrush(bgClr, &bgBrush);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 5.0f * s, 5.0f * s), bgBrush.Get());
+    }
+
+    ComPtr<ID2D1SolidColorBrush> iconBrush;
+    D2D1_COLOR_F iconClr = isHovered 
+        ? (isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f))
+        : (isLight ? D2D1::ColorF(0.3f, 0.3f, 0.35f, 0.85f) : D2D1::ColorF(0.7f, 0.7f, 0.75f, 0.85f));
+    dc->CreateSolidColorBrush(iconClr, &iconBrush);
+
+    static ComPtr<IDWriteFactory> pDW;
+    static ComPtr<IDWriteTextFormat> fmtIcon;
+    static float s_lastIconScale = 0.0f;
+    if (s_lastIconScale != s) {
+        s_lastIconScale = s;
+        fmtIcon.Reset();
+    }
+    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+    if (pDW && !fmtIcon) {
+        pDW->CreateTextFormat(L"Segoe UI Symbol", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * s, L"zh-CN", &fmtIcon);
+    }
+
+    if (fmtIcon) {
+        fmtIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        fmtIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const wchar_t* resetChar = L"↺";
+        dc->DrawText(resetChar, 1, fmtIcon.Get(), rect, iconBrush.Get());
+    }
 }
 
 void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat) {
@@ -1274,7 +1466,7 @@ void ExportPanel::DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& r
     // 5. Value Text
     wchar_t valBuf[16];
     swprintf_s(valBuf, L"%d%%", m_jpegQuality);
-    D2D1_RECT_F valRect = D2D1::RectF(trackRect.right + 8.0f * m_uiScale, rect.top, rect.right, rect.bottom);
+    D2D1_RECT_F valRect = D2D1::RectF(trackRect.right + 6.0f * m_uiScale, rect.top, rect.right, rect.bottom);
     if (textFormat) {
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
