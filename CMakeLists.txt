@@ -7,6 +7,10 @@ cmake_minimum_required(VERSION 3.25)
 # Force-define CXX features to bypass CMake's Clang 22 feature detection bug
 project(QuickView LANGUAGES C CXX RC)
 
+if(WIN32 AND ADAPTIVE_MSVC_INCLUDE_PATHS)
+    include_directories(SYSTEM ${ADAPTIVE_MSVC_INCLUDE_PATHS})
+endif()
+
 set(CMAKE_CXX_COMPILE_FEATURES "cxx_std_11;cxx_std_14;cxx_std_17;cxx_std_20;cxx_std_23;cxx_std_26" CACHE INTERNAL "" FORCE)
 set(CMAKE_CXX98_COMPILE_FEATURES "cxx_template_template_parameters" CACHE INTERNAL "" FORCE)
 set(CMAKE_CXX11_COMPILE_FEATURES "cxx_alias_templates;cxx_alignas;cxx_alignof;cxx_attributes;cxx_auto_type;cxx_constexpr;cxx_decltype;cxx_defaulted_functions;cxx_defaulted_move_initializers;cxx_delegating_constructors;cxx_deleted_functions;cxx_explicit_conversions;cxx_extended_friend_declarations;cxx_extern_templates;cxx_final;cxx_func_identifier;cxx_generalized_initializers;cxx_inheriting_constructors;cxx_inline_namespaces;cxx_lambdas;cxx_local_type_template_args;cxx_long_long_type;cxx_noexcept;cxx_nonstatic_member_init;cxx_nullptr;cxx_override;cxx_range_for;cxx_raw_string_literals;cxx_reference_qualified_functions;cxx_right_angle_brackets;cxx_rvalue_references;cxx_sizeof_member;cxx_static_assert;cxx_strong_enums;cxx_thread_local;cxx_trailing_return_types;cxx_unicode_literals;cxx_uniform_initialization;cxx_unrestricted_unions;cxx_user_literals;cxx_variadic_macros;cxx_variadic_templates" CACHE INTERNAL "" FORCE)
@@ -404,6 +408,7 @@ add_test(NAME QuickViewTests COMMAND QuickViewTests)
 # IDE IntelliSense & Build Environment Helper (Inject Adaptive SDK Include Paths)
 # ============================================================================
 if(WIN32 AND ADAPTIVE_MSVC_INCLUDE_PATHS)
+    include_directories(SYSTEM ${ADAPTIVE_MSVC_INCLUDE_PATHS})
     target_include_directories(QuickView SYSTEM PRIVATE ${ADAPTIVE_MSVC_INCLUDE_PATHS})
     if(TARGET QuickViewTests)
         target_include_directories(QuickViewTests SYSTEM PRIVATE ${ADAPTIVE_MSVC_INCLUDE_PATHS})

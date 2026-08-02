@@ -39,16 +39,29 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     PanelLayout l;
     float s = m_uiScale;
 
-    bool isJpeg = (m_selectedFormat == 0);
-    float panelWidth = 400.0f * s;
-    float panelHeight = (isJpeg ? 310.0f : 270.0f) * s;
+    bool supportsLossless = false;
+    bool supportsQuality = false;
+    if (!m_availableFormats.empty() && m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
+        supportsLossless = m_availableFormats[m_selectedFormatIndex].SupportsLosslessSwitch;
+        supportsQuality = m_availableFormats[m_selectedFormatIndex].SupportsQuality;
+    }
+
+    l.showLosslessCheckbox = supportsLossless;
+    l.showQualitySlider = supportsQuality && !m_isLossless;
+
+    float panelWidth = 420.0f * s;
+    float baseHeight = 270.0f * s;
+    if (l.showLosslessCheckbox) baseHeight += 38.0f * s;
+    if (l.showQualitySlider) baseHeight += 38.0f * s;
+
+    float panelHeight = baseHeight;
 
     float startX = (canvasWidth - panelWidth) * 0.5f;
     float startY = (canvasHeight - panelHeight) * 0.5f;
 
     l.panelRect = D2D1::RectF(startX, startY, startX + panelWidth, startY + panelHeight);
 
-    float curY = startY + 64.0f * s;
+    float curY = startY + 58.0f * s;
     float centerX = startX + panelWidth * 0.5f;
 
     // 1. Width & Height Capsules
@@ -56,29 +69,31 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     l.lockRect = D2D1::RectF(centerX - 16.0f * s, curY, centerX + 16.0f * s, curY + 32.0f * s);
     l.heightRect = D2D1::RectF(centerX + 24.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 32.0f * s);
 
-    // 2. Format Segment Group
-    curY += 46.0f * s;
-    l.formatGroupRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 32.0f * s);
-    float segW = (panelWidth - 40.0f * s) / 4.0f;
-    for (int i = 0; i < 4; ++i) {
-        l.segRects[i] = D2D1::RectF(l.formatGroupRect.left + i * segW, curY, l.formatGroupRect.left + (i + 1) * segW, curY + 32.0f * s);
+    // 2. Format Dropdown Row
+    curY += 44.0f * s;
+    l.formatDropdownRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 28.0f * s);
+
+    // 3. Lossless Checkbox (Conditional)
+    if (l.showLosslessCheckbox) {
+        curY += 38.0f * s;
+        l.losslessCheckboxRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 24.0f * s);
     }
 
-    // 2.5 Quality Slider (Only for JPEG)
-    if (isJpeg) {
-        curY += 44.0f * s;
+    // 4. Quality Slider (Conditional)
+    if (l.showQualitySlider) {
+        curY += 38.0f * s;
         l.qualityRect = D2D1::RectF(startX + 20.0f * s, curY, startX + panelWidth - 20.0f * s, curY + 24.0f * s);
         l.qualityTrackRect = D2D1::RectF(startX + 85.0f * s, curY + 10.0f * s, startX + panelWidth - 75.0f * s, curY + 14.0f * s);
     }
 
-    // 3. Embed ICC Checkbox & Dropdown & Size Label
-    curY += 46.0f * s;
+    // 5. Embed ICC Checkbox & Dropdown & Size Label
+    curY += 40.0f * s;
     l.checkboxRect = D2D1::RectF(startX + 20.0f * s, curY, startX + 145.0f * s, curY + 24.0f * s);
-    l.iccDropdownRect = D2D1::RectF(startX + 148.0f * s, curY + 1.0f * s, startX + 295.0f * s, curY + 23.0f * s);
-    l.sizeRect = D2D1::RectF(startX + 298.0f * s, curY, startX + panelWidth - 15.0f * s, curY + 24.0f * s);
+    l.iccDropdownRect = D2D1::RectF(startX + 148.0f * s, curY + 1.0f * s, startX + 305.0f * s, curY + 23.0f * s);
+    l.sizeRect = D2D1::RectF(startX + 308.0f * s, curY, startX + panelWidth - 15.0f * s, curY + 24.0f * s);
 
-    // 4. Bottom Action Row Buttons
-    curY += 50.0f * s;
+    // 6. Bottom Action Row Buttons
+    curY += 46.0f * s;
     bool canOverwrite = CanOverwriteOriginal();
     bool isUnsavedLeave = (m_exportMode == ExportMode::UnsavedLeave);
 
@@ -106,7 +121,15 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
         }
     }
 
-    // 5. ICC Floating Popup Rect & Upward Smart Direction
+    // 7. Format Popup Geometry (Pops DOWNWARDS from dropdown button)
+    int fmtCount = (int)m_availableFormats.size();
+    l.visibleFormatCount = (std::min)(fmtCount, 10);
+    l.formatItemH = 26.0f * s;
+    float fmtPopupH = l.visibleFormatCount * l.formatItemH;
+    l.formatPopupY = l.formatDropdownRect.bottom + 2.0f * s;
+    l.formatPopupRect = D2D1::RectF(l.formatDropdownRect.left, l.formatPopupY, l.formatDropdownRect.right, l.formatPopupY + fmtPopupH);
+
+    // 8. ICC Popup Geometry (Pops UPWARDS from dropdown button)
     int count = (int)m_iccProfiles.size();
     l.visibleIccCount = (std::min)(count, 8);
     l.itemH = 24.0f * s;
@@ -136,7 +159,26 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_focusedState = HoverState::None;
     m_inputStarted = false;
     m_lockAspectRatio = true;
-    m_selectedFormat = 0; // Default to JPEG
+    
+    // Initialize WIC Formats
+    m_availableFormats = ImageExporter::GetSupportedExportFormats();
+    m_selectedFormatIndex = 0;
+    m_formatDropdownOpen = false;
+    m_hoverFormatItemIndex = -1;
+    m_isLossless = false;
+
+    if (!originalPath.empty()) {
+        const wchar_t* origExt = PathFindExtensionW(originalPath.c_str());
+        if (origExt && *origExt) {
+            for (size_t i = 0; i < m_availableFormats.size(); ++i) {
+                if (_wcsicmp(m_availableFormats[i].Ext.c_str(), origExt) == 0) {
+                    m_selectedFormatIndex = (int)i;
+                    break;
+                }
+            }
+        }
+    }
+
     m_estimatedSizeStr = L"Size: Estimating...";
 
     // 1. Initialize ICC Profiles List
@@ -251,6 +293,7 @@ void ExportPanel::Hide() {
     m_focusedState = HoverState::None;
     m_inputStarted = false;
     m_iccDropdownOpen = false;
+    m_formatDropdownOpen = false;
 }
 
 bool ExportPanel::CanOverwriteOriginal() const {
@@ -276,6 +319,7 @@ void ExportPanel::TriggerAsyncEstimate() {
     opts.TargetWidth = m_targetWidth;
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
+    opts.Lossless = m_isLossless;
     opts.Rotation = GetPaneContext(PaneSlot::Primary).editState.TotalRotation;
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
@@ -287,11 +331,10 @@ void ExportPanel::TriggerAsyncEstimate() {
         opts.EmbedIcc = false;
     }
     
-    switch (m_selectedFormat) {
-        case 0: opts.OutputPath = L"dummy.jpg"; break;
-        case 1: opts.OutputPath = L"dummy.png"; break;
-        case 2: opts.OutputPath = L"dummy.bmp"; break;
-        case 3: opts.OutputPath = L"dummy.tif"; break;
+    if (!m_availableFormats.empty() && m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
+        opts.OutputPath = L"dummy" + m_availableFormats[m_selectedFormatIndex].Ext;
+    } else {
+        opts.OutputPath = L"dummy.jpg";
     }
 
     std::thread([opts, hwnd = m_hwnd]() {
@@ -326,16 +369,50 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
         return r.right > r.left && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
     };
 
+    // 1. Check open popup menus FIRST (Z-Order Topmost, can float beyond panel bounds)
+    if (m_formatDropdownOpen && hit(layout.formatPopupRect)) {
+        if (m_hoverFormatItemIndex >= 0 && m_hoverFormatItemIndex < (int)m_availableFormats.size()) {
+            m_selectedFormatIndex = m_hoverFormatItemIndex;
+            TriggerAsyncEstimate();
+        }
+        m_formatDropdownOpen = false;
+        m_focusedState = HoverState::None;
+        RequestRepaint(PaintLayer::All);
+        return true;
+    }
+
+    if (m_iccDropdownOpen && hit(layout.iccPopupRect)) {
+        if (m_hoverIccItemIndex >= 0 && m_hoverIccItemIndex < (int)m_iccProfiles.size()) {
+            m_selectedIccIndex = m_hoverIccItemIndex;
+            TriggerAsyncEstimate();
+        }
+        m_iccDropdownOpen = false;
+        m_focusedState = HoverState::None;
+        RequestRepaint(PaintLayer::All);
+        return true;
+    }
+
     if (hit(layout.panelRect)) {
         m_focusedState = m_hoverState;
 
-        if (m_focusedState == HoverState::QualitySlider || hit(layout.qualityRect)) {
+        if (m_focusedState == HoverState::FormatDropdownBtn || hit(layout.formatDropdownRect)) {
+            m_formatDropdownOpen = !m_formatDropdownOpen;
+            m_iccDropdownOpen = false;
+            m_focusedState = HoverState::None;
+        } else if (layout.showLosslessCheckbox && (m_focusedState == HoverState::LosslessCheckbox || hit(layout.losslessCheckboxRect))) {
+            m_isLossless = !m_isLossless;
+            TriggerAsyncEstimate();
+            m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+        } else if (layout.showQualitySlider && (m_focusedState == HoverState::QualitySlider || hit(layout.qualityRect))) {
             m_isDraggingQuality = true;
             if (layout.qualityTrackRect.right > layout.qualityTrackRect.left) {
                 float ratio = (x - layout.qualityTrackRect.left) / (layout.qualityTrackRect.right - layout.qualityTrackRect.left);
                 m_jpegQuality = std::clamp((int)std::round(1.0f + ratio * 99.0f), 1, 100);
                 TriggerAsyncEstimate();
             }
+            m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::WidthCapsule || m_focusedState == HoverState::HeightCapsule) {
             m_inputStarted = true;
@@ -345,41 +422,22 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             int val = (m_focusedState == HoverState::WidthCapsule) ? m_targetWidth : m_targetHeight;
             swprintf_s(m_inputBuf, L"%d", val);
             m_inputLen = (int)wcslen(m_inputBuf);
+            m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::LockBtn) {
             m_lockAspectRatio = !m_lockAspectRatio;
             m_focusedState = HoverState::None;
-            m_iccDropdownOpen = false;
-        } else if (m_focusedState == HoverState::FormatJpeg) {
-            if (m_selectedFormat != 0) { m_selectedFormat = 0; TriggerAsyncEstimate(); }
-            m_focusedState = HoverState::None;
-            m_iccDropdownOpen = false;
-        } else if (m_focusedState == HoverState::FormatPng) {
-            if (m_selectedFormat != 1) { m_selectedFormat = 1; TriggerAsyncEstimate(); }
-            m_focusedState = HoverState::None;
-            m_iccDropdownOpen = false;
-        } else if (m_focusedState == HoverState::FormatBmp) {
-            if (m_selectedFormat != 2) { m_selectedFormat = 2; TriggerAsyncEstimate(); }
-            m_focusedState = HoverState::None;
-            m_iccDropdownOpen = false;
-        } else if (m_focusedState == HoverState::FormatTiff) {
-            if (m_selectedFormat != 3) { m_selectedFormat = 3; TriggerAsyncEstimate(); }
-            m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::EmbedIccCheckbox) {
             m_embedIcc = !m_embedIcc;
             TriggerAsyncEstimate();
             m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::IccDropdownBtn) {
             m_iccDropdownOpen = !m_iccDropdownOpen;
-            m_focusedState = HoverState::None;
-        } else if (m_focusedState == HoverState::IccDropdownItem) {
-            if (m_hoverIccItemIndex >= 0 && m_hoverIccItemIndex < (int)m_iccProfiles.size()) {
-                m_selectedIccIndex = m_hoverIccItemIndex;
-                TriggerAsyncEstimate();
-            }
-            m_iccDropdownOpen = false;
+            m_formatDropdownOpen = false;
             m_focusedState = HoverState::None;
         } else if (m_focusedState == HoverState::CancelBtn) {
             m_pendingAction = PendingAction::None;
@@ -396,6 +454,7 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
         } else if (m_focusedState == HoverState::SaveAsBtn) {
             CommitSave(false);
         } else {
+            m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         }
         
@@ -403,10 +462,11 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
         return true;
     }
 
-    if (m_focusedState == HoverState::WidthCapsule || m_focusedState == HoverState::HeightCapsule || m_iccDropdownOpen) {
+    if (m_focusedState == HoverState::WidthCapsule || m_focusedState == HoverState::HeightCapsule || m_iccDropdownOpen || m_formatDropdownOpen) {
         m_focusedState = HoverState::None;
         m_inputStarted = false;
         m_iccDropdownOpen = false;
+        m_formatDropdownOpen = false;
         RequestRepaint(PaintLayer::All);
     }
     
@@ -435,7 +495,7 @@ bool ExportPanel::OnMouseMove(float x, float y) {
     RECT rc; GetClientRect(m_hwnd, &rc);
     PanelLayout layout = ComputeLayout((float)(rc.right - rc.left), (float)(rc.bottom - rc.top));
 
-    if (m_isDraggingQuality && layout.qualityTrackRect.right > layout.qualityTrackRect.left) {
+    if (m_isDraggingQuality && layout.showQualitySlider && layout.qualityTrackRect.right > layout.qualityTrackRect.left) {
         float ratio = (x - layout.qualityTrackRect.left) / (layout.qualityTrackRect.right - layout.qualityTrackRect.left);
         int newQ = std::clamp((int)std::round(1.0f + ratio * 99.0f), 1, 100);
         if (newQ != m_jpegQuality) {
@@ -448,65 +508,69 @@ bool ExportPanel::OnMouseMove(float x, float y) {
 
     HoverState newState = HoverState::None;
     int newHoverIccIndex = -1;
+    int newHoverFormatIndex = -1;
 
     auto hit = [x, y](const D2D1_RECT_F& r) {
         return r.right > r.left && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
     };
 
+    bool hitPopup = false;
+
+    if (m_formatDropdownOpen && !m_availableFormats.empty() && hit(layout.formatPopupRect)) {
+        newState = HoverState::FormatDropdownItem;
+        int idx = (int)((y - layout.formatPopupY) / layout.formatItemH);
+        if (idx < 0) idx = 0;
+        if (idx >= layout.visibleFormatCount) idx = layout.visibleFormatCount - 1;
+        newHoverFormatIndex = idx;
+        hitPopup = true;
+    } else if (m_iccDropdownOpen && !m_iccProfiles.empty() && hit(layout.iccPopupRect)) {
+        newState = HoverState::IccDropdownItem;
+        int idx = (int)((y - layout.popupY) / layout.itemH);
+        if (idx < 0) idx = 0;
+        if (idx >= layout.visibleIccCount) idx = layout.visibleIccCount - 1;
+        newHoverIccIndex = idx;
+        hitPopup = true;
+    }
+
     bool hitInsidePanel = hit(layout.panelRect);
 
-    if (hitInsidePanel) {
-        bool hitPopup = false;
-        if (m_iccDropdownOpen && !m_iccProfiles.empty()) {
-            if (hit(layout.iccPopupRect)) {
-                newState = HoverState::IccDropdownItem;
-                int idx = (int)((y - layout.popupY) / layout.itemH);
-                if (idx < 0) idx = 0;
-                if (idx >= layout.visibleIccCount) idx = layout.visibleIccCount - 1;
-                newHoverIccIndex = idx;
-                hitPopup = true;
-            }
-        }
+    if (hitInsidePanel && !hitPopup) {
+        if (hit(layout.widthRect)) newState = HoverState::WidthCapsule;
+        else if (hit(layout.heightRect)) newState = HoverState::HeightCapsule;
+        else if (hit(layout.lockRect)) newState = HoverState::LockBtn;
+        else if (hit(layout.formatDropdownRect)) newState = HoverState::FormatDropdownBtn;
+        else if (layout.showLosslessCheckbox && hit(layout.losslessCheckboxRect)) newState = HoverState::LosslessCheckbox;
+        else if (layout.showQualitySlider && hit(layout.qualityRect)) newState = HoverState::QualitySlider;
+        else if (hit(layout.checkboxRect)) newState = HoverState::EmbedIccCheckbox;
+        else if (hit(layout.iccDropdownRect)) newState = HoverState::IccDropdownBtn;
+        else if (hit(layout.overwriteRect)) newState = HoverState::OverwriteBtn;
+        else if (hit(layout.saveAsRect)) newState = HoverState::SaveAsBtn;
+        else if (hit(layout.cancelRect)) newState = HoverState::CancelBtn;
+        else if (hit(layout.discardRect)) newState = HoverState::DiscardBtn;
+    }
 
-        if (!hitPopup) {
-            if (hit(layout.widthRect)) newState = HoverState::WidthCapsule;
-            else if (hit(layout.heightRect)) newState = HoverState::HeightCapsule;
-            else if (hit(layout.lockRect)) newState = HoverState::LockBtn;
-            else if (hit(layout.segRects[0])) newState = HoverState::FormatJpeg;
-            else if (hit(layout.segRects[1])) newState = HoverState::FormatPng;
-            else if (hit(layout.segRects[2])) newState = HoverState::FormatBmp;
-            else if (hit(layout.segRects[3])) newState = HoverState::FormatTiff;
-            else if (m_selectedFormat == 0 && hit(layout.qualityRect)) newState = HoverState::QualitySlider;
-            else if (hit(layout.checkboxRect)) newState = HoverState::EmbedIccCheckbox;
-            else if (hit(layout.iccDropdownRect)) newState = HoverState::IccDropdownBtn;
-            else if (hit(layout.overwriteRect)) newState = HoverState::OverwriteBtn;
-            else if (hit(layout.saveAsRect)) newState = HoverState::SaveAsBtn;
-            else if (hit(layout.cancelRect)) newState = HoverState::CancelBtn;
-            else if (hit(layout.discardRect)) newState = HoverState::DiscardBtn;
-        }
-
-        // Mouse Cursor Management for ExportPanel
-        if (newState == HoverState::WidthCapsule || newState == HoverState::HeightCapsule) {
-            ::SetCursor(::LoadCursor(nullptr, IDC_IBEAM));
-        } else if (newState != HoverState::None) {
-            ::SetCursor(::LoadCursor(nullptr, IDC_HAND));
-        } else {
-            ::SetCursor(::LoadCursor(nullptr, IDC_ARROW));
-        }
+    // Mouse Cursor Management for ExportPanel
+    if (newState == HoverState::WidthCapsule || newState == HoverState::HeightCapsule) {
+        ::SetCursor(::LoadCursor(nullptr, IDC_IBEAM));
+    } else if (newState != HoverState::None) {
+        ::SetCursor(::LoadCursor(nullptr, IDC_HAND));
+    } else {
+        ::SetCursor(::LoadCursor(nullptr, IDC_ARROW));
     }
 
     // Trigger repaint instantly on state OR hovered item index change for dynamic response
-    if (m_hoverState != newState || m_hoverIccItemIndex != newHoverIccIndex) {
+    if (m_hoverState != newState || m_hoverIccItemIndex != newHoverIccIndex || m_hoverFormatItemIndex != newHoverFormatIndex) {
         m_hoverState = newState;
         m_hoverIccItemIndex = newHoverIccIndex;
+        m_hoverFormatItemIndex = newHoverFormatIndex;
         RequestRepaint(PaintLayer::All);
     }
 
-    return hitInsidePanel;
+    return hitInsidePanel || hitPopup;
 }
 
 bool ExportPanel::OnMouseWheel(short delta) {
-    if (!m_isVisible || m_selectedFormat != 0) return false;
+    if (!m_isVisible) return false;
 
     POINT pt; GetCursorPos(&pt);
     if (m_hwnd) ScreenToClient(m_hwnd, &pt);
@@ -517,14 +581,17 @@ bool ExportPanel::OnMouseWheel(short delta) {
     // Allow scrolling if cursor is inside panel
     if ((float)pt.x >= layout.panelRect.left && (float)pt.x <= layout.panelRect.right &&
         (float)pt.y >= layout.panelRect.top && (float)pt.y <= layout.panelRect.bottom) {
-        int step = (delta > 0) ? 1 : -1;
-        int oldQ = m_jpegQuality;
-        m_jpegQuality = std::clamp(m_jpegQuality + step, 1, 100);
-        if (m_jpegQuality != oldQ) {
-            TriggerAsyncEstimate();
-            RequestRepaint(PaintLayer::All);
+        
+        if (layout.showQualitySlider) {
+            int step = (delta > 0) ? 1 : -1;
+            int oldQ = m_jpegQuality;
+            m_jpegQuality = std::clamp(m_jpegQuality + step, 1, 100);
+            if (m_jpegQuality != oldQ) {
+                TriggerAsyncEstimate();
+                RequestRepaint(PaintLayer::All);
+            }
+            return true;
         }
-        return true;
     }
     return false;
 }
@@ -630,6 +697,7 @@ void ExportPanel::CommitSave(bool overwrite) {
     opts.TargetWidth = m_targetWidth;
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
+    opts.Lossless = m_isLossless;
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -670,25 +738,22 @@ void ExportPanel::CommitSave(bool overwrite) {
         ofn.lpstrFile = szFile;
         ofn.nMaxFile = sizeof(szFile) / sizeof(wchar_t);
 
-        switch (m_selectedFormat) {
-            case 0:
-                ofn.lpstrFilter = L"JPEG Image\0*.jpg;*.jpeg\0All Files\0*.*\0";
-                ofn.lpstrDefExt = L"jpg";
-                break;
-            case 1:
-                ofn.lpstrFilter = L"PNG Image\0*.png\0All Files\0*.*\0";
-                ofn.lpstrDefExt = L"png";
-                break;
-            case 2:
-                ofn.lpstrFilter = L"BMP Image\0*.bmp\0All Files\0*.*\0";
-                ofn.lpstrDefExt = L"bmp";
-                break;
-            case 3:
-                ofn.lpstrFilter = L"TIFF Image\0*.tif;*.tiff\0All Files\0*.*\0";
-                ofn.lpstrDefExt = L"tif";
-                break;
+        std::wstring filterStr;
+        if (!m_availableFormats.empty() && m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
+            const auto& sel = m_availableFormats[m_selectedFormatIndex];
+            filterStr += sel.DisplayName + L"\0*" + sel.Ext + L"\0";
+            ofn.lpstrDefExt = sel.Ext.c_str() + 1;
         }
-        
+
+        for (const auto& fmt : m_availableFormats) {
+            filterStr += fmt.DisplayName + L"\0*" + fmt.Ext + L"\0";
+        }
+        filterStr += L"All Files\0*.*\0\0";
+
+        std::vector<wchar_t> filterBuf(filterStr.begin(), filterStr.end());
+        filterBuf.push_back(L'\0');
+
+        ofn.lpstrFilter = filterBuf.data();
         ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
 
         if (GetSaveFileNameW(&ofn)) {
@@ -799,11 +864,16 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         (m_focusedState == HoverState::HeightCapsule) ? m_inputBuf : std::to_wstring(m_targetHeight), 
         HoverState::HeightCapsule, textFormat);
 
-    // 6. Format Segment Button Group
-    DrawSegmentGroup(dc, layout.formatGroupRect, textFormat);
+    // 6. Format Selection Dropdown
+    DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
 
-    // 6.5 Quality Slider (Only for JPEG)
-    if (m_selectedFormat == 0) {
+    // 6.2 Lossless Checkbox (Conditional)
+    if (layout.showLosslessCheckbox) {
+        DrawCheckbox(dc, layout.losslessCheckboxRect, L"Always Save Lossless", m_isLossless, HoverState::LosslessCheckbox, textFormat);
+    }
+
+    // 6.5 Quality Slider (Conditional)
+    if (layout.showQualitySlider) {
         DrawQualitySlider(dc, layout.qualityRect, layout.qualityTrackRect, textFormat);
     }
 
@@ -838,8 +908,9 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         DrawButton(dc, layout.discardRect, AppStrings::Dialog_ButtonDiscard, HoverState::DiscardBtn, discardBtnColor, textFormat);
     }
 
-    // 10. Dynamic ICC Profile Dropdown UI (Rendered last for highest Z-order)
+    // 10. Floating Dropdown Popups (Rendered last for highest Z-order)
     DrawIccDropdown(dc, layout.iccDropdownRect, layout, textFormat);
+    DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
 }
 
 void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat) {
@@ -910,47 +981,75 @@ void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, c
     }
 }
 
-void ExportPanel::DrawSegmentGroup(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, IDWriteTextFormat* textFormat) {
+void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat) {
+    if (!dc) return;
     float s = m_uiScale;
     bool isLight = IsLightThemeActive();
 
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    // 1. Draw Closed Dropdown Button
+    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush;
+    D2D1_COLOR_F bgClr;
+    if (m_hoverState == HoverState::FormatDropdownBtn || m_formatDropdownOpen) {
+        bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+    } else {
+        bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
     }
-    
-    ComPtr<ID2D1SolidColorBrush> baseBgBrush;
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f), &baseBgBrush);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), baseBgBrush.Get());
+    dc->CreateSolidColorBrush(bgClr, &bgBrush);
+    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f), &borderBrush);
+    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
 
-    float panelW = rect.right - rect.left;
-    float segW = panelW / 4.0f;
-    const wchar_t* names[] = { L"JPEG", L"PNG", L"BMP", L"TIFF" };
-    HoverState ids[] = { HoverState::FormatJpeg, HoverState::FormatPng, HoverState::FormatBmp, HoverState::FormatTiff };
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 4.0f*s, 4.0f*s), bgBrush.Get());
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 4.0f*s, 4.0f*s), borderBrush.Get(), 1.0f*s);
 
-    for (int i = 0; i < 4; ++i) {
-        D2D1_RECT_F segRect = { rect.left + i * segW + 2.0f*s, rect.top + 2.0f*s, rect.left + (i + 1) * segW - 2.0f*s, rect.bottom - 2.0f*s };
-        bool selected = (m_selectedFormat == i);
-        bool hovered = (m_hoverState == ids[i]);
+    std::wstring label = L"JPEG Image (*.jpg)  ▼";
+    if (m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
+        label = m_availableFormats[m_selectedFormatIndex].DisplayName + L"  ▼";
+    }
 
-        if (selected) {
-            ComPtr<ID2D1SolidColorBrush> activeBrush;
-            dc->CreateSolidColorBrush(accentClr, &activeBrush);
-            dc->FillRoundedRectangle(D2D1::RoundedRect(segRect, 4.0f*s, 4.0f*s), activeBrush.Get());
-        } else if (hovered) {
-            ComPtr<ID2D1SolidColorBrush> hoverBrush;
-            dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f), &hoverBrush);
-            dc->FillRoundedRectangle(D2D1::RoundedRect(segRect, 4.0f*s, 4.0f*s), hoverBrush.Get());
-        }
+    if (textFormat) {
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        dc->DrawText(label.c_str(), (UINT32)label.length(), textFormat, rect, textBrush.Get());
+    }
+
+    // 2. Draw Floating Popup if Opened
+    if (m_formatDropdownOpen && !m_availableFormats.empty()) {
+        D2D1_RECT_F popupRect = layout.formatPopupRect;
+        float popupY = layout.formatPopupY;
+        float itemH = layout.formatItemH;
+        int visibleCount = layout.visibleFormatCount;
+
+        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush;
+        D2D1_COLOR_F popBgClr = isLight ? D2D1::ColorF(0.98f, 0.98f, 1.0f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.98f);
+        dc->CreateSolidColorBrush(popBgClr, &popBgBrush);
+        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f), &popBorderBrush);
+        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f), &itemHoverBrush);
+        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f), &selectedBrush);
+
+        dc->FillRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBgBrush.Get());
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBorderBrush.Get(), 1.0f*s);
 
         if (textFormat) {
-            ComPtr<ID2D1SolidColorBrush> txtBrush;
-            D2D1_COLOR_F c = selected ? D2D1::ColorF(D2D1::ColorF::White) : (isLight ? D2D1::ColorF(0.2f,0.2f,0.25f) : D2D1::ColorF(0.85f,0.85f,0.90f));
-            dc->CreateSolidColorBrush(c, &txtBrush);
-
-            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            dc->DrawText(names[i], (UINT32)wcslen(names[i]), textFormat, segRect, txtBrush.Get());
+        }
+
+        for (int i = 0; i < visibleCount; ++i) {
+            D2D1_RECT_F itemRect = { popupRect.left + 2.0f*s, popupY + i * itemH, popupRect.right - 2.0f*s, popupY + (i + 1) * itemH };
+            
+            if (i == m_hoverFormatItemIndex && m_hoverState == HoverState::FormatDropdownItem) {
+                dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f*s, 4.0f*s), itemHoverBrush.Get());
+            } else if (i == m_selectedFormatIndex) {
+                dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f*s, 4.0f*s), selectedBrush.Get());
+            }
+
+            D2D1_RECT_F textRect = { itemRect.left + 8.0f*s, itemRect.top, itemRect.right - 4.0f*s, itemRect.bottom };
+            std::wstring itemText = m_availableFormats[i].DisplayName;
+            if (i == m_selectedFormatIndex) itemText = L"✓ " + itemText;
+
+            if (textFormat) {
+                dc->DrawText(itemText.c_str(), (UINT32)itemText.length(), textFormat, textRect, textBrush.Get());
+            }
         }
     }
 }

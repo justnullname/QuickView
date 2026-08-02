@@ -183,6 +183,139 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
     return S_OK;
 }
 
+std::vector<ExportFormatDesc> ImageExporter::GetSupportedExportFormats() {
+    std::vector<ExportFormatDesc> result;
+
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
+        return result;
+    }
+
+    ComPtr<IEnumUnknown> enumComponents;
+    HRESULT hr = factory->CreateComponentEnumerator(WICEncoder, WICComponentEnumerateDefault, &enumComponents);
+    if (FAILED(hr)) return result;
+
+    ComPtr<IUnknown> element;
+    ULONG fetched = 0;
+
+    while (enumComponents->Next(1, &element, &fetched) == S_OK && fetched == 1) {
+        ComPtr<IWICBitmapEncoderInfo> encoderInfo;
+        if (FAILED(element.As(&encoderInfo))) continue;
+
+        GUID containerGuid = {};
+        if (FAILED(encoderInfo->GetContainerFormat(&containerGuid))) continue;
+
+        ComPtr<IWICBitmapEncoder> encoder;
+        if (FAILED(factory->CreateEncoder(containerGuid, nullptr, &encoder))) continue;
+
+        wchar_t friendlyName[256] = {};
+        UINT actualLen = 0;
+        encoderInfo->GetFriendlyName(256, friendlyName, &actualLen);
+
+        wchar_t extensions[256] = {};
+        encoderInfo->GetFileExtensions(256, extensions, &actualLen);
+
+        std::wstring extList = extensions;
+        size_t commaPos = extList.find_first_of(L",; ");
+        std::wstring primaryExt = (commaPos != std::wstring::npos) ? extList.substr(0, commaPos) : extList;
+        
+        if (primaryExt.empty()) continue;
+        if (primaryExt[0] != L'.') primaryExt = L"." + primaryExt;
+
+        std::wstring displayName = friendlyName;
+        displayName += L" (*" + primaryExt + L")";
+
+        bool supportsLossless = (_wcsicmp(primaryExt.c_str(), L".webp") == 0 ||
+                                 _wcsicmp(primaryExt.c_str(), L".jxl") == 0 ||
+                                 _wcsicmp(primaryExt.c_str(), L".jxr") == 0 ||
+                                 _wcsicmp(primaryExt.c_str(), L".wdp") == 0 ||
+                                 _wcsicmp(primaryExt.c_str(), L".heic") == 0 ||
+                                 _wcsicmp(primaryExt.c_str(), L".heif") == 0 ||
+                                 _wcsicmp(primaryExt.c_str(), L".avif") == 0);
+
+        bool supportsQuality = (_wcsicmp(primaryExt.c_str(), L".jpg") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".jpeg") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".webp") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".jxl") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".jxr") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".wdp") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".heic") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".heif") == 0 ||
+                                _wcsicmp(primaryExt.c_str(), L".avif") == 0);
+
+        ExportFormatDesc desc;
+        desc.DisplayName = displayName;
+        desc.Ext = primaryExt;
+        desc.ContainerGuid = containerGuid;
+        desc.SupportsLosslessSwitch = supportsLossless;
+        desc.SupportsQuality = supportsQuality;
+
+        result.push_back(std::move(desc));
+
+        // If HEIF container is available, expose AVIF (.avif) via WICHeifCompressionAV1 (HeifCompressionMethod = 3)
+        if (_wcsicmp(primaryExt.c_str(), L".heic") == 0 || _wcsicmp(primaryExt.c_str(), L".heif") == 0) {
+            ExportFormatDesc avifDesc;
+            avifDesc.DisplayName = L"AVIF Image (*.avif)";
+            avifDesc.Ext = L".avif";
+            avifDesc.ContainerGuid = containerGuid;
+            avifDesc.SupportsLosslessSwitch = true;
+            avifDesc.SupportsQuality = true;
+            result.push_back(std::move(avifDesc));
+        }
+    }
+
+    return result;
+}
+
+GUID ImageExporter::GetContainerFormatFromExtension(const wchar_t* ext) {
+    if (!ext || !*ext) return GUID_ContainerFormatJpeg;
+    auto formats = GetSupportedExportFormats();
+    for (const auto& fmt : formats) {
+        if (_wcsicmp(fmt.Ext.c_str(), ext) == 0) {
+            return fmt.ContainerGuid;
+        }
+    }
+    return GUID_ContainerFormatJpeg;
+}
+
+static void ConfigureEncoderProperties(IPropertyBag2* props, const GUID& containerFormat, const ExportOptions& options) {
+    (void)containerFormat;
+    if (!props) return;
+
+    const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
+    if (ext && _wcsicmp(ext, L".avif") == 0) {
+        PROPBAG2 optHeif = {};
+        optHeif.pstrName = (LPOLESTR)L"HeifCompressionMethod";
+        VARIANT varHeif;
+        VariantInit(&varHeif);
+        varHeif.vt = VT_UI1;
+        varHeif.bVal = 3; // WICHeifCompressionAV1 (0x3)
+        props->Write(1, &optHeif, &varHeif);
+    }
+
+    if (options.Lossless) {
+        PROPBAG2 optLossless = {};
+        optLossless.pstrName = (LPOLESTR)L"Lossless";
+        VARIANT varLossless;
+        VariantInit(&varLossless);
+        varLossless.vt = VT_BOOL;
+        varLossless.boolVal = VARIANT_TRUE;
+        props->Write(1, &optLossless, &varLossless);
+    } else {
+        float qualityVal = std::clamp(options.JpegQuality, 1, 100) / 100.0f;
+        PROPBAG2 optQuality = {};
+        optQuality.pstrName = (LPOLESTR)L"ImageQuality";
+        VARIANT varQuality;
+        VariantInit(&varQuality);
+        varQuality.vt = VT_R4;
+        varQuality.fltVal = qualityVal;
+        if (FAILED(props->Write(1, &optQuality, &varQuality))) {
+            optQuality.pstrName = (LPOLESTR)L"Quality";
+            props->Write(1, &optQuality, &varQuality);
+        }
+    }
+}
+
 std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& options) {
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapSource> source;
@@ -193,14 +326,7 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
 
     // Determine encoder by extension
     const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
-    GUID containerFormat = GUID_ContainerFormatJpeg;
-    if (_wcsicmp(ext, L".png") == 0) {
-        containerFormat = GUID_ContainerFormatPng;
-    } else if (_wcsicmp(ext, L".bmp") == 0) {
-        containerFormat = GUID_ContainerFormatBmp;
-    } else if (_wcsicmp(ext, L".tif") == 0 || _wcsicmp(ext, L".tiff") == 0) {
-        containerFormat = GUID_ContainerFormatTiff;
-    }
+    GUID containerFormat = GetContainerFormatFromExtension(ext);
 
     ComPtr<IWICStream> stream;
     hr = factory->CreateStream(&stream);
@@ -221,16 +347,7 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
     hr = encoder->CreateNewFrame(&frameEncode, &props);
     if (FAILED(hr)) return std::unexpected(L"Failed to create encoder frame.");
 
-    // Set JPEG Quality
-    if (containerFormat == GUID_ContainerFormatJpeg) {
-        PROPBAG2 option = {};
-        option.pstrName = (LPOLESTR)L"ImageQuality";
-        VARIANT varValue;
-        VariantInit(&varValue);
-        varValue.vt = VT_R4;
-        varValue.fltVal = std::clamp(options.JpegQuality, 1, 100) / 100.0f;
-        props->Write(1, &option, &varValue);
-    }
+    ConfigureEncoderProperties(props.Get(), containerFormat, options);
 
     hr = frameEncode->Initialize(props.Get());
     if (FAILED(hr)) return std::unexpected(L"Failed to initialize frame encode.");
@@ -262,10 +379,7 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
     if (FAILED(hr)) return std::unexpected(L"Pipeline error.");
 
     const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
-    GUID containerFormat = GUID_ContainerFormatJpeg;
-    if (_wcsicmp(ext, L".png") == 0) containerFormat = GUID_ContainerFormatPng;
-    else if (_wcsicmp(ext, L".bmp") == 0) containerFormat = GUID_ContainerFormatBmp;
-    else if (_wcsicmp(ext, L".tif") == 0 || _wcsicmp(ext, L".tiff") == 0) containerFormat = GUID_ContainerFormatTiff;
+    GUID containerFormat = GetContainerFormatFromExtension(ext);
 
     ComPtr<IStream> memStream;
     CountingStream* countingStream = new CountingStream();
@@ -290,15 +404,7 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
     hr = encoder->CreateNewFrame(&frameEncode, &props);
     if (FAILED(hr)) return std::unexpected(L"Frame error.");
 
-    if (containerFormat == GUID_ContainerFormatJpeg) {
-        PROPBAG2 option = {};
-        option.pstrName = (LPOLESTR)L"ImageQuality";
-        VARIANT varValue;
-        VariantInit(&varValue);
-        varValue.vt = VT_R4;
-        varValue.fltVal = std::clamp(options.JpegQuality, 1, 100) / 100.0f;
-        props->Write(1, &option, &varValue);
-    }
+    ConfigureEncoderProperties(props.Get(), containerFormat, options);
 
     hr = frameEncode->Initialize(props.Get());
     if (FAILED(hr)) return std::unexpected(L"Frame init error.");

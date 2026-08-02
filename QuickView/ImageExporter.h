@@ -21,8 +21,11 @@ struct ExportOptions {
     int TargetWidth = 0;
     int TargetHeight = 0;
     
-    // JPEG Quality (1-100)
+    // JPEG / WebP / JXR Quality (1-100)
     int JpegQuality = 90;
+    
+    // Lossless encoding mode for WebP, JXR, HEIF etc.
+    bool Lossless = false;
     
     // Rotation and Flip transform
     int Rotation = 0; // 0, 90, 180, 270
@@ -35,8 +38,19 @@ struct ExportOptions {
     std::vector<uint8_t> CustomIccData;
 };
 
+struct ExportFormatDesc {
+    std::wstring DisplayName;
+    std::wstring Ext; // Primary extension e.g. ".jpg"
+    GUID ContainerGuid = {};
+    bool SupportsLosslessSwitch = false;
+    bool SupportsQuality = false;
+};
+
 class ImageExporter {
 public:
+    // Returns available export formats supported by WIC on current OS
+    static std::vector<ExportFormatDesc> GetSupportedExportFormats();
+
     // Exports the cropped and scaled image to the specified path
     static std::expected<void, std::wstring> Export(const ExportOptions& options);
     
@@ -51,6 +65,7 @@ private:
                                      Microsoft::WRL::ComPtr<IWICBitmapSource>& outSource,
                                      Microsoft::WRL::ComPtr<IWICImagingFactory>& factory,
                                      Microsoft::WRL::ComPtr<IWICColorContext>& outColorContext);
+    static GUID GetContainerFormatFromExtension(const wchar_t* ext);
 };
 
 } // namespace QuickView

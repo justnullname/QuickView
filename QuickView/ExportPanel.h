@@ -4,6 +4,7 @@
 #include <dwrite_3.h>
 #include <wrl/client.h>
 #include "GeekGlass.h"
+#include "ImageExporter.h"
 #include <string>
 #include <vector>
 
@@ -34,21 +35,37 @@ struct PanelLayout {
     D2D1_RECT_F widthRect = {};
     D2D1_RECT_F lockRect = {};
     D2D1_RECT_F heightRect = {};
-    D2D1_RECT_F formatGroupRect = {};
-    D2D1_RECT_F segRects[4] = {};
+    
+    // Format Selection Dropdown
+    D2D1_RECT_F formatDropdownRect = {};
+    D2D1_RECT_F formatPopupRect = {};
+    float formatPopupY = 0.0f;
+    float formatItemH = 0.0f;
+    int visibleFormatCount = 0;
+
+    // Lossless Switch
+    bool showLosslessCheckbox = false;
+    D2D1_RECT_F losslessCheckboxRect = {};
+
+    // Quality Slider
+    bool showQualitySlider = false;
     D2D1_RECT_F qualityRect = {};
     D2D1_RECT_F qualityTrackRect = {};
+
+    // ICC Profile Selection
     D2D1_RECT_F checkboxRect = {};
     D2D1_RECT_F iccDropdownRect = {};
+    D2D1_RECT_F iccPopupRect = {};
+    float popupY = 0.0f;
+    float itemH = 0.0f;
+    int visibleIccCount = 0;
+
+    // Actions & Estimates
     D2D1_RECT_F sizeRect = {};
     D2D1_RECT_F overwriteRect = {};
     D2D1_RECT_F saveAsRect = {};
     D2D1_RECT_F cancelRect = {};
     D2D1_RECT_F discardRect = {};
-    D2D1_RECT_F iccPopupRect = {};
-    float popupY = 0.0f;
-    float itemH = 0.0f;
-    int visibleIccCount = 0;
 };
 
 class ExportPanel {
@@ -109,10 +126,9 @@ private:
         WidthCapsule, 
         HeightCapsule, 
         LockBtn, 
-        FormatJpeg,
-        FormatPng,
-        FormatBmp,
-        FormatTiff,
+        FormatDropdownBtn,
+        FormatDropdownItem,
+        LosslessCheckbox,
         QualitySlider,
         EmbedIccCheckbox,
         IccDropdownBtn,
@@ -125,8 +141,12 @@ private:
     HoverState m_hoverState = HoverState::None;
     HoverState m_focusedState = HoverState::None;
     
-    // Format Selection (0: JPEG, 1: PNG, 2: BMP, 3: TIFF)
-    int m_selectedFormat = 0;
+    // Formats & Quality
+    std::vector<ExportFormatDesc> m_availableFormats;
+    int m_selectedFormatIndex = 0;
+    bool m_formatDropdownOpen = false;
+    int m_hoverFormatItemIndex = -1;
+    bool m_isLossless = false;
     int m_jpegQuality = 90;
     bool m_isDraggingQuality = false;
     bool m_embedIcc = true;
@@ -154,7 +174,7 @@ private:
     void ExecutePendingAction();
     void DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat);
     void DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& text, HoverState id, D2D1_COLOR_F baseColor, IDWriteTextFormat* textFormat);
-    void DrawSegmentGroup(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, IDWriteTextFormat* textFormat);
+    void DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat);
     void DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const D2D1_RECT_F& trackRect, IDWriteTextFormat* textFormat);
     void DrawCheckbox(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, bool checked, HoverState id, IDWriteTextFormat* textFormat);
     void DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat);

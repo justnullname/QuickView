@@ -3957,7 +3957,16 @@ bool SaveCurrentImage(bool saveAs) {
         ofn.hwndOwner = GetActiveWindow();
         ofn.lpstrFile = szFile;
         ofn.nMaxFile = sizeof(szFile);
-        ofn.lpstrFilter = L"JPEG Files\0*.jpg;*.jpeg\0PNG Files\0*.png\0All Files\0*.*\0";
+        auto formats = QuickView::ImageExporter::GetSupportedExportFormats();
+        std::wstring filterStr;
+        for (const auto& fmt : formats) {
+            filterStr += fmt.DisplayName + L"\0*" + fmt.Ext + L"\0";
+        }
+        filterStr += L"All Files (*.*)\0*.*\0\0";
+        std::vector<wchar_t> filterBuf(filterStr.begin(), filterStr.end());
+        filterBuf.push_back(L'\0');
+
+        ofn.lpstrFilter = filterBuf.data();
         ofn.nFilterIndex = 1; ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
         if (GetSaveFileNameW(&ofn)) targetPath = szFile;
         else { return false; }
