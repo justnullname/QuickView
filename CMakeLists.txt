@@ -374,6 +374,8 @@ add_executable(QuickViewTests
     tests/StringUtilsTests.cpp
     tests/SupportedExtensionsTests.cpp
     tests/MiniTiffTests.cpp
+    tests/Transform2DTests.cpp
+    QuickView/LosslessTransform.cpp
     QuickView/ImageLoaderSimd.cpp
     QuickView/MiniTiff.cpp
     QuickView/MiniTiffLzw.cpp
@@ -399,6 +401,7 @@ target_link_libraries(QuickViewTests PRIVATE
     mscms.lib
     unrar-mini
     ZLIB::ZLIB
+    libjpeg-turbo::turbojpeg-static
 )
 target_include_directories(QuickViewTests PRIVATE QuickView third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)

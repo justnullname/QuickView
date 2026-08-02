@@ -4005,20 +4005,43 @@ bool SaveCurrentImage(bool saveAs) {
         return false;
     }
     
-    // 2. Apply Pending Transforms
+    // 2. Apply Net Transform calculated via D4 Group Algebra (Combine EXIF + Edit)
     bool transformError = false;
-    for (auto type : GetPaneContext(PaneSlot::Primary).editState.PendingTransforms) {
-        TransformResult res;
-        if (CLosslessTransform::IsJPEG(workFile.c_str())) {
-            res = CLosslessTransform::TransformJPEG(workFile.c_str(), workFile.c_str(), type);
-        } else {
-            res = CLosslessTransform::TransformGeneric(workFile.c_str(), workFile.c_str(), type);
-        }
-        
+    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    
+    int baseExif = primaryPane.metadata.ExifOrientation;
+    if (baseExif < 1 || baseExif > 8) baseExif = 1;
+
+    Transform2D exifT = Transform2D::FromExif(baseExif);
+    Transform2D editT;
+    editT.Rotation = (primaryPane.editState.TotalRotation % 360 + 360) % 360;
+    editT.FlipH = primaryPane.editState.FlippedH;
+
+    Transform2D netT = Transform2D::Combine(exifT, editT);
+
+    std::vector<TransformType> steps;
+    if (netT.Rotation == 90) steps.push_back(TransformType::Rotate90CW);
+    else if (netT.Rotation == 180) steps.push_back(TransformType::Rotate180);
+    else if (netT.Rotation == 270) steps.push_back(TransformType::Rotate90CCW);
+
+    if (netT.FlipH) steps.push_back(TransformType::FlipHorizontal);
+    if (primaryPane.editState.FlippedV) steps.push_back(TransformType::FlipVertical);
+
+    bool isJpeg = CLosslessTransform::IsJPEG(workFile.c_str());
+    if (isJpeg) {
+        TransformResult res = CLosslessTransform::TransformJPEG(workFile.c_str(), workFile.c_str(), netT);
         if (!res.Success) {
             transformError = true;
             errorMsg = res.ErrorMessage;
-            break;
+        }
+    } else {
+        for (auto type : steps) {
+            TransformResult res = CLosslessTransform::TransformGeneric(workFile.c_str(), workFile.c_str(), type);
+            if (!res.Success) {
+                transformError = true;
+                errorMsg = res.ErrorMessage;
+                break;
+            }
         }
     }
     
@@ -4059,6 +4082,8 @@ bool SaveCurrentImage(bool saveAs) {
         std::vector<TransformType> pending = GetPaneContext(PaneSlot::Primary).editState.PendingTransforms;
         
         GetPaneContext(PaneSlot::Primary).editState.Reset();
+        GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation = 1;
+        GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
         GetPaneContext(PaneSlot::Primary).editState.OriginalFilePath = targetPath; // Update logic if SaveAs changed it
         GetPaneContext(PaneSlot::Primary).path = targetPath;
 
@@ -7324,7 +7349,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     static bool isTracking = false;
     switch (message) {
     case QuickView::ExportPanel::WM_APP_ESTIMATE_READY:
-        QuickView::ExportPanel::GetInstance().OnEstimateReady(static_cast<uint64_t>(lParam));
+        QuickView::ExportPanel::GetInstance().OnEstimateReady(static_cast<uint64_t>(wParam), static_cast<uint64_t>(lParam));
         return 0;
     case WM_ACTIVATE:
         if (LOWORD(wParam) == WA_INACTIVE) {
@@ -8053,19 +8078,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             // Restore Trigger: If we *were* maximized and now are *not*, RESET zoom to fit.
                if (!isMaximized && s_wasMaximized) {
-                    // Reset to default view state (centered, fit)
-                    bool wasCompare = IsCompareModeActive();
-                    GetPaneContext(PaneSlot::Primary).view.Reset();
-                    if (wasCompare) {
-                        GetPaneContext(PaneSlot::Left).view.Zoom = 1.0f;
-                        GetPaneContext(PaneSlot::Left).view.PanX = 0.0f;
-                        GetPaneContext(PaneSlot::Left).view.PanY = 0.0f;
-                        GetPaneContext(PaneSlot::Primary).view.CompareActive = true;
-                    }
-                    RestoreCurrentExifOrientation();
-                    if (wasCompare && g_config.AutoRotate && GetPaneContext(PaneSlot::Left).valid) {
-                         GetPaneContext(PaneSlot::Left).view.ExifOrientation = GetPaneContext(PaneSlot::Left).metadata.ExifOrientation;
-                    }
                     RequestRepaint(PaintLayer::All);
                 } else if (isMaximized && !s_wasMaximized) {
                      // Apply Fullscreen Zoom Mode when entering Maximized/Fullscreen
@@ -10142,6 +10154,21 @@ SKIP_EDGE_NAV:;
                     opts.CropY = (int)g_cropState.CropTop;
                     opts.CropWidth = (int)(g_cropState.CropRight - g_cropState.CropLeft);
                     opts.CropHeight = (int)(g_cropState.CropBottom - g_cropState.CropTop);
+
+                    const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+                    int baseExif = primaryPane.metadata.ExifOrientation;
+                    if (baseExif < 1 || baseExif > 8) baseExif = 1;
+
+                    Transform2D exifT = Transform2D::FromExif(baseExif);
+                    Transform2D editT;
+                    editT.Rotation = (primaryPane.editState.TotalRotation % 360 + 360) % 360;
+                    editT.FlipH = primaryPane.editState.FlippedH;
+                    Transform2D netT = Transform2D::Combine(exifT, editT);
+
+                    opts.Rotation = netT.Rotation;
+                    opts.FlipH = netT.FlipH;
+                    opts.FlipV = primaryPane.editState.FlippedV;
+
                     auto res = QuickView::ImageExporter::CopyToClipboard(opts, hwnd);
                     if (res.has_value()) {
                         g_osd.Show(hwnd, L"已复制裁剪图像到剪贴板", true);
@@ -11758,15 +11785,11 @@ SKIP_EDGE_NAV:;
                     // [Fix] Set flag BEFORE SetWindowPos so WM_SIZE sees correct state
                     g_isFullScreen = false;
                     ApplyWindowCornerPreference(hwnd, g_config.RoundedCorners); // Restore user preference
-                
-                SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
-                SetWindowPlacement(hwnd, &g_savedWindowPlacement);
-                SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, 
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-                
-                    // [Fix] Reset zoom/pan to ensure image fits restored window
-                    GetPaneContext(PaneSlot::Primary).view.Reset();
-                    RestoreCurrentExifOrientation();
+
+                    SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+                    SetWindowPlacement(hwnd, &g_savedWindowPlacement);
+                    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, 
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
                 } else {
                 // Enter Fullscreen
                 RECT targetRect{};
@@ -12599,9 +12622,7 @@ static void HandleExifPreRotation(const EngineEvent& evt) {
     bool isFrameSwapped = (wDiff < 5) && (hDiff < 5);
 
     if (isFrameSwapped) {
-        // Neutralize: Bitmap is already Visual. Treat as Orient=1.
-        // Update Globals directly (evt.metadata is const)
-        GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation = 1;
+        // Neutralize view: Bitmap surface is already Visual. Preserve true metadata.ExifOrientation.
         GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
     }
 }
@@ -13088,10 +13109,8 @@ void ProcessEngineEvents(HWND hwnd) {
                     RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, false);
                     
                     // [Optimization] GPU-Assistant Surface Rotation Complete
-                    // The Surface is now physically rotated. Neutralize global Exif.
-                    // This ensures AdjustWindowToImage sees "Orientation 1" and uses the already-swapped Surface dimensions.
+                    // The Surface is now physically rotated. Neutralize view Exif while preserving true file metadata.ExifOrientation.
                     if (GetPaneContext(PaneSlot::Primary).view.ExifOrientation > 1 && g_config.AutoRotate) {
-                        GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation = 1;
                         GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
                     }
                     

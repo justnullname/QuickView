@@ -16,7 +16,10 @@
 #include <charconv>
 
 #include "PaneContext.h"
+#include "ImageEngine.h"
 #include <thread>
+
+extern std::unique_ptr<ImageEngine> g_imageEngine;
 
 extern float g_uiScale;
 extern CropState g_cropState;
@@ -117,11 +120,12 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
         l.showQualitySlider = false;
     }
 
-    // 4. Embed ICC Checkbox & Dropdown & Size Label
+    // 4. Embed ICC Checkbox & Dropdown & Preserve EXIF & Size Label
     curY += 38.0f * s;
-    l.checkboxRect = D2D1::RectF(startX + padX, curY, startX + padX + 120.0f * s, curY + 24.0f * s);
-    l.iccDropdownRect = D2D1::RectF(startX + padX + 122.0f * s, curY + 1.0f * s, startX + padX + 250.0f * s, curY + 23.0f * s);
-    l.sizeRect = D2D1::RectF(startX + padX + 255.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
+    l.checkboxRect = D2D1::RectF(startX + padX, curY, startX + padX + 72.0f * s, curY + 24.0f * s);
+    l.iccDropdownRect = D2D1::RectF(startX + padX + 74.0f * s, curY + 1.0f * s, startX + padX + 170.0f * s, curY + 23.0f * s);
+    l.preserveMetadataCheckboxRect = D2D1::RectF(startX + padX + 175.0f * s, curY, startX + padX + 295.0f * s, curY + 24.0f * s);
+    l.sizeRect = D2D1::RectF(startX + padX + 300.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
 
     // 5. Bottom Action Row Buttons
     curY += 40.0f * s;
@@ -358,6 +362,7 @@ void ExportPanel::Hide() {
     m_inputStarted = false;
     m_iccDropdownOpen = false;
     m_formatDropdownOpen = false;
+    ++m_estimateGeneration; // Cancel any running background estimate
 }
 
 bool ExportPanel::CanOverwriteOriginal() const {
@@ -374,32 +379,26 @@ bool ExportPanel::CanOverwriteOriginal() const {
 void ExportPanel::CalculateNetTransform(int& outRotation, bool& outFlipH, bool& outFlipV) const {
     const auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     int baseExif = primaryPane.metadata.ExifOrientation;
-    int baseRot = 0;
-    bool baseFlip = false;
-    switch (baseExif) {
-        case 1: baseRot = 0;   baseFlip = false; break;
-        case 2: baseRot = 0;   baseFlip = true;  break;
-        case 3: baseRot = 180; baseFlip = false; break;
-        case 4: baseRot = 180; baseFlip = true;  break;
-        case 5: baseRot = 270; baseFlip = true;  break;
-        case 6: baseRot = 90;  baseFlip = false; break;
-        case 7: baseRot = 90;  baseFlip = true;  break;
-        case 8: baseRot = 270; baseFlip = false; break;
-        default: baseRot = 0;  baseFlip = false; break;
-    }
+    if (baseExif < 1 || baseExif > 8) baseExif = 1;
 
-    const auto& editState = primaryPane.editState;
-    int netRot = (baseRot + editState.TotalRotation) % 360;
-    bool netFlipH = baseFlip ^ editState.FlippedH;
-    bool netFlipV = editState.FlippedV;
+    Transform2D exifT = Transform2D::FromExif(baseExif);
 
-    outRotation = (netRot + 360) % 360;
-    outFlipH = netFlipH;
-    outFlipV = netFlipV;
+    Transform2D editT;
+    editT.Rotation = (primaryPane.editState.TotalRotation % 360 + 360) % 360;
+    editT.FlipH = primaryPane.editState.FlippedH;
+
+    Transform2D netT = Transform2D::Combine(exifT, editT);
+
+    outRotation = netT.Rotation;
+    outFlipH = netT.FlipH;
+    outFlipV = primaryPane.editState.FlippedV;
 }
 
 void ExportPanel::TriggerAsyncEstimate() {
+    if (!m_isVisible) return; // Only estimate when ExportPanel is visible!
+
     m_estimatedSizeStr = AppStrings::Dialog_SizeEstimating;
+    uint64_t currentGen = ++m_estimateGeneration;
     
     ExportOptions opts;
     opts.InputPath = m_originalPath;
@@ -411,6 +410,7 @@ void ExportPanel::TriggerAsyncEstimate() {
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
     opts.Lossless = m_isLossless;
+    opts.PreserveMetadata = m_preserveMetadata;
     CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
@@ -428,14 +428,21 @@ void ExportPanel::TriggerAsyncEstimate() {
         opts.OutputPath = L"dummy.jpg";
     }
 
-    std::thread([opts, hwnd = m_hwnd]() {
+    std::thread([opts, currentGen, hwnd = m_hwnd, pThis = this]() {
+        if (pThis->m_estimateGeneration.load() != currentGen) return; // Abort early
+
         auto res = ImageExporter::EstimateSize(opts);
+
+        if (pThis->m_estimateGeneration.load() != currentGen) return; // Abort early
+
         uint64_t bytes = res.value_or(0);
-        PostMessageW(hwnd, WM_APP_ESTIMATE_READY, 0, (LPARAM)bytes);
+        PostMessageW(hwnd, WM_APP_ESTIMATE_READY, (WPARAM)currentGen, (LPARAM)bytes);
     }).detach();
 }
 
-void ExportPanel::OnEstimateReady(uint64_t bytes) {
+void ExportPanel::OnEstimateReady(uint64_t gen, uint64_t bytes) {
+    if (m_estimateGeneration.load() != gen || !m_isVisible) return; // Ignore stale results
+
     wchar_t buf[64];
     if (bytes == 0) {
         swprintf_s(buf, L"Size: ~ N/A");
@@ -542,6 +549,12 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::EmbedIccCheckbox) {
             m_embedIcc = !m_embedIcc;
+            TriggerAsyncEstimate();
+            m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+        } else if (m_focusedState == HoverState::PreserveMetadataCheckbox) {
+            m_preserveMetadata = !m_preserveMetadata;
             TriggerAsyncEstimate();
             m_focusedState = HoverState::None;
             m_formatDropdownOpen = false;
@@ -656,6 +669,7 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         else if (layout.showQualitySlider && hit(layout.qualityRect)) newState = HoverState::QualitySlider;
         else if (hit(layout.checkboxRect)) newState = HoverState::EmbedIccCheckbox;
         else if (hit(layout.iccDropdownRect)) newState = HoverState::IccDropdownBtn;
+        else if (hit(layout.preserveMetadataCheckboxRect)) newState = HoverState::PreserveMetadataCheckbox;
         else if (hit(layout.overwriteRect)) newState = HoverState::OverwriteBtn;
         else if (hit(layout.saveAsRect)) newState = HoverState::SaveAsBtn;
         else if (hit(layout.cancelRect)) newState = HoverState::CancelBtn;
@@ -791,6 +805,7 @@ void ExportPanel::ApplyInput() {
 }
 
 void ExportPanel::CommitSave(bool overwrite) {
+    ++m_estimateGeneration; // Cancel any running background estimate so real save gets 100% CPU & IO
     ExportOptions opts;
     opts.InputPath = m_originalPath;
     
@@ -811,6 +826,7 @@ void ExportPanel::CommitSave(bool overwrite) {
     opts.TargetHeight = m_targetHeight;
     opts.JpegQuality = m_jpegQuality;
     opts.Lossless = m_isLossless;
+    opts.PreserveMetadata = m_preserveMetadata;
     CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
@@ -826,6 +842,17 @@ void ExportPanel::CommitSave(bool overwrite) {
         Hide();
         TryExitCropMode(m_hwnd, true);
         primaryPane.editState.IsDirty = false;
+        primaryPane.editState.HasCrop = false;
+        primaryPane.editState.PendingTransforms.clear();
+        primaryPane.editState.TotalRotation = 0;
+        primaryPane.editState.FlippedH = false;
+        primaryPane.editState.FlippedV = false;
+        primaryPane.metadata.ExifOrientation = 1;
+        primaryPane.view.ExifOrientation = 1;
+        
+        if (g_imageEngine) {
+            g_imageEngine->InvalidateCache(savePath);
+        }
         primaryPane.editState.HasCrop = false;
         if (!savePath.empty()) {
             primaryPane.path = savePath;
@@ -1025,8 +1052,9 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         DrawQualitySlider(dc, layout.qualityRect, layout.qualityTrackRect, textFormat);
     }
 
-    // 7. Embed ICC Checkbox & Size Label
+    // 7. Embed ICC Checkbox & ICC Dropdown & Preserve EXIF Checkbox & Size Label
     DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC, m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
+    DrawCheckbox(dc, layout.preserveMetadataCheckboxRect, L"EXIF", m_preserveMetadata, HoverState::PreserveMetadataCheckbox, textFormat);
 
     ComPtr<ID2D1SolidColorBrush> dimTextBrush;
     dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f), &dimTextBrush);

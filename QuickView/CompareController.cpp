@@ -342,7 +342,6 @@ void CompareController::CaptureCurrentImageAsLeft() {
     GetPaneContext(PaneSlot::Left).view.ExifOrientation = g_renderExifOrientation;
     if (!g_config.AutoRotate) {
         GetPaneContext(PaneSlot::Left).view.ExifOrientation = 1;
-        GetPaneContext(PaneSlot::Left).metadata.ExifOrientation = 1;
     }
     GetPaneContext(PaneSlot::Left).CmsModeOverride = g_runtime.CmsModeOverride;
     GetPaneContext(PaneSlot::Left).EnableSoftProofing = g_runtime.EnableSoftProofing;
@@ -588,7 +587,6 @@ void CompareController::EnterMode(HWND hwnd) {
         }
     } else {
         GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
-        GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation = 1;
     }
 
     m_context.Compare.syncZoom = true;
@@ -683,7 +681,6 @@ void CompareController::ExitMode(HWND hwnd) {
     if (GetPaneContext(PaneSlot::Primary).resource) {
         RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, false);
         if (GetPaneContext(PaneSlot::Primary).view.ExifOrientation > 1 && g_config.AutoRotate) {
-            GetPaneContext(PaneSlot::Primary).metadata.ExifOrientation = 1;
             GetPaneContext(PaneSlot::Primary).view.ExifOrientation = 1;
         }
         AdjustWindowToImage(hwnd);

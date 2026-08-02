@@ -32,7 +32,8 @@ struct ExportOptions {
     bool FlipH = false;
     bool FlipV = false;
 
-    // ICC Profile embedding
+    // Metadata & ICC Profile embedding
+    bool PreserveMetadata = true; // Copy EXIF / IPTC / XMP metadata blocks
     bool EmbedIcc = true;
     std::wstring IccProfilePath;
     std::vector<uint8_t> CustomIccData;

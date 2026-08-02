@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "LosslessTransform.h"
+#include "EditState.h"
 
 #include <memory>
 // Include libjpeg-turbo header
@@ -261,6 +262,9 @@ TransformResult CLosslessTransform::TransformJPEG(
     TransformResult transformResult;
     
     if (result == 0 && outputData) {
+        // Reset EXIF Orientation tag to 1 (Normal) after physical DCT transform
+        ResetJpegExifOrientationTo1(outputData.get(), outputSize);
+
         // Write output file
         std::wstring writeError;
         if (WriteMemoryToFile(outputPath, outputData.get(), static_cast<unsigned int>(outputSize), writeError)) {
@@ -273,6 +277,87 @@ TransformResult CLosslessTransform::TransformJPEG(
         const char* errStr = tj3GetErrorStr(tjHandle.get());
         if (errStr) {
             // Convert error string to wide
+            int len = MultiByteToWideChar(CP_UTF8, 0, errStr, -1, NULL, 0);
+            if (len > 0) {
+                std::wstring wideErr(len, 0);
+                MultiByteToWideChar(CP_UTF8, 0, errStr, -1, &wideErr[0], len);
+                errMsg += L": " + wideErr;
+            }
+        }
+        transformResult = TransformResult::Error(errMsg);
+    }
+    
+    return transformResult;
+}
+
+TransformResult CLosslessTransform::TransformJPEG(LPCWSTR inputPath, LPCWSTR outputPath, const Transform2D& netTransform) {
+    if (!inputPath || !outputPath) {
+        return TransformResult::Error(L"Invalid path parameters");
+    }
+    
+    unsigned int inputSize = 0;
+    std::unique_ptr<unsigned char[]> inputData = ReadFileToMemory(inputPath, inputSize);
+    if (!inputData || inputSize == 0) {
+        return TransformResult::Error(L"Failed to read file");
+    }
+    
+    if (inputSize < 3 || inputData[0] != JPEG_MAGIC[0] || inputData[1] != JPEG_MAGIC[1] || inputData[2] != JPEG_MAGIC[2]) {
+        return TransformResult::Error(L"Not a valid JPEG file");
+    }
+    
+    auto tjDeleter = [](tjhandle h) { if (h) tj3Destroy(h); };
+    std::unique_ptr<void, decltype(tjDeleter)> tjHandle(tj3Init(TJINIT_TRANSFORM), tjDeleter);
+    if (!tjHandle) {
+        return TransformResult::Error(L"Failed to initialize JPEG transformer");
+    }
+    
+    tjtransform transform = {};
+    int rot = (netTransform.Rotation % 360 + 360) % 360;
+    if (rot == 0) {
+        transform.op = netTransform.FlipH ? TJXOP_HFLIP : TJXOP_NONE;
+    } else if (rot == 90) {
+        transform.op = netTransform.FlipH ? TJXOP_TRANSVERSE : TJXOP_ROT90;
+    } else if (rot == 180) {
+        transform.op = netTransform.FlipH ? TJXOP_VFLIP : TJXOP_ROT180;
+    } else if (rot == 270) {
+        transform.op = netTransform.FlipH ? TJXOP_TRANSPOSE : TJXOP_ROT270;
+    }
+    
+    transform.options = TJXOPT_PERFECT; 
+    
+    unsigned char* outputDataRaw = nullptr;
+    size_t outputSize = 0;
+    EditQuality quality = EditQuality::Lossless;
+    
+    int result = tj3Transform(tjHandle.get(), inputData.get(), inputSize, 1, &outputDataRaw, &outputSize, &transform);
+    auto memDeleter = [](unsigned char* p) { if (p) tj3Free(p); };
+    std::unique_ptr<unsigned char, decltype(memDeleter)> outputData(outputDataRaw, memDeleter);
+    
+    if (result != 0) {
+        transform.options = TJXOPT_TRIM;
+        outputData.reset();
+        result = tj3Transform(tjHandle.get(), inputData.get(), inputSize, 1, &outputDataRaw, &outputSize, &transform);
+        outputData.reset(outputDataRaw);
+        if (result == 0) {
+            quality = EditQuality::EdgeAdapted;
+        }
+    }
+    
+    inputData.reset(); 
+    
+    TransformResult transformResult;
+    if (result == 0 && outputData) {
+        ResetJpegExifOrientationTo1(outputData.get(), outputSize);
+        std::wstring writeError;
+        if (WriteMemoryToFile(outputPath, outputData.get(), static_cast<unsigned int>(outputSize), writeError)) {
+            transformResult = TransformResult::OK(quality);
+        } else {
+            transformResult = TransformResult::Error(writeError);
+        }
+    } else {
+        std::wstring errMsg = L"Single-pass JPEG transformation failed";
+        const char* errStr = tj3GetErrorStr(tjHandle.get());
+        if (errStr) {
             int len = MultiByteToWideChar(CP_UTF8, 0, errStr, -1, NULL, 0);
             if (len > 0) {
                 std::wstring wideErr(len, 0);
@@ -490,3 +575,92 @@ const wchar_t* CLosslessTransform::GetTransformName(TransformType type) {
         default:                            return L"Unknown";
     }
 }
+
+bool CLosslessTransform::ResetJpegExifOrientationTo1(unsigned char* data, size_t lengthBytes) {
+    if (!data || lengthBytes < 14) return false;
+
+    // Check SOI (FF D8)
+    if (data[0] != 0xFF || data[1] != 0xD8) return false;
+
+    size_t pos = 2;
+    while (pos + 4 < lengthBytes) {
+        if (data[pos] != 0xFF) {
+            pos++;
+            continue;
+        }
+
+        uint8_t marker = data[pos + 1];
+        if (marker == 0xDA || marker == 0xD9) {
+            // Start of Scan or End of Image
+            break;
+        }
+
+        uint16_t segmentLen = (static_cast<uint16_t>(data[pos + 2]) << 8) | data[pos + 3];
+        if (segmentLen < 2 || pos + 2 + segmentLen > lengthBytes) break;
+
+        if (marker == 0xE1 && segmentLen >= 14) { // APP1 Marker
+            size_t payloadPos = pos + 4;
+            // Check "Exif\0\0"
+            if (data[payloadPos] == 'E' && data[payloadPos + 1] == 'x' &&
+                data[payloadPos + 2] == 'i' && data[payloadPos + 3] == 'f' &&
+                data[payloadPos + 4] == 0 && data[payloadPos + 5] == 0) {
+
+                size_t tiffStart = payloadPos + 6;
+                if (tiffStart + 8 > pos + 2 + segmentLen) break;
+
+                bool isLittleEndian = false;
+                if (data[tiffStart] == 'I' && data[tiffStart + 1] == 'I') {
+                    isLittleEndian = true;
+                } else if (data[tiffStart] == 'M' && data[tiffStart + 1] == 'M') {
+                    isLittleEndian = false;
+                } else {
+                    break;
+                }
+
+                auto read16 = [isLittleEndian](const uint8_t* p) -> uint16_t {
+                    return isLittleEndian ? (p[0] | (static_cast<uint16_t>(p[1]) << 8))
+                                          : ((static_cast<uint16_t>(p[0]) << 8) | p[1]);
+                };
+                auto read32 = [isLittleEndian](const uint8_t* p) -> uint32_t {
+                    return isLittleEndian ? (p[0] | (static_cast<uint32_t>(p[1]) << 8) |
+                                             (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24))
+                                          : ((static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+                                             (static_cast<uint32_t>(p[2]) << 8) | p[3]);
+                };
+
+                uint16_t alignCheck = read16(&data[tiffStart + 2]);
+                if (alignCheck != 0x002A) break; // 42
+
+                uint32_t ifd0Offset = read32(&data[tiffStart + 4]);
+                size_t ifdPos = tiffStart + ifd0Offset;
+
+                if (ifdPos + 2 > pos + 2 + segmentLen) break;
+                uint16_t numEntries = read16(&data[ifdPos]);
+                size_t entryPos = ifdPos + 2;
+
+                for (uint16_t i = 0; i < numEntries; i++) {
+                    if (entryPos + 12 > pos + 2 + segmentLen) break;
+
+                    uint16_t tag = read16(&data[entryPos]);
+                    if (tag == 0x0112) { // Orientation Tag
+                        // Type 3 = SHORT, Count = 1
+                        // Write 1 (Normal) in appropriate byte order
+                        if (isLittleEndian) {
+                            data[entryPos + 8] = 1;
+                            data[entryPos + 9] = 0;
+                        } else {
+                            data[entryPos + 8] = 0;
+                            data[entryPos + 9] = 1;
+                        }
+                        return true;
+                    }
+                    entryPos += 12;
+                }
+            }
+        }
+
+        pos += 2 + segmentLen;
+    }
+    return false;
+}
+

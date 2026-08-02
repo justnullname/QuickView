@@ -50,6 +50,9 @@ struct PanelLayout {
     bool showLosslessCheckbox = false;
     D2D1_RECT_F losslessCheckboxRect = {};
 
+    // Preserve EXIF Metadata Switch
+    D2D1_RECT_F preserveMetadataCheckboxRect = {};
+
     // Quality Slider
     bool showQualitySlider = false;
     D2D1_RECT_F qualityRect = {};
@@ -92,7 +95,7 @@ public:
     bool OnMouseWheel(short delta);
     bool OnKeyDown(WPARAM wParam);
     bool OnChar(WPARAM wParam);
-    void OnEstimateReady(uint64_t bytes);
+    void OnEstimateReady(uint64_t gen, uint64_t bytes);
 
     static constexpr UINT WM_APP_ESTIMATE_READY = WM_APP + 101;
 
@@ -134,6 +137,7 @@ private:
         FormatDropdownBtn,
         FormatDropdownItem,
         LosslessCheckbox,
+        PreserveMetadataCheckbox,
         QualitySlider,
         EmbedIccCheckbox,
         IccDropdownBtn,
@@ -152,6 +156,7 @@ private:
     bool m_formatDropdownOpen = false;
     int m_hoverFormatItemIndex = -1;
     bool m_isLossless = false;
+    bool m_preserveMetadata = true;
     int m_jpegQuality = 90;
     bool m_isDraggingQuality = false;
     bool m_embedIcc = true;
@@ -165,6 +170,7 @@ private:
     // Size Estimation
     std::wstring m_estimatedSizeStr = L"Size: Estimating...";
     uint64_t m_estimatedSizeBytes = 0;
+    std::atomic<uint64_t> m_estimateGeneration{ 0 };
 
     // Text input
     wchar_t m_inputBuf[16] = {};

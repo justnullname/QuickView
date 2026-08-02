@@ -22,6 +22,39 @@
 
 extern HCURSOR g_currentCursor;
 
+// Dihedral Group D4 2D Rigid Transformation for precise EXIF & Edit composition
+struct Transform2D {
+    int Rotation = 0;   // 0, 90, 180, 270
+    bool FlipH = false; // Horizontal Flip
+
+    static constexpr Transform2D FromExif(int exifOrientation) {
+        switch (exifOrientation) {
+            case 1: return { 0,   false };
+            case 2: return { 0,   true  };
+            case 3: return { 180, false };
+            case 4: return { 180, true  };
+            case 5: return { 90,  true  };
+            case 6: return { 90,  false };
+            case 7: return { 270, true  };
+            case 8: return { 270, false };
+            default: return { 0,  false };
+        }
+    }
+
+    static constexpr Transform2D Combine(Transform2D exif, Transform2D edit) {
+        Transform2D result;
+        if (!edit.FlipH) {
+            result.Rotation = (exif.Rotation + edit.Rotation) % 360;
+            result.FlipH = exif.FlipH;
+        } else {
+            result.Rotation = (edit.Rotation - exif.Rotation + 360) % 360;
+            result.FlipH = !exif.FlipH;
+        }
+        return result;
+    }
+};
+
+
 struct EditState {
     bool IsDirty = false;               // Has unsaved changes
     std::wstring TempFilePath;          // Temp file path

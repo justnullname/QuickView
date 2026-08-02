@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ImageExporter.h"
 #include <wincodec.h>
+#include <wincodecsdk.h>
 #include <shlwapi.h>
 #include <windows.h>
 #include <algorithm>
@@ -412,6 +413,40 @@ static void ConfigureEncoderProperties(IPropertyBag2* props, const GUID& contain
     }
 }
 
+static void EmbedMetadataAndResetOrientation(IWICImagingFactory* factory,
+                                              IWICBitmapFrameEncode* frameEncode,
+                                              const ExportOptions& options) {
+    if (!factory || !frameEncode) return;
+
+    if (options.PreserveMetadata && !options.InputPath.empty()) {
+        ComPtr<IWICBitmapDecoder> metaDecoder;
+        if (SUCCEEDED(factory->CreateDecoderFromFilename(options.InputPath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &metaDecoder))) {
+            ComPtr<IWICBitmapFrameDecode> metaFrame;
+            if (SUCCEEDED(metaDecoder->GetFrame(0, &metaFrame))) {
+                ComPtr<IWICMetadataBlockReader> blockReader;
+                if (SUCCEEDED(metaFrame.As(&blockReader))) {
+                    ComPtr<IWICMetadataBlockWriter> blockWriter;
+                    if (SUCCEEDED(frameEncode->QueryInterface(IID_PPV_ARGS(&blockWriter)))) {
+                        blockWriter->InitializeFromBlockReader(blockReader.Get());
+                    }
+                }
+            }
+        }
+    }
+
+    // Always neutralize EXIF Orientation tag to 1 (Normal)
+    ComPtr<IWICMetadataQueryWriter> queryWriter;
+    if (SUCCEEDED(frameEncode->GetMetadataQueryWriter(&queryWriter))) {
+        PROPVARIANT var;
+        PropVariantInit(&var);
+        var.vt = VT_UI2;
+        var.uiVal = 1; // Set Orientation = 1 (Normal)
+        queryWriter->SetMetadataByName(L"/app1/ifd/{short=274}", &var);
+        queryWriter->SetMetadataByName(L"/ifd/{short=274}", &var);
+        PropVariantClear(&var);
+    }
+}
+
 std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& options) {
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapSource> source;
@@ -419,6 +454,18 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
     
     HRESULT hr = CreateWICPipeline(options, source, factory, colorContext);
     if (FAILED(hr)) return std::unexpected(L"Failed to create image pipeline.");
+
+    // Check if writing to input file directly (overwrite)
+    bool isOverwrite = false;
+    std::wstring actualOutputPath = options.OutputPath;
+    std::wstring tempPath;
+
+    if (!options.InputPath.empty() && 
+        _wcsicmp(options.OutputPath.c_str(), options.InputPath.c_str()) == 0) {
+        isOverwrite = true;
+        tempPath = options.OutputPath + L".tmp";
+        actualOutputPath = tempPath;
+    }
 
     // Determine encoder by extension
     const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
@@ -428,25 +475,43 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
     hr = factory->CreateStream(&stream);
     if (FAILED(hr)) return std::unexpected(L"Failed to create output stream.");
 
-    hr = stream->InitializeFromFilename(options.OutputPath.c_str(), GENERIC_WRITE);
-    if (FAILED(hr)) return std::unexpected(L"Failed to open output file.");
+    hr = stream->InitializeFromFilename(actualOutputPath.c_str(), GENERIC_WRITE);
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to open output file.");
+    }
 
     ComPtr<IWICBitmapEncoder> encoder;
     hr = factory->CreateEncoder(containerFormat, nullptr, &encoder);
-    if (FAILED(hr)) return std::unexpected(L"Failed to create encoder.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to create encoder.");
+    }
 
     hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
-    if (FAILED(hr)) return std::unexpected(L"Failed to initialize encoder.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to initialize encoder.");
+    }
 
     ComPtr<IWICBitmapFrameEncode> frameEncode;
     ComPtr<IPropertyBag2> props;
     hr = encoder->CreateNewFrame(&frameEncode, &props);
-    if (FAILED(hr)) return std::unexpected(L"Failed to create encoder frame.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to create encoder frame.");
+    }
 
     ConfigureEncoderProperties(props.Get(), containerFormat, options);
 
     hr = frameEncode->Initialize(props.Get());
-    if (FAILED(hr)) return std::unexpected(L"Failed to initialize frame encode.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to initialize frame encode.");
+    }
+
+    // Embed Metadata Blocks & Reset EXIF Orientation to 1
+    EmbedMetadataAndResetOrientation(factory.Get(), frameEncode.Get(), options);
 
     // Embed Color Context
     if (colorContext && options.EmbedIcc) {
@@ -474,13 +539,37 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
     }
 
     hr = frameEncode->WriteSource(finalSource.Get(), nullptr);
-    if (FAILED(hr)) return std::unexpected(L"Failed to write image data.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to write image data.");
+    }
 
     hr = frameEncode->Commit();
-    if (FAILED(hr)) return std::unexpected(L"Failed to commit frame.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to commit frame.");
+    }
 
     hr = encoder->Commit();
-    if (FAILED(hr)) return std::unexpected(L"Failed to commit encoder.");
+    if (FAILED(hr)) {
+        if (isOverwrite) DeleteFileW(tempPath.c_str());
+        return std::unexpected(L"Failed to commit encoder.");
+    }
+
+    // Release WIC handles before moving file
+    frameEncode.Reset();
+    encoder.Reset();
+    stream.Reset();
+    finalSource.Reset();
+    source.Reset();
+    factory.Reset();
+
+    if (isOverwrite) {
+        if (!MoveFileExW(tempPath.c_str(), options.OutputPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            DeleteFileW(tempPath.c_str());
+            return std::unexpected(L"Failed to overwrite target file.");
+        }
+    }
 
     return {};
 }
@@ -523,6 +612,9 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
 
     hr = frameEncode->Initialize(props.Get());
     if (FAILED(hr)) return std::unexpected(L"Frame init error.");
+
+    // Embed Metadata Blocks & Reset EXIF Orientation to 1 for accurate size estimation
+    EmbedMetadataAndResetOrientation(factory.Get(), frameEncode.Get(), options);
 
     if (colorContext && options.EmbedIcc) {
         IWICColorContext* pCtx = colorContext.Get();

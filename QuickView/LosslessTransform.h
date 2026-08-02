@@ -3,6 +3,8 @@
 #include <string>
 #include <cwchar>
 
+struct Transform2D;
+
 /// <summary>
 /// Lossless transformation types
 /// </summary>
@@ -67,6 +69,14 @@ public:
         TransformType type);
     
     /// <summary>
+    /// Perform single-pass combined lossless transformation on JPEG using TurboJPEG & D4 algebra
+    /// </summary>
+    static TransformResult TransformJPEG(
+        LPCWSTR inputPath, 
+        LPCWSTR outputPath, 
+        const Transform2D& netTransform);
+
+    /// <summary>
     /// Perform transformation on any image format using WIC (lossy for non-JPEG)
     /// </summary>
     static TransformResult TransformGeneric(
@@ -75,7 +85,13 @@ public:
         TransformType type);
     
     /// <summary>
+    /// Safely scan JPEG binary stream and reset EXIF Orientation Tag (0x0112) to 1 (Normal)
+    /// </summary>
+    static bool ResetJpegExifOrientationTo1(unsigned char* data, size_t lengthBytes);
+
+    /// <summary>
     /// Get human-readable name for transform type
     /// </summary>
     static const wchar_t* GetTransformName(TransformType type);
+
 };
