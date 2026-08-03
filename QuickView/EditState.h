@@ -881,6 +881,8 @@ struct CropState {
         ReachedEdgeX = false;
         ReachedEdgeY = false;
         CropLeft = CropTop = CropRight = CropBottom = 0;
+        DragStartCropLeft = DragStartCropTop = DragStartCropRight = DragStartCropBottom = 0;
+        DragStartMousePos = { 0, 0 };
         ActiveHandle = -1;
         FocusedField = InputField::None;
         HoverField = InputField::None;

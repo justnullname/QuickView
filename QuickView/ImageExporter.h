@@ -61,11 +61,14 @@ public:
     // Asynchronously or synchronously estimates output file size in bytes
     static std::expected<uint64_t, std::wstring> EstimateSize(const ExportOptions& options);
 
+    static bool FormatSupportsExifOrientation(const wchar_t* ext);
+
 private:
     static HRESULT CreateWICPipeline(const ExportOptions& options,
                                      Microsoft::WRL::ComPtr<IWICBitmapSource>& outSource,
                                      Microsoft::WRL::ComPtr<IWICImagingFactory>& factory,
-                                     Microsoft::WRL::ComPtr<IWICColorContext>& outColorContext);
+                                     Microsoft::WRL::ComPtr<IWICColorContext>& outColorContext,
+                                     Microsoft::WRL::ComPtr<IWICBitmapFrameDecode>& outFrameDecode);
     static GUID GetContainerFormatFromExtension(const wchar_t* ext);
 };
 

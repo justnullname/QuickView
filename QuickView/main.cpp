@@ -1702,8 +1702,7 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
         float ch = editState.CropBottom - editState.CropTop;
         if (cw > 0.0f && ch > 0.0f) {
             srcRect = D2D1::RectF(editState.CropLeft, editState.CropTop, editState.CropRight, editState.CropBottom);
-            bool isRotated = (exifOrientation >= 5 && exifOrientation <= 8);
-            effectiveSize = isRotated ? D2D1::SizeF(ch, cw) : D2D1::SizeF(cw, ch);
+            effectiveSize = D2D1::SizeF(cw, ch);
         }
     }
 
@@ -1809,6 +1808,40 @@ int GetEffectiveExifOrientation(int baseExif, const EditState& editState) {
     }
     return 1;
 }
+
+static D2D1_POINT_2F MapOrientedPointToRawPoint(float x_o, float y_o, float imgW, float imgH, int orientation) {
+    switch (orientation) {
+        case 1: return { x_o, y_o };
+        case 2: return { imgW - x_o, y_o };             // Flip H
+        case 3: return { imgW - x_o, imgH - y_o };       // Rotate 180
+        case 4: return { x_o, imgH - y_o };             // Flip V
+        case 5: return { y_o, x_o };                    // Transpose
+        case 6: return { y_o, imgH - x_o };             // Rotate 90 CW
+        case 7: return { imgW - y_o, imgH - x_o };       // Transverse
+        case 8: return { imgW - y_o, x_o };             // Rotate 270 CW (90 CCW)
+        default: return { x_o, y_o };
+    }
+}
+
+static D2D1_RECT_F MapOrientedRectToRawRect(const D2D1_RECT_F& oRect, float imgW, float imgH, int orientation) {
+    D2D1_POINT_2F p1 = MapOrientedPointToRawPoint(oRect.left,  oRect.top,    imgW, imgH, orientation);
+    D2D1_POINT_2F p2 = MapOrientedPointToRawPoint(oRect.right, oRect.top,    imgW, imgH, orientation);
+    D2D1_POINT_2F p3 = MapOrientedPointToRawPoint(oRect.left,  oRect.bottom, imgW, imgH, orientation);
+    D2D1_POINT_2F p4 = MapOrientedPointToRawPoint(oRect.right, oRect.bottom, imgW, imgH, orientation);
+
+    float minX = (std::min)({p1.x, p2.x, p3.x, p4.x});
+    float maxX = (std::max)({p1.x, p2.x, p3.x, p4.x});
+    float minY = (std::min)({p1.y, p2.y, p3.y, p4.y});
+    float maxY = (std::max)({p1.y, p2.y, p3.y, p4.y});
+
+    minX = (std::clamp)(minX, 0.0f, imgW);
+    maxX = (std::clamp)(maxX, 0.0f, imgW);
+    minY = (std::clamp)(minY, 0.0f, imgH);
+    maxY = (std::clamp)(maxY, 0.0f, imgH);
+
+    return D2D1::RectF(minX, minY, maxX, maxY);
+}
+
 
 
 
@@ -2321,7 +2354,7 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
     // The backing bitmap surface only bakes EXIF rotation. User rotation stays in
     // the DComp transform layer, so including it here would make upgraded
     // surfaces look pre-rotated to later layout code.
-    if (baseRot == 90 || baseRot == 270) {
+    if (!editState.HasCrop && (baseRot == 90 || baseRot == 270)) {
         std::swap(originalW, originalH);
     }
 
@@ -2435,7 +2468,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
 
             // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
             // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
-            if (!res.isSvg && g_config.AutoRotate) {
+            if (!res.isSvg && !editState.HasCrop && g_config.AutoRotate) {
                  int orient = g_renderExifOrientation;
                  if (orient >= 5 && orient <= 8) {
                      std::swap(contentW, contentH);
@@ -2538,11 +2571,14 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         if (!res.bitmap) return false;
         
         D2D1_SIZE_F bmpSize = res.bitmap->GetSize();
+        const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
         
         // Handle EXIF Orientation (GPU Pre-Rotation)
         int orientation = g_renderExifOrientation;
-        // If AutoRotate is disabled, force 1 (unless we want to support manual rotation later)
         if (!g_config.AutoRotate) orientation = 1;
+
+        int effOrientation = GetEffectiveExifOrientation(g_renderExifOrientation, editState);
+        if (!g_config.AutoRotate) effOrientation = 1;
 
         float imgW = bmpSize.width;
         float imgH = bmpSize.height;
@@ -2550,25 +2586,27 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         // Swap dimensions for portrait orientations (5-8) to ensure Surface matches Window shape
         bool isSwapped = (orientation >= 5 && orientation <= 8);
         
-        // [Titan Fix] For Titan mode with small/dummy base layer, we must calculate 
-        // the "Fit Scale" based on the FULL image dimensions (Metadata), not the bitmap dimensions.
-        // Otherwise, fitScale will be huge (fitting 1x1 to screen), breaking tile culling.
-        
         // [Titan Fix] Define effective dimensions (swapped if needed)
         float effectiveW = isSwapped ? imgH : imgW;
         float effectiveH = isSwapped ? imgW : imgH;
 
-        // [Titan Fix] For Titan mode with small/dummy base layer, we must calculate 
-        // the "Fit Scale" based on the FULL image dimensions (Metadata), not the bitmap dimensions.
-        // Otherwise, fitScale will be huge (fitting 1x1 to screen), breaking tile culling.
-        
+        if (editState.HasCrop) {
+            float cw = (float)(editState.CropRight - editState.CropLeft);
+            float ch = (float)(editState.CropBottom - editState.CropTop);
+            if (cw > 0.0f && ch > 0.0f) {
+                bool userRotated90 = (editState.TotalRotation == 90 || editState.TotalRotation == 270);
+                effectiveW = userRotated90 ? ch : cw;
+                effectiveH = userRotated90 ? cw : ch;
+            }
+        }
+
         float scaleCalcW = effectiveW;
         float scaleCalcH = effectiveH;
         
         // Check if we are in Titan mode (detected above) AND if the bitmap is unexpectedly small 
         // (implying a dummy or preview placeholder).
         // Titan Threshold: >8192. If bitmap is small (e.g. <4096 or 1x1), we use Metadata.
-        if (isTitan && (imgW < 4096 || imgH < 4096)) {
+        if (isTitan && (imgW < 4096 || imgH < 4096) && !editState.HasCrop) {
              scaleCalcW = isSwapped ? (float)fullHeight : (float)fullWidth;
              scaleCalcH = isSwapped ? (float)fullWidth : (float)fullHeight;
         }
@@ -2584,13 +2622,21 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         g_lastFitScale = scale;
         g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
         
+        D2D1_RECT_F rawRect = D2D1::RectF(0, 0, imgW, imgH);
+        if (editState.HasCrop) {
+            D2D1_RECT_F orientedCropRect = D2D1::RectF((float)editState.CropLeft, (float)editState.CropTop, (float)editState.CropRight, (float)editState.CropBottom);
+            rawRect = MapOrientedRectToRawRect(orientedCropRect, imgW, imgH, effOrientation);
+        }
+
         // GPU Rotation Matrix Calculation
-        // Goal: Map the source bitmap (0,0,imgW,imgH) to the destination surface center, rotated and scaled.
-        D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Identity();
-        
+        // Goal: Map the source bitmap to the destination surface center, rotated and scaled.
         if (orientation > 1) {
-             // 1. Move Center of Bitmap to (0,0)
-             m = m * D2D1::Matrix3x2F::Translation(-imgW / 2.0f, -imgH / 2.0f);
+             float rawCenterX = (rawRect.left + rawRect.right) * 0.5f;
+             float rawCenterY = (rawRect.top + rawRect.bottom) * 0.5f;
+
+             D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Identity();
+             // 1. Move Center of Bitmap/Crop Region to (0,0)
+             m = m * D2D1::Matrix3x2F::Translation(-rawCenterX, -rawCenterY);
              
              // 2. Apply Rotation / Flip
              switch (orientation) {
@@ -2605,8 +2651,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              }
              
              // 3. Scale to Fit Surface
-             // [Titan Fix] We must calculate a "Visual Scale" to stretch the bitmap (even if 1x1) to fill the surface.
-             // If we used `scale` (logical scale ~0.02), a 1x1 bitmap would vanish.
              float drawScaleX = (float)surfW / effectiveW;
              float drawScaleY = (float)surfH / effectiveH;
              float drawScale = std::min(drawScaleX, drawScaleY);
@@ -2618,18 +2662,12 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              
              ctx->SetTransform(CombineWithCurrentTransform(ctx, m));
              
-             // Draw bitmap at its original coordinates. The Transform handles placement.
-             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-             D2D1_RECT_F srcRect = D2D1::RectF(0, 0, imgW, imgH);
-             D2D1_RECT_F destRect = D2D1::RectF(0, 0, imgW, imgH);
-             if (editState.HasCrop) {
-                 srcRect = D2D1::RectF((float)editState.CropLeft, (float)editState.CropTop, (float)editState.CropRight, (float)editState.CropBottom);
-                 destRect = D2D1::RectF(0, 0, (float)(editState.CropRight - editState.CropLeft), (float)(editState.CropBottom - editState.CropTop));
-             }
+             D2D1_RECT_F srcRect = rawRect;
+             D2D1_RECT_F destRect = rawRect;
 
              // Use Smart Interpolation
              float absoluteScale = GetPaneContext(PaneSlot::Primary).view.Zoom * scale;
-             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, imgW, imgH);
+             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, rawRect.right - rawRect.left, rawRect.bottom - rawRect.top);
 
              ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, interpMode, &srcRect);
              
@@ -2637,18 +2675,12 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
         } else {
              // Standard Path (Optimization: No Matrix overhead)
-             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-             D2D1_RECT_F srcRect = D2D1::RectF(0, 0, imgW, imgH);
-             float cropW = imgW;
-             float cropH = imgH;
-             if (editState.HasCrop) {
-                 srcRect = D2D1::RectF(editState.CropLeft, editState.CropTop, editState.CropRight, editState.CropBottom);
-                 cropW = editState.CropRight - editState.CropLeft;
-                 cropH = editState.CropBottom - editState.CropTop;
-             }
+             D2D1_RECT_F srcRect = rawRect;
+             float cropW = rawRect.right - rawRect.left;
+             float cropH = rawRect.bottom - rawRect.top;
 
-             float drawScaleX = (float)surfW / cropW;
-             float drawScaleY = (float)surfH / cropH;
+             float drawScaleX = (float)surfW / effectiveW;
+             float drawScaleY = (float)surfH / effectiveH;
              float drawScale = std::min(drawScaleX, drawScaleY);
              
              float drawW = cropW * drawScale;
@@ -2727,48 +2759,82 @@ void ReleaseImageResources() {
     g_renderExifOrientation = 1;
     Sleep(50);
 }
+namespace {
+static float MeasureStringWidth(const wchar_t* text, float fontSize, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL) {
+    if (!text || !*text) return 0.0f;
+    static ComPtr<IDWriteFactory> pDW;
+    static ComPtr<IDWriteTextFormat> pFmt;
+    static float s_lastSize = 0.0f;
+    static DWRITE_FONT_WEIGHT s_lastWeight = DWRITE_FONT_WEIGHT_NORMAL;
+    if (s_lastSize != fontSize || s_lastWeight != weight) {
+        s_lastSize = fontSize;
+        s_lastWeight = weight;
+        pFmt.Reset();
+    }
+    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+    if (pDW && !pFmt) {
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"zh-CN", &pFmt);
+    }
+    if (!pDW || !pFmt) return (float)wcslen(text) * fontSize * 0.6f;
+
+    ComPtr<IDWriteTextLayout> pLayout;
+    if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 3000.0f, 200.0f, &pLayout))) {
+        DWRITE_TEXT_METRICS metrics = {};
+        pLayout->GetMetrics(&metrics);
+        return metrics.widthIncludingTrailingWhitespace;
+    }
+    return (float)wcslen(text) * fontSize * 0.6f;
+}
+}
+
 DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     DialogLayout layout;
     const float s = g_uiScale;
     float dlgW = 350.0f * s;
     const size_t nb = AppContext::GetInstance().Dialog.Buttons.size();
 
-    // Dynamically adjust button size and gap based on button count to keep the modal compact.
-    float btnW = 95.0f * s;
-    float btnGap = 12.0f * s;
-    float marginX = 20.0f * s;
+    // Dynamically adjust button size and gap based on button count & text length to keep the modal compact.
+    float defaultBtnW = (nb >= 4) ? 82.0f * s : 95.0f * s;
+    float btnGap = (nb >= 4) ? 8.0f * s : 12.0f * s;
+    float marginX = (nb >= 4) ? 15.0f * s : 20.0f * s;
 
-    if (nb >= 4) {
-        btnW = 82.0f * s;
-        btnGap = 8.0f * s;
-        marginX = 15.0f * s;
+    // Measure maximum required button width across multi-language button titles
+    float maxReqBtnW = defaultBtnW;
+    for (const auto& btn : AppContext::GetInstance().Dialog.Buttons) {
+        float reqW = MeasureStringWidth(btn.Text.c_str(), 13.0f * s, DWRITE_FONT_WEIGHT_SEMI_BOLD) + 20.0f * s;
+        if (reqW > maxReqBtnW) maxReqBtnW = reqW;
     }
+    float btnW = maxReqBtnW;
 
     if (nb > 0) {
         float rowWidth = nb * btnW + (nb - 1) * btnGap + marginX * 2.0f;
         if (rowWidth > dlgW) dlgW = rowWidth;
     }
 
-    // Calculate required height based on content
-    // Title line: ~30px, Message lines: estimate based on length, Buttons: 50px, Padding: 40px
-    float titleHeight = 30.0f * s;
-    float messageHeight = 22.0f * s;
-    
-    // Estimate title wrapping (assume ~25 chars per line at this width)
-    int titleLines = (int)(AppContext::GetInstance().Dialog.Title.length() / 20) + 1;
+    float availTextWidth = dlgW - 50.0f * s; // 25px margin left and right
+    if (availTextWidth < 100.0f * s) availTextWidth = 100.0f * s;
+
+    // Calculate required height based on DirectWrite measured text layout
+    float titleHeight = 28.0f * s;
+    float titleTextW = MeasureStringWidth(AppContext::GetInstance().Dialog.Title.c_str(), 17.0f * s, DWRITE_FONT_WEIGHT_BOLD);
+    int titleLines = (int)std::ceil(titleTextW / availTextWidth);
+    if (titleLines < 1) titleLines = 1;
     if (titleLines > 3) titleLines = 3;  // Max 3 lines
     
-    // Estimate message wrapping and explicit line breaks (\n)
+    // Estimate message wrapping and explicit line breaks (\n) via DirectWrite font metrics
+    float messageHeight = 20.0f * s;
     const std::wstring& msgStr = AppContext::GetInstance().Dialog.Message;
     int msgLines = 0;
     size_t startPos = 0;
     while (startPos < msgStr.length()) {
         size_t nextPos = msgStr.find(L'\n', startPos);
-        std::wstring_view line = (nextPos == std::wstring::npos) ? 
-            std::wstring_view(msgStr.c_str() + startPos) : 
-            std::wstring_view(msgStr.c_str() + startPos, nextPos - startPos);
+        std::wstring line = (nextPos == std::wstring::npos) ? 
+            msgStr.substr(startPos) : 
+            msgStr.substr(startPos, nextPos - startPos);
         
-        int subLines = static_cast<int>(line.length() / 20) + 1;
+        float lineW = MeasureStringWidth(line.c_str(), 12.0f * s);
+        int subLines = (int)std::ceil(lineW / availTextWidth);
+        if (subLines < 1) subLines = 1;
         msgLines += subLines;
 
         if (nextPos == std::wstring::npos) break;
@@ -2784,8 +2850,8 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     float buttonsHeight = 50.0f * s;
     float padding = 32.0f * s; 
     
-    float dlgH = padding + contentHeight + qualityHeight + inputHeight + checkboxHeight + buttonsHeight + 20.0f * s; 
-    if (dlgH < 160.0f * s) dlgH = 160.0f * s;
+    float dlgH = padding + contentHeight + qualityHeight + inputHeight + checkboxHeight + buttonsHeight + 10.0f * s; 
+    if (dlgH < 150.0f * s) dlgH = 150.0f * s;
     if (dlgH > 480.0f * s) dlgH = 480.0f * s;
     
     auto clamp = [](float v, float minV, float maxV) {
@@ -5080,20 +5146,7 @@ bool CheckUnsavedChanges(HWND hwnd, QuickView::PendingAction pending = QuickView
         return SaveCurrentImage(false);
     }
     if (result == DialogResult::Custom1) {
-        int targetW = primaryPane.metadata.Width;
-        int targetH = primaryPane.metadata.Height;
-        if (targetW <= 0 || targetH <= 0) {
-            auto rsize = primaryPane.resource.GetSize();
-            targetW = (int)rsize.width;
-            targetH = (int)rsize.height;
-        }
-        std::wstring targetPath = !primaryPane.path.empty() ? primaryPane.path : g_imagePath;
-        if (pending == QuickView::PendingAction::None) {
-            pending = QuickView::PendingAction::ExitCropMode;
-        }
-        QuickView::ExportPanel::GetInstance().Show(hwnd, targetW, targetH, targetPath, pending);
-        RequestRepaint(PaintLayer::All);
-        return false; // Handled asynchronously by ExportPanel
+        return SaveCurrentImage(true);
     }
     if (result == DialogResult::No) {
         DiscardChanges();
@@ -6218,8 +6271,8 @@ void PerformTransform(HWND hwnd, TransformType type) {
     else if (type == TransformType::FlipHorizontal) state.FlippedH = !state.FlippedH;
     else if (type == TransformType::FlipVertical) state.FlippedV = !state.FlippedV;
     
-    // If in Crop Mode, rotate the crop selection coordinates
-    if (g_cropState.IsActive) {
+    // If in Crop Mode or HasCrop, rotate the crop selection coordinates
+    if (g_cropState.IsActive || state.HasCrop) {
         const auto& pane = GetPaneContext(PaneSlot::Primary);
         if (pane.resource) {
             int baseExif = g_renderExifOrientation;
@@ -6232,27 +6285,54 @@ void PerformTransform(HWND hwnd, TransformType type) {
                 origH = currSize.width;
             }
 
-            float oldL = g_cropState.CropLeft;
-            float oldT = g_cropState.CropTop;
-            float oldR = g_cropState.CropRight;
-            float oldB = g_cropState.CropBottom;
+            if (g_cropState.IsActive) {
+                float oldL = g_cropState.CropLeft;
+                float oldT = g_cropState.CropTop;
+                float oldR = g_cropState.CropRight;
+                float oldB = g_cropState.CropBottom;
 
-            if (type == TransformType::Rotate90CW) {
-                g_cropState.CropLeft   = (std::max)(0.0f, origH - oldB);
-                g_cropState.CropTop    = (std::max)(0.0f, oldL);
-                g_cropState.CropRight  = origH - oldT;
-                g_cropState.CropBottom = oldR;
-            } else if (type == TransformType::Rotate90CCW) {
-                g_cropState.CropLeft   = (std::max)(0.0f, oldT);
-                g_cropState.CropTop    = (std::max)(0.0f, origW - oldR);
-                g_cropState.CropRight  = oldB;
-                g_cropState.CropBottom = origW - oldL;
-            } else if (type == TransformType::FlipHorizontal) {
-                g_cropState.CropLeft   = (std::max)(0.0f, origW - oldR);
-                g_cropState.CropRight  = origW - oldL;
-            } else if (type == TransformType::FlipVertical) {
-                g_cropState.CropTop    = (std::max)(0.0f, origH - oldB);
-                g_cropState.CropBottom = origH - oldT;
+                if (type == TransformType::Rotate90CW) {
+                    g_cropState.CropLeft   = (std::max)(0.0f, origH - oldB);
+                    g_cropState.CropTop    = (std::max)(0.0f, oldL);
+                    g_cropState.CropRight  = origH - oldT;
+                    g_cropState.CropBottom = oldR;
+                } else if (type == TransformType::Rotate90CCW) {
+                    g_cropState.CropLeft   = (std::max)(0.0f, oldT);
+                    g_cropState.CropTop    = (std::max)(0.0f, origW - oldR);
+                    g_cropState.CropRight  = oldB;
+                    g_cropState.CropBottom = origW - oldL;
+                } else if (type == TransformType::FlipHorizontal) {
+                    g_cropState.CropLeft   = (std::max)(0.0f, origW - oldR);
+                    g_cropState.CropRight  = origW - oldL;
+                } else if (type == TransformType::FlipVertical) {
+                    g_cropState.CropTop    = (std::max)(0.0f, origH - oldB);
+                    g_cropState.CropBottom = origH - oldT;
+                }
+            }
+
+            if (state.HasCrop) {
+                float oldL = (float)state.CropLeft;
+                float oldT = (float)state.CropTop;
+                float oldR = (float)state.CropRight;
+                float oldB = (float)state.CropBottom;
+
+                if (type == TransformType::Rotate90CW) {
+                    state.CropLeft   = (int)std::round((std::max)(0.0f, origH - oldB));
+                    state.CropTop    = (int)std::round((std::max)(0.0f, oldL));
+                    state.CropRight  = (int)std::round(origH - oldT);
+                    state.CropBottom = (int)std::round(oldR);
+                } else if (type == TransformType::Rotate90CCW) {
+                    state.CropLeft   = (int)std::round((std::max)(0.0f, oldT));
+                    state.CropTop    = (int)std::round((std::max)(0.0f, origW - oldR));
+                    state.CropRight  = (int)std::round(oldB);
+                    state.CropBottom = (int)std::round(origW - oldL);
+                } else if (type == TransformType::FlipHorizontal) {
+                    state.CropLeft   = (int)std::round((std::max)(0.0f, origW - oldR));
+                    state.CropRight  = (int)std::round(origW - oldL);
+                } else if (type == TransformType::FlipVertical) {
+                    state.CropTop    = (int)std::round((std::max)(0.0f, origH - oldB));
+                    state.CropBottom = (int)std::round(origH - oldT);
+                }
             }
         }
     }
@@ -7351,6 +7431,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case QuickView::ExportPanel::WM_APP_ESTIMATE_READY:
         QuickView::ExportPanel::GetInstance().OnEstimateReady(static_cast<uint64_t>(wParam), static_cast<uint64_t>(lParam));
         return 0;
+    case QuickView::ExportPanel::WM_APP_EXPORT_DONE: {
+        auto* r = reinterpret_cast<QuickView::ExportPanel::ExportResult*>(lParam);
+        if (r) {
+            QuickView::ExportPanel::GetInstance().OnExportDone(r->success, r->errorMsg, r->savePath);
+            delete r;
+        }
+        return 0;
+    }
     case WM_ACTIVATE:
         if (LOWORD(wParam) == WA_INACTIVE) {
             // [Loupe] When the window loses focus, ensure the loupe state is reset and mouse pointer is restored, in case the key release event is lost
@@ -8143,6 +8231,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (IsPassthroughModeActive()) {
             UnregisterHotKey(hwnd, HOTKEY_ID_EXIT_PASSTHROUGH);
         }
+
+        // [Async Export] If export is in progress, show confirmation dialog
+        if (QuickView::ExportPanel::GetInstance().IsExporting()) {
+            int result = MessageBoxW(hwnd,
+                L"\x6B63\x5728\x4FDD\x5B58\x56FE\x7247\xFF0C\x786E\x8BA4\x5C06\x53D6\x6D88\x4FDD\x5B58\x4EFB\x52A1\x3002",  // "正在保存图片，确认将取消保存任务。"
+                L"QuickView",
+                MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+            if (result == IDOK) {
+                // User confirmed: abort export, clean up .tmp, proceed with close
+                QuickView::ExportPanel::GetInstance().ForceAbortExport();
+                QuickView::ExportPanel::GetInstance().Hide();
+            } else {
+                return 0; // User chose to keep saving — swallow WM_CLOSE
+            }
+        }
+
         if (!CheckUnsavedChanges(hwnd, QuickView::PendingAction::CloseApp)) return 0;
 
         // Save Last Window Size
@@ -9096,7 +9200,7 @@ SKIP_EDGE_NAV:;
         float winW = (float)(rcClient.right - rcClient.left);
         float winH = (float)(rcClient.bottom - rcClient.top);
         bool insideGallery = g_gallery.IsVisible() && g_gallery.HitTestArea(pt.x, pt.y, winW, winH);
-        if (insideGallery || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || QuickView::PrintPreviewUI::GetInstance().IsVisible()) return 0;
+        if (insideGallery || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || QuickView::PrintPreviewUI::GetInstance().IsVisible() || QuickView::ExportPanel::GetInstance().IsVisible()) return 0;
         if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
             return 0;
         }
@@ -9892,6 +9996,38 @@ SKIP_EDGE_NAV:;
                         }
                     }
 
+                    // [Feature] When Ctrl key is held down in Crop Mode, Ctrl + Drag re-defines a new selection box
+                    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+                        float imgX = 0.0f, imgY = 0.0f;
+                        if (ScreenToImageSpace(hwnd, pt.x, pt.y, imgX, imgY, PaneSlot::Primary)) {
+                            SetCapture(hwnd);
+                            g_cropState.Reset();
+                            g_cropState.IsActive = true;
+                            g_cropState.IsDragging = true;
+                            g_cropState.ActiveHandle = 5; // Special handle for defining initial region
+                            g_cropState.DragStartMousePos = pt;
+
+                            imgX = (std::max)(0.0f, (std::min)(imgX, orientedSize.width));
+                            imgY = (std::max)(0.0f, (std::min)(imgY, orientedSize.height));
+
+                            g_cropState.CropLeft = imgX;
+                            g_cropState.CropTop = imgY;
+                            g_cropState.CropRight = imgX;
+                            g_cropState.CropBottom = imgY;
+                            g_cropState.DragStartCropLeft = (int)imgX;
+                            g_cropState.DragStartCropTop = (int)imgY;
+                            g_cropState.DragStartCropRight = (int)imgX;
+                            g_cropState.DragStartCropBottom = (int)imgY;
+                            g_cropState.IsQuickActionVisible = true;
+
+                            g_toolbar.SetCropMode(true);
+                            g_toolbar.SetVisible(true);
+
+                            RequestRepaint(PaintLayer::All);
+                            return 0;
+                        }
+                    }
+
                     auto hitPt = [pt, hTol](float hx, float hy) {
                         return (std::abs(pt.x - hx) <= hTol && std::abs(pt.y - hy) <= hTol);
                     };
@@ -9966,6 +10102,14 @@ SKIP_EDGE_NAV:;
                         g_cropState.CropTop = imgY;
                         g_cropState.CropRight = imgX;
                         g_cropState.CropBottom = imgY;
+                        g_cropState.DragStartCropLeft = (int)imgX;
+                        g_cropState.DragStartCropTop = (int)imgY;
+                        g_cropState.DragStartCropRight = (int)imgX;
+                        g_cropState.DragStartCropBottom = (int)imgY;
+                        g_cropState.IsQuickActionVisible = true;
+                        
+                        g_toolbar.SetCropMode(true);
+                        g_toolbar.SetVisible(true);
                         
                         RequestRepaint(PaintLayer::All);
                         return 0;
@@ -10456,6 +10600,10 @@ SKIP_EDGE_NAV:;
             g_cropState.IsDragging = false;
             g_cropState.ActiveHandle = -1;
             g_cropState.IsQuickActionVisible = true;
+            g_toolbar.SetCropMode(true);
+            g_toolbar.SetVisible(true);
+            RECT rcWnd; GetClientRect(hwnd, &rcWnd);
+            g_toolbar.UpdateLayout((float)rcWnd.right, (float)rcWnd.bottom);
             RequestRepaint(PaintLayer::All);
             return 0;
         }
@@ -10920,6 +11068,11 @@ SKIP_EDGE_NAV:;
 
     case WM_SYSKEYUP:
     case WM_KEYUP:
+        if (wParam == VK_CONTROL || wParam == VK_LCONTROL || wParam == VK_RCONTROL) {
+            if (g_cropState.IsActive) {
+                RequestRepaint(PaintLayer::All);
+            }
+        }
         // [Loupe] Releasing the loupe key hides the magnifier. The key is the
         // rebindable HotkeyAction::Loupe binding (default 'L'), so this honours
         // user remapping rather than a hardcoded key.
@@ -10988,6 +11141,11 @@ SKIP_EDGE_NAV:;
 
     case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
+        if (wParam == VK_CONTROL || wParam == VK_LCONTROL || wParam == VK_RCONTROL) {
+            if (g_cropState.IsActive) {
+                RequestRepaint(PaintLayer::All);
+            }
+        }
         if (g_cropState.IsActive && g_cropState.FocusedField != CropState::InputField::None) {
             int baseExif = g_renderExifOrientation;
             const auto& pane = GetPaneContext(PaneSlot::Primary);

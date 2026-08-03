@@ -30,9 +30,35 @@ extern CompositionEngine* g_compEngine;
 extern void TryExitCropMode(HWND hwnd, bool forceQuit = false);
 extern void Navigate(HWND hwnd, int direction);
 extern void RequestRepaint(QuickView::PaintLayer layer);
-extern bool IsLightThemeActive();
 extern void DiscardChanges();
 extern void ReloadCurrentImage(HWND hwnd);
+extern void ReleaseImageResources();
+
+namespace {
+static float MeasureStringWidth(const wchar_t* text, float fontSize) {
+    if (!text || !*text) return 0.0f;
+    static ComPtr<IDWriteFactory> pDW;
+    static ComPtr<IDWriteTextFormat> pFmt;
+    static float s_lastSize = 0.0f;
+    if (s_lastSize != fontSize) {
+        s_lastSize = fontSize;
+        pFmt.Reset();
+    }
+    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+    if (pDW && !pFmt) {
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"zh-CN", &pFmt);
+    }
+    if (!pDW || !pFmt) return (float)wcslen(text) * fontSize * 0.6f;
+
+    ComPtr<IDWriteTextLayout> pLayout;
+    if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 2000.0f, 100.0f, &pLayout))) {
+        DWRITE_TEXT_METRICS metrics = {};
+        pLayout->GetMetrics(&metrics);
+        return metrics.widthIncludingTrailingWhitespace;
+    }
+    return (float)wcslen(text) * fontSize * 0.6f;
+}
+}
 extern bool IsImageModified();
 extern std::vector<std::wstring>& GetSystemIccProfiles();
 
@@ -120,12 +146,34 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
         l.showQualitySlider = false;
     }
 
-    // 4. Embed ICC Checkbox & Dropdown & Preserve EXIF & Size Label
+    // 4. Preserve EXIF Checkbox & Embed ICC Checkbox & Dropdown & Size Label (Multi-language Dynamic Flow Layout)
     curY += 38.0f * s;
-    l.checkboxRect = D2D1::RectF(startX + padX, curY, startX + padX + 72.0f * s, curY + 24.0f * s);
-    l.iccDropdownRect = D2D1::RectF(startX + padX + 74.0f * s, curY + 1.0f * s, startX + padX + 170.0f * s, curY + 23.0f * s);
-    l.preserveMetadataCheckboxRect = D2D1::RectF(startX + padX + 175.0f * s, curY, startX + padX + 295.0f * s, curY + 24.0f * s);
-    l.sizeRect = D2D1::RectF(startX + padX + 300.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
+    float boxSize = 16.0f * s;
+    float textMargin = 8.0f * s;
+
+    // 4.1 Preserve EXIF Checkbox
+    float exifTextW = MeasureStringWidth(L"EXIF", 13.0f * s);
+    float exifTotalW = boxSize + textMargin + exifTextW;
+    l.preserveMetadataCheckboxRect = D2D1::RectF(startX + padX, curY, startX + padX + exifTotalW, curY + 24.0f * s);
+
+    // 4.2 Embed ICC Checkbox (16px gap after EXIF)
+    float gap1 = 16.0f * s;
+    float iccLeft = l.preserveMetadataCheckboxRect.right + gap1;
+    const wchar_t* embedIccStr = (AppStrings::Dialog_EmbedICC && *AppStrings::Dialog_EmbedICC) ? AppStrings::Dialog_EmbedICC : L"Embed ICC";
+    float iccTextW = MeasureStringWidth(embedIccStr, 13.0f * s);
+    float iccTotalW = boxSize + textMargin + iccTextW;
+    l.checkboxRect = D2D1::RectF(iccLeft, curY, iccLeft + iccTotalW, curY + 24.0f * s);
+
+    // 4.3 ICC Dropdown (3px gap after Embed ICC)
+    float gap2 = 3.0f * s;
+    float dropdownLeft = l.checkboxRect.right + gap2;
+    float maxDropdownRight = startX + panelWidth - padX - 90.0f * s; // Keep 90px space for Size label
+    float dropdownRight = (std::min)(dropdownLeft + 120.0f * s, maxDropdownRight);
+    if (dropdownRight < dropdownLeft + 60.0f * s) dropdownRight = dropdownLeft + 60.0f * s;
+    l.iccDropdownRect = D2D1::RectF(dropdownLeft, curY + 1.0f * s, dropdownRight, curY + 23.0f * s);
+
+    // 4.4 Size Estimate Label
+    l.sizeRect = D2D1::RectF(l.iccDropdownRect.right + 6.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
 
     // 5. Bottom Action Row Buttons
     curY += 40.0f * s;
@@ -594,23 +642,16 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
         RequestRepaint(PaintLayer::All);
     }
     
-    return false;
+    return true; // Modal overlay — consume all mouse events
 }
 
 bool ExportPanel::OnLButtonUp(float x, float y) {
+    (void)x;
+    (void)y;
     if (!m_isVisible) return false;
     
     m_isDraggingQuality = false;
-
-    RECT rc; GetClientRect(m_hwnd, &rc);
-    PanelLayout layout = ComputeLayout((float)(rc.right - rc.left), (float)(rc.bottom - rc.top));
-
-    if (x >= layout.panelRect.left && x <= layout.panelRect.right &&
-        y >= layout.panelRect.top && y <= layout.panelRect.bottom) {
-        return true;
-    }
-    
-    return false;
+    return true; // Modal overlay — consume all mouse events
 }
 
 bool ExportPanel::OnMouseMove(float x, float y) {
@@ -805,22 +846,37 @@ void ExportPanel::ApplyInput() {
 }
 
 void ExportPanel::CommitSave(bool overwrite) {
-    ++m_estimateGeneration; // Cancel any running background estimate so real save gets 100% CPU & IO
-    ExportOptions opts;
-    opts.InputPath = m_originalPath;
-    
-    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
-    if (g_cropState.IsActive) {
-        opts.CropX = (int)g_cropState.CropLeft;
-        opts.CropY = (int)g_cropState.CropTop;
-        opts.CropWidth = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
-        opts.CropHeight = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
-    } else if (primaryPane.editState.HasCrop) {
-        opts.CropX = (int)primaryPane.editState.CropLeft;
-        opts.CropY = (int)primaryPane.editState.CropTop;
-        opts.CropWidth = (int)std::round(primaryPane.editState.CropRight - primaryPane.editState.CropLeft);
-        opts.CropHeight = (int)std::round(primaryPane.editState.CropBottom - primaryPane.editState.CropTop);
-    }
+  if (m_isExporting.load())
+    return; // Reject double-click while export in progress
+
+  ++m_estimateGeneration; // Cancel any running background estimate so real save
+                          // gets 100% CPU & IO
+
+  // Release image locks and clear engine caches BEFORE export thread runs
+  ::ReleaseImageResources();
+  if (g_imageEngine && !m_originalPath.empty()) {
+      g_imageEngine->InvalidateCache(m_originalPath);
+  }
+
+  ExportOptions opts;
+  opts.InputPath = m_originalPath;
+
+  auto &primaryPane = GetPaneContext(PaneSlot::Primary);
+  if (g_cropState.IsActive) {
+    opts.CropX = (int)g_cropState.CropLeft;
+    opts.CropY = (int)g_cropState.CropTop;
+    opts.CropWidth =
+        (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
+    opts.CropHeight =
+        (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
+  } else if (primaryPane.editState.HasCrop) {
+    opts.CropX = (int)primaryPane.editState.CropLeft;
+    opts.CropY = (int)primaryPane.editState.CropTop;
+    opts.CropWidth = (int)std::round(primaryPane.editState.CropRight -
+                                     primaryPane.editState.CropLeft);
+    opts.CropHeight = (int)std::round(primaryPane.editState.CropBottom -
+                                      primaryPane.editState.CropTop);
+  }
     
     opts.TargetWidth = m_targetWidth;
     opts.TargetHeight = m_targetHeight;
@@ -838,38 +894,12 @@ void ExportPanel::CommitSave(bool overwrite) {
         opts.EmbedIcc = false;
     }
 
-    auto finalizeSave = [this, &primaryPane](const std::wstring& savePath) {
-        Hide();
-        TryExitCropMode(m_hwnd, true);
-        primaryPane.editState.IsDirty = false;
-        primaryPane.editState.HasCrop = false;
-        primaryPane.editState.PendingTransforms.clear();
-        primaryPane.editState.TotalRotation = 0;
-        primaryPane.editState.FlippedH = false;
-        primaryPane.editState.FlippedV = false;
-        primaryPane.metadata.ExifOrientation = 1;
-        primaryPane.view.ExifOrientation = 1;
-        
-        if (g_imageEngine) {
-            g_imageEngine->InvalidateCache(savePath);
-        }
-        primaryPane.editState.HasCrop = false;
-        if (!savePath.empty()) {
-            primaryPane.path = savePath;
-            ::ReloadCurrentImage(m_hwnd);
-        }
-        ::RequestRepaint(PaintLayer::All);
-        ExecutePendingAction();
-    };
-
+    // Resolve output path on UI thread (Save As dialog is modal and requires
+    // message pump)
+    std::wstring savePath;
     if (overwrite) {
-        opts.OutputPath = m_originalPath;
-        auto res = ImageExporter::Export(opts);
-        if (res.has_value()) {
-            finalizeSave(m_originalPath);
-        } else {
-            MessageBoxW(m_hwnd, res.error().c_str(), L"Export Error", MB_OK | MB_ICONERROR);
-        }
+      savePath = m_originalPath;
+      opts.OutputPath = m_originalPath;
     } else {
         OPENFILENAMEW ofn = {};
         wchar_t szFile[MAX_PATH] = {0};
@@ -910,16 +940,111 @@ void ExportPanel::CommitSave(bool overwrite) {
         ofn.lpstrFilter = filterBuf.data();
         ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
 
-        if (GetSaveFileNameW(&ofn)) {
-            opts.OutputPath = szFile;
-            auto res = ImageExporter::Export(opts);
-            if (res.has_value()) {
-                finalizeSave(szFile);
-            } else {
-                MessageBoxW(m_hwnd, res.error().c_str(), L"Export Error", MB_OK | MB_ICONERROR);
-            }
+        if (!GetSaveFileNameW(&ofn)) {
+          return; // User cancelled Save As dialog
         }
+        savePath = szFile;
+        opts.OutputPath = szFile;
     }
+
+    // Enter "exporting" state — UI shows "Saving..." and buttons are disabled
+    m_isExporting.store(true);
+    m_exportSavePath = savePath;
+    m_exportTempPath.clear();
+
+    // Track .tmp path for cleanup if Export creates one (overwrite mode)
+    if (!opts.InputPath.empty() &&
+        _wcsicmp(opts.OutputPath.c_str(), opts.InputPath.c_str()) == 0) {
+      m_exportTempPath = opts.OutputPath + L".tmp";
+    }
+
+    m_estimatedSizeStr =
+        AppStrings::Dialog_SizeEstimating; // Reuse as "Saving..." indicator
+    RequestRepaint(PaintLayer::All);
+
+    // Dispatch export to background worker thread
+    HWND hwnd = m_hwnd;
+    m_exportThread =
+        std::jthread([opts = std::move(opts), savePath, hwnd](std::stop_token) {
+          // COM must be initialized per-thread for WIC
+          CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+          auto res = ImageExporter::Export(opts);
+          bool ok = res.has_value();
+          std::wstring err = ok ? L"" : res.error();
+
+          CoUninitialize();
+
+          // Heap-allocate result for cross-thread PostMessage (main thread
+          // takes ownership)
+          auto *r = new ExportPanel::ExportResult{ok, std::move(err), savePath};
+          if (!PostMessageW(hwnd, WM_APP_EXPORT_DONE, 0,
+                            reinterpret_cast<LPARAM>(r))) {
+            delete r;
+          }
+        });
+}
+
+void ExportPanel::OnExportDone(bool success, const std::wstring &errorMsg,
+                               const std::wstring &savePath) {
+  // Join the export thread (it already finished, join is instant)
+  if (m_exportThread.joinable()) {
+    m_exportThread.join();
+  }
+
+  m_isExporting.store(false);
+  m_exportTempPath.clear();
+
+  if (success) {
+    auto &primaryPane = GetPaneContext(PaneSlot::Primary);
+    Hide();
+    TryExitCropMode(m_hwnd, true);
+    primaryPane.editState.IsDirty = false;
+    primaryPane.editState.HasCrop = false;
+    primaryPane.editState.PendingTransforms.clear();
+    primaryPane.editState.TotalRotation = 0;
+    primaryPane.editState.FlippedH = false;
+    primaryPane.editState.FlippedV = false;
+    primaryPane.metadata.ExifOrientation = 1;
+    primaryPane.view.ExifOrientation = 1;
+
+    if (g_imageEngine) {
+      g_imageEngine->InvalidateCache(savePath);
+    }
+    primaryPane.editState.HasCrop = false;
+    if (!savePath.empty()) {
+      primaryPane.path = savePath;
+      ::ReloadCurrentImage(m_hwnd);
+    }
+    ::RequestRepaint(PaintLayer::All);
+    ExecutePendingAction();
+  } else {
+    // Export failed — show error, remain on ExportPanel for retry
+    m_estimatedSizeStr = L"Size: Error";
+    MessageBoxW(m_hwnd, errorMsg.c_str(), L"Export Error",
+                MB_OK | MB_ICONERROR);
+    TriggerAsyncEstimate(); // Re-estimate for retry
+    RequestRepaint(PaintLayer::All);
+  }
+}
+
+void ExportPanel::ForceAbortExport() {
+  if (!m_isExporting.load())
+    return;
+
+  // Detach the export thread — it will be killed by OS process teardown.
+  // WIC WriteSource is not interruptible, so we can't cancel mid-write.
+  if (m_exportThread.joinable()) {
+    m_exportThread.detach();
+  }
+
+  // Clean up .tmp file if one was created (original file is always safe)
+  if (!m_exportTempPath.empty()) {
+    DeleteFileW(m_exportTempPath.c_str());
+    m_exportTempPath.clear();
+  }
+
+  m_isExporting.store(false);
 }
 
 void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat) {
@@ -1052,9 +1177,11 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         DrawQualitySlider(dc, layout.qualityRect, layout.qualityTrackRect, textFormat);
     }
 
-    // 7. Embed ICC Checkbox & ICC Dropdown & Preserve EXIF Checkbox & Size Label
-    DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC, m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
+    // 7. Preserve EXIF Checkbox & Embed ICC Checkbox & ICC Dropdown & Size
+    // Label
     DrawCheckbox(dc, layout.preserveMetadataCheckboxRect, L"EXIF", m_preserveMetadata, HoverState::PreserveMetadataCheckbox, textFormat);
+    DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC,
+                 m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
 
     ComPtr<ID2D1SolidColorBrush> dimTextBrush;
     dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f), &dimTextBrush);

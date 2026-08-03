@@ -87,102 +87,6 @@ public:
     }
 };
 
-HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
-                                         ComPtr<IWICBitmapSource>& outSource,
-                                         ComPtr<IWICImagingFactory>& factory,
-                                         ComPtr<IWICColorContext>& outColorContext) {
-    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-    if (FAILED(hr)) return hr;
-
-    ComPtr<IWICBitmapDecoder> decoder;
-    hr = factory->CreateDecoderFromFilename(options.InputPath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
-    if (FAILED(hr)) return hr;
-
-    ComPtr<IWICBitmapFrameDecode> frame;
-    hr = decoder->GetFrame(0, &frame);
-    if (FAILED(hr)) return hr;
-
-    // Extract or Create ICC Color Context if requested
-    if (options.EmbedIcc) {
-        if (!options.CustomIccData.empty()) {
-            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                outColorContext->InitializeFromMemory(options.CustomIccData.data(), static_cast<UINT>(options.CustomIccData.size()));
-            }
-        } else if (!options.IccProfilePath.empty()) {
-            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                outColorContext->InitializeFromFilename(options.IccProfilePath.c_str());
-            }
-        } else {
-            UINT count = 0;
-            if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
-                if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                    UINT actualCount = 0;
-                    IWICColorContext* pContext = outColorContext.Get();
-                    frame->GetColorContexts(1, &pContext, &actualCount);
-                }
-            }
-        }
-    }
-
-    ComPtr<IWICBitmapSource> currentSource = frame;
-
-    // Get Original Frame Size for Boundary Clamp
-    UINT origWidth = 0, origHeight = 0;
-    currentSource->GetSize(&origWidth, &origHeight);
-
-    // Apply Flip / Rotation Transforms before cropping if specified
-    if (options.Rotation != 0 || options.FlipH || options.FlipV) {
-        ComPtr<IWICBitmapFlipRotator> flipRotator;
-        hr = factory->CreateBitmapFlipRotator(&flipRotator);
-        if (SUCCEEDED(hr)) {
-            WICBitmapTransformOptions transformOpt = WICBitmapTransformRotate0;
-            int rot = (options.Rotation % 360 + 360) % 360;
-            if (rot == 90) transformOpt = WICBitmapTransformRotate90;
-            else if (rot == 180) transformOpt = WICBitmapTransformRotate180;
-            else if (rot == 270) transformOpt = WICBitmapTransformRotate270;
-
-            if (options.FlipH) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipHorizontal);
-            if (options.FlipV) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipVertical);
-
-            if (SUCCEEDED(flipRotator->Initialize(currentSource.Get(), transformOpt))) {
-                currentSource = flipRotator;
-                currentSource->GetSize(&origWidth, &origHeight);
-            }
-        }
-    }
-
-    // Apply Crop with strict boundary clamp
-    if (options.CropWidth > 0 && options.CropHeight > 0) {
-        int cx = std::clamp(options.CropX, 0, (int)origWidth - 1);
-        int cy = std::clamp(options.CropY, 0, (int)origHeight - 1);
-        int cw = std::clamp(options.CropWidth, 1, (int)origWidth - cx);
-        int ch = std::clamp(options.CropHeight, 1, (int)origHeight - cy);
-
-        ComPtr<IWICBitmapClipper> clipper;
-        hr = factory->CreateBitmapClipper(&clipper);
-        if (FAILED(hr)) return hr;
-
-        WICRect rect = { cx, cy, cw, ch };
-        hr = clipper->Initialize(currentSource.Get(), &rect);
-        if (FAILED(hr)) return hr;
-        currentSource = clipper;
-    }
-
-    // Apply Scaling
-    if (options.TargetWidth > 0 && options.TargetHeight > 0 && 
-        (options.TargetWidth != options.CropWidth || options.TargetHeight != options.CropHeight)) {
-        ComPtr<IWICBitmapScaler> scaler;
-        hr = factory->CreateBitmapScaler(&scaler);
-        if (FAILED(hr)) return hr;
-
-        hr = scaler->Initialize(currentSource.Get(), options.TargetWidth, options.TargetHeight, WICBitmapInterpolationModeHighQualityCubic);
-        if (FAILED(hr)) return hr;
-        currentSource = scaler;
-    }
-
-    outSource = currentSource;
-    return S_OK;
-}
 
 static bool ProbeAvifEncoderSupport(IWICImagingFactory* factory, const GUID& containerGuid) {
     if (!factory) return false;
@@ -408,42 +312,193 @@ static void ConfigureEncoderProperties(IPropertyBag2* props, const GUID& contain
         varQuality.fltVal = qualityVal;
         if (FAILED(props->Write(1, &optQuality, &varQuality))) {
             optQuality.pstrName = (LPOLESTR)L"Quality";
-            props->Write(1, &optQuality, &varQuality);
+        props->Write(1, &optQuality, &varQuality);
         }
     }
 }
 
-static void EmbedMetadataAndResetOrientation(IWICImagingFactory* factory,
-                                              IWICBitmapFrameEncode* frameEncode,
-                                              const ExportOptions& options) {
-    if (!factory || !frameEncode) return;
+HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
+                                         ComPtr<IWICBitmapSource>& outSource,
+                                         ComPtr<IWICImagingFactory>& factory,
+                                         ComPtr<IWICColorContext>& outColorContext,
+                                         ComPtr<IWICBitmapFrameDecode>& outFrameDecode) {
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) return hr;
 
-    if (options.PreserveMetadata && !options.InputPath.empty()) {
-        ComPtr<IWICBitmapDecoder> metaDecoder;
-        if (SUCCEEDED(factory->CreateDecoderFromFilename(options.InputPath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &metaDecoder))) {
-            ComPtr<IWICBitmapFrameDecode> metaFrame;
-            if (SUCCEEDED(metaDecoder->GetFrame(0, &metaFrame))) {
-                ComPtr<IWICMetadataBlockReader> blockReader;
-                if (SUCCEEDED(metaFrame.As(&blockReader))) {
-                    ComPtr<IWICMetadataBlockWriter> blockWriter;
-                    if (SUCCEEDED(frameEncode->QueryInterface(IID_PPV_ARGS(&blockWriter)))) {
-                        blockWriter->InitializeFromBlockReader(blockReader.Get());
-                    }
+    ComPtr<IWICBitmapDecoder> decoder;
+    hr = factory->CreateDecoderFromFilename(options.InputPath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) return hr;
+    outFrameDecode = frame;
+
+    // Extract or Create ICC Color Context if requested
+    if (options.EmbedIcc) {
+        if (!options.CustomIccData.empty()) {
+            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                outColorContext->InitializeFromMemory(options.CustomIccData.data(), static_cast<UINT>(options.CustomIccData.size()));
+            }
+        } else if (!options.IccProfilePath.empty()) {
+            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                outColorContext->InitializeFromFilename(options.IccProfilePath.c_str());
+            }
+        } else {
+            UINT count = 0;
+            if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
+                if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                    UINT actualCount = 0;
+                    IWICColorContext* pContext = outColorContext.Get();
+                    frame->GetColorContexts(1, &pContext, &actualCount);
                 }
             }
         }
     }
 
-    // Always neutralize EXIF Orientation tag to 1 (Normal)
-    ComPtr<IWICMetadataQueryWriter> queryWriter;
-    if (SUCCEEDED(frameEncode->GetMetadataQueryWriter(&queryWriter))) {
-        PROPVARIANT var;
-        PropVariantInit(&var);
-        var.vt = VT_UI2;
-        var.uiVal = 1; // Set Orientation = 1 (Normal)
-        queryWriter->SetMetadataByName(L"/app1/ifd/{short=274}", &var);
-        queryWriter->SetMetadataByName(L"/ifd/{short=274}", &var);
-        PropVariantClear(&var);
+    ComPtr<IWICBitmapSource> currentSource = frame;
+
+    // Get Original Frame Size for Boundary Clamp
+    UINT origWidth = 0, origHeight = 0;
+    currentSource->GetSize(&origWidth, &origHeight);
+
+    // RAM CACHE: Decode frame into IWICBitmap to eliminate O(N^2) random-access
+    // thrashing during WIC FlipRotator. Only needed when rotation/flip is requested;
+    // pure crop uses sequential access and needs no cache.
+    // Budget: min(50% available RAM, 25% total RAM) with 2GB OS reserve,
+    // matching the same dynamic memory pattern used in HeavyLanePool.
+    bool needsRandomAccess = (options.Rotation != 0 || options.FlipH || options.FlipV);
+    if (needsRandomAccess) {
+        // Query actual bits-per-pixel from source pixel format (not hardcoded 32)
+        WICPixelFormatGUID srcPF = {};
+        frame->GetPixelFormat(&srcPF);
+        UINT bpp = 32; // conservative fallback
+        ComPtr<IWICComponentInfo> compInfo;
+        if (SUCCEEDED(factory->CreateComponentInfo(srcPF, &compInfo))) {
+            ComPtr<IWICPixelFormatInfo> pfInfo;
+            if (SUCCEEDED(compInfo.As(&pfInfo))) {
+                pfInfo->GetBitsPerPixel(&bpp);
+            }
+        }
+
+        uint64_t rawBytes = static_cast<uint64_t>(origWidth) * static_cast<uint64_t>(origHeight) * static_cast<uint64_t>(bpp) / 8;
+
+        // Dynamic memory budget (same pattern as HeavyLanePool::ApplyBaselineConcurrency)
+        MEMORYSTATUSEX memInfo = {};
+        memInfo.dwLength = sizeof(memInfo);
+        uint64_t maxCacheBytes = 512ULL * 1024 * 1024; // conservative fallback if query fails
+        if (GlobalMemoryStatusEx(&memInfo)) {
+            uint64_t avail = memInfo.ullAvailPhys;
+            uint64_t total = memInfo.ullTotalPhys;
+            uint64_t reserve = 2ULL * 1024 * 1024 * 1024; // 2GB OS/UI reserve
+            uint64_t usable = (avail > reserve) ? (avail - reserve) : 0;
+            // Budget: min(50% usable, 25% total) — never starve OS or other subsystems
+            maxCacheBytes = std::min(usable / 2, total / 4);
+        }
+
+        if (rawBytes > 0 && rawBytes <= maxCacheBytes) {
+            ComPtr<IWICBitmap> ramBitmap;
+            if (SUCCEEDED(factory->CreateBitmapFromSource(frame.Get(), WICBitmapCacheOnLoad, &ramBitmap))) {
+                currentSource = ramBitmap;
+            }
+        }
+    }
+
+    // Apply Flip / Rotation Transforms before cropping if specified
+    if (options.Rotation != 0 || options.FlipH || options.FlipV) {
+        ComPtr<IWICBitmapFlipRotator> flipRotator;
+        hr = factory->CreateBitmapFlipRotator(&flipRotator);
+        if (SUCCEEDED(hr)) {
+            WICBitmapTransformOptions transformOpt = WICBitmapTransformRotate0;
+            int rot = (options.Rotation % 360 + 360) % 360;
+            if (rot == 90) transformOpt = WICBitmapTransformRotate90;
+            else if (rot == 180) transformOpt = WICBitmapTransformRotate180;
+            else if (rot == 270) transformOpt = WICBitmapTransformRotate270;
+
+            if (options.FlipH) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipHorizontal);
+            if (options.FlipV) transformOpt = static_cast<WICBitmapTransformOptions>(transformOpt | WICBitmapTransformFlipVertical);
+
+            if (SUCCEEDED(flipRotator->Initialize(currentSource.Get(), transformOpt))) {
+                currentSource = flipRotator;
+                currentSource->GetSize(&origWidth, &origHeight);
+            }
+        }
+    }
+
+    // Apply Crop with strict boundary clamp
+    if (options.CropWidth > 0 && options.CropHeight > 0) {
+        int cx = std::clamp(options.CropX, 0, (int)origWidth - 1);
+        int cy = std::clamp(options.CropY, 0, (int)origHeight - 1);
+        int cw = std::clamp(options.CropWidth, 1, (int)origWidth - cx);
+        int ch = std::clamp(options.CropHeight, 1, (int)origHeight - cy);
+
+        ComPtr<IWICBitmapClipper> clipper;
+        hr = factory->CreateBitmapClipper(&clipper);
+        if (FAILED(hr)) return hr;
+
+        WICRect rect = { cx, cy, cw, ch };
+        hr = clipper->Initialize(currentSource.Get(), &rect);
+        if (FAILED(hr)) return hr;
+        currentSource = clipper;
+    }
+
+    // Apply Scaling
+    if (options.TargetWidth > 0 && options.TargetHeight > 0 && 
+        (options.TargetWidth != options.CropWidth || options.TargetHeight != options.CropHeight)) {
+        ComPtr<IWICBitmapScaler> scaler;
+        hr = factory->CreateBitmapScaler(&scaler);
+        if (FAILED(hr)) return hr;
+
+        hr = scaler->Initialize(currentSource.Get(), options.TargetWidth, options.TargetHeight, WICBitmapInterpolationModeHighQualityCubic);
+        if (FAILED(hr)) return hr;
+        currentSource = scaler;
+    }
+
+    outSource = currentSource;
+    return S_OK;
+}
+
+bool ImageExporter::FormatSupportsExifOrientation(const wchar_t* ext) {
+    if (!ext || !*ext) return false;
+    return (_wcsicmp(ext, L".jpg") == 0 || _wcsicmp(ext, L".jpeg") == 0 ||
+            _wcsicmp(ext, L".tif") == 0 || _wcsicmp(ext, L".tiff") == 0 ||
+            _wcsicmp(ext, L".heic") == 0 || _wcsicmp(ext, L".heif") == 0 ||
+            _wcsicmp(ext, L".avif") == 0);
+}
+
+static void EmbedMetadataAndResetOrientation(IWICImagingFactory* factory,
+                                              IWICBitmapFrameDecode* metaFrame,
+                                              IWICBitmapFrameEncode* frameEncode,
+                                              const ExportOptions& options) {
+    if (!factory || !frameEncode) return;
+
+    if (options.PreserveMetadata && metaFrame) {
+        ComPtr<IWICMetadataBlockReader> blockReader;
+        if (SUCCEEDED(metaFrame->QueryInterface(IID_PPV_ARGS(&blockReader)))) {
+            ComPtr<IWICMetadataBlockWriter> blockWriter;
+            if (SUCCEEDED(frameEncode->QueryInterface(IID_PPV_ARGS(&blockWriter)))) {
+                blockWriter->InitializeFromBlockReader(blockReader.Get());
+            }
+        }
+    }
+
+    // Neutralize EXIF Orientation tag to 1 ONLY when transforms are applied and format supports EXIF.
+    // Skip entirely for non-EXIF formats (PNG/BMP/GIF/WebP) and for unmodified exports.
+    bool hasTransform = (options.Rotation != 0 || options.FlipH || options.FlipV);
+    if (hasTransform) {
+        const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
+        if (ImageExporter::FormatSupportsExifOrientation(ext)) {
+            ComPtr<IWICMetadataQueryWriter> queryWriter;
+            if (SUCCEEDED(frameEncode->GetMetadataQueryWriter(&queryWriter))) {
+                PROPVARIANT var;
+                PropVariantInit(&var);
+                var.vt = VT_UI2;
+                var.uiVal = 1; // Set Orientation = 1 (Normal)
+                queryWriter->SetMetadataByName(L"/app1/ifd/{short=274}", &var);
+                queryWriter->SetMetadataByName(L"/ifd/{short=274}", &var);
+                PropVariantClear(&var);
+            }
+        }
     }
 }
 
@@ -451,8 +506,9 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapSource> source;
     ComPtr<IWICColorContext> colorContext;
+    ComPtr<IWICBitmapFrameDecode> frameDecode;
     
-    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext);
+    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext, frameDecode);
     if (FAILED(hr)) return std::unexpected(L"Failed to create image pipeline.");
 
     // Check if writing to input file directly (overwrite)
@@ -511,7 +567,7 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
     }
 
     // Embed Metadata Blocks & Reset EXIF Orientation to 1
-    EmbedMetadataAndResetOrientation(factory.Get(), frameEncode.Get(), options);
+    EmbedMetadataAndResetOrientation(factory.Get(), frameDecode.Get(), frameEncode.Get(), options);
 
     // Embed Color Context
     if (colorContext && options.EmbedIcc) {
@@ -556,17 +612,38 @@ std::expected<void, std::wstring> ImageExporter::Export(const ExportOptions& opt
         return std::unexpected(L"Failed to commit encoder.");
     }
 
-    // Release WIC handles before moving file
+    // Release WIC handles (both input and output) before moving file
     frameEncode.Reset();
     encoder.Reset();
     stream.Reset();
     finalSource.Reset();
     source.Reset();
+    frameDecode.Reset();
+    colorContext.Reset();
     factory.Reset();
 
     if (isOverwrite) {
-        if (!MoveFileExW(tempPath.c_str(), options.OutputPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            DeleteFileW(tempPath.c_str());
+        bool moveOk = false;
+        // 1. Retry MoveFileExW with MOVEFILE_COPY_ALLOWED (5 retries with 80ms delay)
+        for (int i = 0; i < 5; ++i) {
+            if (MoveFileExW(tempPath.c_str(), options.OutputPath.c_str(), 
+                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) {
+                moveOk = true;
+                break;
+            }
+            Sleep(80);
+        }
+
+        // 2. Fallback: CopyFileW if Move fails
+        if (!moveOk) {
+            if (CopyFileW(tempPath.c_str(), options.OutputPath.c_str(), FALSE)) {
+                moveOk = true;
+            }
+        }
+
+        DeleteFileW(tempPath.c_str());
+
+        if (!moveOk) {
             return std::unexpected(L"Failed to overwrite target file.");
         }
     }
@@ -578,8 +655,9 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapSource> source;
     ComPtr<IWICColorContext> colorContext;
+    ComPtr<IWICBitmapFrameDecode> frameDecode;
     
-    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext);
+    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext, frameDecode);
     if (FAILED(hr)) return std::unexpected(L"Pipeline error.");
 
     const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
@@ -614,7 +692,7 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
     if (FAILED(hr)) return std::unexpected(L"Frame init error.");
 
     // Embed Metadata Blocks & Reset EXIF Orientation to 1 for accurate size estimation
-    EmbedMetadataAndResetOrientation(factory.Get(), frameEncode.Get(), options);
+    EmbedMetadataAndResetOrientation(factory.Get(), frameDecode.Get(), frameEncode.Get(), options);
 
     if (colorContext && options.EmbedIcc) {
         IWICColorContext* pCtx = colorContext.Get();
@@ -656,8 +734,9 @@ std::expected<void, std::wstring> ImageExporter::CopyToClipboard(const ExportOpt
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapSource> source;
     ComPtr<IWICColorContext> colorContext;
+    ComPtr<IWICBitmapFrameDecode> frameDecode;
     
-    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext);
+    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext, frameDecode);
     if (FAILED(hr)) return std::unexpected(L"Failed to create image pipeline.");
 
     // Convert to BGRA for DIB

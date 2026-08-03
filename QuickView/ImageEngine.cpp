@@ -1846,13 +1846,16 @@ void ImageEngine::InvalidateCache(const std::wstring& path) {
     if (cit != m_cache.end()) {
         m_currentCacheBytes -= cit->second.sizeBytes;
         m_cache.erase(cit);
-        
         // Remove from LRU list (O(N) unfortunately, but safe)
-        // Finding element in list by value needs scan
         auto lit = std::find(m_lruOrder.begin(), m_lruOrder.end(), path);
         if (lit != m_lruOrder.end()) {
             m_lruOrder.erase(lit);
         }
+    }
+
+    // Release MMF handle if it matches the invalidated file path to unlock file on disk
+    if (m_mmf && (path.empty() || _wcsicmp(m_currentNavPath.c_str(), path.c_str()) == 0)) {
+        m_mmf.reset();
     }
 }
 

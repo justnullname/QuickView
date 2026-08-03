@@ -6156,6 +6156,8 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
 // Crop Overlay Layer
 void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
     if (!g_cropState.IsActive) return;
+    // Hide crop overlay when Ctrl is held down while not dragging, providing clean raw image view before drawing new region
+    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0 && !g_cropState.IsDragging) return;
 
     auto& pane = GetPaneContext(PaneSlot::Primary);
     if (!pane.resource) return;

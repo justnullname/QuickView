@@ -149,8 +149,11 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         if (!fmtBtn) pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * g_uiScale, AppStrings::CurrentLocale, &fmtBtn);
         if (!fmtBtnCenter) {
              pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * g_uiScale, AppStrings::CurrentLocale, &fmtBtnCenter);
-             if (fmtBtnCenter) fmtBtnCenter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-             if (fmtBtnCenter) fmtBtnCenter->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+             if (fmtBtnCenter) {
+                 fmtBtnCenter->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                 fmtBtnCenter->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                 fmtBtnCenter->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+             }
         }
     }
 

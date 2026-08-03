@@ -98,6 +98,18 @@ public:
     void OnEstimateReady(uint64_t gen, uint64_t bytes);
 
     static constexpr UINT WM_APP_ESTIMATE_READY = WM_APP + 101;
+    static constexpr UINT WM_APP_EXPORT_DONE = WM_APP + 102;
+
+    // Async export result (heap-allocated, ownership transferred via PostMessage)
+    struct ExportResult {
+        bool success;
+        std::wstring errorMsg;
+        std::wstring savePath;
+    };
+
+    void OnExportDone(bool success, const std::wstring& errorMsg, const std::wstring& savePath);
+    bool IsExporting() const { return m_isExporting.load(std::memory_order_relaxed); }
+    void ForceAbortExport(); // Cancel in-flight export and clean up .tmp file
 
     void Render(ID2D1DeviceContext* dc, float width, float height, IDWriteTextFormat* textFormat);
 
@@ -171,6 +183,12 @@ private:
     std::wstring m_estimatedSizeStr = L"Size: Estimating...";
     uint64_t m_estimatedSizeBytes = 0;
     std::atomic<uint64_t> m_estimateGeneration{ 0 };
+
+    // Async Export State
+    std::atomic<bool> m_isExporting{ false };
+    std::jthread m_exportThread;
+    std::wstring m_exportTempPath; // Track .tmp for cleanup on abort
+    std::wstring m_exportSavePath; // Final save path for OnExportDone
 
     // Text input
     wchar_t m_inputBuf[16] = {};
