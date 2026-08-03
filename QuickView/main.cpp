@@ -13181,6 +13181,22 @@ void ProcessEngineEvents(HWND hwnd) {
                  // We want UIRenderer to detect "false" and trigger RequestFullMetadata (Async).
                  // finalMetadata.IsFullMetadataLoaded = true;
 
+                // 9. ICC Profile Data: Preserve HeavyLane's raw ICC bytes if Async didn't provide any
+                if (finalMetadata.iccProfileData.empty() && !GetPaneContext(PaneSlot::Primary).metadata.iccProfileData.empty()) {
+                    finalMetadata.iccProfileData.assign(
+                        GetPaneContext(PaneSlot::Primary).metadata.iccProfileData.begin(),
+                        GetPaneContext(PaneSlot::Primary).metadata.iccProfileData.end());
+                }
+                if (finalMetadata.iccProfileData.empty() && evt.rawFrame && !evt.rawFrame->iccProfile.empty()) {
+                    finalMetadata.iccProfileData.assign(
+                        evt.rawFrame->iccProfile.begin(),
+                        evt.rawFrame->iccProfile.end());
+                }
+                if (finalMetadata.ColorSpace.empty() && !finalMetadata.iccProfileData.empty()) {
+                    finalMetadata.ColorSpace = CImageLoader::ParseICCProfileName(
+                        finalMetadata.iccProfileData.data(), finalMetadata.iccProfileData.size());
+                }
+
                 // Metadata - Full Copy (Propagate EXIF/Histograms/LoaderName)
                 GetPaneContext(PaneSlot::Primary).metadata = finalMetadata;
                 g_runtime.ShowHdrDetailsExpanded = false;
@@ -13453,8 +13469,8 @@ void ProcessEngineEvents(HWND hwnd) {
                  if (!evt.metadata.WhiteBalance.empty()) GetPaneContext(PaneSlot::Primary).metadata.WhiteBalance = evt.metadata.WhiteBalance;
                  if (!evt.metadata.MeteringMode.empty()) GetPaneContext(PaneSlot::Primary).metadata.MeteringMode = evt.metadata.MeteringMode;
                  if (!evt.metadata.ExposureProgram.empty()) GetPaneContext(PaneSlot::Primary).metadata.ExposureProgram = evt.metadata.ExposureProgram;
-                 if (!evt.metadata.ColorSpace.empty()) GetPaneContext(PaneSlot::Primary).metadata.ColorSpace = evt.metadata.ColorSpace;
                  if (evt.metadata.HasEmbeddedColorProfile.has_value()) GetPaneContext(PaneSlot::Primary).metadata.HasEmbeddedColorProfile = evt.metadata.HasEmbeddedColorProfile;
+                 if (!evt.metadata.iccProfileData.empty()) GetPaneContext(PaneSlot::Primary).metadata.iccProfileData = evt.metadata.iccProfileData;
                  if (evt.metadata.colorInfo.dataSpace != QuickView::PixelDataSpace::Unknown) GetPaneContext(PaneSlot::Primary).metadata.colorInfo = evt.metadata.colorInfo;
                  if (evt.metadata.hdrMetadata.isValid || evt.metadata.hdrMetadata.hasGainMap) GetPaneContext(PaneSlot::Primary).metadata.hdrMetadata = evt.metadata.hdrMetadata;
                  

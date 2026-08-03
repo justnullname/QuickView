@@ -1881,6 +1881,12 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
             }
 
             evt.metadata = std::move(meta);
+            if (evt.metadata.iccProfileData.empty() && evt.rawFrame && !evt.rawFrame->iccProfile.empty()) {
+                evt.metadata.iccProfileData.assign(evt.rawFrame->iccProfile.begin(), evt.rawFrame->iccProfile.end());
+            }
+            if (evt.metadata.ColorSpace.empty() && !evt.metadata.iccProfileData.empty()) {
+                evt.metadata.ColorSpace = CImageLoader::ParseICCProfileName(evt.metadata.iccProfileData.data(), evt.metadata.iccProfileData.size());
+            }
             
             QueueResult(std::move(evt));
         }

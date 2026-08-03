@@ -420,6 +420,8 @@ static void ProbeHdrMetadataNative(const uint8_t *data, size_t size,
     if (memcmp(data + i, appleUrn, urnLen) == 0) {
       pHdr->hasGainMap = true;
       pHdr->isValid = true;
+      // Apple GainMap JPEGs always use Display P3 space natively
+      pHdr->primaries = QuickView::ColorPrimaries::DisplayP3;
       // Default headroom: 1.5 stops (Apple standard when no explicit tag found)
       if (pHdr->gainMapAlternateHeadroom <= 0.0f)
         pHdr->gainMapAlternateHeadroom = 1.5f;
@@ -1914,13 +1916,15 @@ PopulateMetadataFromEasyExif_Refined(const easyexif::EXIFInfo &exif,
     meta.Altitude = exif.GeoLocation.Altitude;
   }
 
-  // [v6.2] Level 1: EXIF Color Space (Fastest)
-  if (exif.ColorSpace == 1)
-    meta.ColorSpace = L"sRGB";
-  else if (exif.ColorSpace == 2)
-    meta.ColorSpace = L"Adobe RGB";
-  else if (exif.ColorSpace == 65535)
-    meta.ColorSpace = L"Uncalibrated";
+  // [v6.2] Level 1: EXIF Color Space (Only if ICC profile didn't specify a profile name)
+  if (meta.ColorSpace.empty()) {
+    if (exif.ColorSpace == 1)
+      meta.ColorSpace = L"sRGB";
+    else if (exif.ColorSpace == 2)
+      meta.ColorSpace = L"Adobe RGB";
+    else if (exif.ColorSpace == 65535)
+      meta.ColorSpace = L"Uncalibrated";
+  }
 
   // [Fix] Populate Orientation!
   if (exif.Orientation >= 1 && exif.Orientation <= 8) {
@@ -4740,13 +4744,15 @@ static void PopulateMetadataFromEasyExif(const easyexif::EXIFInfo &exif,
   if (!exif.LensInfo.Model.empty())
     meta.Lens = toW(exif.LensInfo.Model);
 
-  // [v6.0] Color Space
-  if (exif.ColorSpace == 1)
-    meta.ColorSpace = L"sRGB";
-  else if (exif.ColorSpace == 2)
-    meta.ColorSpace = L"Adobe RGB";
-  else if (exif.ColorSpace == 65535)
-    meta.ColorSpace = L"Uncalibrated";
+  // [v6.0] Color Space (Only if ICC profile didn't specify a profile name)
+  if (meta.ColorSpace.empty()) {
+    if (exif.ColorSpace == 1)
+      meta.ColorSpace = L"sRGB";
+    else if (exif.ColorSpace == 2)
+      meta.ColorSpace = L"Adobe RGB";
+    else if (exif.ColorSpace == 65535)
+      meta.ColorSpace = L"Uncalibrated";
+  }
 
   // [Fix] Populate Orientation! (Crucial for TurboJPEG/Buffer Loaders)
   if (exif.Orientation >= 1 && exif.Orientation <= 8) {
@@ -6351,10 +6357,7 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
 
   // [CMS] Extract and Merge Multi-segment ICC Profile from APP2 markers
   {
-    size_t iccTotalSize = 0;
-    int iccNumMarkers = 0;
-
-    // First pass: identify markers and calculate size
+    // First pass: identify markers for UltraHDR
     for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker;
          marker = marker->next) {
       // [UltraHDR Diagnostic]
@@ -6394,53 +6397,21 @@ static HRESULT Load(const uint8_t *pBuf, size_t bufSize,
         }
       }
 
-      if (marker->marker == 0xE2 && marker->data_length >= 14) {
-        if (memcmp(marker->data, "ICC_PROFILE", 11) == 0) {
-          iccTotalSize += (marker->data_length - 14);
-          iccNumMarkers++;
-        }
-      }
+      // Handled above or via jpeg_read_icc_profile
     }
 
-    {
-      QV_LOG("Loader_JPEG", TraceLoggingInt32(iccNumMarkers, "IccSegments"),
-             TraceLoggingUInt64(iccTotalSize, "IccTotalSize"));
-    }
-
-    if (iccNumMarkers > 0) {
-      result.metadata.iccProfileData.resize(iccTotalSize);
-      uint8_t *pIcc = result.metadata.iccProfileData.data();
-      size_t currentOffset = 0;
-      int markersmerged = 0;
-
-      // Second pass: Merge segments in correct sequence
-      for (int seq = 1; seq <= 255; ++seq) {
-        bool found = false;
-        for (jpeg_saved_marker_ptr marker = cinfo.marker_list; marker;
-             marker = marker->next) {
-          if (marker->marker == JPEG_APP0 + 2 && marker->data_length >= 14 &&
-              memcmp(marker->data, "ICC_PROFILE\0", 12) == 0) {
-            if (marker->data[12] == seq) {
-              size_t partLen = marker->data_length - 14;
-              if (currentOffset + partLen <= iccTotalSize) {
-                memcpy(pIcc + currentOffset, marker->data + 14, partLen);
-                currentOffset += partLen;
-                markersmerged++;
-              }
-              found = true;
-              break;
-            }
-          }
-        }
-        if (!found)
-          break; // Finished or missing segment
+    // Official libjpeg-turbo ICC Profile Reader (Handles multi-segment, sequence alignment & validation)
+    JOCTET *iccBuf = nullptr;
+    unsigned int iccLen = 0;
+    if (jpeg_read_icc_profile(&cinfo, &iccBuf, &iccLen) && iccBuf && iccLen > 0) {
+      result.metadata.iccProfileData.assign(iccBuf, iccBuf + iccLen);
+      result.metadata.HasEmbeddedColorProfile = true;
+      result.metadata.colorInfo.hasEmbeddedIcc = true;
+      std::wstring parsedName = CImageLoader::ParseICCProfileName(iccBuf, iccLen);
+      if (!parsedName.empty()) {
+        result.metadata.ColorSpace = parsedName;
       }
-
-      if (markersmerged > 0) {
-        result.metadata.HasEmbeddedColorProfile = true;
-      } else {
-        result.metadata.iccProfileData.clear();
-      }
+      free(iccBuf);
     }
   }
 
@@ -11334,9 +11305,11 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
           else if (csVar.vt == VT_UI4)
             csVal = csVar.ulVal;
 
-          if (csVal == 1)
+          if (csVal == 1) {
             pMetadata->ColorSpace = L"sRGB";
-          else if (csVal == 2)
+            pMetadata->HasEmbeddedColorProfile = false;
+            pMetadata->colorInfo.hasEmbeddedIcc = false;
+          } else if (csVal == 2)
             pMetadata->ColorSpace = L"Adobe RGB";
           else if (csVal == 65535)
             pMetadata->ColorSpace = L"Uncalibrated";
@@ -11390,19 +11363,22 @@ HRESULT CImageLoader::ReadMetadata(LPCWSTR filePath, ImageMetadata *pMetadata,
                       cbProfile, profile.data(), &cbProfile))) {
                 std::wstring desc = CImageLoader::ParseICCProfileName(
                     profile.data(), profile.size());
-                if (!desc.empty()) {
-                  // Skip WIC-synthesized profiles when native probe already determined the state
-                  if (pMetadata->HasEmbeddedColorProfile.has_value() && !pMetadata->HasEmbeddedColorProfile.value())
-                    continue; // Reject fake ICC from WIC
 
-                  pMetadata->ColorSpace = desc;
-                  found = true;
-                  if (!pMetadata->HasEmbeddedColorProfile.has_value())
-                    pMetadata->HasEmbeddedColorProfile = true;
-                  pMetadata->colorInfo.hasEmbeddedIcc = true;
-                  if (pMetadata->iccProfileData.empty())
-                    pMetadata->iccProfileData.assign(profile.begin(), profile.end());
+                // Skip WIC-synthesized profiles when native probe already determined the state
+                if (pMetadata->HasEmbeddedColorProfile.has_value() && !pMetadata->HasEmbeddedColorProfile.value())
+                  continue; // Reject fake ICC from WIC
+
+                if (desc.empty()) {
+                  desc = L"Embedded Profile";
                 }
+
+                pMetadata->ColorSpace = desc;
+                found = true;
+                if (!pMetadata->HasEmbeddedColorProfile.has_value())
+                  pMetadata->HasEmbeddedColorProfile = true;
+                pMetadata->colorInfo.hasEmbeddedIcc = true;
+                if (pMetadata->iccProfileData.empty())
+                  pMetadata->iccProfileData.assign(profile.begin(), profile.end());
               }
             }
           }

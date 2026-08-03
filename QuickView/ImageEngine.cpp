@@ -364,6 +364,12 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                     e.metadata.HasEmbeddedColorProfile =
                         cachedFrame->colorInfo.hasEmbeddedIcc || !cachedFrame->iccProfile.empty();
                 }
+                if (e.metadata.iccProfileData.empty() && !cachedFrame->iccProfile.empty()) {
+                    e.metadata.iccProfileData.assign(cachedFrame->iccProfile.begin(), cachedFrame->iccProfile.end());
+                }
+                if (e.metadata.ColorSpace.empty() && !e.metadata.iccProfileData.empty()) {
+                    e.metadata.ColorSpace = CImageLoader::ParseICCProfileName(e.metadata.iccProfileData.data(), e.metadata.iccProfileData.size());
+                }
                 
                 if (cachedFrame->IsSvg()) e.metadata.Format = L"SVG"; 
 
@@ -1274,6 +1280,12 @@ void ImageEngine::FastLane::QueueWorker() {
                 if (!e.metadata.HasEmbeddedColorProfile.has_value()) {
                     e.metadata.HasEmbeddedColorProfile =
                         rawFrame.colorInfo.hasEmbeddedIcc || !safeFrame->iccProfile.empty();
+                }
+                if (e.metadata.iccProfileData.empty() && safeFrame && !safeFrame->iccProfile.empty()) {
+                    e.metadata.iccProfileData.assign(safeFrame->iccProfile.begin(), safeFrame->iccProfile.end());
+                }
+                if (e.metadata.ColorSpace.empty() && !e.metadata.iccProfileData.empty()) {
+                    e.metadata.ColorSpace = CImageLoader::ParseICCProfileName(e.metadata.iccProfileData.data(), e.metadata.iccProfileData.size());
                 }
                     
                 // [v5.3] Metadata is now populated by LoadToFrame (Unified path)
