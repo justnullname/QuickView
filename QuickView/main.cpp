@@ -2762,6 +2762,13 @@ void ReleaseImageResources() {
 namespace {
 static float MeasureStringWidth(const wchar_t* text, float fontSize, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL) {
     if (!text || !*text) return 0.0f;
+
+    struct CacheEntry { std::wstring t; float s; DWRITE_FONT_WEIGHT w; float width; };
+    static std::vector<CacheEntry> s_cache;
+    for (const auto& entry : s_cache) {
+        if (entry.s == fontSize && entry.w == weight && entry.t == text) return entry.width;
+    }
+
     static ComPtr<IDWriteFactory> pDW;
     static ComPtr<IDWriteTextFormat> pFmt;
     static float s_lastSize = 0.0f;
@@ -2775,19 +2782,36 @@ static float MeasureStringWidth(const wchar_t* text, float fontSize, DWRITE_FONT
     if (pDW && !pFmt) {
         pDW->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"zh-CN", &pFmt);
     }
-    if (!pDW || !pFmt) return (float)wcslen(text) * fontSize * 0.6f;
-
-    ComPtr<IDWriteTextLayout> pLayout;
-    if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 3000.0f, 200.0f, &pLayout))) {
-        DWRITE_TEXT_METRICS metrics = {};
-        pLayout->GetMetrics(&metrics);
-        return metrics.widthIncludingTrailingWhitespace;
+    
+    float width = (float)wcslen(text) * fontSize * 0.6f;
+    if (pDW && pFmt) {
+        ComPtr<IDWriteTextLayout> pLayout;
+        if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 3000.0f, 200.0f, &pLayout))) {
+            DWRITE_TEXT_METRICS metrics = {};
+            pLayout->GetMetrics(&metrics);
+            width = metrics.widthIncludingTrailingWhitespace;
+        }
     }
-    return (float)wcslen(text) * fontSize * 0.6f;
+    
+    if (s_cache.size() > 64) s_cache.erase(s_cache.begin());
+    s_cache.push_back({text, fontSize, weight, width});
+    return width;
 }
 }
 
 DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
+    static D2D1_SIZE_F s_cachedSize = { 0, 0 };
+    static DialogLayout s_cachedLayout;
+    static std::wstring s_cachedTitle;
+    static std::wstring s_cachedMessage;
+
+    if (s_cachedSize.width == size.width && 
+        s_cachedSize.height == size.height && 
+        s_cachedTitle == AppContext::GetInstance().Dialog.Title && 
+        s_cachedMessage == AppContext::GetInstance().Dialog.Message) {
+        return s_cachedLayout;
+    }
+
     DialogLayout layout;
     const float s = g_uiScale;
     float dlgW = 350.0f * s;
@@ -2905,6 +2929,12 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     for (size_t i = 0; i < nb; ++i) {
         layout.Buttons.push_back(D2D1::RectF(startX + i * (btnW + btnGap), btnY, startX + i * (btnW + btnGap) + btnW, btnY + btnH));
     }
+    
+    s_cachedSize = size;
+    s_cachedTitle = AppContext::GetInstance().Dialog.Title;
+    s_cachedMessage = AppContext::GetInstance().Dialog.Message;
+    s_cachedLayout = layout;
+    
     return layout;
 }
 
@@ -4029,10 +4059,9 @@ bool SaveCurrentImage(bool saveAs) {
             filterStr += fmt.DisplayName + L"\0*" + fmt.Ext + L"\0";
         }
         filterStr += L"All Files (*.*)\0*.*\0\0";
-        std::vector<wchar_t> filterBuf(filterStr.begin(), filterStr.end());
-        filterBuf.push_back(L'\0');
+        filterStr.push_back(L'\0');
 
-        ofn.lpstrFilter = filterBuf.data();
+        ofn.lpstrFilter = filterStr.data();
         ofn.nFilterIndex = 1; ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
         if (GetSaveFileNameW(&ofn)) targetPath = szFile;
         else { return false; }

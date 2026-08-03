@@ -13,7 +13,6 @@
 #include <shlwapi.h>
 #include <cwchar>
 #include <algorithm>
-#include <charconv>
 
 #include "PaneContext.h"
 #include "ImageEngine.h"
@@ -37,6 +36,13 @@ extern void ReleaseImageResources();
 namespace {
 static float MeasureStringWidth(const wchar_t* text, float fontSize) {
     if (!text || !*text) return 0.0f;
+
+    struct CacheEntry { std::wstring t; float s; float w; };
+    static std::vector<CacheEntry> s_cache;
+    for (const auto& entry : s_cache) {
+        if (entry.s == fontSize && entry.t == text) return entry.w;
+    }
+
     static ComPtr<IDWriteFactory> pDW;
     static ComPtr<IDWriteTextFormat> pFmt;
     static float s_lastSize = 0.0f;
@@ -48,15 +54,20 @@ static float MeasureStringWidth(const wchar_t* text, float fontSize) {
     if (pDW && !pFmt) {
         pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"zh-CN", &pFmt);
     }
-    if (!pDW || !pFmt) return (float)wcslen(text) * fontSize * 0.6f;
-
-    ComPtr<IDWriteTextLayout> pLayout;
-    if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 2000.0f, 100.0f, &pLayout))) {
-        DWRITE_TEXT_METRICS metrics = {};
-        pLayout->GetMetrics(&metrics);
-        return metrics.widthIncludingTrailingWhitespace;
+    
+    float width = (float)wcslen(text) * fontSize * 0.6f;
+    if (pDW && pFmt) {
+        ComPtr<IDWriteTextLayout> pLayout;
+        if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 2000.0f, 100.0f, &pLayout))) {
+            DWRITE_TEXT_METRICS metrics = {};
+            pLayout->GetMetrics(&metrics);
+            width = metrics.widthIncludingTrailingWhitespace;
+        }
     }
-    return (float)wcslen(text) * fontSize * 0.6f;
+    
+    if (s_cache.size() > 64) s_cache.erase(s_cache.begin());
+    s_cache.push_back({text, fontSize, width});
+    return width;
 }
 }
 extern bool IsImageModified();
