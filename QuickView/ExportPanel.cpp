@@ -37,10 +37,13 @@ namespace {
 static float MeasureStringWidth(const wchar_t* text, float fontSize) {
     if (!text || !*text) return 0.0f;
 
-    struct CacheEntry { std::wstring t; float s; float w; };
-    static std::vector<CacheEntry> s_cache;
-    for (const auto& entry : s_cache) {
-        if (entry.s == fontSize && entry.t == text) return entry.w;
+    struct CacheEntry { wchar_t t[32]; float s; float w; };
+    static CacheEntry s_cache[16];
+    static int s_cacheHead = 0;
+    static int s_cacheSize = 0;
+
+    for (int i = 0; i < s_cacheSize; ++i) {
+        if (s_cache[i].s == fontSize && wcscmp(s_cache[i].t, text) == 0) return s_cache[i].w;
     }
 
     static ComPtr<IDWriteFactory> pDW;
@@ -65,8 +68,13 @@ static float MeasureStringWidth(const wchar_t* text, float fontSize) {
         }
     }
     
-    if (s_cache.size() > 64) s_cache.erase(s_cache.begin());
-    s_cache.push_back({text, fontSize, width});
+    if (wcslen(text) < 32) {
+        int idx = (s_cacheSize < 16) ? s_cacheSize++ : s_cacheHead;
+        wcscpy_s(s_cache[idx].t, 32, text);
+        s_cache[idx].s = fontSize;
+        s_cache[idx].w = width;
+        if (s_cacheSize >= 16) s_cacheHead = (s_cacheHead + 1) % 16;
+    }
     return width;
 }
 }

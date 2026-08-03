@@ -2763,10 +2763,13 @@ namespace {
 static float MeasureStringWidth(const wchar_t* text, float fontSize, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL) {
     if (!text || !*text) return 0.0f;
 
-    struct CacheEntry { std::wstring t; float s; DWRITE_FONT_WEIGHT w; float width; };
-    static std::vector<CacheEntry> s_cache;
-    for (const auto& entry : s_cache) {
-        if (entry.s == fontSize && entry.w == weight && entry.t == text) return entry.width;
+    struct CacheEntry { wchar_t t[32]; float s; DWRITE_FONT_WEIGHT w; float width; };
+    static CacheEntry s_cache[16];
+    static int s_cacheHead = 0;
+    static int s_cacheSize = 0;
+
+    for (int i = 0; i < s_cacheSize; ++i) {
+        if (s_cache[i].s == fontSize && s_cache[i].w == weight && wcscmp(s_cache[i].t, text) == 0) return s_cache[i].width;
     }
 
     static ComPtr<IDWriteFactory> pDW;
@@ -2793,8 +2796,14 @@ static float MeasureStringWidth(const wchar_t* text, float fontSize, DWRITE_FONT
         }
     }
     
-    if (s_cache.size() > 64) s_cache.erase(s_cache.begin());
-    s_cache.push_back({text, fontSize, weight, width});
+    if (wcslen(text) < 32) {
+        int idx = (s_cacheSize < 16) ? s_cacheSize++ : s_cacheHead;
+        wcscpy_s(s_cache[idx].t, 32, text);
+        s_cache[idx].s = fontSize;
+        s_cache[idx].w = weight;
+        s_cache[idx].width = width;
+        if (s_cacheSize >= 16) s_cacheHead = (s_cacheHead + 1) % 16;
+    }
     return width;
 }
 }
@@ -2802,13 +2811,21 @@ static float MeasureStringWidth(const wchar_t* text, float fontSize, DWRITE_FONT
 DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     static D2D1_SIZE_F s_cachedSize = { 0, 0 };
     static DialogLayout s_cachedLayout;
-    static std::wstring s_cachedTitle;
-    static std::wstring s_cachedMessage;
+    static size_t s_cachedTitleHash = 0;
+    static size_t s_cachedMessageHash = 0;
+
+    auto hashStr = [](const std::wstring& str) {
+        size_t h = 5381;
+        for (wchar_t c : str) h = ((h << 5) + h) + c;
+        return h;
+    };
+    size_t titleHash = hashStr(AppContext::GetInstance().Dialog.Title);
+    size_t msgHash = hashStr(AppContext::GetInstance().Dialog.Message);
 
     if (s_cachedSize.width == size.width && 
         s_cachedSize.height == size.height && 
-        s_cachedTitle == AppContext::GetInstance().Dialog.Title && 
-        s_cachedMessage == AppContext::GetInstance().Dialog.Message) {
+        s_cachedTitleHash == titleHash && 
+        s_cachedMessageHash == msgHash) {
         return s_cachedLayout;
     }
 
@@ -2931,8 +2948,8 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     }
     
     s_cachedSize = size;
-    s_cachedTitle = AppContext::GetInstance().Dialog.Title;
-    s_cachedMessage = AppContext::GetInstance().Dialog.Message;
+    s_cachedTitleHash = titleHash;
+    s_cachedMessageHash = msgHash;
     s_cachedLayout = layout;
     
     return layout;
