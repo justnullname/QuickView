@@ -263,6 +263,8 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_inputStarted = false;
     m_lockAspectRatio = true;
     
+
+
     // Initialize WIC Formats (Sorted Alphabetically)
     m_availableFormats = ImageExporter::GetSupportedExportFormats();
     m_selectedFormatIndex = 0;
@@ -315,8 +317,28 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
 
     if (hasEmbeddedIcc) {
         IccProfileItem item;
-        std::wstring parsedName = CImageLoader::ParseICCProfileName(primaryMetadata.iccProfileData.data(), primaryMetadata.iccProfileData.size());
-        if (parsedName.empty()) {
+        std::wstring parsedName = primaryMetadata.ColorSpace;
+        
+        bool hdrLikeContent = primaryMetadata.hdrMetadata.hasGainMap ||
+                              primaryMetadata.colorInfo.dataSpace == QuickView::PixelDataSpace::EncodedHdr ||
+                              primaryMetadata.colorInfo.IsSceneLinear() ||
+                              (primaryMetadata.hdrMetadata.isHdr && primaryMetadata.hdrMetadata.isValid);
+
+        if (hdrLikeContent && (parsedName.empty() || parsedName == L"sRGB" || parsedName == L"Embedded Profile" || parsedName == L"Uncalibrated")) {
+            const wchar_t* primaries = QuickView::ToString(
+                primaryMetadata.colorInfo.primaries != QuickView::ColorPrimaries::Unknown
+                    ? primaryMetadata.colorInfo.primaries
+                    : primaryMetadata.hdrMetadata.primaries);
+            if (primaries && wcscmp(primaries, L"Unknown") != 0) {
+                parsedName = primaries;
+            }
+        }
+        
+        if (parsedName.empty() || parsedName == L"Embedded Profile") {
+            parsedName = CImageLoader::ParseICCProfileName(primaryMetadata.iccProfileData.data(), primaryMetadata.iccProfileData.size());
+        }
+
+        if (parsedName.empty() || parsedName == L"Embedded Profile") {
             parsedName = L"Emb ICC";
         } else {
             if (parsedName.length() > 12) {
@@ -384,6 +406,47 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
         m_iccProfiles.push_back(std::move(item));
     }
 
+    // Determine HasEmbedded / Tagged Profile State
+    bool isTaggedProfile = primaryMetadata.HasEmbeddedColorProfile.value_or(false) ||
+                           primaryMetadata.colorInfo.hasEmbeddedIcc ||
+                           !primaryMetadata.iccProfileData.empty();
+                          
+    if (!isTaggedProfile && !primaryMetadata.ColorSpace.empty() &&
+        primaryMetadata.ColorSpace != L"sRGB" && primaryMetadata.ColorSpace != L"Uncalibrated") {
+        isTaggedProfile = true;
+    }
+
+    // Find best matching profile index when raw ICC payload is missing but ColorSpace/Primaries are known
+    int autoMatchedIndex = -1;
+    if (embeddedItemIndex != -1) {
+        autoMatchedIndex = embeddedItemIndex;
+    } else {
+        // [User Request] Use exactly the same parameter resolution as Info Panel (UIRenderer::DrawInfoPanel)
+        std::wstring colorText = primaryMetadata.ColorSpace;
+        if (colorText.empty() || colorText == L"Uncalibrated") {
+            const wchar_t* primaries = QuickView::ToString(primaryMetadata.colorInfo.primaries);
+            if (primaries && wcscmp(primaries, L"Unknown") != 0) {
+                colorText = primaries;
+            }
+        }
+        if (colorText.empty() || colorText == L"Uncalibrated") {
+            const wchar_t* primaries = QuickView::ToString(primaryMetadata.hdrMetadata.primaries);
+            if (primaries && wcscmp(primaries, L"Unknown") != 0) {
+                colorText = primaries;
+            }
+        }
+
+        if (colorText.find(L"Display P3") != std::wstring::npos || colorText.find(L"P3") != std::wstring::npos) {
+            autoMatchedIndex = p3Index;
+        } else if (colorText.find(L"Adobe") != std::wstring::npos) {
+            autoMatchedIndex = adobeRgbIndex;
+        } else if (colorText.find(L"ProPhoto") != std::wstring::npos) {
+            autoMatchedIndex = proPhotoIndex;
+        } else if (colorText.find(L"sRGB") != std::wstring::npos) {
+            autoMatchedIndex = srgbIndex;
+        }
+    }
+
     // 2. Automated decision logic
     int cmsMode = GetPaneContext(PaneSlot::Primary).CmsModeOverride;
     if (cmsMode == -1) cmsMode = g_runtime.CmsModeOverride;
@@ -398,14 +461,14 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
         else if (cmsMode == 6) targetIdx = proPhotoIndex;
         
         m_selectedIccIndex = (targetIdx != -1) ? targetIdx : (srgbIndex != -1 ? srgbIndex : 0);
-    } else if (hasEmbeddedIcc) {
+    } else if (isTaggedProfile) {
         m_embedIcc = true;
-        m_selectedIccIndex = embeddedItemIndex;
+        m_selectedIccIndex = (autoMatchedIndex != -1) ? autoMatchedIndex : (srgbIndex != -1 ? srgbIndex : 0);
     } else {
         m_embedIcc = false;
         m_selectedIccIndex = (srgbIndex != -1) ? srgbIndex : 0;
     }
-    
+
     OnFormatChanged();
 }
 
@@ -496,14 +559,24 @@ void ExportPanel::TriggerAsyncEstimate() {
     }
 
     std::thread([opts, currentGen, hwnd = m_hwnd, pThis = this]() {
-        if (pThis->m_estimateGeneration.load() != currentGen) return; // Abort early
+        HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        
+        if (pThis->m_estimateGeneration.load() != currentGen) {
+            if (SUCCEEDED(hrCo)) CoUninitialize();
+            return; // Abort early
+        }
 
         auto res = ImageExporter::EstimateSize(opts);
 
-        if (pThis->m_estimateGeneration.load() != currentGen) return; // Abort early
+        if (pThis->m_estimateGeneration.load() != currentGen) {
+            if (SUCCEEDED(hrCo)) CoUninitialize();
+            return; // Abort early
+        }
 
         uint64_t bytes = res.value_or(0);
         PostMessageW(hwnd, WM_APP_ESTIMATE_READY, (WPARAM)currentGen, (LPARAM)bytes);
+        
+        if (SUCCEEDED(hrCo)) CoUninitialize();
     }).detach();
 }
 
@@ -1236,6 +1309,11 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     } else {
         DrawIccDropdown(dc, layout.iccDropdownRect, layout, textFormat);
         DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
+    }
+
+    if (textFormat) {
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 }
 

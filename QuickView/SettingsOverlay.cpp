@@ -2047,6 +2047,9 @@ void SettingsOverlay::BuildMenu() {
         if (action == HotkeyAction::EnterCropMode || action == HotkeyAction::SaveAs) {
             item.isNewOption = true;
         }
+        if (action == HotkeyAction::EnterCropMode) {
+            item.tooltipText = AppStrings::Settings_Tooltip_CropModeHotkey;
+        }
         if (action == HotkeyAction::Loupe) {
             item.tooltipText = AppStrings::Settings_Tooltip_LoupeHotkey;
         }

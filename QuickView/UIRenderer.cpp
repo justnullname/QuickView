@@ -4119,6 +4119,8 @@ D2D1_COLOR_F UIRenderer::LerpColor(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b,
 
 void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
     if (!g_runtime.ShowInfoPanel || !m_panelFormat) return;
+    m_panelFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    m_panelFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     const float s = GetInfoPanelScale();
     BuildInfoGrid();  // Populate m_infoGrid from g_currentMetadata before sizing.
     

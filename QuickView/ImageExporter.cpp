@@ -480,6 +480,8 @@ static void EmbedMetadataAndResetOrientation(IWICImagingFactory* factory,
                 blockWriter->InitializeFromBlockReader(blockReader.Get());
             }
         }
+        
+
     }
 
     // Neutralize EXIF Orientation tag to 1 ONLY when transforms are applied and format supports EXIF.
