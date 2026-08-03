@@ -1604,6 +1604,7 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
         if (elapsed >= 500) {
             m_decodeFinishTime = 0;
             m_decodeDisplayedProgress = 0.0f;
+            if (hwnd) ::InvalidateRect(hwnd, nullptr, FALSE);
             return;
         }
         finishingMode = true;
@@ -1749,6 +1750,12 @@ void UIRenderer::DrawDecodingStatus(ID2D1DeviceContext* dc, HWND hwnd) {
             dc->CreateSolidColorBrush(headColor, &headBrush);
             dc->FillRectangle(headRect, headBrush.Get());
         }
+    }
+
+    // [Fix] Continuously drive animation frame repaints while decoding is active or during 500ms fade-out phase.
+    // Without this, when decoding completes, no background messages arrive, leaving the UI frozen with the progress bar visible.
+    if ((decodingActive || m_decodeFinishTime != 0) && hwnd) {
+        ::InvalidateRect(hwnd, nullptr, FALSE);
     }
 }
 

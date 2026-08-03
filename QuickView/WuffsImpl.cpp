@@ -64,6 +64,51 @@ namespace WuffsLoader {
         allocator_type get_allocator() const { return allocator_type(); }
     };
 
+    struct BufferSink {
+        void* container = nullptr;
+        uint8_t* (*allocate)(void* ctx, size_t size) = nullptr;
+        std::pmr::memory_resource* memRes = nullptr;
+
+        uint8_t* Allocate(size_t size) {
+            return allocate ? allocate(container, size) : nullptr;
+        }
+    };
+
+    template <typename Vec>
+    inline BufferSink MakeBufferSink(Vec& outPixels) {
+        if constexpr (std::is_same_v<Vec, std::pmr::vector<uint8_t>>) {
+            return BufferSink{
+                &outPixels,
+                [](void* ctx, size_t sz) -> uint8_t* {
+                    auto* v = static_cast<std::pmr::vector<uint8_t>*>(ctx);
+                    v->resize(sz);
+                    return v->data();
+                },
+                outPixels.get_allocator().resource()
+            };
+        } else if constexpr (std::is_same_v<Vec, std::vector<uint8_t>>) {
+            return BufferSink{
+                &outPixels,
+                [](void* ctx, size_t sz) -> uint8_t* {
+                    auto* v = static_cast<std::vector<uint8_t>*>(ctx);
+                    v->resize(sz);
+                    return v->data();
+                },
+                nullptr
+            };
+        } else {
+            return BufferSink{
+                &outPixels,
+                [](void* ctx, size_t sz) -> uint8_t* {
+                    auto* a = static_cast<BufferAdapter*>(ctx);
+                    a->resize(sz);
+                    return a->data();
+                },
+                nullptr
+            };
+        }
+    }
+
 #define WUFFS_TRY(expr) \
     do { \
         while(true) { \
@@ -83,10 +128,9 @@ namespace WuffsLoader {
 // ------------------------------------------------------------
 // PNG Decoder
 // ------------------------------------------------------------
-template <typename Vec>
 static bool DecodePNG_Impl(const uint8_t* data, size_t size, 
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel,
                WuffsImageInfo* pInfo) {
     if (!data || size == 0) return false;
@@ -176,15 +220,8 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
 
     // [v6.3] Extract Metadata (Zero Cost) - Before we override format for decoding
     if (pInfo) {
-        // Transparency
         pInfo->hasAlpha = !wuffs_base__image_config__first_frame_is_opaque(&ic);
-        
-        // Bit depth comes from IHDR prescan; Wuffs decodes 8-bit as BGRA premul, 16-bit as RGBA 4x16LE.
         if (pInfo->bitDepth <= 0) pInfo->bitDepth = 8;
-        
-        // Simple heuristic for APNG? Wuffs doesn't easily expose "is_animated" flag in image_config for PNG?
-        // Actually it might satisfy "generic" animation interface?
-        // For now, default to false.
     }
 
     uint32_t targetFmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL;
@@ -196,16 +233,15 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, targetFmt, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * bpp;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_png__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_png__decoder__decode_frame_config(&dec, &fc, &src));
@@ -216,17 +252,19 @@ static bool DecodePNG_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { return DecodePNG_Impl(d, s, w, h, out, c, p); }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { return DecodePNG_Impl(d, s, w, h, out, c, p); }
-bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c, WuffsImageInfo* p) { BufferAdapter a(alloc); return DecodePNG_Impl(d, s, w, h, a, c, p); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { auto sink = MakeBufferSink(out); return DecodePNG_Impl(d, s, w, h, sink, c, p); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c, WuffsImageInfo* p) { auto sink = MakeBufferSink(out); return DecodePNG_Impl(d, s, w, h, sink, c, p); }
+bool DecodePNG(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c, WuffsImageInfo* p) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodePNG_Impl(d, s, w, h, sink, c, p); }
 
 // ------------------------------------------------------------
 // GIF Decoder
 // ------------------------------------------------------------
-template <typename Vec>
+// ------------------------------------------------------------
+// GIF Decoder
+// ------------------------------------------------------------
 static bool DecodeGIF_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel) {
     wuffs_gif__decoder dec;
     wuffs_base__status status = wuffs_gif__decoder__initialize(
@@ -251,16 +289,15 @@ static bool DecodeGIF_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_gif__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_gif__decoder__decode_frame_config(&dec, &fc, &src));
@@ -271,17 +308,16 @@ static bool DecodeGIF_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeGIF_Impl(d, s, w, h, out, c); }
-bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeGIF_Impl(d, s, w, h, out, c); }
-bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeGIF_Impl(d, s, w, h, a, c); }
+bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeGIF_Impl(d, s, w, h, sink, c); }
+bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeGIF_Impl(d, s, w, h, sink, c); }
+bool DecodeGIF(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodeGIF_Impl(d, s, w, h, sink, c); }
 
 // ------------------------------------------------------------
 // BMP Decoder
 // ------------------------------------------------------------
-template <typename Vec>
 static bool DecodeBMP_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel) {
     wuffs_bmp__decoder dec;
     wuffs_base__status status = wuffs_bmp__decoder__initialize(
@@ -306,16 +342,15 @@ static bool DecodeBMP_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_bmp__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_bmp__decoder__decode_frame_config(&dec, &fc, &src));
@@ -326,17 +361,16 @@ static bool DecodeBMP_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeBMP_Impl(d, s, w, h, out, c); }
-bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeBMP_Impl(d, s, w, h, out, c); }
-bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeBMP_Impl(d, s, w, h, a, c); }
+bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeBMP_Impl(d, s, w, h, sink, c); }
+bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeBMP_Impl(d, s, w, h, sink, c); }
+bool DecodeBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodeBMP_Impl(d, s, w, h, sink, c); }
 
 // ------------------------------------------------------------
 // TGA Decoder
 // ------------------------------------------------------------
-template <typename Vec>
 static bool DecodeTGA_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel) {
     wuffs_targa__decoder dec;
     wuffs_base__status status = wuffs_targa__decoder__initialize(
@@ -361,16 +395,15 @@ static bool DecodeTGA_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_targa__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_targa__decoder__decode_frame_config(&dec, &fc, &src));
@@ -381,17 +414,16 @@ static bool DecodeTGA_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeTGA_Impl(d, s, w, h, out, c); }
-bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeTGA_Impl(d, s, w, h, out, c); }
-bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeTGA_Impl(d, s, w, h, a, c); }
+bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeTGA_Impl(d, s, w, h, sink, c); }
+bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeTGA_Impl(d, s, w, h, sink, c); }
+bool DecodeTGA(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodeTGA_Impl(d, s, w, h, sink, c); }
 
 // ------------------------------------------------------------
 // WBMP Decoder
 // ------------------------------------------------------------
-template <typename Vec>
 static bool DecodeWBMP_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel) {
     wuffs_wbmp__decoder dec;
     wuffs_base__status status = wuffs_wbmp__decoder__initialize(
@@ -416,16 +448,15 @@ static bool DecodeWBMP_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_wbmp__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_wbmp__decoder__decode_frame_config(&dec, &fc, &src));
@@ -436,17 +467,16 @@ static bool DecodeWBMP_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeWBMP_Impl(d, s, w, h, out, c); }
-bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeWBMP_Impl(d, s, w, h, out, c); }
-bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeWBMP_Impl(d, s, w, h, a, c); }
+bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeWBMP_Impl(d, s, w, h, sink, c); }
+bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeWBMP_Impl(d, s, w, h, sink, c); }
+bool DecodeWBMP(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodeWBMP_Impl(d, s, w, h, sink, c); }
 
 // ------------------------------------------------------------
 // NetPBM Decoder
 // ------------------------------------------------------------
-template <typename Vec>
 static bool DecodeNetpbm_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel) {
     wuffs_netpbm__decoder dec;
     wuffs_base__status status = wuffs_netpbm__decoder__initialize(
@@ -471,16 +501,15 @@ static bool DecodeNetpbm_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_netpbm__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_netpbm__decoder__decode_frame_config(&dec, &fc, &src));
@@ -491,17 +520,16 @@ static bool DecodeNetpbm_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeNetpbm_Impl(d, s, w, h, out, c); }
-bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeNetpbm_Impl(d, s, w, h, out, c); }
-bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeNetpbm_Impl(d, s, w, h, a, c); }
+bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeNetpbm_Impl(d, s, w, h, sink, c); }
+bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeNetpbm_Impl(d, s, w, h, sink, c); }
+bool DecodeNetpbm(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodeNetpbm_Impl(d, s, w, h, sink, c); }
 
 // ------------------------------------------------------------
 // QOI Decoder
 // ------------------------------------------------------------
-template <typename Vec>
 static bool DecodeQOI_Impl(const uint8_t* data, size_t size,
                uint32_t* outWidth, uint32_t* outHeight,
-               Vec& outPixels,
+               BufferSink& outSink,
                CancelPredicate checkCancel) {
     wuffs_qoi__decoder dec;
     wuffs_base__status status = wuffs_qoi__decoder__initialize(
@@ -526,16 +554,15 @@ static bool DecodeQOI_Impl(const uint8_t* data, size_t size,
     wuffs_base__pixel_config__set(&ic.pixcfg, WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
 
     size_t pixelSize = (size_t)width * height * 4;
-    outPixels.resize(pixelSize);
+    uint8_t* outPtr = outSink.Allocate(pixelSize);
+    if (!outPtr) return false;
 
     wuffs_base__pixel_buffer pb;
-    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPixels.data(), pixelSize));
+    status = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(outPtr, pixelSize));
     if (!wuffs_base__status__is_ok(&status)) return false;
 
     uint64_t workbuf_len = wuffs_qoi__decoder__workbuf_len(&dec).max_incl;
-    // [Opt] Use same allocator as output (PMR for Heavy Lane = Fast / Heap for Scout = Standard)
-    std::vector<uint8_t, typename Vec::allocator_type> workbuf(outPixels.get_allocator());
-    workbuf.resize(workbuf_len);
+    std::pmr::vector<uint8_t> workbuf(workbuf_len, outSink.memRes ? outSink.memRes : std::pmr::get_default_resource());
 
     wuffs_base__frame_config fc = {};
     WUFFS_TRY(wuffs_qoi__decoder__decode_frame_config(&dec, &fc, &src));
@@ -546,9 +573,9 @@ static bool DecodeQOI_Impl(const uint8_t* data, size_t size,
     *outHeight = height;
     return true;
 }
-bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { return DecodeQOI_Impl(d, s, w, h, out, c); }
-bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { return DecodeQOI_Impl(d, s, w, h, out, c); }
-bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); return DecodeQOI_Impl(d, s, w, h, a, c); }
+bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::pmr::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeQOI_Impl(d, s, w, h, sink, c); }
+bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, std::vector<uint8_t>& out, CancelPredicate c) { auto sink = MakeBufferSink(out); return DecodeQOI_Impl(d, s, w, h, sink, c); }
+bool DecodeQOI(const uint8_t* d, size_t s, uint32_t* w, uint32_t* h, AllocatorFunc alloc, CancelPredicate c) { BufferAdapter a(alloc); auto sink = MakeBufferSink(a); return DecodeQOI_Impl(d, s, w, h, sink, c); }
 
 #undef WUFFS_TRY
 

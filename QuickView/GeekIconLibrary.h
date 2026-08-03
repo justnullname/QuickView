@@ -12,10 +12,12 @@
 namespace GeekIcons {
 
     // --- Vector Infrastructure ---
+#pragma pack(push, 1)
     struct IconPathCommand {
         char type; // 'M', 'L', 'B', 'Z'
         int16_t x1, y1, x2, y2, x3, y3;
     };
+#pragma pack(pop)
 
     struct VectorIcon {
         const IconPathCommand* commands;

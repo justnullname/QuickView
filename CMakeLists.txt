@@ -195,14 +195,11 @@ if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endif()
 
     if(ENABLE_LTO)
-        message(STATUS "Build Matrix: Enabling Full LTO (Release-LTO Mode)")
-        # Peak performance flags: 
-        # /fp:fast (maximum floating point speed) 
-        # /GS- (disable security checks for raw performance)
-        # /EHs-c- (disable exceptions)
+        message(STATUS "Build Matrix: Enabling Full LTO (Release-LTO Pure Maximum Speed)")
+        # Pure peak performance flags (Pure /O2, no /Oscompromise)
         target_compile_options(QuickView PRIVATE 
-            /O2 /Gw /Zc:inline /GR- /fp:fast /GS- /EHs-c- /Z7
-            /clang:-flto=full /clang:-mllvm /clang:-inline-threshold=250
+            /O2 /Gw /Gy /Zc:inline /GR- /fp:fast /GS- /EHs-c- /Z7
+            /clang:-flto=full
             /clang:-fwhole-program-vtables /clang:-fvirtual-function-elimination
             /clang:-fno-ident)
         target_link_options(QuickView PRIVATE /DEBUG /OPT:REF /OPT:ICF /opt:lldlto=3 "/MAP:${CMAKE_BINARY_DIR}/QuickView.map")
