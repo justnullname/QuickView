@@ -45,6 +45,8 @@ using namespace QuickView;
 #include <shobjidl.h> // [Add] for IShellItemImageFactory
 #include <thread>
 #include "MiniTiff.h"
+#include "OffscreenWebView2.h"
+#include "ImageTypes.h"
 
 extern FileNavigator& g_navigator;
 
@@ -13848,7 +13850,33 @@ HRESULT CImageLoader::LoadToFrame(
       if (svgH <= 0)
         svgH = 512;
 
-      // 3. Populate RawImageFrame
+      // 3. Check for WebView2 Offscreen Fallback (for complex SVG with <foreignObject> or <filter>)
+      if (QuickView::OffscreenWebView2::NeedsFallback(svgContent)) {
+          std::vector<uint8_t> pixels;
+          int w = 0, h = 0;
+          if (QuickView::OffscreenWebView2::RenderSvgToRgba(svgContent, svgW, svgH, pixels, w, h)) {
+              outFrame->format = PixelFormat::RGBA8888;
+              outFrame->width = w;
+              outFrame->height = h;
+              outFrame->stride = w * 4;
+              outFrame->pixels = (uint8_t*)malloc(pixels.size());
+              if (outFrame->pixels) {
+                  memcpy(outFrame->pixels, pixels.data(), pixels.size());
+              }
+              if (pLoaderName) *pLoaderName = L"SVG (WebView2 Offscreen)";
+              if (pMetadata) {
+                  pMetadata->LoaderName = L"SVG (WebView2 Offscreen)";
+                  pMetadata->Format = L"SVG";
+                  pMetadata->FormatDetails = L"Complex Vector (Rasterized)";
+                  pMetadata->Width = (UINT)w;
+                  pMetadata->Height = (UINT)h;
+              }
+              outFrame->formatDetails = L"Complex SVG";
+              return S_OK;
+          }
+      }
+
+      // 4. Native Direct2D SVG Fast-Track
       outFrame->format = PixelFormat::SVG_XML;
       outFrame->width = (int)std::lround(svgW);
       outFrame->height = (int)std::lround(svgH);

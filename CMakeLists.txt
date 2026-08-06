@@ -112,6 +112,7 @@ set(QUICKVIEW_SOURCES
     QuickView/AvifAnimator.cpp
     QuickView/JxlAnimator.cpp
     QuickView/QuickViewETW.cpp
+    QuickView/OffscreenWebView2.cpp
     
     # Third party manually included
     third_party/yyjson/yyjson.c
@@ -137,7 +138,7 @@ endif()
 set_target_properties(QuickView PROPERTIES LINK_FLAGS "${QUICKVIEW_LINK_FLAGS}")
 
 # Include paths
-target_include_directories(QuickView PRIVATE QuickView third_party/yyjson third_party/unrar-mini)
+target_include_directories(QuickView PRIVATE QuickView third_party/yyjson third_party/unrar-mini third_party/webview2)
 
 # Precompiled Headers (PCH) - CXX only to avoid conflict with C source (yyjson.c)
 target_precompile_headers(QuickView PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
@@ -213,6 +214,7 @@ set_target_properties(QuickView PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 target_compile_definitions(QuickView PRIVATE UNICODE _UNICODE)
+
 # Note: Manifest is handled via QuickView.rc
 
 # ============================================================================
@@ -350,12 +352,17 @@ target_link_libraries(QuickView PRIVATE
     ZLIB::ZLIB
     unrar-mini
     # Windows system libraries
+    d2d1.lib
+    d3d11.lib
+    dxgi.lib
+    ntdll.lib
     imm32.lib
     dwrite.lib
     windowscodecs.lib
     shlwapi.lib
     shell32.lib
     mscms.lib
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/WebView2LoaderStatic.lib
 )
 
 # ============================================================================
