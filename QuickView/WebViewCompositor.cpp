@@ -312,7 +312,9 @@ HRESULT WebViewCompositor::SetRasterizationScale(float scale) {
     if (!controller3_) return E_NOINTERFACE;
     if (scale <= 0.0f) return E_INVALIDARG;
 
-    // Clamp raster scale between 0.25 and 4.0 to balance sharp rendering vs GPU memory footprint
+    // Clamp raster scale between 0.25 and 4.0 to balance sharp rendering vs GPU memory footprint.
+    // In USE_RASTERIZATION_SCALE mode, visual size stays constant at Bounds;
+    // only internal pixel density changes. No inverse compensation needed.
     double clampedScale = static_cast<double>(std::clamp(scale, 0.25f, 4.0f));
     return controller3_->put_RasterizationScale(clampedScale);
 }

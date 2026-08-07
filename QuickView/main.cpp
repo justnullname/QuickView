@@ -5405,7 +5405,7 @@ int GetCurrentZoomPercent() {
     // Convert to "True Scale" relative to Original Resolution
     VisualState vs = GetVisualState();
     float originalDim = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Height : GetPaneContext(PaneSlot::Primary).metadata.Width);
-    if (!GetPaneContext(PaneSlot::Primary).resource.isSvg && originalDim > 0) {
+    if (!GetPaneContext(PaneSlot::Primary).resource.isSvg && !GetPaneContext(PaneSlot::Primary).resource.isWebView && originalDim > 0) {
         totalScale = totalScale * (effSize.width / originalDim);
     }
     
@@ -6227,10 +6227,6 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
 
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
                 g_compEngine->SetImageInterpolationMode(interpMode);
-
-                if (GetPaneContext(PaneSlot::Primary).resource.isWebView && g_webViewCompositor) {
-                    g_webViewCompositor->SetRasterizationScale(displayZoom);
-                }
             }
         }
     } else {
@@ -13148,8 +13144,11 @@ void ProcessEngineEvents(HWND hwnd) {
                 }
                 
                 // [Fix] For SVG frames, explicitly set Format and dimensions
-                if (GetPaneContext(PaneSlot::Primary).resource.isSvg) {
-                    finalMetadata.Format = L"SVG";
+                if (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView) {
+                    if (GetPaneContext(PaneSlot::Primary).resource.isWebView)
+                        finalMetadata.Format = L"SVG (WebView2)";
+                    else
+                        finalMetadata.Format = L"SVG";
                     finalMetadata.Width = (UINT)GetPaneContext(PaneSlot::Primary).resource.svgW;
                     finalMetadata.Height = (UINT)GetPaneContext(PaneSlot::Primary).resource.svgH;
                 } else if (GetPaneContext(PaneSlot::Primary).resource.bitmap) {
@@ -13173,7 +13172,7 @@ void ProcessEngineEvents(HWND hwnd) {
                 // [SVG Fix] SVG has no scaled/full upgrade, so always accept SVG dimensions.
                 {
                     bool acceptDimUpdate = (finalMetadata.Width >= GetPaneContext(PaneSlot::Primary).metadata.Width && finalMetadata.Width > 16);
-                    if (GetPaneContext(PaneSlot::Primary).resource.isSvg && finalMetadata.Width > 0) acceptDimUpdate = true;
+                    if ((GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView) && finalMetadata.Width > 0) acceptDimUpdate = true;
                     if (acceptDimUpdate) {
                         GetPaneContext(PaneSlot::Primary).metadata.Width = finalMetadata.Width;
                         GetPaneContext(PaneSlot::Primary).metadata.Height = finalMetadata.Height;
