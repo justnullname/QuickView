@@ -25,6 +25,7 @@
 #include <d2d1_2.h>
 #include <d2d1_3.h>
 #include <dxgi1_2.h>
+#include <dcomp.h>
 #include <memory>
 #include <wrl/client.h>
 
@@ -34,8 +35,11 @@ struct ImageResource {
     ComPtr<ID2D1Bitmap> bitmap;
     ComPtr<ID2D1SvgDocument> svgDoc;
     bool isSvg = false;
+    bool isWebView = false;     // [DComp] Complex SVG rendered via WebView2 composition
+    ComPtr<IDCompositionVisual2> webViewVisual;
     float svgW = 0.0f;
     float svgH = 0.0f;
+    std::wstring webviewHtml;   // [DComp] Pre-built HTML for WebView2 navigation
 
     QuickView::GpuBlendOp blendOp = QuickView::GpuBlendOp::None;
     QuickView::GpuShaderPayload shaderPayload = {};
@@ -47,9 +51,12 @@ struct ImageResource {
     void Reset() {
         bitmap.Reset();
         svgDoc.Reset();
+        webViewVisual.Reset();
         isSvg = false;
+        isWebView = false;
         svgW = 0.0f;
         svgH = 0.0f;
+        webviewHtml.clear();
         blendOp = QuickView::GpuBlendOp::None;
         shaderPayload = {};
         auxLayer.reset();
@@ -68,8 +75,10 @@ struct ImageResource {
         cloned.bitmap = bitmap;
         cloned.svgDoc = svgDoc;
         cloned.isSvg = isSvg;
+        cloned.isWebView = isWebView;
         cloned.svgW = svgW;
         cloned.svgH = svgH;
+        cloned.webviewHtml = webviewHtml;
         cloned.blendOp = blendOp;
         cloned.shaderPayload = shaderPayload;
         if (auxLayer) {
@@ -81,13 +90,13 @@ struct ImageResource {
     }
 
     D2D1_SIZE_F GetSize() const {
-        if (isSvg) return D2D1::SizeF(svgW, svgH);
+        if (isSvg || isWebView) return D2D1::SizeF(svgW, svgH);
         if (bitmap) return bitmap->GetSize();
         return D2D1::SizeF(0.0f, 0.0f);
     }
 
     operator bool() const {
-        return (isSvg && svgDoc) || bitmap;
+        return (isSvg && svgDoc) || isWebView || bitmap;
     }
 };
 

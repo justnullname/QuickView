@@ -144,7 +144,8 @@ enum class PixelFormat : uint8_t {
     R32G32B32A32_FLOAT, // HDR (TinyEXR) - 128-bit floating point
     R16G16B16A16_UNORM, // HDR (HEIC/AVIF native PQ/HLG) - 64-bit unsigned normalized [0,1]
     R16G16B16A16_FLOAT, // HDR (WIC linearized scRGB) - 64-bit half-float, preserves >1.0
-    SVG_XML             // [D2D Native] Raw SVG XML Data
+    SVG_XML,            // [D2D Native] Raw SVG XML Data
+    SVG_WEBVIEW         // [DComp] Complex SVG for WebView2 composition rendering
 };
 
 // [v9.0] Decode Quality Tag (for Cache Validation)
@@ -384,8 +385,11 @@ struct RawImageFrame {
     };
     std::unique_ptr<SvgData> svg;  // nullptr = Non-SVG
     
-    // Helper: SVG only call
+    // Helper: SVG only call (D2D native SVG path)
     bool IsSvg() const { return format == PixelFormat::SVG_XML && svg; }
+    
+    // Helper: WebView2 DComp composition path (complex SVG)
+    bool IsWebView() const { return format == PixelFormat::SVG_WEBVIEW && svg; }
 
     // [GPU Pipeline] Release auxiliary layer
     GpuBlendOp blendOp = GpuBlendOp::None;
@@ -411,7 +415,7 @@ struct RawImageFrame {
     /// Check if frame contains valid data (pixels for raster, or XML for SVG)
     [[nodiscard]] bool IsValid() const noexcept {
         // SVG frames don't have pixels, only XML data
-        if (format == PixelFormat::SVG_XML && svg && !svg->xmlData.empty()) {
+        if ((format == PixelFormat::SVG_XML || format == PixelFormat::SVG_WEBVIEW) && svg && !svg->xmlData.empty()) {
             return true;
         }
         return pixels != nullptr && width > 0 && height > 0 && stride > 0;

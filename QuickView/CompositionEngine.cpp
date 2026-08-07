@@ -1450,3 +1450,78 @@ HRESULT CompositionEngine::UpdateBackground(float width, float height, const D2D
 
     return S_OK;
 }
+
+namespace {
+
+void SetVisualOpacitySafe(IDCompositionVisual2* visual, float opacity) {
+    if (!visual) return;
+    ComPtr<IDCompositionVisual3> v3;
+    if (SUCCEEDED(visual->QueryInterface(IID_PPV_ARGS(&v3))) && v3) {
+        v3->SetOpacity(opacity);
+    }
+}
+
+} // namespace
+
+HRESULT CompositionEngine::MountWebViewVisual(IDCompositionVisual2* webviewVisual) {
+    if (!webviewVisual || !m_imageContainer) return E_INVALIDARG;
+
+    // Already mounted as the same visual — no-op.
+    if (m_webviewVisual == webviewVisual) {
+        return S_OK;
+    }
+
+    if (m_webviewVisual) {
+        m_imageContainer->RemoveVisual(m_webviewVisual);
+        m_webviewVisual = nullptr;
+    }
+
+    // Z-order inside ImageContainer (back → front):
+    //   ImageB → ImageA → ImageOverlay → WebViewVisual
+    // Insert above overlay when present; otherwise above active image layer.
+    IDCompositionVisual* insertAbove = nullptr;
+    if (m_imageOverlayVisual) {
+        insertAbove = m_imageOverlayVisual.Get();
+    } else {
+        insertAbove = (m_activeLayerIndex == 0) ? m_imageA.visual.Get() : m_imageB.visual.Get();
+    }
+
+    HRESULT hr = m_imageContainer->AddVisual(webviewVisual, TRUE, insertAbove);
+    if (SUCCEEDED(hr)) {
+        m_webviewVisual = webviewVisual;
+    }
+    return hr;
+}
+
+HRESULT CompositionEngine::UnmountWebViewVisual() {
+    if (m_webviewVisual && m_imageContainer) {
+        m_imageContainer->RemoveVisual(m_webviewVisual);
+    }
+    m_webviewVisual = nullptr;
+
+    if (m_webviewModeActive) {
+        SetWebViewMode(false);
+    }
+    return S_OK;
+}
+
+HRESULT CompositionEngine::SetWebViewMode(bool enabled) {
+    if (m_webviewModeActive == enabled) return S_OK;
+    m_webviewModeActive = enabled;
+
+    if (enabled) {
+        // Hide bitmap/SVG ping-pong layers and gamut overlay; WebView owns the pixels.
+        SetVisualOpacitySafe(m_imageA.visual.Get(), 0.0f);
+        SetVisualOpacitySafe(m_imageB.visual.Get(), 0.0f);
+        SetVisualOpacitySafe(m_imageOverlayVisual.Get(), 0.0f);
+    } else {
+        // Restore the active image layer. Pending layer stays at whatever
+        // PlayPingPongCrossFade last set (typically 0 until next swap).
+        auto& activeLayer = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+        auto& pendingLayer = (m_activeLayerIndex == 0) ? m_imageB : m_imageA;
+        SetVisualOpacitySafe(activeLayer.visual.Get(), 1.0f);
+        SetVisualOpacitySafe(pendingLayer.visual.Get(), 0.0f);
+        SetVisualOpacitySafe(m_imageOverlayVisual.Get(), 1.0f);
+    }
+    return S_OK;
+}

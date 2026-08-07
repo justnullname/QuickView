@@ -1226,7 +1226,7 @@ void ImageEngine::FastLane::QueueWorker() {
                 // When FastLane immediately starts next job, Arena memory is reused.
                 // Main thread may not have consumed this frame yet -> corruption!
                 auto safeFrame = std::make_shared<QuickView::RawImageFrame>();
-                if (rawFrame.IsSvg()) {
+                if (rawFrame.IsSvg() || rawFrame.IsWebView()) {
                     safeFrame->format = rawFrame.format;
                     safeFrame->formatDetails = rawFrame.formatDetails;
                     safeFrame->width = rawFrame.width;

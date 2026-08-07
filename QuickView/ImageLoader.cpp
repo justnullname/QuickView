@@ -13850,30 +13850,30 @@ HRESULT CImageLoader::LoadToFrame(
       if (svgH <= 0)
         svgH = 512;
 
-      // 3. Check for WebView2 Offscreen Fallback (for complex SVG with <foreignObject> or <filter>)
+      // 3. Check for WebView2 DComp Composition (complex SVG with <foreignObject> or <filter>)
       if (QuickView::OffscreenWebView2::NeedsFallback(svgContent)) {
-          std::vector<uint8_t> pixels;
-          int w = 0, h = 0;
-          if (QuickView::OffscreenWebView2::RenderSvgToRgba(svgContent, svgW, svgH, pixels, w, h)) {
-              outFrame->format = PixelFormat::RGBA8888;
-              outFrame->width = w;
-              outFrame->height = h;
-              outFrame->stride = w * 4;
-              outFrame->pixels = (uint8_t*)malloc(pixels.size());
-              if (outFrame->pixels) {
-                  memcpy(outFrame->pixels, pixels.data(), pixels.size());
-              }
-              if (pLoaderName) *pLoaderName = L"SVG (WebView2 Offscreen)";
-              if (pMetadata) {
-                  pMetadata->LoaderName = L"SVG (WebView2 Offscreen)";
-                  pMetadata->Format = L"SVG";
-                  pMetadata->FormatDetails = L"Complex Vector (Rasterized)";
-                  pMetadata->Width = (UINT)w;
-                  pMetadata->Height = (UINT)h;
-              }
-              outFrame->formatDetails = L"Complex SVG";
-              return S_OK;
+          // Tag as SVG_WEBVIEW -- UI thread will route to WebViewCompositor DComp visual
+          outFrame->format = PixelFormat::SVG_WEBVIEW;
+          outFrame->width = (int)std::lround(svgW);
+          outFrame->height = (int)std::lround(svgH);
+          outFrame->stride = 0; // No pixels -- WebView2 renders via DComp composition
+          outFrame->pixels = nullptr;
+
+          outFrame->svg = std::make_unique<RawImageFrame::SvgData>();
+          outFrame->svg->xmlData.assign(svgContent.begin(), svgContent.end());
+          outFrame->svg->viewBoxW = svgW;
+          outFrame->svg->viewBoxH = svgH;
+
+          if (pLoaderName) *pLoaderName = L"SVG (WebView2 DComp)";
+          if (pMetadata) {
+              pMetadata->LoaderName = L"SVG (WebView2 DComp)";
+              pMetadata->Format = L"SVG";
+              pMetadata->FormatDetails = L"Complex Vector (DComp)";
+              pMetadata->Width = (UINT)svgW;
+              pMetadata->Height = (UINT)svgH;
           }
+          outFrame->formatDetails = L"Complex SVG";
+          return S_OK;
       }
 
       // 4. Native Direct2D SVG Fast-Track

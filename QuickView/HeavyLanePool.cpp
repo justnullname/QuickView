@@ -1815,7 +1815,7 @@ tile_decode_done: ; // [P14] Jump target for fast path (skip legacy TJ decode)
                 
                 size_t bufferSize = 0;
 
-                if (rawFrame.IsSvg()) {
+                if (rawFrame.IsSvg() || rawFrame.IsWebView()) {
                     safeFrame->format = rawFrame.format;
                     safeFrame->width = rawFrame.width;
                     safeFrame->height = rawFrame.height;

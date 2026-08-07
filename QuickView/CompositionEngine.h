@@ -91,6 +91,17 @@ public:
     HRESULT EndImageOverlayUpdate(bool visible);
     HRESULT ClearImageOverlay();
     
+    // [WebView2 DComp] Mount/Unmount external WebView2 visual into ImageContainer
+    // The mounted visual inherits all hardware transforms (scale/translate/rotate)
+    HRESULT MountWebViewVisual(IDCompositionVisual2* webviewVisual);
+    HRESULT UnmountWebViewVisual();
+    
+    // [WebView2 DComp] Toggle between bitmap mode and WebView mode
+    // In WebView mode: image layers hidden, WebView visual visible
+    // In Bitmap mode: image layers visible, WebView visual hidden
+    HRESULT SetWebViewMode(bool enabled);
+    bool IsWebViewMode() const { return m_webviewModeActive; }
+    
     // Background management
     HRESULT UpdateBackground(float width, float height, const D2D1_COLOR_F& bgColor, bool showGrid);
     
@@ -229,6 +240,10 @@ private:
     POINT m_imageOverlayDrawOffset = {};
     UINT m_imageOverlayMaskWidth = 0;
     UINT m_imageOverlayMaskHeight = 0;
+    
+    // [WebView2 DComp] External WebView visual mounted in ImageContainer
+    IDCompositionVisual2* m_webviewVisual = nullptr; // Non-owning, lifecycle managed by WebViewCompositor
+    bool m_webviewModeActive = false;
     
     // Hardware Transforms (applied to m_imageContainer)
     ComPtr<IDCompositionScaleTransform> m_scaleTransform;

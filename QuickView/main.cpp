@@ -11,6 +11,8 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "ImageEngine.h"
 #include "MappedFile.h"
 #include "UIRenderer.h"
+#include "OffscreenWebView2.h"
+#include "WebViewCompositor.h"
 #include "AppContext.h"
 #include "CompareController.h"
 #include "DialogController.h"
@@ -160,6 +162,10 @@ void HandleAnimFrameStep(HWND hwnd, bool forward); // [v10.5] fwd decl
 void PerformAnimSeek(HWND hwnd, float targetProgress);
 void RequestRepaint(QuickView::PaintLayer layer);
 static std::unique_ptr<CRenderEngine> g_renderEngine;
+std::unique_ptr<QuickView::WebViewCompositor> g_webViewCompositor;
+
+// Minimal globals for D3D fallback path
+ComPtr<ID3D11DeviceContext> g_d3dContext;
 static std::unique_ptr<CImageLoader> g_imageLoader;
 std::unique_ptr<ImageEngine> g_imageEngine;
 ImageEngine* g_pImageEngine = nullptr; // [v3.1] Global Accessor for UIRenderer
@@ -2458,17 +2464,17 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
             float maxW = screenW * maxSizePercent;
             float maxH = screenH * maxSizePercent;
             
-            float contentW = res.isSvg ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
-            float contentH = res.isSvg ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
+            float contentW = (res.isSvg || res.isWebView) ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
+            float contentH = (res.isSvg || res.isWebView) ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-            if (!res.isSvg && editState.HasCrop) {
+            if (!res.isSvg && !res.isWebView && editState.HasCrop) {
                 contentW = (float)(editState.CropRight - editState.CropLeft);
                 contentH = (float)(editState.CropBottom - editState.CropTop);
             }
 
             // [v9.9 Fix] Must Swap Dimensions for Portrait Orientation when calculating target surface size!
             // Otherwise we create a Landscape surface for a Portrait window -> Huge Margins.
-            if (!res.isSvg && !editState.HasCrop && g_config.AutoRotate) {
+            if (!res.isSvg && !res.isWebView && !editState.HasCrop && g_config.AutoRotate) {
                  int orient = g_renderExifOrientation;
                  if (orient >= 5 && orient <= 8) {
                      std::swap(contentW, contentH);
@@ -2494,6 +2500,33 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     if (UseSvgViewportRendering(res)) {
         surfW = winW;
         surfH = winH;
+    }
+
+    if (res.isWebView) {
+        UINT intrinsicW = (UINT)std::lround(res.svgW > 0.0f ? res.svgW : 512.0f);
+        UINT intrinsicH = (UINT)std::lround(res.svgH > 0.0f ? res.svgH : 512.0f);
+
+        // Clear background and enter WebView mode using intrinsic content sizing
+        ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(intrinsicW, intrinsicH, false, 0, 0, false, DXGI_FORMAT_B8G8R8A8_UNORM, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
+        if (ctx) ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+        g_compEngine->EndPendingUpdate();
+
+        // [WebView2] Mount and Toggle
+        g_compEngine->SetWebViewMode(true);
+        if (res.webViewVisual && g_webViewCompositor) {
+            g_webViewCompositor->SetContentSize(intrinsicW, intrinsicH);
+            g_compEngine->MountWebViewVisual(res.webViewVisual.Get());
+        }
+
+        g_compEngine->PlayPingPongCrossFade(0); // Instant switch
+        g_compEngine->Commit();
+        return true;
+    }
+
+    // [Bitmap/SVG Path] Exit WebView mode if we were in it
+    if (g_compEngine->IsWebViewMode()) {
+        g_compEngine->SetWebViewMode(false);
+        g_compEngine->UnmountWebViewVisual();
     }
 
     // [Titan Detection]
@@ -3365,7 +3398,7 @@ static D2D1_SIZE_F GetLogicalImageSize() {
         }
     }
 
-    if (primaryPane.resource && primaryPane.resource.isSvg) {
+    if (primaryPane.resource && (primaryPane.resource.isSvg || primaryPane.resource.isWebView)) {
         if (primaryPane.resource.svgW > 0.0f && primaryPane.resource.svgH > 0.0f) {
             return primaryPane.resource.GetSize();
         }
@@ -3914,7 +3947,7 @@ static float CalculateTargetZoom(HWND hwnd, float delta, bool isFineInterval = f
 static void ShowZoomOsd(HWND hwnd, float newTotalScale) {
     D2D1_SIZE_F visualSize = GetVisualImageSize();
     float osdScale = newTotalScale;
-    if (!GetPaneContext(PaneSlot::Primary).resource.isSvg && GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
+    if (!GetPaneContext(PaneSlot::Primary).resource.isSvg && !GetPaneContext(PaneSlot::Primary).resource.isWebView && GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
         VisualState vs = GetVisualState();
         float originalDim = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Height : GetPaneContext(PaneSlot::Primary).metadata.Width);
         if (originalDim > 0) {
@@ -6194,6 +6227,10 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
 
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
                 g_compEngine->SetImageInterpolationMode(interpMode);
+
+                if (GetPaneContext(PaneSlot::Primary).resource.isWebView && g_webViewCompositor) {
+                    g_webViewCompositor->SetRasterizationScale(displayZoom);
+                }
             }
         }
     } else {
@@ -13007,6 +13044,44 @@ void ProcessEngineEvents(HWND hwnd) {
                          resourceReady = true;
                      }
                      
+                } else if (evt.rawFrame->IsWebView()) {
+                     // === WebView2 DComp Path ===
+                     GetPaneContext(PaneSlot::Primary).resource.Reset();
+                     GetPaneContext(PaneSlot::Primary).resource.isWebView = true;
+                     GetPaneContext(PaneSlot::Primary).resource.svgW = evt.rawFrame->svg->viewBoxW;
+                     GetPaneContext(PaneSlot::Primary).resource.svgH = evt.rawFrame->svg->viewBoxH;
+
+                     const auto& xml = evt.rawFrame->svg->xmlData;
+                     std::wstring wXml;
+                     if (!xml.empty()) {
+                         int size = MultiByteToWideChar(CP_UTF8, 0, (const char*)xml.data(), (int)xml.size(), nullptr, 0);
+                         if (size > 0) {
+                             wXml.resize(size);
+                             MultiByteToWideChar(CP_UTF8, 0, (const char*)xml.data(), (int)xml.size(), wXml.data(), size);
+                         }
+                     }
+                     // Ensure initialization of the compositor and its visual
+                     if (!g_webViewCompositor) {
+                         g_webViewCompositor = std::make_unique<QuickView::WebViewCompositor>();
+                     }
+                     if (!g_webViewCompositor->IsInitialized() && g_compEngine) {
+                         g_webViewCompositor->Initialize(hwnd, g_compEngine->GetDevice());
+                     }
+
+                     if (g_webViewCompositor && g_webViewCompositor->IsInitialized()) {
+                         UINT intrinsicW = (UINT)std::lround(evt.rawFrame->svg->viewBoxW > 0.0f ? evt.rawFrame->svg->viewBoxW : 512.0f);
+                         UINT intrinsicH = (UINT)std::lround(evt.rawFrame->svg->viewBoxH > 0.0f ? evt.rawFrame->svg->viewBoxH : 512.0f);
+
+                         // Build full HTML doc with 100% viewport dimensions
+                         std::wstring html = L"<!DOCTYPE html><html><head><style>body,html{margin:0;padding:0;overflow:hidden;background:transparent;width:100%;height:100%;} svg{width:100%;height:100%;display:block;}</style></head><body>" + wXml + L"</body></html>";
+                         g_webViewCompositor->NavigateToString(html);
+                         g_webViewCompositor->SetContentSize(intrinsicW, intrinsicH);
+                         g_webViewCompositor->SetVisible(true);
+                         
+                         // Pass the visual to the PaneResource
+                         GetPaneContext(PaneSlot::Primary).resource.webViewVisual = g_webViewCompositor->GetVisual();
+                         resourceReady = true;
+                     }
                 } else {
                     // === Bitmap Path ===
                     QuickView::DisplayColorState uploadState = {};

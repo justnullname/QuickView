@@ -1,26 +1,46 @@
+/*
+ * QuickView - WebView2 SVG Fallback Detection & Offscreen Rasterizer
+ * Copyright (C) 2026-Present QuickView Contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "pch.h"
 #include "OffscreenWebView2.h"
 #include "WuffsLoader.h"
 #include "../third_party/webview2/WebView2.h"
 
-#include <windows.h>
 #include <wrl/client.h>
 #include <wrl/event.h>
 #include <shlwapi.h>
 #include <string>
 #include <atomic>
+#include <algorithm>
 
 using namespace Microsoft::WRL;
 
 namespace QuickView {
 
 bool OffscreenWebView2::NeedsFallback(std::string_view svgContent) {
-    if (svgContent.find("<foreignObject") != std::string_view::npos ||
-        svgContent.find("<foreignobject") != std::string_view::npos ||
-        svgContent.find("<filter") != std::string_view::npos ||
-        svgContent.find("<mask") != std::string_view::npos) {
-        return true;
-    }
-    return false;
+    // D2D native SVG lacks these features. Case-cover common spellings.
+    // Keep this a pure scan — no allocations, safe on loader threads.
+    auto has = [&](std::string_view tag) {
+        return svgContent.find(tag) != std::string_view::npos;
+    };
+    return has("<foreignObject") || has("<foreignobject") ||
+           has("<filter") || has("<Filter") ||
+           has("<mask") || has("<Mask");
 }
 
 bool OffscreenWebView2::RenderSvgToRgba(
@@ -29,51 +49,62 @@ bool OffscreenWebView2::RenderSvgToRgba(
     float targetH,
     std::vector<uint8_t>& outPixels,
     int& outW,
-    int& outH) 
+    int& outH)
 {
-    // CoInitialize for STA thread as WebView2 requires STA
-    HRESULT hrCo = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    outPixels.clear();
+    outW = 0;
+    outH = 0;
+    if (svgContent.empty()) return false;
 
-    // Prepare temp user data folder in local appdata or temp
-    wchar_t tempPath[MAX_PATH];
-    GetTempPathW(MAX_PATH, tempPath);
-    std::wstring userDataFolder = std::wstring(tempPath) + L"QuickView_WV2_Temp";
-
-    // Message-only window for hosting offscreen WebView2
-    // CRITICAL: We must use a real WS_POPUP window off-screen instead of HWND_MESSAGE.
-    // If we use HWND_MESSAGE or set IsVisible(FALSE), the Chromium render pipeline suspends and CapturePreview hangs or captures nothing!
-    HWND hWndOffscreen = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, 
-        L"STATIC", L"QV_Offscreen", 
-        WS_POPUP, -10000, -10000, 10, 10, 
-        nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
-    if (!hWndOffscreen) {
-        if (SUCCEEDED(hrCo)) CoUninitialize();
+    HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool coInitedHere = (hrCo == S_OK || hrCo == S_FALSE);
+    // RPC_E_CHANGED_MODE: already on MTA — WebView2 requires STA; abort.
+    if (hrCo == RPC_E_CHANGED_MODE) {
         return false;
     }
 
-    int renderW = (int)(targetW > 0 ? targetW : 1024);
-    int renderH = (int)(targetH > 0 ? targetH : 1024);
+    wchar_t tempPath[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, tempPath);
+    const std::wstring userDataFolder = std::wstring(tempPath) + L"QuickView_WV2_Temp";
 
-    std::atomic<bool> isDone = false;
+    // Real off-screen popup — HWND_MESSAGE / IsVisible(FALSE) suspends Chromium paint.
+    HWND hWndOffscreen = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"STATIC", L"QV_Offscreen",
+        WS_POPUP, -10000, -10000, 10, 10,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!hWndOffscreen) {
+        if (coInitedHere) CoUninitialize();
+        return false;
+    }
+
+    const int renderW = (std::max)(1, static_cast<int>(targetW > 0.0f ? targetW : 1024.0f));
+    const int renderH = (std::max)(1, static_cast<int>(targetH > 0.0f ? targetH : 1024.0f));
+
+    std::atomic<bool> isDone{false};
     bool success = false;
 
     ComPtr<ICoreWebView2Controller> webViewController;
     ComPtr<ICoreWebView2> webView;
 
-    // Html wrapper for rendering SVG crisp & centered
-    std::string htmlContent = 
+    const std::string htmlContent =
         "<!DOCTYPE html><html><head><style>"
-        "html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background-color:#ffffff; display:flex; justify-content:center; align-items:center; }"
-        "svg { max-width:100%; max-height:100%; }"
+        "html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;"
+        "background:transparent;display:flex;justify-content:center;align-items:center;}"
+        "svg{max-width:100%;max-height:100%;}"
         "</style></head><body>" + std::string(svgContent) + "</body></html>";
 
-    // Convert string to wchar for NavigateToString
     int reqLen = MultiByteToWideChar(CP_UTF8, 0, htmlContent.c_str(), -1, nullptr, 0);
-    std::wstring wHtml(reqLen, 0);
-    MultiByteToWideChar(CP_UTF8, 0, htmlContent.c_str(), -1, &wHtml[0], reqLen);
+    if (reqLen <= 0) {
+        DestroyWindow(hWndOffscreen);
+        if (coInitedHere) CoUninitialize();
+        return false;
+    }
+    std::wstring wHtml(static_cast<size_t>(reqLen), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, htmlContent.c_str(), -1, wHtml.data(), reqLen);
+    // Drop the embedded null from MultiByteToWideChar(-1).
+    if (!wHtml.empty() && wHtml.back() == L'\0') wHtml.pop_back();
 
-    // Call CreateCoreWebView2EnvironmentWithOptions directly (Static Linking)
     HRESULT hrEnv = CreateCoreWebView2EnvironmentWithOptions(
         nullptr,
         userDataFolder.c_str(),
@@ -96,22 +127,37 @@ bool OffscreenWebView2::RenderSvgToRgba(
 
                             webViewController = controller;
                             webViewController->get_CoreWebView2(&webView);
+                            if (!webView) {
+                                isDone = true;
+                                return S_OK;
+                            }
 
-                            // Set size & bounds
-                            RECT bounds = {0, 0, renderW, renderH};
+                            RECT bounds = { 0, 0, renderW, renderH };
                             webViewController->put_Bounds(bounds);
-                            // CRITICAL: Must be TRUE, otherwise rendering is suspended!
                             webViewController->put_IsVisible(TRUE);
 
-                            // Add NavigationCompleted handler
-                            EventRegistrationToken tokenNav;
+                            ComPtr<ICoreWebView2Controller2> c2;
+                            if (SUCCEEDED(webViewController.As(&c2))) {
+                                COREWEBVIEW2_COLOR color = { 0, 0, 0, 0 };
+                                c2->put_DefaultBackgroundColor(color);
+                            }
+
+                            EventRegistrationToken tokenNav{};
                             webView->add_NavigationCompleted(
                                 Callback<ICoreWebView2NavigationCompletedEventHandler>(
                                     [&](ICoreWebView2* sender, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
-                                        (void)args;
-                                        // Capture preview as PNG to stream
+                                        BOOL navOk = FALSE;
+                                        if (args) args->get_IsSuccess(&navOk);
+                                        if (!navOk) {
+                                            isDone = true;
+                                            return S_OK;
+                                        }
+
                                         ComPtr<IStream> imgStream;
-                                        CreateStreamOnHGlobal(nullptr, TRUE, &imgStream);
+                                        if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &imgStream)) || !imgStream) {
+                                            isDone = true;
+                                            return S_OK;
+                                        }
 
                                         sender->CapturePreview(
                                             COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
@@ -119,26 +165,25 @@ bool OffscreenWebView2::RenderSvgToRgba(
                                             Callback<ICoreWebView2CapturePreviewCompletedHandler>(
                                                 [&, imgStream](HRESULT hrCap) -> HRESULT {
                                                     if (SUCCEEDED(hrCap)) {
-                                                        // Read stream into buffer
-                                                        STATSTG stat;
+                                                        STATSTG stat = {};
                                                         imgStream->Stat(&stat, STATFLAG_NONAME);
-                                                        ULONG bytesRead = 0;
-                                                        std::vector<uint8_t> pngData(stat.cbSize.LowPart);
-                                                        LARGE_INTEGER zero;
-                                                        zero.QuadPart = 0;
-                                                        imgStream->Seek(zero, STREAM_SEEK_SET, nullptr);
-                                                        imgStream->Read(pngData.data(), stat.cbSize.LowPart, &bytesRead);
-                                                        
-                                                        uint32_t dw = 0, dh = 0;
-                                                        if (WuffsLoader::DecodePNG(pngData.data(), pngData.size(), &dw, &dh, outPixels)) {
-                                                            outW = (int)dw;
-                                                            outH = (int)dh;
-                                                            
-                                                            // Wuffs outputs BGRA. Convert to RGBA for consistency with fallback pipeline
-                                                            for (size_t i = 0; i < outPixels.size(); i += 4) {
-                                                                std::swap(outPixels[i], outPixels[i+2]);
+                                                        if (stat.cbSize.LowPart > 0) {
+                                                            std::vector<uint8_t> pngData(stat.cbSize.LowPart);
+                                                            LARGE_INTEGER zero{};
+                                                            imgStream->Seek(zero, STREAM_SEEK_SET, nullptr);
+                                                            ULONG bytesRead = 0;
+                                                            imgStream->Read(pngData.data(), stat.cbSize.LowPart, &bytesRead);
+
+                                                            uint32_t dw = 0, dh = 0;
+                                                            if (WuffsLoader::DecodePNG(pngData.data(), pngData.size(), &dw, &dh, outPixels)) {
+                                                                outW = static_cast<int>(dw);
+                                                                outH = static_cast<int>(dh);
+                                                                // Wuffs PNG path yields BGRA; pipeline expects RGBA here.
+                                                                for (size_t i = 0; i + 3 < outPixels.size(); i += 4) {
+                                                                    std::swap(outPixels[i], outPixels[i + 2]);
+                                                                }
+                                                                success = true;
                                                             }
-                                                            success = true;
                                                         }
                                                     }
                                                     isDone = true;
@@ -147,7 +192,6 @@ bool OffscreenWebView2::RenderSvgToRgba(
                                         return S_OK;
                                     }).Get(), &tokenNav);
 
-                            // Navigate to string
                             webView->NavigateToString(wHtml.c_str());
                             return S_OK;
                         }).Get());
@@ -156,30 +200,27 @@ bool OffscreenWebView2::RenderSvgToRgba(
 
     if (FAILED(hrEnv)) {
         DestroyWindow(hWndOffscreen);
-        if (SUCCEEDED(hrCo)) CoUninitialize();
+        if (coInitedHere) CoUninitialize();
         return false;
     }
 
-    // Pump Win32 messages while waiting for offscreen render completion (timeout 5 sec max)
-    DWORD startTicks = GetTickCount();
-    MSG msg;
-    while (!isDone && (GetTickCount() - startTicks < 5000)) {
+    const DWORD startTicks = GetTickCount();
+    MSG msg = {};
+    while (!isDone.load() && (GetTickCount() - startTicks < 5000)) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
         Sleep(5);
     }
-    
-    // CRITICAL: Immediately close controller and release all COM objects to guarantee ZERO background memory footprint!
+
     if (webViewController) {
         webViewController->Close();
-        webViewController = nullptr;
+        webViewController.Reset();
     }
-    webView = nullptr;
-
+    webView.Reset();
     DestroyWindow(hWndOffscreen);
-    if (SUCCEEDED(hrCo)) CoUninitialize();
+    if (coInitedHere) CoUninitialize();
 
     return success;
 }
