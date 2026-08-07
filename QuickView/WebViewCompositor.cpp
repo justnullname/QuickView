@@ -79,6 +79,11 @@ HRESULT WebViewCompositor::CreateVisualTree(IDCompositionDesktopDevice* dcompDev
         return hr;
     }
 
+    hr = dcompDevice->CreateScaleTransform(&scaleTransform_);
+    if (SUCCEEDED(hr) && scaleTransform_) {
+        containerVisual_->SetTransform(scaleTransform_.Get());
+    }
+
     SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
     return S_OK;
 }
@@ -312,11 +317,30 @@ HRESULT WebViewCompositor::SetRasterizationScale(float scale) {
     if (!controller3_) return E_NOINTERFACE;
     if (scale <= 0.0f) return E_INVALIDARG;
 
-    // Clamp raster scale between 0.25 and 4.0 to balance sharp rendering vs GPU memory footprint.
-    // In USE_RASTERIZATION_SCALE mode, visual size stays constant at Bounds;
-    // only internal pixel density changes. No inverse compensation needed.
-    double clampedScale = static_cast<double>(std::clamp(scale, 0.25f, 4.0f));
-    return controller3_->put_RasterizationScale(clampedScale);
+    // Dynamically calculate upper bound based on GPU hardware texture limit (16384 px) and intrinsic content dimensions.
+    float maxScale = 16.0f;
+    const UINT maxDim = (std::max)(contentW_, contentH_);
+    if (maxDim > 0) {
+        maxScale = 16384.0f / static_cast<float>(maxDim);
+        maxScale = (std::clamp)(maxScale, 1.0f, 32.0f);
+    }
+
+    float clampedScale = (std::clamp)(scale, 0.25f, maxScale);
+
+    if (std::abs(currentRasterScale_ - clampedScale) < 0.01f) {
+        return S_OK;
+    }
+
+    HRESULT hr = controller3_->put_RasterizationScale(static_cast<double>(clampedScale));
+    if (SUCCEEDED(hr)) {
+        currentRasterScale_ = clampedScale;
+        if (scaleTransform_) {
+            float invScale = 1.0f / clampedScale;
+            scaleTransform_->SetScaleX(invScale);
+            scaleTransform_->SetScaleY(invScale);
+        }
+    }
+    return hr;
 }
 
 void WebViewCompositor::SetVisible(bool visible) {
@@ -374,10 +398,12 @@ void WebViewCompositor::ResetCompositorState() {
         containerVisual_->RemoveAllVisuals();
     }
     webviewVisual_.Reset();
+    scaleTransform_.Reset();
     containerVisual_.Reset();
 
     contentW_ = 0;
     contentH_ = 0;
+    currentRasterScale_ = 1.0f;
     visible_ = false;
     ready_ = false;
 }

@@ -810,6 +810,8 @@ static D2D1_SIZE_F GetLogicalImageSize();
 D2D1_SIZE_F GetVisualImageSize();
 VisualState GetVisualState();
 static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
+static void SyncWebView2RasterizationScale(HWND hwnd = nullptr);
+static void SyncWebView2RasterizationScale(float totalScale);
 
 void ApplyFullScreenZoomMode(HWND hwnd) {
     if (!GetPaneContext(PaneSlot::Primary).resource || (!g_isFullScreen && !IsZoomed(hwnd))) return;
@@ -2515,6 +2517,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         g_compEngine->SetWebViewMode(true);
         if (res.webViewVisual && g_webViewCompositor) {
             g_webViewCompositor->SetContentSize(intrinsicW, intrinsicH);
+            SyncWebView2RasterizationScale();
             g_compEngine->MountWebViewVisual(res.webViewVisual.Get());
         }
 
@@ -3451,6 +3454,30 @@ static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, flo
     }
 
     return baseFit;
+}
+
+static void SyncWebView2RasterizationScale(float totalScale) {
+    const auto& res = GetPaneContext(PaneSlot::Primary).resource;
+    if (res && res.isWebView && g_webViewCompositor && g_webViewCompositor->IsReady()) {
+        g_webViewCompositor->SetRasterizationScale(totalScale);
+    }
+}
+
+static void SyncWebView2RasterizationScale(HWND hwnd) {
+    const auto& res = GetPaneContext(PaneSlot::Primary).resource;
+    if (res && res.isWebView && g_webViewCompositor && g_webViewCompositor->IsReady()) {
+        float winW = 0.0f, winH = 0.0f;
+        RECT rc = {};
+        if (hwnd && GetClientRect(hwnd, &rc) && rc.right > 0 && rc.bottom > 0) {
+            winW = static_cast<float>(rc.right);
+            winH = static_cast<float>(rc.bottom);
+        }
+        VisualState vs = GetVisualState();
+        float baseFit = (winW > 0.0f && winH > 0.0f) ? ComputeBaseFitScaleForVisual(vs, winW, winH) : 1.0f;
+        float zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
+        float totalScale = baseFit * zoom;
+        g_webViewCompositor->SetRasterizationScale(totalScale);
+    }
 }
 
 
@@ -6227,6 +6254,10 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
 
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
                 g_compEngine->SetImageInterpolationMode(interpMode);
+
+                if (animationDurationMs <= 0.0f) {
+                    SyncWebView2RasterizationScale(displayZoom);
+                }
             }
         }
     } else {
@@ -7955,12 +7986,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             KillTimer(hwnd, IDT_INTERACTION);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = false;  // End interaction mode
             TryUpgradeBitmapSurface(hwnd);
+            SyncWebView2RasterizationScale();
             RequestRepaint(PaintLayer::Image);  // [v4.1] Trigger HQ interpolation redraw
         }
 
         if (wParam == IDT_SMOOTH_ZOOM) {
             if (!AppContext::GetInstance().ZoomAnimCtrl->Tick(hwnd)) {
                 KillTimer(hwnd, IDT_SMOOTH_ZOOM);
+                SyncWebView2RasterizationScale();
             }
             return 0;
         }
@@ -13068,10 +13101,11 @@ void ProcessEngineEvents(HWND hwnd) {
                          UINT intrinsicW = (UINT)std::lround(evt.rawFrame->svg->viewBoxW > 0.0f ? evt.rawFrame->svg->viewBoxW : 512.0f);
                          UINT intrinsicH = (UINT)std::lround(evt.rawFrame->svg->viewBoxH > 0.0f ? evt.rawFrame->svg->viewBoxH : 512.0f);
 
-                         // Build full HTML doc with 100% viewport dimensions
-                         std::wstring html = L"<!DOCTYPE html><html><head><style>body,html{margin:0;padding:0;overflow:hidden;background:transparent;width:100%;height:100%;} svg{width:100%;height:100%;display:block;}</style></head><body>" + wXml + L"</body></html>";
+                         // Build full HTML doc with 100% viewport dimensions & flex centering
+                         std::wstring html = L"<!DOCTYPE html><html><head><style>body,html{margin:0;padding:0;overflow:hidden;background:transparent;width:100%;height:100%;display:flex;justify-content:center;align-items:center;} svg{width:100%;height:100%;display:block;margin:auto;}</style></head><body>" + wXml + L"</body></html>";
                          g_webViewCompositor->NavigateToString(html);
                          g_webViewCompositor->SetContentSize(intrinsicW, intrinsicH);
+                         SyncWebView2RasterizationScale();
                          g_webViewCompositor->SetVisible(true);
                          
                          // Pass the visual to the PaneResource

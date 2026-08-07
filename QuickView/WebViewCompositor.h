@@ -69,6 +69,7 @@ public:
 
     // Dynamically update WebView2 rasterization scale (clamped to safe limits).
     HRESULT SetRasterizationScale(float scale);
+    float GetRasterizationScale() const { return currentRasterScale_; }
 
     // Show/hide via visual opacity + controller visibility.
     void SetVisible(bool visible);
@@ -98,6 +99,7 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> containerVisual_;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> webviewVisual_;
+    Microsoft::WRL::ComPtr<IDCompositionScaleTransform> scaleTransform_;
 
     HWND hwnd_ = nullptr;
     std::atomic<bool> ready_{false};
@@ -107,6 +109,7 @@ private:
 
     UINT contentW_ = 0;
     UINT contentH_ = 0;
+    float currentRasterScale_ = 1.0f;
 
     static constexpr DWORD kInitTimeoutMs = 15000;
 };
