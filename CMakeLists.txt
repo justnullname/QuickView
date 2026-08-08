@@ -113,7 +113,7 @@ set(QUICKVIEW_SOURCES
     QuickView/JxlAnimator.cpp
     QuickView/QuickViewETW.cpp
     QuickView/OffscreenWebView2.cpp
-    QuickView/WebViewCompositor.cpp
+    QuickView/WebContentHost.cpp
     
     # Third party manually included
     third_party/yyjson/yyjson.c

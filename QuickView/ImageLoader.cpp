@@ -4358,7 +4358,9 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
 
     HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetSize,
                              targetSize, &pData->loaderName, {}, {});
-    if (SUCCEEDED(hr) && pFrame->IsSvg() && pFrame->svg) {
+    // SVG_XML and SVG_WEBVIEW both carry xmlData; D2D raster is best-effort for
+    // complex (WebView) SVGs but still produces a usable gallery/minimap thumb.
+    if (SUCCEEDED(hr) && (pFrame->IsSvg() || pFrame->IsWebView()) && pFrame->svg) {
       hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
                                  pFrame->svg->viewBoxH, targetSize, pData);
     } else if (SUCCEEDED(hr) && pFrame->pixels && pFrame->width > 0 &&
@@ -13852,7 +13854,7 @@ HRESULT CImageLoader::LoadToFrame(
 
       // 3. Check for WebView2 DComp Composition (complex SVG with <foreignObject> or <filter>)
       if (QuickView::OffscreenWebView2::NeedsFallback(svgContent)) {
-          // Tag as SVG_WEBVIEW -- UI thread will route to WebViewCompositor DComp visual
+          // Tag as SVG_WEBVIEW -- UI thread will route to WebContentHost DComp visual
           outFrame->format = PixelFormat::SVG_WEBVIEW;
           outFrame->width = (int)std::lround(svgW);
           outFrame->height = (int)std::lround(svgH);

@@ -1466,14 +1466,14 @@ void SetVisualOpacitySafe(IDCompositionVisual2* visual, float opacity) {
 HRESULT CompositionEngine::MountWebViewVisual(IDCompositionVisual2* webviewVisual) {
     if (!webviewVisual || !m_imageContainer) return E_INVALIDARG;
 
-    // Already mounted as the same visual — no-op.
-    if (m_webviewVisual == webviewVisual) {
-        return S_OK;
-    }
-
+    // Always detach first. After Unmount→Remount the same pointer is common;
+    // a no-op on pointer equality left the visual off-tree and showed the old image.
     if (m_webviewVisual) {
         m_imageContainer->RemoveVisual(m_webviewVisual);
         m_webviewVisual = nullptr;
+    } else {
+        // Best-effort: visual may still be parented from a prior session.
+        m_imageContainer->RemoveVisual(webviewVisual);
     }
 
     // Z-order inside ImageContainer (back → front):

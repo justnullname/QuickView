@@ -1952,7 +1952,13 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
     float winW = (float)m_width;
     float winH = (float)m_height;
 
-    float baseFit = std::min(winW / imgSize.width, winH / imgSize.height);
+    // Match SyncDCompState: pin-mode filmstrip reduces effective vertical viewport.
+    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
+        ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = winH - galleryH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
+
+    float baseFit = std::min(winW / imgSize.width, effWinH / imgSize.height);
 
     // [SVG Lossless] Adjust bounds calculation baseFit just like main.cpp
     if (g_runtime.LockWindowSize) {
@@ -1965,15 +1971,24 @@ void UIRenderer::DrawBorderIndicators(ID2D1DeviceContext* dc) {
         }
     }
 
-    // Use the global g_viewState which is updated synchronously by main.cpp during panning
+    // Prefer live smooth-zoom display values when animating (WebView/DComp path).
+    float panX = g_viewState.PanX;
+    float panY = g_viewState.PanY;
     float targetZoom = baseFit * g_viewState.Zoom;
+    if (AppContext::GetInstance().SmoothZoom.Active) {
+        targetZoom = AppContext::GetInstance().SmoothZoom.CurrentZoom;
+        panX = AppContext::GetInstance().SmoothZoom.CurrentPanX;
+        panY = AppContext::GetInstance().SmoothZoom.CurrentPanY;
+    }
     float scaledW = imgSize.width * targetZoom;
     float scaledH = imgSize.height * targetZoom;
 
-    float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + g_viewState.PanX;
-    float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + g_viewState.PanX;
-    float imgTop = (winH * 0.5f) - (scaledH * 0.5f) + g_viewState.PanY;
-    float imgBottom = (winH * 0.5f) + (scaledH * 0.5f) + g_viewState.PanY;
+    // Image center is shifted down by galleryH/2 when filmstrip is pinned (SyncDCompState).
+    float centerY = (winH * 0.5f) + galleryH * 0.5f;
+    float imgLeft = (winW * 0.5f) - (scaledW * 0.5f) + panX;
+    float imgRight = (winW * 0.5f) + (scaledW * 0.5f) + panX;
+    float imgTop = centerY - (scaledH * 0.5f) + panY;
+    float imgBottom = centerY + (scaledH * 0.5f) + panY;
 
     // Buffer to avoid flickering at exact edge bounds
     const float edgeBuffer = 1.0f;
@@ -6061,7 +6076,8 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         float minimapCenterX = (minimap.innerRect.left + minimap.innerRect.right) * 0.5f;
         float minimapCenterY = (minimap.innerRect.top + minimap.innerRect.bottom) * 0.5f;
         
-        if (pane.resource.isSvg && pane.resource.svgDoc) {
+        // Native SVG + WebView2 complex SVG (preview svgDoc populated best-effort at load).
+        if (pane.resource.svgDoc && (pane.resource.isSvg || pane.resource.isWebView)) {
             ComPtr<ID2D1DeviceContext5> ctx5;
             if (SUCCEEDED(dc->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
                 D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Scale(geo.fitScale, geo.fitScale) *

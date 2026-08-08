@@ -242,7 +242,7 @@ private:
     UINT m_imageOverlayMaskHeight = 0;
     
     // [WebView2 DComp] External WebView visual mounted in ImageContainer
-    IDCompositionVisual2* m_webviewVisual = nullptr; // Non-owning, lifecycle managed by WebViewCompositor
+    IDCompositionVisual2* m_webviewVisual = nullptr; // Non-owning, lifecycle managed by WebContentHost
     bool m_webviewModeActive = false;
     
     // Hardware Transforms (applied to m_imageContainer)

@@ -12,7 +12,8 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "MappedFile.h"
 #include "UIRenderer.h"
 #include "OffscreenWebView2.h"
-#include "WebViewCompositor.h"
+#include "WebContentHost.h"
+#include "WebContentKinds.h"
 #include "AppContext.h"
 #include "CompareController.h"
 #include "DialogController.h"
@@ -162,7 +163,7 @@ void HandleAnimFrameStep(HWND hwnd, bool forward); // [v10.5] fwd decl
 void PerformAnimSeek(HWND hwnd, float targetProgress);
 void RequestRepaint(QuickView::PaintLayer layer);
 static std::unique_ptr<CRenderEngine> g_renderEngine;
-std::unique_ptr<QuickView::WebViewCompositor> g_webViewCompositor;
+std::unique_ptr<QuickView::WebContentHost> g_webContentHost;
 
 // Minimal globals for D3D fallback path
 ComPtr<ID3D11DeviceContext> g_d3dContext;
@@ -810,8 +811,8 @@ static D2D1_SIZE_F GetLogicalImageSize();
 D2D1_SIZE_F GetVisualImageSize();
 VisualState GetVisualState();
 static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, float winH);
-static void SyncWebView2RasterizationScale(HWND hwnd = nullptr);
-static void SyncWebView2RasterizationScale(float totalScale);
+static size_t CountWebContentFilesInNavigator();
+
 
 void ApplyFullScreenZoomMode(HWND hwnd) {
     if (!GetPaneContext(PaneSlot::Primary).resource || (!g_isFullScreen && !IsZoomed(hwnd))) return;
@@ -2215,16 +2216,88 @@ static void DrawSvgWithViewportTransform(ID2D1DeviceContext* ctx, const ImageRes
 }
 
 static float GetSvgMaxSharpTotalScale(const ImageResource& res) {
-    if (!res.isSvg || res.svgW <= 0.0f || res.svgH <= 0.0f) {
+    // Native SVG: 2x supersampled viewport. WebContent: GPU R_max (soft above
+    // current RasterizationScale until idle upgrade — not open R).
+    if (res.svgW <= 0.0f || res.svgH <= 0.0f) {
+        return (std::numeric_limits<float>::max)();
+    }
+    if (!res.isSvg && !res.isWebView) {
         return (std::numeric_limits<float>::max)();
     }
 
     const float maxSurfaceSize = (float)GetSvgSurfaceSizeLimit();
     const float maxSurfaceScale = std::min(maxSurfaceSize / res.svgW,
                                            maxSurfaceSize / res.svgH);
-    // We render SVG backing surfaces at 2x supersampling, so the sharp on-screen
-    // scale limit is half of the maximum backing-surface scale.
+    if (res.isWebView) {
+        // Zoom hard cap = hardware texture ceiling, not current density R.
+        if (g_webContentHost && g_webContentHost->IsReady()) {
+            return std::max(0.1f, g_webContentHost->GetMaxRasterScale());
+        }
+        return std::max(0.1f, QuickView::WebContentHost::ComputeMaxRasterScale(
+            res.svgW, res.svgH, GetSvgSurfaceSizeLimit()));
+    }
+    // Native SVG: 2x supersampling on viewport surface.
     return std::max(0.1f, maxSurfaceScale / 2.0f);
+}
+
+// Gallery-aware displayZoom = baseFit * view.Zoom for current client.
+static float ComputeWebContentFitZoom(HWND hwnd, float contentW, float contentH) {
+    RECT rc = {};
+    if (!hwnd || !GetClientRect(hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) {
+        return 1.0f;
+    }
+    float winW = static_cast<float>(rc.right);
+    float winH = static_cast<float>(rc.bottom);
+    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible())
+        ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = winH - galleryH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
+
+    VisualState vs{};
+    vs.PhysicalSize = D2D1::SizeF(contentW > 0 ? contentW : 1.0f, contentH > 0 ? contentH : 1.0f);
+    vs.VisualSize = vs.PhysicalSize;
+    vs.TotalRotation = 0.0f;
+    vs.IsRotated90 = false;
+    vs.FlipX = 1.0f;
+    vs.FlipY = 1.0f;
+
+    float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+    if (g_slideshowState.IsActive && g_config.SlideshowImmersiveMode == 1) {
+        baseFit *= 0.85f;
+    }
+    return baseFit * GetPaneContext(PaneSlot::Primary).view.Zoom;
+}
+
+// After AdjustWindowToImage: apply open RasterizationScale from final displayZoom,
+// remount visual, sync ImageContainer. Bounds stay logical (W,H).
+static void SyncWebContentLayerAfterLayout(HWND hwnd) {
+    if (!g_webContentHost || !g_webContentHost->IsReady()) return;
+    auto& res = GetPaneContext(PaneSlot::Primary).resource;
+    if (!res || !res.isWebView) return;
+
+    const float displayZoom = ComputeWebContentFitZoom(hwnd, res.svgW, res.svgH);
+    g_webContentHost->ApplyOpenRasterScale(displayZoom, GetSvgSurfaceSizeLimit());
+
+    RenderImageToDComp(hwnd, res, false);
+    RECT rc = {};
+    if (GetClientRect(hwnd, &rc)) {
+        SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom, false);
+    }
+    if (g_compEngine) g_compEngine->Commit();
+}
+
+// Idle: track WebView density to displayZoom (up if soft, down if oversampled).
+// May briefly mask the surface; unhide via kDensitySettleTimerId.
+static void MaybeSyncWebContentRaster(HWND hwnd) {
+    if (!g_webContentHost || !g_webContentHost->IsReady()) return;
+    auto& res = GetPaneContext(PaneSlot::Primary).resource;
+    if (!res || !res.isWebView) return;
+
+    const float displayZoom = ComputeWebContentFitZoom(hwnd, res.svgW, res.svgH);
+    if (SUCCEEDED(g_webContentHost->SyncRasterScaleToDisplay(
+            displayZoom, GetSvgSurfaceSizeLimit()))) {
+        if (g_compEngine) g_compEngine->Commit();
+    }
 }
 
 static UINT GetSvgSurfaceSizeLimit() {
@@ -2505,23 +2578,42 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     }
 
     if (res.isWebView) {
-        UINT intrinsicW = (UINT)std::lround(res.svgW > 0.0f ? res.svgW : 512.0f);
-        UINT intrinsicH = (UINT)std::lround(res.svgH > 0.0f ? res.svgH : 512.0f);
+        // Layer = LOGICAL (W,H). ImageContainer.scale = displayZoom.
+        // Bounds (W,H) fixed; R = density; invScale 1/R keeps parent size W×H.
+        const UINT logicalW = (UINT)std::lround(res.svgW > 0.0f ? res.svgW : 512.0f);
+        const UINT logicalH = (UINT)std::lround(res.svgH > 0.0f ? res.svgH : 512.0f);
 
-        // Clear background and enter WebView mode using intrinsic content sizing
-        ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(intrinsicW, intrinsicH, false, 0, 0, false, DXGI_FORMAT_B8G8R8A8_UNORM, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
+        ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(
+            logicalW, logicalH, false, 0, 0, false,
+            DXGI_FORMAT_B8G8R8A8_UNORM, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
         if (ctx) ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
         g_compEngine->EndPendingUpdate();
 
-        // [WebView2] Mount and Toggle
-        g_compEngine->SetWebViewMode(true);
-        if (res.webViewVisual && g_webViewCompositor) {
-            g_webViewCompositor->SetContentSize(intrinsicW, intrinsicH);
-            SyncWebView2RasterizationScale();
-            g_compEngine->MountWebViewVisual(res.webViewVisual.Get());
+        if (g_webContentHost) {
+            g_webContentHost->PrepareForRemount();
+            IDCompositionVisual2* vis = res.webViewVisual.Get()
+                ? res.webViewVisual.Get()
+                : g_webContentHost->GetVisual();
+            if (vis) {
+                g_compEngine->MountWebViewVisual(vis);
+            }
         }
 
-        g_compEngine->PlayPingPongCrossFade(0); // Instant switch
+        g_compEngine->PlayPingPongCrossFade(0);
+        g_compEngine->SetWebViewMode(true);
+
+        // Keep layout metrics coherent with other paths (UI overlays, etc.).
+        g_lastSurfaceSize = D2D1::SizeF((float)logicalW, (float)logicalH);
+        {
+            float fitW = (float)(winW > 0 ? winW : logicalW);
+            float fitH = (float)(winH > 0 ? winH : logicalH);
+            g_lastFitScale = std::min(fitW / std::max(1.0f, (float)logicalW),
+                                      fitH / std::max(1.0f, (float)logicalH));
+            g_lastFitOffset = D2D1::Point2F(
+                (fitW - (float)logicalW * g_lastFitScale) * 0.5f,
+                (fitH - (float)logicalH * g_lastFitScale) * 0.5f);
+        }
+
         g_compEngine->Commit();
         return true;
     }
@@ -2530,6 +2622,9 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     if (g_compEngine->IsWebViewMode()) {
         g_compEngine->SetWebViewMode(false);
         g_compEngine->UnmountWebViewVisual();
+        if (g_webContentHost) {
+            g_webContentHost->NotifySurfaceInactive(hwnd, CountWebContentFilesInNavigator());
+        }
     }
 
     // [Titan Detection]
@@ -3456,29 +3551,19 @@ static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, flo
     return baseFit;
 }
 
-static void SyncWebView2RasterizationScale(float totalScale) {
-    const auto& res = GetPaneContext(PaneSlot::Primary).resource;
-    if (res && res.isWebView && g_webViewCompositor && g_webViewCompositor->IsReady()) {
-        g_webViewCompositor->SetRasterizationScale(totalScale);
+static size_t CountWebContentFilesInNavigator() {
+    size_t n = 0;
+    const auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+    const size_t count = nav.Count();
+    for (size_t i = 0; i < count; ++i) {
+        if (QuickView::IsWebContentPath(nav.GetFile(static_cast<int>(i)))) {
+            ++n;
+        }
     }
+    return n;
 }
 
-static void SyncWebView2RasterizationScale(HWND hwnd) {
-    const auto& res = GetPaneContext(PaneSlot::Primary).resource;
-    if (res && res.isWebView && g_webViewCompositor && g_webViewCompositor->IsReady()) {
-        float winW = 0.0f, winH = 0.0f;
-        RECT rc = {};
-        if (hwnd && GetClientRect(hwnd, &rc) && rc.right > 0 && rc.bottom > 0) {
-            winW = static_cast<float>(rc.right);
-            winH = static_cast<float>(rc.bottom);
-        }
-        VisualState vs = GetVisualState();
-        float baseFit = (winW > 0.0f && winH > 0.0f) ? ComputeBaseFitScaleForVisual(vs, winW, winH) : 1.0f;
-        float zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
-        float totalScale = baseFit * zoom;
-        g_webViewCompositor->SetRasterizationScale(totalScale);
-    }
-}
+
 
 
 
@@ -3848,8 +3933,11 @@ static float ClampTotalScale(HWND hwnd, float newTotalScale) {
 
     float minScale = 0.1f * fitScale;
     float maxScale = std::max(50.0f * fitScale, 50.0f);
-    if (GetPaneContext(PaneSlot::Primary).resource.isSvg && !UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-        maxScale = std::min(maxScale, GetSvgMaxSharpTotalScale(GetPaneContext(PaneSlot::Primary).resource));
+    const auto& zoomRes = GetPaneContext(PaneSlot::Primary).resource;
+    if (zoomRes.isWebView) {
+        maxScale = std::min(maxScale, GetSvgMaxSharpTotalScale(zoomRes));
+    } else if (zoomRes.isSvg && !UseSvgViewportRendering(zoomRes)) {
+        maxScale = std::min(maxScale, GetSvgMaxSharpTotalScale(zoomRes));
     }
 
     if (newTotalScale < minScale) newTotalScale = minScale;
@@ -6255,9 +6343,8 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
                 g_compEngine->SetImageInterpolationMode(interpMode);
 
-                if (animationDurationMs <= 0.0f) {
-                    SyncWebView2RasterizationScale(displayZoom);
-                }
+                // WebContent: interactive zoom is ImageContainer-only. Density R is
+                // synced on idle (MaybeSyncWebContentRaster), never here.
             }
         }
     } else {
@@ -6351,7 +6438,7 @@ static void TickSmoothWindowZoom(HWND hwnd) {
         g_compEngine->Commit();
         DwmFlush(); // Force DWM to sync, preventing tearing during window animation
     }
-    RequestRepaint(PaintLayer::Dynamic);
+    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
 
     if (t >= 1.0f) {
         GetPaneContext(PaneSlot::Primary).view.Zoom = AppContext::GetInstance().SmoothWindowZoom.targetZoom;
@@ -7425,7 +7512,8 @@ static void UpdatePanFromMinimapClick(int idx, POINT pt, HWND hwnd) {
         MarkCompareDirty();
         RequestRepaint(PaintLayer::Image | PaintLayer::Static | PaintLayer::Dynamic);
     } else {
-        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic);
+        // Static: minimap view-rect + edge overflow indicators (WebView is DComp-only).
+        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
     }
 }
 
@@ -7986,14 +8074,49 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             KillTimer(hwnd, IDT_INTERACTION);
             GetPaneContext(PaneSlot::Primary).view.IsInteracting = false;  // End interaction mode
             TryUpgradeBitmapSurface(hwnd);
-            SyncWebView2RasterizationScale();
+            MaybeSyncWebContentRaster(hwnd); // density ↔ displayZoom
+            {
+                RECT rcIdle = {};
+                if (GetClientRect(hwnd, &rcIdle)) {
+                    SyncDCompState(hwnd, (float)rcIdle.right, (float)rcIdle.bottom, false);
+                }
+            }
             RequestRepaint(PaintLayer::Image);  // [v4.1] Trigger HQ interpolation redraw
         }
 
         if (wParam == IDT_SMOOTH_ZOOM) {
             if (!AppContext::GetInstance().ZoomAnimCtrl->Tick(hwnd)) {
                 KillTimer(hwnd, IDT_SMOOTH_ZOOM);
-                SyncWebView2RasterizationScale();
+                MaybeSyncWebContentRaster(hwnd);
+                RECT rcIdle = {};
+                if (GetClientRect(hwnd, &rcIdle)) {
+                    SyncDCompState(hwnd, (float)rcIdle.right, (float)rcIdle.bottom, false);
+                }
+            }
+            // Keep minimap + edge overflow indicators in sync while DComp zoom animates.
+            RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+            return 0;
+        }
+
+        if (wParam == QuickView::WebContentHost::kDensitySettleTimerId) {
+            // Density R/invScale settled; restore surface opacity after mask.
+            if (g_webContentHost) {
+                g_webContentHost->OnDensitySettleTimer();
+            }
+            if (g_compEngine) g_compEngine->Commit();
+            return 0;
+        }
+
+        if (wParam == QuickView::WebContentHost::kRetentionTimerId) {
+            // Host is warm-idle; drop DComp mount then release WebView runtime.
+            if (g_compEngine) {
+                g_compEngine->UnmountWebViewVisual();
+                if (g_compEngine->IsWebViewMode()) {
+                    g_compEngine->SetWebViewMode(false);
+                }
+            }
+            if (g_webContentHost) {
+                g_webContentHost->OnRetentionTimer();
             }
             return 0;
         }
@@ -8433,7 +8556,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         DestroyWindow(hwnd);
         return 0;
     }
-case WM_DESTROY: g_thumbMgr.Shutdown(); PostQuitMessage(0); return 0;
+case WM_DESTROY: {
+            if (g_compEngine) {
+                g_compEngine->UnmountWebViewVisual();
+                g_compEngine->SetWebViewMode(false);
+            }
+            if (g_webContentHost) {
+                g_webContentHost->Shutdown();
+                g_webContentHost.reset();
+            }
+            g_thumbMgr.Shutdown();
+            PostQuitMessage(0);
+            return 0;
+        }
     
      // Mouse Interaction
      case WM_MOUSEMOVE: {
@@ -13074,43 +13209,76 @@ void ProcessEngineEvents(HWND hwnd) {
                      }
                      
                 } else if (evt.rawFrame->IsWebView()) {
-                     // === WebView2 DComp Path ===
-                     GetPaneContext(PaneSlot::Primary).resource.Reset();
-                     GetPaneContext(PaneSlot::Primary).resource.isWebView = true;
-                     GetPaneContext(PaneSlot::Primary).resource.svgW = evt.rawFrame->svg->viewBoxW;
-                     GetPaneContext(PaneSlot::Primary).resource.svgH = evt.rawFrame->svg->viewBoxH;
+                     // === WebContentHost DComp path (complex SVG) ===
+                     // Commit resource only after Present succeeds (avoid half-state UI).
+                     // No retry/Shutdown loops: warm leave keeps controller alive so Present
+                     // cannot fail from put_IsVisible(FALSE) suspension.
+                     if (!g_webContentHost) {
+                         g_webContentHost = std::make_unique<QuickView::WebContentHost>();
+                     }
+                     if (g_compEngine &&
+                         SUCCEEDED(g_webContentHost->EnsureReady(hwnd, g_compEngine->GetDevice())) &&
+                         g_webContentHost->IsReady()) {
 
-                     const auto& xml = evt.rawFrame->svg->xmlData;
-                     std::wstring wXml;
-                     if (!xml.empty()) {
-                         int size = MultiByteToWideChar(CP_UTF8, 0, (const char*)xml.data(), (int)xml.size(), nullptr, 0);
-                         if (size > 0) {
-                             wXml.resize(size);
-                             MultiByteToWideChar(CP_UTF8, 0, (const char*)xml.data(), (int)xml.size(), wXml.data(), size);
+                         QuickView::WebContentPayload payload;
+                         payload.kind = QuickView::WebContentKind::ComplexSvg;
+                         payload.intrinsicW = evt.rawFrame->svg->viewBoxW > 0.0f
+                             ? evt.rawFrame->svg->viewBoxW : 512.0f;
+                         payload.intrinsicH = evt.rawFrame->svg->viewBoxH > 0.0f
+                             ? evt.rawFrame->svg->viewBoxH : 512.0f;
+                         const auto& xml = evt.rawFrame->svg->xmlData;
+                         if (!xml.empty()) {
+                             payload.utf8Document.assign(
+                                 reinterpret_cast<const char*>(xml.data()), xml.size());
                          }
-                     }
-                     // Ensure initialization of the compositor and its visual
-                     if (!g_webViewCompositor) {
-                         g_webViewCompositor = std::make_unique<QuickView::WebViewCompositor>();
-                     }
-                     if (!g_webViewCompositor->IsInitialized() && g_compEngine) {
-                         g_webViewCompositor->Initialize(hwnd, g_compEngine->GetDevice());
-                     }
 
-                     if (g_webViewCompositor && g_webViewCompositor->IsInitialized()) {
-                         UINT intrinsicW = (UINT)std::lround(evt.rawFrame->svg->viewBoxW > 0.0f ? evt.rawFrame->svg->viewBoxW : 512.0f);
-                         UINT intrinsicH = (UINT)std::lround(evt.rawFrame->svg->viewBoxH > 0.0f ? evt.rawFrame->svg->viewBoxH : 512.0f);
+                         const UINT texLimit = GetSvgSurfaceSizeLimit();
+                         // Provisional R=1; open density applied after AdjustWindowToImage
+                         // (SyncWebContentLayerAfterLayout → ApplyOpenRasterScale).
+                         if (SUCCEEDED(g_webContentHost->Present(payload, 1.0f, texLimit)) &&
+                             g_webContentHost->GetVisual()) {
+                             GetPaneContext(PaneSlot::Primary).resource.Reset();
+                             GetPaneContext(PaneSlot::Primary).resource.isWebView = true;
+                             GetPaneContext(PaneSlot::Primary).resource.svgW =
+                                 evt.rawFrame->svg->viewBoxW;
+                             GetPaneContext(PaneSlot::Primary).resource.svgH =
+                                 evt.rawFrame->svg->viewBoxH;
+                             GetPaneContext(PaneSlot::Primary).resource.webViewVisual =
+                                 g_webContentHost->GetVisual();
 
-                         // Build full HTML doc with 100% viewport dimensions & flex centering
-                         std::wstring html = L"<!DOCTYPE html><html><head><style>body,html{margin:0;padding:0;overflow:hidden;background:transparent;width:100%;height:100%;display:flex;justify-content:center;align-items:center;} svg{width:100%;height:100%;display:block;margin:auto;}</style></head><body>" + wXml + L"</body></html>";
-                         g_webViewCompositor->NavigateToString(html);
-                         g_webViewCompositor->SetContentSize(intrinsicW, intrinsicH);
-                         SyncWebView2RasterizationScale();
-                         g_webViewCompositor->SetVisible(true);
-                         
-                         // Pass the visual to the PaneResource
-                         GetPaneContext(PaneSlot::Primary).resource.webViewVisual = g_webViewCompositor->GetVisual();
-                         resourceReady = true;
+                             // Best-effort D2D SVG document for minimap/UI overlays.
+                             // foreignObject/filter may be incomplete, but beats an empty navigator.
+                             if (!xml.empty() && g_renderEngine) {
+                                 ComPtr<ID2D1DeviceContext> ctxBase = g_renderEngine->GetDeviceContext();
+                                 ComPtr<ID2D1DeviceContext5> ctx5;
+                                 if (ctxBase && SUCCEEDED(ctxBase.As(&ctx5))) {
+                                     ComPtr<IStream> stream;
+                                     HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xml.size());
+                                     if (hMem) {
+                                         void* pMem = GlobalLock(hMem);
+                                         if (pMem) {
+                                             memcpy(pMem, xml.data(), xml.size());
+                                             GlobalUnlock(hMem);
+                                             CreateStreamOnHGlobal(hMem, TRUE, &stream);
+                                         } else {
+                                             GlobalFree(hMem);
+                                         }
+                                     }
+                                     if (stream) {
+                                         D2D1_SIZE_F vpSize = {
+                                             GetPaneContext(PaneSlot::Primary).resource.svgW,
+                                             GetPaneContext(PaneSlot::Primary).resource.svgH
+                                         };
+                                         if (vpSize.width <= 0.0f) vpSize.width = 100.0f;
+                                         if (vpSize.height <= 0.0f) vpSize.height = 100.0f;
+                                         ctx5->CreateSvgDocument(
+                                             stream.Get(), vpSize,
+                                             &GetPaneContext(PaneSlot::Primary).resource.svgDoc);
+                                     }
+                                 }
+                             }
+                             resourceReady = true;
+                         }
                      }
                 } else {
                     // === Bitmap Path ===
@@ -13474,6 +13642,12 @@ void ProcessEngineEvents(HWND hwnd) {
                         RECT rc; GetClientRect(hwnd, &rc);
                         SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
                         g_compEngine->Commit();
+                    }
+
+                    // WebContent: apply open RasterizationScale from final displayZoom,
+                    // then remount + ImageContainer sync (Bounds stay logical W×H).
+                    if (GetPaneContext(PaneSlot::Primary).resource.isWebView) {
+                        SyncWebContentLayerAfterLayout(hwnd);
                     }
                 }
 
@@ -15280,7 +15454,8 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
               g_compEngine->Commit();
               DwmFlush(); // Force DWM to sync, preventing tearing when smooth scaling is off
           }
-          RequestRepaint(PaintLayer::Dynamic);
+          // Static: edge overflow indicators + minimap track zoom (critical for WebView DComp).
+          RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
      } else {
          // --- Standard Zoom Path (Locked) ---
          RECT rcNew; GetClientRect(hwnd, &rcNew);
@@ -15358,7 +15533,8 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
               }
 
          }
-         RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image);
+         // Static: edge overflow indicators + minimap (WebView has no Image-layer pixels).
+         RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
     }
 
     RefreshSvgSurfaceAfterZoom(hwnd);
