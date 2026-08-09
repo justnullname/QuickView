@@ -170,8 +170,16 @@ void WebContentHost::ApplyDensityCompensation() {
         const float inv = 1.0f / r;
         scaleTransform_->SetCenterX(0.0f);
         scaleTransform_->SetCenterY(0.0f);
-        scaleTransform_->SetScaleX(inv);
-        scaleTransform_->SetScaleY(inv);
+        
+        // When masked or hidden, physically scale to zero to prevent WebView2 
+        // from showing stretched residual frames from a previous navigation.
+        if (surfaceOpacity_ <= 0.0f || densityMasked_) {
+            scaleTransform_->SetScaleX(0.0f);
+            scaleTransform_->SetScaleY(0.0f);
+        } else {
+            scaleTransform_->SetScaleX(inv);
+            scaleTransform_->SetScaleY(inv);
+        }
     }
     if (containerVisual_) {
         containerVisual_->SetOffsetX(0.0f);
@@ -494,6 +502,7 @@ void WebContentHost::HideSurface() {
     surfaceOpacity_ = 0.0f;
     pendingReveal_ = false;
     SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
+    ApplyDensityCompensation();
 }
 
 void WebContentHost::TryRevealSurface() {
@@ -504,6 +513,7 @@ void WebContentHost::TryRevealSurface() {
     pendingReveal_ = false;
     surfaceOpacity_ = 1.0f;
     SetVisualOpacitySafe(containerVisual_.Get(), 1.0f);
+    ApplyDensityCompensation();
     if (hwnd_) {
         PostMessageW(hwnd_, kCommitMessage, 0, 0);
         PostMessageW(hwnd_, kProxyStateMessage, 0, 0); // Hide proxy
@@ -587,6 +597,10 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
                                              maxTextureDim_);
     float r = (initialRasterScale > 0.0f) ? initialRasterScale : 1.0f;
     rasterScale_ = (std::clamp)(r, 0.25f, rMax);
+    if (controller3_) {
+        controller3_->put_RasterizationScale(static_cast<double>(rasterScale_));
+    }
+    ApplyDensityCompensation();
 
     controller_->put_IsVisible(TRUE);
 
@@ -677,6 +691,7 @@ HRESULT WebContentHost::PrepareForRemount() {
     } else {
         SetVisualOpacitySafe(containerVisual_.Get(), surfaceOpacity_);
     }
+    ApplyDensityCompensation();
     return S_OK;
 }
 
@@ -685,10 +700,12 @@ void WebContentHost::SetSurfaceOpacity(float opacity) {
     if (densityMasked_) {
         // Keep hidden until density settle completes.
         SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
+        ApplyDensityCompensation();
         return;
     }
     if (containerVisual_) {
         SetVisualOpacitySafe(containerVisual_.Get(), opacity);
+        ApplyDensityCompensation();
     }
 }
 
@@ -709,6 +726,7 @@ void WebContentHost::OnDensitySettleTimer() {
     densityMasked_ = false;
     if (containerVisual_ && surfaceActive_) {
         SetVisualOpacitySafe(containerVisual_.Get(), surfaceOpacity_);
+        ApplyDensityCompensation();
         if (hwnd_) PostMessageW(hwnd_, kProxyStateMessage, 0, 0); // Hide proxy
     }
 }

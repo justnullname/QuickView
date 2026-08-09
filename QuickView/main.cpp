@@ -7971,12 +7971,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // [Feature] Snapshot Cover (LOD) Proxy Layer
             // Push the newly acquired thumbnail into the DComp proxy layer (m_imageA)
             // so it's ready to cover the WebView2 visual when it's hidden during RasterizationScale updates.
-            extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade);
-            RenderImageToDComp(hwnd, res, false);
-
-            if (g_compEngine) {
-                // Hide it immediately so it doesn't bleed through the active WebView2
-                g_compEngine->SetWebViewProxyOpacity(0.0f);
+            if (res.isWebView) {
+                extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade);
+                RenderImageToDComp(hwnd, res, false);
+                RECT rc = {};
+                if (GetClientRect(hwnd, &rc)) {
+                    SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom, false);
+                }
+                if (g_compEngine) {
+                    // Hide it immediately so it doesn't bleed through the active WebView2
+                    g_compEngine->SetWebViewProxyOpacity(0.0f);
+                    g_compEngine->Commit();
+                }
             }
 
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
@@ -14565,6 +14571,7 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
         GetPaneContext(PaneSlot::Primary).metadata = {};
         g_runtime.ShowHdrDetailsExpanded = false;
         GetPaneContext(PaneSlot::Primary).metadata.IsFullMetadataLoaded = false;
+        GetPaneContext(PaneSlot::Primary).view.Reset();
     }
     ClearGamutWarningState(hwnd);
 
