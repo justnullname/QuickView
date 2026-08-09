@@ -43,14 +43,16 @@ public:
     static constexpr DWORD kWarmTtlMs = 180'000;
     static constexpr UINT_PTR kRetentionTimerId = 1004;
     static constexpr UINT_PTR kDensitySettleTimerId = 1005;
-    // Short mask while R/invScale settle. Too long = obvious blank flash;
-    // too short = size/origin desync still visible on slow machines.
-    static constexpr DWORD kDensitySettleMs = 40;
+    // Short mask while R/invScale settle. Now covered by static snapshot (Proxy Layer),
+    // so we can safely extend this to fully absorb slow WebView2 re-rasterization async desync.
+    static constexpr DWORD kDensitySettleMs = 150;
     // Posted when document is ready to paint (NavigationCompleted + open R).
     // main.cpp must Commit DComp on this message.
     static constexpr UINT kCommitMessage = WM_APP + 55;
     // CapturePreview PNG stream ready for minimap/gallery thumb.
     static constexpr UINT kPreviewReadyMessage = WM_APP + 56;
+    // Show/Hide Proxy Layer (wParam: 1 = Show, 0 = Hide).
+    static constexpr UINT kProxyStateMessage = WM_APP + 58;
 
     // Open: mild supersample over max(displayZoom, 1).
     static constexpr float kOpenRasterHeadroom = 1.5f;

@@ -2588,7 +2588,18 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         ID2D1DeviceContext* ctx = g_compEngine->BeginPendingUpdate(
             logicalW, logicalH, false, 0, 0, false,
             DXGI_FORMAT_B8G8R8A8_UNORM, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
-        if (ctx) ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+        if (ctx) {
+            ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+            
+            // [Feature] Snapshot Cover (LOD) Proxy Layer
+            // Draw the captured thumbnail (if available) to the underlying DComp visual (m_imageA).
+            // This acts as a proxy layer when WebView2 hides itself during RasterizationScale updates,
+            // preventing black flashes and layout jumps.
+            if (res.bitmap) {
+                D2D1_RECT_F destRect = D2D1::RectF(0.0f, 0.0f, (float)logicalW, (float)logicalH);
+                ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            }
+        }
         g_compEngine->EndPendingUpdate();
 
         if (g_webContentHost) {
@@ -7957,7 +7968,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_thumbMgr.InjectThumbnail(imgId, std::move(td));
             }
 
+            // [Feature] Snapshot Cover (LOD) Proxy Layer
+            // Push the newly acquired thumbnail into the DComp proxy layer (m_imageA)
+            // so it's ready to cover the WebView2 visual when it's hidden during RasterizationScale updates.
+            extern bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade);
+            RenderImageToDComp(hwnd, res, false);
+
+            if (g_compEngine) {
+                // Hide it immediately so it doesn't bleed through the active WebView2
+                g_compEngine->SetWebViewProxyOpacity(0.0f);
+            }
+
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+        }
+        return 0;
+    }
+
+    case QuickView::WebContentHost::kProxyStateMessage: {
+        if (g_compEngine) {
+            g_compEngine->SetWebViewProxyOpacity(wParam ? 1.0f : 0.0f);
+            g_compEngine->Commit();
         }
         return 0;
     }

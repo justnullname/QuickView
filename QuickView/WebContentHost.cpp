@@ -443,6 +443,7 @@ HRESULT WebContentHost::SetRasterScaleInternal(float rasterScale, bool allowDecr
     if (maskFlash && surfaceActive_) {
         densityMasked_ = true;
         SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
+        if (hwnd_) PostMessageW(hwnd_, kProxyStateMessage, 1, 0); // Show proxy
     }
 
     // 1) Update logical R + invScale/offset first (parent size stays W×H once visual matches).
@@ -505,6 +506,7 @@ void WebContentHost::TryRevealSurface() {
     SetVisualOpacitySafe(containerVisual_.Get(), 1.0f);
     if (hwnd_) {
         PostMessageW(hwnd_, kCommitMessage, 0, 0);
+        PostMessageW(hwnd_, kProxyStateMessage, 0, 0); // Hide proxy
     }
     // Capture after content is shown (or at least loaded) for minimap thumb.
     RequestMinimapCapture();
@@ -707,6 +709,7 @@ void WebContentHost::OnDensitySettleTimer() {
     densityMasked_ = false;
     if (containerVisual_ && surfaceActive_) {
         SetVisualOpacitySafe(containerVisual_.Get(), surfaceOpacity_);
+        if (hwnd_) PostMessageW(hwnd_, kProxyStateMessage, 0, 0); // Hide proxy
     }
 }
 

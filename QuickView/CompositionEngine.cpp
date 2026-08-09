@@ -1525,3 +1525,12 @@ HRESULT CompositionEngine::SetWebViewMode(bool enabled) {
     }
     return S_OK;
 }
+
+void CompositionEngine::SetWebViewProxyOpacity(float opacity) {
+    if (m_webviewModeActive) {
+        auto& activeLayer = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
+        if (activeLayer.visual) {
+            SetVisualOpacitySafe(activeLayer.visual.Get(), opacity);
+        }
+    }
+}

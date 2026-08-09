@@ -102,6 +102,9 @@ public:
     HRESULT SetWebViewMode(bool enabled);
     bool IsWebViewMode() const { return m_webviewModeActive; }
     
+    // [Feature] Set proxy layer opacity explicitly
+    void SetWebViewProxyOpacity(float opacity);
+    
     // Background management
     HRESULT UpdateBackground(float width, float height, const D2D1_COLOR_F& bgColor, bool showGrid);
     
