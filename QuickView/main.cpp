@@ -14,6 +14,7 @@ static constexpr const char* CURRENT_MODULE = "Main";
 #include "OffscreenWebView2.h"
 #include "WebContentHost.h"
 #include "WebContentKinds.h"
+#include "WebViewThumbService.h"
 #include "AppContext.h"
 #include "CompareController.h"
 #include "DialogController.h"
@@ -147,6 +148,7 @@ void SyncDCompState(HWND hwnd, float winW, float winH, bool animate);
 #define WM_UPDATE_FOUND  (WM_APP + 2)
 #define WM_ENGINE_EVENT  (WM_APP + 3)
 #define WM_ROUTED_OPEN   (WM_APP + 10)  // [Phase 0] Reserved for pipe-routed file open
+// WebContentHost::kCommitMessage (WM_APP+55) — document ready, need DComp Commit
 constexpr UINT_PTR TIMER_ID_STARTUP_SHOW = 992;
 
 
@@ -7144,6 +7146,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     
     // Set global hwnd for RequestRepaint system
     g_mainHwnd = hwnd;
+    QuickView::WebViewThumbService::Instance().SetUiHwnd(hwnd);
     
     // Note: LoadConfig was already called early for SingleInstance check
     // Just sync runtime state
@@ -7889,6 +7892,82 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
+    case QuickView::WebContentHost::kCommitMessage: {
+        // NavigationCompleted + open-R: reveal already applied; flush DComp tree.
+        if (g_compEngine) g_compEngine->Commit();
+        return 0;
+    }
+
+    case QuickView::WebContentHost::kPreviewReadyMessage: {
+        // Live WebView CapturePreview → minimap bitmap + gallery L1 inject.
+        if (!g_webContentHost || !g_renderEngine) return 0;
+        auto& res = GetPaneContext(PaneSlot::Primary).resource;
+        if (!res.isWebView) return 0;
+
+        const uint32_t serial = static_cast<uint32_t>(lParam);
+        if (serial != g_webContentHost->GetMinimapPreviewSerial()) return 0;
+
+        ComPtr<IStream> stream = g_webContentHost->TakeMinimapPreviewStream();
+        if (!stream) return 0;
+
+        IWICImagingFactory* wic = g_renderEngine->GetWICFactory();
+        if (!wic) return 0;
+
+        ComPtr<IWICBitmapDecoder> decoder;
+        if (FAILED(wic->CreateDecoderFromStream(stream.Get(), nullptr,
+                                                WICDecodeMetadataCacheOnLoad, &decoder)) ||
+            !decoder) {
+            return 0;
+        }
+        ComPtr<IWICBitmapFrameDecode> frame;
+        if (FAILED(decoder->GetFrame(0, &frame)) || !frame) return 0;
+
+        UINT bw = 0, bh = 0;
+        frame->GetSize(&bw, &bh);
+        if (bw == 0 || bh == 0) return 0;
+
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(wic->CreateFormatConverter(&converter)) || !converter) return 0;
+        if (FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                                         WICBitmapDitherTypeNone, nullptr, 0.0f,
+                                         WICBitmapPaletteTypeCustom))) {
+            return 0;
+        }
+
+        ComPtr<ID2D1Bitmap> thumb;
+        if (SUCCEEDED(g_renderEngine->CreateBitmapFromWIC(converter.Get(), &thumb)) && thumb) {
+            res.bitmap = thumb;
+
+            const UINT stride = bw * 4;
+            CImageLoader::ThumbData td;
+            td.width = static_cast<int>(bw);
+            td.height = static_cast<int>(bh);
+            td.stride = static_cast<int>(stride);
+            td.pixels.resize(static_cast<size_t>(stride) * bh);
+            if (SUCCEEDED(converter->CopyPixels(nullptr, stride,
+                                                static_cast<UINT>(td.pixels.size()),
+                                                td.pixels.data()))) {
+                td.isValid = true;
+                td.isBlurry = false;
+                td.loaderName = L"WebView2 CapturePreview";
+                td.origWidth = static_cast<int>(res.svgW > 0 ? res.svgW : bw);
+                td.origHeight = static_cast<int>(res.svgH > 0 ? res.svgH : bh);
+                const size_t imgId = FileNavigator::PathToImageID(
+                    GetPaneContext(PaneSlot::Primary).path);
+                g_thumbMgr.InjectThumbnail(imgId, std::move(td));
+            }
+
+            RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
+        }
+        return 0;
+    }
+
+    case QuickView::WebViewThumbService::kRasterMessage: {
+        auto* job = reinterpret_cast<QuickView::WebViewThumbJob*>(lParam);
+        QuickView::WebViewThumbService::Instance().HandleRasterMessage(job);
+        return 0;
+    }
+
     case WM_ENGINE_EVENT:
         ProcessEngineEvents(hwnd);
         return 0;
@@ -8108,6 +8187,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
 
         if (wParam == QuickView::WebContentHost::kRetentionTimerId) {
+            // Stale WM_TIMER can still run after KillTimer (queued during EnsureReady pump).
+            if (g_webContentHost && g_webContentHost->ShouldIgnoreRetentionTimer()) {
+                return 0;
+            }
             // Host is warm-idle; drop DComp mount then release WebView runtime.
             if (g_compEngine) {
                 g_compEngine->UnmountWebViewVisual();
@@ -8566,6 +8649,7 @@ case WM_DESTROY: {
                 g_webContentHost.reset();
             }
             g_thumbMgr.Shutdown();
+            QuickView::WebViewThumbService::Instance().Shutdown();
             PostQuitMessage(0);
             return 0;
         }
@@ -13216,6 +13300,9 @@ void ProcessEngineEvents(HWND hwnd) {
                      if (!g_webContentHost) {
                          g_webContentHost = std::make_unique<QuickView::WebContentHost>();
                      }
+                     // Must mark active BEFORE EnsureReady: init pumps messages and a
+                     // queued retention WM_TIMER would otherwise ReleaseRuntime mid-create.
+                     g_webContentHost->NotifySurfaceActive();
                      if (g_compEngine &&
                          SUCCEEDED(g_webContentHost->EnsureReady(hwnd, g_compEngine->GetDevice())) &&
                          g_webContentHost->IsReady()) {

@@ -6076,8 +6076,14 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         float minimapCenterX = (minimap.innerRect.left + minimap.innerRect.right) * 0.5f;
         float minimapCenterY = (minimap.innerRect.top + minimap.innerRect.bottom) * 0.5f;
         
-        // Native SVG + WebView2 complex SVG (preview svgDoc populated best-effort at load).
-        if (pane.resource.svgDoc && (pane.resource.isSvg || pane.resource.isWebView)) {
+        // Thumb content: prefer bitmap (includes WebView2 CapturePreview).
+        // Native SVG may use svgDoc; complex WebView SVG often has no usable D2D svgDoc.
+        if (pane.resource.isWebView && pane.resource.bitmap) {
+            D2D1_RECT_F dest = D2D1::RectF(geo.imgDrawX, geo.imgDrawY,
+                                           geo.imgDrawX + geo.drawW, geo.imgDrawY + geo.drawH);
+            dc->DrawBitmap(pane.resource.bitmap.Get(), &dest, 1.0f,
+                           D2D1_INTERPOLATION_MODE_LINEAR);
+        } else if (pane.resource.svgDoc && (pane.resource.isSvg || pane.resource.isWebView)) {
             ComPtr<ID2D1DeviceContext5> ctx5;
             if (SUCCEEDED(dc->QueryInterface(IID_PPV_ARGS(&ctx5)))) {
                 D2D1::Matrix3x2F m = D2D1::Matrix3x2F::Scale(geo.fitScale, geo.fitScale) *

@@ -42,6 +42,12 @@ std::wstring WebContentHost::GetUserDataFolder() {
     return std::wstring(base) + L"\\QuickView\\WebView2";
 }
 
+std::wstring WebContentHost::BuildBlankHtml() {
+    // Transparent empty page — clears residual SVG when leaving the surface.
+    return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
+           L"<body style=\"margin:0;padding:0;background:transparent\"></body></html>";
+}
+
 std::wstring WebContentHost::BuildComplexSvgHtml(std::string_view utf8Svg) {
     int size = MultiByteToWideChar(CP_UTF8, 0, utf8Svg.data(),
                                    static_cast<int>(utf8Svg.size()), nullptr, 0);
@@ -250,6 +256,29 @@ HRESULT WebContentHost::CreateController() {
                     settings->put_IsScriptEnabled(FALSE);
                 }
 
+                // Reveal only after the *current* document finishes loading so a
+                // shared host never paints the previous SVG (a→b→c residual).
+                hasNavCompletedToken_ = false;
+                if (SUCCEEDED(webview_->add_NavigationCompleted(
+                        Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                            [this](ICoreWebView2* /*sender*/,
+                                   ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                                BOOL ok = FALSE;
+                                if (args) args->get_IsSuccess(&ok);
+                                if (!ok) return S_OK;
+                                // Stale navigations (blank clear, superseded Present).
+                                if (pendingNavSerial_ == 0 || pendingNavSerial_ != navSerial_) {
+                                    return S_OK;
+                                }
+                                if (!surfaceActive_) return S_OK;
+                                contentReady_ = true;
+                                TryRevealSurface();
+                                return S_OK;
+                            }).Get(),
+                        &navCompletedToken_))) {
+                    hasNavCompletedToken_ = true;
+                }
+
                 ready_ = true;
                 return S_OK;
             }).Get());
@@ -297,8 +326,16 @@ HRESULT WebContentHost::EnsureReady(HWND hwnd, IDCompositionDesktopDevice* dcomp
     if (IsReady()) return S_OK;
     if (initializing_) return E_PENDING;
 
-    initializing_ = true;
+    // Re-entry path (bitmap → WebView again): kill warm-idle teardown first.
+    // CreateController pumps the UI queue; a stale retention WM_TIMER must not
+    // ReleaseRuntime mid-init (classic "can't switch back to WebView SVG" bug).
     hwnd_ = hwnd;
+    KillRetentionTimer();
+    KillDensitySettleTimer();
+    surfaceActive_ = true;
+    densityMasked_ = false;
+
+    initializing_ = true;
     dcompDevice_ = dcompDevice;
     failed_ = false;
     ready_ = false;
@@ -452,6 +489,72 @@ HRESULT WebContentHost::ApplyLayout() {
     return hr;
 }
 
+void WebContentHost::HideSurface() {
+    surfaceOpacity_ = 0.0f;
+    pendingReveal_ = false;
+    SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
+}
+
+void WebContentHost::TryRevealSurface() {
+    // Need both: open-R applied (pendingReveal_) and document painted (contentReady_).
+    if (!surfaceActive_ || !contentReady_ || !pendingReveal_) return;
+    if (densityMasked_) return;
+
+    pendingReveal_ = false;
+    surfaceOpacity_ = 1.0f;
+    SetVisualOpacitySafe(containerVisual_.Get(), 1.0f);
+    if (hwnd_) {
+        PostMessageW(hwnd_, kCommitMessage, 0, 0);
+    }
+    // Capture after content is shown (or at least loaded) for minimap thumb.
+    RequestMinimapCapture();
+}
+
+void WebContentHost::RequestMinimapCapture() {
+    if (!webview_ || !surfaceActive_ || !contentReady_) return;
+    if (minimapCapturePending_) return;
+
+    Microsoft::WRL::ComPtr<IStream> stream;
+    // CreateStreamOnHGlobal grows as CapturePreview writes PNG bytes.
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) || !stream) return;
+
+    minimapCapturePending_ = true;
+    const uint32_t serial = ++minimapPreviewSerial_;
+    minimapPreviewStream_.Reset();
+
+    // CapturePreview uses the live document (filter/foreignObject intact).
+    // Works with composition host; independent of DComp opacity.
+    HRESULT hr = webview_->CapturePreview(
+        COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+        stream.Get(),
+        Callback<ICoreWebView2CapturePreviewCompletedHandler>(
+            [this, serial, stream](HRESULT errorCode) -> HRESULT {
+                minimapCapturePending_ = false;
+                if (FAILED(errorCode) || !surfaceActive_) return S_OK;
+                if (serial != minimapPreviewSerial_) return S_OK;
+
+                // Rewind for WIC decoder.
+                LARGE_INTEGER zero{};
+                stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+                minimapPreviewStream_ = stream;
+                if (hwnd_) {
+                    PostMessageW(hwnd_, kPreviewReadyMessage, 0,
+                                 static_cast<LPARAM>(serial));
+                }
+                return S_OK;
+            }).Get());
+
+    if (FAILED(hr)) {
+        minimapCapturePending_ = false;
+    }
+}
+
+Microsoft::WRL::ComPtr<IStream> WebContentHost::TakeMinimapPreviewStream() {
+    Microsoft::WRL::ComPtr<IStream> out = minimapPreviewStream_;
+    minimapPreviewStream_.Reset();
+    return out;
+}
+
 HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialRasterScale,
                                 UINT maxTextureDim) {
     if (!IsReady() || !webview_ || !controller_) return E_FAIL;
@@ -459,6 +562,11 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
     NotifySurfaceActive();
     KillDensitySettleTimer();
     densityMasked_ = false;
+    contentReady_ = false;
+    minimapCapturePending_ = false;
+    minimapPreviewStream_.Reset();
+    ++minimapPreviewSerial_; // invalidate in-flight captures
+    HideSurface();
 
     UINT w = static_cast<UINT>(std::lround(
         payload.intrinsicW > 0.0f ? payload.intrinsicW : 512.0f));
@@ -479,9 +587,6 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
     rasterScale_ = (std::clamp)(r, 0.25f, rMax);
 
     controller_->put_IsVisible(TRUE);
-    // Stay hidden until ApplyOpenRasterScale finalizes open density (avoids R=1→open flash).
-    surfaceOpacity_ = 1.0f;
-    SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
 
     if (compositionController_ && webviewVisual_) {
         compositionController_->put_RootVisualTarget(webviewVisual_.Get());
@@ -494,6 +599,9 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
     case WebContentKind::ComplexSvg: {
         if (payload.utf8Document.empty()) return E_INVALIDARG;
         const std::wstring html = BuildComplexSvgHtml(payload.utf8Document);
+        // Invalidate prior navigations (including blank clear from leave).
+        pendingNavSerial_ = ++navSerial_;
+        contentReady_ = false;
         return webview_->NavigateToString(html.c_str());
     }
     case WebContentKind::Pdf:
@@ -512,12 +620,13 @@ HRESULT WebContentHost::ApplyOpenRasterScale(float displayZoom, UINT maxTextureD
     const float openR = ComputeOpenRasterScale(
         displayZoom, static_cast<float>(contentW_), static_cast<float>(contentH_),
         maxTextureDim_);
-    // Open path: surface already hidden from Present; no extra mask flicker.
+    // Density only — do NOT show yet; previous SVG may still be in the compositor.
     HRESULT hr = SetRasterScaleInternal(openR, /*allowDecrease=*/true, /*maskFlash=*/false);
     KillDensitySettleTimer();
     densityMasked_ = false;
-    surfaceOpacity_ = 1.0f;
-    SetVisualOpacitySafe(containerVisual_.Get(), 1.0f);
+    HideSurface(); // keep hidden until NavigationCompleted
+    pendingReveal_ = true; // HideSurface cleared it; re-arm reveal intent
+    TryRevealSurface();    // no-op until contentReady_
     return hr;
 }
 
@@ -560,8 +669,10 @@ HRESULT WebContentHost::PrepareForRemount() {
         compositionController_->put_RootVisualTarget(webviewVisual_.Get());
     }
     ApplyLayout();
-    // Preserve intentional mask during density settle.
-    if (!densityMasked_) {
+    // Never force-show previous document. Visibility is gated by TryRevealSurface.
+    if (!contentReady_ || pendingReveal_ || densityMasked_ || surfaceOpacity_ <= 0.0f) {
+        SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
+    } else {
         SetVisualOpacitySafe(containerVisual_.Get(), surfaceOpacity_);
     }
     return S_OK;
@@ -622,8 +733,20 @@ void WebContentHost::NotifySurfaceInactive(HWND hwnd, size_t webFriendlyFileCoun
     surfaceActive_ = false;
     KillDensitySettleTimer();
     densityMasked_ = false;
-    surfaceOpacity_ = 0.0f;
-    SetVisualOpacitySafe(containerVisual_.Get(), 0.0f);
+    contentReady_ = false;
+    pendingReveal_ = false;
+    minimapCapturePending_ = false;
+    minimapPreviewStream_.Reset();
+    ++minimapPreviewSerial_;
+    // Invalidate any in-flight NavigationCompleted so blank/clear cannot reveal.
+    ++navSerial_;
+    pendingNavSerial_ = 0;
+    HideSurface();
+
+    // Drop residual SVG from the shared WebView so remount never paints it.
+    if (webview_) {
+        webview_->NavigateToString(BuildBlankHtml().c_str());
+    }
 
     if (!hwnd) return;
     const DWORD ttl = (webFriendlyFileCount >= 2) ? kWarmTtlMs : kColdTtlMs;
@@ -634,7 +757,8 @@ void WebContentHost::NotifySurfaceInactive(HWND hwnd, size_t webFriendlyFileCoun
 
 void WebContentHost::OnRetentionTimer() {
     KillRetentionTimer();
-    if (surfaceActive_) return;
+    // surfaceActive_ or EnsureReady/CreateController in progress — never tear down.
+    if (surfaceActive_ || initializing_) return;
     ReleaseRuntime();
 }
 
@@ -645,6 +769,10 @@ void WebContentHost::KillRetentionTimer() {
 }
 
 void WebContentHost::ResetControllerState() {
+    if (webview_ && hasNavCompletedToken_) {
+        webview_->remove_NavigationCompleted(navCompletedToken_);
+        hasNavCompletedToken_ = false;
+    }
     if (controller_) {
         controller_->put_IsVisible(FALSE);
         controller_->Close();
@@ -653,6 +781,9 @@ void WebContentHost::ResetControllerState() {
     controller3_.Reset();
     controller_.Reset();
     compositionController_.Reset();
+    contentReady_ = false;
+    pendingReveal_ = false;
+    pendingNavSerial_ = 0;
 }
 
 void WebContentHost::ResetAllState() {
@@ -674,6 +805,11 @@ void WebContentHost::ResetAllState() {
     surfaceActive_ = false;
     densityMasked_ = false;
     surfaceOpacity_ = 1.0f;
+    contentReady_ = false;
+    pendingReveal_ = false;
+    pendingNavSerial_ = 0;
+    minimapCapturePending_ = false;
+    minimapPreviewStream_.Reset();
 }
 
 void WebContentHost::ReleaseRuntime() {
@@ -694,6 +830,11 @@ void WebContentHost::ReleaseRuntime() {
     surfaceActive_ = false;
     densityMasked_ = false;
     surfaceOpacity_ = 1.0f;
+    contentReady_ = false;
+    pendingReveal_ = false;
+    pendingNavSerial_ = 0;
+    minimapCapturePending_ = false;
+    minimapPreviewStream_.Reset();
     initializing_ = false;
 }
 

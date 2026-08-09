@@ -114,6 +114,7 @@ set(QUICKVIEW_SOURCES
     QuickView/QuickViewETW.cpp
     QuickView/OffscreenWebView2.cpp
     QuickView/WebContentHost.cpp
+    QuickView/WebViewThumbService.cpp
     
     # Third party manually included
     third_party/yyjson/yyjson.c

@@ -46,6 +46,11 @@ public:
     // Short mask while R/invScale settle. Too long = obvious blank flash;
     // too short = size/origin desync still visible on slow machines.
     static constexpr DWORD kDensitySettleMs = 40;
+    // Posted when document is ready to paint (NavigationCompleted + open R).
+    // main.cpp must Commit DComp on this message.
+    static constexpr UINT kCommitMessage = WM_APP + 55;
+    // CapturePreview PNG stream ready for minimap/gallery thumb.
+    static constexpr UINT kPreviewReadyMessage = WM_APP + 56;
 
     // Open: mild supersample over max(displayZoom, 1).
     static constexpr float kOpenRasterHeadroom = 1.5f;
@@ -67,11 +72,12 @@ public:
 
     HRESULT EnsureReady(HWND hwnd, IDCompositionDesktopDevice* dcompDevice);
 
-    // Navigate with provisional density; keeps opacity 0 until ApplyOpenRasterScale.
+    // Navigate with provisional density; opacity stays 0 until NavigationCompleted
+    // AND ApplyOpenRasterScale (avoids residual previous SVG on shared host).
     HRESULT Present(const WebContentPayload& payload, float initialRasterScale,
                     UINT maxTextureDim);
 
-    // Post-layout: set open R from final displayZoom, then reveal surface.
+    // Post-layout: set open R from final displayZoom. Reveal only when document ready.
     HRESULT ApplyOpenRasterScale(float displayZoom, UINT maxTextureDim);
 
     // Idle: track R to displayZoom (up if soft, down if oversampled). May hide
@@ -95,6 +101,13 @@ public:
 
     bool IsReady() const;
     bool IsFailed() const;
+    bool IsInitializing() const { return initializing_; }
+    bool IsSurfaceActive() const { return surfaceActive_; }
+    // Stale WM_TIMER can still dispatch after KillTimer during EnsureReady's
+    // message pump — ignore retention teardown while re-entering WebView.
+    bool ShouldIgnoreRetentionTimer() const {
+        return surfaceActive_ || initializing_;
+    }
 
     void NotifySurfaceActive();
     void NotifySurfaceInactive(HWND hwnd, size_t webFriendlyFileCount);
@@ -102,6 +115,12 @@ public:
     void OnDensitySettleTimer();
 
     HRESULT PrepareForRemount();
+
+    // After reveal: CapturePreview → PNG stream; main posts kPreviewReadyMessage.
+    void RequestMinimapCapture();
+    // Takes ownership of the last successful capture stream (PNG).
+    Microsoft::WRL::ComPtr<IStream> TakeMinimapPreviewStream();
+    uint32_t GetMinimapPreviewSerial() const { return minimapPreviewSerial_; }
 
     void Shutdown();
     void ReleaseRuntime();
@@ -115,11 +134,14 @@ private:
     void ApplyDensityCompensation();
     void ScheduleDensityUnhide();
     void KillDensitySettleTimer();
+    void TryRevealSurface();
+    void HideSurface();
     void ResetControllerState();
     void ResetAllState();
     void KillRetentionTimer();
     static std::wstring BuildComplexSvgHtml(std::string_view utf8Svg);
     static std::wstring GetUserDataFolder();
+    static std::wstring BuildBlankHtml();
 
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
     Microsoft::WRL::ComPtr<ICoreWebView2CompositionController> compositionController_;
@@ -139,6 +161,19 @@ private:
     bool surfaceActive_ = false;
     bool densityMasked_ = false;
     float surfaceOpacity_ = 1.0f;
+
+    // Document gating: shared host must not paint previous SVG while next loads.
+    bool contentReady_ = false;
+    bool pendingReveal_ = false;
+    uint32_t navSerial_ = 0;
+    uint32_t pendingNavSerial_ = 0;
+    EventRegistrationToken navCompletedToken_{};
+    bool hasNavCompletedToken_ = false;
+
+    // Minimap thumb via CapturePreview (one-shot per Present).
+    bool minimapCapturePending_ = false;
+    uint32_t minimapPreviewSerial_ = 0;
+    Microsoft::WRL::ComPtr<IStream> minimapPreviewStream_;
 
     UINT contentW_ = 0;
     UINT contentH_ = 0;

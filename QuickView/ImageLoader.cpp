@@ -46,6 +46,7 @@ using namespace QuickView;
 #include <thread>
 #include "MiniTiff.h"
 #include "OffscreenWebView2.h"
+#include "WebViewThumbService.h"
 #include "ImageTypes.h"
 
 extern FileNavigator& g_navigator;
@@ -4358,11 +4359,24 @@ HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
 
     HRESULT hr = LoadToFrame(filePath, pFrame.get(), nullptr, targetSize,
                              targetSize, &pData->loaderName, {}, {});
-    // SVG_XML and SVG_WEBVIEW both carry xmlData; D2D raster is best-effort for
-    // complex (WebView) SVGs but still produces a usable gallery/minimap thumb.
-    if (SUCCEEDED(hr) && (pFrame->IsSvg() || pFrame->IsWebView()) && pFrame->svg) {
-      hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
-                                 pFrame->svg->viewBoxH, targetSize, pData);
+    if (SUCCEEDED(hr) && pFrame->svg &&
+        (pFrame->IsSvg() || pFrame->IsWebView())) {
+      // Complex SVG (WebView): CapturePreview via shared offscreen WebView2
+      // (gallery + same pipeline as minimap quality). Simple SVG: D2D first.
+      if (pFrame->IsWebView()) {
+        hr = WebViewThumbService::Instance().RasterizeSvgToThumb(
+            pFrame->svg->xmlData, pFrame->svg->viewBoxW, pFrame->svg->viewBoxH,
+            targetSize, pData);
+        if (FAILED(hr) || !pData->isValid) {
+          pData->isValid = false;
+          pData->pixels.clear();
+          hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
+                                     pFrame->svg->viewBoxH, targetSize, pData);
+        }
+      } else {
+        hr = RasterizeSvgThumbnail(pFrame->svg->xmlData, pFrame->svg->viewBoxW,
+                                   pFrame->svg->viewBoxH, targetSize, pData);
+      }
     } else if (SUCCEEDED(hr) && pFrame->pixels && pFrame->width > 0 &&
                pFrame->height > 0) {
       pData->width = pFrame->width;

@@ -40,6 +40,9 @@ public:
     // If L1 Cache hit (Raw Data), immediately creates Bitmap (L2) and returns it.
     ComPtr<ID2D1Bitmap> GetThumbnail(size_t imageId, LPCWSTR filePath, ID2D1RenderTarget* pRT);
 
+    // Inject pre-rasterized thumb (e.g. live WebView CapturePreview → gallery share).
+    void InjectThumbnail(size_t imageId, CImageLoader::ThumbData data);
+
     // Call this when file list changes completely
     void ClearCache();
 

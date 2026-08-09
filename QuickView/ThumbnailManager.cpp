@@ -28,6 +28,30 @@ void ThumbnailManager::Shutdown() {
     ClearCache();
 }
 
+void ThumbnailManager::InjectThumbnail(size_t imageId, CImageLoader::ThumbData data) {
+    if (!data.isValid || data.pixels.empty() || data.isFailed) return;
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    // Drop prior GPU promotion so L1 inject is used.
+    m_l2Cache.erase(imageId);
+    auto itLru = m_lruMap.find(imageId);
+    if (itLru != m_lruMap.end()) {
+        m_lruList.erase(itLru->second);
+        m_lruMap.erase(itLru);
+    }
+    auto it = m_l1Cache.find(imageId);
+    if (it != m_l1Cache.end()) {
+        if (m_currentCacheSize >= it->second.pixels.size()) {
+            m_currentCacheSize -= it->second.pixels.size();
+        } else {
+            m_currentCacheSize = 0;
+        }
+    }
+    const size_t size = data.pixels.size();
+    m_l1Cache[imageId] = std::move(data);
+    AddToLRU(imageId, size);
+    EvictLRU();
+}
+
 void ThumbnailManager::ClearCache() {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
     m_l1Cache.clear();

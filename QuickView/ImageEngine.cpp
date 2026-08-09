@@ -323,10 +323,18 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
 
         if (cachedFrame) {
             bool isHit = true;
+
+            // Drop corrupt SVG_WEBVIEW cache entries (pre-fix: raster path stripped svg).
+            if (cachedFrame->format == QuickView::PixelFormat::SVG_WEBVIEW &&
+                !cachedFrame->IsWebView()) {
+                InvalidateCache(path);
+                cachedFrame.reset();
+                isHit = false;
+            }
             
             // [v9.0] Smart RAW Quality Check
             // RAW files require strict quality matching (Preview vs Full) for A/B comparison
-            if (info.format.contains(L"RAW")) {
+            if (cachedFrame && info.format.contains(L"RAW")) {
                   bool wantFull = m_config.ForceRawDecode;
                   bool hasFull = (cachedFrame->quality == QuickView::DecodeQuality::Full);
                   
@@ -340,7 +348,7 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                   }
             }
 
-            if (isHit) {
+            if (cachedFrame && isHit) {
                 EngineEvent e;
                 e.type = EventType::FullReady;
                 e.filePath = path; 
@@ -1566,7 +1574,13 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
     // 1. Calculate true backing-store size.
     // Float HDR frames are 16 Bpp, not 4 Bpp, so width*height*4 badly underestimates
     // both cache pressure and the cost of prefetch deep copies.
-    size_t newSize = frame->GetBufferSize();
+    // SVG / SVG_WEBVIEW: no pixels — account for XML payload only.
+    size_t newSize = 0;
+    if ((frame->IsSvg() || frame->IsWebView()) && frame->svg) {
+        newSize = frame->svg->xmlData.size();
+    } else {
+        newSize = frame->GetBufferSize();
+    }
     
     std::lock_guard lock(m_cacheMutex);
     
@@ -1639,16 +1653,21 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
         // We must copy the data to independently-owned heap memory for safe caching.
         auto cachedFrame = std::make_shared<QuickView::RawImageFrame>();
         
-        if (frame->IsSvg()) {
-            // SVG: Copy the SVG data struct
+        // SVG_XML (D2D) and SVG_WEBVIEW (WebContentHost) both carry xmlData only.
+        // IsSvg() is SVG_XML-only — WebView frames must use the same branch or
+        // they fall into the raster path without svg, so IsWebView() fails on revisit.
+        if (frame->IsSvg() || frame->IsWebView()) {
+            // SVG / complex-SVG: Copy the SVG data struct (no pixel buffer)
             cachedFrame->format = frame->format;
             cachedFrame->formatDetails = frame->formatDetails;
             cachedFrame->width = frame->width;
             cachedFrame->height = frame->height;
             cachedFrame->svg = std::make_unique<QuickView::RawImageFrame::SvgData>();
-            cachedFrame->svg->xmlData = frame->svg->xmlData; // Vector copy
-            cachedFrame->svg->viewBoxW = frame->svg->viewBoxW;
-            cachedFrame->svg->viewBoxH = frame->svg->viewBoxH;
+            if (frame->svg) {
+                cachedFrame->svg->xmlData = frame->svg->xmlData; // Vector copy
+                cachedFrame->svg->viewBoxW = frame->svg->viewBoxW;
+                cachedFrame->svg->viewBoxH = frame->svg->viewBoxH;
+            }
             cachedFrame->srcWidth = frame->srcWidth;
             cachedFrame->srcHeight = frame->srcHeight;
             
@@ -1659,6 +1678,9 @@ void ImageEngine::AddToCache(int index, const std::wstring& path, std::shared_pt
         } else {
             // Raster: Deep copy pixels to heap
             size_t bufferSize = frame->GetBufferSize();
+            if (!frame->pixels || bufferSize == 0) {
+                return; // Refuse to cache invalid raster
+            }
             uint8_t* heapPixels = new uint8_t[bufferSize];
             memcpy(heapPixels, frame->pixels, bufferSize);
             
