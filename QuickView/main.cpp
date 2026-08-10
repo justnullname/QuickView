@@ -434,6 +434,7 @@ static bool RestoreDeletedFile(HWND hwnd, const std::wstring& targetPath) {
 
         hr = pRecycleBin2->GetDetailsEx(pidlItem, &PKEY_RecycleBin_OriginalFolder, &varFolder);
         if (SUCCEEDED(hr) && varFolder.vt == VT_BSTR) {
+
             std::wstring origFolder = varFolder.bstrVal;
             VariantClear(&varFolder);
 
@@ -2175,6 +2176,22 @@ struct SvgSurfaceSpec {
     float RawH = 0.0f;
 };
 
+// [Reprojection] Global state for WebView Overscan Reprojection
+struct WebViewReprojectionState {
+    float committedZoom = 1.0f;
+    float committedPanX = 0.0f;
+    float committedPanY = 0.0f;
+    float targetZoom = 1.0f;
+    float targetPanX = 0.0f;
+    float targetPanY = 0.0f;
+    float baseFit = 1.0f;
+    float overscanWinW = 0.0f;
+    float overscanWinH = 0.0f;
+    bool isPending = false;
+    bool isInitialized = false;
+};
+static WebViewReprojectionState g_webViewReproject;
+
 static bool UseSvgViewportRendering(const ImageResource& res) {
     return res.isSvg && res.svgDoc;
 }
@@ -2489,7 +2506,7 @@ static bool ShouldUpgradeBitmapSurface(const D2D1_SIZE_U& desired) {
 
 
 static void TryUpgradeBitmapSurface(HWND hwnd) {
-    if (!GetPaneContext(PaneSlot::Primary).resource || GetPaneContext(PaneSlot::Primary).resource.isSvg) return;
+    if (!GetPaneContext(PaneSlot::Primary).resource || GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView) return;
     if (IsCompareModeActive()) return;
     if (g_isLoading) return;
     if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) return;
@@ -2614,6 +2631,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
 
         g_compEngine->PlayPingPongCrossFade(0);
         g_compEngine->SetWebViewMode(true);
+        g_compEngine->SetWebViewProxyOpacity(0.0f); // Force hide proxy immediately to prevent ghosting
 
         // Keep layout metrics coherent with other paths (UI overlays, etc.).
         g_lastSurfaceSize = D2D1::SizeF((float)logicalW, (float)logicalH);
@@ -6329,7 +6347,58 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
             // Fix #6: Pin mode — shift main image down by half of gallery filmstrip height
             displayPanY += galleryH / 2.0f;
 
-            if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
+            if (GetPaneContext(PaneSlot::Primary).resource.isWebView) {
+                // [Reprojection] Handle WebView2 with 1.5x Overscan & Guard Band
+                if (!g_webViewReproject.isInitialized) {
+                    g_webViewReproject.committedZoom = displayZoom;
+                    g_webViewReproject.committedPanX = displayPanX;
+                    g_webViewReproject.committedPanY = displayPanY;
+                    g_webViewReproject.baseFit = baseFit;
+                    g_webViewReproject.overscanWinW = winW;
+                    g_webViewReproject.overscanWinH = effWinH;
+                    g_webViewReproject.isInitialized = true;
+                    if (g_webContentHost) {
+                        g_webContentHost->SetViewportReprojection(displayZoom, displayPanX, displayPanY, winW, effWinH);
+                    }
+                }
+
+                float deltaZoom = displayZoom / (g_webViewReproject.committedZoom > 0.0001f ? g_webViewReproject.committedZoom : 1.0f);
+                float deltaPanX = displayPanX - g_webViewReproject.committedPanX;
+                float deltaPanY = displayPanY - g_webViewReproject.committedPanY;
+
+                bool isInteracting = GetPaneContext(PaneSlot::Primary).view.IsInteracting;
+                // Thresholds: Allow DComp hardware scale to handle continuous zoom/pan (zero jitter).
+                // 1.5x Overscan buffer provides ~25% safe margin on all sides.
+                float thresholdX = winW * (isInteracting ? 0.24f : 0.0f);
+                float thresholdY = effWinH * (isInteracting ? 0.24f : 0.0f);
+                float thresholdZoomIn = isInteracting ? 1.45f : 1.001f;
+                float thresholdZoomOut = isInteracting ? 0.65f : 0.999f;
+
+                if (!g_webViewReproject.isPending) {
+                    if (std::abs(deltaPanX) > thresholdX || std::abs(deltaPanY) > thresholdY ||
+                        deltaZoom > thresholdZoomIn || deltaZoom < thresholdZoomOut ||
+                        std::abs(winW - g_webViewReproject.overscanWinW) > 5.0f ||
+                        std::abs(effWinH - g_webViewReproject.overscanWinH) > 5.0f) {
+
+                        g_webViewReproject.targetZoom = displayZoom;
+                        g_webViewReproject.targetPanX = displayPanX;
+                        g_webViewReproject.targetPanY = displayPanY;
+                        g_webViewReproject.overscanWinW = winW;
+                        g_webViewReproject.overscanWinH = effWinH;
+                        g_webViewReproject.isPending = true;
+
+                        if (g_webContentHost) {
+                            g_webContentHost->SetViewportReprojection(displayZoom, displayPanX, displayPanY, winW, effWinH);
+                        }
+                    }
+                }
+
+                g_compEngine->UpdateTransformMatrix(vs, winW, winH, deltaZoom, deltaPanX, deltaPanY, animationDurationMs);
+
+                DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
+                g_compEngine->SetImageInterpolationMode(interpMode);
+            } else if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
+
                 VisualState surfaceVs{};
                 float currentScale = 1.0f;
                 // [Fix] Maintain aspect ratio and sync zoom during interactive resize by uniformly scaling the old surface.
@@ -7991,12 +8060,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case QuickView::WebContentHost::kProxyStateMessage: {
+        // Skip proxy layer when Overscan reprojection is active (size mismatch)
+        if (g_webContentHost && g_webContentHost->IsReprojectionActive()) {
+            return 0;
+        }
         if (g_compEngine) {
             g_compEngine->SetWebViewProxyOpacity(wParam ? 1.0f : 0.0f);
             g_compEngine->Commit();
         }
         return 0;
     }
+
+    case WM_APP + 59: { // kReprojectionReadyMessage
+        if (g_webViewReproject.isPending) {
+            g_webViewReproject.committedZoom = g_webViewReproject.targetZoom;
+            g_webViewReproject.committedPanX = g_webViewReproject.targetPanX;
+            g_webViewReproject.committedPanY = g_webViewReproject.targetPanY;
+            g_webViewReproject.isPending = false;
+
+            // Re-sync DComp to snap delta to 0, since JS canvas has shifted underneath
+            RECT rc = {};
+            if (GetClientRect(hwnd, &rc)) {
+                SyncDCompState(hwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom), false);
+            }
+            if (g_compEngine) {
+                g_compEngine->Commit();
+            }
+        }
+        return 0;
+    }
+
 
     case QuickView::WebViewThumbService::kRasterMessage: {
         auto* job = reinterpret_cast<QuickView::WebViewThumbJob*>(lParam);
@@ -14572,6 +14665,7 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
         g_runtime.ShowHdrDetailsExpanded = false;
         GetPaneContext(PaneSlot::Primary).metadata.IsFullMetadataLoaded = false;
         GetPaneContext(PaneSlot::Primary).view.Reset();
+        g_webViewReproject = {}; // [Reprojection] Reset WebView state on new image
     }
     ClearGamutWarningState(hwnd);
 

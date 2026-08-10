@@ -86,6 +86,10 @@ public:
     // briefly; caller should Commit after. Unhide via OnDensitySettleTimer.
     HRESULT SyncRasterScaleToDisplay(float displayZoom, UINT maxTextureDim);
 
+    // [Reprojection] Update the Overscan viewport and inject scale & pan transform into WebView.
+    HRESULT SetViewportReprojection(float scaleFactor, float panX, float panY, float viewportW, float viewportH);
+    bool IsReprojectionActive() const { return reprojectionActive_; }
+
     static float ComputeMaxRasterScale(float contentW, float contentH, UINT maxTextureDim);
     static float ComputeOpenRasterScale(float displayZoom, float contentW, float contentH,
                                         UINT maxTextureDim);
@@ -141,7 +145,7 @@ private:
     void ResetControllerState();
     void ResetAllState();
     void KillRetentionTimer();
-    static std::wstring BuildComplexSvgHtml(std::string_view utf8Svg);
+    static std::wstring BuildComplexSvgHtml(std::string_view utf8Svg, float contentW, float contentH);
     static std::wstring GetUserDataFolder();
     static std::wstring BuildBlankHtml();
 
@@ -181,6 +185,10 @@ private:
     UINT contentH_ = 0;
     UINT maxTextureDim_ = 8192;
     float rasterScale_ = 1.0f;
+    // [Reprojection] Overscan state tracking
+    bool reprojectionActive_ = false;
+    float overscanViewportW_ = 0.0f;
+    float overscanViewportH_ = 0.0f;
 
     static constexpr DWORD kInitTimeoutMs = 15000;
 };

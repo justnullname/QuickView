@@ -48,7 +48,7 @@ std::wstring WebContentHost::BuildBlankHtml() {
            L"<body style=\"margin:0;padding:0;background:transparent\"></body></html>";
 }
 
-std::wstring WebContentHost::BuildComplexSvgHtml(std::string_view utf8Svg) {
+std::wstring WebContentHost::BuildComplexSvgHtml(std::string_view utf8Svg, float contentW, float contentH) {
     int size = MultiByteToWideChar(CP_UTF8, 0, utf8Svg.data(),
                                    static_cast<int>(utf8Svg.size()), nullptr, 0);
     std::wstring wXml;
@@ -58,14 +58,33 @@ std::wstring WebContentHost::BuildComplexSvgHtml(std::string_view utf8Svg) {
                             static_cast<int>(utf8Svg.size()), wXml.data(), size);
     }
 
-    // Contain (not stretch): letterbox when aspect differs from viewBox.
+    wchar_t containerStyle[256];
+    swprintf_s(containerStyle, L"width:%fpx; height:%fpx; flex-shrink:0; display:flex; justify-content:center; align-items:center; transform-origin:center center;", contentW, contentH);
+
     return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
            L"<style>"
-           L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;"
-           L"background:transparent;display:flex;justify-content:center;align-items:center;}"
-           L"svg{max-width:100%;max-height:100%;width:auto;height:auto;display:block;}"
-           L"</style></head><body>" +
-           wXml + L"</body></html>";
+           L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
+           L"#svg-stage{position:absolute;left:0;top:0;width:100%;height:100%;"
+           L"display:flex;justify-content:center;align-items:center;overflow:hidden;}"
+           L"svg{width:100% !important;height:100% !important;display:block;margin:auto;}"
+           L"</style>"
+           L"<script>"
+           L"window.updateViewport = function(scale, panX, panY) {"
+           L"  const container = document.getElementById('svg-container');"
+           L"  if (container) {"
+           L"    container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;"
+           L"  }"
+           L"  if (window.chrome && window.chrome.webview) {"
+           L"    requestAnimationFrame(() => {"
+           L"      requestAnimationFrame(() => {"
+           L"        window.chrome.webview.postMessage('ReprojectionReady');"
+           L"      });"
+           L"    });"
+           L"  }"
+           L"};"
+           L"</script>"
+           L"</head><body><div id=\"svg-stage\"><div id=\"svg-container\" style=\"" + std::wstring(containerStyle) + L"\">" +
+           wXml + L"</div></div></body></html>";
 }
 
 WebContentHost::~WebContentHost() {
@@ -156,8 +175,6 @@ HRESULT WebContentHost::CreateVisualTree(IDCompositionDesktopDevice* dcompDevice
 
 void WebContentHost::ApplyDensityCompensation() {
     const float r = (rasterScale_ > 0.0f) ? rasterScale_ : 1.0f;
-    const float w = static_cast<float>(contentW_);
-    const float h = static_cast<float>(contentH_);
 
     // Origin alignment (all spaces share content center at 0,0):
     //   visual size ≈ (W·R, H·R), top-left at webview local (0,0)
@@ -185,11 +202,16 @@ void WebContentHost::ApplyDensityCompensation() {
         containerVisual_->SetOffsetX(0.0f);
         containerVisual_->SetOffsetY(0.0f);
     }
-    if (webviewVisual_ && contentW_ > 0 && contentH_ > 0) {
-        webviewVisual_->SetOffsetX(-0.5f * w * r);
-        webviewVisual_->SetOffsetY(-0.5f * h * r);
+    if (webviewVisual_) {
+        float visW = reprojectionActive_ ? (1.5f * overscanViewportW_) : static_cast<float>(contentW_);
+        float visH = reprojectionActive_ ? (1.5f * overscanViewportH_) : static_cast<float>(contentH_);
+        if (visW > 0.0f && visH > 0.0f) {
+            webviewVisual_->SetOffsetX(-0.5f * visW * r);
+            webviewVisual_->SetOffsetY(-0.5f * visH * r);
+        }
     }
 }
+
 
 HRESULT WebContentHost::CreateController() {
     if (!environment_ || !hwnd_ || !webviewVisual_) return E_FAIL;
@@ -261,12 +283,28 @@ HRESULT WebContentHost::CreateController() {
                     settings->put_IsZoomControlEnabled(FALSE);
                     settings->put_AreDefaultScriptDialogsEnabled(FALSE);
                     settings->put_IsBuiltInErrorPageEnabled(FALSE);
-                    settings->put_IsScriptEnabled(FALSE);
+                    settings->put_IsScriptEnabled(TRUE); // [Reprojection] Needed for window.setReprojection
                 }
-
                 // Reveal only after the *current* document finishes loading so a
                 // shared host never paints the previous SVG (a→b→c residual).
                 hasNavCompletedToken_ = false;
+                
+                // [Reprojection] Handle JS callbacks
+                settings->put_IsWebMessageEnabled(TRUE);
+                webview_->add_WebMessageReceived(
+                    Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                        [this](ICoreWebView2* /*sender*/, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                            LPWSTR message;
+                            if (SUCCEEDED(args->TryGetWebMessageAsString(&message))) {
+                                if (wcscmp(message, L"ReprojectionReady") == 0 && hwnd_) {
+                                    PostMessageW(hwnd_, WM_APP + 59, 0, 0); // kReprojectionReadyMessage
+                                }
+                                CoTaskMemFree(message);
+                            }
+                            return S_OK;
+                        }).Get(),
+                    nullptr);
+
                 if (SUCCEEDED(webview_->add_NavigationCompleted(
                         Callback<ICoreWebView2NavigationCompletedEventHandler>(
                             [this](ICoreWebView2* /*sender*/,
@@ -480,22 +518,20 @@ HRESULT WebContentHost::SetRasterScaleInternal(float rasterScale, bool allowDecr
 }
 
 HRESULT WebContentHost::ApplyLayout() {
-    if (!controller_ || contentW_ == 0 || contentH_ == 0) return E_FAIL;
-    if (!scaleTransform_) return E_FAIL;
-
-    // Bounds fixed at intrinsic (W,H). Density = R; size = invScale(1/R).
-    ApplyDensityCompensation();
-
-    RECT bounds = {0, 0, static_cast<LONG>(contentW_), static_cast<LONG>(contentH_)};
-    HRESULT hr = controller_->put_Bounds(bounds);
-    if (FAILED(hr)) return hr;
-
-    if (controller3_) {
-        hr = controller3_->put_RasterizationScale(static_cast<double>(
-            rasterScale_ > 0.0f ? rasterScale_ : 1.0f));
-        ApplyDensityCompensation();
+    if (!hwnd_ || !controller_ || !webview_) return E_FAIL;
+    RECT bounds;
+    GetClientRect(hwnd_, &bounds);
+    
+    if (reprojectionActive_) {
+        bounds.right = static_cast<LONG>(std::lround(overscanViewportW_ * 1.5f));
+        bounds.bottom = static_cast<LONG>(std::lround(overscanViewportH_ * 1.5f));
+    } else {
+        bounds.right = static_cast<LONG>(contentW_);
+        bounds.bottom = static_cast<LONG>(contentH_);
     }
-    return hr;
+    bounds.left = 0;
+    bounds.top = 0;
+    return controller_->put_Bounds(bounds);
 }
 
 void WebContentHost::HideSurface() {
@@ -573,6 +609,7 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
 
     NotifySurfaceActive();
     KillDensitySettleTimer();
+    reprojectionActive_ = false;
     densityMasked_ = false;
     contentReady_ = false;
     minimapCapturePending_ = false;
@@ -614,7 +651,7 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
     switch (payload.kind) {
     case WebContentKind::ComplexSvg: {
         if (payload.utf8Document.empty()) return E_INVALIDARG;
-        const std::wstring html = BuildComplexSvgHtml(payload.utf8Document);
+        const std::wstring html = BuildComplexSvgHtml(payload.utf8Document, contentW_, contentH_);
         // Invalidate prior navigations (including blank clear from leave).
         pendingNavSerial_ = ++navSerial_;
         contentReady_ = false;
@@ -647,7 +684,8 @@ HRESULT WebContentHost::ApplyOpenRasterScale(float displayZoom, UINT maxTextureD
 }
 
 HRESULT WebContentHost::SyncRasterScaleToDisplay(float displayZoom, UINT maxTextureDim) {
-    if (!IsReady()) return E_FAIL;
+    if (!controller3_ || contentW_ == 0 || contentH_ == 0) return E_FAIL;
+    if (reprojectionActive_) return S_OK; // [Fix] Skip tracking in Overscan mode, let WebView handle scaling via CSS
     if (maxTextureDim >= 256) maxTextureDim_ = maxTextureDim;
 
     const float z = (std::max)(displayZoom, 0.05f);
@@ -868,5 +906,37 @@ void WebContentHost::Shutdown() {
     hwnd_ = nullptr;
     dcompDevice_ = nullptr;
 }
+
+HRESULT WebContentHost::SetViewportReprojection(float scaleFactor, float panX, float panY, float viewportW, float viewportH) {
+    if (!webview_) return E_FAIL;
+    if (viewportW <= 0.0f || viewportH <= 0.0f) return E_INVALIDARG;
+
+    reprojectionActive_ = true;
+    overscanViewportW_ = viewportW;
+    overscanViewportH_ = viewportH;
+
+    // Lock WebView2 Bounds to 1.5x of screen viewport
+    LONG boundsW = static_cast<LONG>(std::lround(viewportW * 1.5f));
+    LONG boundsH = static_cast<LONG>(std::lround(viewportH * 1.5f));
+    RECT bounds = { 0, 0, boundsW, boundsH };
+    if (controller_) {
+        controller_->put_Bounds(bounds);
+    }
+
+    // Lock R=1.0: Overscan viewport is already at screen resolution.
+    // Prevents density tracking from triggering proxy layer ghost images.
+    rasterScale_ = 1.0f;
+    if (controller3_) {
+        controller3_->put_RasterizationScale(1.0);
+    }
+
+    ApplyDensityCompensation();
+
+    wchar_t script[512];
+    swprintf_s(script, L"if(window.updateViewport) window.updateViewport(%f, %f, %f);",
+              scaleFactor, panX, panY);
+    return webview_->ExecuteScript(script, nullptr);
+}
+
 
 } // namespace QuickView
