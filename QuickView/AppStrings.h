@@ -28,6 +28,7 @@ namespace AppStrings {
 
     // OSD Messages
     extern const wchar_t* OSD_NoImage;
+    extern const wchar_t* OSD_FolderEmpty;
     extern const wchar_t* OSD_Lossless;
     extern const wchar_t* OSD_ReencodedLossless;
     extern const wchar_t* OSD_EdgeAdapted;
@@ -274,6 +275,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_GalleryTriggerAreaHeight;
     extern const wchar_t* Settings_Label_GalleryDwellTime;
     extern const wchar_t* Settings_Label_GalleryExitDelay;
+    extern const wchar_t* Settings_Label_GalleryMinSize;
 
     
     extern const wchar_t* Settings_Group_Foundation;

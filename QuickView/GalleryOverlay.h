@@ -36,6 +36,11 @@ public:
   void Open(int currentIndex, GalleryMode targetMode = GalleryMode::Filmstrip);
   void Close(bool keepSelection = false); // Default: reset selection
 
+  // FullGrid expand slider: 2-column min-thumb client width, and [min, max] window range.
+  static float TwoColumnMinClientWidth(float uiScale);
+  static void GetMinSizeSliderRange(HWND hwnd, float uiScale, float& outMin, float& outMax);
+  static float ClampMinSize(float value, HWND hwnd, float uiScale);
+
   bool IsVisible() const {
     return m_mode != GalleryMode::Hidden || m_transitionProgress > 0.001f;
   }
@@ -157,6 +162,7 @@ private:
   float m_cellHeight = 0.0f;
 
   int m_selectedIndex = -1;
+  int m_lastSyncedNavIndex = -2;
   bool m_needsEnsureVisible = false;
   int m_hoverIndex = -1;
 

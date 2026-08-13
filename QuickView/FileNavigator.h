@@ -72,6 +72,7 @@ public:
     inline size_t Count() const { return m_files.size(); }
     inline int Index() const { return m_currentIndex; }
     void SetIndex(int index);
+    const std::wstring& GetWatchedDir() const { return m_watchedDir; }
 
     // Random Access (For Gallery Virtualization)
     const std::wstring& GetFile(int index) const;

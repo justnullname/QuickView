@@ -189,6 +189,8 @@ void HelpOverlay::SetVisible(bool visible) {
             extern GalleryOverlay g_gallery;
             if (g_gallery.IsVisible()) {
                 g_gallery.Close(true);
+                extern void NotifyGallerySessionEnded();
+                NotifyGallerySessionEnded();
             }
             g_gallery.SetHoveringHotspot(false);
             if (m_hwnd) {

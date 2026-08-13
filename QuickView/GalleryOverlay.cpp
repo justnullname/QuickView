@@ -49,6 +49,44 @@ GalleryOverlay::GalleryOverlay() {}
 
 GalleryOverlay::~GalleryOverlay() {}
 
+float GalleryOverlay::TwoColumnMinClientWidth(float uiScale) {
+    const float s = uiScale > 0.0f ? uiScale : 1.0f;
+    constexpr float kMinThumb = 80.0f;
+    constexpr float kGapRatio = 0.10f;
+    return 2.0f * PADDING * s + kMinThumb * s * (2.0f + kGapRatio);
+}
+
+void GalleryOverlay::GetMinSizeSliderRange(HWND hwnd, float uiScale, float& outMin, float& outMax) {
+    float border = 16.0f;
+    if (hwnd) {
+        RECT wr{}, cr{};
+        if (GetWindowRect(hwnd, &wr) && GetClientRect(hwnd, &cr)) {
+            const int bw = (wr.right - wr.left) - (cr.right - cr.left);
+            if (bw > 0) border = (float)bw;
+        }
+    }
+    outMin = TwoColumnMinClientWidth(uiScale) + border;
+
+    RECT work{ 0, 0, 1920, 1080 };
+    const HMONITOR mon = hwnd
+        ? MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+        : MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfo(mon, &mi)) work = mi.rcWork;
+    const int ww = work.right - work.left;
+    const int wh = work.bottom - work.top;
+    outMax = (float)((std::max)(ww, wh));
+    if (outMax < outMin) outMax = outMin;
+}
+
+float GalleryOverlay::ClampMinSize(float value, HWND hwnd, float uiScale) {
+    float mn = 0.0f, mx = 0.0f;
+    GetMinSizeSliderRange(hwnd, uiScale, mn, mx);
+    if (value <= 0.0f) value = 600.0f;
+    return std::clamp(value, mn, mx);
+}
+
 float GalleryOverlay::GetFilmCellSize() const {
     float preferredH = g_config.GalleryFilmstripHeight;
     
@@ -107,6 +145,7 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
     m_targetProgress = 1.0f;
     m_targetGridProgress = (targetMode == GalleryMode::FullGrid) ? 1.0f : 0.0f;
     m_selectedIndex = currentIndex;
+    m_lastSyncedNavIndex = -2;
     
     // Save and hide Info Panel (Only for FullGrid, keep open for Filmstrip)
     if (targetMode == GalleryMode::FullGrid && g_runtime.ShowInfoPanel) {
@@ -352,19 +391,22 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
             repaintNeeded = true;
         }
 
-        // Sync gallery selection index with the navigator's current index if it changed in the background
+        // Follow navigator index only when it *changes* (and is valid). A directory
+        // Initialize leaves Index() == -1; do not clobber arrow-key selection every tick.
         if (m_pNav) {
             int navIdx = m_pNav->Index();
-            if (m_selectedIndex != navIdx) {
-                m_selectedIndex = navIdx;
-                // Only auto-center if user is not actively browsing the filmstrip (within 3 seconds)
-                if (GetTickCount() - m_lastUserScrollTime >= 3000) {
-                    EnsureVisible(m_selectedIndex, m_lastSize, true);
-                    m_recenterPending = false;
-                } else {
-                    m_recenterPending = true;
+            if (navIdx != m_lastSyncedNavIndex) {
+                m_lastSyncedNavIndex = navIdx;
+                if (navIdx >= 0 && m_selectedIndex != navIdx) {
+                    m_selectedIndex = navIdx;
+                    if (GetTickCount() - m_lastUserScrollTime >= 3000) {
+                        EnsureVisible(m_selectedIndex, m_lastSize, true);
+                        m_recenterPending = false;
+                    } else {
+                        m_recenterPending = true;
+                    }
+                    repaintNeeded = true;
                 }
-                repaintNeeded = true;
             }
         }
     }

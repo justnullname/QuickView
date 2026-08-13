@@ -683,6 +683,7 @@ struct AppConfig {
     float GalleryExitDelay = 0.80f;        // Exit dismissal delay in seconds (0.10 ~ 3.0)
     int GalleryThumbnailSize = 0;       // 0=Auto(140px), 80~300=explicit pixel size
     float GalleryFilmstripHeight = 140.0f; // Preferred height of filmstrip in logical pixels
+    float GalleryMinSize = 600.0f;      // FullGrid expand target, physical window px (2-col min … work-area max)
     int PrefetchGear = 1;               // 0=Off, 1=Auto, 2=Eco, 3=Balanced, 4=Ultra
     int MemoryReclaimStrategy = 0;      // 0=Smart, 1=Aggressive, 2=OnDemand
     

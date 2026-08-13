@@ -13,6 +13,7 @@ namespace AppStrings {
 // ----------------------------------------------------------------
 const wchar_t *CurrentLocale = L"en-us";
 const wchar_t *OSD_NoImage = nullptr;
+const wchar_t *OSD_FolderEmpty = nullptr;
 const wchar_t *OSD_Lossless = nullptr;
 const wchar_t *OSD_ReencodedLossless = nullptr;
 const wchar_t *OSD_EdgeAdapted = nullptr;
@@ -566,6 +567,7 @@ const wchar_t *Settings_Tooltip_GalleryTrigger = nullptr;
 const wchar_t *Settings_Label_GalleryTriggerAreaHeight = nullptr;
 const wchar_t *Settings_Label_GalleryDwellTime = nullptr;
 const wchar_t *Settings_Label_GalleryExitDelay = nullptr;
+const wchar_t *Settings_Label_GalleryMinSize = nullptr;
 
 const wchar_t *OSD_SlideshowStarted = nullptr;
 const wchar_t *OSD_SlideshowStopped = nullptr;
@@ -594,6 +596,7 @@ const wchar_t *Settings_Text_License = L"Licensed under GNU GPL v3.0";
 // ----------------------------------------------------------------
 struct LanguageTable {
     const wchar_t *OSD_NoImage;
+    const wchar_t *OSD_FolderEmpty;
     const wchar_t *OSD_Lossless;
     const wchar_t *OSD_ReencodedLossless;
     const wchar_t *OSD_EdgeAdapted;
@@ -1130,6 +1133,7 @@ struct LanguageTable {
     const wchar_t *Settings_Label_GalleryTriggerAreaHeight;
     const wchar_t *Settings_Label_GalleryDwellTime;
     const wchar_t *Settings_Label_GalleryExitDelay;
+    const wchar_t *Settings_Label_GalleryMinSize;
 
     const wchar_t *OSD_SlideshowStarted;
     const wchar_t *OSD_SlideshowStopped;
@@ -1162,6 +1166,7 @@ struct LanguageTable {
 // ----------------------------------------------------------------
 static const LanguageTable Table_EN = {
     L"No image loaded", // OSD_NoImage
+    L"No images in this folder", // OSD_FolderEmpty
     L"Lossless", // OSD_Lossless
     L"Re-encoded (Lossless)", // OSD_ReencodedLossless
     L"Cropped", // OSD_EdgeAdapted
@@ -1698,6 +1703,7 @@ static const LanguageTable Table_EN = {
     L"Trigger Area Height", // Settings_Label_GalleryTriggerAreaHeight
     L"Dwell Time", // Settings_Label_GalleryDwellTime
     L"Exit Delay", // Settings_Label_GalleryExitDelay
+    L"Gallery Minimum Size", // Settings_Label_GalleryMinSize
 
     L"Slideshow Started", // OSD_SlideshowStarted
     L"Slideshow Stopped", // OSD_SlideshowStopped
@@ -1730,6 +1736,7 @@ static const LanguageTable Table_EN = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_CN = {
     L"没有加载图片", // OSD_NoImage
+    L"文件夹中没有图片", // OSD_FolderEmpty
     L"无损", // OSD_Lossless
     L"重编码 (无损)", // OSD_ReencodedLossless
     L"边缘优化", // OSD_EdgeAdapted
@@ -2266,6 +2273,7 @@ static const LanguageTable Table_CN = {
     L"触发区域高度", // Settings_Label_GalleryTriggerAreaHeight
     L"停留时长", // Settings_Label_GalleryDwellTime
     L"退出延迟", // Settings_Label_GalleryExitDelay
+    L"画廊最小尺寸", // Settings_Label_GalleryMinSize
 
     L"开始播放幻灯片", // OSD_SlideshowStarted
     L"停止播放幻灯片", // OSD_SlideshowStopped
@@ -2298,6 +2306,7 @@ static const LanguageTable Table_CN = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_TW = {
     L"沒有載入圖片", // OSD_NoImage
+    L"資料夾中沒有圖片", // OSD_FolderEmpty
     L"無損", // OSD_Lossless
     L"重新編碼 (無損)", // OSD_ReencodedLossless
     L"剪裁", // OSD_EdgeAdapted
@@ -2834,6 +2843,7 @@ static const LanguageTable Table_TW = {
     L"觸發區域高度", // Settings_Label_GalleryTriggerAreaHeight
     L"停留時長", // Settings_Label_GalleryDwellTime
     L"退出延遲", // Settings_Label_GalleryExitDelay
+    L"畫廊最小尺寸", // Settings_Label_GalleryMinSize
 
     L"開始播放幻燈片", // OSD_SlideshowStarted
     L"停止播放幻燈片", // OSD_SlideshowStopped
@@ -2866,6 +2876,7 @@ static const LanguageTable Table_TW = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_JA = {
     L"画像が読み込まれていません", // OSD_NoImage
+    L"このフォルダーに画像がありません", // OSD_FolderEmpty
     L"ロスレス", // OSD_Lossless
     L"再エンコード (ロスレス)", // OSD_ReencodedLossless
     L"クロップ済み", // OSD_EdgeAdapted
@@ -3402,6 +3413,7 @@ static const LanguageTable Table_JA = {
     L"トリガーエリアの高さ", // Settings_Label_GalleryTriggerAreaHeight
     L"ホバー滞在時間", // Settings_Label_GalleryDwellTime
     L"退出ディレイ", // Settings_Label_GalleryExitDelay
+    L"ギャラリー最小サイズ", // Settings_Label_GalleryMinSize
 
     L"スライドショーを開始", // OSD_SlideshowStarted
     L"スライドショーを停止", // OSD_SlideshowStopped
@@ -3434,6 +3446,7 @@ static const LanguageTable Table_JA = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_RU = {
     L"Изображение не загружено", // OSD_NoImage
+    L"В этой папке нет изображений", // OSD_FolderEmpty
     L"Без потерь", // OSD_Lossless
     L"Перекодировано (без потерь)", // OSD_ReencodedLossless
     L"Оптимизация краёв", // OSD_EdgeAdapted
@@ -3970,6 +3983,7 @@ static const LanguageTable Table_RU = {
     L"Высота зоны триггера", // Settings_Label_GalleryTriggerAreaHeight
     L"Время задержки", // Settings_Label_GalleryDwellTime
     L"Задержка выхода", // Settings_Label_GalleryExitDelay
+    L"Мин. размер галереи", // Settings_Label_GalleryMinSize
 
     L"Слайд-шоу запущено", // OSD_SlideshowStarted
     L"Слайд-шоу остановлено", // OSD_SlideshowStopped
@@ -4002,6 +4016,7 @@ static const LanguageTable Table_RU = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_DE = {
     L"Kein Bild geladen", // OSD_NoImage
+    L"Keine Bilder in diesem Ordner", // OSD_FolderEmpty
     L"Verlustfrei", // OSD_Lossless
     L"Neu kodiert (verlustfrei)", // OSD_ReencodedLossless
     L"Kantenoptimiert", // OSD_EdgeAdapted
@@ -4538,6 +4553,7 @@ static const LanguageTable Table_DE = {
     L"Höhe des Auslösebereichs", // Settings_Label_GalleryTriggerAreaHeight
     L"Verweilzeit", // Settings_Label_GalleryDwellTime
     L"Verzögerung beim Beenden", // Settings_Label_GalleryExitDelay
+    L"Galerie-Mindestgröße", // Settings_Label_GalleryMinSize
 
     L"Diashow gestartet", // OSD_SlideshowStarted
     L"Diashow gestoppt", // OSD_SlideshowStopped
@@ -4570,6 +4586,7 @@ static const LanguageTable Table_DE = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_ES = {
     L"No hay imagen cargada", // OSD_NoImage
+    L"No hay imágenes en esta carpeta", // OSD_FolderEmpty
     L"Sin pérdida", // OSD_Lossless
     L"Recodificado (sin pérdida)", // OSD_ReencodedLossless
     L"Bordes optimizados", // OSD_EdgeAdapted
@@ -5106,6 +5123,7 @@ static const LanguageTable Table_ES = {
     L"Altura del área de activación", // Settings_Label_GalleryTriggerAreaHeight
     L"Tiempo de permanencia", // Settings_Label_GalleryDwellTime
     L"Retardo de salida", // Settings_Label_GalleryExitDelay
+    L"Tamaño mínimo de galería", // Settings_Label_GalleryMinSize
 
     L"Presentación iniciada", // OSD_SlideshowStarted
     L"Presentación detenida", // OSD_SlideshowStopped
@@ -5138,6 +5156,7 @@ static const LanguageTable Table_ES = {
 // ----------------------------------------------------------------
 static const LanguageTable Table_FR = {
     L"No image loaded", // OSD_NoImage
+    L"Aucune image dans ce dossier", // OSD_FolderEmpty
     L"Lossless", // OSD_Lossless
     L"Re-encoded (Lossless)", // OSD_ReencodedLossless
     L"Cropped", // OSD_EdgeAdapted
@@ -5674,6 +5693,7 @@ static const LanguageTable Table_FR = {
     L"Hauteur de la zone de déclenchement", // Settings_Label_GalleryTriggerAreaHeight
     L"Temps de maintien", // Settings_Label_GalleryDwellTime
     L"Délai de sortie", // Settings_Label_GalleryExitDelay
+    L"Taille minimale de la galerie", // Settings_Label_GalleryMinSize
 
     L"Diaporama démarré", // OSD_SlideshowStarted
     L"Diaporama arrêté", // OSD_SlideshowStopped
@@ -5706,6 +5726,7 @@ static const LanguageTable Table_FR = {
 // ----------------------------------------------------------------
 void Apply(const LanguageTable& t) {
   OSD_NoImage = t.OSD_NoImage;
+  OSD_FolderEmpty = t.OSD_FolderEmpty;
   OSD_Lossless = t.OSD_Lossless;
   OSD_ReencodedLossless = t.OSD_ReencodedLossless;
   OSD_EdgeAdapted = t.OSD_EdgeAdapted;
@@ -6247,6 +6268,7 @@ void Apply(const LanguageTable& t) {
   Settings_Label_GalleryTriggerAreaHeight = t.Settings_Label_GalleryTriggerAreaHeight;
   Settings_Label_GalleryDwellTime = t.Settings_Label_GalleryDwellTime;
   Settings_Label_GalleryExitDelay = t.Settings_Label_GalleryExitDelay;
+  Settings_Label_GalleryMinSize = t.Settings_Label_GalleryMinSize;
 
   OSD_SlideshowStarted = t.OSD_SlideshowStarted;
   OSD_SlideshowStopped = t.OSD_SlideshowStopped;

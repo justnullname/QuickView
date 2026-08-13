@@ -550,6 +550,34 @@ SettingsOverlay g_settingsOverlay;  // Non-static for extern access from UIRende
 HelpOverlay g_helpOverlay; // Non-static for extern access
 static UINT g_windowDpi = USER_DEFAULT_SCREEN_DPI;
 float g_uiScale = 1.0f;
+extern HWND g_mainHwnd;
+
+enum class GalleryIntent : uint8_t { None, OverlayBrowse, FolderBrowse };
+enum class GalleryFinishKind { Dismiss, Commit, VisualOnly };
+
+struct GallerySession {
+    GalleryIntent intent = GalleryIntent::None;
+    bool navigatorSwitched = false;
+    std::wstring restorePath;
+    std::wstring restoreFolder;
+    int restoreNavIndex = -1;
+};
+static GallerySession g_gallerySession;
+
+void NotifyGallerySessionEnded() {
+    g_gallerySession = {};
+}
+
+static bool GalleryMinApplies() {
+    // IsVisible() stays true during fade-out. Min-track must drop the instant
+    // Close() sets Hidden, or shrink is clamped to GalleryMinSize on one axis.
+    return g_gallery.GetMode() != GalleryMode::Hidden
+        || g_gallerySession.intent != GalleryIntent::None;
+}
+
+static float GetEffectiveGalleryMinSize() {
+    return GalleryOverlay::ClampMinSize(g_config.GalleryMinSize, g_mainHwnd, g_uiScale);
+}
 
 static float GetMinWindowWidth() {
     float defaultMinW = 4.0f * 38.0f * g_uiScale; // window controls
@@ -563,10 +591,8 @@ static float GetMinWindowWidth() {
     if (g_helpOverlay.IsVisible()) {
         defaultMinW = std::max(defaultMinW, 500.0f * g_uiScale + 50.0f * g_uiScale);
     }
-    if (g_gallery.IsVisible()) {
-        // Lowered limits (2x2 thumbnail matrix baseline) to prevent unwanted layout jumps on normal-sized windows.
-        float galleryMinW = 250.0f;
-        defaultMinW = std::max(defaultMinW, galleryMinW * g_uiScale + 50.0f * g_uiScale);
+    if (GalleryMinApplies()) {
+        defaultMinW = std::max(defaultMinW, GetEffectiveGalleryMinSize());
     }
     if (AppContext::GetInstance().Dialog.IsVisible) {
         defaultMinW = std::max(defaultMinW, 420.0f * g_uiScale + 24.0f * g_uiScale);
@@ -593,10 +619,11 @@ static float GetMinWindowHeight() {
     if (g_helpOverlay.IsVisible()) {
         defaultMinH = std::max(defaultMinH, 600.0f * g_uiScale + 50.0f * g_uiScale);
     }
-    if (g_gallery.IsVisible()) {
-        // Lowered limits (2x2 thumbnail matrix baseline) to prevent unwanted layout jumps on normal-sized windows.
-        float galleryMinH = (g_gallery.GetMode() == GalleryMode::FullGrid) ? 250.0f : 180.0f;
-        defaultMinH = std::max(defaultMinH, galleryMinH * g_uiScale + 50.0f * g_uiScale);
+    if (GalleryMinApplies() && (g_gallery.GetMode() == GalleryMode::FullGrid
+            || g_gallerySession.intent != GalleryIntent::None)) {
+        defaultMinH = std::max(defaultMinH, GetEffectiveGalleryMinSize());
+    } else if (g_gallery.GetMode() == GalleryMode::Filmstrip) {
+        defaultMinH = std::max(defaultMinH, 180.0f * g_uiScale + 50.0f * g_uiScale);
     }
     if (AppContext::GetInstance().Dialog.IsVisible) {
         float titleHeight = 35.0f;
@@ -1322,6 +1349,7 @@ static void SaveOverlayWindowState(HWND hwnd);
 static void RestoreOverlayWindowState(HWND hwnd);
 static void ShowGallery(HWND hwnd);
 static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearThumbCache = true);
+static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex = -1);
 static std::wstring PickFolder(HWND hwnd, const std::wstring& initialPath = L"");
 
 static void ApplyUIScale(float scale) {
@@ -3361,15 +3389,167 @@ static void ReloadGainMapImagesForDisplayChange(HWND hwnd) {
 
 
 
+static void NormalizeFolderPath(std::wstring& p) {
+    while (!p.empty() && (p.back() == L'\\' || p.back() == L'/')) {
+        p.pop_back();
+    }
+}
+
+static bool SameFolderPath(std::wstring a, std::wstring b) {
+    NormalizeFolderPath(a);
+    NormalizeFolderPath(b);
+    return !a.empty() && !b.empty() && _wcsicmp(a.c_str(), b.c_str()) == 0;
+}
+
+static std::wstring FolderOfImage(const std::wstring& imagePath) {
+    std::wstring archive;
+    size_t vfsIndex = (size_t)-1;
+    if (FileNavigator::ParseVirtualPath(imagePath, archive, vfsIndex)) {
+        return std::filesystem::path(archive).parent_path().wstring();
+    }
+    return std::filesystem::path(imagePath).parent_path().wstring();
+}
+
+static bool IsDirectoryPath(LPCWSTR path) {
+    return path && *path && PathIsDirectoryW(path) != FALSE;
+}
+
+static bool SameFolderAsCurrent(const std::wstring& folder) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (!pane.navigator.GetWatchedDir().empty() && SameFolderPath(pane.navigator.GetWatchedDir(), folder)) {
+        return true;
+    }
+    if (!pane.path.empty() && SameFolderPath(FolderOfImage(pane.path), folder)) {
+        return true;
+    }
+    return false;
+}
+
+static bool RestoreNavigatorToSession(HWND hwnd, const GallerySession& s) {
+    auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+    if (!s.navigatorSwitched) return true;
+    if (!s.restorePath.empty() && FileExists(s.restorePath.c_str())) {
+        nav.Initialize(s.restorePath, hwnd);
+        return nav.Index() >= 0;
+    }
+    if (!s.restoreFolder.empty() && IsDirectoryPath(s.restoreFolder.c_str())) {
+        nav.Initialize(s.restoreFolder, hwnd);
+        if (nav.Count() == 0) return false;
+        nav.SetIndex(0);
+        return true;
+    }
+    return false;
+}
+
+static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
+    if (kind == GalleryFinishKind::VisualOnly) {
+        return;
+    }
+
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+
+    if (kind == GalleryFinishKind::Commit) {
+        g_savedState.isValid = false;
+        if (commitIndex >= 0 && commitIndex < (int)pane.navigator.Count()) {
+            const std::wstring path = pane.navigator.GetFile(commitIndex);
+            const std::wstring resolved = pane.navigator.GetResolvedPath(path);
+            const bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
+            if (isLeft) {
+                if (resolved != GetPaneContext(PaneSlot::Left).path) {
+                    GetPaneContext(PaneSlot::Left).navigator.Initialize(resolved, hwnd);
+                    AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolved, [](bool success) {
+                        if (success) {
+                            AppContext::GetInstance().Compare.activePane = ComparePane::Left;
+                            AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
+                            MarkCompareDirty();
+                            RequestRepaint(PaintLayer::All);
+                        }
+                    });
+                }
+            } else if (resolved != pane.path) {
+                pane.navigator.Initialize(resolved, hwnd);
+                LoadImageAsync(hwnd, resolved.c_str());
+            }
+        }
+        if (g_config.GalleryKeepVisibleOnThumbnailClick && g_gallery.GetMode() != GalleryMode::Hidden) {
+            g_gallerySession.restorePath.clear();
+            g_gallerySession.restoreFolder.clear();
+            g_gallerySession.navigatorSwitched = false;
+            g_gallerySession.intent = GalleryIntent::OverlayBrowse;
+            return;
+        }
+        g_gallerySession = {};
+        return;
+    }
+
+    // Dismiss: restore navigator first, drop gallery min-track, then shrink via existing helper.
+    if (g_gallerySession.navigatorSwitched) {
+        RestoreNavigatorToSession(hwnd, g_gallerySession);
+    }
+    g_gallerySession = {};
+    AdjustWindowForOverlay(hwnd, true);
+    g_savedState.isValid = false;
+}
+
 static void ShowGallery(HWND hwnd) {
+    if (g_gallerySession.intent == GalleryIntent::None) {
+        g_gallerySession.intent = GalleryIntent::OverlayBrowse;
+    }
     if (!g_gallery.IsVisible()) SaveOverlayWindowState(hwnd);
 
-    g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::FullGrid);
-    if (g_gallery.IsVisible()) {
-        AdjustWindowForOverlay(hwnd, false);
-    }
+    AdjustWindowForOverlay(hwnd, false);
+    auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+    g_gallery.Open(std::max(nav.Index(), 0), GalleryMode::FullGrid);
     RequestRepaint(PaintLayer::All);
     SetTimer(hwnd, 998, 16, nullptr);
+}
+
+static bool BeginFolderGallery(HWND hwnd, const std::wstring& folder, bool clearThumbCache) {
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    const bool hadImage = !pane.path.empty();
+
+    if (!hadImage) {
+        pane.navigator.Initialize(folder, hwnd);
+        if (clearThumbCache) g_thumbMgr.ClearCache();
+        if (pane.navigator.Count() == 0) {
+            g_osd.Show(hwnd, AppStrings::OSD_FolderEmpty, false);
+            return false;
+        }
+        pane.navigator.SetIndex(0);
+        g_gallerySession = {};
+        g_gallerySession.intent = GalleryIntent::FolderBrowse;
+        ShowGallery(hwnd);
+        return true;
+    }
+
+    if (SameFolderAsCurrent(folder)) {
+        g_gallerySession = {};
+        g_gallerySession.intent = GalleryIntent::OverlayBrowse;
+        if (clearThumbCache) g_thumbMgr.ClearCache();
+        ShowGallery(hwnd);
+        return true;
+    }
+
+    GallerySession next{};
+    next.intent = GalleryIntent::FolderBrowse;
+    next.navigatorSwitched = true;
+    next.restorePath = pane.path;
+    next.restoreFolder = pane.navigator.GetWatchedDir().empty()
+        ? FolderOfImage(pane.path)
+        : pane.navigator.GetWatchedDir();
+    next.restoreNavIndex = pane.navigator.Index();
+
+    pane.navigator.Initialize(folder, hwnd);
+    if (clearThumbCache) g_thumbMgr.ClearCache();
+    if (pane.navigator.Count() == 0) {
+        RestoreNavigatorToSession(hwnd, next);
+        g_osd.Show(hwnd, AppStrings::OSD_FolderEmpty, false);
+        return false;
+    }
+    pane.navigator.SetIndex(0);
+    g_gallerySession = std::move(next);
+    ShowGallery(hwnd);
+    return true;
 }
 
 static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearThumbCache) {
@@ -3382,21 +3562,19 @@ static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearT
     const bool isDirectory = fs::is_directory(fsPath, ec);
     if (ec) return false;
 
+    if (isDirectory) {
+        const bool ok = BeginFolderGallery(hwnd, path, clearThumbCache);
+        RequestRepaint(PaintLayer::All);
+        return ok;
+    }
+
     GetPaneContext(PaneSlot::Primary).editState.Reset();
     GetPaneContext(PaneSlot::Primary).view.Reset();
     GetPaneContext(PaneSlot::Primary).navigator.Initialize(path, hwnd);
     if (clearThumbCache) {
         g_thumbMgr.ClearCache();
     }
-
-    if (isDirectory) {
-        ReleaseImageResources();
-        GetPaneContext(PaneSlot::Primary).path = L"";
-        GetPaneContext(PaneSlot::Primary).metadata = CImageLoader::ImageMetadata{};
-        ShowGallery(hwnd);
-    } else {
-        LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path).c_str());
-    }
+    LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path).c_str());
 
     RequestRepaint(PaintLayer::All);
     return true;
@@ -4805,6 +4983,7 @@ void SaveConfig() {
     WriteConfigFloat(L"Controls", L"GalleryExitDelay", g_config.GalleryExitDelay, iniPath.c_str());
     WriteConfigInt(L"Controls", L"GalleryThumbnailSize", g_config.GalleryThumbnailSize, iniPath.c_str());
     WriteConfigInt(L"Controls", L"GalleryFilmstripHeight", g_config.GalleryFilmstripHeight, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"GalleryMinSize", (int)std::lround(g_config.GalleryMinSize), iniPath.c_str());
     // NavIndicator moved to View section
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
@@ -5130,6 +5309,12 @@ void LoadConfig() {
     GetPrivateProfileStringW(L"Controls", L"GalleryExitDelay", L"0.80", buf, 64, iniPath.c_str());
     g_config.GalleryExitDelay = std::clamp((float)_wtof(buf), 0.10f, 3.00f);
     g_config.GalleryThumbnailSize = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"GalleryThumbnailSize", 0, iniPath.c_str()), 0, 300);
+    {
+        wchar_t bufGalleryMin[32];
+        GetPrivateProfileStringW(L"Controls", L"GalleryMinSize", L"600", bufGalleryMin, 32, iniPath.c_str());
+        g_config.GalleryMinSize = (float)_wtof(bufGalleryMin);
+        if (g_config.GalleryMinSize <= 0.0f) g_config.GalleryMinSize = 600.0f;
+    }
     GetPrivateProfileStringW(L"Controls", L"GalleryFilmstripHeight", L"-1.0", buf, 64, iniPath.c_str());
     {
         float loadedH = (float)_wtof(buf);
@@ -5588,7 +5773,10 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
         }
     } else {
         // Closing overlay:
-        if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) {
+        // Fade-out still reports IsVisible(); only an actually open gallery must block shrink.
+        if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible()
+            || g_gallery.GetMode() != GalleryMode::Hidden
+            || AppContext::GetInstance().Dialog.IsVisible) {
             return;
         }
 
@@ -10150,42 +10338,18 @@ SKIP_EDGE_NAV:;
             float winH = (float)(rcClient.bottom - rcClient.top);
             if (g_gallery.HitTestArea(pt.x, pt.y, winW, winH)) {
                 if (g_gallery.OnLButtonDown(pt.x, pt.y)) {
-                    // Check if closed with selection
-                    if (!g_gallery.IsVisible()) {
-                        SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Fix sticky wait cursor
-                        RestoreOverlayWindowState(hwnd);
-                        int idx = g_gallery.GetSelectedIndex();
-                        if (idx >= 0 && idx < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
-                             std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(idx);
-                             bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
-                             std::wstring resolvedPath = GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path);
-                             if (isLeft) {
-                                 if (resolvedPath != GetPaneContext(PaneSlot::Left).path) {
-                                     GetPaneContext(PaneSlot::Left).navigator.Initialize(resolvedPath, hwnd);
-                                     AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolvedPath, [](bool success){
-                                         if (success) {
-                                             AppContext::GetInstance().Compare.activePane = ComparePane::Left;
-                                             AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
-                                             MarkCompareDirty();
-                                             RequestRepaint(PaintLayer::All);
-                                         }
-                                     });
-                                 }
-                             } else {
-                                 if (resolvedPath != GetPaneContext(PaneSlot::Primary).path) {
-                                     GetPaneContext(PaneSlot::Primary).navigator.Initialize(resolvedPath, hwnd);
-                                     LoadImageAsync(hwnd, resolvedPath.c_str());
-                                 }
-                             }
-                        }
+                    if (g_gallery.GetMode() == GalleryMode::Hidden) {
+                        SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                        FinishGallery(hwnd, GalleryFinishKind::Dismiss);
                         RequestRepaint(PaintLayer::All);
                     } else {
-                        RequestRepaint(PaintLayer::Gallery); // Only repaint Gallery, not Image!
+                        RequestRepaint(PaintLayer::Gallery);
                     }
                 }
                 return 0;
             } else if (!g_gallery.IsPinned()) {
                 g_gallery.Close(true);
+                FinishGallery(hwnd, GalleryFinishKind::Dismiss);
                 RequestRepaint(PaintLayer::All);
             }
         }
@@ -10645,32 +10809,9 @@ SKIP_EDGE_NAV:;
                 int selectedIdx = -1;
                 bool clicked = g_gallery.OnLButtonUp((int)pt.x, (int)pt.y, selectedIdx);
                 if (clicked && selectedIdx >= 0) {
-                    if (selectedIdx < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
-                        std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(selectedIdx);
-                        bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
-                        std::wstring resolvedPath = GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path);
-                        if (isLeft) {
-                            if (resolvedPath != GetPaneContext(PaneSlot::Left).path) {
-                                GetPaneContext(PaneSlot::Left).navigator.Initialize(resolvedPath, hwnd);
-                                AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolvedPath, [](bool success){
-                                    if (success) {
-                                        AppContext::GetInstance().Compare.activePane = ComparePane::Left;
-                                        AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
-                                        MarkCompareDirty();
-                                        RequestRepaint(PaintLayer::All);
-                                    }
-                                });
-                            }
-                        } else {
-                            if (resolvedPath != GetPaneContext(PaneSlot::Primary).path) {
-                                GetPaneContext(PaneSlot::Primary).navigator.Initialize(resolvedPath, hwnd);
-                                LoadImageAsync(hwnd, resolvedPath.c_str());
-                            }
-                        }
-                    }
-                    if (!g_gallery.IsPinned()) {
-                        SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Restore cursor
-                        RestoreOverlayWindowState(hwnd);
+                    FinishGallery(hwnd, GalleryFinishKind::Commit, selectedIdx);
+                    if (g_gallery.GetMode() == GalleryMode::Hidden) {
+                        SetCursor(LoadCursor(nullptr, IDC_ARROW));
                     }
                     RequestRepaint(PaintLayer::All);
                 } else {
@@ -10797,7 +10938,7 @@ SKIP_EDGE_NAV:;
                 case ToolbarButtonID::Gallery: 
                     if (g_gallery.IsVisible()) {
                         g_gallery.Close();
-                        RestoreOverlayWindowState(hwnd);
+                        FinishGallery(hwnd, GalleryFinishKind::Dismiss);
                         RequestRepaint(PaintLayer::All);
                     } else {
                         ShowGallery(hwnd);
@@ -10847,6 +10988,7 @@ SKIP_EDGE_NAV:;
                         } else {
                             g_gallery.SetPinned(false);
                             g_gallery.Close();
+                            NotifyGallerySessionEnded();
                         }
                         SaveConfig();
                         ApplyWindowTheme(hwnd); // Update DWM borders
@@ -11743,33 +11885,13 @@ SKIP_EDGE_NAV:;
         // Gallery handling
         if (g_gallery.IsVisible()) {
             if (g_gallery.OnKeyDown(wParam)) {
-                if (!g_gallery.IsVisible()) {
-                    SetCursor(LoadCursor(nullptr, IDC_ARROW)); // Fix sticky wait cursor
-                    AdjustWindowForOverlay(hwnd, true); // Restore window state on close
-                    // Closed with selection potentially
-                    int idx = g_gallery.GetSelectedIndex();
-                    if (idx >= 0 && idx < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
-                         std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(idx);
-                         bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
-                         std::wstring resolvedPath = GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path);
-                         if (isLeft) {
-                             if (resolvedPath != GetPaneContext(PaneSlot::Left).path) {
-                                 GetPaneContext(PaneSlot::Left).navigator.Initialize(resolvedPath, hwnd);
-                                 AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolvedPath, [](bool success){
-                                     if (success) {
-                                         AppContext::GetInstance().Compare.activePane = ComparePane::Left;
-                                         AppContext::GetInstance().Compare.contextPane = ComparePane::Left;
-                                         MarkCompareDirty();
-                                         RequestRepaint(PaintLayer::All);
-                                     }
-                                 });
-                             }
-                         } else {
-                             if (resolvedPath != GetPaneContext(PaneSlot::Primary).path) {
-                                 GetPaneContext(PaneSlot::Primary).navigator.Initialize(resolvedPath, hwnd); 
-                                 LoadImageAsync(hwnd, resolvedPath.c_str());
-                             }
-                         }
+                if (g_gallery.GetMode() == GalleryMode::Hidden) {
+                    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                    const int idx = g_gallery.GetSelectedIndex();
+                    if (wParam == VK_RETURN && idx >= 0) {
+                        FinishGallery(hwnd, GalleryFinishKind::Commit, idx);
+                    } else {
+                        FinishGallery(hwnd, GalleryFinishKind::Dismiss);
                     }
                     RequestRepaint(PaintLayer::All);
                 } else {
@@ -12033,6 +12155,7 @@ SKIP_EDGE_NAV:;
             if (g_galleryContextMenuIndex >= 0 && g_galleryContextMenuIndex < (int)GetPaneContext(PaneSlot::Primary).navigator.Count()) {
                 std::wstring path = GetPaneContext(PaneSlot::Primary).navigator.GetFile(g_galleryContextMenuIndex);
                 g_gallery.Close();
+                NotifyGallerySessionEnded();
                 RestoreOverlayWindowState(hwnd);
                 if (!IsCompareModeActive()) {
                     AppContext::GetInstance().CompareCtrl->EnterMode(hwnd);
@@ -12731,6 +12854,7 @@ SKIP_EDGE_NAV:;
             if (g_runtime.ShowInfoPanel) {
                 if (g_gallery.IsVisible() && !g_gallery.IsPinned()) {
                     g_gallery.Close();
+                    NotifyGallerySessionEnded();
                     RestoreOverlayWindowState(hwnd);
                 }
                 g_runtime.InfoPanelExpanded = (g_config.ToolbarInfoDefault == 1); // 0=Lite, 1=Full
@@ -13122,6 +13246,7 @@ SKIP_EDGE_NAV:;
             } else {
                 if (g_gallery.IsVisible()) {
                     g_gallery.Close();
+                    NotifyGallerySessionEnded();
                     RestoreOverlayWindowState(hwnd);
                 }
                 SaveOverlayWindowState(hwnd);
@@ -13148,8 +13273,15 @@ SKIP_EDGE_NAV:;
 
 
 void OnResize(HWND hwnd, UINT width, UINT height) {
-    if ((height < 450 || width < 600) && g_gallery.IsVisible() && !g_gallery.IsPinned()) {
-        g_gallery.Close();
+    const bool tooSmall = (height < 450 || width < 600);
+    const bool autoCloseFilmstrip =
+        tooSmall
+        && g_gallery.IsVisible()
+        && !g_gallery.IsPinned()
+        && g_gallery.GetMode() != GalleryMode::FullGrid
+        && !g_programmaticResize;
+    if (autoCloseFilmstrip) {
+        g_gallery.Close(true);
         RestoreOverlayWindowState(hwnd);
         RequestRepaint(PaintLayer::All);
     }
@@ -16524,7 +16656,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
     case HotkeyAction::ToggleGallery:
         if (g_gallery.IsVisible()) {
             g_gallery.Close();
-            RestoreOverlayWindowState(hwnd);
+            FinishGallery(hwnd, GalleryFinishKind::Dismiss);
             RequestRepaint(PaintLayer::All);
         } else {
             ShowGallery(hwnd);
@@ -16538,6 +16670,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             if (!g_runtime.ShowInfoPanel) {
                 if (g_gallery.IsVisible()) {
                     g_gallery.Close();
+                    NotifyGallerySessionEnded();
                     RestoreOverlayWindowState(hwnd);
                 }
                 g_runtime.ShowInfoPanel = true;
@@ -16565,6 +16698,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             if (!g_runtime.ShowInfoPanel) {
                 if (g_gallery.IsVisible()) {
                     g_gallery.Close();
+                    NotifyGallerySessionEnded();
                     RestoreOverlayWindowState(hwnd);
                 }
                 g_runtime.ShowInfoPanel = true;
@@ -16759,6 +16893,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         if (!g_helpOverlay.IsVisible()) {
             if (g_gallery.IsVisible()) {
                 g_gallery.Close();
+                NotifyGallerySessionEnded();
                 RestoreOverlayWindowState(hwnd);
             }
             SaveOverlayWindowState(hwnd);
@@ -16796,6 +16931,7 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
                 g_gallery.SetPinned(wasPinned);
                 if (!wasPinned) {
                     g_gallery.Close();
+                    NotifyGallerySessionEnded();
                 }
             }
             g_osd.Show(hwnd, AppStrings::OSD_SlideshowStopped, true);
