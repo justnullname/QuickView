@@ -138,7 +138,14 @@ struct LoupeState {
     bool sizeChanged = false;      // wheel resized the loupe this session -> persist on release
 };
 
+enum class MinimapOverride : uint8_t {
+    Auto = 0, // Follow default configuration rules
+    Show = 1, // Runtime manual force-show (hotkey M)
+    Hide = 2  // Runtime manual force-hide (close button or hotkey M)
+};
+
 struct MinimapState {
+    MinimapOverride overrideState = MinimapOverride::Auto;
     bool closedByUser = false;
     bool isDraggingWindow = false;
     bool isDraggingView = false;
@@ -156,6 +163,7 @@ struct MinimapState {
     D2D1_RECT_F innerRect = { 0.0f, 0.0f, 0.0f, 0.0f };
 
     void ResetLayout() {
+        overrideState = MinimapOverride::Auto;
         closedByUser = false;
         isDraggingWindow = false;
         isDraggingView = false;

@@ -1907,11 +1907,11 @@ void SettingsOverlay::BuildMenu() {
     
     tabControl.items.push_back({ AppStrings::Settings_Header_KeyboardPan, OptionType::Header });
     
-    SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 100.0f, {}, L"%.0f px" };
+    SettingsItem itemPanNormal = { AppStrings::Settings_Label_PanStepNormal, OptionType::Slider, nullptr, &g_config.PanStepNormal, nullptr, nullptr, 1.0f, 600.0f, {}, L"%.0f px" };
     itemPanNormal.tooltipText = AppStrings::Settings_Tooltip_PanStepNormal;
     tabControl.items.push_back(itemPanNormal);
 
-    SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 500.0f, {}, L"%.0f px" };
+    SettingsItem itemPanFast = { AppStrings::Settings_Label_PanStepFast, OptionType::Slider, nullptr, &g_config.PanStepFast, nullptr, nullptr, 10.0f, 1000.0f, {}, L"%.0f px" };
     itemPanFast.step = 1.0f;
     tabControl.items.push_back(itemPanFast);
 
@@ -2073,6 +2073,9 @@ void SettingsOverlay::BuildMenu() {
         }
         if (action == HotkeyAction::Loupe) {
             item.tooltipText = AppStrings::Settings_Tooltip_LoupeHotkey;
+        }
+        if (action == HotkeyAction::ToggleMinimap) {
+            item.isNewOption = true;
         }
         // Apply pending conflict status if any
         if (m_lastConflictAction == action && GetTickCount() - m_lastConflictTime < 3000) {

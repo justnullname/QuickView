@@ -336,6 +336,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'T', 0 }, KeyCombo{ 'T', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ VK_TAB, 0 }, KeyCombo{ VK_TAB, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleMinimap, KeyCombo{ 'M', 0 }, KeyCombo{ 'M', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleFullscreen, KeyCombo{ VK_F11, 0 }, KeyCombo{ VK_F11, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleSpan, KeyCombo{ VK_F11, 1 }, KeyCombo{ VK_F11, 1 } }, // Ctrl + F11
     HotkeyBinding{ HotkeyAction::ToggleSlideshow, KeyCombo{ VK_F10, 0 }, KeyCombo{ VK_F10, 0 } },
@@ -847,56 +848,49 @@ static size_t CountWebContentFilesInNavigator();
 void ApplyFullScreenZoomMode(HWND hwnd) {
     if (!GetPaneContext(PaneSlot::Primary).resource || (!g_isFullScreen && !IsZoomed(hwnd))) return;
 
-    // Helper: compute the Zoom value to make the image fit the current window,
-    // accounting for the baseFit cap on small images.
-    auto computeFitZoomLocal = [&]() -> float {
-        D2D1_SIZE_F effSize = GetVisualImageSize();
-        if (effSize.width <= 0 || effSize.height <= 0) return 1.0f;
-        RECT rc; GetClientRect(hwnd, &rc);
-        float fW = (float)rc.right;
-        float fH = (float)rc.bottom;
-        if (fW <= 0 || fH <= 0) return 1.0f;
-        float rawFit = std::min(fW / effSize.width, fH / effSize.height);
-        VisualState vs = GetVisualState();
-        float cappedFit = ComputeBaseFitScaleForVisual(vs, fW, fH);
-        return (cappedFit > 0.0001f) ? rawFit / cappedFit : 1.0f;
-    };
+    // 1. Obtain true intrinsic visual dimensions (imgW, imgH) unpolluted by DComp surface size
+    float imgW = 0.0f;
+    float imgH = 0.0f;
+    VisualState vs = GetVisualState();
 
-    if (g_config.FullScreenZoomMode == 0) { // Fit
-        GetPaneContext(PaneSlot::Primary).view.Zoom = computeFitZoomLocal();
-    } else { // Auto (100% / Fit)
-        D2D1_SIZE_F effSize = GetVisualImageSize();
-        float imgW = effSize.width;
-        float imgH = effSize.height;
-        if (imgW <= 0 || imgH <= 0) return;
+    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
+        imgW = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Height : GetPaneContext(PaneSlot::Primary).metadata.Width);
+        imgH = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Width : GetPaneContext(PaneSlot::Primary).metadata.Height);
+    } else if (GetPaneContext(PaneSlot::Primary).resource) {
+        D2D1_SIZE_F sz = GetPaneContext(PaneSlot::Primary).resource.GetSize();
+        imgW = vs.IsRotated90 ? sz.height : sz.width;
+        imgH = vs.IsRotated90 ? sz.width : sz.height;
+    }
+    if (imgW <= 0.0f || imgH <= 0.0f) return;
 
-        RECT rc; GetClientRect(hwnd, &rc);
-        float winW = (float)rc.right;
-        float winH = (float)rc.bottom;
-        if (winW <= 0 || winH <= 0) return;
+    // 2. Get effective window client dimensions
+    RECT rc; GetClientRect(hwnd, &rc);
+    float winW = (float)rc.right;
+    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight((float)rc.bottom) : 0.0f;
+    float winH = (float)rc.bottom - galleryH;
+    if (winH < 1.0f) winH = (float)rc.bottom;
+    if (winW <= 0.0f || winH <= 0.0f) return;
 
-        // The raw max scale to fit window
-        float rawFitScale = std::min(winW / imgW, winH / imgH);
+    // 3. Compute base fit scale from true intrinsic size (incorporating < 200px small image protection)
+    VisualState vsIntrinsic = vs;
+    vsIntrinsic.VisualSize = D2D1::SizeF(imgW, imgH);
+    float baseFit = ComputeBaseFitScaleForVisual(vsIntrinsic, winW, winH);
+    if (baseFit <= 0.0001f) baseFit = 1.0f;
 
-        // Use true original metadata size to determine 100% target
-        float originalW = imgW;
-        VisualState vs = GetVisualState();
-        if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0) {
-            originalW = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Height : GetPaneContext(PaneSlot::Primary).metadata.Width);
-        }
-
-        // The scale factor required to render at exactly 100% original size
-        float renderScaleTarget = originalW / imgW;
-
-        // If the 100% size is smaller than the window, use 100% (renderScaleTarget),
-        // which means setting Zoom so that baseFit * Zoom = renderScaleTarget
-        if (rawFitScale > renderScaleTarget) {
-            float baseFit = ComputeBaseFitScaleForVisual(vs, winW, winH);
-            GetPaneContext(PaneSlot::Primary).view.Zoom = (baseFit > 0.0001f) ? (renderScaleTarget / baseFit) : 1.0f;
+    // 4. Determine target scale factor based on FullScreenZoomMode configuration
+    float targetScale = 1.0f;
+    if (g_config.FullScreenZoomMode == 0) { // 0 = Fit Screen
+        targetScale = std::min(winW / imgW, winH / imgH);
+    } else { // 1 = Auto (100% / Fit)
+        if (imgW <= winW && imgH <= winH) {
+            targetScale = 1.0f; // Image fits inside screen -> Render at true 100% (1:1)
         } else {
-            GetPaneContext(PaneSlot::Primary).view.Zoom = computeFitZoomLocal(); // Fit
+            targetScale = std::min(winW / imgW, winH / imgH); // Image exceeds screen -> Fit Screen
         }
     }
+
+    // 5. Calculate final Zoom value (baseFit * Zoom = targetScale) & reset pan offsets
+    GetPaneContext(PaneSlot::Primary).view.Zoom = targetScale / baseFit;
     GetPaneContext(PaneSlot::Primary).view.PanX = 0;
     GetPaneContext(PaneSlot::Primary).view.PanY = 0;
 }
@@ -3879,7 +3873,7 @@ static float GetCurrentRealScale(HWND hwnd) {
 }
 
 static void PerformRestoreWindow(HWND hwnd) {
-    if (s_restoredWindowRect.right > s_restoredWindowRect.left && !IsZoomed(hwnd) && !g_isFullScreen) {
+    if (s_restoredWindowRect.right > s_restoredWindowRect.left && !IsZoomed(hwnd) && !g_isFullScreen && !g_runtime.LockWindowSize) {
         int rW = s_restoredWindowRect.right - s_restoredWindowRect.left;
         int rH = s_restoredWindowRect.bottom - s_restoredWindowRect.top;
         SetWindowPos(hwnd, nullptr, s_restoredWindowRect.left, s_restoredWindowRect.top, rW, rH, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -4011,16 +4005,18 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
             }
         }
         
-        // Calculate the Scale Factor required to make the Rendered Surface match the Original Size
-        // TargetScale = OriginalW / SurfaceW
-        float renderScaleTarget = (originalW / imgW);
+        // [Bugfix] Compute target zoom against the TRUE dimensions that the surface will upgrade to,
+        // rather than the current temporary DComp surface size. This eliminates cross-axis rounding errors
+        // that cause `targetZoom` to deviate slightly from 1.0, triggering DComp LINEAR interpolation blur.
+        VisualState targetVs = {};
+        targetVs.VisualSize = D2D1::SizeF(originalW, originalH);
             
         // Logic to resize window to wrap image at 100% if allowed
         if (allowResizeWindow && !IsZoomed(hwnd) && !g_isFullScreen && !g_runtime.LockWindowSize) {
-                int targetW = (int)originalW; // Target TRUE pixel width
-                int targetH = (int)originalH;
-                
-                RECT bounds = GetWindowExpansionBounds(hwnd);
+                 int targetW = (int)originalW; // Target TRUE pixel width
+                 int targetH = (int)originalH;
+                 
+                 RECT bounds = GetWindowExpansionBounds(hwnd);
                  int maxW = (bounds.right - bounds.left);
                  int maxH = (bounds.bottom - bounds.top);
                  
@@ -4039,18 +4035,18 @@ static void PerformZoom100(HWND hwnd, bool allowResizeWindow = true) {
                               SWP_NOZORDER | SWP_NOACTIVATE);
                  
                  RECT rcNew; GetClientRect(hwnd, &rcNew);
-                 float galleryHNew = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight((float)rcNew.bottom) : 0.0f;
-                 float effHNew = std::max(1.0f, (float)rcNew.bottom - galleryHNew);
-                 VisualState vs = GetVisualState();
-                 float newFitScale = ComputeBaseFitScaleForVisual(vs, (float)rcNew.right, effHNew);
-                 if (newFitScale > 0.0001f) GetPaneContext(PaneSlot::Primary).view.Zoom = renderScaleTarget / newFitScale;
+                 float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight((float)rcNew.bottom) : 0.0f;
+                 float effWinH = std::max(1.0f, (float)rcNew.bottom - galleryH);
+                 
+                 float targetBaseFit = ComputeBaseFitScaleForVisual(targetVs, (float)rcNew.right, effWinH);
+                 if (targetBaseFit > 0) GetPaneContext(PaneSlot::Primary).view.Zoom = 1.0f / targetBaseFit;
             } else {
                 RECT rc; GetClientRect(hwnd, &rc);
                 float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight((float)rc.bottom) : 0.0f;
-                float effH = std::max(1.0f, (float)rc.bottom - galleryH);
-                VisualState vs = GetVisualState();
-                float fitScale = ComputeBaseFitScaleForVisual(vs, (float)rc.right, effH);
-                if (fitScale > 0.0001f) GetPaneContext(PaneSlot::Primary).view.Zoom = renderScaleTarget / fitScale;
+                float effWinH = std::max(1.0f, (float)rc.bottom - galleryH);
+                
+                float targetBaseFit = ComputeBaseFitScaleForVisual(targetVs, (float)rc.right, effWinH);
+                if (targetBaseFit > 0) GetPaneContext(PaneSlot::Primary).view.Zoom = 1.0f / targetBaseFit;
             }
 
             GetPaneContext(PaneSlot::Primary).view.PanX = 0;
@@ -4279,7 +4275,7 @@ static void ShowZoomOsd(HWND hwnd, float newTotalScale) {
 static void PerformZoomFit(HWND hwnd, float maxScreenPct = 1.0f, bool allowResizeWindow = true) {
     AppContext::GetInstance().ZoomAnimCtrl->Reset();
     if (GetPaneContext(PaneSlot::Primary).resource) {
-        if (!allowResizeWindow) {
+        if (!allowResizeWindow || g_runtime.LockWindowSize) {
             GetPaneContext(PaneSlot::Primary).view.Zoom = ComputeFitZoom(hwnd);
             GetPaneContext(PaneSlot::Primary).view.PanX = 0;
             GetPaneContext(PaneSlot::Primary).view.PanY = 0;
@@ -5228,7 +5224,7 @@ void LoadConfig() {
     wchar_t bufNavX[32], bufNavY[32];
     GetPrivateProfileStringW(L"View", L"NavigatorOffsetX", L"12.0", bufNavX, 32, iniPath.c_str());
     g_config.NavigatorOffsetX = (float)_wtof(bufNavX);
-    GetPrivateProfileStringW(L"View", L"NavigatorOffsetY", L"12.0", bufNavY, 32, iniPath.c_str());
+    GetPrivateProfileStringW(L"View", L"NavigatorOffsetY", L"44.0", bufNavY, 32, iniPath.c_str());
     g_config.NavigatorOffsetY = (float)_wtof(bufNavY);
     g_config.NavigatorAlignX = GetPrivateProfileIntW(L"View", L"NavigatorAlignX", 1, iniPath.c_str());
     g_config.NavigatorAlignY = GetPrivateProfileIntW(L"View", L"NavigatorAlignY", 0, iniPath.c_str());
@@ -5289,9 +5285,9 @@ void LoadConfig() {
     GetPrivateProfileStringW(L"Controls", L"RightDragZoomSpeed", L"1.0", buf, 64, iniPath.c_str());
     g_config.RightDragZoomSpeed = std::clamp((float)_wtof(buf), 0.1f, 3.0f);
     GetPrivateProfileStringW(L"Controls", L"PanStepNormal", L"20.0", buf, 64, iniPath.c_str());
-    g_config.PanStepNormal = std::clamp((float)_wtof(buf), 1.0f, 100.0f);
+    g_config.PanStepNormal = std::clamp((float)_wtof(buf), 1.0f, 600.0f);
     GetPrivateProfileStringW(L"Controls", L"PanStepFast", L"100.0", buf, 64, iniPath.c_str());
-    g_config.PanStepFast = std::clamp((float)_wtof(buf), 10.0f, 500.0f);
+    g_config.PanStepFast = std::clamp((float)_wtof(buf), 10.0f, 1000.0f);
     g_config.LeftDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"LeftDragAction", (int)MouseAction::WindowDrag, iniPath.c_str());
     g_config.MiddleDragAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleDragAction", (int)MouseAction::PanImage, iniPath.c_str());
     g_config.MiddleClickAction = (MouseAction)GetPrivateProfileIntW(L"Controls", L"MiddleClickAction", (int)MouseAction::ExitApp, iniPath.c_str());
@@ -6552,7 +6548,16 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
                         : animationDurationMs;
                 g_compEngine->UpdateTransformMatrix(vs, winW, winH, displayZoom, displayPanX, displayPanY, animMs);
 
-                DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
+                float origW = 0.0f;
+                float origH = 0.0f;
+                if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
+                    origW = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Height : GetPaneContext(PaneSlot::Primary).metadata.Width);
+                    origH = (float)(vs.IsRotated90 ? GetPaneContext(PaneSlot::Primary).metadata.Width : GetPaneContext(PaneSlot::Primary).metadata.Height);
+                } else {
+                    origW = vs.VisualSize.width;
+                    origH = vs.VisualSize.height;
+                }
+                DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, origW, origH);
                 g_compEngine->SetImageInterpolationMode(interpMode);
             }
         }
@@ -7610,13 +7615,12 @@ struct MinimapHitResult {
 };
 
 static MinimapHitResult HitTestMinimaps(POINT pt) {
-    if (g_config.ShowNavigator == 2) return {};
     const float s = g_uiScale;
     const float edgeBuffer = 8.0f * s;
     
     for (int idx : {1, 0}) {
         auto& minimap = AppContext::GetInstance().Minimaps[idx];
-        if (minimap.closedByUser) continue;
+        if (minimap.overrideState == MinimapOverride::Hide) continue;
         if (minimap.layoutRect.right - minimap.layoutRect.left <= 0.0f) continue;
         
         // 1. Close button
@@ -8995,16 +8999,14 @@ case WM_DESTROY: {
                   if (minimapW <= 0.0f) minimapW = 150.0f * s;
                   if (minimapH <= 0.0f) minimapH = 150.0f * s;
                   
-                  float topOffset = 0.0f;
-                  if (vpLeft + vpW >= winW - 1.0f && g_showControls) {
-                      topOffset += 32.0f * s;
-                  }
-                  
                   // Clamp to keep it fully within the viewport
                   float margin = 8.0f * s;
                   float minX = vpLeft + margin;
                   float maxX = vpLeft + vpW - minimapW - margin;
-                  float minY = topOffset + margin;
+                  float minY = margin;
+                  if (currentMinimapX + minimapW * 0.5f >= vpLeft + vpW * 0.5f && vpLeft + vpW >= winW - 1.0f) {
+                      minY = 32.0f * s + margin;
+                  }
                   float maxY = vpH - minimapH - margin;
                   
                   float clampedX = std::clamp(currentMinimapX, minX, (std::max)(minX, maxX));
@@ -9019,9 +9021,9 @@ case WM_DESTROY: {
                       g_config.NavigatorOffsetX = (vpLeft + vpW - (clampedX + minimapW)) / s;
                   }
                   
-                  if (clampedY + minimapH * 0.5f < topOffset + (vpH - topOffset) * 0.5f) {
+                  if (clampedY + minimapH * 0.5f < vpH * 0.5f) {
                       g_config.NavigatorAlignY = 0; // Top
-                      g_config.NavigatorOffsetY = (clampedY - topOffset) / s;
+                      g_config.NavigatorOffsetY = clampedY / s;
                   } else {
                       g_config.NavigatorAlignY = 1; // Bottom
                       g_config.NavigatorOffsetY = (vpH - (clampedY + minimapH)) / s;
@@ -9183,7 +9185,8 @@ case WM_DESTROY: {
               }
 
               int oldHoverIdx = g_winCtrlHoverState;
-              if (g_showControls && g_uiRenderer) {
+              auto miniHit = HitTestMinimaps(pt);
+              if (g_showControls && g_uiRenderer && miniHit.minimapIdx == -1) {
                   g_winCtrlHoverState = HitTestWindowControlButton(pt);
                   if (g_winCtrlHoverState != -1) {
                       g_currentCursor = LoadCursor(nullptr, IDC_HAND);
@@ -9913,10 +9916,11 @@ SKIP_EDGE_NAV:;
             int winHeight = rcWin.bottom - rcWin.top;
 
             bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
+            bool isWindowFixed = isMaximizedOrFullscreen || g_runtime.LockWindowSize;
             bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || isMaximizedOrFullscreen;
 
-            if (isMaximizedOrFullscreen) {
-                // In fullscreen/maximized, ONLY toggle between 100% and Fit. No restoring window size.
+            if (isWindowFixed) {
+                // In fullscreen/maximized/locked mode, ONLY toggle between 100% and Fit. No restoring window size.
                 if (is100Percent) {
                     PerformZoomFit(hwnd);
                 } else {
@@ -10218,7 +10222,7 @@ SKIP_EDGE_NAV:;
         if (miniHit.minimapIdx != -1) {
             auto& minimap = AppContext::GetInstance().Minimaps[miniHit.minimapIdx];
             if (miniHit.isClose) {
-                minimap.closedByUser = true;
+                minimap.overrideState = MinimapOverride::Hide;
                 RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
                 return 0;
             } else if (miniHit.isEdge) {
@@ -16571,12 +16575,21 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             float currentRealScale = GetCurrentRealScale(hwnd);
             bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.05f);
             bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
+            bool isWindowFixed = isMaximizedOrFullscreen || g_runtime.LockWindowSize;
 
-            if (is100Percent && !isMaximizedOrFullscreen && s_restoredWindowRect.right > s_restoredWindowRect.left) {
-                PerformRestoreWindow(hwnd);
+            if (isWindowFixed) {
+                if (is100Percent) {
+                    PerformZoomFit(hwnd);
+                } else {
+                    PerformZoom100(hwnd);
+                }
             } else {
-                if (!isMaximizedOrFullscreen && s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
-                PerformZoom100(hwnd);
+                if (is100Percent && s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                    PerformRestoreWindow(hwnd);
+                } else {
+                    if (s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoom100(hwnd);
+                }
             }
         }
         return true;
@@ -16585,22 +16598,34 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         if (IsCompareModeActive()) {
             PerformCompareZoomFit(hwnd);
         } else if (GetPaneContext(PaneSlot::Primary).resource) {
-            HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi{}; mi.cbSize = sizeof(mi); GetMonitorInfoW(hMon, &mi);
-            int maxW = mi.rcWork.right - mi.rcWork.left;
-            int maxH = mi.rcWork.bottom - mi.rcWork.top;
-            RECT rcWin; GetWindowRect(hwnd, &rcWin);
-            int winWidth = rcWin.right - rcWin.left;
-            int winHeight = rcWin.bottom - rcWin.top;
-
+            float currentRealScale = GetCurrentRealScale(hwnd);
+            bool is100Percent = (fabsf(currentRealScale - 1.0f) < 0.05f);
             bool isMaximizedOrFullscreen = IsZoomed(hwnd) || g_isFullScreen;
-            bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2) || isMaximizedOrFullscreen;
+            bool isWindowFixed = isMaximizedOrFullscreen || g_runtime.LockWindowSize;
+            bool isFitZoom = (fabsf(GetPaneContext(PaneSlot::Primary).view.Zoom - 1.0f) < 0.02f);
 
-            if (isFitWindow && !isMaximizedOrFullscreen && s_restoredWindowRect.right > s_restoredWindowRect.left) {
-                PerformRestoreWindow(hwnd);
+            if (isWindowFixed) {
+                if (isFitZoom && !is100Percent) {
+                    PerformZoom100(hwnd);
+                } else {
+                    PerformZoomFit(hwnd);
+                }
             } else {
-                if (!isMaximizedOrFullscreen && s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
-                PerformZoomFit(hwnd);
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi{}; mi.cbSize = sizeof(mi); GetMonitorInfoW(hMon, &mi);
+                int maxW = mi.rcWork.right - mi.rcWork.left;
+                int maxH = mi.rcWork.bottom - mi.rcWork.top;
+                RECT rcWin; GetWindowRect(hwnd, &rcWin);
+                int winWidth = rcWin.right - rcWin.left;
+                int winHeight = rcWin.bottom - rcWin.top;
+                bool isFitWindow = (winWidth >= maxW - 2 || winHeight >= maxH - 2);
+
+                if (isFitWindow && s_restoredWindowRect.right > s_restoredWindowRect.left) {
+                    PerformRestoreWindow(hwnd);
+                } else {
+                    if (s_restoredWindowRect.right == 0) GetWindowRect(hwnd, &s_restoredWindowRect);
+                    PerformZoomFit(hwnd);
+                }
             }
         }
         return true;
@@ -16760,6 +16785,52 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             }
             RequestRepaint(PaintLayer::Static);
         }
+        return true;
+
+    case HotkeyAction::ToggleMinimap:
+        for (int idx : {0, 1}) {
+            auto& minimap = AppContext::GetInstance().Minimaps[idx];
+            if (minimap.overrideState == MinimapOverride::Show) {
+                minimap.overrideState = MinimapOverride::Hide;
+            } else if (minimap.overrideState == MinimapOverride::Hide) {
+                minimap.overrideState = MinimapOverride::Show;
+            } else {
+                bool currentlyShownByDefault = false;
+                if (g_config.ShowNavigator == 1) {
+                    currentlyShownByDefault = true;
+                } else if (g_config.ShowNavigator == 0) {
+                    PaneSlot slot = (idx == 1) ? PaneSlot::Left : PaneSlot::Primary;
+                    auto& pane = GetPaneContext(slot);
+                    if (pane.resource) {
+                        RECT rcClient; GetClientRect(hwnd, &rcClient);
+                        float winW = (float)(rcClient.right - rcClient.left);
+                        float winH = (float)(rcClient.bottom - rcClient.top);
+                        if (IsCompareModeActive() && AppContext::GetInstance().Compare.mode == ViewMode::CompareSideBySide) {
+                            winW *= 0.5f;
+                        }
+                        int baseExif = (slot == PaneSlot::Primary) ? g_renderExifOrientation : pane.view.ExifOrientation;
+                        int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
+                        const D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
+                        if (orientedSize.width > 0.0f && orientedSize.height > 0.0f) {
+                            float fitScale = std::min(winW / orientedSize.width, winH / orientedSize.height);
+                            float totalScale = fitScale * (std::max)(0.02f, pane.view.Zoom);
+                            float scaledW = orientedSize.width * totalScale;
+                            float scaledH = orientedSize.height * totalScale;
+                            if (scaledW > winW * 1.5f || scaledH > winH * 1.5f) {
+                                currentlyShownByDefault = true;
+                            }
+                        }
+                    }
+                }
+                
+                if (currentlyShownByDefault) {
+                    minimap.overrideState = MinimapOverride::Hide;
+                } else {
+                    minimap.overrideState = MinimapOverride::Show;
+                }
+            }
+        }
+        RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
         return true;
 
     case HotkeyAction::ToggleFullscreen:

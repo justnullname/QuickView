@@ -28,7 +28,7 @@ BEGIN
             VALUE "FileDescription", "QuickView"
             VALUE "FileVersion", "6.36.0.5"
             VALUE "InternalName", "QuickView.exe"
-            VALUE "LegalCopyright", "Copyright (C) 2024"
+            VALUE "LegalCopyright", "Copyright (C) 2026"
             VALUE "OriginalFilename", "QuickView.exe"
             VALUE "ProductName", "QuickView"
             VALUE "ProductVersion", "6.36.0.5"

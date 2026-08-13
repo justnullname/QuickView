@@ -5940,7 +5940,6 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         int minimapIdx = (slot == PaneSlot::Left) ? 1 : 0;
         
         auto& minimap = AppContext::GetInstance().Minimaps[minimapIdx];
-        if (minimap.closedByUser) continue;
         
         auto& pane = GetPaneContext(slot);
         if (!pane.resource) continue;
@@ -5976,14 +5975,19 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         const float scaledW = orientedSize.width * totalScale;
         const float scaledH = orientedSize.height * totalScale;
         
+        bool isOverflow = (scaledW > vpW + 1.0f || scaledH > vpH + 1.0f);
         bool shouldShow = false;
-        if (g_config.ShowNavigator == 0) {
-            if (scaledW > vpW * 1.5f || scaledH > vpH * 1.5f) {
+        if (isOverflow) {
+            if (minimap.overrideState == MinimapOverride::Show) {
                 shouldShow = true;
-            }
-        } else if (g_config.ShowNavigator == 1) {
-            if (scaledW > vpW + 1.0f || scaledH > vpH + 1.0f) {
-                shouldShow = true;
+            } else if (minimap.overrideState == MinimapOverride::Hide) {
+                shouldShow = false;
+            } else {
+                if (g_config.ShowNavigator == 0) {
+                    shouldShow = (scaledW > vpW * 1.5f || scaledH > vpH * 1.5f);
+                } else if (g_config.ShowNavigator == 1) {
+                    shouldShow = true;
+                }
             }
         }
         
@@ -6009,15 +6013,10 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
             minimapX = vpRect.right - minimapW - g_config.NavigatorOffsetX * s;
         }
         
-        // Vertical position
-        float topOffset = vpRect.top;
-        if (vpRect.right >= (float)m_width - 1.0f && m_showControls) {
-            topOffset += 32.0f * s;
-        }
-        
+        // Vertical position - keep coordinate system anchored strictly to vpRect.top
         float minimapY = 0.0f;
         if (g_config.NavigatorAlignY == 0) {
-            minimapY = topOffset + g_config.NavigatorOffsetY * s;
+            minimapY = vpRect.top + g_config.NavigatorOffsetY * s;
         } else {
             minimapY = vpRect.bottom - minimapH - g_config.NavigatorOffsetY * s;
         }
@@ -6026,7 +6025,10 @@ void UIRenderer::DrawNavigator(ID2D1DeviceContext* dc) {
         float margin = 8.0f * s;
         float minX = vpRect.left + margin;
         float maxX = vpRect.right - minimapW - margin;
-        float minY = topOffset + margin;
+        float minY = vpRect.top + margin;
+        if (g_config.NavigatorAlignX == 1 && g_config.NavigatorAlignY == 0 && vpRect.right >= (float)m_width - 1.0f) {
+            minY = vpRect.top + 32.0f * s + margin;
+        }
         float maxY = vpRect.bottom - minimapH - margin;
         
         minimapX = std::clamp(minimapX, minX, (std::max)(minX, maxX));

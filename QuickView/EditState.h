@@ -184,6 +184,7 @@ enum class HotkeyAction : uint8_t {
     ToggleGallery,     // Toggle Gallery Overlay
     ToggleInfoPanel,   // Toggle Info Panel (Lite)
     ToggleExifPanel,   // Toggle Exif Panel (Full)
+    ToggleMinimap,     // Toggle Minimap visibility (Hotkey M)
     ToggleFullscreen,  // Toggle Fullscreen
     ToggleSpan,        // Toggle Span Displays
     ToggleSlideshow,   // Toggle Slideshow Mode
@@ -247,6 +248,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::ToggleGallery: return L"ToggleGallery";
         case HotkeyAction::ToggleInfoPanel: return L"ToggleInfoPanel";
         case HotkeyAction::ToggleExifPanel: return L"ToggleExifPanel";
+        case HotkeyAction::ToggleMinimap: return L"ToggleMinimap";
         case HotkeyAction::ToggleFullscreen: return L"ToggleFullscreen";
         case HotkeyAction::ToggleSpan: return L"ToggleSpan";
         case HotkeyAction::OpenFile: return L"OpenFile";
@@ -306,6 +308,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ToggleGallery") return HotkeyAction::ToggleGallery;
     if (sv == L"ToggleInfoPanel") return HotkeyAction::ToggleInfoPanel;
     if (sv == L"ToggleExifPanel") return HotkeyAction::ToggleExifPanel;
+    if (sv == L"ToggleMinimap") return HotkeyAction::ToggleMinimap;
     if (sv == L"ToggleFullscreen") return HotkeyAction::ToggleFullscreen;
     if (sv == L"ToggleSpan") return HotkeyAction::ToggleSpan;
     if (sv == L"OpenFile") return HotkeyAction::OpenFile;
@@ -634,7 +637,7 @@ struct AppConfig {
     float BorderIndicatorCustomB = 1.00f;
     int ShowNavigator = 0; // 0=Auto, 1=On, 2=Off
     float NavigatorOffsetX = 12.0f;
-    float NavigatorOffsetY = 12.0f;
+    float NavigatorOffsetY = 44.0f;
     int NavigatorAlignX = 1; // 0=Left, 1=Right
     int NavigatorAlignY = 0; // 0=Top, 1=Bottom
 

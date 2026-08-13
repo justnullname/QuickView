@@ -6553,6 +6553,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         }
         break;
     }
+    case HotkeyAction::ToggleMinimap: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"切换导航缩略图 (Minimap)"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"切換導航縮略圖 (Minimap)"; break;
+        case AppStrings::Language::Japanese:           raw = L"ミニマップ表示切り替え"; break;
+        case AppStrings::Language::Russian:            raw = L"Переключить миникарту"; break;
+        case AppStrings::Language::German:             raw = L"Minimap umschalten"; break;
+        case AppStrings::Language::Spanish:            raw = L"Alternar minimapa"; break;
+        case AppStrings::Language::French:             raw = L"Basculer la minicarte"; break;
+        default:                                       raw = L"Toggle Minimap"; break;
+        }
+        break;
+    }
     case HotkeyAction::NavNext:
         raw = AppStrings::Toolbar_Tooltip_Next;
         break;
