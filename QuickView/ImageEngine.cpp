@@ -6,6 +6,7 @@ static constexpr const char* CURRENT_MODULE = "ImageEngine";
 #include "HeavyLanePool.h"  // [N+1] Include pool implementation
 #include "EditState.h"      // [v9.9] Access g_runtime.ForceRawDecode for dispatch decisions
 #include "TileManager.h"    // [Infinity Engine]
+#include "OffscreenWebView2.h"
 
 #include <algorithm>
 #include <psapi.h>
@@ -330,6 +331,17 @@ void ImageEngine::DispatchImageLoad(const std::wstring& path, ImageID imageId, u
                 InvalidateCache(path);
                 cachedFrame.reset();
                 isHit = false;
+            }
+
+            // Same-process upgrade: old SVG_XML entries that now classify as animated/complex.
+            if (cachedFrame && cachedFrame->format == QuickView::PixelFormat::SVG_XML &&
+                cachedFrame->svg && !cachedFrame->svg->xmlData.empty()) {
+                const auto& xml = cachedFrame->svg->xmlData;
+                if (QuickView::OffscreenWebView2::NeedsFallback(
+                        std::string_view(reinterpret_cast<const char*>(xml.data()), xml.size()))) {
+                    cachedFrame->format = QuickView::PixelFormat::SVG_WEBVIEW;
+                    cachedFrame->formatDetails = L"Complex SVG";
+                }
             }
             
             // [v9.0] Smart RAW Quality Check

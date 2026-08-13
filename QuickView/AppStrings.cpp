@@ -14,6 +14,7 @@ namespace AppStrings {
 const wchar_t *CurrentLocale = L"en-us";
 const wchar_t *OSD_NoImage = nullptr;
 const wchar_t *OSD_FolderEmpty = nullptr;
+const wchar_t *OSD_SvgStaticFallback = nullptr;
 const wchar_t *OSD_Lossless = nullptr;
 const wchar_t *OSD_ReencodedLossless = nullptr;
 const wchar_t *OSD_EdgeAdapted = nullptr;
@@ -597,6 +598,7 @@ const wchar_t *Settings_Text_License = L"Licensed under GNU GPL v3.0";
 struct LanguageTable {
     const wchar_t *OSD_NoImage;
     const wchar_t *OSD_FolderEmpty;
+    const wchar_t *OSD_SvgStaticFallback;
     const wchar_t *OSD_Lossless;
     const wchar_t *OSD_ReencodedLossless;
     const wchar_t *OSD_EdgeAdapted;
@@ -1167,6 +1169,7 @@ struct LanguageTable {
 static const LanguageTable Table_EN = {
     L"No image loaded", // OSD_NoImage
     L"No images in this folder", // OSD_FolderEmpty
+    L"Animated SVG shown as a still image", // OSD_SvgStaticFallback
     L"Lossless", // OSD_Lossless
     L"Re-encoded (Lossless)", // OSD_ReencodedLossless
     L"Cropped", // OSD_EdgeAdapted
@@ -1737,6 +1740,7 @@ static const LanguageTable Table_EN = {
 static const LanguageTable Table_CN = {
     L"没有加载图片", // OSD_NoImage
     L"文件夹中没有图片", // OSD_FolderEmpty
+    L"动态 SVG 已显示为静态图像", // OSD_SvgStaticFallback
     L"无损", // OSD_Lossless
     L"重编码 (无损)", // OSD_ReencodedLossless
     L"边缘优化", // OSD_EdgeAdapted
@@ -2307,6 +2311,7 @@ static const LanguageTable Table_CN = {
 static const LanguageTable Table_TW = {
     L"沒有載入圖片", // OSD_NoImage
     L"資料夾中沒有圖片", // OSD_FolderEmpty
+    L"動態 SVG 已顯示為靜態圖像", // OSD_SvgStaticFallback
     L"無損", // OSD_Lossless
     L"重新編碼 (無損)", // OSD_ReencodedLossless
     L"剪裁", // OSD_EdgeAdapted
@@ -2877,6 +2882,7 @@ static const LanguageTable Table_TW = {
 static const LanguageTable Table_JA = {
     L"画像が読み込まれていません", // OSD_NoImage
     L"このフォルダーに画像がありません", // OSD_FolderEmpty
+    L"アニメーション SVG を静止画として表示しています", // OSD_SvgStaticFallback
     L"ロスレス", // OSD_Lossless
     L"再エンコード (ロスレス)", // OSD_ReencodedLossless
     L"クロップ済み", // OSD_EdgeAdapted
@@ -3447,6 +3453,7 @@ static const LanguageTable Table_JA = {
 static const LanguageTable Table_RU = {
     L"Изображение не загружено", // OSD_NoImage
     L"В этой папке нет изображений", // OSD_FolderEmpty
+    L"Анимированный SVG показан как статичный кадр", // OSD_SvgStaticFallback
     L"Без потерь", // OSD_Lossless
     L"Перекодировано (без потерь)", // OSD_ReencodedLossless
     L"Оптимизация краёв", // OSD_EdgeAdapted
@@ -4017,6 +4024,7 @@ static const LanguageTable Table_RU = {
 static const LanguageTable Table_DE = {
     L"Kein Bild geladen", // OSD_NoImage
     L"Keine Bilder in diesem Ordner", // OSD_FolderEmpty
+    L"Animiertes SVG als Standbild angezeigt", // OSD_SvgStaticFallback
     L"Verlustfrei", // OSD_Lossless
     L"Neu kodiert (verlustfrei)", // OSD_ReencodedLossless
     L"Kantenoptimiert", // OSD_EdgeAdapted
@@ -4587,6 +4595,7 @@ static const LanguageTable Table_DE = {
 static const LanguageTable Table_ES = {
     L"No hay imagen cargada", // OSD_NoImage
     L"No hay imágenes en esta carpeta", // OSD_FolderEmpty
+    L"SVG animado mostrado como imagen fija", // OSD_SvgStaticFallback
     L"Sin pérdida", // OSD_Lossless
     L"Recodificado (sin pérdida)", // OSD_ReencodedLossless
     L"Bordes optimizados", // OSD_EdgeAdapted
@@ -5157,6 +5166,7 @@ static const LanguageTable Table_ES = {
 static const LanguageTable Table_FR = {
     L"No image loaded", // OSD_NoImage
     L"Aucune image dans ce dossier", // OSD_FolderEmpty
+    L"SVG animé affiché comme image fixe", // OSD_SvgStaticFallback
     L"Lossless", // OSD_Lossless
     L"Re-encoded (Lossless)", // OSD_ReencodedLossless
     L"Cropped", // OSD_EdgeAdapted
@@ -5727,6 +5737,7 @@ static const LanguageTable Table_FR = {
 void Apply(const LanguageTable& t) {
   OSD_NoImage = t.OSD_NoImage;
   OSD_FolderEmpty = t.OSD_FolderEmpty;
+  OSD_SvgStaticFallback = t.OSD_SvgStaticFallback;
   OSD_Lossless = t.OSD_Lossless;
   OSD_ReencodedLossless = t.OSD_ReencodedLossless;
   OSD_EdgeAdapted = t.OSD_EdgeAdapted;

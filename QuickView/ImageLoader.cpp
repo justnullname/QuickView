@@ -13866,7 +13866,7 @@ HRESULT CImageLoader::LoadToFrame(
       if (svgH <= 0)
         svgH = 512;
 
-      // 3. Check for WebView2 DComp Composition (complex SVG with <foreignObject> or <filter>)
+      // 3. Check for WebView2 DComp Composition (filters, SMIL/CSS animation, script)
       if (QuickView::OffscreenWebView2::NeedsFallback(svgContent)) {
           // Tag as SVG_WEBVIEW -- UI thread will route to WebContentHost DComp visual
           outFrame->format = PixelFormat::SVG_WEBVIEW;

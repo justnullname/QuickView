@@ -29,6 +29,7 @@ namespace AppStrings {
     // OSD Messages
     extern const wchar_t* OSD_NoImage;
     extern const wchar_t* OSD_FolderEmpty;
+    extern const wchar_t* OSD_SvgStaticFallback;
     extern const wchar_t* OSD_Lossless;
     extern const wchar_t* OSD_ReencodedLossless;
     extern const wchar_t* OSD_EdgeAdapted;

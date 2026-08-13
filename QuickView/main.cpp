@@ -13586,6 +13586,43 @@ void ProcessEngineEvents(HWND hwnd) {
                              resourceReady = true;
                          }
                      }
+                     if (!resourceReady && evt.rawFrame->svg && !evt.rawFrame->svg->xmlData.empty()) {
+                         // Present/EnsureReady failed: demote this file to static D2D. Do not latch the host.
+                         auto& res = GetPaneContext(PaneSlot::Primary).resource;
+                         res.Reset();
+                         res.isSvg = true;
+                         res.isWebView = false;
+                         res.svgW = evt.rawFrame->svg->viewBoxW;
+                         res.svgH = evt.rawFrame->svg->viewBoxH;
+                         ComPtr<ID2D1DeviceContext> ctxBase = g_renderEngine ? g_renderEngine->GetDeviceContext() : nullptr;
+                         ComPtr<ID2D1DeviceContext5> ctx5;
+                         const auto& xml = evt.rawFrame->svg->xmlData;
+                         HRESULT hrDoc = E_FAIL;
+                         if (ctxBase && SUCCEEDED(ctxBase.As(&ctx5))) {
+                             ComPtr<IStream> stream;
+                             HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xml.size());
+                             if (hMem) {
+                                 void* pMem = GlobalLock(hMem);
+                                 if (pMem) {
+                                     memcpy(pMem, xml.data(), xml.size());
+                                     GlobalUnlock(hMem);
+                                     CreateStreamOnHGlobal(hMem, TRUE, &stream);
+                                 } else {
+                                     GlobalFree(hMem);
+                                 }
+                             }
+                             if (stream) {
+                                 D2D1_SIZE_F vpSize = { res.svgW, res.svgH };
+                                 if (vpSize.width <= 0.0f) vpSize.width = 100.0f;
+                                 if (vpSize.height <= 0.0f) vpSize.height = 100.0f;
+                                 hrDoc = ctx5->CreateSvgDocument(stream.Get(), vpSize, &res.svgDoc);
+                             }
+                         }
+                         if (SUCCEEDED(hrDoc)) {
+                             resourceReady = true;
+                             g_osd.Show(hwnd, AppStrings::OSD_SvgStaticFallback, false);
+                         }
+                     }
                 } else {
                     // === Bitmap Path ===
                     QuickView::DisplayColorState uploadState = {};

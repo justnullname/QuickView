@@ -382,6 +382,8 @@ add_executable(QuickViewTests
     tests/MiniTiffTests.cpp
     tests/Transform2DTests.cpp
     tests/SettingsSliderMathTests.cpp
+    tests/SvgNeedsFallbackTests.cpp
+    QuickView/OffscreenWebView2.cpp
     QuickView/LosslessTransform.cpp
     QuickView/ImageLoaderSimd.cpp
     QuickView/MiniTiff.cpp
