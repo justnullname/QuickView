@@ -3644,9 +3644,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                   const float valueW = 80.0f * s;
                   const float buttonW = 28.0f * s;
 
-                  // Standard slider rect (Track + Padding)
+                  // Track + right pad + knob radius so a min-value knob is still hittable.
+                  const float knobPad = QuickView::SliderKnobHitRadius();
                   item.interactRect = D2D1::RectF(
-                      controlRect.right - (trackW + padding), item.rect.top,
+                      controlRect.right - (trackW + padding) - knobPad, item.rect.top,
                       controlRect.right, item.rect.bottom);
 
                   if (item.onReset) {
@@ -4411,6 +4412,19 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                     }
                 }
 
+                // Knob at min sits half outside the track; test it even if interactRect is stale.
+                if (item.type == OptionType::Slider && !item.isDisabled) {
+                    const float val = item.pFloatVal ? *item.pFloatVal : item.minVal;
+                    const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
+                        item.rect.right, item.rect.top, item.rect.bottom,
+                        m_uiScale, val, item.minVal, item.maxVal);
+                    if (QuickView::HitTestSlider(g, x, y, item.rect.top, item.rect.bottom, item.rect.right)) {
+                        m_pHoverItem = &item;
+                        item.isHovered = true;
+                        g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+                    }
+                }
+
                 bool inR1 = (x >= item.interactRect.left && x <= item.interactRect.right &&
                            y >= item.interactRect.top && y <= item.interactRect.bottom);
                 bool inR2 = (x >= item.interactRect2.left && x <= item.interactRect2.right &&
@@ -4429,7 +4443,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
                             item.rect.right, item.rect.top, item.rect.bottom,
                             m_uiScale, val, item.minVal, item.maxVal);
-                        if (x >= g.trackLeft && x <= item.rect.right && y >= item.rect.top && y <= item.rect.bottom) {
+                        if (QuickView::HitTestSlider(g, x, y, item.rect.top, item.rect.bottom, item.rect.right)) {
                             g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
                             m_pHoverItem = &item;
                         }

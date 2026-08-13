@@ -26,6 +26,13 @@ TEST(SettingsSliderMath, IntegerStepHits375) {
     EXPECT_FLOAT_EQ(QuantizeSliderValue(640.f, 190.f, 800.f, 1.f), 640.f);
 }
 
+TEST(SettingsSliderMath, MinKnobIsHittableLeftOfTrack) {
+    const auto g = ComputeSliderGeom(400.f, 10.f, 40.f, 1.f, 190.f, 190.f, 800.f);
+    EXPECT_FLOAT_EQ(g.knobX, g.trackLeft);
+    EXPECT_TRUE(QuickView::HitTestSlider(g, g.knobX - 6.f, 25.f, 10.f, 40.f, 400.f));
+    EXPECT_FALSE(QuickView::HitTestSlider(g, g.knobX - 20.f, 25.f, 10.f, 40.f, 400.f));
+}
+
 TEST(SettingsSliderMath, EffectiveStepMatchesWheelHeuristic) {
     EXPECT_FLOAT_EQ(EffectiveStep(0.f, 10.f, 100.f, L"%.0f %%"), 1.f);
     EXPECT_FLOAT_EQ(EffectiveStep(0.f, 0.f, 1.f, L"%.0f %%"), 0.01f);

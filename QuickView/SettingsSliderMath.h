@@ -15,6 +15,18 @@ struct SliderGeom {
     float TrackWidth() const { return trackRight - trackLeft; }
 };
 
+// Draw uses an 8px hovered knob. Hit tests must include the full disc,
+// including the half that sits left of trackLeft when value == min.
+inline float SliderKnobHitRadius() { return 8.f; }
+
+inline bool HitTestSlider(const SliderGeom& g, float x, float y,
+                          float itemTop, float itemBottom, float itemRight) {
+    const float r = SliderKnobHitRadius();
+    const float left = (std::min)(g.trackLeft, g.knobX) - r;
+    const float right = (std::max)(itemRight, g.trackRight + r);
+    return x >= left && x <= right && y >= itemTop && y <= itemBottom;
+}
+
 inline float QuantizeSliderValue(float v, float minV, float maxV, float step) {
     if (maxV < minV) std::swap(minV, maxV);
     v = std::clamp(v, minV, maxV);
