@@ -56,6 +56,8 @@ build_log*.txt
 # Intermediates
 *.exp
 *.lib
+!third_party/webview2/win-x64/WebView2LoaderStatic.lib
+!third_party/webview2/win-arm64/WebView2LoaderStatic.lib
 *.iobj
 *.ipdb
 

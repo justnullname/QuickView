@@ -134,8 +134,14 @@ add_executable(QuickView WIN32 ${QUICKVIEW_SOURCES})
 set(QUICKVIEW_LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
     set(QUICKVIEW_LINK_FLAGS "${QUICKVIEW_LINK_FLAGS} /machine:ARM64")
+    set(QV_WEBVIEW2_ARCH win-arm64)
 else()
     set(QUICKVIEW_LINK_FLAGS "${QUICKVIEW_LINK_FLAGS} /machine:x64")
+    set(QV_WEBVIEW2_ARCH win-x64)
+endif()
+set(QV_WEBVIEW2_LIB "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/${QV_WEBVIEW2_ARCH}/WebView2LoaderStatic.lib")
+if(NOT EXISTS "${QV_WEBVIEW2_LIB}")
+    message(FATAL_ERROR "WebView2LoaderStatic.lib missing for ${QV_WEBVIEW2_ARCH}: ${QV_WEBVIEW2_LIB}")
 endif()
 set_target_properties(QuickView PROPERTIES LINK_FLAGS "${QUICKVIEW_LINK_FLAGS}")
 
@@ -364,7 +370,7 @@ target_link_libraries(QuickView PRIVATE
     shlwapi.lib
     shell32.lib
     mscms.lib
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/WebView2LoaderStatic.lib
+    ${QV_WEBVIEW2_LIB}
 )
 
 # ============================================================================
