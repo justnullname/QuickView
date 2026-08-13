@@ -5733,8 +5733,8 @@ int GetCurrentZoomPercent() {
 void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     if (g_isFullScreen || IsZoomed(hwnd)) return;
 
-    int minW = (int)GetMinWindowWidth();
-    int minH = (int)GetMinWindowHeight();
+    int minW = (int)std::lround(GetMinWindowWidth());
+    int minH = (int)std::lround(GetMinWindowHeight());
 
     RECT rcWin; GetWindowRect(hwnd, &rcWin);
     int currentW = rcWin.right - rcWin.left;
@@ -6068,8 +6068,8 @@ void AdjustWindowToImage(HWND hwnd) {
     // Minimum size for UI controls (Preserve Aspect Ratio)
     // [Phase 3] User Requested: Min 100x100. Small images stay at 100% inside this.
     // If Settings is visible, we might want larger, but AdjustWindowToImage returns early if Settings visible.
-    int minW = (int)GetMinWindowWidth();
-    int minH = (int)GetMinWindowHeight();
+    int minW = (int)std::lround(GetMinWindowWidth());
+    int minH = (int)std::lround(GetMinWindowHeight());
     
     // [Phase 3] Special handling for small images
     if (imgWidth < minW && imgHeight < minH) {
@@ -8553,8 +8553,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         MINMAXINFO* pMMI = (MINMAXINFO*)lParam;
         
         // [Phase 3] Default minimum window size
-        pMMI->ptMinTrackSize.x = (int)GetMinWindowWidth();
-        pMMI->ptMinTrackSize.y = (int)GetMinWindowHeight();
+        pMMI->ptMinTrackSize.x = (int)std::lround(GetMinWindowWidth());
+        pMMI->ptMinTrackSize.y = (int)std::lround(GetMinWindowHeight());
         
         // [Fix] For borderless/custom title bar windows, correctly position maximized window.
         // Without this, maximized window extends beyond screen edges (to hide resize borders),
@@ -15685,8 +15685,8 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
          if (finalWinW > maxW) { finalWinW = maxW; cappedW = true; }
          if (finalWinH > maxH) { finalWinH = maxH; cappedH = true; }
  
-         if (finalWinW < (int)GetMinWindowWidth()) finalWinW = (int)GetMinWindowWidth();
-         if (finalWinH < (int)GetMinWindowHeight()) finalWinH = (int)GetMinWindowHeight();
+         if (finalWinW < (int)std::lround(GetMinWindowWidth())) finalWinW = (int)std::lround(GetMinWindowWidth());
+         if (finalWinH < (int)std::lround(GetMinWindowHeight())) finalWinH = (int)std::lround(GetMinWindowHeight());
          
          if (!centerPt) {
              if (!cappedW) GetPaneContext(PaneSlot::Primary).view.PanX = 0;

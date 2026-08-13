@@ -381,6 +381,7 @@ add_executable(QuickViewTests
     tests/SupportedExtensionsTests.cpp
     tests/MiniTiffTests.cpp
     tests/Transform2DTests.cpp
+    tests/SettingsSliderMathTests.cpp
     QuickView/LosslessTransform.cpp
     QuickView/ImageLoaderSimd.cpp
     QuickView/MiniTiff.cpp

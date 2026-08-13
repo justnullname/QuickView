@@ -1,6 +1,7 @@
 #include "CompareController.h"
 #include "StringUtils.h"
 #include "SettingsOverlay.h"
+#include "SettingsSliderMath.h"
 #include "ThemeSystem.h"
 #include "HelpOverlay.h"
 #include "GalleryOverlay.h"
@@ -4071,23 +4072,11 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
 
     // 1. Slider adjustment via scroll wheel
     if (m_pHoverItem && m_pHoverItem->type == OptionType::Slider && !m_pHoverItem->isDisabled && m_pHoverItem->pFloatVal) {
-        float stepSize = m_pHoverItem->step;
-        if (stepSize == 0.0f) {
-            float rawStep = (m_pHoverItem->maxVal - m_pHoverItem->minVal) * 0.01f;
-            // Inspect display format to determine appropriate rounding for integers vs floats
-            if (m_pHoverItem->displayFormat && wcsstr(m_pHoverItem->displayFormat, L"%.0f") != nullptr) {
-                if (m_pHoverItem->maxVal <= 1.05f && wcsstr(m_pHoverItem->displayFormat, L"%%") != nullptr) {
-                    stepSize = 0.01f; // 1% for percentage representation
-                } else {
-                    stepSize = (std::max)(1.0f, std::round(rawStep));
-                }
-            } else {
-                stepSize = rawStep;
-            }
-        }
-        *m_pHoverItem->pFloatVal += delta * stepSize;
-        if (*m_pHoverItem->pFloatVal < m_pHoverItem->minVal) *m_pHoverItem->pFloatVal = m_pHoverItem->minVal;
-        if (*m_pHoverItem->pFloatVal > m_pHoverItem->maxVal) *m_pHoverItem->pFloatVal = m_pHoverItem->maxVal;
+        const float stepSize = QuickView::EffectiveStep(
+            m_pHoverItem->step, m_pHoverItem->minVal, m_pHoverItem->maxVal, m_pHoverItem->displayFormat);
+        *m_pHoverItem->pFloatVal = QuickView::QuantizeSliderValue(
+            *m_pHoverItem->pFloatVal + delta * stepSize,
+            m_pHoverItem->minVal, m_pHoverItem->maxVal, stepSize);
         
         if (m_pHoverItem->onLiveUpdate) {
             m_pHoverItem->onLiveUpdate(this, m_pHoverItem);
@@ -4142,17 +4131,12 @@ void SettingsOverlay::DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
 
 void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered, const wchar_t* format, bool isDisabled) {
     const float s = m_uiScale;
-    // Width 150, Height 4 (Scaled), with 12px right padding to prevent knob clipping
-    const float padding = 12.0f * s;
-    float w = 150.0f * s; 
-    float h = 4.0f * s;
-    float x = rect.right - w - padding; // Right aligned with safety padding
-    float y = rect.top + (rect.bottom - rect.top - h) / 2.0f;
-    
-    // Normalize val
-    float ratio = (val - minV) / (maxV - minV);
-    if (ratio < 0.0f) ratio = 0.0f;
-    if (ratio > 1.0f) ratio = 1.0f;
+    const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
+        rect.right, rect.top, rect.bottom, s, val, minV, maxV);
+    const float w = g.TrackWidth();
+    const float h = g.trackH;
+    const float x = g.trackLeft;
+    const float y = g.trackY;
 
     // Track Background
     D2D1_RECT_F trackRect = D2D1::RectF(x, y, x + w, y + h);
@@ -4160,17 +4144,17 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
 
     if (!isDisabled) {
         // Active Track
-        D2D1_RECT_F activeRect = D2D1::RectF(x, y, x + w * ratio, y + h);
+        D2D1_RECT_F activeRect = D2D1::RectF(x, y, g.knobX, y + h);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(activeRect, h/2, h/2), m_brushAccent.Get());
 
         // Knob
         float knobR = isHovered ? 8.0f : 6.0f;
-        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(x + w * ratio, y + h/2), knobR, knobR);
+        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(g.knobX, y + h/2), knobR, knobR);
         pRT->FillEllipse(knob, m_brushText.Get());
     } else {
         // Disabled Knob (Gray)
         float knobR = 5.0f * s;
-        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(x + w * ratio, y + h/2), knobR, knobR);
+        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(g.knobX, y + h/2), knobR, knobR);
         pRT->FillEllipse(knob, m_brushTextDim.Get());
     }
     
@@ -4372,15 +4356,14 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
     // 1. Dragging Slider?
     if (m_pActiveSlider && m_pActiveSlider->pFloatVal) {
-        float w = 150.0f * m_uiScale;
-        float sliderLeft = m_pActiveSlider->rect.right - w;
-        [[maybe_unused]] float sliderRight = m_pActiveSlider->rect.right;
-        
-        float t = (x - sliderLeft) / w;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        
-        float newVal = m_pActiveSlider->minVal + t * (m_pActiveSlider->maxVal - m_pActiveSlider->minVal);
+        const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
+            m_pActiveSlider->rect.right, m_pActiveSlider->rect.top, m_pActiveSlider->rect.bottom,
+            m_uiScale, *m_pActiveSlider->pFloatVal, m_pActiveSlider->minVal, m_pActiveSlider->maxVal);
+        const float step = QuickView::EffectiveStep(
+            m_pActiveSlider->step, m_pActiveSlider->minVal, m_pActiveSlider->maxVal,
+            m_pActiveSlider->displayFormat);
+        const float newVal = QuickView::ValueFromX(
+            g, x, m_pActiveSlider->minVal, m_pActiveSlider->maxVal, step);
         if (*m_pActiveSlider->pFloatVal != newVal) {
             *m_pActiveSlider->pFloatVal = newVal;
             if (m_pActiveSlider->onLiveUpdate) m_pActiveSlider->onLiveUpdate(this, m_pActiveSlider);
@@ -4442,9 +4425,11 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
                     // Add slider specific hover cursor if not already handled by inR1/inR2
                     if (item.type == OptionType::Slider && !item.isDisabled) {
-                        float w = 150.0f * m_uiScale;
-                        float sliderLeft = item.rect.right - w - 12.0f * m_uiScale; // including padding
-                        if (x >= sliderLeft && x <= item.rect.right && y >= item.rect.top && y <= item.rect.bottom) {
+                        const float val = item.pFloatVal ? *item.pFloatVal : item.minVal;
+                        const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
+                            item.rect.right, item.rect.top, item.rect.bottom,
+                            m_uiScale, val, item.minVal, item.maxVal);
+                        if (x >= g.trackLeft && x <= item.rect.right && y >= item.rect.top && y <= item.rect.bottom) {
                             g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
                             m_pHoverItem = &item;
                         }
