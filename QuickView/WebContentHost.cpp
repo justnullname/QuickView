@@ -2,8 +2,8 @@
  * QuickView - WebContentHost implementation
  * Copyright (C) 2026-Present QuickView Contributors
  *
- * Dual-track scale: ImageContainer owns interactive zoom; RasterizationScale
- * owns pixel density (fixed logical Bounds). See WebContentHost.h.
+ * Viewport-150% tile: viewBox owns the committed view; DComp owns the delta.
+ * See WebContentHost.h.
  */
 
 #include "pch.h"
@@ -58,33 +58,17 @@ std::wstring WebContentHost::BuildComplexSvgHtml(std::string_view utf8Svg, float
                             static_cast<int>(utf8Svg.size()), wXml.data(), size);
     }
 
-    wchar_t containerStyle[256];
-    swprintf_s(containerStyle, L"width:%fpx; height:%fpx; flex-shrink:0; display:flex; justify-content:center; align-items:center; transform-origin:center center;", contentW, contentH);
+    (void)contentW;
+    (void)contentH;
 
+    // Single root <svg> (no nesting). CSS forces it to Bounds (1.5× window).
+    // Never assign contentW×contentH as element size — Chromium would raster
+    // a full-document layer and freeze on large SVGs.
     return L"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
            L"<style>"
            L"html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;}"
-           L"#svg-stage{position:absolute;left:0;top:0;width:100%;height:100%;"
-           L"display:flex;justify-content:center;align-items:center;overflow:hidden;}"
-           L"svg{width:100% !important;height:100% !important;display:block;margin:auto;}"
-           L"</style>"
-           L"<script>"
-           L"window.updateViewport = function(scale, panX, panY) {"
-           L"  const container = document.getElementById('svg-container');"
-           L"  if (container) {"
-           L"    container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;"
-           L"  }"
-           L"  if (window.chrome && window.chrome.webview) {"
-           L"    requestAnimationFrame(() => {"
-           L"      requestAnimationFrame(() => {"
-           L"        window.chrome.webview.postMessage('ReprojectionReady');"
-           L"      });"
-           L"    });"
-           L"  }"
-           L"};"
-           L"</script>"
-           L"</head><body><div id=\"svg-stage\"><div id=\"svg-container\" style=\"" + std::wstring(containerStyle) + L"\">" +
-           wXml + L"</div></div></body></html>";
+           L"svg{width:100% !important;height:100% !important;display:block;}"
+           L"</style></head><body>" + wXml + L"</body></html>";
 }
 
 WebContentHost::~WebContentHost() {
@@ -98,6 +82,15 @@ float WebContentHost::ComputeMaxRasterScale(float contentW, float contentH, UINT
     const float maxByW = static_cast<float>(maxTextureDim) / contentW;
     const float maxByH = static_cast<float>(maxTextureDim) / contentH;
     return (std::max)(0.25f, (std::min)(maxByW, maxByH) * 0.98f);
+}
+
+float WebContentHost::ComputeViewportRasterCap(float contentW, float contentH,
+                                               float viewportW, float viewportH) {
+    if (contentW < 1.0f) contentW = 1.0f;
+    if (contentH < 1.0f) contentH = 1.0f;
+    if (viewportW < 1.0f) viewportW = 1.0f;
+    if (viewportH < 1.0f) viewportH = 1.0f;
+    return kOverscanFactor * (std::min)(viewportW / contentW, viewportH / contentH);
 }
 
 float WebContentHost::ComputeOpenRasterScale(float displayZoom, float contentW, float contentH,
@@ -176,13 +169,8 @@ HRESULT WebContentHost::CreateVisualTree(IDCompositionDesktopDevice* dcompDevice
 void WebContentHost::ApplyDensityCompensation() {
     const float r = (rasterScale_ > 0.0f) ? rasterScale_ : 1.0f;
 
-    // Origin alignment (all spaces share content center at 0,0):
-    //   visual size ≈ (W·R, H·R), top-left at webview local (0,0)
-    //   webview.Offset = (-W·R/2, -H·R/2)  → center at parent origin
-    //   container.Scale(1/R) about (0,0)   → parent extent (-W/2..W/2)
-    //   container.Offset = (0,0)
-    //   ImageContainer.scale = displayZoom about (0,0)
-    // Net: screen size W·displayZoom, center stable when R changes.
+    // Viewport tile: visual ≈ (tileW·R, tileH·R), top-left at local (0,0).
+    // Offset by half so ImageContainer (window center) sees a centered tile.
     if (scaleTransform_) {
         const float inv = 1.0f / r;
         scaleTransform_->SetCenterX(0.0f);
@@ -203,8 +191,8 @@ void WebContentHost::ApplyDensityCompensation() {
         containerVisual_->SetOffsetY(0.0f);
     }
     if (webviewVisual_) {
-        float visW = reprojectionActive_ ? (1.5f * overscanViewportW_) : static_cast<float>(contentW_);
-        float visH = reprojectionActive_ ? (1.5f * overscanViewportH_) : static_cast<float>(contentH_);
+        float visW = static_cast<float>(contentW_);
+        float visH = static_cast<float>(contentH_);
         if (visW > 0.0f && visH > 0.0f) {
             webviewVisual_->SetOffsetX(-0.5f * visW * r);
             webviewVisual_->SetOffsetY(-0.5f * visH * r);
@@ -283,27 +271,32 @@ HRESULT WebContentHost::CreateController() {
                     settings->put_IsZoomControlEnabled(FALSE);
                     settings->put_AreDefaultScriptDialogsEnabled(FALSE);
                     settings->put_IsBuiltInErrorPageEnabled(FALSE);
-                    settings->put_IsScriptEnabled(TRUE); // [Reprojection] Needed for window.setReprojection
+                    settings->put_IsScriptEnabled(TRUE);
+                    settings->put_IsWebMessageEnabled(TRUE);
                 }
                 // Reveal only after the *current* document finishes loading so a
                 // shared host never paints the previous SVG (a→b→c residual).
                 hasNavCompletedToken_ = false;
-                
-                // [Reprojection] Handle JS callbacks
-                settings->put_IsWebMessageEnabled(TRUE);
-                webview_->add_WebMessageReceived(
-                    Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                        [this](ICoreWebView2* /*sender*/, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
-                            LPWSTR message;
-                            if (SUCCEEDED(args->TryGetWebMessageAsString(&message))) {
-                                if (wcscmp(message, L"ReprojectionReady") == 0 && hwnd_) {
-                                    PostMessageW(hwnd_, WM_APP + 59, 0, 0); // kReprojectionReadyMessage
+                if (hasWebMessageToken_) {
+                    webview_->remove_WebMessageReceived(webMessageToken_);
+                    hasWebMessageToken_ = false;
+                }
+                if (SUCCEEDED(webview_->add_WebMessageReceived(
+                        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                            [this](ICoreWebView2* /*sender*/, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                LPWSTR message = nullptr;
+                                if (SUCCEEDED(args->TryGetWebMessageAsString(&message)) && message) {
+                                    if (wcscmp(message, L"ReprojectionReady") == 0 && hwnd_) {
+                                        // Snap DComp delta first (main handler), then reveal.
+                                        PostMessageW(hwnd_, kReprojectionReadyMessage, 0, 0);
+                                    }
+                                    CoTaskMemFree(message);
                                 }
-                                CoTaskMemFree(message);
-                            }
-                            return S_OK;
-                        }).Get(),
-                    nullptr);
+                                return S_OK;
+                            }).Get(),
+                        &webMessageToken_))) {
+                    hasWebMessageToken_ = true;
+                }
 
                 if (SUCCEEDED(webview_->add_NavigationCompleted(
                         Callback<ICoreWebView2NavigationCompletedEventHandler>(
@@ -378,6 +371,7 @@ HRESULT WebContentHost::EnsureReady(HWND hwnd, IDCompositionDesktopDevice* dcomp
     hwnd_ = hwnd;
     KillRetentionTimer();
     KillDensitySettleTimer();
+    KillViewportSettleTimer();
     surfaceActive_ = true;
     densityMasked_ = false;
 
@@ -519,18 +513,16 @@ HRESULT WebContentHost::SetRasterScaleInternal(float rasterScale, bool allowDecr
 
 HRESULT WebContentHost::ApplyLayout() {
     if (!hwnd_ || !controller_ || !webview_) return E_FAIL;
-    RECT bounds;
-    GetClientRect(hwnd_, &bounds);
-    
-    if (reprojectionActive_) {
-        bounds.right = static_cast<LONG>(std::lround(overscanViewportW_ * 1.5f));
-        bounds.bottom = static_cast<LONG>(std::lround(overscanViewportH_ * 1.5f));
-    } else {
-        bounds.right = static_cast<LONG>(contentW_);
-        bounds.bottom = static_cast<LONG>(contentH_);
+    RECT bounds{0, 0, static_cast<LONG>(contentW_), static_cast<LONG>(contentH_)};
+    if (bounds.right < 1) bounds.right = 1;
+    if (bounds.bottom < 1) bounds.bottom = 1;
+
+    RECT current{};
+    if (SUCCEEDED(controller_->get_Bounds(&current)) &&
+        current.left == bounds.left && current.top == bounds.top &&
+        current.right == bounds.right && current.bottom == bounds.bottom) {
+        return S_OK;
     }
-    bounds.left = 0;
-    bounds.top = 0;
     return controller_->put_Bounds(bounds);
 }
 
@@ -545,9 +537,15 @@ void WebContentHost::TryRevealSurface() {
     // Need both: open-R applied (pendingReveal_) and document painted (contentReady_).
     if (!surfaceActive_ || !contentReady_ || !pendingReveal_) return;
     if (densityMasked_) return;
+    // Overscan: wait until CSS committed view has presented, else first frame is
+    // identity-at-origin inside a window-sized surface (top-left flash).
+    if (reprojectionActive_ && !cssPresented_) return;
 
     pendingReveal_ = false;
     surfaceOpacity_ = 1.0f;
+    if (controller_) {
+        controller_->put_IsVisible(TRUE);
+    }
     SetVisualOpacitySafe(containerVisual_.Get(), 1.0f);
     ApplyDensityCompensation();
     if (hwnd_) {
@@ -609,7 +607,8 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
 
     NotifySurfaceActive();
     KillDensitySettleTimer();
-    reprojectionActive_ = false;
+    KillViewportSettleTimer();
+    ResetOverscanState();
     densityMasked_ = false;
     contentReady_ = false;
     minimapCapturePending_ = false;
@@ -633,6 +632,13 @@ HRESULT WebContentHost::Present(const WebContentPayload& payload, float initialR
     const float rMax = ComputeMaxRasterScale(static_cast<float>(w), static_cast<float>(h),
                                              maxTextureDim_);
     float r = (initialRasterScale > 0.0f) ? initialRasterScale : 1.0f;
+    RECT client{};
+    if (hwnd_ && GetClientRect(hwnd_, &client) && client.right > 0 && client.bottom > 0) {
+        const float cap = ComputeViewportRasterCap(
+            static_cast<float>(w), static_cast<float>(h),
+            static_cast<float>(client.right), static_cast<float>(client.bottom));
+        r = (std::min)(r, cap);
+    }
     rasterScale_ = (std::clamp)(r, 0.25f, rMax);
     if (controller3_) {
         controller3_->put_RasterizationScale(static_cast<double>(rasterScale_));
@@ -670,27 +676,40 @@ HRESULT WebContentHost::ApplyOpenRasterScale(float displayZoom, UINT maxTextureD
     if (!IsReady()) return E_FAIL;
     if (maxTextureDim >= 256) maxTextureDim_ = maxTextureDim;
 
-    const float openR = ComputeOpenRasterScale(
+    float openR = ComputeOpenRasterScale(
         displayZoom, static_cast<float>(contentW_), static_cast<float>(contentH_),
         maxTextureDim_);
-    // Density only — do NOT show yet; previous SVG may still be in the compositor.
+    RECT client{};
+    if (hwnd_ && GetClientRect(hwnd_, &client) && client.right > 0 && client.bottom > 0) {
+        const float cap = ComputeViewportRasterCap(
+            static_cast<float>(contentW_), static_cast<float>(contentH_),
+            static_cast<float>(client.right), static_cast<float>(client.bottom));
+        openR = (std::min)(openR, cap);
+    }
     HRESULT hr = SetRasterScaleInternal(openR, /*allowDecrease=*/true, /*maskFlash=*/false);
+
     KillDensitySettleTimer();
     densityMasked_ = false;
-    HideSurface(); // keep hidden until NavigationCompleted
-    pendingReveal_ = true; // HideSurface cleared it; re-arm reveal intent
-    TryRevealSurface();    // no-op until contentReady_
+    HideSurface();
+    pendingReveal_ = true;
+    TryRevealSurface();
     return hr;
 }
 
 HRESULT WebContentHost::SyncRasterScaleToDisplay(float displayZoom, UINT maxTextureDim) {
     if (!controller3_ || contentW_ == 0 || contentH_ == 0) return E_FAIL;
-    if (reprojectionActive_) return S_OK; // [Fix] Skip tracking in Overscan mode, let WebView handle scaling via CSS
     if (maxTextureDim >= 256) maxTextureDim_ = maxTextureDim;
 
     const float z = (std::max)(displayZoom, 0.05f);
     const float rMax = GetMaxRasterScale();
     const float cur = rasterScale_ > 0.0f ? rasterScale_ : 1.0f;
+    float viewportCap = rMax;
+    RECT client{};
+    if (hwnd_ && GetClientRect(hwnd_, &client) && client.right > 0 && client.bottom > 0) {
+        viewportCap = ComputeViewportRasterCap(
+            static_cast<float>(contentW_), static_cast<float>(contentH_),
+            static_cast<float>(client.right), static_cast<float>(client.bottom));
+    }
 
     float target = ComputeTrackedRasterScale(z, static_cast<float>(contentW_),
                                              static_cast<float>(contentH_), maxTextureDim_);
@@ -704,8 +723,10 @@ HRESULT WebContentHost::SyncRasterScaleToDisplay(float displayZoom, UINT maxText
         target = ComputeTrackedRasterScale(z, static_cast<float>(contentW_),
                                            static_cast<float>(contentH_), maxTextureDim_);
     } else {
-        return S_OK; // inside comfortable band
+        return S_OK;
     }
+
+    target = (std::min)(target, viewportCap);
 
     const float rel = std::abs(target - cur) / cur;
     if (rel < kRasterRelEpsilon) {
@@ -791,6 +812,7 @@ void WebContentHost::NotifySurfaceActive() {
 void WebContentHost::NotifySurfaceInactive(HWND hwnd, size_t webFriendlyFileCount) {
     surfaceActive_ = false;
     KillDensitySettleTimer();
+    KillViewportSettleTimer();
     densityMasked_ = false;
     contentReady_ = false;
     pendingReveal_ = false;
@@ -828,6 +850,10 @@ void WebContentHost::KillRetentionTimer() {
 }
 
 void WebContentHost::ResetControllerState() {
+    if (webview_ && hasWebMessageToken_) {
+        webview_->remove_WebMessageReceived(webMessageToken_);
+        hasWebMessageToken_ = false;
+    }
     if (webview_ && hasNavCompletedToken_) {
         webview_->remove_NavigationCompleted(navCompletedToken_);
         hasNavCompletedToken_ = false;
@@ -847,6 +873,7 @@ void WebContentHost::ResetControllerState() {
 
 void WebContentHost::ResetAllState() {
     KillDensitySettleTimer();
+    KillViewportSettleTimer();
     ResetControllerState();
     environment_.Reset();
 
@@ -869,11 +896,13 @@ void WebContentHost::ResetAllState() {
     pendingNavSerial_ = 0;
     minimapCapturePending_ = false;
     minimapPreviewStream_.Reset();
+    ResetOverscanState();
 }
 
 void WebContentHost::ReleaseRuntime() {
     KillRetentionTimer();
     KillDensitySettleTimer();
+    KillViewportSettleTimer();
     ResetControllerState();
     if (containerVisual_) {
         containerVisual_->RemoveAllVisuals();
@@ -895,11 +924,13 @@ void WebContentHost::ReleaseRuntime() {
     minimapCapturePending_ = false;
     minimapPreviewStream_.Reset();
     initializing_ = false;
+    ResetOverscanState();
 }
 
 void WebContentHost::Shutdown() {
     KillRetentionTimer();
     KillDensitySettleTimer();
+    KillViewportSettleTimer();
     ResetAllState();
     failed_ = false;
     initializing_ = false;
@@ -907,35 +938,145 @@ void WebContentHost::Shutdown() {
     dcompDevice_ = nullptr;
 }
 
+void WebContentHost::ResetOverscanState() {
+    reprojectionActive_ = false;
+    overscanViewportW_ = 0.0f;
+    overscanViewportH_ = 0.0f;
+    overscanPixelW_ = 0.0f;
+    overscanPixelH_ = 0.0f;
+    lastCssScale_ = 1.0f;
+    lastCssPanX_ = 0.0f;
+    lastCssPanY_ = 0.0f;
+    hasCommittedViewport_ = false;
+    cssPresented_ = false;
+}
+
+void WebContentHost::InjectCommittedViewport() {
+    if (!webview_ || !hasCommittedViewport_) return;
+    const float z = lastCssScale_ > 1.0e-6f ? lastCssScale_ : 1.0f;
+    const float tileW = overscanPixelW_ > 0.0f ? overscanPixelW_ : (kOverscanFactor * overscanViewportW_);
+    const float tileH = overscanPixelH_ > 0.0f ? overscanPixelH_ : (kOverscanFactor * overscanViewportH_);
+    if (tileW <= 0.0f || tileH <= 0.0f) return;
+
+    const float vbW = tileW / z;
+    const float vbH = tileH / z;
+    const float cx = static_cast<float>(contentW_) * 0.5f - lastCssPanX_ / z;
+    const float cy = static_cast<float>(contentH_) * 0.5f - lastCssPanY_ / z;
+    const float vbX = cx - vbW * 0.5f;
+    const float vbY = cy - vbH * 0.5f;
+
+    wchar_t script[320];
+    swprintf_s(script, L"if(window.updateViewport) window.updateViewport(%f,%f,%f,%f);",
+               vbX, vbY, vbW, vbH);
+    webview_->ExecuteScript(script, nullptr);
+    // viewBox re-raster is slower than 2 rAFs; reveal only after this settle.
+    ScheduleViewportSettle();
+}
+
+void WebContentHost::ScheduleViewportSettle() {
+    if (!hwnd_) return;
+    KillViewportSettleTimer();
+    SetTimer(hwnd_, kViewportSettleTimerId, kViewportSettleMs, nullptr);
+}
+
+void WebContentHost::KillViewportSettleTimer() {
+    if (hwnd_) {
+        KillTimer(hwnd_, kViewportSettleTimerId);
+    }
+}
+
+void WebContentHost::OnViewportSettleTimer() {
+    KillViewportSettleTimer();
+    if (hwnd_) {
+        PostMessageW(hwnd_, kReprojectionReadyMessage, 0, 0);
+    }
+}
+
+void WebContentHost::NotifyReprojectionPresented() {
+    cssPresented_ = true;
+    TryRevealSurface();
+}
+
+void WebContentHost::HideForViewportRebase() {
+    if (surfaceOpacity_ > 0.0f) {
+        HideSurface();
+        pendingReveal_ = true;
+        cssPresented_ = false;
+    }
+    if (controller_) {
+        controller_->put_IsVisible(FALSE);
+    }
+}
+
 HRESULT WebContentHost::SetViewportReprojection(float scaleFactor, float panX, float panY, float viewportW, float viewportH) {
     if (!webview_) return E_FAIL;
     if (viewportW <= 0.0f || viewportH <= 0.0f) return E_INVALIDARG;
 
+    const bool firstArm = !reprojectionActive_;
+    const bool viewportChanged =
+        firstArm ||
+        std::abs(viewportW - overscanViewportW_) > 5.0f ||
+        std::abs(viewportH - overscanViewportH_) > 5.0f;
+
     reprojectionActive_ = true;
     overscanViewportW_ = viewportW;
     overscanViewportH_ = viewportH;
+    lastCssScale_ = scaleFactor;
+    lastCssPanX_ = panX;
+    lastCssPanY_ = panY;
+    hasCommittedViewport_ = true;
 
-    // Lock WebView2 Bounds to 1.5x of screen viewport
-    LONG boundsW = static_cast<LONG>(std::lround(viewportW * 1.5f));
-    LONG boundsH = static_cast<LONG>(std::lround(viewportH * 1.5f));
-    RECT bounds = { 0, 0, boundsW, boundsH };
-    if (controller_) {
-        controller_->put_Bounds(bounds);
+    float tileW = viewportW * kOverscanFactor;
+    float tileH = viewportH * kOverscanFactor;
+    const float cap = static_cast<float>((std::max)(256u, maxTextureDim_));
+    const float peak = (std::max)(tileW, tileH);
+    if (peak > cap) {
+        const float s = cap / peak;
+        tileW *= s;
+        tileH *= s;
+    }
+    const bool tileChanged =
+        firstArm ||
+        std::abs(tileW - overscanPixelW_) > 1.0f ||
+        std::abs(tileH - overscanPixelH_) > 1.0f;
+    overscanPixelW_ = tileW;
+    overscanPixelH_ = tileH;
+
+    // viewBox re-raster shows a stale tile if left visible; cover with proxy.
+    if (surfaceOpacity_ > 0.0f) {
+        HideSurface();
+        pendingReveal_ = true;
+        cssPresented_ = false;
     }
 
-    // Lock R=1.0: Overscan viewport is already at screen resolution.
-    // Prevents density tracking from triggering proxy layer ghost images.
-    rasterScale_ = 1.0f;
-    if (controller3_) {
+    if (viewportChanged || tileChanged) {
+        RECT bounds = {
+            0, 0,
+            static_cast<LONG>(std::lround(tileW)),
+            static_cast<LONG>(std::lround(tileH))
+        };
+        RECT current{};
+        const bool sameBounds = controller_ &&
+            SUCCEEDED(controller_->get_Bounds(&current)) &&
+            current.left == bounds.left && current.top == bounds.top &&
+            current.right == bounds.right && current.bottom == bounds.bottom;
+        if (controller_ && !sameBounds) {
+            controller_->put_Bounds(bounds);
+        }
+    }
+
+    if (controller3_ && std::abs(rasterScale_ - 1.0f) > kRasterEpsilon) {
+        rasterScale_ = 1.0f;
         controller3_->put_RasterizationScale(1.0);
+    } else {
+        rasterScale_ = 1.0f;
     }
 
-    ApplyDensityCompensation();
-
-    wchar_t script[512];
-    swprintf_s(script, L"if(window.updateViewport) window.updateViewport(%f, %f, %f);",
-              scaleFactor, panX, panY);
-    return webview_->ExecuteScript(script, nullptr);
+    if (viewportChanged || tileChanged) {
+        ApplyDensityCompensation();
+    }
+    InjectCommittedViewport();
+    return S_OK;
 }
 
 

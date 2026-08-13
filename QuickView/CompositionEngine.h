@@ -95,6 +95,8 @@ public:
     // The mounted visual inherits all hardware transforms (scale/translate/rotate)
     HRESULT MountWebViewVisual(IDCompositionVisual2* webviewVisual);
     HRESULT UnmountWebViewVisual();
+    // Remove from the tree without leaving WebView mode (idle rebase cover).
+    HRESULT DetachWebViewVisual();
     
     // [WebView2 DComp] Toggle between bitmap mode and WebView mode
     // In WebView mode: image layers hidden, WebView visual visible

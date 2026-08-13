@@ -552,6 +552,10 @@ HRESULT CompositionEngine::Initialize(HWND hwnd, ID3D11Device* d3dDevice, ID2D1D
     if (m_width > 0 && m_height > 0) {
         hr = CreateAllSurfaces(m_width, m_height);
         if (FAILED(hr)) return hr;
+        if (m_imageContainer) {
+            m_imageContainer->SetOffsetX(m_width / 2.0f);
+            m_imageContainer->SetOffsetY(m_height / 2.0f);
+        }
     }
     
     // 11. Commit initial state
@@ -1494,14 +1498,19 @@ HRESULT CompositionEngine::MountWebViewVisual(IDCompositionVisual2* webviewVisua
 }
 
 HRESULT CompositionEngine::UnmountWebViewVisual() {
-    if (m_webviewVisual && m_imageContainer) {
-        m_imageContainer->RemoveVisual(m_webviewVisual);
-    }
-    m_webviewVisual = nullptr;
+    DetachWebViewVisual();
 
     if (m_webviewModeActive) {
         SetWebViewMode(false);
     }
+    return S_OK;
+}
+
+HRESULT CompositionEngine::DetachWebViewVisual() {
+    if (m_webviewVisual && m_imageContainer) {
+        m_imageContainer->RemoveVisual(m_webviewVisual);
+    }
+    m_webviewVisual = nullptr;
     return S_OK;
 }
 

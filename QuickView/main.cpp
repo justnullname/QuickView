@@ -2187,6 +2187,7 @@ struct WebViewReprojectionState {
     float baseFit = 1.0f;
     float overscanWinW = 0.0f;
     float overscanWinH = 0.0f;
+    DWORD pendingTick = 0;
     bool isPending = false;
     bool isInitialized = false;
 };
@@ -2248,12 +2249,8 @@ static float GetSvgMaxSharpTotalScale(const ImageResource& res) {
     const float maxSurfaceScale = std::min(maxSurfaceSize / res.svgW,
                                            maxSurfaceSize / res.svgH);
     if (res.isWebView) {
-        // Zoom hard cap = hardware texture ceiling, not current density R.
-        if (g_webContentHost && g_webContentHost->IsReady()) {
-            return std::max(0.1f, g_webContentHost->GetMaxRasterScale());
-        }
-        return std::max(0.1f, QuickView::WebContentHost::ComputeMaxRasterScale(
-            res.svgW, res.svgH, GetSvgSurfaceSizeLimit()));
+        // Viewport tile is always 1.5× the window. Zoom is DComp; no texture cap.
+        return (std::numeric_limits<float>::max)();
     }
     // Native SVG: 2x supersampling on viewport surface.
     return std::max(0.1f, maxSurfaceScale / 2.0f);
@@ -2287,8 +2284,7 @@ static float ComputeWebContentFitZoom(HWND hwnd, float contentW, float contentH)
     return baseFit * GetPaneContext(PaneSlot::Primary).view.Zoom;
 }
 
-// After AdjustWindowToImage: apply open RasterizationScale from final displayZoom,
-// remount visual, sync ImageContainer. Bounds stay logical (W,H).
+// After AdjustWindowToImage: commit the 150% viewport tile, remount, sync DComp.
 static void SyncWebContentLayerAfterLayout(HWND hwnd) {
     if (!g_webContentHost || !g_webContentHost->IsReady()) return;
     auto& res = GetPaneContext(PaneSlot::Primary).resource;
@@ -2305,8 +2301,6 @@ static void SyncWebContentLayerAfterLayout(HWND hwnd) {
     if (g_compEngine) g_compEngine->Commit();
 }
 
-// Idle: track WebView density to displayZoom (up if soft, down if oversampled).
-// May briefly mask the surface; unhide via kDensitySettleTimerId.
 static void MaybeSyncWebContentRaster(HWND hwnd) {
     if (!g_webContentHost || !g_webContentHost->IsReady()) return;
     auto& res = GetPaneContext(PaneSlot::Primary).resource;
@@ -2597,8 +2591,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     }
 
     if (res.isWebView) {
-        // Layer = LOGICAL (W,H). ImageContainer.scale = displayZoom.
-        // Bounds (W,H) fixed; R = density; invScale 1/R keeps parent size W×H.
         const UINT logicalW = (UINT)std::lround(res.svgW > 0.0f ? res.svgW : 512.0f);
         const UINT logicalH = (UINT)std::lround(res.svgH > 0.0f ? res.svgH : 512.0f);
 
@@ -2607,11 +2599,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
             DXGI_FORMAT_B8G8R8A8_UNORM, GetPaneContext(PaneSlot::Primary).metadata.hasAlpha);
         if (ctx) {
             ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
-            
-            // [Feature] Snapshot Cover (LOD) Proxy Layer
-            // Draw the captured thumbnail (if available) to the underlying DComp visual (m_imageA).
-            // This acts as a proxy layer when WebView2 hides itself during RasterizationScale updates,
-            // preventing black flashes and layout jumps.
             if (res.bitmap) {
                 D2D1_RECT_F destRect = D2D1::RectF(0.0f, 0.0f, (float)logicalW, (float)logicalH);
                 ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -3966,7 +3953,7 @@ static float ClampTotalScale(HWND hwnd, float newTotalScale) {
     float maxScale = std::max(50.0f * fitScale, 50.0f);
     const auto& zoomRes = GetPaneContext(PaneSlot::Primary).resource;
     if (zoomRes.isWebView) {
-        maxScale = std::min(maxScale, GetSvgMaxSharpTotalScale(zoomRes));
+        maxScale = (std::max)(maxScale, 1.0e5f * fitScale);
     } else if (zoomRes.isSvg && !UseSvgViewportRendering(zoomRes)) {
         maxScale = std::min(maxScale, GetSvgMaxSharpTotalScale(zoomRes));
     }
@@ -6347,57 +6334,7 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
             // Fix #6: Pin mode — shift main image down by half of gallery filmstrip height
             displayPanY += galleryH / 2.0f;
 
-            if (GetPaneContext(PaneSlot::Primary).resource.isWebView) {
-                // [Reprojection] Handle WebView2 with 1.5x Overscan & Guard Band
-                if (!g_webViewReproject.isInitialized) {
-                    g_webViewReproject.committedZoom = displayZoom;
-                    g_webViewReproject.committedPanX = displayPanX;
-                    g_webViewReproject.committedPanY = displayPanY;
-                    g_webViewReproject.baseFit = baseFit;
-                    g_webViewReproject.overscanWinW = winW;
-                    g_webViewReproject.overscanWinH = effWinH;
-                    g_webViewReproject.isInitialized = true;
-                    if (g_webContentHost) {
-                        g_webContentHost->SetViewportReprojection(displayZoom, displayPanX, displayPanY, winW, effWinH);
-                    }
-                }
-
-                float deltaZoom = displayZoom / (g_webViewReproject.committedZoom > 0.0001f ? g_webViewReproject.committedZoom : 1.0f);
-                float deltaPanX = displayPanX - g_webViewReproject.committedPanX;
-                float deltaPanY = displayPanY - g_webViewReproject.committedPanY;
-
-                bool isInteracting = GetPaneContext(PaneSlot::Primary).view.IsInteracting;
-                // Thresholds: Allow DComp hardware scale to handle continuous zoom/pan (zero jitter).
-                // 1.5x Overscan buffer provides ~25% safe margin on all sides.
-                float thresholdX = winW * (isInteracting ? 0.24f : 0.0f);
-                float thresholdY = effWinH * (isInteracting ? 0.24f : 0.0f);
-                float thresholdZoomIn = isInteracting ? 1.45f : 1.001f;
-                float thresholdZoomOut = isInteracting ? 0.65f : 0.999f;
-
-                if (!g_webViewReproject.isPending) {
-                    if (std::abs(deltaPanX) > thresholdX || std::abs(deltaPanY) > thresholdY ||
-                        deltaZoom > thresholdZoomIn || deltaZoom < thresholdZoomOut ||
-                        std::abs(winW - g_webViewReproject.overscanWinW) > 5.0f ||
-                        std::abs(effWinH - g_webViewReproject.overscanWinH) > 5.0f) {
-
-                        g_webViewReproject.targetZoom = displayZoom;
-                        g_webViewReproject.targetPanX = displayPanX;
-                        g_webViewReproject.targetPanY = displayPanY;
-                        g_webViewReproject.overscanWinW = winW;
-                        g_webViewReproject.overscanWinH = effWinH;
-                        g_webViewReproject.isPending = true;
-
-                        if (g_webContentHost) {
-                            g_webContentHost->SetViewportReprojection(displayZoom, displayPanX, displayPanY, winW, effWinH);
-                        }
-                    }
-                }
-
-                g_compEngine->UpdateTransformMatrix(vs, winW, winH, deltaZoom, deltaPanX, deltaPanY, animationDurationMs);
-
-                DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
-                g_compEngine->SetImageInterpolationMode(interpMode);
-            } else if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
+            if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
 
                 VisualState surfaceVs{};
                 float currentScale = 1.0f;
@@ -6420,13 +6357,15 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(currentScale, g_lastSurfaceSize.width, g_lastSurfaceSize.height);
                 g_compEngine->SetImageInterpolationMode(interpMode);
             } else {
-                g_compEngine->UpdateTransformMatrix(vs, winW, winH, displayZoom, displayPanX, displayPanY, animationDurationMs);
+                const float animMs =
+                    (GetPaneContext(PaneSlot::Primary).resource.isWebView &&
+                     AppContext::GetInstance().SmoothZoom.Active)
+                        ? 0.0f
+                        : animationDurationMs;
+                g_compEngine->UpdateTransformMatrix(vs, winW, winH, displayZoom, displayPanX, displayPanY, animMs);
 
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(displayZoom, vs.VisualSize.width, vs.VisualSize.height);
                 g_compEngine->SetImageInterpolationMode(interpMode);
-
-                // WebContent: interactive zoom is ImageContainer-only. Density R is
-                // synced on idle (MaybeSyncWebContentRaster), never here.
             }
         }
     } else {
@@ -7812,9 +7751,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RECT rc; GetClientRect(hwnd, &rc);
             // Sync one last time while g_isInSizeMove is true to finalize absolute scale adjustments
             SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
+            g_isInSizeMove = false;
+            if (GetPaneContext(PaneSlot::Primary).resource.isWebView) {
+                MaybeSyncWebContentRaster(hwnd);
+            }
             g_compEngine->Commit();
+        } else {
+            g_isInSizeMove = false;
         }
-        g_isInSizeMove = false;
         s_maintainAbsoluteScale = false;
         s_resizeSnapLocked = false;
         return 0;
@@ -8060,10 +8004,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     case QuickView::WebContentHost::kProxyStateMessage: {
-        // Skip proxy layer when Overscan reprojection is active (size mismatch)
-        if (g_webContentHost && g_webContentHost->IsReprojectionActive()) {
-            return 0;
-        }
         if (g_compEngine) {
             g_compEngine->SetWebViewProxyOpacity(wParam ? 1.0f : 0.0f);
             g_compEngine->Commit();
@@ -8071,21 +8011,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
-    case WM_APP + 59: { // kReprojectionReadyMessage
+    case QuickView::WebContentHost::kReprojectionReadyMessage: {
         if (g_webViewReproject.isPending) {
             g_webViewReproject.committedZoom = g_webViewReproject.targetZoom;
             g_webViewReproject.committedPanX = g_webViewReproject.targetPanX;
             g_webViewReproject.committedPanY = g_webViewReproject.targetPanY;
             g_webViewReproject.isPending = false;
-
-            // Re-sync DComp to snap delta to 0, since JS canvas has shifted underneath
+        }
+        if (g_compEngine && g_webContentHost) {
+            if (IDCompositionVisual2* vis = g_webContentHost->GetVisual()) {
+                g_compEngine->MountWebViewVisual(vis);
+            }
+        }
+        if (g_webViewReproject.isInitialized) {
             RECT rc = {};
             if (GetClientRect(hwnd, &rc)) {
                 SyncDCompState(hwnd, static_cast<float>(rc.right), static_cast<float>(rc.bottom), false);
             }
-            if (g_compEngine) {
-                g_compEngine->Commit();
-            }
+        }
+        if (g_compEngine) {
+            g_compEngine->SetWebViewProxyOpacity(0.0f);
+        }
+        if (g_webContentHost) {
+            g_webContentHost->NotifyReprojectionPresented();
+        }
+        if (g_compEngine) {
+            g_compEngine->Commit();
         }
         return 0;
     }
@@ -8312,6 +8263,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_webContentHost->OnDensitySettleTimer();
             }
             if (g_compEngine) g_compEngine->Commit();
+            return 0;
+        }
+
+        if (wParam == QuickView::WebContentHost::kViewportSettleTimerId) {
+            if (g_webContentHost) {
+                g_webContentHost->OnViewportSettleTimer();
+            }
             return 0;
         }
 
@@ -13449,8 +13407,8 @@ void ProcessEngineEvents(HWND hwnd) {
                          }
 
                          const UINT texLimit = GetSvgSurfaceSizeLimit();
-                         // Provisional R=1; open density applied after AdjustWindowToImage
-                         // (SyncWebContentLayerAfterLayout → ApplyOpenRasterScale).
+                         // Provisional R=1; overscan Bounds/CSS armed on first SyncDCompState
+                         // while the surface is still hidden.
                          if (SUCCEEDED(g_webContentHost->Present(payload, 1.0f, texLimit)) &&
                              g_webContentHost->GetVisual()) {
                              GetPaneContext(PaneSlot::Primary).resource.Reset();
@@ -13860,8 +13818,7 @@ void ProcessEngineEvents(HWND hwnd) {
                         g_compEngine->Commit();
                     }
 
-                    // WebContent: apply open RasterizationScale from final displayZoom,
-                    // then remount + ImageContainer sync (Bounds stay logical W×H).
+                    // WebContent: remount + reveal after overscan has been armed hidden.
                     if (GetPaneContext(PaneSlot::Primary).resource.isWebView) {
                         SyncWebContentLayerAfterLayout(hwnd);
                     }

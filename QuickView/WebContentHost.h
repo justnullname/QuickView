@@ -2,26 +2,13 @@
  * QuickView - WebContentHost (WebView2 × DirectComposition surface)
  * Copyright (C) 2026-Present QuickView Contributors
  *
- * =====================================================================
- * DUAL-TRACK SCALE
- * =====================================================================
- * ImageContainer.scale = displayZoom     // sole interactive size control
- * Bounds               = (W, H) fixed    // never change for zoom
- * BoundsMode           = USE_RASTERIZATION_SCALE
- * RasterizationScale R = pixel density
+ * Dual-track, VRAM capped at 1.5× the window:
+ *   ImageContainer.scale = displayZoom   // live zoom, unbounded
+ *   Bounds               = (W, H)        // content CSS px, never change for zoom
+ *   RasterizationScale R ≤ 1.5 × window / content   // never content×zoom
  *
- * Composition quirk: RootVisualTarget visual grows ≈ (W·R)×(H·R).
- * Compensate so parent-space size stays W×H (origin at content center):
- *   container.Scale  = 1/R   (center 0,0)
- *   container.Offset = (0,0)
- *   webview.Offset   = (-W·R/2, -H·R/2)
- * Screen size = W × displayZoom  (independent of R).
- *
- * Density changes are async in WebView2 → invScale/R can desync for a frame.
- * Policy: mask surface opacity while R changes, unhide after settle timer.
- *
- * R tracks displayZoom with hysteresis (up when soft, down when oversampled)
- * to avoid over-sharp edges after zoom-out.
+ * Compensate RootVisualTarget growth: container.Scale=1/R, offset=(-W·R/2,-H·R/2).
+ * Screen size = W × displayZoom. Past the R cap, DComp just upscales (soft, cheap).
  */
 
 #pragma once
@@ -43,6 +30,8 @@ public:
     static constexpr DWORD kWarmTtlMs = 180'000;
     static constexpr UINT_PTR kRetentionTimerId = 1004;
     static constexpr UINT_PTR kDensitySettleTimerId = 1005;
+    static constexpr UINT_PTR kViewportSettleTimerId = 1006;
+    static constexpr DWORD kViewportSettleMs = 220;
     // Short mask while R/invScale settle. Now covered by static snapshot (Proxy Layer),
     // so we can safely extend this to fully absorb slow WebView2 re-rasterization async desync.
     static constexpr DWORD kDensitySettleMs = 150;
@@ -53,6 +42,10 @@ public:
     static constexpr UINT kPreviewReadyMessage = WM_APP + 56;
     // Show/Hide Proxy Layer (wParam: 1 = Show, 0 = Hide).
     static constexpr UINT kProxyStateMessage = WM_APP + 58;
+    // CSS committed view presented; main snaps DComp delta to identity.
+    static constexpr UINT kReprojectionReadyMessage = WM_APP + 59;
+    static constexpr float kOverscanFactor = 1.5f;
+    static constexpr DWORD kReprojectionReadyTimeoutMs = 500;
 
     // Open: mild supersample over max(displayZoom, 1).
     static constexpr float kOpenRasterHeadroom = 1.5f;
@@ -79,18 +72,23 @@ public:
     HRESULT Present(const WebContentPayload& payload, float initialRasterScale,
                     UINT maxTextureDim);
 
-    // Post-layout: set open R from final displayZoom. Reveal only when document ready.
+    // Post-layout: open R from displayZoom, clamped to 1.5× the window. Then reveal.
     HRESULT ApplyOpenRasterScale(float displayZoom, UINT maxTextureDim);
 
-    // Idle: track R to displayZoom (up if soft, down if oversampled). May hide
-    // briefly; caller should Commit after. Unhide via OnDensitySettleTimer.
+    // Idle: track R up toward displayZoom, never above 1.5× the window.
     HRESULT SyncRasterScaleToDisplay(float displayZoom, UINT maxTextureDim);
 
-    // [Reprojection] Update the Overscan viewport and inject scale & pan transform into WebView.
+    // Lock Bounds to 1.5× viewport (R=1) and set the SVG viewBox to the visible
+    // content rect. Hide first if the surface is showing — viewBox is a re-raster.
     HRESULT SetViewportReprojection(float scaleFactor, float panX, float panY, float viewportW, float viewportH);
+    // Hide the WebView tile so a later viewBox write cannot present at the old DComp delta.
+    void HideForViewportRebase();
     bool IsReprojectionActive() const { return reprojectionActive_; }
+    void NotifyReprojectionPresented();
 
     static float ComputeMaxRasterScale(float contentW, float contentH, UINT maxTextureDim);
+    static float ComputeViewportRasterCap(float contentW, float contentH,
+                                          float viewportW, float viewportH);
     static float ComputeOpenRasterScale(float displayZoom, float contentW, float contentH,
                                         UINT maxTextureDim);
     static float ComputeTrackedRasterScale(float displayZoom, float contentW, float contentH,
@@ -119,6 +117,9 @@ public:
     void NotifySurfaceInactive(HWND hwnd, size_t webFriendlyFileCount);
     void OnRetentionTimer();
     void OnDensitySettleTimer();
+    void OnViewportSettleTimer();
+    float GetOverscanPixelWidth() const { return overscanPixelW_; }
+    float GetOverscanPixelHeight() const { return overscanPixelH_; }
 
     HRESULT PrepareForRemount();
 
@@ -140,11 +141,15 @@ private:
     void ApplyDensityCompensation();
     void ScheduleDensityUnhide();
     void KillDensitySettleTimer();
+    void ScheduleViewportSettle();
+    void KillViewportSettleTimer();
     void TryRevealSurface();
     void HideSurface();
     void ResetControllerState();
     void ResetAllState();
     void KillRetentionTimer();
+    void ResetOverscanState();
+    void InjectCommittedViewport();
     static std::wstring BuildComplexSvgHtml(std::string_view utf8Svg, float contentW, float contentH);
     static std::wstring GetUserDataFolder();
     static std::wstring BuildBlankHtml();
@@ -175,6 +180,8 @@ private:
     uint32_t pendingNavSerial_ = 0;
     EventRegistrationToken navCompletedToken_{};
     bool hasNavCompletedToken_ = false;
+    EventRegistrationToken webMessageToken_{};
+    bool hasWebMessageToken_ = false;
 
     // Minimap thumb via CapturePreview (one-shot per Present).
     bool minimapCapturePending_ = false;
@@ -185,10 +192,16 @@ private:
     UINT contentH_ = 0;
     UINT maxTextureDim_ = 8192;
     float rasterScale_ = 1.0f;
-    // [Reprojection] Overscan state tracking
     bool reprojectionActive_ = false;
     float overscanViewportW_ = 0.0f;
     float overscanViewportH_ = 0.0f;
+    float overscanPixelW_ = 0.0f;
+    float overscanPixelH_ = 0.0f;
+    float lastCssScale_ = 1.0f;
+    float lastCssPanX_ = 0.0f;
+    float lastCssPanY_ = 0.0f;
+    bool hasCommittedViewport_ = false;
+    bool cssPresented_ = false;
 
     static constexpr DWORD kInitTimeoutMs = 15000;
 };
