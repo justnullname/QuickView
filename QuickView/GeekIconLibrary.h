@@ -53,8 +53,6 @@ namespace GeekIcons {
     extern const VectorIcon SortVector;
     extern const VectorIcon NavigationVector;
     extern const VectorIcon SettingsVector;
-    extern const VectorIcon AboutVector;
-    extern const VectorIcon ExitVector;
     extern const VectorIcon ChevronVector;
     extern const VectorIcon CheckVector;
     extern const VectorIcon LockVector;

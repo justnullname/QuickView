@@ -1574,6 +1574,25 @@ void SettingsOverlay::BuildMenu() {
     itemMaxSize.displayFormat = L"%.0f %%";
     tabVisuals.items.push_back(itemMaxSize);
 
+    SettingsItem itemGalleryMin = { AppStrings::Settings_Label_GalleryMinSize, OptionType::Slider, nullptr, &g_config.GalleryMinSize };
+    float galleryMinLo = 0.0f, galleryMinHi = 0.0f;
+    GalleryOverlay::GetMinSizeSliderRange(m_hwnd, m_uiScale, galleryMinLo, galleryMinHi);
+    itemGalleryMin.minVal = galleryMinLo;
+    itemGalleryMin.maxVal = galleryMinHi;
+    itemGalleryMin.step = 1.0f;
+    itemGalleryMin.displayFormat = L"%.0f px";
+    g_config.GalleryMinSize = GalleryOverlay::ClampMinSize(g_config.GalleryMinSize, m_hwnd, m_uiScale);
+    itemGalleryMin.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        SaveConfig();
+        extern GalleryOverlay g_gallery;
+        extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
+        extern HWND g_mainHwnd;
+        if (g_gallery.IsVisible() && g_mainHwnd) {
+            AdjustWindowForOverlay(g_mainHwnd, false);
+        }
+    };
+    tabVisuals.items.push_back(itemGalleryMin);
+
     SettingsItem itemBorderInd = { AppStrings::Settings_Label_ShowBorderIndicator, OptionType::Segment, nullptr, &g_config.BorderIndicatorCustomR, &g_config.ShowBorderIndicator, nullptr, 0, 0, {AppStrings::Settings_Option_Off, AppStrings::Settings_Option_On, AppStrings::Settings_Option_Custom} };
     itemBorderInd.isNewOption = true;
     itemBorderInd.tooltipText = AppStrings::Settings_Tooltip_ShowBorderIndicator;
@@ -1923,25 +1942,6 @@ void SettingsOverlay::BuildMenu() {
     // Gallery Trigger Mode
     {
         tabControl.items.push_back({ AppStrings::Settings_Header_GalleryTrigger, OptionType::Header });
-
-        SettingsItem itemGalleryMin = { AppStrings::Settings_Label_GalleryMinSize, OptionType::Slider, nullptr, &g_config.GalleryMinSize };
-        float galleryMinLo = 0.0f, galleryMinHi = 0.0f;
-        GalleryOverlay::GetMinSizeSliderRange(m_hwnd, m_uiScale, galleryMinLo, galleryMinHi);
-        itemGalleryMin.minVal = galleryMinLo;
-        itemGalleryMin.maxVal = galleryMinHi;
-        itemGalleryMin.step = 1.0f;
-        itemGalleryMin.displayFormat = L"%.0f px";
-        g_config.GalleryMinSize = GalleryOverlay::ClampMinSize(g_config.GalleryMinSize, m_hwnd, m_uiScale);
-        itemGalleryMin.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            SaveConfig();
-            extern GalleryOverlay g_gallery;
-            extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
-            extern HWND g_mainHwnd;
-            if (g_gallery.IsVisible() && g_mainHwnd) {
-                AdjustWindowForOverlay(g_mainHwnd, false);
-            }
-        };
-        tabControl.items.push_back(itemGalleryMin);
 
         SettingsItem itemGalleryTrigger = { AppStrings::Settings_Label_GalleryTriggerMode, OptionType::ComboBox, nullptr, nullptr, &g_config.GalleryTriggerMode };
         itemGalleryTrigger.options = {

@@ -110,6 +110,10 @@ TEST(SupportedExtensionsTest, FilterStringIsWellFormed) {
     EXPECT_NE(filter.find(L"*.jpg"), std::wstring::npos);
     EXPECT_NE(filter.find(L"*.crw"), std::wstring::npos);
     EXPECT_NE(filter.find(L"*.rar"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.wmf"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.emf"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.wmz"), std::wstring::npos);
+    EXPECT_NE(filter.find(L"*.emz"), std::wstring::npos);
     // Extended (non-browsable) RAW must NOT be offered by the folder filter
     EXPECT_EQ(filter.find(L"*.braw"), std::wstring::npos);
 }

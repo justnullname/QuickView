@@ -48,6 +48,8 @@ using namespace QuickView;
 #include "OffscreenWebView2.h"
 #include "WebViewThumbService.h"
 #include "ImageTypes.h"
+#include "MetafileCodec.h"
+#include <zlib.h>
 
 extern FileNavigator& g_navigator;
 
@@ -761,6 +763,14 @@ static std::wstring DetectFormatFromContent(const uint8_t *magic, size_t size) {
   if (size >= 2 && magic[0] == 'P' && magic[1] >= '1' && magic[1] <= '7')
     return L"PNM";
 
+  {
+    const auto mf = QuickView::Metafile::Detect(magic, size);
+    if (mf == QuickView::Metafile::Kind::Emf)
+      return L"EMF";
+    if (mf == QuickView::Metafile::Kind::Wmf)
+      return L"WMF";
+  }
+
   if (size >= 18) {
     bool validColorMap = (magic[1] == 0 || magic[1] == 1);
     bool validType = (magic[2] == 1 || magic[2] == 2 || magic[2] == 3 ||
@@ -794,6 +804,142 @@ bool IsUnifiedBufferCodec(const std::wstring &fmt) {
 bool ShouldProbeAnimatedBufferCodec(const std::wstring &fmt) {
   return fmt == L"WebP" || fmt == L"GIF" || fmt == L"PNG" || fmt == L"AVIF" ||
          fmt == L"JXL";
+}
+
+bool IsMetafileFormat(const std::wstring &fmt) {
+  return fmt == L"EMF" || fmt == L"WMF" || fmt == L"EMZ" || fmt == L"WMZ";
+}
+
+bool InflateGzip(const uint8_t *src, size_t srcLen, std::vector<uint8_t> &dst,
+                 bool requireComplete = true) {
+  if (!src || srcLen < 2 || src[0] != 0x1F || src[1] != 0x8B)
+    return false;
+
+  z_stream strm{};
+  if (inflateInit2(&strm, 15 + 16) != Z_OK)
+    return false;
+
+  strm.next_in = const_cast<Bytef *>(src);
+  strm.avail_in = static_cast<uInt>(srcLen);
+  dst.resize(std::min<size_t>(srcLen * 4 + 4096, 64 * 1024));
+  strm.next_out = dst.data();
+  strm.avail_out = static_cast<uInt>(dst.size());
+
+  int ret = Z_OK;
+  constexpr size_t kMaxInflated = 64 * 1024 * 1024;
+  while (ret == Z_OK) {
+    if (strm.avail_out == 0) {
+      if (dst.size() >= kMaxInflated) {
+        inflateEnd(&strm);
+        dst.clear();
+        return false;
+      }
+      const size_t produced = strm.total_out;
+      dst.resize(std::min(dst.size() * 2, kMaxInflated));
+      strm.next_out = dst.data() + produced;
+      strm.avail_out = static_cast<uInt>(dst.size() - produced);
+    }
+    ret = inflate(&strm, Z_NO_FLUSH);
+  }
+
+  const size_t produced = strm.total_out;
+  inflateEnd(&strm);
+  if (ret != Z_STREAM_END && (requireComplete || produced < 88)) {
+    dst.clear();
+    return false;
+  }
+  dst.resize(produced);
+  return true;
+}
+
+HRESULT DecodeMetafileBuffer(const uint8_t *data, size_t size,
+                             const std::wstring &fmtHint,
+                             const QuickView::Codec::DecodeContext &ctx,
+                             QuickView::Codec::DecodeResult &result) {
+  if (!data || size == 0)
+    return E_INVALIDARG;
+
+  const uint8_t *bytes = data;
+  size_t nbytes = size;
+  std::vector<uint8_t> inflated;
+  if (size >= 2 && data[0] == 0x1F && data[1] == 0x8B) {
+    if (!InflateGzip(data, size, inflated) || inflated.empty())
+      return E_FAIL;
+    bytes = inflated.data();
+    nbytes = inflated.size();
+  }
+
+  auto kind = QuickView::Metafile::Detect(bytes, nbytes);
+  if (kind == QuickView::Metafile::Kind::None) {
+    if (fmtHint == L"WMF" || fmtHint == L"WMZ")
+      kind = QuickView::Metafile::Kind::Wmf;
+    else if (fmtHint == L"EMF" || fmtHint == L"EMZ")
+      kind = QuickView::Metafile::Kind::Emf;
+    else
+      return E_NOTIMPL;
+  }
+
+  HENHMETAFILE hemf = QuickView::Metafile::OpenHemf(bytes, nbytes);
+  if (!hemf)
+    return E_FAIL;
+
+  int dpiX = 96, dpiY = 96;
+  if (HDC screen = GetDC(nullptr)) {
+    dpiX = GetDeviceCaps(screen, LOGPIXELSX);
+    dpiY = GetDeviceCaps(screen, LOGPIXELSY);
+    ReleaseDC(nullptr, screen);
+  }
+
+  int logicalW = 0, logicalH = 0;
+  auto headerSize = QuickView::Metafile::MeasureHeader(bytes, nbytes, dpiX, dpiY);
+  if (headerSize.valid) {
+    logicalW = headerSize.width;
+    logicalH = headerSize.height;
+  } else if (!QuickView::Metafile::MeasureViaGdi(hemf, dpiX, dpiY, logicalW,
+                                                logicalH)) {
+    DeleteEnhMetaFile(hemf);
+    return E_FAIL;
+  }
+
+  int outW = 0, outH = 0;
+  QuickView::Metafile::ChooseRasterSize(logicalW, logicalH, ctx.targetWidth,
+                                        ctx.targetHeight, outW, outH);
+  const int stride = outW * 4;
+  const size_t bufSize = static_cast<size_t>(stride) * outH;
+  uint8_t *pixels = ctx.allocator
+                        ? ctx.allocator(bufSize)
+                        : static_cast<uint8_t *>(_aligned_malloc(bufSize, 64));
+  if (!pixels) {
+    DeleteEnhMetaFile(hemf);
+    return E_OUTOFMEMORY;
+  }
+
+  if (!QuickView::Metafile::Rasterize(hemf, outW, outH, pixels, stride)) {
+    if (!ctx.allocator)
+      _aligned_free(pixels);
+    DeleteEnhMetaFile(hemf);
+    return E_FAIL;
+  }
+  DeleteEnhMetaFile(hemf);
+
+  result.pixels = pixels;
+  result.width = outW;
+  result.height = outH;
+  result.stride = stride;
+  result.format = PixelFormat::BGRA8888;
+  result.success = true;
+  result.metadata.Width = static_cast<UINT>(outW);
+  result.metadata.Height = static_cast<UINT>(outH);
+  result.metadata.Format = QuickView::Metafile::KindName(kind);
+  result.metadata.LoaderName = L"GDI Metafile";
+  result.metadata.hasAlpha = false;
+  result.metadata.DpiX = dpiX;
+  result.metadata.DpiY = dpiY;
+  result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;
+  result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
+  result.metadata.colorInfo.primaries = QuickView::ColorPrimaries::SRGB;
+  result.metadata.colorInfo.nominalBitDepth = 8;
+  return S_OK;
 }
 
 bool PrefersSdrTarget(const QuickView::Codec::DecodeContext &ctx) {
@@ -1092,6 +1238,11 @@ HRESULT LoadBufferUnified(const uint8_t *mappedData, size_t mappedSize,
     }
   } else if (fmt == L"PIC" || fmt == L"PCX") {
     HRESULT hr = Stb::Load(mappedData, mappedSize, ctx, result);
+    if (SUCCEEDED(hr)) {
+      return S_OK;
+    }
+  } else if (IsMetafileFormat(fmt)) {
+    HRESULT hr = DecodeMetafileBuffer(mappedData, mappedSize, fmt, ctx, result);
     if (SUCCEEDED(hr)) {
       return S_OK;
     }
@@ -1396,9 +1547,19 @@ static std::wstring DetectFormatFromContent(LPCWSTR filePath) {
   if (QuickView::ExtEqualsIgnoreCase(QuickView::ExtensionOf(filePath), L".svg"))
     return L"SVG";
 
+  {
+    const std::wstring_view ext = QuickView::ExtensionOf(filePath);
+    if (QuickView::ExtEqualsIgnoreCase(ext, L".emf") ||
+        QuickView::ExtEqualsIgnoreCase(ext, L".emz"))
+      return L"EMF";
+    if (QuickView::ExtEqualsIgnoreCase(ext, L".wmf") ||
+        QuickView::ExtEqualsIgnoreCase(ext, L".wmz"))
+      return L"WMF";
+  }
+
   // === STEP 2: Magic Bytes Detection (for non-RAW formats) ===
-  uint8_t magic[32] = {0};
-  size_t read = PeekHeader(filePath, magic, 32);
+  uint8_t magic[64] = {0};
+  size_t read = PeekHeader(filePath, magic, 64);
   if (read == 0)
     return L"Unknown";
 
@@ -8942,6 +9103,14 @@ HRESULT CImageLoader::LoadImageUnifiedInternal(LPCWSTR filePath,
     // If Unknown or DDS, falls through to WIC/Fallback (E_NOTIMPL -> WIC).
   }
 
+  if (IsMetafileFormat(fmt)) {
+    auto fileMap = std::make_shared<QuickView::MappedFile>(filePath);
+    if (!fileMap->IsValid() || !fileMap->data() || fileMap->size() == 0)
+      return E_FAIL;
+    return DecodeMetafileBuffer(fileMap->data(), fileMap->size(), fmt, ctx,
+                                result);
+  }
+
   // --- Buffer Based Codecs ---
   // [v6.7] Expanded: Include ALL integrated specialized formats
   bool isBufferCodec = IsUnifiedBufferCodec(fmt) || fmt == L"HEIC";
@@ -9406,6 +9575,38 @@ HRESULT CImageLoader::GetImageInfoFast(LPCWSTR filePath, ImageInfo *pInfo) {
   size_t size = header.size();
 
   // 3. Detect format and parse header
+
+  {
+    const uint8_t *mfData = data;
+    size_t mfSize = size;
+    std::vector<uint8_t> inflated;
+    auto mf = QuickView::Metafile::Detect(mfData, mfSize);
+    if (mf == QuickView::Metafile::Kind::None && size >= 2 && data[0] == 0x1F &&
+        data[1] == 0x8B && InflateGzip(data, size, inflated, false) &&
+        !inflated.empty()) {
+      mfData = inflated.data();
+      mfSize = inflated.size();
+      mf = QuickView::Metafile::Detect(mfData, mfSize);
+    }
+    if (mf != QuickView::Metafile::Kind::None) {
+      pInfo->format = QuickView::Metafile::KindName(mf);
+      int dpiX = 96, dpiY = 96;
+      if (HDC screen = GetDC(nullptr)) {
+        dpiX = GetDeviceCaps(screen, LOGPIXELSX);
+        dpiY = GetDeviceCaps(screen, LOGPIXELSY);
+        ReleaseDC(nullptr, screen);
+      }
+      auto logical = QuickView::Metafile::MeasureHeader(mfData, mfSize, dpiX, dpiY);
+      if (logical.valid) {
+        pInfo->width = logical.width;
+        pInfo->height = logical.height;
+      }
+      pInfo->channels = 3;
+      pInfo->bitDepth = 8;
+      pInfo->hasAlpha = false;
+      return S_OK;
+    }
+  }
 
   // --- JPEG: Iterative Header Parsing (Streaming) ---
   if (size >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
@@ -10800,7 +11001,9 @@ static HRESULT ReadMetadataLibRaw(LPCWSTR filePath,
     tm tmBuf;
     localtime_s(&tmBuf, &t);
     wchar_t buf[64];
-    wcsftime(buf, 64, L"%Y-%m-%d %H:%M", &tmBuf);
+    swprintf_s(buf, L"%04d-%02d-%02d %02d:%02d",
+               tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday,
+               tmBuf.tm_hour, tmBuf.tm_min);
     pMetadata->Date = buf;
   }
 
@@ -13046,6 +13249,10 @@ CImageLoader::ImageHeaderInfo CImageLoader::PeekHeader(LPCWSTR filePath) {
         result.format = L"AVIF";
       else if (ext == L".jxl")
         result.format = L"JXL";
+      else if (ext == L".emf" || ext == L".emz")
+        result.format = L"EMF";
+      else if (ext == L".wmf" || ext == L".wmz")
+        result.format = L"WMF";
       else
         result.format = L"JPEG"; // Fallback
     } else {
