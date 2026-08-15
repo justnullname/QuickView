@@ -83,6 +83,16 @@ TEST(SupportedExtensionsTest, HeifAndArchiveHelpers) {
     EXPECT_FALSE(IsArchivePath(L"C:\\comics\\page.png"));
 }
 
+TEST(SupportedExtensionsTest, PlaylistImageExcludesArchives) {
+    EXPECT_TRUE(IsSupportedExtension(L".JPG"));
+    EXPECT_TRUE(IsSupportedExtension(L".zip"));
+    EXPECT_TRUE(IsPlaylistImageExtension(L".jpg"));
+    EXPECT_TRUE(IsPlaylistImageExtension(L".CR3"));
+    EXPECT_FALSE(IsPlaylistImageExtension(L".zip"));
+    EXPECT_FALSE(IsPlaylistImageExtension(L".cbz"));
+    EXPECT_FALSE(IsPlaylistImageExtension(L".txt"));
+}
+
 TEST(SupportedExtensionsTest, RenderedPairWhitelist) {
     // Camera-rendered stills that may pair with a RAW
     EXPECT_TRUE(IsRenderedPairExtension(L".jpg"));

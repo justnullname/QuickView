@@ -54,7 +54,27 @@ public:
     FileNavigator(const FileNavigator&) = delete;
     FileNavigator& operator=(const FileNavigator&) = delete;
 
-    void Initialize(const std::wstring& currentPath, HWND hwnd = nullptr);
+    // deferFolderScan: seed the opened file and do not block on a folder
+    // listing. Auto + a live Explorer window binds an index cursor (Next/Prev
+    // are Item(i±1)). Otherwise a names-only scan runs on the watcher thread.
+    // Callers that need a complete playlist before returning (sort change,
+    // tests, folder gallery) leave this false.
+    void Initialize(const std::wstring& currentPath, HWND hwnd = nullptr, bool deferFolderScan = false);
+
+    // If `path` is already in the current playlist (or is a RAW folded
+    // behind a rendered sibling), retarget the index and return true.
+    // Used to open another file in the same folder without re-listing.
+    bool TrySelectExisting(const std::wstring& path);
+
+    // Build the compact on-disk playlist (names-only directory pass).
+    // No-op when the list is already materialized or this is an archive.
+    // Gallery / explicit sort / pairing need this; Next/Prev in Auto mode
+    // use the live Explorer view and do not.
+    void EnsureMaterialized();
+    bool UsingExplorerCursor() const { return m_explorerBound && !m_playlistReady && !m_archive; }
+    // Re-read the live Explorer view (sort column + current-file index).
+    // Auto mode calls this before Next/Prev and when the window is activated.
+    void SyncWithExplorer();
 
     std::wstring Next(bool loop = true);
     std::wstring Previous(bool loop = true);
@@ -69,8 +89,8 @@ public:
     void Refresh();
     
     // Status info
-    inline size_t Count() const { return m_files.size(); }
-    inline int Index() const { return m_currentIndex; }
+    size_t Count() const;
+    int Index() const;
     void SetIndex(int index);
     const std::wstring& GetWatchedDir() const { return m_watchedDir; }
 
@@ -78,6 +98,8 @@ public:
     const std::wstring& GetFile(int index) const;
     std::wstring GetResolvedPath(const std::wstring& requestedPath) const;
     int FindIndex(const std::wstring& path) const;
+    uintmax_t GetFileSize(int index) const;
+    ImageID GetImageID(int index) const;
 
     // Virtual file system accessors
     inline bool IsVirtualPath(const std::wstring& path) const {
@@ -90,20 +112,9 @@ public:
     inline QuickView::IArchive* GetArchive() const { return m_archive.get(); }
     inline const std::vector<std::wstring>& GetAllFiles() const { return m_files; }
 
-    inline uintmax_t GetFileSize(int index) const {
-        if (index < 0 || index >= (int)m_sizes.size()) return 0;
-        return m_sizes[index];
-    }
-    
-    // [ImageID] Get stable hash ID for image at index
-    inline ImageID GetImageID(int index) const {
-        if (index < 0 || index >= (int)m_ids.size()) return 0;
-        return m_ids[index];
-    }
-    
     // [ImageID] Get hash ID for current image
     inline ImageID GetCurrentImageID() const {
-        return GetImageID(m_currentIndex);
+        return GetImageID(Index());
     }
     
     // [ImageID] Compute hash from path (for external use)
@@ -135,6 +146,8 @@ public:
 
     // [Directory Watcher] Apply pending scan result from background thread (main thread only)
     void ApplyPendingScanResult();
+    // Refresh IFolderView::ItemCount after a directory change (Explorer cursor).
+    void RefreshExplorerCount();
 
     // [RAW+JPEG Pairing] Re-list the watched directory synchronously and apply
     // the result (main thread only) -- used when the pairing setting toggles,
@@ -142,7 +155,9 @@ public:
     // No-op for archives and when no folder is open.
     void RescanDirectory();
 
-    // Shared sort comparator for Entry vectors (used by Initialize and PerformDirectoryScan)
+    // Shared sort comparator for Entry vectors (used by Initialize and PerformDirectoryScan).
+    // sortOrder 0 (Auto) maps the live Explorer window's sort column; it does
+    // not walk Explorer's item list.
     struct SortEntry {
         std::wstring p;
         uintmax_t s;
@@ -152,7 +167,9 @@ public:
     };
 
     static void SortEntries(std::vector<SortEntry>& entries, int sortOrder, bool sortDesc, const std::wstring& dirPath = L"");
-    static std::unordered_map<ImageID, size_t> GetExplorerWindowFileOrder(const std::wstring& targetDir);
+    // Map the live Explorer window's sort column onto QuickView's SortOrder.
+    // Does not enumerate folder items (O(open Explorer windows), not O(files)).
+    static bool ResolveExplorerSortColumn(const std::wstring& targetDir, int& sortOrder, bool& sortDesc);
 
     // [RAW+JPEG Pairing] Fold same-name RAW + rendered pairs: strict 1:1 per
     // stem (exactly one RAW and exactly one whitelisted rendered still), the
@@ -194,6 +211,18 @@ private:
     void WatcherThreadProc();
     void StartDirectoryWatcher(const std::wstring& dirPath);
     void StopDirectoryWatcher();
+    void SeedOpenedFile(const std::wstring& path);
+    bool CollectFolderEntries(const std::wstring& dir, std::vector<SortEntry>& entries) const;
+    bool ScanCancelled() const;
+    bool TryBindExplorer(const std::wstring& dir, const std::wstring& openedPath);
+    bool SyncExplorerCursor(bool allowDematerialize);
+    void ClearExplorerCursor();
+    std::wstring CurrentVisiblePath() const;
+    void AdoptCurrentFile(const std::wstring& path);
+    int FindExplorerNeighbor(int dir) const;
+    bool IsExplorerVisibleImage(const std::wstring& path) const;
+    std::wstring ExplorerStep(int dir);
+    const std::wstring& CacheExplorerPath(int index, std::wstring path) const;
 
     // [RAW+JPEG Pairing] Asynchronous capture-time verification of the folded
     // pairs. Confirmed mismatches go into m_verifyUnpaired and a rescan is
@@ -212,7 +241,7 @@ private:
     // the rendered file's ImageID and guarded by m_verifyMutex; they belong to
     // m_verifyDir and reset when the browsed folder changes.
     std::thread m_verifyThread;
-    std::mutex m_verifyMutex;
+    mutable std::mutex m_verifyMutex;
     std::unordered_set<ImageID> m_verifyDone;      // checked (match or mismatch)
     std::unordered_set<ImageID> m_verifyUnpaired;  // confirmed mismatch: never fold
     std::wstring m_verifyDir;
@@ -228,6 +257,16 @@ private:
     // [Directory Watcher] Background monitoring state
     HWND m_hwnd = nullptr;
     std::wstring m_watchedDir;
+    std::atomic<bool> m_playlistReady{ false };
+    std::atomic<bool> m_needInitialScan{ false };
+    bool m_explorerBound = false;
+    int m_explorerIndex = -1;
+    mutable int m_explorerCount = 0;
+    mutable std::unordered_map<int, std::wstring> m_explorerPathCache;
+    mutable GUID m_explorerSortFmtid{};
+    mutable DWORD m_explorerSortPid = 0;
+    mutable int m_explorerSortDir = 0;
+    mutable bool m_hasExplorerSort = false;
     HANDLE m_hCancelEvent = nullptr;
     std::thread m_watcherThread;
     std::mutex m_scanResultMutex;

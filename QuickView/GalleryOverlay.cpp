@@ -139,7 +139,14 @@ void GalleryOverlay::Initialize(ThumbnailManager* pThumbMgr, FileNavigator* pNav
 }
 
 void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
+    if (m_pNav) {
+        m_pNav->EnsureMaterialized();
+        m_pNav->SyncWithExplorer();
+    }
     if (!m_pNav || m_pNav->Count() == 0) return;
+    if (currentIndex < 0 || currentIndex >= (int)m_pNav->Count()) {
+        currentIndex = (std::max)(m_pNav->Index(), 0);
+    }
     
     m_mode = targetMode;
     m_targetProgress = 1.0f;

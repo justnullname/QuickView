@@ -1036,6 +1036,10 @@ void SettingsOverlay::BuildMenu() {
     itemSortOrder.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         g_runtime.SortOrder = g_config.SortOrder;
         SaveConfig();
+        extern HWND g_mainHwnd;
+        if (g_mainHwnd && !g_imagePath.empty()) {
+            g_navigator.Initialize(g_imagePath, g_mainHwnd, g_runtime.SortOrder == 0);
+        }
     };
     tabGeneral.items.push_back(itemSortOrder);
 

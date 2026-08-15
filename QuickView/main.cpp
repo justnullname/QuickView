@@ -3450,7 +3450,10 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
             const bool isLeft = IsCompareModeActive() && (AppContext::GetInstance().Compare.selectedPane == ComparePane::Left);
             if (isLeft) {
                 if (resolved != GetPaneContext(PaneSlot::Left).path) {
-                    GetPaneContext(PaneSlot::Left).navigator.Initialize(resolved, hwnd);
+                    auto& leftNav = GetPaneContext(PaneSlot::Left).navigator;
+                    if (!leftNav.TrySelectExisting(resolved)) {
+                        leftNav.Initialize(resolved, hwnd, true);
+                    }
                     AppContext::GetInstance().CompareCtrl->LoadImageIntoLeftSlot(hwnd, resolved, [](bool success) {
                         if (success) {
                             AppContext::GetInstance().Compare.activePane = ComparePane::Left;
@@ -3461,7 +3464,7 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
                     });
                 }
             } else if (resolved != pane.path) {
-                pane.navigator.Initialize(resolved, hwnd);
+                pane.navigator.SetIndex(commitIndex);
                 LoadImageAsync(hwnd, resolved.c_str());
             }
         }
@@ -3493,6 +3496,7 @@ static void ShowGallery(HWND hwnd) {
 
     AdjustWindowForOverlay(hwnd, false);
     auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+    nav.EnsureMaterialized();
     g_gallery.Open(std::max(nav.Index(), 0), GalleryMode::FullGrid);
     RequestRepaint(PaintLayer::All);
     SetTimer(hwnd, 998, 16, nullptr);
@@ -3562,13 +3566,22 @@ static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearT
         return ok;
     }
 
-    GetPaneContext(PaneSlot::Primary).editState.Reset();
-    GetPaneContext(PaneSlot::Primary).view.Reset();
-    GetPaneContext(PaneSlot::Primary).navigator.Initialize(path, hwnd);
+    auto& pane = GetPaneContext(PaneSlot::Primary);
+    if (pane.navigator.TrySelectExisting(path)) {
+        pane.editState.Reset();
+        pane.view.Reset();
+        LoadImageAsync(hwnd, pane.navigator.GetResolvedPath(path).c_str());
+        RequestRepaint(PaintLayer::All);
+        return true;
+    }
+
+    pane.editState.Reset();
+    pane.view.Reset();
+    pane.navigator.Initialize(path, hwnd, true);
     if (clearThumbCache) {
         g_thumbMgr.ClearCache();
     }
-    LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(path).c_str());
+    LoadImageAsync(hwnd, pane.navigator.GetResolvedPath(path).c_str());
 
     RequestRepaint(PaintLayer::All);
     return true;
@@ -7460,7 +7473,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
           isTitanCandidate = isSupportedFormat && (sizeTrigger || pixelTrigger);
         }
         if (!isTitanCandidate) {
-          GetPaneContext(PaneSlot::Primary).navigator.Initialize(initialImagePath, hwnd);
+          GetPaneContext(PaneSlot::Primary).navigator.Initialize(initialImagePath, hwnd, true);
           LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(initialImagePath).c_str());
           startedInitialLoadEarly = true;
           deferStartupShow = true;
@@ -7852,6 +7865,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_ACTIVATE:
+        if (LOWORD(wParam) != WA_INACTIVE && g_runtime.SortOrder == 0) {
+            GetPaneContext(PaneSlot::Primary).navigator.SyncWithExplorer();
+        }
         if (LOWORD(wParam) == WA_INACTIVE) {
             // [Loupe] When the window loses focus, ensure the loupe state is reset and mouse pointer is restored, in case the key release event is lost
             if (AppContext::GetInstance().Loupe.active) {
@@ -10195,14 +10211,21 @@ SKIP_EDGE_NAV:;
         return 0;
 
     case WM_NAVIGATOR_DIR_CHANGED: {
-        // [Directory Watcher] Apply background scan result from watcher thread
-        size_t oldCount = GetPaneContext(PaneSlot::Primary).navigator.Count();
-        GetPaneContext(PaneSlot::Primary).navigator.ApplyPendingScanResult();
-        size_t newCount = GetPaneContext(PaneSlot::Primary).navigator.Count();
-        if (newCount != oldCount) {
+        auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+        const size_t oldCount = nav.Count();
+        const int oldIndex = nav.Index();
+        if (wParam == 1) {
+            nav.RefreshExplorerCount();
+        } else {
+            nav.ApplyPendingScanResult();
+        }
+        if (nav.Count() != oldCount || nav.Index() != oldIndex) {
             RequestRepaint(PaintLayer::Static | PaintLayer::Dynamic);
             if (g_gallery.IsVisible()) {
                 RequestRepaint(PaintLayer::Gallery);
+            }
+            if (g_pImageEngine && nav.Index() >= 0) {
+                g_pImageEngine->UpdateView(nav.Index(), QuickView::BrowseDirection::IDLE);
             }
         }
         return 0;
@@ -12287,9 +12310,7 @@ SKIP_EDGE_NAV:;
                         }
                         GetPaneContext(PaneSlot::Primary).editState.Reset();
                         GetPaneContext(PaneSlot::Primary).view.Reset();
-                        GetPaneContext(PaneSlot::Primary).navigator.Initialize(szFile, hwnd);
-                        g_thumbMgr.ClearCache(); // Fix: Clear old thumbnails on folder switch
-                    LoadImageAsync(hwnd, GetPaneContext(PaneSlot::Primary).navigator.GetResolvedPath(szFile).c_str());
+                        OpenPathOrDirectory(hwnd, szFile);
                 }
             }
             break;
@@ -13046,7 +13067,10 @@ SKIP_EDGE_NAV:;
         case IDM_SORT_TYPE: {
             g_runtime.SortOrder = wmId - IDM_SORT_AUTO;
             if (!GetPaneContext(PaneSlot::Primary).path.empty()) {
-                GetPaneContext(PaneSlot::Primary).navigator.Initialize(GetPaneContext(PaneSlot::Primary).path, hwnd); // Re-initialize to re-sort
+                // Auto follows the live Explorer view; other modes need a full list.
+                const bool defer = (g_runtime.SortOrder == 0);
+                GetPaneContext(PaneSlot::Primary).navigator.Initialize(
+                    GetPaneContext(PaneSlot::Primary).path, hwnd, defer);
             }
             break;
         }

@@ -3,17 +3,222 @@
 #include <shlobj.h>
 #include <exdisp.h>
 #include <shobjidl.h>
+#include <propkey.h>
 #include <wrl/client.h>
 
 extern AppConfig g_config;
 
 // [Directory Watcher] Custom window message posted when background scan completes
 // defined in header: constexpr UINT WM_NAVIGATOR_DIR_CHANGED = WM_APP + 50;
+constexpr WPARAM NAVIGATOR_EXPLORER_REFRESH = 1;
 
-void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
-    // Stop existing watcher and pair verification before mutating state
-    StopPairVerification();
-    StopDirectoryWatcher();
+static bool PathsEqualCi(const std::wstring& a, const std::wstring& b) {
+    return !a.empty() && !b.empty() && _wcsicmp(a.c_str(), b.c_str()) == 0;
+}
+
+static std::wstring CanonicalFolderPath(const std::wstring& dir) {
+    namespace fs = std::filesystem;
+    std::wstring s = fs::path(dir).lexically_normal().wstring();
+    while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+    std::transform(s.begin(), s.end(), s.begin(), ::towlower);
+    return s;
+}
+
+static std::wstring ShellItemFilePath(IShellItem* item) {
+    if (!item) return {};
+    PWSTR psz = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &psz)) || !psz) return {};
+    std::wstring path = psz;
+    CoTaskMemFree(psz);
+    return path;
+}
+
+static std::wstring PidlsToPath(PCIDLIST_ABSOLUTE folderPidl, PCUITEMID_CHILD itemPidl) {
+    if (!folderPidl || !itemPidl) return {};
+    PIDLIST_ABSOLUTE full = ILCombine(folderPidl, itemPidl);
+    if (!full) return {};
+    Microsoft::WRL::ComPtr<IShellItem> item;
+    std::wstring path;
+    if (SUCCEEDED(SHCreateItemFromIDList(full, IID_PPV_ARGS(&item))) && item) {
+        path = ShellItemFilePath(item.Get());
+    }
+    ILFree(full);
+    return path;
+}
+
+// Live IFolderView for one Explorer window showing `dir`. UI-thread / STA only.
+// One Item() call is cheap; never walk the whole view.
+struct ExplorerFolderView {
+    Microsoft::WRL::ComPtr<IFolderView> view;
+    Microsoft::WRL::ComPtr<IShellFolder> shellFolder;
+    PIDLIST_ABSOLUTE folderPidl = nullptr;
+    int itemCount = 0;
+
+    ExplorerFolderView() = default;
+    ~ExplorerFolderView() {
+        if (folderPidl) CoTaskMemFree(folderPidl);
+    }
+    ExplorerFolderView(const ExplorerFolderView&) = delete;
+    ExplorerFolderView& operator=(const ExplorerFolderView&) = delete;
+
+    bool Open(const std::wstring& dir) {
+        if (dir.empty()) return false;
+        const std::wstring target = CanonicalFolderPath(dir);
+
+        Microsoft::WRL::ComPtr<IShellWindows> pShellWindows;
+        if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
+                                    IID_IShellWindows, (void**)&pShellWindows)) || !pShellWindows) {
+            return false;
+        }
+
+        long windows = 0;
+        pShellWindows->get_Count(&windows);
+        for (long i = 0; i < windows; ++i) {
+            VARIANT vIndex;
+            vIndex.vt = VT_I4;
+            vIndex.lVal = i;
+
+            Microsoft::WRL::ComPtr<IDispatch> pDisp;
+            if (FAILED(pShellWindows->Item(vIndex, &pDisp)) || !pDisp) continue;
+
+            Microsoft::WRL::ComPtr<IWebBrowser2> pWebBrowser;
+            if (FAILED(pDisp.As(&pWebBrowser)) || !pWebBrowser) continue;
+
+            Microsoft::WRL::ComPtr<IServiceProvider> pServiceProvider;
+            if (FAILED(pWebBrowser.As(&pServiceProvider)) || !pServiceProvider) continue;
+
+            Microsoft::WRL::ComPtr<IShellBrowser> pShellBrowser;
+            if (FAILED(pServiceProvider->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&pShellBrowser))) || !pShellBrowser) continue;
+
+            Microsoft::WRL::ComPtr<IShellView> pShellView;
+            if (FAILED(pShellBrowser->QueryActiveShellView(&pShellView)) || !pShellView) continue;
+
+            Microsoft::WRL::ComPtr<IFolderView> pFolderView;
+            if (FAILED(pShellView.As(&pFolderView)) || !pFolderView) continue;
+
+            Microsoft::WRL::ComPtr<IPersistFolder2> pPersistFolder;
+            if (FAILED(pFolderView->GetFolder(IID_PPV_ARGS(&pPersistFolder))) || !pPersistFolder) continue;
+
+            PIDLIST_ABSOLUTE pidlFolder = nullptr;
+            if (FAILED(pPersistFolder->GetCurFolder(&pidlFolder)) || !pidlFolder) continue;
+
+            Microsoft::WRL::ComPtr<IShellItem> folderItem;
+            std::wstring folderPath;
+            if (SUCCEEDED(SHCreateItemFromIDList(pidlFolder, IID_PPV_ARGS(&folderItem))) && folderItem) {
+                folderPath = ShellItemFilePath(folderItem.Get());
+            }
+            if (folderPath.empty()) {
+                wchar_t buf[MAX_PATH] = {};
+                if (SHGetPathFromIDListW(pidlFolder, buf)) folderPath = buf;
+            }
+            if (CanonicalFolderPath(folderPath) != target) {
+                CoTaskMemFree(pidlFolder);
+                continue;
+            }
+
+            view = pFolderView;
+            folderPidl = pidlFolder;
+            pFolderView->GetFolder(IID_PPV_ARGS(&shellFolder));
+            pFolderView->ItemCount(SVGIO_ALLVIEW, &itemCount);
+            return true;
+        }
+        return false;
+    }
+
+    int FocusedIndex() const {
+        if (!view) return -1;
+        int index = -1;
+        if (FAILED(view->GetFocusedItem(&index))) return -1;
+        return index;
+    }
+
+    int SelectionMarkedIndex() const {
+        if (!view) return -1;
+        int index = -1;
+        if (FAILED(view->GetSelectionMarkedItem(&index))) return -1;
+        return index;
+    }
+
+    bool GetSortColumnRaw(SORTCOLUMN& sc) const {
+        if (!view) return false;
+        Microsoft::WRL::ComPtr<IFolderView2> view2;
+        if (FAILED(view.As(&view2)) || !view2) return false;
+        return SUCCEEDED(view2->GetSortColumns(&sc, 1));
+    }
+
+    std::wstring PathAt(int index) const {
+        if (!view || index < 0) return {};
+        PITEMID_CHILD pidlItem = nullptr;
+        if (FAILED(view->Item(index, &pidlItem)) || !pidlItem) return {};
+        std::wstring path = PidlsToPath(folderPidl, pidlItem);
+        CoTaskMemFree(pidlItem);
+        return path;
+    }
+
+    bool GetSortColumn(int& sortOrder, bool& sortDesc) const {
+        if (!view) return false;
+        Microsoft::WRL::ComPtr<IFolderView2> view2;
+        if (FAILED(view.As(&view2)) || !view2) return false;
+        SORTCOLUMN sc{};
+        if (FAILED(view2->GetSortColumns(&sc, 1))) return false;
+        sortDesc = (sc.direction == SORT_DESCENDING);
+        const PROPERTYKEY& k = sc.propkey;
+        if (k == PKEY_DateModified || k == PKEY_DateCreated || k == PKEY_DateAccessed) {
+            sortOrder = 2;
+        } else if (k == PKEY_Size) {
+            sortOrder = 4;
+        } else if (k == PKEY_FileExtension || k == PKEY_ItemType) {
+            sortOrder = 5;
+        } else if (k == PKEY_Photo_DateTaken || k == PKEY_ItemDate) {
+            sortOrder = 3;
+        } else {
+            sortOrder = 1;
+        }
+        return true;
+    }
+};
+
+static std::wstring UniqueRenderedSibling(const std::wstring& rawPath) {
+    if (!QuickView::IsRawPath(rawPath)) return {};
+    const std::filesystem::path p(rawPath);
+    const std::wstring stem = (p.parent_path() / p.stem()).wstring();
+    std::wstring found;
+    int count = 0;
+    for (const auto ext : QuickView::RENDERED_PAIR_EXTENSIONS) {
+        std::wstring cand = stem;
+        cand.append(ext.data(), ext.size());
+        if (GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            ++count;
+            found = std::move(cand);
+        }
+    }
+    return (count == 1) ? found : std::wstring{};
+}
+
+static bool PathIsSameShot(const std::wstring& a, const std::wstring& b) {
+    if (PathsEqualCi(a, b)) return true;
+    if (a.empty() || b.empty()) return false;
+    return PathsEqualCi(UniqueRenderedSibling(a), b)
+        || PathsEqualCi(a, UniqueRenderedSibling(b));
+}
+
+static int LocatePathInView(const ExplorerFolderView& view, const std::wstring& path, bool allowWalk) {
+    if (path.empty() || !view.view) return -1;
+    auto matches = [&](int idx) {
+        return idx >= 0 && PathIsSameShot(view.PathAt(idx), path);
+    };
+    const int mark = view.SelectionMarkedIndex();
+    if (matches(mark)) return mark;
+    const int focus = view.FocusedIndex();
+    if (matches(focus)) return focus;
+    if (!allowWalk) return -1;
+    for (int i = 0; i < view.itemCount; ++i) {
+        if (matches(i)) return i;
+    }
+    return -1;
+}
+
+void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd, bool deferFolderScan) {
     if (hwnd) m_hwnd = hwnd;
 
     namespace fs = std::filesystem;
@@ -25,45 +230,62 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
     fs::path p = isVfsInput ? fs::path(archivePart) : fs::path(currentPath);
     if (!fs::exists(p)) return;
 
-    // VFS State Teardown
-    m_archive.reset();
-    m_archivePath.clear();
-
-    m_files.clear();
-    m_currentIndex = -1;
-
     const bool isDirectory = fs::is_directory(p);
 
     // If a directory is passed in, scan it directly. Otherwise scan the parent directory.
     fs::path dir = isDirectory ? p : p.parent_path();
     if (dir.empty()) return;
 
+    std::wstring pExt = p.extension().wstring();
+    std::transform(pExt.begin(), pExt.end(), pExt.begin(), [](wchar_t c){ return std::towlower(c); });
+    const bool isArchive = !isDirectory && QuickView::IsArchiveExtension(pExt);
+    const std::wstring dirStr = dir.wstring();
+
+    // Same folder, scan already running or finished: retarget without
+    // tearing down the watcher (opening another file in a 40k folder).
+    if (deferFolderScan && hwnd && !isDirectory && !isArchive && !isVfsInput
+        && m_watcherThread.joinable()
+        && !m_watchedDir.empty() && _wcsicmp(dirStr.c_str(), m_watchedDir.c_str()) == 0) {
+        if (TrySelectExisting(p.wstring())) return;
+        if (!m_playlistReady) {
+            SeedOpenedFile(p.wstring());
+            if (g_runtime.SortOrder == 0 && TryBindExplorer(dirStr, CurrentVisiblePath())) {
+                m_needInitialScan = false;
+            } else {
+                ClearExplorerCursor();
+                EnsureMaterialized();
+            }
+            return;
+        }
+    }
+
+    // Stop existing watcher and pair verification before mutating state
+    StopPairVerification();
+    StopDirectoryWatcher();
+
+    // VFS State Teardown
+    m_archive.reset();
+    m_archivePath.clear();
+
+    m_files.clear();
+    m_sizes.clear();
+    m_ids.clear();
+    m_pairedRaws.clear();
+    m_currentIndex = -1;
+    m_playlistReady = false;
+    ClearExplorerCursor();
+
     // [RAW+JPEG Pairing] Verification results belong to one folder
     {
-        std::wstring dirStr = dir.wstring();
         if (_wcsicmp(dirStr.c_str(), m_verifyDir.c_str()) != 0) {
             std::lock_guard<std::mutex> lock(m_verifyMutex);
             m_verifyDone.clear();
             m_verifyUnpaired.clear();
-            m_verifyDir = std::move(dirStr);
+            m_verifyDir = dirStr;
         }
     }
 
-    // Supported extensions (comprehensive list including RAW formats)
-    // using QuickView::SUPPORTED_EXTENSIONS from SupportedExtensions.h
-
-    std::error_code ec;
-    if (fs::exists(p, ec) && fs::is_directory(p, ec)) {
-        // Already handled isDirectory
-    }
-
-    m_sizes.clear();
-
-    // VFS Support for Archives
-    std::wstring pExt = p.extension().wstring();
-    std::transform(pExt.begin(), pExt.end(), pExt.begin(), [](wchar_t c){ return std::towlower(c); });
-
-    if (QuickView::IsArchiveExtension(pExt)) {
+    if (isArchive) {
         // Load from Archive VFS
         m_archivePath = p.wstring();
         if (pExt == L".cbr" || pExt == L".rar") {
@@ -103,77 +325,68 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
                 }
             }
         }
-    } else {
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (entry.is_regular_file(ec)) {
-                std::wstring ext = entry.path().extension().wstring();
-                std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-
-                // Skip archive container files from the flat folder slideshow playlist
-                bool isArchiveExt = QuickView::IsArchiveExtension(ext);
-                if (isArchiveExt) continue;
-
-                for (const auto& supp : QuickView::SUPPORTED_EXTENSIONS) {
-                    if (ext == supp) {
-                        m_files.push_back(entry.path().wstring());
-                        // Cache file size for Scout Lane decision
-                        m_sizes.push_back(entry.file_size(ec));
-                        break;
-                    }
-                }
-            }
-        }
+    } else if (deferFolderScan && hwnd && !isDirectory) {
+        SeedOpenedFile(isVfsInput ? currentPath : p.wstring());
+        const bool bound = (g_runtime.SortOrder == 0)
+            && TryBindExplorer(dirStr, CurrentVisiblePath());
+        m_needInitialScan = !bound;
+        StartDirectoryWatcher(dirStr);
+        StartPairVerification();
+        return;
     }
 
-    
     std::vector<SortEntry> entries;
-    entries.reserve(m_files.size());
-    namespace fs2 = std::filesystem;
-    for(size_t i=0; i<m_files.size(); ++i) {
-        SortEntry e;
-        e.p = m_files[i];
-        e.s = m_sizes[i];
-        std::error_code ec2;
-        
-        // For virtual paths, use the archive file's timestamp
-        if (IsVirtualPath(e.p)) {
-            e.m = fs2::last_write_time(p, ec2);
-        } else {
-            e.m = fs2::last_write_time(e.p, ec2);
+    if (isArchive) {
+        entries.reserve(m_files.size());
+        std::error_code archiveTimeEc;
+        const auto archiveTime = fs::last_write_time(p, archiveTimeEc);
+        for (size_t i = 0; i < m_files.size(); ++i) {
+            SortEntry e;
+            e.p = m_files[i];
+            e.s = m_sizes[i];
+            e.m = archiveTime;
+            e.t = fs::path(e.p).extension().wstring();
+            std::transform(e.t.begin(), e.t.end(), e.t.begin(), [](wchar_t c){ return std::towlower(c); });
+            entries.push_back(std::move(e));
         }
-
-        e.t = fs2::path(e.p).extension().wstring();
-        std::transform(e.t.begin(), e.t.end(), e.t.begin(), [](wchar_t c){ return std::towlower(c); });
-
-        // Only parse EXIF date if specifically requested and it's a real file
-        if (g_runtime.SortOrder == 3 && !IsVirtualPath(e.p)) {
-             FILE *fp = nullptr;
-             _wfopen_s(&fp, e.p.c_str(), L"rb");
-             if (fp) {
-                 unsigned char buf[65536];
-                 size_t bytes = fread(buf, 1, sizeof(buf), fp);
-                 fclose(fp);
-                 if (bytes > 0) {
-                     easyexif::EXIFInfo info;
-                     if (info.parseFrom(buf, (unsigned)bytes) == PARSE_EXIF_SUCCESS) {
-                         e.exifDate = info.DateTimeOriginal;
-                     }
-                 }
-             }
-        }
-
-        entries.push_back(e);
+    } else if (!CollectFolderEntries(dirStr, entries)) {
+        return;
     }
-    
+
     int sortOrder = g_runtime.SortOrder;
     bool sortDesc = g_runtime.SortDescending;
 
     if (m_archive && m_archive->IsValid() && g_config.SortArchivesByNameAscending) {
         sortOrder = 1;      // Force sort by Name
         sortDesc = false;   // Force Ascending
+    } else if (sortOrder == 0 && !isArchive) {
+        int mapped = 1;
+        bool mappedDesc = sortDesc;
+        if (ResolveExplorerSortColumn(dirStr, mapped, mappedDesc)) {
+            sortOrder = mapped;
+            sortDesc = mappedDesc;
+        } else {
+            sortOrder = 1;
+        }
     }
 
-    SortEntries(entries, sortOrder, sortDesc, dir.wstring());
+    if (sortOrder == 3 && !isArchive) {
+        for (auto& e : entries) {
+            FILE* fp = nullptr;
+            _wfopen_s(&fp, e.p.c_str(), L"rb");
+            if (!fp) continue;
+            unsigned char buf[65536];
+            size_t bytes = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp);
+            if (bytes == 0) continue;
+            easyexif::EXIFInfo info;
+            if (info.parseFrom(buf, (unsigned)bytes) == PARSE_EXIF_SUCCESS) {
+                e.exifDate = info.DateTimeOriginal;
+            }
+        }
+    }
+
+    SortEntries(entries, sortOrder, sortDesc);
 
     // [RAW+JPEG Pairing] Fold same-name RAW + rendered pairs (real folders
     // only; archives are never paired)
@@ -214,7 +427,7 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
             }
         } else {
             for (size_t i = 0; i < m_files.size(); ++i) {
-                if (m_files[i] == currentFull) {
+                if (_wcsicmp(m_files[i].c_str(), currentFull.c_str()) == 0) {
                     m_currentIndex = (int)i;
                     break;
                 }
@@ -224,7 +437,7 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
             // its rendered sibling -- land on the pair instead.
             if (m_currentIndex < 0 && !m_pairedRaws.empty()) {
                 for (const auto& [renderedId, raw] : m_pairedRaws) {
-                    if (raw.path == currentFull) {
+                    if (_wcsicmp(raw.path.c_str(), currentFull.c_str()) == 0) {
                         for (size_t i = 0; i < m_ids.size(); ++i) {
                             if (m_ids[i] == renderedId) {
                                 m_currentIndex = (int)i;
@@ -238,11 +451,13 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
         }
     }
 
+    m_playlistReady = true;
+    m_needInitialScan = false;
+
     // [Directory Watcher] Start monitoring for non-VFS real directories
     if (!m_archive && m_hwnd) {
-        std::wstring watchDir = dir.wstring();
-        if (!watchDir.empty()) {
-            StartDirectoryWatcher(watchDir);
+        if (!dirStr.empty()) {
+            StartDirectoryWatcher(dirStr);
         }
     }
 
@@ -251,6 +466,19 @@ void FileNavigator::Initialize(const std::wstring& currentPath, HWND hwnd) {
 }
 
 std::wstring FileNavigator::Next(bool /*unused*/) {
+    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    if (UsingExplorerCursor()) {
+        std::wstring path = ExplorerStep(+1);
+        if (path.empty() && g_runtime.NavTraverse) {
+            std::wstring nextFolderImg = FindAdjacentFolderImage(true);
+            if (!nextFolderImg.empty()) {
+                m_crossFolderMessage = L">>> Entering [" + std::filesystem::path(nextFolderImg).parent_path().filename().wstring() + L"] >>>";
+                return nextFolderImg;
+            }
+        }
+        return path;
+    }
+
     if (m_files.empty()) return L"";
 
     if (g_runtime.NavTraverse) {
@@ -318,6 +546,19 @@ std::wstring FileNavigator::Next(bool /*unused*/) {
 }
 
 std::wstring FileNavigator::Previous(bool /*unused*/) {
+    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    if (UsingExplorerCursor()) {
+        std::wstring path = ExplorerStep(-1);
+        if (path.empty() && g_runtime.NavTraverse) {
+            std::wstring prevFolderImg = FindAdjacentFolderImage(false);
+            if (!prevFolderImg.empty()) {
+                m_crossFolderMessage = L"<<< Entering [" + std::filesystem::path(prevFolderImg).parent_path().filename().wstring() + L"] <<<";
+                return prevFolderImg;
+            }
+        }
+        return path;
+    }
+
     if (m_files.empty()) return L"";
 
     if (g_runtime.NavTraverse) {
@@ -385,6 +626,17 @@ std::wstring FileNavigator::Previous(bool /*unused*/) {
 }
 
 std::wstring FileNavigator::First() {
+    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    if (UsingExplorerCursor()) {
+        const int saved = m_explorerIndex;
+        m_explorerIndex = -1;
+        std::wstring path = ExplorerStep(+1);
+        if (path.empty()) {
+            m_explorerIndex = saved;
+            m_currentIndex = saved;
+        }
+        return path;
+    }
     if (m_files.empty()) return L"";
     m_hitEnd = false;
     m_currentIndex = 0;
@@ -392,6 +644,17 @@ std::wstring FileNavigator::First() {
 }
 
 std::wstring FileNavigator::Last() {
+    if (g_runtime.SortOrder == 0) SyncExplorerCursor(true);
+    if (UsingExplorerCursor()) {
+        const int saved = m_explorerIndex;
+        m_explorerIndex = m_explorerCount;
+        std::wstring path = ExplorerStep(-1);
+        if (path.empty()) {
+            m_explorerIndex = saved;
+            m_currentIndex = saved;
+        }
+        return path;
+    }
     if (m_files.empty()) return L"";
     m_hitEnd = false;
     m_currentIndex = (int)m_files.size() - 1;
@@ -405,25 +668,63 @@ std::wstring FileNavigator::GetCrossFolderMessage() {
 }
 
 std::wstring FileNavigator::PeekNext() const {
+    if (g_runtime.SortOrder == 0) {
+        const_cast<FileNavigator*>(this)->SyncExplorerCursor(false);
+    }
+    if (UsingExplorerCursor()) {
+        const int next = FindExplorerNeighbor(+1);
+        if (next < 0) return L"";
+        auto it = m_explorerPathCache.find(next);
+        if (it == m_explorerPathCache.end()) return L"";
+        const std::wstring rendered = UniqueRenderedSibling(it->second);
+        return rendered.empty() ? it->second : rendered;
+    }
     if (m_files.empty()) return L"";
     size_t nextIdx = (m_currentIndex + 1) % m_files.size();
     return m_files[nextIdx];
 }
 
 std::wstring FileNavigator::PeekPrevious() const {
+    if (g_runtime.SortOrder == 0) {
+        const_cast<FileNavigator*>(this)->SyncExplorerCursor(false);
+    }
+    if (UsingExplorerCursor()) {
+        const int prev = FindExplorerNeighbor(-1);
+        if (prev < 0) return L"";
+        auto it = m_explorerPathCache.find(prev);
+        if (it == m_explorerPathCache.end()) return L"";
+        const std::wstring rendered = UniqueRenderedSibling(it->second);
+        return rendered.empty() ? it->second : rendered;
+    }
     if (m_files.empty()) return L"";
     size_t prevIdx = (m_currentIndex - 1 + m_files.size()) % m_files.size();
     return m_files[prevIdx];
 }
 
 void FileNavigator::Refresh() {
-    if (m_currentIndex >= 0 && m_currentIndex < (int)m_files.size()) {
-        std::error_code ec;
-        m_sizes[m_currentIndex] = std::filesystem::file_size(m_files[m_currentIndex], ec);
+    const std::wstring path = CurrentVisiblePath();
+    if (path.empty()) return;
+    std::error_code ec;
+    const uintmax_t sz = std::filesystem::file_size(path, ec);
+    if (UsingExplorerCursor()) {
+        if (!m_sizes.empty()) m_sizes[0] = sz;
+        return;
+    }
+    if (m_currentIndex >= 0 && m_currentIndex < (int)m_sizes.size()) {
+        m_sizes[m_currentIndex] = sz;
     }
 }
 
 void FileNavigator::SetIndex(int index) {
+    if (UsingExplorerCursor()) {
+        if (index < 0 || index >= m_explorerCount) return;
+        m_explorerIndex = index;
+        m_currentIndex = index;
+        m_hitEnd = false;
+        std::wstring path = GetFile(index);
+        if (!path.empty()) AdoptCurrentFile(path);
+        return;
+    }
     if (index >= 0 && index < (int)m_files.size()) {
         m_currentIndex = index;
         m_hitEnd = false;
@@ -432,6 +733,20 @@ void FileNavigator::SetIndex(int index) {
 
 const std::wstring& FileNavigator::GetFile(int index) const {
     static std::wstring empty;
+    if (UsingExplorerCursor()) {
+        if (index < 0 || (m_explorerCount > 0 && index >= m_explorerCount)) return empty;
+        auto it = m_explorerPathCache.find(index);
+        if (it != m_explorerPathCache.end()) return it->second;
+        if (index == m_explorerIndex && !m_files.empty()) {
+            return CacheExplorerPath(index, m_files.front());
+        }
+        ExplorerFolderView view;
+        if (!view.Open(m_watchedDir)) return empty;
+        m_explorerCount = view.itemCount;
+        std::wstring path = view.PathAt(index);
+        if (path.empty()) return empty;
+        return CacheExplorerPath(index, std::move(path));
+    }
     if (index < 0 || index >= (int)m_files.size()) return empty;
     return m_files[index];
 }
@@ -448,7 +763,7 @@ std::wstring FileNavigator::GetResolvedPath(const std::wstring& requestedPath) c
     // rendered file is its visible face, regardless of which file was opened.
     if (!m_pairedRaws.empty()) {
         for (const auto& [renderedId, raw] : m_pairedRaws) {
-            if (raw.path == requestedPath) {
+            if (_wcsicmp(raw.path.c_str(), requestedPath.c_str()) == 0) {
                 for (size_t i = 0; i < m_ids.size(); ++i) {
                     if (m_ids[i] == renderedId) return m_files[i];
                 }
@@ -468,9 +783,433 @@ int FileNavigator::FindIndex(const std::wstring& path) const {
         }
     }
 
-    auto it = std::find(m_files.begin(), m_files.end(), path);
-    if (it != m_files.end()) return (int)std::distance(m_files.begin(), it);
+    if (UsingExplorerCursor()) {
+        if (PathsEqualCi(CurrentVisiblePath(), path)) return m_explorerIndex;
+        for (const auto& [idx, cached] : m_explorerPathCache) {
+            if (PathsEqualCi(cached, path)) return idx;
+        }
+        return -1;
+    }
+
+    for (size_t i = 0; i < m_files.size(); ++i) {
+        if (_wcsicmp(m_files[i].c_str(), path.c_str()) == 0) return (int)i;
+    }
     return -1;
+}
+
+bool FileNavigator::TrySelectExisting(const std::wstring& path) {
+    if (path.empty()) return false;
+
+    if (UsingExplorerCursor()) {
+        if (PathsEqualCi(CurrentVisiblePath(), path)) return true;
+        for (const auto& [id, raw] : m_pairedRaws) {
+            if (PathsEqualCi(raw.path, path)) return true;
+        }
+        SeedOpenedFile(path);
+        if (TryBindExplorer(m_watchedDir, CurrentVisiblePath())) return true;
+        ClearExplorerCursor();
+        m_currentIndex = 0;
+        return false;
+    }
+
+    if (m_files.empty()) return false;
+
+    for (size_t i = 0; i < m_files.size(); ++i) {
+        if (_wcsicmp(m_files[i].c_str(), path.c_str()) == 0) {
+            SetIndex((int)i);
+            return true;
+        }
+    }
+
+    if (!m_pairedRaws.empty()) {
+        for (const auto& [renderedId, raw] : m_pairedRaws) {
+            if (_wcsicmp(raw.path.c_str(), path.c_str()) == 0) {
+                for (size_t i = 0; i < m_ids.size(); ++i) {
+                    if (m_ids[i] == renderedId) {
+                        SetIndex((int)i);
+                        return true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    if (m_archive && m_archive->IsValid() && _wcsicmp(path.c_str(), m_archivePath.c_str()) == 0) {
+        SetIndex(0);
+        return true;
+    }
+    return false;
+}
+
+void FileNavigator::SeedOpenedFile(const std::wstring& path) {
+    namespace fs = std::filesystem;
+    m_archive.reset();
+    m_archivePath.clear();
+    m_files.clear();
+    m_sizes.clear();
+    m_ids.clear();
+    m_pairedRaws.clear();
+    m_currentIndex = -1;
+    m_hitEnd = false;
+    m_playlistReady = false;
+
+    std::error_code ec;
+    uintmax_t sz = fs::file_size(path, ec);
+    std::wstring visible = path;
+
+    if (g_config.PairRawJpeg && QuickView::IsRawPath(path)) {
+        const fs::path p(path);
+        const std::wstring stem = (p.parent_path() / p.stem()).wstring();
+        std::wstring found;
+        int renderedCount = 0;
+        for (const auto ext : QuickView::RENDERED_PAIR_EXTENSIONS) {
+            std::wstring cand = stem;
+            cand.append(ext.data(), ext.size());
+            if (GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                ++renderedCount;
+                found = std::move(cand);
+            }
+        }
+        if (renderedCount == 1) {
+            visible = std::move(found);
+            const ImageID rid = ComputePathHash(visible);
+            m_pairedRaws.emplace(rid, PairedRaw{ path, sz, ComputePathHash(path) });
+            sz = fs::file_size(visible, ec);
+        }
+    }
+
+    m_files.push_back(visible);
+    m_sizes.push_back(sz);
+    m_ids.push_back(ComputePathHash(visible));
+    m_currentIndex = 0;
+}
+
+bool FileNavigator::ScanCancelled() const {
+    return m_hCancelEvent && WaitForSingleObject(m_hCancelEvent, 0) == WAIT_OBJECT_0;
+}
+
+bool FileNavigator::CollectFolderEntries(const std::wstring& dir, std::vector<SortEntry>& entries) const {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    size_t n = 0;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if ((++n & 0xFF) == 0 && ScanCancelled()) return false;
+        if (!entry.is_regular_file(ec)) continue;
+
+        std::wstring ext = entry.path().extension().wstring();
+        if (!QuickView::IsPlaylistImageExtension(ext)) continue;
+
+        SortEntry e;
+        e.p = entry.path().wstring();
+        e.s = entry.file_size(ec);
+        e.m = entry.last_write_time(ec); // cached from FindFirstFile
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
+        e.t = std::move(ext);
+        entries.push_back(std::move(e));
+    }
+    return true;
+}
+
+void FileNavigator::ClearExplorerCursor() {
+    m_explorerBound = false;
+    m_explorerIndex = -1;
+    m_explorerCount = 0;
+    m_explorerPathCache.clear();
+    m_hasExplorerSort = false;
+    m_explorerSortPid = 0;
+    m_explorerSortDir = 0;
+    m_explorerSortFmtid = {};
+}
+
+std::wstring FileNavigator::CurrentVisiblePath() const {
+    if (UsingExplorerCursor()) {
+        if (!m_files.empty()) return m_files.front();
+        if (m_explorerIndex >= 0) {
+            auto it = m_explorerPathCache.find(m_explorerIndex);
+            if (it != m_explorerPathCache.end()) return it->second;
+        }
+        return {};
+    }
+    if (m_currentIndex >= 0 && m_currentIndex < (int)m_files.size()) {
+        return m_files[m_currentIndex];
+    }
+    return {};
+}
+
+void FileNavigator::AdoptCurrentFile(const std::wstring& path) {
+    std::error_code ec;
+    uintmax_t sz = std::filesystem::file_size(path, ec);
+    std::wstring visible = path;
+    m_pairedRaws.clear();
+    if (g_config.PairRawJpeg && QuickView::IsRawPath(path)) {
+        std::wstring rendered = UniqueRenderedSibling(path);
+        if (!rendered.empty()) {
+            const ImageID rid = ComputePathHash(rendered);
+            bool skip = false;
+            {
+                std::lock_guard<std::mutex> lock(m_verifyMutex);
+                skip = m_verifyUnpaired.find(rid) != m_verifyUnpaired.end();
+            }
+            if (!skip) {
+                m_pairedRaws.emplace(rid, PairedRaw{ path, sz, ComputePathHash(path) });
+                visible = std::move(rendered);
+                sz = std::filesystem::file_size(visible, ec);
+            }
+        }
+    }
+    m_files.clear();
+    m_sizes.clear();
+    m_ids.clear();
+    m_files.push_back(visible);
+    m_sizes.push_back(sz);
+    m_ids.push_back(ComputePathHash(visible));
+}
+
+const std::wstring& FileNavigator::CacheExplorerPath(int index, std::wstring path) const {
+    static std::wstring empty;
+    if (path.empty()) return empty;
+    auto [it, inserted] = m_explorerPathCache.emplace(index, std::move(path));
+    if (!inserted) it->second = std::move(path);
+    return it->second;
+}
+
+bool FileNavigator::IsExplorerVisibleImage(const std::wstring& path) const {
+    if (path.empty()) return false;
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    if (!QuickView::IsPlaylistImageExtension(QuickView::ExtensionOf(path))) return false;
+    if (g_config.PairRawJpeg && QuickView::IsRawPath(path)) {
+        const std::wstring rendered = UniqueRenderedSibling(path);
+        if (!rendered.empty()) {
+            const ImageID rid = ComputePathHash(rendered);
+            std::lock_guard<std::mutex> lock(m_verifyMutex);
+            if (m_verifyUnpaired.find(rid) == m_verifyUnpaired.end()) return false;
+        }
+    }
+    return true;
+}
+
+bool FileNavigator::TryBindExplorer(const std::wstring& dir, const std::wstring& openedPath) {
+    if (dir.empty() || openedPath.empty() || g_runtime.SortOrder != 0) {
+        ClearExplorerCursor();
+        return false;
+    }
+
+    ExplorerFolderView view;
+    if (!view.Open(dir) || view.itemCount <= 0) {
+        ClearExplorerCursor();
+        return false;
+    }
+
+    // Prefer the selection mark: after a double-click Explorer keeps the file
+    // selected even when the view no longer has keyboard focus (GetFocusedItem
+    // then returns -1 and we used to fall back to a frozen name list).
+    int idx = LocatePathInView(view, openedPath, false);
+    if (idx < 0) idx = LocatePathInView(view, CurrentVisiblePath(), false);
+    if (idx < 0) {
+        ClearExplorerCursor();
+        return false;
+    }
+
+    m_explorerBound = true;
+    m_explorerIndex = idx;
+    m_explorerCount = view.itemCount;
+    m_currentIndex = idx;
+    m_explorerPathCache.clear();
+    CacheExplorerPath(idx, openedPath);
+    SORTCOLUMN sc{};
+    if (view.GetSortColumnRaw(sc)) {
+        m_explorerSortFmtid = sc.propkey.fmtid;
+        m_explorerSortPid = sc.propkey.pid;
+        m_explorerSortDir = (int)sc.direction;
+        m_hasExplorerSort = true;
+    }
+    return true;
+}
+
+bool FileNavigator::SyncExplorerCursor(bool allowDematerialize) {
+    if (g_runtime.SortOrder != 0 || m_archive || m_watchedDir.empty()) return UsingExplorerCursor();
+
+    ExplorerFolderView view;
+    if (!view.Open(m_watchedDir) || view.itemCount <= 0) return UsingExplorerCursor();
+
+    SORTCOLUMN sc{};
+    const bool haveSort = view.GetSortColumnRaw(sc);
+    PROPERTYKEY oldKey{};
+    oldKey.fmtid = m_explorerSortFmtid;
+    oldKey.pid = m_explorerSortPid;
+    const bool sortChanged = haveSort && m_hasExplorerSort
+        && (!IsEqualPropertyKey(sc.propkey, oldKey) || (int)sc.direction != m_explorerSortDir);
+
+    if (haveSort) {
+        m_explorerSortFmtid = sc.propkey.fmtid;
+        m_explorerSortPid = sc.propkey.pid;
+        m_explorerSortDir = (int)sc.direction;
+        m_hasExplorerSort = true;
+    }
+
+    const std::wstring current = CurrentVisiblePath();
+    const bool indexStale = UsingExplorerCursor()
+        && m_explorerIndex >= 0
+        && !PathIsSameShot(view.PathAt(m_explorerIndex), current);
+
+    if (!sortChanged && !indexStale && UsingExplorerCursor()) {
+        m_explorerCount = view.itemCount;
+        return true;
+    }
+
+    // Relocate the current file in the (possibly re-sorted) view. Walk the
+    // whole view only when sort actually changed and selection no longer
+    // points at the file we are showing.
+    int idx = LocatePathInView(view, current, false);
+    if (idx < 0 && (sortChanged || UsingExplorerCursor())) {
+        idx = LocatePathInView(view, current, true);
+    }
+    if (idx < 0) return UsingExplorerCursor();
+
+    if (sortChanged || indexStale) m_explorerPathCache.clear();
+
+    m_explorerBound = true;
+    m_explorerIndex = idx;
+    m_explorerCount = view.itemCount;
+    m_currentIndex = idx;
+    if (allowDematerialize && m_playlistReady) {
+        m_playlistReady = false;
+        if (!current.empty()) AdoptCurrentFile(current);
+    }
+    if (!current.empty()) CacheExplorerPath(idx, current);
+    return true;
+}
+
+void FileNavigator::SyncWithExplorer() {
+    SyncExplorerCursor(true);
+}
+
+int FileNavigator::FindExplorerNeighbor(int dir) const {
+    if (dir == 0 || m_watchedDir.empty()) return -1;
+    ExplorerFolderView view;
+    if (!view.Open(m_watchedDir) || view.itemCount <= 0) return -1;
+    m_explorerCount = view.itemCount;
+
+    int i = m_explorerIndex;
+    for (int n = 0; n < view.itemCount; ++n) {
+        i += dir;
+        if (i < 0 || i >= view.itemCount) {
+            if (!g_runtime.NavLoop) return -2;
+            i = (dir > 0) ? 0 : view.itemCount - 1;
+        }
+        if (i == m_explorerIndex) return -2;
+        std::wstring path = view.PathAt(i);
+        if (!IsExplorerVisibleImage(path)) continue;
+        CacheExplorerPath(i, std::move(path));
+        return i;
+    }
+    return -2;
+}
+
+std::wstring FileNavigator::ExplorerStep(int dir) {
+    const int next = FindExplorerNeighbor(dir);
+    if (next == -1) {
+        // Explorer window gone — fall back to a names-only playlist.
+        ClearExplorerCursor();
+        EnsureMaterialized();
+        return (dir > 0) ? Next() : Previous();
+    }
+    if (next < 0) {
+        m_hitEnd = true;
+        return L"";
+    }
+    m_hitEnd = (g_runtime.NavLoop && ((dir > 0 && next < m_explorerIndex) || (dir < 0 && next > m_explorerIndex)));
+    m_explorerIndex = next;
+    m_currentIndex = next;
+    auto it = m_explorerPathCache.find(next);
+    const std::wstring path = (it != m_explorerPathCache.end()) ? it->second : CurrentVisiblePath();
+    if (!path.empty()) AdoptCurrentFile(path);
+    return CurrentVisiblePath();
+}
+
+void FileNavigator::RefreshExplorerCount() {
+    if (!UsingExplorerCursor() || m_watchedDir.empty()) return;
+    ExplorerFolderView view;
+    if (!view.Open(m_watchedDir)) {
+        ClearExplorerCursor();
+        return;
+    }
+    m_explorerCount = view.itemCount;
+    m_explorerPathCache.clear();
+    if (m_explorerIndex >= 0 && m_explorerIndex < m_explorerCount) {
+        CacheExplorerPath(m_explorerIndex, CurrentVisiblePath());
+    }
+}
+
+void FileNavigator::EnsureMaterialized() {
+    if (m_playlistReady || m_archive) return;
+    // Auto + live Explorer view: keep the cursor. Materializing would freeze
+    // the playlist to one snapshot and ignore later Explorer sort changes.
+    if (g_runtime.SortOrder == 0 && !m_watchedDir.empty()) {
+        if (UsingExplorerCursor() || TryBindExplorer(m_watchedDir, CurrentVisiblePath())) {
+            return;
+        }
+    }
+    if (m_watchedDir.empty() && m_files.empty()) return;
+
+    const std::wstring current = CurrentVisiblePath();
+    if (m_watchedDir.empty()) {
+        m_playlistReady = true;
+        ClearExplorerCursor();
+        return;
+    }
+
+    DirectoryScanResult result = PerformDirectoryScan();
+    {
+        std::lock_guard<std::mutex> lock(m_scanResultMutex);
+        m_pendingScanResult = std::move(result);
+    }
+    // ApplyPending reads the current file from m_files[m_currentIndex] —
+    // park the visible path at index 0 so relocation works.
+    if (!current.empty()) {
+        if (m_files.empty()) m_files.push_back(current);
+        else m_files[0] = current;
+        m_currentIndex = 0;
+    }
+    ClearExplorerCursor();
+    ApplyPendingScanResult();
+}
+
+size_t FileNavigator::Count() const {
+    if (UsingExplorerCursor()) {
+        return (m_explorerCount > 0) ? (size_t)m_explorerCount : (size_t)1;
+    }
+    return m_files.size();
+}
+
+int FileNavigator::Index() const {
+    if (UsingExplorerCursor()) return m_explorerIndex;
+    return m_currentIndex;
+}
+
+uintmax_t FileNavigator::GetFileSize(int index) const {
+    if (UsingExplorerCursor()) {
+        if (index == m_explorerIndex && !m_sizes.empty()) return m_sizes[0];
+        const std::wstring& path = GetFile(index);
+        if (path.empty()) return 0;
+        WIN32_FILE_ATTRIBUTE_DATA fad{};
+        if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return 0;
+        return (static_cast<uintmax_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+    }
+    if (index < 0 || index >= (int)m_sizes.size()) return 0;
+    return m_sizes[index];
+}
+
+ImageID FileNavigator::GetImageID(int index) const {
+    if (UsingExplorerCursor()) {
+        if (index == m_explorerIndex && !m_ids.empty()) return m_ids[0];
+        const std::wstring& path = GetFile(index);
+        return path.empty() ? 0 : ComputePathHash(path);
+    }
+    if (index < 0 || index >= (int)m_ids.size()) return 0;
+    return m_ids[index];
 }
 
 bool FileNavigator::ParseVirtualPath(const std::wstring& path, std::wstring& outArchivePath, size_t& outIndex) {
@@ -507,10 +1246,7 @@ void FileNavigator::ApplyPendingScanResult() {
     }
 
     // Cache current path BEFORE swap for index reconciliation
-    std::wstring currentPath;
-    if (m_currentIndex >= 0 && m_currentIndex < (int)m_files.size()) {
-        currentPath = m_files[m_currentIndex];
-    }
+    std::wstring currentPath = CurrentVisiblePath();
 
     // O(1) swap
     m_files = std::move(result.files);
@@ -520,7 +1256,9 @@ void FileNavigator::ApplyPendingScanResult() {
 
     // Relocate current index in new list
     if (!currentPath.empty()) {
-        auto it = std::find(m_files.begin(), m_files.end(), currentPath);
+        auto it = std::find_if(m_files.begin(), m_files.end(), [&](const std::wstring& f) {
+            return _wcsicmp(f.c_str(), currentPath.c_str()) == 0;
+        });
         if (it != m_files.end()) {
             m_currentIndex = (int)std::distance(m_files.begin(), it);
         } else {
@@ -529,7 +1267,7 @@ void FileNavigator::ApplyPendingScanResult() {
             // relocate to the pair instead of clamping.
             bool redirected = false;
             for (const auto& [renderedId, raw] : m_pairedRaws) {
-                if (raw.path == currentPath) {
+                if (_wcsicmp(raw.path.c_str(), currentPath.c_str()) == 0) {
                     for (size_t i = 0; i < m_ids.size(); ++i) {
                         if (m_ids[i] == renderedId) {
                             m_currentIndex = (int)i;
@@ -550,6 +1288,9 @@ void FileNavigator::ApplyPendingScanResult() {
             }
         }
     }
+
+    m_playlistReady = true;
+    ClearExplorerCursor();
 
     // [RAW+JPEG Pairing] A rescan may have folded new pairs -- verify them.
     // Already-verified pairs are skipped, so this cannot loop.
@@ -749,114 +1490,10 @@ void FileNavigator::ApplyRawJpegPairing(std::vector<SortEntry>& entries,
     entries = std::move(kept);
 }
 
-std::unordered_map<ImageID, size_t> FileNavigator::GetExplorerWindowFileOrder(const std::wstring& targetDir) {
-    std::unordered_map<ImageID, size_t> orderMap;
-    if (targetDir.empty()) return orderMap;
-
-    namespace fs = std::filesystem;
-    std::wstring canonicalTarget = fs::path(targetDir).lexically_normal().wstring();
-    while (!canonicalTarget.empty() && (canonicalTarget.back() == L'\\' || canonicalTarget.back() == L'/')) {
-        canonicalTarget.pop_back();
-    }
-    std::transform(canonicalTarget.begin(), canonicalTarget.end(), canonicalTarget.begin(), ::towlower);
-
-    Microsoft::WRL::ComPtr<IShellWindows> pShellWindows;
-    HRESULT hr = CoCreateInstance(CLSID_ShellWindows, NULL, CLSCTX_ALL, IID_IShellWindows, (void**)&pShellWindows);
-    if (FAILED(hr) || !pShellWindows) return orderMap;
-
-    long count = 0;
-    pShellWindows->get_Count(&count);
-
-    for (long i = 0; i < count; ++i) {
-        VARIANT vIndex;
-        vIndex.vt = VT_I4;
-        vIndex.lVal = i;
-
-        Microsoft::WRL::ComPtr<IDispatch> pDisp;
-        if (FAILED(pShellWindows->Item(vIndex, &pDisp)) || !pDisp) continue;
-
-        Microsoft::WRL::ComPtr<IWebBrowser2> pWebBrowser;
-        if (FAILED(pDisp.As(&pWebBrowser)) || !pWebBrowser) continue;
-
-        Microsoft::WRL::ComPtr<IServiceProvider> pServiceProvider;
-        if (FAILED(pWebBrowser.As(&pServiceProvider)) || !pServiceProvider) continue;
-
-        Microsoft::WRL::ComPtr<IShellBrowser> pShellBrowser;
-        if (FAILED(pServiceProvider->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&pShellBrowser))) || !pShellBrowser) continue;
-
-        Microsoft::WRL::ComPtr<IShellView> pShellView;
-        if (FAILED(pShellBrowser->QueryActiveShellView(&pShellView)) || !pShellView) continue;
-
-        Microsoft::WRL::ComPtr<IFolderView> pFolderView;
-        if (FAILED(pShellView.As(&pFolderView)) || !pFolderView) continue;
-
-        Microsoft::WRL::ComPtr<IPersistFolder2> pPersistFolder;
-        if (FAILED(pFolderView->GetFolder(IID_PPV_ARGS(&pPersistFolder))) || !pPersistFolder) continue;
-
-        PIDLIST_ABSOLUTE pidlFolder = nullptr;
-        if (FAILED(pPersistFolder->GetCurFolder(&pidlFolder)) || !pidlFolder) continue;
-
-        wchar_t folderPathBuf[MAX_PATH] = { 0 };
-        BOOL gotPath = SHGetPathFromIDListW(pidlFolder, folderPathBuf);
-
-        if (!gotPath) {
-            CoTaskMemFree(pidlFolder);
-            continue;
-        }
-
-        std::wstring currentFolder = fs::path(folderPathBuf).lexically_normal().wstring();
-        while (!currentFolder.empty() && (currentFolder.back() == L'\\' || currentFolder.back() == L'/')) {
-            currentFolder.pop_back();
-        }
-        std::transform(currentFolder.begin(), currentFolder.end(), currentFolder.begin(), ::towlower);
-
-        if (currentFolder == canonicalTarget) {
-            int itemCount = 0;
-            if (SUCCEEDED(pFolderView->ItemCount(SVGIO_ALLVIEW, &itemCount)) && itemCount > 0) {
-                Microsoft::WRL::ComPtr<IShellFolder> pShellFolder;
-                pFolderView->GetFolder(IID_PPV_ARGS(&pShellFolder));
-
-                orderMap.reserve(itemCount);
-                for (int j = 0; j < itemCount; ++j) {
-                    PITEMID_CHILD pidlItem = nullptr;
-                    if (SUCCEEDED(pFolderView->Item(j, &pidlItem)) && pidlItem) {
-                        wchar_t itemPathBuf[MAX_PATH] = { 0 };
-                        bool pathResolved = false;
-
-                        if (pShellFolder) {
-                            STRRET strRet;
-                            if (SUCCEEDED(pShellFolder->GetDisplayNameOf(pidlItem, SHGDN_FORPARSING, &strRet))) {
-                                if (SUCCEEDED(StrRetToBufW(&strRet, pidlItem, itemPathBuf, MAX_PATH))) {
-                                    pathResolved = true;
-                                }
-                            }
-                        }
-
-                        if (!pathResolved) {
-                            PIDLIST_ABSOLUTE pidlFull = ILCombine(pidlFolder, pidlItem);
-                            if (pidlFull) {
-                                SHGetPathFromIDListW(pidlFull, itemPathBuf);
-                                ILFree(pidlFull);
-                                pathResolved = (itemPathBuf[0] != L'\0');
-                            }
-                        }
-
-                        CoTaskMemFree(pidlItem);
-
-                        if (pathResolved) {
-                            ImageID id = ComputePathHash(itemPathBuf);
-                            orderMap.emplace(id, static_cast<size_t>(j));
-                        }
-                    }
-                }
-            }
-            CoTaskMemFree(pidlFolder);
-            break;
-        }
-        CoTaskMemFree(pidlFolder);
-    }
-
-    return orderMap;
+bool FileNavigator::ResolveExplorerSortColumn(const std::wstring& targetDir, int& sortOrder, bool& sortDesc) {
+    ExplorerFolderView view;
+    if (!view.Open(targetDir)) return false;
+    return view.GetSortColumn(sortOrder, sortDesc);
 }
 
 void FileNavigator::SortEntries(std::vector<SortEntry>& entries, int sortOrder, bool sortDesc, const std::wstring& dirPath) {
@@ -873,35 +1510,25 @@ void FileNavigator::SortEntries(std::vector<SortEntry>& entries, int sortOrder, 
         return path.c_str();
     };
 
-    std::unordered_map<ImageID, size_t> explorerOrder;
-    if (sortOrder == 0 && !dirPath.empty()) {
-        explorerOrder = GetExplorerWindowFileOrder(dirPath);
+    // Auto: adopt Explorer's sort *column* (one COM query). Never walk the
+    // folder's item list — that is O(files) shell binds and freezes 40k+ dirs.
+    if (sortOrder == 0) {
+        int mapped = 1;
+        bool mappedDesc = sortDesc;
+        if (!dirPath.empty() && ResolveExplorerSortColumn(dirPath, mapped, mappedDesc)) {
+            sortOrder = mapped;
+            sortDesc = mappedDesc;
+        } else {
+            sortOrder = 1;
+        }
     }
 
-    std::sort(entries.begin(), entries.end(), [sortOrder, sortDesc, &getSortNamePtr, &explorerOrder](const SortEntry& a, const SortEntry& b){
+    std::sort(entries.begin(), entries.end(), [sortOrder, sortDesc, &getSortNamePtr](const SortEntry& a, const SortEntry& b){
         int cmp = 0;
         LPCWSTR nameA = getSortNamePtr(a.p);
         LPCWSTR nameB = getSortNamePtr(b.p);
         switch (sortOrder) {
-            case 0: // Auto (Explorer Order)
-                if (!explorerOrder.empty()) {
-                    ImageID idA = ComputePathHash(a.p);
-                    ImageID idB = ComputePathHash(b.p);
-                    auto itA = explorerOrder.find(idA);
-                    auto itB = explorerOrder.find(idB);
-                    if (itA != explorerOrder.end() && itB != explorerOrder.end()) {
-                        if (itA->second < itB->second) cmp = -1;
-                        else if (itA->second > itB->second) cmp = 1;
-                    } else if (itA != explorerOrder.end()) {
-                        cmp = -1;
-                    } else if (itB != explorerOrder.end()) {
-                        cmp = 1;
-                    } else {
-                        cmp = StrCmpLogicalW(nameA, nameB);
-                    }
-                    break;
-                }
-                [[fallthrough]];
+            case 0: // leftover Auto — treat as name
             case 1: // Name
                 cmp = StrCmpLogicalW(nameA, nameB);
                 break;
@@ -972,10 +1599,10 @@ __declspec(noinline) std::vector<std::wstring> FileNavigator::GetSortedSiblings(
 }
 
 std::wstring FileNavigator::FindAdjacentFolderImage(bool next) {
-    if (m_files.empty() || m_currentIndex < 0 || m_currentIndex >= (int)m_files.size()) return L"";
+    std::wstring currentFile = CurrentVisiblePath();
+    if (currentFile.empty()) return L"";
 
     namespace fs = std::filesystem;
-    std::wstring currentFile = m_files[m_currentIndex];
     std::wstring currentPhysical = std::wstring(GetPhysicalHostPath(currentFile));
 
     fs::path currentPath(currentPhysical);
@@ -1042,63 +1669,43 @@ std::wstring FileNavigator::FindAdjacentFolderImage(bool next) {
 
 FileNavigator::DirectoryScanResult FileNavigator::PerformDirectoryScan() {
     DirectoryScanResult result;
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    
-    for (const auto& entry : fs::directory_iterator(m_watchedDir, ec)) {
-        if (entry.is_regular_file(ec)) {
-            std::wstring ext = entry.path().extension().wstring();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c){ return std::towlower(c); });
-
-            // Skip archive container files from the flat folder slideshow playlist
-            bool isArchiveExt = QuickView::IsArchiveExtension(ext);
-            if (isArchiveExt) continue;
-
-            for (const auto& supp : QuickView::SUPPORTED_EXTENSIONS) {
-                if (ext == supp) {
-                    result.files.push_back(entry.path().wstring());
-                    result.sizes.push_back(entry.file_size(ec));
-                    break;
-                }
-            }
-        }
-    }
-
-    // Sort (same logic as Initialize, but without VFS virtual path handling)
     std::vector<SortEntry> entries;
-    entries.reserve(result.files.size());
-    for (size_t i = 0; i < result.files.size(); ++i) {
-        SortEntry e;
-        e.p = result.files[i];
-        e.s = result.sizes[i];
-        std::error_code ec2;
-        e.m = fs::last_write_time(e.p, ec2);
-        e.t = fs::path(e.p).extension().wstring();
-        std::transform(e.t.begin(), e.t.end(), e.t.begin(), [](wchar_t c){ return std::towlower(c); });
-
-        int sortOrder = g_runtime.SortOrder;
-        if (sortOrder == 3) {
-            FILE* fp = nullptr;
-            _wfopen_s(&fp, e.p.c_str(), L"rb");
-            if (fp) {
-                unsigned char buf[65536];
-                size_t bytes = fread(buf, 1, sizeof(buf), fp);
-                fclose(fp);
-                if (bytes > 0) {
-                    easyexif::EXIFInfo info;
-                    if (info.parseFrom(buf, (unsigned)bytes) == PARSE_EXIF_SUCCESS) {
-                        e.exifDate = info.DateTimeOriginal;
-                    }
-                }
-            }
-        }
-
-        entries.push_back(e);
+    if (!CollectFolderEntries(m_watchedDir, entries)) {
+        return result; // cancelled
     }
 
     int sortOrder = g_runtime.SortOrder;
     bool sortDesc = g_runtime.SortDescending;
-    SortEntries(entries, sortOrder, sortDesc, m_watchedDir);
+    if (sortOrder == 0) {
+        int mapped = 1;
+        bool mappedDesc = sortDesc;
+        if (ResolveExplorerSortColumn(m_watchedDir, mapped, mappedDesc)) {
+            sortOrder = mapped;
+            sortDesc = mappedDesc;
+        } else {
+            sortOrder = 1;
+        }
+    }
+
+    if (sortOrder == 3) {
+        for (auto& e : entries) {
+            if (ScanCancelled()) return {};
+            FILE* fp = nullptr;
+            _wfopen_s(&fp, e.p.c_str(), L"rb");
+            if (!fp) continue;
+            unsigned char buf[65536];
+            size_t bytes = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp);
+            if (bytes == 0) continue;
+            easyexif::EXIFInfo info;
+            if (info.parseFrom(buf, (unsigned)bytes) == PARSE_EXIF_SUCCESS) {
+                e.exifDate = info.DateTimeOriginal;
+            }
+        }
+    }
+
+    if (ScanCancelled()) return {};
+    SortEntries(entries, sortOrder, sortDesc);
 
     // [RAW+JPEG Pairing] Same fold as Initialize (watcher rescan path)
     if (g_config.PairRawJpeg) {
@@ -1126,12 +1733,34 @@ FileNavigator::DirectoryScanResult FileNavigator::PerformDirectoryScan() {
 }
 
 void FileNavigator::WatcherThreadProc() {
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+    auto publishScan = [this]() {
+        if (ScanCancelled()) return;
+        auto scanResult = PerformDirectoryScan();
+        if (ScanCancelled()) return;
+        if (scanResult.files.empty() && !std::filesystem::exists(m_watchedDir)) return;
+        // An empty folder is a valid result (publish it). A cancelled scan
+        // returns a default-constructed result; ScanCancelled already bailed.
+        {
+            std::lock_guard<std::mutex> lock(m_scanResultMutex);
+            m_pendingScanResult = std::move(scanResult);
+        }
+        if (m_hwnd) PostMessageW(m_hwnd, WM_NAVIGATOR_DIR_CHANGED, 0, 0);
+    };
+
+    // Names-only list only when we are not using the live Explorer cursor.
+    if (m_needInitialScan.load()) publishScan();
+
     HANDLE hNotify = FindFirstChangeNotificationW(
         m_watchedDir.c_str(),
         FALSE,                          // Non-recursive (current directory only)
         FILE_NOTIFY_CHANGE_FILE_NAME    // File create, delete, rename only
     );
-    if (hNotify == INVALID_HANDLE_VALUE) return;
+    if (hNotify == INVALID_HANDLE_VALUE) {
+        if (SUCCEEDED(comHr)) CoUninitialize();
+        return;
+    }
 
     HANDLE handles[2] = { hNotify, m_hCancelEvent };
 
@@ -1156,20 +1785,19 @@ void FileNavigator::WatcherThreadProc() {
         }
         if (cancelled) break;
 
-        // === Background Scan (on this thread, zero UI impact) ===
-        auto scanResult = PerformDirectoryScan();
-
-        {
-            std::lock_guard<std::mutex> lock(m_scanResultMutex);
-            m_pendingScanResult = std::move(scanResult);
+        // Materialized playlists rescan; Explorer cursor just refreshes ItemCount.
+        if (m_playlistReady.load() || m_needInitialScan.load()) {
+            publishScan();
+        } else if (m_hwnd) {
+            PostMessageW(m_hwnd, WM_NAVIGATOR_DIR_CHANGED, NAVIGATOR_EXPLORER_REFRESH, 0);
         }
-        PostMessageW(m_hwnd, WM_NAVIGATOR_DIR_CHANGED, 0, 0);
 
         // Re-arm for next batch of changes
         if (!FindNextChangeNotification(hNotify)) break; // Directory gone
     }
 
     FindCloseChangeNotification(hNotify);
+    if (SUCCEEDED(comHr)) CoUninitialize();
 }
 
 void FileNavigator::StartDirectoryWatcher(const std::wstring& dirPath) {

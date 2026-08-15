@@ -137,6 +137,18 @@ constexpr bool IsArchivePath(std::wstring_view path) {
     return IsArchiveExtension(ExtensionOf(path));
 }
 
+constexpr bool IsSupportedExtension(std::wstring_view ext) {
+    for (const auto& s : SUPPORTED_EXTENSIONS) {
+        if (ExtEqualsIgnoreCase(ext, s)) return true;
+    }
+    return false;
+}
+
+// Folder slideshow playlist: every browsable image except archive containers
+constexpr bool IsPlaylistImageExtension(std::wstring_view ext) {
+    return IsSupportedExtension(ext) && !IsArchiveExtension(ext);
+}
+
 // ============================================================================
 // RAW+JPEG pairing policy
 // ============================================================================
@@ -179,6 +191,9 @@ static_assert(IsArchivePath(L"C:\\comics\\manga.CBZ"));
 static_assert(IsRenderedPairExtension(L".JPG"));
 static_assert(!IsRenderedPairExtension(L".tif"));  // TIFF is a RAW-derived export
 static_assert(!IsRenderedPairExtension(L".png")); // not camera-written beside a RAW
+static_assert(IsPlaylistImageExtension(L".JPG"));
+static_assert(IsPlaylistImageExtension(L".CR3"));
+static_assert(!IsPlaylistImageExtension(L".zip"));
 
 // Generate the COMDLG filter string, e.g., "All Images\0*.jpg;*.png...\0All Files\0*.*\0\0"
 inline std::wstring GetSupportedExtensionsFilter() {

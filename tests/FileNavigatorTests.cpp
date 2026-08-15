@@ -377,6 +377,92 @@ TEST(RawJpegPairingTest, InitializePairsAndRedirectsRawOpen) {
     g_runtime.SortDescending = oldSortDesc;
 }
 
+TEST(FileNavigatorTest, TrySelectExistingHitsFileAndPairedRaw) {
+    namespace fs = std::filesystem;
+    const bool oldPair = g_config.PairRawJpeg;
+    const int oldSortOrder = g_runtime.SortOrder;
+    const bool oldSortDesc = g_runtime.SortDescending;
+    g_config.PairRawJpeg = true;
+    g_runtime.SortOrder = 1;
+    g_runtime.SortDescending = false;
+
+    fs::path tempDir = fs::current_path() / "test_select_existing_dir";
+    std::error_code ec;
+    fs::create_directory(tempDir, ec);
+    ASSERT_FALSE(ec);
+
+    fs::path jpg1 = tempDir / "IMG_001.JPG";
+    fs::path raw1 = tempDir / "IMG_001.CR3";
+    fs::path jpg2 = tempDir / "IMG_002.JPG";
+    std::ofstream(jpg1).close();
+    std::ofstream(raw1).close();
+    std::ofstream(jpg2).close();
+
+    FileNavigator nav;
+    nav.Initialize(jpg1.wstring(), nullptr);
+    ASSERT_EQ(nav.Count(), 2u);
+    EXPECT_EQ(nav.Index(), 0);
+
+    EXPECT_TRUE(nav.TrySelectExisting(jpg2.wstring()));
+    EXPECT_EQ(nav.Index(), 1);
+    EXPECT_EQ(nav.GetFile(nav.Index()), jpg2.wstring());
+
+    // Case-insensitive match
+    std::wstring mixed = jpg1.wstring();
+    for (auto& c : mixed) c = (wchar_t)std::towlower(c);
+    EXPECT_TRUE(nav.TrySelectExisting(mixed));
+    EXPECT_EQ(nav.Index(), 0);
+
+    // Opening the folded RAW lands on the rendered sibling
+    EXPECT_TRUE(nav.TrySelectExisting(raw1.wstring()));
+    EXPECT_EQ(nav.Index(), 0);
+    EXPECT_EQ(nav.GetResolvedPath(raw1.wstring()), jpg1.wstring());
+
+    EXPECT_FALSE(nav.TrySelectExisting((tempDir / "missing.jpg").wstring()));
+    EXPECT_FALSE(nav.TrySelectExisting(L""));
+
+    fs::remove_all(tempDir, ec);
+    g_config.PairRawJpeg = oldPair;
+    g_runtime.SortOrder = oldSortOrder;
+    g_runtime.SortDescending = oldSortDesc;
+}
+
+TEST(FileNavigatorTest, EnsureMaterializedIsIdempotentAndKeepsCurrent) {
+    namespace fs = std::filesystem;
+    const int oldSortOrder = g_runtime.SortOrder;
+    const bool oldSortDesc = g_runtime.SortDescending;
+    g_runtime.SortOrder = 1;
+    g_runtime.SortDescending = false;
+
+    fs::path tempDir = fs::current_path() / "test_materialize_dir";
+    std::error_code ec;
+    fs::create_directory(tempDir, ec);
+    ASSERT_FALSE(ec);
+
+    fs::path a = tempDir / "a.png";
+    fs::path b = tempDir / "b.png";
+    fs::path c = tempDir / "c.png";
+    std::ofstream(a).close();
+    std::ofstream(b).close();
+    std::ofstream(c).close();
+
+    FileNavigator nav;
+    nav.Initialize(b.wstring(), nullptr);
+    ASSERT_EQ(nav.Count(), 3u);
+    EXPECT_EQ(nav.GetFile(nav.Index()), b.wstring());
+    EXPECT_FALSE(nav.UsingExplorerCursor());
+
+    nav.EnsureMaterialized();
+    ASSERT_EQ(nav.Count(), 3u);
+    EXPECT_EQ(nav.GetFile(nav.Index()), b.wstring());
+    EXPECT_EQ(nav.PeekNext(), c.wstring());
+    EXPECT_EQ(nav.PeekPrevious(), a.wstring());
+
+    fs::remove_all(tempDir, ec);
+    g_runtime.SortOrder = oldSortOrder;
+    g_runtime.SortDescending = oldSortDesc;
+}
+
 // Helper to create a valid uncompressed Zip archive programmatically
 static bool CreateMockZip(const std::wstring& zipPath, const std::string& entryName) {
     std::ofstream fs(zipPath, std::ios::binary);
