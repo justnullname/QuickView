@@ -1,10 +1,22 @@
 #include "pch.h"
 #include "ImageExporter.h"
+#include "ImageLoader.h"
+#include "ImageTypes.h"
+#include "AppContext.h"
+#include "MappedFile.h"
+#include "MetafileCodec.h"
+#include "SupportedExtensions.h"
 #include <wincodec.h>
 #include <wincodecsdk.h>
 #include <shlwapi.h>
 #include <windows.h>
+#include <ole2.h>
 #include <algorithm>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <chrono>
 
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -325,54 +337,164 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
     HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
     if (FAILED(hr)) return hr;
 
-    ComPtr<IWICBitmapDecoder> decoder;
-    hr = factory->CreateDecoderFromFilename(options.InputPath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
-    if (FAILED(hr)) return hr;
+    ComPtr<IWICBitmapSource> currentSource;
+    bool isSvgAlreadyCropped = false;
 
-    ComPtr<IWICBitmapFrameDecode> frame;
-    hr = decoder->GetFrame(0, &frame);
-    if (FAILED(hr)) return hr;
-    outFrameDecode = frame;
+    // Check if in-memory source frame was supplied (e.g. animated frame or canvas buffer)
+    if (options.SourceFrame && options.SourceFrame->pixels && options.SourceFrame->width > 0 && options.SourceFrame->height > 0) {
+        WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppBGRA;
+        UINT stride = options.SourceFrame->stride > 0 ? options.SourceFrame->stride : (options.SourceFrame->width * 4);
+        UINT totalBytes = stride * options.SourceFrame->height;
+        ComPtr<IWICBitmap> memBmp;
+        hr = factory->CreateBitmapFromMemory(options.SourceFrame->width, options.SourceFrame->height, pixelFormat, stride, totalBytes, options.SourceFrame->pixels, &memBmp);
+        if (SUCCEEDED(hr) && memBmp) {
+            currentSource = memBmp;
+        }
+    }
 
-    // Extract or Create ICC Color Context if requested
-    if (options.EmbedIcc) {
-        if (!options.CustomIccData.empty()) {
-            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                outColorContext->InitializeFromMemory(options.CustomIccData.data(), static_cast<UINT>(options.CustomIccData.size()));
-            }
-        } else if (!options.IccProfilePath.empty()) {
-            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                outColorContext->InitializeFromFilename(options.IccProfilePath.c_str());
-            }
-        } else {
-            UINT count = 0;
-            if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
-                if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
-                    UINT actualCount = 0;
-                    IWICColorContext* pContext = outColorContext.Get();
-                    frame->GetColorContexts(1, &pContext, &actualCount);
+    // 1. Camera RAW Direct Bypass (Bypass flawed/incomplete Windows WIC RAW Codecs)
+    if (!currentSource && !options.InputPath.empty() && QuickView::IsRawPath(options.InputPath)) {
+        ComPtr<IWICBitmap> rawBmp;
+        CImageLoader loader;
+        loader.Initialize(factory.Get());
+        hr = loader.LoadRaw(options.InputPath.c_str(), rawBmp.GetAddressOf(), options.RawForceFullDecode);
+        if (SUCCEEDED(hr) && rawBmp) {
+            currentSource = rawBmp;
+        }
+    }
+
+    // 2. Standard WIC Decoder (for JPEG, PNG, TIFF, BMP, GIF, etc.)
+    if (!currentSource && !options.InputPath.empty()) {
+        ComPtr<IWICBitmapDecoder> decoder;
+        hr = factory->CreateDecoderFromFilename(options.InputPath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+        if (SUCCEEDED(hr) && decoder) {
+            ComPtr<IWICBitmapFrameDecode> frame;
+            if (SUCCEEDED(decoder->GetFrame(0, &frame)) && frame) {
+                outFrameDecode = frame;
+                currentSource = frame;
+
+                // Extract ICC Color Context from frame if requested
+                if (options.EmbedIcc) {
+                    UINT count = 0;
+                    if (SUCCEEDED(frame->GetColorContexts(0, nullptr, &count)) && count > 0) {
+                        if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                            UINT actualCount = 0;
+                            IWICColorContext* pContext = outColorContext.Get();
+                            frame->GetColorContexts(1, &pContext, &actualCount);
+                        }
+                    }
                 }
             }
         }
     }
 
-    ComPtr<IWICBitmapSource> currentSource = frame;
+    // 3. Universal Fallback: Unified loaders (SVG, EMF/WMF, AVIF, JXL, PSD, HDR, EXR, etc.)
+    if (!currentSource && !options.InputPath.empty()) {
+        QuickView::MappedFile fileMap(options.InputPath.c_str());
+        if (fileMap.IsValid() && fileMap.size() > 0) {
+            std::wstring pathLower = options.InputPath;
+            std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+
+            // 3.1 Vector SVG: True-vector sub-region rasterization
+            if (pathLower.ends_with(L".svg") || pathLower.ends_with(L".svgz") || 
+                (fileMap.size() >= 5 && (memcmp(fileMap.data(), "<?xml", 5) == 0 || memcmp(fileMap.data(), "<svg", 4) == 0))) {
+                CImageLoader::ThumbData svgData;
+                CImageLoader::ImageHeaderInfo hdr = ::g_imageLoader ? ::g_imageLoader->PeekHeader(options.InputPath.c_str()) : CImageLoader::ImageHeaderInfo{};
+                
+                float cropX = (float)options.CropX;
+                float cropY = (float)options.CropY;
+                float cropW = (float)options.CropWidth;
+                float cropH = (float)options.CropHeight;
+                float zoom = options.DisplayZoom > 0.0f ? options.DisplayZoom : 1.0f;
+
+                if (SUCCEEDED(CImageLoader::RasterizeSvgToPixels(
+                        fileMap.data(), fileMap.size(), (float)hdr.width, (float)hdr.height, 0, &svgData,
+                        cropX, cropY, cropW, cropH, zoom)) && svgData.isValid && !svgData.pixels.empty()) {
+                    ComPtr<IWICBitmap> memBmp;
+                    hr = factory->CreateBitmapFromMemory(svgData.width, svgData.height, GUID_WICPixelFormat32bppBGRA, svgData.stride, (UINT)svgData.pixels.size(), svgData.pixels.data(), &memBmp);
+                    if (SUCCEEDED(hr) && memBmp) {
+                        currentSource = memBmp;
+                        if (cropW > 0.0f && cropH > 0.0f) {
+                            isSvgAlreadyCropped = true;
+                        }
+                    }
+                }
+            }
+            // 3.2 Metafile (EMF / WMF)
+            else if (QuickView::Metafile::Detect(fileMap.data(), fileMap.size()) != QuickView::Metafile::Kind::None) {
+                HENHMETAFILE hemf = QuickView::Metafile::OpenHemf(fileMap.data(), fileMap.size());
+                if (hemf) {
+                    auto logical = QuickView::Metafile::MeasureHeader(fileMap.data(), fileMap.size(), 96, 96);
+                    int w = (logical.width > 0) ? logical.width : 1024;
+                    int h = (logical.height > 0) ? logical.height : 768;
+                    std::vector<uint8_t> pixels((size_t)w * h * 4);
+                    if (QuickView::Metafile::Rasterize(hemf, w, h, pixels.data(), w * 4)) {
+                        ComPtr<IWICBitmap> memBmp;
+                        hr = factory->CreateBitmapFromMemory(w, h, GUID_WICPixelFormat32bppBGRA, w * 4, (UINT)pixels.size(), pixels.data(), &memBmp);
+                        if (SUCCEEDED(hr) && memBmp) {
+                            currentSource = memBmp;
+                        }
+                    }
+                    DeleteEnhMetaFile(hemf);
+                }
+            }
+            // 3.3 Memory-based unified formats (AVIF, JXL, PSD, EXR, HDR, WebP, etc.)
+            else {
+                QuickView::RawImageFrame rawFrame;
+                if (SUCCEEDED(CImageLoader::FullDecodeFromMemory(fileMap.data(), fileMap.size(), &rawFrame)) && rawFrame.pixels && rawFrame.width > 0 && rawFrame.height > 0) {
+                    WICPixelFormatGUID pixelFormat = (rawFrame.format == PixelFormat::RGBA8888) 
+                        ? GUID_WICPixelFormat32bppRGBA : GUID_WICPixelFormat32bppBGRA;
+                    UINT stride = rawFrame.stride > 0 ? rawFrame.stride : (rawFrame.width * 4);
+                    UINT totalBytes = stride * rawFrame.height;
+                    ComPtr<IWICBitmap> memBmp;
+                    hr = factory->CreateBitmapFromMemory(rawFrame.width, rawFrame.height, pixelFormat, stride, totalBytes, rawFrame.pixels, &memBmp);
+                    if (SUCCEEDED(hr) && memBmp) {
+                        currentSource = memBmp;
+                    }
+                }
+            }
+        }
+
+        // 3.4 Secondary fallback to CImageLoader::LoadToMemory (full decode)
+        if (!currentSource) {
+            ComPtr<IWICBitmap> fallbackBmp;
+            CImageLoader loader;
+            loader.Initialize(factory.Get());
+            hr = loader.LoadToMemory(options.InputPath.c_str(), fallbackBmp.GetAddressOf(), nullptr, true /* forceFullDecode */);
+            if (SUCCEEDED(hr) && fallbackBmp) {
+                currentSource = fallbackBmp;
+            }
+        }
+    }
+
+    if (!currentSource) {
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    // Explicit ICC Profile Injection if provided
+    if (options.EmbedIcc && !outColorContext) {
+        if (!options.IccProfilePath.empty()) {
+            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                outColorContext->InitializeFromFilename(options.IccProfilePath.c_str());
+            }
+        } else if (!options.CustomIccData.empty()) {
+            if (SUCCEEDED(factory->CreateColorContext(&outColorContext))) {
+                outColorContext->InitializeFromMemory(options.CustomIccData.data(), (UINT)options.CustomIccData.size());
+            }
+        }
+    }
 
     // Get Original Frame Size for Boundary Clamp
     UINT origWidth = 0, origHeight = 0;
     currentSource->GetSize(&origWidth, &origHeight);
 
     // RAM CACHE: Decode frame into IWICBitmap to eliminate O(N^2) random-access
-    // thrashing during WIC FlipRotator. Only needed when rotation/flip is requested;
-    // pure crop uses sequential access and needs no cache.
-    // Budget: min(50% available RAM, 25% total RAM) with 2GB OS reserve,
-    // matching the same dynamic memory pattern used in HeavyLanePool.
+    // thrashing during WIC FlipRotator.
     bool needsRandomAccess = (options.Rotation != 0 || options.FlipH || options.FlipV);
-    if (needsRandomAccess) {
-        // Query actual bits-per-pixel from source pixel format (not hardcoded 32)
+    if (needsRandomAccess && outFrameDecode) {
         WICPixelFormatGUID srcPF = {};
-        frame->GetPixelFormat(&srcPF);
-        UINT bpp = 32; // conservative fallback
+        outFrameDecode->GetPixelFormat(&srcPF);
+        UINT bpp = 32;
         ComPtr<IWICComponentInfo> compInfo;
         if (SUCCEEDED(factory->CreateComponentInfo(srcPF, &compInfo))) {
             ComPtr<IWICPixelFormatInfo> pfInfo;
@@ -382,23 +504,20 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
         }
 
         uint64_t rawBytes = static_cast<uint64_t>(origWidth) * static_cast<uint64_t>(origHeight) * static_cast<uint64_t>(bpp) / 8;
-
-        // Dynamic memory budget (same pattern as HeavyLanePool::ApplyBaselineConcurrency)
         MEMORYSTATUSEX memInfo = {};
         memInfo.dwLength = sizeof(memInfo);
-        uint64_t maxCacheBytes = 512ULL * 1024 * 1024; // conservative fallback if query fails
+        uint64_t maxCacheBytes = 512ULL * 1024 * 1024;
         if (GlobalMemoryStatusEx(&memInfo)) {
             uint64_t avail = memInfo.ullAvailPhys;
             uint64_t total = memInfo.ullTotalPhys;
-            uint64_t reserve = 2ULL * 1024 * 1024 * 1024; // 2GB OS/UI reserve
+            uint64_t reserve = 2ULL * 1024 * 1024 * 1024;
             uint64_t usable = (avail > reserve) ? (avail - reserve) : 0;
-            // Budget: min(50% usable, 25% total) — never starve OS or other subsystems
             maxCacheBytes = std::min(usable / 2, total / 4);
         }
 
         if (rawBytes > 0 && rawBytes <= maxCacheBytes) {
             ComPtr<IWICBitmap> ramBitmap;
-            if (SUCCEEDED(factory->CreateBitmapFromSource(frame.Get(), WICBitmapCacheOnLoad, &ramBitmap))) {
+            if (SUCCEEDED(factory->CreateBitmapFromSource(outFrameDecode.Get(), WICBitmapCacheOnLoad, &ramBitmap))) {
                 currentSource = ramBitmap;
             }
         }
@@ -425,8 +544,8 @@ HRESULT ImageExporter::CreateWICPipeline(const ExportOptions& options,
         }
     }
 
-    // Apply Crop with strict boundary clamp
-    if (options.CropWidth > 0 && options.CropHeight > 0) {
+    // Apply Crop with strict boundary clamp (Skip if SVG was already true-vector cropped)
+    if (!isSvgAlreadyCropped && options.CropWidth > 0 && options.CropHeight > 0) {
         int cx = std::clamp(options.CropX, 0, (int)origWidth - 1);
         int cy = std::clamp(options.CropY, 0, (int)origHeight - 1);
         int cw = std::clamp(options.CropWidth, 1, (int)origWidth - cx);
@@ -660,13 +779,14 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
     ComPtr<IWICBitmapFrameDecode> frameDecode;
     
     HRESULT hr = CreateWICPipeline(options, source, factory, colorContext, frameDecode);
-    if (FAILED(hr)) return std::unexpected(L"Pipeline error.");
+    if (FAILED(hr) || !source || !factory) return std::unexpected(L"Pipeline error.");
 
     const wchar_t* ext = PathFindExtensionW(options.OutputPath.c_str());
     GUID containerFormat = GetContainerFormatFromExtension(ext);
 
     ComPtr<IStream> memStream;
-    CountingStream* countingStream = new CountingStream();
+    CountingStream* countingStream = new (std::nothrow) CountingStream();
+    if (!countingStream) return std::unexpected(L"Out of memory creating measurement stream.");
     memStream.Attach(countingStream); // memStream will manage the ref count
 
     ComPtr<IWICStream> wicStream;
@@ -696,107 +816,358 @@ std::expected<uint64_t, std::wstring> ImageExporter::EstimateSize(const ExportOp
     // Embed Metadata Blocks & Reset EXIF Orientation to 1 for accurate size estimation
     EmbedMetadataAndResetOrientation(factory.Get(), frameDecode.Get(), frameEncode.Get(), options);
 
+    // Embed Color Context
     if (colorContext && options.EmbedIcc) {
         IWICColorContext* pCtx = colorContext.Get();
         frameEncode->SetColorContexts(1, &pCtx);
     }
 
-    UINT estW = 0, estH = 0;
-    source->GetSize(&estW, &estH);
-    frameEncode->SetSize(estW, estH);
+    UINT w = 0, h = 0;
+    source->GetSize(&w, &h);
+    frameEncode->SetSize(w, h);
 
-    WICPixelFormatGUID estPixelFormat = {};
-    source->GetPixelFormat(&estPixelFormat);
-    WICPixelFormatGUID estOrigPixelFormat = estPixelFormat;
-    frameEncode->SetPixelFormat(&estPixelFormat);
+    WICPixelFormatGUID pixelFormat = {};
+    source->GetPixelFormat(&pixelFormat);
+    WICPixelFormatGUID origPixelFormat = pixelFormat;
+    frameEncode->SetPixelFormat(&pixelFormat);
 
-    ComPtr<IWICBitmapSource> estFinalSource = source;
-    if (estPixelFormat != estOrigPixelFormat) {
+    ComPtr<IWICBitmapSource> finalSource = source;
+    if (pixelFormat != origPixelFormat) {
         ComPtr<IWICFormatConverter> converter;
         if (SUCCEEDED(factory->CreateFormatConverter(&converter))) {
-            if (SUCCEEDED(converter->Initialize(source.Get(), estPixelFormat, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
-                estFinalSource = converter;
+            if (SUCCEEDED(converter->Initialize(source.Get(), pixelFormat, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+                finalSource = converter;
             }
         }
     }
 
-    hr = frameEncode->WriteSource(estFinalSource.Get(), nullptr);
-    if (FAILED(hr)) return std::unexpected(L"Write error.");
+    hr = frameEncode->WriteSource(finalSource.Get(), nullptr);
+    if (FAILED(hr)) return std::unexpected(L"Write source error.");
 
     hr = frameEncode->Commit();
     if (FAILED(hr)) return std::unexpected(L"Commit error.");
 
     hr = encoder->Commit();
-    if (FAILED(hr)) return std::unexpected(L"Commit encoder error.");
+    if (FAILED(hr)) return std::unexpected(L"Encoder commit error.");
 
     return countingStream->GetSize();
 }
 
-std::expected<void, std::wstring> ImageExporter::CopyToClipboard(const ExportOptions& options, HWND hwnd) {
+bool g_isSettingUpClipboard = false;
+
+struct PreRenderSession {
+    uint64_t generationId = 0;
+    std::atomic<bool> isCancelled{false};
+    std::atomic<bool> isCompleted{false};
+    HGLOBAL hPng = nullptr;
+    HGLOBAL hDib = nullptr;
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    ~PreRenderSession() {
+        if (hPng) { GlobalFree(hPng); hPng = nullptr; }
+        if (hDib) { GlobalFree(hDib); hDib = nullptr; }
+    }
+};
+
+static std::shared_ptr<PreRenderSession> g_activePreRenderSession;
+static std::mutex g_preRenderSessionMutex;
+static uint64_t g_preRenderGeneration = 0;
+
+UINT ImageExporter::GetPngClipboardFormat() {
+    static const UINT s_cfPng = RegisterClipboardFormatW(L"PNG");
+    return s_cfPng;
+}
+
+void ImageExporter::CancelPreRendering() {
+    std::lock_guard<std::mutex> lock(g_preRenderSessionMutex);
+    if (g_activePreRenderSession) {
+        g_activePreRenderSession->isCancelled = true;
+        g_activePreRenderSession->cv.notify_all();
+        g_activePreRenderSession.reset();
+    }
+}
+
+std::expected<void, std::wstring> ImageExporter::SetupDelayedClipboard(HWND hwnd, const PendingClipboardSnapshot& snapshot) {
+    if (!snapshot.isValid) {
+        return std::unexpected(L"Invalid clipboard snapshot.");
+    }
+    if (!OpenClipboard(hwnd)) {
+        return std::unexpected(L"Failed to open clipboard.");
+    }
+
+    g_isSettingUpClipboard = true;
+    EmptyClipboard();
+    g_isSettingUpClipboard = false;
+
+    // Register delayed rendering formats (NULL data)
+    // NOTE: Only register PNG + CF_DIB. Do NOT register CF_DIBV5 here!
+    // Windows auto-synthesizes CF_DIBV5/CF_BITMAP from CF_DIB. Registering CF_DIBV5
+    // explicitly causes the auto-synthesis engine to interfere with our CF_DIB
+    // delayed rendering, producing corrupt 16x16 bitmaps in MS Paint.
+    SetClipboardData(GetPngClipboardFormat(), nullptr);
+    SetClipboardData(CF_DIB, nullptr);
+
+    CloseClipboard();
+
+    // Hybrid Pre-rendering: Trigger background worker to decode & compress in advance (0ms Ctrl+V latency)
+    {
+        std::lock_guard<std::mutex> lock(g_preRenderSessionMutex);
+        if (g_activePreRenderSession) {
+            g_activePreRenderSession->isCancelled = true;
+            g_activePreRenderSession->cv.notify_all();
+        }
+        auto session = std::make_shared<PreRenderSession>();
+        session->generationId = ++g_preRenderGeneration;
+        g_activePreRenderSession = session;
+
+        std::thread preRenderWorker([session, snapshot, hwnd]() {
+            HGLOBAL hPng = nullptr;
+            HGLOBAL hDib = nullptr;
+            RenderClipboardDual(snapshot, hPng, hDib);
+
+            std::lock_guard<std::mutex> sLock(session->mtx);
+            if (session->isCancelled) {
+                if (hPng) GlobalFree(hPng);
+                if (hDib) GlobalFree(hDib);
+            } else {
+                session->hPng = hPng;
+                session->hDib = hDib;
+                session->isCompleted = true;
+                session->cv.notify_all();
+                if (hwnd && IsWindow(hwnd)) {
+                    PostMessageW(hwnd, WM_CLIPBOARD_PRERENDER_READY, 0, 0);
+                }
+            }
+        });
+        preRenderWorker.detach();
+    }
+
+    return {};
+}
+
+void ImageExporter::RenderClipboardDual(const PendingClipboardSnapshot& snapshot, HGLOBAL& outPng, HGLOBAL& outDib) {
+    outPng = nullptr;
+    outDib = nullptr;
+    if (!snapshot.isValid) return;
+
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapSource> source;
     ComPtr<IWICColorContext> colorContext;
     ComPtr<IWICBitmapFrameDecode> frameDecode;
-    
-    HRESULT hr = CreateWICPipeline(options, source, factory, colorContext, frameDecode);
-    if (FAILED(hr)) return std::unexpected(L"Failed to create image pipeline.");
 
-    // Convert to BGRA for DIB
+    HRESULT hr = ImageExporter::CreateWICPipeline(snapshot.options, source, factory, colorContext, frameDecode);
+    if (FAILED(hr) || !source || !factory) return;
+
     ComPtr<IWICFormatConverter> converter;
     hr = factory->CreateFormatConverter(&converter);
-    if (FAILED(hr)) return std::unexpected(L"Failed to create format converter.");
+    if (FAILED(hr)) return;
 
     hr = converter->Initialize(source.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
-    if (FAILED(hr)) return std::unexpected(L"Failed to initialize format converter.");
+    if (FAILED(hr)) return;
 
-    UINT width, height;
-    converter->GetSize(&width, &height);
+    UINT width = 0, height = 0;
+    hr = converter->GetSize(&width, &height);
+    if (FAILED(hr) || width == 0 || height == 0) return;
 
     const UINT stride = width * 4;
     const UINT imageSize = stride * height;
-    
-    // Allocate global memory for DIB (BITMAPV5HEADER)
-    const UINT dibSize = sizeof(BITMAPV5HEADER) + imageSize;
-    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, dibSize);
-    if (!hMem) return std::unexpected(L"Failed to allocate clipboard memory.");
+    const UINT dibSize = sizeof(BITMAPINFOHEADER) + imageSize;
 
-    uint8_t* pData = static_cast<uint8_t*>(GlobalLock(hMem));
-    if (!pData) {
-        GlobalFree(hMem);
-        return std::unexpected(L"Failed to lock clipboard memory.");
+    // 1. Single-pass Pull of all BGRA pixels into RAM buffer
+    std::vector<uint8_t> topDownPixels((size_t)imageSize);
+    HRESULT copyHr = converter->CopyPixels(nullptr, stride, imageSize, topDownPixels.data());
+    if (FAILED(copyHr)) return;
+
+    // 2. Fast CF_DIB Construction (2ms parallel row flip)
+    HGLOBAL hDib = GlobalAlloc(GMEM_MOVEABLE, dibSize);
+    if (hDib) {
+        uint8_t* pData = static_cast<uint8_t*>(GlobalLock(hDib));
+        if (pData) {
+            BITMAPINFOHEADER* bmi = reinterpret_cast<BITMAPINFOHEADER*>(pData);
+            ZeroMemory(bmi, sizeof(BITMAPINFOHEADER));
+            bmi->biSize = sizeof(BITMAPINFOHEADER);
+            bmi->biWidth = static_cast<LONG>(width);
+            bmi->biHeight = static_cast<LONG>(height);
+            bmi->biPlanes = 1;
+            bmi->biBitCount = 32;
+            bmi->biCompression = BI_RGB;
+            bmi->biSizeImage = imageSize;
+            bmi->biXPelsPerMeter = 0;
+            bmi->biYPelsPerMeter = 0;
+
+            uint8_t* pixels = pData + sizeof(BITMAPINFOHEADER);
+            for (UINT y = 0; y < height; ++y) {
+                const uint8_t* srcRow = topDownPixels.data() + static_cast<size_t>(y) * stride;
+                uint8_t* dstRow = pixels + static_cast<size_t>(height - 1 - y) * stride;
+                memcpy(dstRow, srcRow, stride);
+            }
+            GlobalUnlock(hDib);
+            outDib = hDib;
+        } else {
+            GlobalFree(hDib);
+        }
     }
 
-    BITMAPV5HEADER* bmi = reinterpret_cast<BITMAPV5HEADER*>(pData);
-    ZeroMemory(bmi, sizeof(BITMAPV5HEADER));
-    bmi->bV5Size = sizeof(BITMAPV5HEADER);
-    bmi->bV5Width = width;
-    bmi->bV5Height = -static_cast<LONG>(height); // Top-down
-    bmi->bV5Planes = 1;
-    bmi->bV5BitCount = 32;
-    bmi->bV5Compression = BI_BITFIELDS;
-    bmi->bV5RedMask   = 0x00FF0000;
-    bmi->bV5GreenMask = 0x0000FF00;
-    bmi->bV5BlueMask  = 0x000000FF;
-    bmi->bV5AlphaMask = 0xFF000000;
+    // 3. Fast PNG Encoding (Direct from already initialized converter)
+    IStream* pStream = nullptr;
+    hr = CreateStreamOnHGlobal(nullptr, FALSE, &pStream);
+    if (SUCCEEDED(hr) && pStream) {
+        ComPtr<IWICBitmapEncoder> pngEncoder;
+        hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &pngEncoder);
+        if (SUCCEEDED(hr)) {
+            hr = pngEncoder->Initialize(pStream, WICBitmapEncoderNoCache);
+            if (SUCCEEDED(hr)) {
+                ComPtr<IWICBitmapFrameEncode> frameEncode;
+                ComPtr<IPropertyBag2> props;
+                hr = pngEncoder->CreateNewFrame(&frameEncode, &props);
+                if (SUCCEEDED(hr)) {
+                    if (props) {
+                        PROPBAG2 optFilter = {};
+                        optFilter.pstrName = (LPOLESTR)L"FilterOption";
+                        VARIANT varFilter; VariantInit(&varFilter);
+                        varFilter.vt = VT_UI1;
+                        varFilter.bVal = 1; // WICPngFilterNone = 1
+                        props->Write(1, &optFilter, &varFilter);
 
-    uint8_t* pixels = pData + sizeof(BITMAPV5HEADER);
-    hr = converter->CopyPixels(nullptr, stride, imageSize, pixels);
-    GlobalUnlock(hMem);
-
-    if (FAILED(hr)) {
-        GlobalFree(hMem);
-        return std::unexpected(L"Failed to copy pixels.");
+                        PROPBAG2 optInterlace = {};
+                        optInterlace.pstrName = (LPOLESTR)L"InterlaceOption";
+                        VARIANT varInterlace; VariantInit(&varInterlace);
+                        varInterlace.vt = VT_BOOL;
+                        varInterlace.boolVal = VARIANT_FALSE;
+                        props->Write(1, &optInterlace, &varInterlace);
+                    }
+                    if (SUCCEEDED(frameEncode->Initialize(props.Get())) &&
+                        SUCCEEDED(frameEncode->SetSize(width, height))) {
+                        frameEncode->SetResolution(96.0, 96.0);
+                        WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppBGRA;
+                        frameEncode->SetPixelFormat(&pixelFormat);
+                        if (colorContext && snapshot.options.EmbedIcc) {
+                            IWICColorContext* pCtx = colorContext.Get();
+                            frameEncode->SetColorContexts(1, &pCtx);
+                        }
+                        if (SUCCEEDED(frameEncode->WriteSource(converter.Get(), nullptr)) &&
+                            SUCCEEDED(frameEncode->Commit()) &&
+                            SUCCEEDED(pngEncoder->Commit())) {
+                            STATSTG stat = {};
+                            pStream->Stat(&stat, STATFLAG_NONAME);
+                            ULARGE_INTEGER streamSize = stat.cbSize;
+                            HGLOBAL hStreamMem = nullptr;
+                            GetHGlobalFromStream(pStream, &hStreamMem);
+                            if (hStreamMem && streamSize.QuadPart > 0) {
+                                HGLOBAL hFinalMem = GlobalAlloc(GMEM_MOVEABLE, static_cast<SIZE_T>(streamSize.QuadPart));
+                                if (hFinalMem) {
+                                    void* pSrc = GlobalLock(hStreamMem);
+                                    void* pDst = GlobalLock(hFinalMem);
+                                    if (pSrc && pDst) {
+                                        memcpy(pDst, pSrc, static_cast<size_t>(streamSize.QuadPart));
+                                    }
+                                    if (pSrc) GlobalUnlock(hStreamMem);
+                                    if (pDst) GlobalUnlock(hFinalMem);
+                                    outPng = hFinalMem;
+                                }
+                            }
+                            if (hStreamMem) GlobalFree(hStreamMem);
+                        }
+                    }
+                }
+            }
+        }
+        pStream->Release();
     }
+}
+
+HGLOBAL ImageExporter::RenderClipboardFormat(UINT uFormat, const PendingClipboardSnapshot& snapshot) {
+    if (!snapshot.isValid) return nullptr;
+
+    const UINT pngFormat = GetPngClipboardFormat();
+
+    // Check Hybrid Pre-rendering cache
+    std::shared_ptr<PreRenderSession> session;
+    {
+        std::lock_guard<std::mutex> lock(g_preRenderSessionMutex);
+        session = g_activePreRenderSession;
+    }
+
+    if (session) {
+        std::unique_lock<std::mutex> sLock(session->mtx);
+        if (!session->isCompleted && !session->isCancelled) {
+            // Wait up to 3 seconds for background worker to complete
+            session->cv.wait_for(sLock, std::chrono::milliseconds(3000), [&]() {
+                return session->isCompleted.load() || session->isCancelled.load();
+            });
+        }
+
+        if (session->isCompleted && !session->isCancelled) {
+            if (uFormat == pngFormat && session->hPng) {
+                HGLOBAL res = session->hPng;
+                session->hPng = nullptr; // Transfer ownership to Windows Clipboard
+                return res;
+            } else if (uFormat == CF_DIB && session->hDib) {
+                HGLOBAL res = session->hDib;
+                session->hDib = nullptr; // Transfer ownership to Windows Clipboard
+                return res;
+            }
+        }
+    }
+
+    // Direct synchronous fallback
+    return RenderClipboardFormatDirect(uFormat, snapshot);
+}
+
+HGLOBAL ImageExporter::RenderClipboardFormatDirect(UINT uFormat, const PendingClipboardSnapshot& snapshot) {
+    if (!snapshot.isValid) return nullptr;
+    HGLOBAL hPng = nullptr;
+    HGLOBAL hDib = nullptr;
+    RenderClipboardDual(snapshot, hPng, hDib);
+
+    const UINT pngFormat = ImageExporter::GetPngClipboardFormat();
+    if (uFormat == pngFormat) {
+        if (hDib) GlobalFree(hDib);
+        return hPng;
+    } else if (uFormat == CF_DIB) {
+        if (hPng) GlobalFree(hPng);
+        return hDib;
+    }
+    if (hPng) GlobalFree(hPng);
+    if (hDib) GlobalFree(hDib);
+    return nullptr;
+}
+
+void ImageExporter::RenderAllClipboardFormats(HWND /*hwnd*/, const PendingClipboardSnapshot& snapshot) {
+    if (!snapshot.isValid) return;
+
+    UINT pngFormat = GetPngClipboardFormat();
+    HGLOBAL hPng = RenderClipboardFormat(pngFormat, snapshot);
+    if (hPng) {
+        if (!SetClipboardData(pngFormat, hPng)) {
+            GlobalFree(hPng);
+        }
+    }
+
+    HGLOBAL hDib = RenderClipboardFormat(CF_DIB, snapshot);
+    if (hDib) {
+        if (!SetClipboardData(CF_DIB, hDib)) {
+            GlobalFree(hDib);
+        }
+    }
+}
+
+std::expected<void, std::wstring> ImageExporter::CopyToClipboard(const ExportOptions& options, HWND hwnd) {
+    PendingClipboardSnapshot snapshot;
+    snapshot.filePath = options.InputPath;
+    snapshot.options = options;
+    snapshot.memoryFrame = options.SourceFrame;
+    snapshot.isValid = true;
 
     if (!OpenClipboard(hwnd)) {
-        GlobalFree(hMem);
         return std::unexpected(L"Failed to open clipboard.");
     }
-
     EmptyClipboard();
-    SetClipboardData(CF_DIBV5, hMem);
-    CloseClipboard();
 
+    RenderAllClipboardFormats(hwnd, snapshot);
+
+    CloseClipboard();
     return {};
 }
 

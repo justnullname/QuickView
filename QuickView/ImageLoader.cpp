@@ -4180,21 +4180,52 @@ static HRESULT LoadThumbJXL_Sampled(const uint8_t *pFile, size_t fileSize,
   return cleanup(S_OK);
 }
 
-static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
-                                     float viewBoxW, float viewBoxH,
-                                     int targetSize,
-                                     CImageLoader::ThumbData *pData) {
-  if (!pData || xmlData.empty())
+HRESULT CImageLoader::RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSize,
+                                           float viewBoxW, float viewBoxH,
+                                           int targetSize,
+                                           CImageLoader::ThumbData *pData,
+                                           float cropX, float cropY,
+                                           float cropW, float cropH,
+                                           float zoomScale) {
+  if (!pData || !xmlData || xmlSize == 0)
     return E_INVALIDARG;
 
   const float safeW = viewBoxW > 0.0f ? viewBoxW : 512.0f;
   const float safeH = viewBoxH > 0.0f ? viewBoxH : 512.0f;
-  const int maxDim = targetSize > 0 ? targetSize : 512;
-  const float scale =
-      (std::min)(1.0f, (float)maxDim / (std::max)(safeW, safeH));
-  const UINT outW = (UINT)(std::max)(1, (int)std::lround(safeW * scale));
-  const UINT outH = (UINT)(std::max)(1, (int)std::lround(safeH * scale));
 
+  const bool hasCrop = (cropW > 0.0f && cropH > 0.0f);
+  const float renderW = hasCrop ? cropW : safeW;
+  const float renderH = hasCrop ? cropH : safeH;
+
+  float scale = 1.0f;
+  if (targetSize > 0) {
+    scale = (float)targetSize / (std::max)(renderW, renderH);
+  } else {
+    // Vector graphics export / clipboard: ensure 4K/2K crystal sharpness.
+    // Scale up so the longest dimension is at least 2048px (or matches current zoom factor).
+    const float maxDim = (std::max)(renderW, renderH);
+    const float minZoomTarget = (std::max)(1.0f, zoomScale);
+    if (maxDim < 2048.0f) {
+      scale = (std::max)(2048.0f / maxDim, minZoomTarget);
+    } else {
+      scale = minZoomTarget;
+    }
+  }
+  const UINT outW = (UINT)(std::max)(1, (int)std::lround(renderW * scale));
+  const UINT outH = (UINT)(std::max)(1, (int)std::lround(renderH * scale));
+
+  // 1. Check if SVG requires WebView2 rendering (complex CSS, foreignObject, web fonts, animations)
+  if (QuickView::OffscreenWebView2::NeedsFallback(std::string_view(reinterpret_cast<const char*>(xmlData), xmlSize))) {
+    std::vector<uint8_t> xmlVec(xmlData, xmlData + xmlSize);
+    int webTarget = (targetSize > 0) ? targetSize : (int)(std::max)(outW, outH);
+    if (SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
+            xmlVec, safeW, safeH, webTarget, pData)) &&
+        pData->isValid) {
+      return S_OK;
+    }
+  }
+
+  // 2. Direct2D WARP Hardware Rasterization
   UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
   D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
   ComPtr<ID3D11Device> d3dDevice;
@@ -4266,7 +4297,7 @@ static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
   if (FAILED(hr))
     return hr;
 
-  HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xmlData.size());
+  HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xmlSize);
   if (!hMem)
     return E_OUTOFMEMORY;
 
@@ -4276,7 +4307,7 @@ static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
     GlobalFree(hMem);
     return E_OUTOFMEMORY;
   }
-  memcpy(mem, xmlData.data(), xmlData.size());
+  memcpy(mem, xmlData, xmlSize);
   GlobalUnlock(hMem);
   hr = CreateStreamOnHGlobal(hMem, TRUE, &stream);
   if (FAILED(hr)) {
@@ -4287,18 +4318,45 @@ static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
   ComPtr<ID2D1SvgDocument> svgDoc;
   hr = d2dContext5->CreateSvgDocument(stream.Get(), D2D1::SizeF(safeW, safeH),
                                       &svgDoc);
-  if (FAILED(hr))
+  if (FAILED(hr)) {
+    // Direct2D SVG creation failed - fallback to WebView2 offscreen rasterizer
+    std::vector<uint8_t> xmlVec(xmlData, xmlData + xmlSize);
+    int webTarget = (targetSize > 0) ? targetSize : (int)(std::max)(outW, outH);
+    if (SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
+            xmlVec, safeW, safeH, webTarget, pData)) &&
+        pData->isValid) {
+      return S_OK;
+    }
     return hr;
+  }
 
   d2dContext5->SetTarget(targetBitmap.Get());
   d2dContext5->BeginDraw();
   d2dContext5->Clear(D2D1::ColorF(0, 0, 0, 0));
-  d2dContext5->SetTransform(
-      D2D1::Matrix3x2F::Scale((float)outW / safeW, (float)outH / safeH));
+
+  if (hasCrop) {
+    // True Vector Sub-Region: Translate to crop origin, then scale to target dimensions
+    d2dContext5->SetTransform(
+        D2D1::Matrix3x2F::Translation(-cropX, -cropY) *
+        D2D1::Matrix3x2F::Scale((float)outW / renderW, (float)outH / renderH));
+  } else {
+    d2dContext5->SetTransform(
+        D2D1::Matrix3x2F::Scale((float)outW / safeW, (float)outH / safeH));
+  }
+
   d2dContext5->DrawSvgDocument(svgDoc.Get());
   hr = d2dContext5->EndDraw();
-  if (FAILED(hr))
+  if (FAILED(hr)) {
+    // Direct2D SVG drawing failed - fallback to WebView2 offscreen rasterizer
+    std::vector<uint8_t> xmlVec(xmlData, xmlData + xmlSize);
+    int webTarget = (targetSize > 0) ? targetSize : (int)(std::max)(outW, outH);
+    if (SUCCEEDED(WebViewThumbService::Instance().RasterizeSvgToThumb(
+            xmlVec, safeW, safeH, webTarget, pData)) &&
+        pData->isValid) {
+      return S_OK;
+    }
     return hr;
+  }
 
   D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
   stagingDesc.BindFlags = 0;
@@ -4334,6 +4392,14 @@ static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
   pData->isValid = true;
   pData->isBlurry = false;
   return S_OK;
+}
+
+static HRESULT RasterizeSvgThumbnail(const std::vector<uint8_t> &xmlData,
+                                     float viewBoxW, float viewBoxH,
+                                     int targetSize,
+                                     CImageLoader::ThumbData *pData) {
+  if (xmlData.empty()) return E_INVALIDARG;
+  return CImageLoader::RasterizeSvgToPixels(xmlData.data(), xmlData.size(), viewBoxW, viewBoxH, targetSize, pData);
 }
 
 HRESULT CImageLoader::LoadThumbnail(LPCWSTR filePath, int targetSize,
@@ -5628,19 +5694,26 @@ HRESULT CImageLoader::LoadJXL(LPCWSTR filePath, IWICBitmap **ppBitmap,
 HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
                               bool forceFullDecode,
                               [[maybe_unused]] ImageMetadata *pMetadata) {
-  // Optimization: Try to load embedded JPEG preview first (FAST)
-  // Fallback: Full RAW decode (SLOW)
-
-  std::pmr::vector<uint8_t> rawBuf(std::pmr::get_default_resource());
-  if (!ReadFileToPMR(filePath, rawBuf, {}))
-    return E_FAIL;
+  if (!filePath || !ppBitmap)
+    return E_INVALIDARG;
 
   LibRaw RawProcessor;
-  if (RawProcessor.open_buffer(rawBuf.data(), rawBuf.size()) != LIBRAW_SUCCESS)
+#ifdef _WIN32
+  if (RawProcessor.open_file(filePath) != LIBRAW_SUCCESS)
     return E_FAIL;
+#else
+  std::string pathUtf8;
+  int len = WideCharToMultiByte(CP_UTF8, 0, filePath, -1, NULL, 0, NULL, NULL);
+  if (len > 0) {
+    pathUtf8.resize(len);
+    WideCharToMultiByte(CP_UTF8, 0, filePath, -1, &pathUtf8[0], len, NULL, NULL);
+    pathUtf8.pop_back();
+  }
+  if (RawProcessor.open_file(pathUtf8.c_str()) != LIBRAW_SUCCESS)
+    return E_FAIL;
+#endif
 
-  // [Fix] Capture RAW orientation early (same mapping as LoadImageUnified RAW
-  // Codec)
+  // [Fix] Capture RAW orientation early (same mapping as LoadImageUnified RAW Codec)
   int flip = RawProcessor.imgdata.sizes.flip;
   int exifOrientation = 1;
   if (flip == 3)
@@ -5665,53 +5738,44 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
 
     if (thumb) {
       if (thumb->type == LIBRAW_IMAGE_JPEG) {
-        // JPEG Thumbnail
-        ComPtr<IWICStream> stream;
-        HRESULT hr = m_wicFactory->CreateStream(&stream);
-        if (SUCCEEDED(hr))
-          hr = stream->InitializeFromMemory(thumb->data, thumb->data_size);
+        // High-compatibility TurboJPEG decompression (Consistent with RawCodec::Load)
+        DecodeContext ctx;
+        ctx.allocator.pfn = [](void *, size_t s) -> uint8_t * {
+          return new (std::nothrow) uint8_t[s];
+        };
+        ctx.freeFunc.pfn = [](void *, uint8_t *p) { delete[] p; };
 
-        ComPtr<IWICBitmapDecoder> decoder;
-        if (SUCCEEDED(hr))
-          hr = m_wicFactory->CreateDecoderFromStream(
-              stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
-
-        ComPtr<IWICBitmapFrameDecode> frame;
-        if (SUCCEEDED(hr))
-          hr = decoder->GetFrame(0, &frame);
-
-        ComPtr<IWICFormatConverter> converter;
-        if (SUCCEEDED(hr))
-          hr = m_wicFactory->CreateFormatConverter(&converter);
-        if (SUCCEEDED(hr))
-          hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
-                                     WICBitmapDitherTypeNone, nullptr, 0.f,
-                                     WICBitmapPaletteTypeMedianCut);
-
-        if (SUCCEEDED(hr)) {
-          hr = m_wicFactory->CreateBitmapFromSource(
-              converter.Get(), WICBitmapCacheOnLoad, ppBitmap);
-        }
-
-        if (SUCCEEDED(hr)) {
-          // [Fix] Embedded JPEG preview is pre-rotated by camera firmware.
-          // Set orientation to 1 to prevent double-rotation in compare mode.
-          g_lastExifOrientation = 1;
-          RawProcessor.dcraw_clear_mem(thumb);
-          return hr; // Success with JPEG Preview!
+        DecodeResult result;
+        HRESULT hr = JPEG::Load(reinterpret_cast<const uint8_t *>(thumb->data),
+                                thumb->data_size, ctx, result);
+        if (SUCCEEDED(hr) && result.pixels && result.width > 0 && result.height > 0) {
+          hr = CreateWICBitmapCopy(
+              result.width, result.height, GUID_WICPixelFormat32bppBGRA,
+              result.stride, (UINT)(result.stride * result.height),
+              result.pixels, ppBitmap);
+          ctx.freeFunc(result.pixels);
+          if (SUCCEEDED(hr)) {
+            g_lastExifOrientation = (result.metadata.ExifOrientation > 1)
+                                        ? result.metadata.ExifOrientation
+                                        : exifOrientation;
+            RawProcessor.dcraw_clear_mem(thumb);
+            return S_OK; // Success with TurboJPEG Embedded Preview!
+          }
+        } else if (result.pixels) {
+          ctx.freeFunc(result.pixels);
         }
       } else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
-        // Bitmap Thumbnail (RGB)
+        // Bitmap Thumbnail (RGB 24bpp -> BGRA 32bpp standalone copy via Google Highway SIMD)
         if (thumb->bits == 8 && thumb->colors == 3) {
-          UINT width = thumb->width;
-          UINT height = thumb->height;
-          UINT stride = width * 3;
-          HRESULT hr = CreateWICBitmapFromMemory(
-              width, height, GUID_WICPixelFormat24bppRGB, stride,
-              thumb->data_size, thumb->data, ppBitmap);
+          const UINT width = thumb->width;
+          const UINT height = thumb->height;
+          const UINT dstStride = width * 4;
+          std::vector<uint8_t> bgraPixels((size_t)dstStride * height);
+          ImageLoaderSimd::ConvertRGBToBGRA(reinterpret_cast<const uint8_t*>(thumb->data), bgraPixels.data(), width, height, dstStride);
+          HRESULT hr = CreateWICBitmapCopy(
+              width, height, GUID_WICPixelFormat32bppBGRA, dstStride,
+              (UINT)bgraPixels.size(), bgraPixels.data(), ppBitmap);
           if (SUCCEEDED(hr)) {
-            // [Fix] Bitmap thumbnails may NOT be pre-rotated.
-            // Preserve orientation so renderer can apply it.
             g_lastExifOrientation = exifOrientation;
             RawProcessor.dcraw_clear_mem(thumb);
             return hr; // Success with Bitmap Preview!
@@ -5722,19 +5786,17 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
     }
   }
 
-  // 2. Fallback: Full Decode (Slow)
-  // Optimization: Disable Auto WB (slow), use Camera WB
+  // 2. Full RAW Decode (LibRaw Demosaic)
   RawProcessor.imgdata.params.use_camera_wb = 1;
-  RawProcessor.imgdata.params.use_auto_wb = 0; // Speed up
-  RawProcessor.imgdata.params.user_qual =
-      2; // 0=Linear(fast), 2=AHD(good), 3=AHD+Interpolation
-  // [Fix] Disable auto-rotation so bitmap stays in sensor orientation.
-  // This matches LoadImageUnified RAW Codec behavior.
-  // Rotation is handled by the renderer using g_lastExifOrientation.
-  RawProcessor.imgdata.params.user_flip = 0;
-
-  // If you want extreme speed at cost of resolution, uncomment:
-  // RawProcessor.imgdata.params.half_size = 1;
+  RawProcessor.imgdata.params.use_auto_wb = 1; // Fallback to Auto-WB if camera WB is missing
+  RawProcessor.imgdata.params.auto_bright_thr = 0.01f; // Standard brightness normalization
+  RawProcessor.imgdata.params.gamm[0] = 1.0 / 2.222; // Standard sRGB Gamma curve
+  RawProcessor.imgdata.params.gamm[1] = 4.5;
+  RawProcessor.imgdata.params.user_qual = 2; // AHD (Standard Quality)
+  RawProcessor.imgdata.params.half_size = 0;
+  RawProcessor.imgdata.params.output_bps = 8; // Guarantee 8-bit output
+  RawProcessor.imgdata.params.output_color = 1; // Guarantee sRGB
+  RawProcessor.imgdata.params.user_flip = 0; // Sensor orientation (UI handles rotation)
 
   if (RawProcessor.unpack() != LIBRAW_SUCCESS)
     return E_FAIL;
@@ -5747,19 +5809,37 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
 
   HRESULT hr = E_FAIL;
 
-  if (image->type == LIBRAW_IMAGE_BITMAP) {
-    if (image->bits == 8 && image->colors == 3) {
-      UINT width = image->width;
-      UINT height = image->height;
-      UINT stride = width * 3;
-      hr = CreateWICBitmapFromMemory(width, height, GUID_WICPixelFormat24bppRGB,
-                                     stride, image->data_size, image->data,
-                                     ppBitmap);
+  if (image->type == LIBRAW_IMAGE_BITMAP && image->colors == 3) {
+    const UINT width = image->width;
+    const UINT height = image->height;
+    const UINT dstStride = width * 4;
+    std::vector<uint8_t> bgraPixels((size_t)dstStride * height);
+    uint8_t* dst = bgraPixels.data();
+
+    if (image->bits == 8) {
+      // Highway SIMD + OpenMP multi-core accelerated conversion
+      ImageLoaderSimd::ConvertRGBToBGRA(reinterpret_cast<const uint8_t*>(image->data), dst, width, height, dstStride);
+    } else if (image->bits == 16) {
+      const uint16_t* src = reinterpret_cast<const uint16_t*>(image->data);
+      for (UINT y = 0; y < height; ++y) {
+        const uint16_t* s = src + (size_t)y * (width * 3);
+        uint8_t* d = dst + (size_t)y * dstStride;
+        for (UINT x = 0; x < width; ++x) {
+          d[x * 4 + 0] = static_cast<uint8_t>(s[x * 3 + 2] >> 8); // B
+          d[x * 4 + 1] = static_cast<uint8_t>(s[x * 3 + 1] >> 8); // G
+          d[x * 4 + 2] = static_cast<uint8_t>(s[x * 3 + 0] >> 8); // R
+          d[x * 4 + 3] = 255;                                     // A
+        }
+      }
     }
+
+    hr = CreateWICBitmapCopy(width, height, GUID_WICPixelFormat32bppBGRA,
+                             dstStride, (UINT)bgraPixels.size(), bgraPixels.data(),
+                             ppBitmap);
   }
 
   if (SUCCEEDED(hr)) {
-    // [Fix] Bitmap is un-rotated (user_flip=0). Store real orientation.
+    // Bitmap is un-rotated (user_flip=0). Store real orientation.
     g_lastExifOrientation = exifOrientation;
   }
 

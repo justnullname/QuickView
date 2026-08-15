@@ -109,6 +109,8 @@ const wchar_t *Context_OpenWith = nullptr;
 const wchar_t *Context_Edit = nullptr;
 const wchar_t *Context_ShowInExplorer = nullptr;
 const wchar_t *Context_OpenFolder = nullptr;
+const wchar_t *Context_CopyPixels = nullptr;
+const wchar_t *Context_CopyFile = nullptr;
 const wchar_t *Context_CopyImage = nullptr;
 const wchar_t *Context_CopyPath = nullptr;
 const wchar_t *Context_Print = nullptr;
@@ -224,6 +226,9 @@ const wchar_t *Settings_Option_LoupeShapeCircle = nullptr;
 const wchar_t *Settings_Tooltip_LoupeHotkey = nullptr;
 const wchar_t *Settings_Tooltip_CropModeHotkey = nullptr;
 const wchar_t *OSD_Copied = nullptr;
+const wchar_t *OSD_PixelsCopied = nullptr;
+const wchar_t *OSD_PixelsExtracting = nullptr;
+const wchar_t *OSD_FileCopied = nullptr;
 const wchar_t *OSD_CoordinatesCopied = nullptr;
 const wchar_t *OSD_FilePathCopied = nullptr;
 const wchar_t *OSD_Zoom100 = nullptr;
@@ -683,6 +688,8 @@ struct LanguageTable {
     const wchar_t *Context_Edit;
     const wchar_t *Context_ShowInExplorer;
     const wchar_t *Context_OpenFolder;
+    const wchar_t *Context_CopyPixels;
+    const wchar_t *Context_CopyFile;
     const wchar_t *Context_CopyImage;
     const wchar_t *Context_CopyPath;
     const wchar_t *Context_Print;
@@ -797,6 +804,9 @@ struct LanguageTable {
     const wchar_t *Settings_Label_ShowDirtyRect;
     const wchar_t *Settings_Tooltip_ShowDirtyRect;
     const wchar_t *OSD_Copied;
+    const wchar_t *OSD_PixelsCopied;
+    const wchar_t *OSD_PixelsExtracting;
+    const wchar_t *OSD_FileCopied;
     const wchar_t *OSD_CoordinatesCopied;
     const wchar_t *OSD_FilePathCopied;
     const wchar_t *OSD_Zoom100;
@@ -1255,7 +1265,9 @@ static const LanguageTable Table_EN = {
     L"Edit\tE", // Context_Edit
     L"Show in Explorer", // Context_ShowInExplorer
     L"Open Folder", // Context_OpenFolder
-    L"Copy Image\tCtrl+C", // Context_CopyImage
+    L"Copy Pixels\tCtrl+C", // Context_CopyPixels
+    L"Copy File\tCtrl+Shift+C", // Context_CopyFile
+    L"Copy Pixels\tCtrl+C", // Context_CopyImage
     L"Copy Path\tCtrl+Alt+C", // Context_CopyPath
     L"Print\tCtrl+P", // Context_Print
     L"Rotate 90\x00B0 CW\tR", // Context_RotateCW
@@ -1369,6 +1381,9 @@ static const LanguageTable Table_EN = {
     L"Show update regions button in animation", // Settings_Label_ShowDirtyRect
     L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.", // Settings_Tooltip_ShowDirtyRect
     L"Copied!", // OSD_Copied
+    L"Pixels copied to clipboard!", // OSD_PixelsCopied
+    L"Extracting raw pixels...", // OSD_PixelsExtracting
+    L"File copied to clipboard!", // OSD_FileCopied
     L"Coordinates copied!", // OSD_CoordinatesCopied
     L"File path copied!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
@@ -1827,7 +1842,9 @@ static const LanguageTable Table_CN = {
     L"编辑\tE", // Context_Edit
     L"在资源管理器中显示", // Context_ShowInExplorer
     L"打开文件夹", // Context_OpenFolder
-    L"复制图像\tCtrl+C", // Context_CopyImage
+    L"复制像素\tCtrl+C", // Context_CopyPixels
+    L"复制文件\tCtrl+Shift+C", // Context_CopyFile
+    L"复制像素\tCtrl+C", // Context_CopyImage
     L"复制路径\tCtrl+Alt+C", // Context_CopyPath
     L"打印\tCtrl+P", // Context_Print
     L"顺时针旋转 90\x00B0\tR", // Context_RotateCW
@@ -1941,6 +1958,9 @@ static const LanguageTable Table_CN = {
     L"动画模式下显示重绘区域预览按钮", // Settings_Label_ShowDirtyRect
     L"在播放动画时显示用于调试重绘区域的工具按钮，以便可视化哪些部分正在更新。", // Settings_Tooltip_ShowDirtyRect
     L"已复制!", // OSD_Copied
+    L"像素已复制到剪贴板!", // OSD_PixelsCopied
+    L"正在提取原片像素...", // OSD_PixelsExtracting
+    L"文件已复制到剪贴板!", // OSD_FileCopied
     L"坐标已复制!", // OSD_CoordinatesCopied
     L"文件路径已复制!", // OSD_FilePathCopied
     L"缩放: 100%", // OSD_Zoom100
@@ -2399,7 +2419,9 @@ static const LanguageTable Table_TW = {
     L"編輯\tE", // Context_Edit
     L"在檔案總管中顯示", // Context_ShowInExplorer
     L"開啟資料夾", // Context_OpenFolder
-    L"複製圖像\tCtrl+C", // Context_CopyImage
+    L"複製像素\tCtrl+C", // Context_CopyPixels
+    L"複製檔案\tCtrl+Shift+C", // Context_CopyFile
+    L"複製像素\tCtrl+C", // Context_CopyImage
     L"複製路徑\tCtrl+Alt+C", // Context_CopyPath
     L"列印\tCtrl+P", // Context_Print
     L"順時針旋轉 90\x00B0\tR", // Context_RotateCW
@@ -2513,6 +2535,9 @@ static const LanguageTable Table_TW = {
     L"動畫模式下顯示髒矩形按鈕", // Settings_Label_ShowDirtyRect
     L"在動畫模式工具欄顯示髒矩形調試按鈕，用於觀察局部刷新區域。", // Settings_Tooltip_ShowDirtyRect
     L"已複製!", // OSD_Copied
+    L"像素已複製到剪貼簿!", // OSD_PixelsCopied
+    L"正在擷取原圖像素...", // OSD_PixelsExtracting
+    L"檔案已複製到剪貼簿!", // OSD_FileCopied
     L"座標已複製!", // OSD_CoordinatesCopied
     L"檔案路徑已複製!", // OSD_FilePathCopied
     L"縮放: 100%", // OSD_Zoom100
@@ -2971,7 +2996,9 @@ static const LanguageTable Table_JA = {
     L"編集\tE", // Context_Edit
     L"エクスプローラーで表示", // Context_ShowInExplorer
     L"フォルダーを開く", // Context_OpenFolder
-    L"画像をコピー\tCtrl+C", // Context_CopyImage
+    L"ピクセルをコピー\tCtrl+C", // Context_CopyPixels
+    L"ファイルをコピー\tCtrl+Shift+C", // Context_CopyFile
+    L"ピクセルをコピー\tCtrl+C", // Context_CopyImage
     L"パスをコピー\tCtrl+Alt+C", // Context_CopyPath
     L"印刷\tCtrl+P", // Context_Print
     L"右に90\x00B0回転\tR", // Context_RotateCW
@@ -3085,6 +3112,9 @@ static const LanguageTable Table_JA = {
     L"アニメーションモードで更新領域ボタン表示", // Settings_Label_ShowDirtyRect
     L"フレームのどの部分が再描画されているかを視覚化するため、アニメーションモードで更新領域のデバッグボタンを表示します。", // Settings_Tooltip_ShowDirtyRect
     L"コピーしました！", // OSD_Copied
+    L"ピクセルをコピーしました！", // OSD_PixelsCopied
+    L"生ピクセルを抽出中...", // OSD_PixelsExtracting
+    L"ファイルをコピーしました！", // OSD_FileCopied
     L"座標をコピーしました！", // OSD_CoordinatesCopied
     L"ファイルパスをコピーしました！", // OSD_FilePathCopied
     L"ズーム : 100%", // OSD_Zoom100
@@ -3543,7 +3573,9 @@ static const LanguageTable Table_RU = {
     L"Изменить\tE", // Context_Edit
     L"Показать в Проводнике", // Context_ShowInExplorer
     L"Открыть папку", // Context_OpenFolder
-    L"Скопировать изображение\tCtrl+C", // Context_CopyImage
+    L"Скопировать пиксели\tCtrl+C", // Context_CopyPixels
+    L"Скопировать файл\tCtrl+Shift+C", // Context_CopyFile
+    L"Скопировать пиксели\tCtrl+C", // Context_CopyImage
     L"Скопировать путь\tCtrl+Alt+C", // Context_CopyPath
     L"Печать\tCtrl+P", // Context_Print
     L"Повернуть на 90\x00B0 вправо\tR", // Context_RotateCW
@@ -3657,6 +3689,9 @@ static const LanguageTable Table_RU = {
     L"Кнопка обновляемых областей в анимации", // Settings_Label_ShowDirtyRect
     L"Показывать кнопку отладки отображаемой области на панели инструментов анимации для отображения обновляемых участков.", // Settings_Tooltip_ShowDirtyRect
     L"Скопировано!", // OSD_Copied
+    L"Пиксели скопированы в буфер обмена!", // OSD_PixelsCopied
+    L"Извлечение пикселей...", // OSD_PixelsExtracting
+    L"Файл скопирован в буфер обмена!", // OSD_FileCopied
     L"Координаты скопированы!", // OSD_CoordinatesCopied
     L"Путь к файлу скопирован!", // OSD_FilePathCopied
     L"Масштаб: 100%", // OSD_Zoom100
@@ -4115,7 +4150,9 @@ static const LanguageTable Table_DE = {
     L"Bearbeiten\tE", // Context_Edit
     L"Im Explorer anzeigen", // Context_ShowInExplorer
     L"Ordner öffnen", // Context_OpenFolder
-    L"Bild kopieren\tStrg+C", // Context_CopyImage
+    L"Pixel kopieren\tStrg+C", // Context_CopyPixels
+    L"Datei kopieren\tStrg+Umschalt+C", // Context_CopyFile
+    L"Pixel kopieren\tStrg+C", // Context_CopyImage
     L"Pfad kopieren\tStrg+Alt+C", // Context_CopyPath
     L"Drucken\tStrg+P", // Context_Print
     L"90\x00B0 im Uhrzeigersinn\tR", // Context_RotateCW
@@ -4229,6 +4266,9 @@ static const LanguageTable Table_DE = {
     L"Dirty-Rect-Taste in Animation anzeigen", // Settings_Label_ShowDirtyRect
     L"Debug-Schaltfläche für Dirty Rects in der Animations-Symbolleiste anzeigen.", // Settings_Tooltip_ShowDirtyRect
     L"Kopiert!", // OSD_Copied
+    L"Pixel in die Zwischenablage kopiert!", // OSD_PixelsCopied
+    L"Rohpixel werden extrahiert...", // OSD_PixelsExtracting
+    L"Datei in die Zwischenablage kopiert!", // OSD_FileCopied
     L"Koordinaten kopiert!", // OSD_CoordinatesCopied
     L"Dateipfad kopiert!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
@@ -4687,7 +4727,9 @@ static const LanguageTable Table_ES = {
     L"Editar\tE", // Context_Edit
     L"Mostrar en Explorador", // Context_ShowInExplorer
     L"Abrir carpeta", // Context_OpenFolder
-    L"Copiar imagen\tCtrl+C", // Context_CopyImage
+    L"Copiar píxeles\tCtrl+C", // Context_CopyPixels
+    L"Copiar archivo\tCtrl+Shift+C", // Context_CopyFile
+    L"Copiar píxeles\tCtrl+C", // Context_CopyImage
     L"Copiar ruta\tCtrl+Alt+C", // Context_CopyPath
     L"Imprimir\tCtrl+P", // Context_Print
     L"Girar 90\x00B0 horario\tR", // Context_RotateCW
@@ -4801,6 +4843,9 @@ static const LanguageTable Table_ES = {
     L"Mostrar botón de regiones en animación", // Settings_Label_ShowDirtyRect
     L"Mostrar botón de depuración de Dirty Rect en la barra de herramientas de animación.", // Settings_Tooltip_ShowDirtyRect
     L"¡Copiado!", // OSD_Copied
+    L"¡Píxeles copiados al portapapeles!", // OSD_PixelsCopied
+    L"Extrayendo píxeles...", // OSD_PixelsExtracting
+    L"¡Archivo copiado al portapapeles!", // OSD_FileCopied
     L"¡Coordenadas copiadas!", // OSD_CoordinatesCopied
     L"¡Ruta del archivo copiada!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
@@ -5259,7 +5304,9 @@ static const LanguageTable Table_FR = {
     L"Edit\tE", // Context_Edit
     L"Show in Explorer", // Context_ShowInExplorer
     L"Open Folder", // Context_OpenFolder
-    L"Copy Image\tCtrl+C", // Context_CopyImage
+    L"Copier les pixels\tCtrl+C", // Context_CopyPixels
+    L"Copier le fichier\tCtrl+Shift+C", // Context_CopyFile
+    L"Copier les pixels\tCtrl+C", // Context_CopyImage
     L"Copy Path\tCtrl+Alt+C", // Context_CopyPath
     L"Print\tCtrl+P", // Context_Print
     L"Rotate 90\x00B0 CW\tR", // Context_RotateCW
@@ -5373,6 +5420,9 @@ static const LanguageTable Table_FR = {
     L"Show update regions button in animation", // Settings_Label_ShowDirtyRect
     L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.", // Settings_Tooltip_ShowDirtyRect
     L"Copied!", // OSD_Copied
+    L"Pixels copiés dans le presse-papiers !", // OSD_PixelsCopied
+    L"Extraction des pixels...", // OSD_PixelsExtracting
+    L"Fichier copié dans le presse-papiers !", // OSD_FileCopied
     L"Coordinates copied!", // OSD_CoordinatesCopied
     L"File path copied!", // OSD_FilePathCopied
     L"Zoom: 100%", // OSD_Zoom100
@@ -5831,6 +5881,8 @@ void Apply(const LanguageTable& t) {
   Context_Edit = t.Context_Edit;
   Context_ShowInExplorer = t.Context_ShowInExplorer;
   Context_OpenFolder = t.Context_OpenFolder;
+  Context_CopyPixels = t.Context_CopyPixels;
+  Context_CopyFile = t.Context_CopyFile;
   Context_CopyImage = t.Context_CopyImage;
   Context_CopyPath = t.Context_CopyPath;
   Context_Print = t.Context_Print;
@@ -5950,6 +6002,9 @@ void Apply(const LanguageTable& t) {
   Settings_Tooltip_LoupeHotkey = t.Settings_Tooltip_LoupeHotkey;
   Settings_Tooltip_CropModeHotkey = t.Settings_Tooltip_CropModeHotkey;
   OSD_Copied = t.OSD_Copied;
+  OSD_PixelsCopied = t.OSD_PixelsCopied;
+  OSD_PixelsExtracting = t.OSD_PixelsExtracting;
+  OSD_FileCopied = t.OSD_FileCopied;
   OSD_CoordinatesCopied = t.OSD_CoordinatesCopied;
   OSD_FilePathCopied = t.OSD_FilePathCopied;
   OSD_Zoom100 = t.OSD_Zoom100;
@@ -6727,8 +6782,11 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::DeleteFile:
         raw = AppStrings::Context_Delete;
         break;
-    case HotkeyAction::CopyImage:
-        raw = AppStrings::Context_CopyImage;
+    case HotkeyAction::CopyPixels:
+        raw = AppStrings::Context_CopyPixels;
+        break;
+    case HotkeyAction::CopyFileItem:
+        raw = AppStrings::Context_CopyFile;
         break;
     case HotkeyAction::CopyPath:
         raw = AppStrings::Context_CopyPath;

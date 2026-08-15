@@ -57,3 +57,16 @@ TEST(HotkeyTest, KeyComboToStringConversion) {
     EXPECT_EQ(KeyComboToString(KeyCombo{ VK_XBUTTON1, 1 }), L"Ctrl+XButton1");
     EXPECT_EQ(KeyComboToString(KeyCombo{ VK_XBUTTON2, 0 }), L"XButton2");
 }
+
+TEST(HotkeyTest, HotkeyActionToStringAndParsing) {
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::CopyPixels), L"CopyPixels");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::CopyFileItem), L"CopyFile");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::CopyPath), L"CopyPath");
+
+    EXPECT_EQ(StringToHotkeyAction(L"CopyPixels"), HotkeyAction::CopyPixels);
+    EXPECT_EQ(StringToHotkeyAction(L"CopyImage"), HotkeyAction::CopyPixels); // Backward compatibility
+    EXPECT_EQ(StringToHotkeyAction(L"CopyFile"), HotkeyAction::CopyFileItem);
+    EXPECT_EQ(StringToHotkeyAction(L"CopyFileItem"), HotkeyAction::CopyFileItem);
+    EXPECT_EQ(StringToHotkeyAction(L"CopyPath"), HotkeyAction::CopyPath);
+}
+

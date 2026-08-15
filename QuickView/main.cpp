@@ -305,6 +305,7 @@ static bool g_animPlaying = true;
 static int g_animInspectorFrame = -1; // -1 means playing normally
 static bool g_showAnimDirtyRect = false; // [v10.5] Dirty rect debug overlay
 OSDState g_osd; // Removed static, explicitly Global
+QuickView::PendingClipboardSnapshot g_pendingClipboard;
 bool g_pendingRegistryCheck = false;
 static const UINT_PTR TIMER_ID_REGISTRY_CHECK = 993;
 
@@ -331,11 +332,11 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::FlipH, KeyCombo{ 'H', 0 }, KeyCombo{ 'H', 0 } },
     HotkeyBinding{ HotkeyAction::FlipV, KeyCombo{ 'V', 0 }, KeyCombo{ 'V', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleAnimation, KeyCombo{ VK_SPACE, 0 }, KeyCombo{ VK_SPACE, 0 } },
-    HotkeyBinding{ HotkeyAction::AnimNextFrame, KeyCombo{ VK_RIGHT, 4 }, KeyCombo{ VK_RIGHT, 4 } }, // Alt + Right
-    HotkeyBinding{ HotkeyAction::AnimPrevFrame, KeyCombo{ VK_LEFT, 4 }, KeyCombo{ VK_LEFT, 4 } },   // Alt + Left
-    HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'T', 0 }, KeyCombo{ 'T', 0 } },
-    HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ VK_TAB, 0 }, KeyCombo{ VK_TAB, 0 } },
-    HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
+    HotkeyBinding{ HotkeyAction::AnimNextFrame, KeyCombo{ 'N', 0 }, KeyCombo{ 'N', 0 } },
+    HotkeyBinding{ HotkeyAction::AnimPrevFrame, KeyCombo{ 'P', 0 }, KeyCombo{ 'P', 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'G', 0 }, KeyCombo{ 'G', 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'E', 1 }, KeyCombo{ 'E', 1 } }, // Ctrl + E
     HotkeyBinding{ HotkeyAction::ToggleMinimap, KeyCombo{ 'M', 0 }, KeyCombo{ 'M', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleFullscreen, KeyCombo{ VK_F11, 0 }, KeyCombo{ VK_F11, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleSpan, KeyCombo{ VK_F11, 1 }, KeyCombo{ VK_F11, 1 } }, // Ctrl + F11
@@ -345,7 +346,8 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::EditFile, KeyCombo{ 'E', 0 }, KeyCombo{ 'E', 0 } },
     HotkeyBinding{ HotkeyAction::RenameFile, KeyCombo{ VK_F2, 0 }, KeyCombo{ VK_F2, 0 } },
     HotkeyBinding{ HotkeyAction::DeleteFile, KeyCombo{ VK_DELETE, 0 }, KeyCombo{ VK_DELETE, 0 } },
-    HotkeyBinding{ HotkeyAction::CopyImage, KeyCombo{ 'C', 1 }, KeyCombo{ 'C', 1 } }, // Ctrl + C
+    HotkeyBinding{ HotkeyAction::CopyPixels, KeyCombo{ 'C', 1 }, KeyCombo{ 'C', 1 } }, // Ctrl + C
+    HotkeyBinding{ HotkeyAction::CopyFileItem, KeyCombo{ 'C', 3 }, KeyCombo{ 'C', 3 } },   // Ctrl + Shift + C (1 | 2 = 3)
     HotkeyBinding{ HotkeyAction::CopyPath, KeyCombo{ 'C', 5 }, KeyCombo{ 'C', 5 } },  // Ctrl + Alt + C (1 | 4 = 5)
     HotkeyBinding{ HotkeyAction::ShowInExplorer, KeyCombo{ VK_RETURN, 1 }, KeyCombo{ VK_RETURN, 1 } }, // Ctrl + Enter
     HotkeyBinding{ HotkeyAction::ToggleCompare, KeyCombo{ VK_F6, 0 }, KeyCombo{ VK_F6, 0 } },
@@ -12390,40 +12392,101 @@ SKIP_EDGE_NAV:;
             }
             break;
         }
-        case IDM_COPY_IMAGE: {
+        case IDM_COPY_PIXELS: {
+            std::wstring targetPath = !contextPath.empty() ? contextPath : (!GetPaneContext(PaneSlot::Primary).path.empty() ? GetPaneContext(PaneSlot::Primary).path : g_imagePath);
+            const auto& pane = GetPaneContext(PaneSlot::Primary);
+
+            QuickView::ExportOptions opts;
+            opts.InputPath = targetPath;
+            int baseExif = (g_renderExifOrientation >= 1 && g_renderExifOrientation <= 8)
+                           ? g_renderExifOrientation
+                           : (pane.metadata.ExifOrientation >= 1 && pane.metadata.ExifOrientation <= 8
+                              ? pane.metadata.ExifOrientation
+                              : pane.view.ExifOrientation);
+            int effExif = GetEffectiveExifOrientation(baseExif, pane.editState);
+            int rot = 0;
+            bool flipH = false;
+            bool flipV = false;
+            switch (effExif) {
+                case 1: rot = 0;   flipH = false; flipV = false; break;
+                case 2: rot = 0;   flipH = true;  flipV = false; break;
+                case 3: rot = 180; flipH = false; flipV = false; break;
+                case 4: rot = 180; flipH = true;  flipV = false; break;
+                case 5: rot = 270; flipH = true;  flipV = false; break;
+                case 6: rot = 90;  flipH = false; flipV = false; break;
+                case 7: rot = 90;  flipH = true;  flipV = false; break;
+                case 8: rot = 270; flipH = false; flipV = false; break;
+                default: rot = 0;  break;
+            }
+
+            opts.Rotation = rot;
+            opts.FlipH = flipH;
+            opts.FlipV = flipV;
+            opts.RawForceFullDecode = g_runtime.ForceRawDecode;
+
             if (g_cropState.IsActive) {
-                QuickView::ExportOptions opts;
-                opts.InputPath = g_imagePath;
                 opts.CropX = (int)g_cropState.CropLeft;
                 opts.CropY = (int)g_cropState.CropTop;
                 opts.CropWidth = (int)(g_cropState.CropRight - g_cropState.CropLeft);
                 opts.CropHeight = (int)(g_cropState.CropBottom - g_cropState.CropTop);
-                auto res = QuickView::ImageExporter::CopyToClipboard(opts, hwnd);
-                if (res.has_value()) {
-                    g_osd.Show(hwnd, AppStrings::OSD_CropCopied, true);
-                }
-                break;
+            } else if (pane.editState.HasCrop) {
+                opts.CropX = pane.editState.CropLeft;
+                opts.CropY = pane.editState.CropTop;
+                opts.CropWidth = pane.editState.CropRight - pane.editState.CropLeft;
+                opts.CropHeight = pane.editState.CropBottom - pane.editState.CropTop;
             }
+
+            opts.DisplayZoom = (std::max)(1.0f, pane.view.Zoom);
+
+            if (pane.resource.animator) {
+                extern std::mutex g_animatorMutex;
+                std::lock_guard<std::mutex> lock(g_animatorMutex);
+                opts.SourceFrame = pane.resource.animator->SeekToFrame(pane.resource.frameMeta.index);
+            }
+
+            g_pendingClipboard.filePath = targetPath;
+            g_pendingClipboard.options = opts;
+            g_pendingClipboard.memoryFrame = opts.SourceFrame;
+            g_pendingClipboard.isValid = (!targetPath.empty() || opts.SourceFrame != nullptr);
+
+            if (g_pendingClipboard.isValid) {
+                auto res = QuickView::ImageExporter::SetupDelayedClipboard(hwnd, g_pendingClipboard);
+                if (res.has_value()) {
+                    bool isHeavy = (QuickView::IsRawPath(targetPath) && opts.RawForceFullDecode) ||
+                                   pane.metadata.Width >= 8192 ||
+                                   pane.metadata.Height >= 8192 ||
+                                   pane.resource.isWebView;
+                    if (isHeavy) {
+                        g_osd.Show(hwnd, AppStrings::OSD_PixelsExtracting, false, false, D2D1::ColorF(0.4f, 0.8f, 1.0f), OSDPosition::Bottom, 60000);
+                    } else {
+                        g_osd.Show(hwnd, g_cropState.IsActive ? AppStrings::OSD_CropCopied : AppStrings::OSD_PixelsCopied, false);
+                    }
+                    RequestRepaint(PaintLayer::Dynamic);
+                }
+            }
+            break;
+        }
+        case IDM_COPY_FILE: {
             if (!CheckUnsavedChanges(hwnd)) break;
-            // Copy file to clipboard (can paste in Explorer or other apps)
-            if (!contextPath.empty() && OpenClipboard(hwnd)) {
+            std::wstring targetPath = !contextPath.empty() ? contextPath : (!GetPaneContext(PaneSlot::Primary).path.empty() ? GetPaneContext(PaneSlot::Primary).path : g_imagePath);
+            if (!targetPath.empty() && OpenClipboard(hwnd)) {
                 EmptyClipboard();
                 
                 // CF_HDROP format for file copy
-                size_t pathLen = (contextPath.length() + 1) * sizeof(wchar_t);
+                size_t pathLen = (targetPath.length() + 1) * sizeof(wchar_t);
                 size_t totalSize = sizeof(DROPFILES) + pathLen + sizeof(wchar_t); // Extra null for double-null terminator
                 HGLOBAL hDrop = GlobalAlloc(GHND, totalSize);
                 if (hDrop) {
                     DROPFILES* df = (DROPFILES*)GlobalLock(hDrop);
                     df->pFiles = sizeof(DROPFILES);
                     df->fWide = TRUE;
-                    memcpy((char*)df + sizeof(DROPFILES), contextPath.c_str(), pathLen);
+                    memcpy((char*)df + sizeof(DROPFILES), targetPath.c_str(), pathLen);
                     GlobalUnlock(hDrop);
                     SetClipboardData(CF_HDROP, hDrop);
                 }
                 
                 CloseClipboard();
-                g_osd.Show(hwnd, AppStrings::OSD_Copied, false);
+                g_osd.Show(hwnd, AppStrings::OSD_FileCopied, false);
                 RequestRepaint(PaintLayer::Dynamic);
             }
             break;
@@ -13291,6 +13354,41 @@ SKIP_EDGE_NAV:;
         // TODO: Implement other menu commands
         default:
             break;
+        }
+        return 0;
+    }
+
+    case WM_CLIPBOARD_PRERENDER_READY: {
+        g_osd.Show(hwnd, g_cropState.IsActive ? AppStrings::OSD_CropCopied : AppStrings::OSD_PixelsCopied, false, false, D2D1::ColorF(D2D1::ColorF::White), OSDPosition::Bottom, 1500);
+        RequestRepaint(PaintLayer::Dynamic);
+        return 0;
+    }
+
+    case WM_RENDERFORMAT: {
+        UINT uFormat = static_cast<UINT>(wParam);
+        if (g_pendingClipboard.isValid) {
+            HGLOBAL hData = QuickView::ImageExporter::RenderClipboardFormat(uFormat, g_pendingClipboard);
+            if (hData) {
+                SetClipboardData(uFormat, hData);
+            }
+        }
+        return 0;
+    }
+
+    case WM_RENDERALLFORMATS: {
+        if (g_pendingClipboard.isValid) {
+            if (OpenClipboard(hwnd)) {
+                QuickView::ImageExporter::RenderAllClipboardFormats(hwnd, g_pendingClipboard);
+                CloseClipboard();
+            }
+        }
+        return 0;
+    }
+
+    case WM_DESTROYCLIPBOARD: {
+        if (!QuickView::g_isSettingUpClipboard) {
+            QuickView::ImageExporter::CancelPreRendering();
+            g_pendingClipboard = QuickView::PendingClipboardSnapshot{};
         }
         return 0;
     }
@@ -16889,9 +16987,14 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
         return true;
 
-    case HotkeyAction::CopyImage:
+    case HotkeyAction::CopyPixels:
         if (IsCompareModeActive()) AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().Compare.activePane;
-        SendMessage(hwnd, WM_COMMAND, IDM_COPY_IMAGE, 0);
+        SendMessage(hwnd, WM_COMMAND, IDM_COPY_PIXELS, 0);
+        return true;
+
+    case HotkeyAction::CopyFileItem:
+        if (IsCompareModeActive()) AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().Compare.activePane;
+        SendMessage(hwnd, WM_COMMAND, IDM_COPY_FILE, 0);
         return true;
 
     case HotkeyAction::CopyPath:

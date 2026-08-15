@@ -5,6 +5,8 @@
 #include <wrl/client.h>
 #include <expected>
 
+#define WM_CLIPBOARD_PRERENDER_READY (WM_USER + 102)
+
 namespace QuickView {
 
 struct ExportOptions {
@@ -32,11 +34,25 @@ struct ExportOptions {
     bool FlipH = false;
     bool FlipV = false;
 
+    // Display zoom for true vector crop rasterization
+    float DisplayZoom = 1.0f;
+    // RAW decode mode (false = smart embedded JPEG preview ~10ms; true = full demosaic)
+    bool RawForceFullDecode = false;
+
     // Metadata & ICC Profile embedding
     bool PreserveMetadata = true; // Copy EXIF / IPTC / XMP metadata blocks
     bool EmbedIcc = true;
     std::wstring IccProfilePath;
     std::vector<uint8_t> CustomIccData;
+    // Optional in-memory source frame (e.g. for animations or memory bitmaps)
+    std::shared_ptr<struct RawImageFrame> SourceFrame = nullptr;
+};
+
+struct PendingClipboardSnapshot {
+    std::wstring filePath;
+    ExportOptions options;
+    std::shared_ptr<struct RawImageFrame> memoryFrame = nullptr;
+    bool isValid = false;
 };
 
 struct ExportFormatDesc {
@@ -55,7 +71,14 @@ public:
     // Exports the cropped and scaled image to the specified path
     static std::expected<void, std::wstring> Export(const ExportOptions& options);
     
-    // Copies the cropped and scaled image to the clipboard
+    // Delayed Rendering Windows Clipboard API (0ms latency on copy)
+    static UINT GetPngClipboardFormat();
+    static std::expected<void, std::wstring> SetupDelayedClipboard(HWND hwnd, const PendingClipboardSnapshot& snapshot);
+    static HGLOBAL RenderClipboardFormat(UINT uFormat, const PendingClipboardSnapshot& snapshot);
+    static void RenderAllClipboardFormats(HWND hwnd, const PendingClipboardSnapshot& snapshot);
+    static void CancelPreRendering();
+
+    // Direct synchronous copy fallback
     static std::expected<void, std::wstring> CopyToClipboard(const ExportOptions& options, HWND hwnd);
 
     // Asynchronously or synchronously estimates output file size in bytes
@@ -69,7 +92,11 @@ private:
                                      Microsoft::WRL::ComPtr<IWICImagingFactory>& factory,
                                      Microsoft::WRL::ComPtr<IWICColorContext>& outColorContext,
                                      Microsoft::WRL::ComPtr<IWICBitmapFrameDecode>& outFrameDecode);
+    static HGLOBAL RenderClipboardFormatDirect(UINT uFormat, const PendingClipboardSnapshot& snapshot);
+    static void RenderClipboardDual(const PendingClipboardSnapshot& snapshot, HGLOBAL& outPng, HGLOBAL& outDib);
     static GUID GetContainerFormatFromExtension(const wchar_t* ext);
 };
+
+extern bool g_isSettingUpClipboard;
 
 } // namespace QuickView

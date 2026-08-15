@@ -193,8 +193,9 @@ enum class HotkeyAction : uint8_t {
     EditFile,          // Edit with External Editor
     RenameFile,        // Rename File Dialog
     DeleteFile,        // Delete File Dialog
-    CopyImage,         // Copy Image to Clipboard
-    CopyPath,          // Copy Path to Clipboard
+    CopyPixels,        // Copy Pixels to Clipboard (Ctrl+C)
+    CopyFileItem,      // Copy File to Clipboard (Ctrl+Shift+C)
+    CopyPath,          // Copy Path to Clipboard (Ctrl+Alt+C)
     ShowInExplorer,    // Show in File Explorer
     ToggleCompare,     // Toggle Compare Mode
     ComparePair,       // Compare a pair: rendered vs RAW side by side
@@ -255,7 +256,8 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::EditFile: return L"EditFile";
         case HotkeyAction::RenameFile: return L"RenameFile";
         case HotkeyAction::DeleteFile: return L"DeleteFile";
-        case HotkeyAction::CopyImage: return L"CopyImage";
+        case HotkeyAction::CopyPixels: return L"CopyPixels";
+        case HotkeyAction::CopyFileItem: return L"CopyFile";
         case HotkeyAction::CopyPath: return L"CopyPath";
         case HotkeyAction::ShowInExplorer: return L"ShowInExplorer";
         case HotkeyAction::ToggleCompare: return L"ToggleCompare";
@@ -315,7 +317,8 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"EditFile") return HotkeyAction::EditFile;
     if (sv == L"RenameFile") return HotkeyAction::RenameFile;
     if (sv == L"DeleteFile") return HotkeyAction::DeleteFile;
-    if (sv == L"CopyImage") return HotkeyAction::CopyImage;
+    if (sv == L"CopyPixels" || sv == L"CopyImage") return HotkeyAction::CopyPixels;
+    if (sv == L"CopyFile" || sv == L"CopyFileItem") return HotkeyAction::CopyFileItem;
     if (sv == L"CopyPath") return HotkeyAction::CopyPath;
     if (sv == L"ShowInExplorer") return HotkeyAction::ShowInExplorer;
     if (sv == L"ToggleCompare") return HotkeyAction::ToggleCompare;

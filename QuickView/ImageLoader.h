@@ -441,6 +441,9 @@ public:
   HRESULT LoadThumbnail(LPCWSTR filePath, int targetSize, ThumbData *pData,
                         bool allowSlow = true);
 
+  // Direct RAW Loader API
+  HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap, bool forceFullDecode, ImageMetadata* pMetadata = nullptr); // libraw
+
   // [JXL Global Runner] Global thread pool singleton to avoid creation overhead for each decode
   static void *GetJxlRunner();
   // Public Specialized Loaders (needed by helpers)
@@ -454,6 +457,14 @@ public:
                                      ImageMetadata *pMetadata = nullptr);
 
   static void ReleaseJxlRunner();
+
+  static HRESULT RasterizeSvgToPixels(const uint8_t *xmlData, size_t xmlSize,
+                                      float viewBoxW, float viewBoxH,
+                                      int targetSize,
+                                      ThumbData *pData,
+                                      float cropX = 0.0f, float cropY = 0.0f,
+                                      float cropW = 0.0f, float cropH = 0.0f,
+                                      float zoomScale = 1.0f);
 
 private:
   HRESULT LoadImageUnifiedInternal(LPCWSTR filePath,
@@ -484,7 +495,6 @@ private:
   HRESULT LoadWebP(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr); // libwebp
   HRESULT LoadAVIF(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr); // libavif + dav1d
   HRESULT LoadJXL(LPCWSTR filePath, IWICBitmap **ppBitmap, ImageMetadata* pMetadata = nullptr);  // libjxl
-  HRESULT LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap, bool forceFullDecode, ImageMetadata* pMetadata = nullptr); // libraw
 
   // Wuffs (Google's memory-safe decoder) - Ultimate Performance
   // [v4.0] Cancellation Support

@@ -74,7 +74,9 @@ namespace AppStrings {
     extern const wchar_t* Context_Edit;
     extern const wchar_t* Context_ShowInExplorer;
     extern const wchar_t* Context_OpenFolder;
-    extern const wchar_t* Context_CopyImage;
+    extern const wchar_t* Context_CopyPixels;
+    extern const wchar_t* Context_CopyFile;
+    extern const wchar_t* Context_CopyImage; // Alias for backward compatibility
     extern const wchar_t* Context_CopyPath;
     extern const wchar_t* Context_Print;
     extern const wchar_t* Context_RotateCW;
@@ -188,6 +190,9 @@ namespace AppStrings {
 
     // OSD Messages
     extern const wchar_t* OSD_Copied;
+    extern const wchar_t* OSD_PixelsCopied;
+    extern const wchar_t* OSD_PixelsExtracting;
+    extern const wchar_t* OSD_FileCopied;
     extern const wchar_t* OSD_CoordinatesCopied;
     extern const wchar_t* OSD_FilePathCopied;
     extern const wchar_t* OSD_Zoom100;

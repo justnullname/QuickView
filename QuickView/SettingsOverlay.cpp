@@ -2074,7 +2074,8 @@ void SettingsOverlay::BuildMenu() {
         item.type = OptionType::HotkeyBindRow;
         item.hotkeyAction = action;
         
-        if (action == HotkeyAction::EnterCropMode || action == HotkeyAction::SaveAs) {
+        if (action == HotkeyAction::EnterCropMode || action == HotkeyAction::SaveAs ||
+            action == HotkeyAction::CopyPixels || action == HotkeyAction::CopyFileItem || action == HotkeyAction::CopyPath) {
             item.isNewOption = true;
         }
         if (action == HotkeyAction::EnterCropMode) {
@@ -2551,6 +2552,7 @@ void SettingsOverlay::BuildMenu() {
     tabAdvanced.items.push_back(itemCustomEditor);
 
     SettingsItem itemConfigIO = { AppStrings::Settings_Header_ConfigManagement, OptionType::DualActionButton };
+    itemConfigIO.isNewOption = true;
     itemConfigIO.buttonText = AppStrings::Settings_Action_ImportTheme;
     itemConfigIO.buttonText2 = AppStrings::Settings_Action_ExportTheme;
     itemConfigIO.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {

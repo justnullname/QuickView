@@ -53,12 +53,13 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
 
     // --- Open & Copy Group ---
     items.push_back(MI::Normal(IDM_OPENWITH_DEFAULT, AppStrings::Context_OpenWith, GeekIcons::OpenWith).Enabled(hasImage));
-    items.push_back(MI::Normal(IDM_COPY_IMAGE, AppStrings::Context_CopyImage, GeekIcons::Copy, getHK(HotkeyAction::CopyImage)));
+    items.push_back(MI::Normal(IDM_COPY_PIXELS, AppStrings::Context_CopyPixels, GeekIcons::Image, getHK(HotkeyAction::CopyPixels)).Enabled(hasImage));
+    items.push_back(MI::Normal(IDM_COPY_FILE, AppStrings::Context_CopyFile, GeekIcons::Copy, getHK(HotkeyAction::CopyFileItem)).Enabled(hasImage));
+    items.push_back(MI::Normal(IDM_COPY_PATH, AppStrings::Context_CopyPath, GeekIcons::Link, getHK(HotkeyAction::CopyPath)).Enabled(hasImage));
     items.push_back(MI::Normal(IDM_ENTER_CROP_MODE, AppStrings::Context_Crop, GeekIcons::Crop, getHK(HotkeyAction::EnterCropMode)).Enabled(hasImage));
     items.push_back(MI::Normal(IDM_SAVE_AS, AppStrings::Dialog_ButtonSaveAs, GeekIcons::Save, getHK(HotkeyAction::SaveAs)));
     items.push_back(MI::Normal(IDM_SHOW_IN_EXPLORER, AppStrings::Context_ShowInExplorer, GeekIcons::Explorer, getHK(HotkeyAction::ShowInExplorer)));
     items.push_back(MI::Normal(IDM_OPEN_FOLDER, AppStrings::Context_OpenFolder, GeekIcons::Folder));
-    items.push_back(MI::Normal(IDM_COPY_PATH, AppStrings::Context_CopyPath, GeekIcons::Link, getHK(HotkeyAction::CopyPath)));
     items.push_back(MI::Normal(IDM_PRINT, AppStrings::Context_Print, GeekIcons::Print, getHK(HotkeyAction::Print)));
     
     extern UndoManager g_undoManager;
