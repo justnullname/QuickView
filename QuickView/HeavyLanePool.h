@@ -59,6 +59,7 @@ public:
     void SetTitanMode(bool enabled, int srcW = 0, int srcH = 0, const std::wstring& format = L"", ImageID activeId = 0);
     bool IsTitanMode() const { return m_isTitanMode.load(std::memory_order_relaxed); }
     void SetTargetHdrHeadroomStops(float stops) { m_targetHdrHeadroomStops.store(stops, std::memory_order_relaxed); }
+    void SetTargetColorPrimaries(QuickView::ColorPrimaries primaries) { m_targetPrimaries.store(primaries, std::memory_order_relaxed); }
     void Flush(); // Clears queue and increments GenID
     
     // [Titan] Concurrency Control
@@ -172,6 +173,7 @@ private:
     std::atomic<bool> m_isTitanMode = false;
     std::atomic<ImageID> m_activeTitanImageId{ 0 }; // [Revision 2] Only this ID can trigger Titan warmup
     std::atomic<float> m_targetHdrHeadroomStops{ -1.0f };
+    std::atomic<QuickView::ColorPrimaries> m_targetPrimaries{ QuickView::ColorPrimaries::SRGB };
     int m_titanSrcW = 0, m_titanSrcH = 0; // Source image dimensions (set in SetTitanMode)
     std::atomic<QuickView::TitanFormat> m_titanFormat{QuickView::TitanFormat::Unknown}; // [P15] Thread-safe format enum
     std::counting_semaphore<std::numeric_limits<std::ptrdiff_t>::max()> m_ioSemaphore{ 0 }; // Initialized in constructor
@@ -282,6 +284,7 @@ private:
         std::chrono::steady_clock::time_point submitTime; // [Metrics] Track queue time
         std::shared_ptr<QuickView::MappedFile> mmf; // [Optimization] Zero-Copy MMF Source
         float targetHdrHeadroomStops = -1.0f;
+        QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB;
         
         // Standard
         bool isFullDecode = false;  // true = full resolution, false = scaled

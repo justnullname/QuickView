@@ -5789,7 +5789,11 @@ HRESULT CImageLoader::LoadRaw(LPCWSTR filePath, IWICBitmap **ppBitmap,
   // 2. Full RAW Decode (LibRaw Demosaic)
   RawProcessor.imgdata.params.use_camera_wb = 1;
   RawProcessor.imgdata.params.use_auto_wb = 1; // Fallback to Auto-WB if camera WB is missing
-  RawProcessor.imgdata.params.auto_bright_thr = 0.01f; // Standard brightness normalization
+  RawProcessor.imgdata.params.use_camera_matrix = 3; // Use camera color matrix
+  RawProcessor.imgdata.params.no_auto_bright = 1; // Disable auto brightness guessing
+  RawProcessor.imgdata.params.highlight = 0; // Natural highlight clip
+  RawProcessor.imgdata.params.exp_correc = 0; // Preserve linear dynamic range
+  RawProcessor.imgdata.params.exp_shift = 1.0f;
   RawProcessor.imgdata.params.gamm[0] = 1.0 / 2.222; // Standard sRGB Gamma curve
   RawProcessor.imgdata.params.gamm[1] = 4.5;
   RawProcessor.imgdata.params.user_qual = 2; // AHD (Standard Quality)
@@ -8202,8 +8206,32 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
   if (ctx.checkCancel && ctx.checkCancel())
     return E_ABORT;
 
+  // 1. Target Color Space & Gamma Mapping
+  int outputColor = 1; // Default sRGB
+  QuickView::ColorPrimaries outPrimaries = QuickView::ColorPrimaries::SRGB;
+
+  if (ctx.targetPrimaries == QuickView::ColorPrimaries::AdobeRGB) {
+    outputColor = 2; // Adobe RGB (1998)
+    outPrimaries = QuickView::ColorPrimaries::AdobeRGB;
+  } else if (ctx.targetPrimaries == QuickView::ColorPrimaries::DisplayP3) {
+    outputColor = 3; // Wide Gamut RGB (covers DCI-P3)
+    outPrimaries = QuickView::ColorPrimaries::DisplayP3;
+  } else if (ctx.targetPrimaries == QuickView::ColorPrimaries::ProPhotoRGB) {
+    outputColor = 4; // ProPhoto RGB (ROMM RGB)
+    outPrimaries = QuickView::ColorPrimaries::ProPhotoRGB;
+  }
+
+  RawProcessor.imgdata.params.output_color = outputColor;
   RawProcessor.imgdata.params.use_camera_wb = 1;
-  RawProcessor.imgdata.params.use_auto_wb = 0;
+  RawProcessor.imgdata.params.use_auto_wb = 1; // Fallback to Auto-WB if Camera WB is missing
+  RawProcessor.imgdata.params.use_camera_matrix = 3; // Use camera color matrix
+  RawProcessor.imgdata.params.no_auto_bright = 1; // Disable auto brightness guessing
+  RawProcessor.imgdata.params.highlight = 0; // Natural highlight clip
+  RawProcessor.imgdata.params.exp_correc = 0; // Preserve linear dynamic range
+  RawProcessor.imgdata.params.exp_shift = 1.0f;
+  RawProcessor.imgdata.params.gamm[0] = 1.0 / 2.222; // Standard sRGB/P3 Gamma curve
+  RawProcessor.imgdata.params.gamm[1] = 4.5;
+  RawProcessor.imgdata.params.output_bps = 8; // Guarantee 8-bit output
 
   // [v9.9] Optimize demosaic algorithm based on decode mode
   if (g_runtime.ForceRawDecode) {
@@ -8256,9 +8284,17 @@ static HRESULT Load(LPCWSTR filePath, const DecodeContext &ctx,
     result.stride = stride;
     result.format = PixelFormat::BGRA8888;
     result.success = true;
+    result.metadata.colorInfo.primaries = outPrimaries;
+    result.metadata.colorInfo.transfer = QuickView::TransferFunction::SRGB;
     result.metadata.LoaderName = L"LibRaw";
     result.metadata.IsRawFullDecode = true; // [Compare RAW] mark as full decode
     result.metadata.FormatDetails = L"RAW Developed";
+    if (outPrimaries == QuickView::ColorPrimaries::AdobeRGB)
+      result.metadata.FormatDetails += L" (AdobeRGB)";
+    else if (outPrimaries == QuickView::ColorPrimaries::DisplayP3)
+      result.metadata.FormatDetails += L" (Display-P3)";
+    else if (outPrimaries == QuickView::ColorPrimaries::ProPhotoRGB)
+      result.metadata.FormatDetails += L" (ProPhoto)";
     if (RawProcessor.imgdata.params.half_size)
       result.metadata.FormatDetails += L" (Half)";
     else
@@ -13522,7 +13558,8 @@ HRESULT CImageLoader::LoadToFrame(
     LPCWSTR filePath, QuickView::RawImageFrame *outFrame, QuantumArena *arena,
     int targetWidth, int targetHeight, std::wstring *pLoaderName,
     CancelPredicate checkCancel, ImageMetadata *pMetadata, bool allowFakeBase,
-    bool isTitanMode, float targetHdrHeadroomStops) {
+    bool isTitanMode, float targetHdrHeadroomStops,
+    QuickView::ColorPrimaries targetPrimaries) {
   using namespace QuickView;
 
   if (!filePath || !outFrame)
@@ -13626,6 +13663,7 @@ HRESULT CImageLoader::LoadToFrame(
       (arena != nullptr); // [v6.2.5.3] Main viewport requests always use an
                           // arena; protect them from CPU SDR reduction!
   ctx.targetHdrHeadroomStops = targetHdrHeadroomStops;
+  ctx.targetPrimaries = targetPrimaries;
 
   // Pass callback to intercept async AuxLayer from LoadImageUnified
   ctx.onAuxLayerReady = outFrame->onAuxLayerReady;

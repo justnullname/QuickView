@@ -102,6 +102,7 @@ public:
     void NavigateTo(const std::wstring& path, uintmax_t fileSize = 0, uint64_t navToken = 0, PaneSlot targetSlot = PaneSlot::Primary, uint64_t generationId = 0);
     void SetWindow(HWND hwnd);
     void SetTargetHdrHeadroomStops(float stops);
+    void SetTargetColorPrimaries(QuickView::ColorPrimaries primaries);
     
     // [v3.1] Cancel Heavy Lane when Fast Pass succeeds
     void CancelHeavy();  // Implementation in ImageEngine.cpp

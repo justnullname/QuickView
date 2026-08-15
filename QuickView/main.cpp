@@ -141,6 +141,7 @@ static std::string GetAppVersionUTF8() {
 
 // Function Prototypes
 void SyncDCompState(HWND hwnd, float winW, float winH, bool animate);
+void UpdateTargetColorSpaceForEngine(HWND hwnd);
 
 
 // --- Globals ---
@@ -3264,6 +3265,7 @@ static void RefreshDisplayColorPipeline(HWND hwnd, bool requestFullRepaint) {
     }
     if (g_imageEngine) {
         g_imageEngine->SetTargetHdrHeadroomStops(displayHdrHeadroomStops);
+        UpdateTargetColorSpaceForEngine(hwnd);
     }
 
     if (changed) {
@@ -6266,6 +6268,30 @@ void RefreshHdrOverrideSettings(HWND hwnd) {
 
   // Re-upload cached frames with updated tone-mapping/headroom parameters.
   RefreshImageDisplay(hwnd);
+}
+
+void UpdateTargetColorSpaceForEngine(HWND /*hwnd*/) {
+  if (!g_imageEngine) return;
+  int effCms = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+  QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB;
+
+  if (effCms == 2) {
+    targetPrimaries = QuickView::ColorPrimaries::SRGB;
+  } else if (effCms == 3) {
+    targetPrimaries = QuickView::ColorPrimaries::DisplayP3;
+  } else if (effCms == 4) {
+    targetPrimaries = QuickView::ColorPrimaries::AdobeRGB;
+  } else if (effCms == 6) {
+    targetPrimaries = QuickView::ColorPrimaries::ProPhotoRGB;
+  } else if (effCms == 1) { // Auto mode
+    if (g_renderEngine) {
+      auto dispState = g_renderEngine->GetDisplayColorState();
+      if (dispState.wideColorActive || dispState.advancedColorActive) {
+        targetPrimaries = QuickView::ColorPrimaries::DisplayP3;
+      }
+    }
+  }
+  g_imageEngine->SetTargetColorPrimaries(targetPrimaries);
 }
 
 void ReloadCurrentImage(HWND hwnd) {
@@ -13172,8 +13198,15 @@ SKIP_EDGE_NAV:;
                  g_runtime.CmsModeOverride = newMode;
              }
              
-             // Apply immediately by forcing a GPU re-upload (isFastUpgrade=true, no window resize)
-             RefreshImageDisplay(hwnd);
+             UpdateTargetColorSpaceForEngine(hwnd);
+
+             // If currently displaying a RAW file in Full Decode mode, re-trigger decode with the new color space
+             const auto& pane = GetPaneContext(contextLeft ? PaneSlot::Left : PaneSlot::Primary);
+             if (QuickView::IsRawPath(pane.path) && pane.metadata.IsRawFullDecode) {
+                 ReloadCurrentImage(hwnd);
+             } else {
+                 RefreshImageDisplay(hwnd);
+             }
              if (!contextLeft) ScheduleGamutWarningAnalysis(hwnd);
 
              std::wstring msg = L"Color Space: ";

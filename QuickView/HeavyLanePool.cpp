@@ -583,6 +583,7 @@ void HeavyLanePool::Submit(const std::wstring& path, ImageID imageId, std::share
     job.submitTime = std::chrono::steady_clock::now();
     job.mmf = mmf;
     job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
+    job.targetPrimaries = m_targetPrimaries.load(std::memory_order_relaxed);
     job.isFullDecode = isFull;
     job.priority = 200; 
     job.genID = m_generationID.load(); // [Smart Pull] Stamp Generation
@@ -606,6 +607,7 @@ void HeavyLanePool::SubmitFullDecode(const std::wstring& path, ImageID imageId, 
     job.submitTime = std::chrono::steady_clock::now();
     job.mmf = mmf; 
     job.targetHdrHeadroomStops = m_targetHdrHeadroomStops.load(std::memory_order_relaxed);
+    job.targetPrimaries = m_targetPrimaries.load(std::memory_order_relaxed);
     job.isFullDecode = true; 
     job.priority = 150; 
     job.genID = m_generationID.load();
@@ -1430,14 +1432,14 @@ void HeavyLanePool::PerformDecode(int workerId, const JobInfo& job, std::stop_to
                        hr = m_loader->LoadToFrameFromMemory(job.mmf->data(), job.mmf->size(), &rawFrame, &arena, targetW, targetH, &loaderName, &meta);
                        if (FAILED(hr)) {
                            // Fallback to file if MMF decode fails
-                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
+                           hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
                        } else {
                            // MMF Decode Success -> Trigger Touch-Up Prefetch!
                            TriggerPrefetch(job.mmf);
                        }
                    }
               } else {
-                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops);
+                   hr = m_loader->LoadToFrame(job.path.c_str(), &rawFrame, &arena, targetW, targetH, &loaderName, cancelPred, &meta, !job.isFullDecode, m_isTitanMode, job.targetHdrHeadroomStops, job.targetPrimaries);
               }
               } // end FAILED(hr) inline fallback
               // [Baseline Benchmark] Measure performance from Standard (base layer) decode

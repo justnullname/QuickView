@@ -329,7 +329,8 @@ public:
                       CancelPredicate checkCancel = {},
                       ImageMetadata *pMetadata = nullptr,
                       bool allowFakeBase = true, bool isTitanMode = false,
-                      float targetHdrHeadroomStops = -1.0f);
+                      float targetHdrHeadroomStops = -1.0f,
+                      QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB);
 
   /// <summary>
   /// Load a frame directly from a mapped/in-memory buffer via the unified
@@ -547,6 +548,7 @@ struct DecodeContext {
   PixelFormat format = PixelFormat::BGRA8888;
   bool forcePreview = false;
   float targetHdrHeadroomStops = -1.0f;
+  QuickView::ColorPrimaries targetPrimaries = QuickView::ColorPrimaries::SRGB;
 
   std::wstring *pLoaderName = nullptr;
   std::wstring *pFormatDetails = nullptr;

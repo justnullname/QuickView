@@ -152,6 +152,12 @@ void ImageEngine::SetTargetHdrHeadroomStops(float stops) {
     }
 }
 
+void ImageEngine::SetTargetColorPrimaries(QuickView::ColorPrimaries primaries) {
+    if (m_heavyPool) {
+        m_heavyPool->SetTargetColorPrimaries(primaries);
+    }
+}
+
 // Request full resolution decode for current image (used by JXL serial pipeline)
 void ImageEngine::RequestFullDecode(const std::wstring& path, ImageID imageId, PaneSlot targetSlot, uint64_t generationId) {
     // Node B: Decoding Complete / Request Full Decode
