@@ -1118,6 +1118,7 @@ struct RuntimeConfig {
 
 extern RuntimeConfig g_runtime;
 bool CheckWritePermission(const std::wstring& dir);
+std::wstring GetConfigPath(bool forcePortableCheck = false);
 void SaveConfig(); // Ensure visible
 void LoadConfig(); // Ensure visible
 void ParseFixedZoomLevels(); // Parse comma-separated fixed zoom levels

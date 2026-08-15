@@ -431,6 +431,7 @@ const wchar_t *Settings_Label_SettingsAlpha = nullptr;
 const wchar_t *Settings_Label_Reset = nullptr;
 const wchar_t *Settings_Action_Restore = nullptr;
 const wchar_t *Settings_Action_Done = nullptr;
+const wchar_t *Settings_Header_ConfigManagement = nullptr;
 const wchar_t *Settings_Option_CmsUnmanaged = nullptr;
 const wchar_t *Settings_Option_CmssRGB = nullptr;
 const wchar_t *Settings_Option_CmsP3 = nullptr;
@@ -998,6 +999,7 @@ struct LanguageTable {
     const wchar_t *Settings_Label_Reset;
     const wchar_t *Settings_Action_Restore;
     const wchar_t *Settings_Action_Done;
+    const wchar_t *Settings_Header_ConfigManagement;
     const wchar_t *Settings_Option_CmsUnmanaged;
     const wchar_t *Settings_Option_CmssRGB;
     const wchar_t *Settings_Option_CmsP3;
@@ -1569,6 +1571,7 @@ static const LanguageTable Table_EN = {
     L"Reset All Settings", // Settings_Label_Reset
     L"Restore", // Settings_Action_Restore
     L"Done", // Settings_Action_Done
+    L"Import / Export (.ini)", // Settings_Header_ConfigManagement
     L"Unmanaged", // Settings_Option_CmsUnmanaged
     L"sRGB", // Settings_Option_CmssRGB
     L"Display P3", // Settings_Option_CmsP3
@@ -2140,6 +2143,7 @@ static const LanguageTable Table_CN = {
     L"重置所有设置", // Settings_Label_Reset
     L"恢复", // Settings_Action_Restore
     L"完成", // Settings_Action_Done
+    L"导入导出 (.ini)", // Settings_Header_ConfigManagement
     L"无管理", // Settings_Option_CmsUnmanaged
     L"sRGB", // Settings_Option_CmssRGB
     L"Display P3", // Settings_Option_CmsP3
@@ -2711,6 +2715,7 @@ static const LanguageTable Table_TW = {
     L"重設所有設定", // Settings_Label_Reset
     L"還原", // Settings_Action_Restore
     L"完成", // Settings_Action_Done
+    L"匯入匯出 (.ini)", // Settings_Header_ConfigManagement
     L"無管理", // Settings_Option_CmsUnmanaged
     L"sRGB", // Settings_Option_CmssRGB
     L"Display P3", // Settings_Option_CmsP3
@@ -3282,6 +3287,7 @@ static const LanguageTable Table_JA = {
     L"すべての設定をリセット", // Settings_Label_Reset
     L"復元", // Settings_Action_Restore
     L"完了", // Settings_Action_Done
+    L"設定の入出力 (.ini)", // Settings_Header_ConfigManagement
     L"管理なし", // Settings_Option_CmsUnmanaged
     L"sRGB", // Settings_Option_CmssRGB
     L"Display P3", // Settings_Option_CmsP3
@@ -3853,6 +3859,7 @@ static const LanguageTable Table_RU = {
     L"Сбросить все настройки", // Settings_Label_Reset
     L"Восстановить", // Settings_Action_Restore
     L"Готово", // Settings_Action_Done
+    L"Импорт / экспорт (.ini)", // Settings_Header_ConfigManagement
     L"Неуправляемый (быстро)", // Settings_Option_CmsUnmanaged
     L"sRGB (стандарт)", // Settings_Option_CmssRGB
     L"Display P3 (широкий охват)", // Settings_Option_CmsP3
@@ -4424,6 +4431,7 @@ static const LanguageTable Table_DE = {
     L"Alle Einstellungen zurücksetzen", // Settings_Label_Reset
     L"Wiederherstellen", // Settings_Action_Restore
     L"Fertig", // Settings_Action_Done
+    L"Import / Export (.ini)", // Settings_Header_ConfigManagement
     L"Unverwaltet (schnell)", // Settings_Option_CmsUnmanaged
     L"sRGB (Standard)", // Settings_Option_CmssRGB
     L"Display P3 (Breites Farbspektrum)", // Settings_Option_CmsP3
@@ -4995,6 +5003,7 @@ static const LanguageTable Table_ES = {
     L"Restablecer toda la configuración", // Settings_Label_Reset
     L"Restaurar", // Settings_Action_Restore
     L"Hecho", // Settings_Action_Done
+    L"Importar / Exportar (.ini)", // Settings_Header_ConfigManagement
     L"No gestionado (rápido)", // Settings_Option_CmsUnmanaged
     L"sRGB (estándar)", // Settings_Option_CmssRGB
     L"Display P3 (gama amplia)", // Settings_Option_CmsP3
@@ -5566,6 +5575,7 @@ static const LanguageTable Table_FR = {
     L"Réinitialiser tous les paramètres", // Settings_Label_Reset
     L"Restaurer", // Settings_Action_Restore
     L"Terminé", // Settings_Action_Done
+    L"Importer / Exporter (.ini)", // Settings_Header_ConfigManagement
     L"Non géré", // Settings_Option_CmsUnmanaged
     L"sRGB", // Settings_Option_CmssRGB
     L"Display P3", // Settings_Option_CmsP3
@@ -6142,6 +6152,7 @@ void Apply(const LanguageTable& t) {
   Settings_Label_Reset = t.Settings_Label_Reset;
   Settings_Action_Restore = t.Settings_Action_Restore;
   Settings_Action_Done = t.Settings_Action_Done;
+  Settings_Header_ConfigManagement = t.Settings_Header_ConfigManagement;
   Settings_Option_CmsUnmanaged = t.Settings_Option_CmsUnmanaged;
   Settings_Option_CmssRGB = t.Settings_Option_CmssRGB;
   Settings_Option_CmsP3 = t.Settings_Option_CmsP3;

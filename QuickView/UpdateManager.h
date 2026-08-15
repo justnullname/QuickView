@@ -56,6 +56,7 @@ private:
     // Helpers
     std::string HttpGet(const std::wstring& host, const std::wstring& path);
     VersionInfo ParseJson(const std::string& json);
+    // True when remote != current (upgrade or downgrade onto the selected channel).
     bool CompareVersions(const std::string& current, const std::string& remote);
     std::string CalculateSHA256(const std::wstring& filePath);
 

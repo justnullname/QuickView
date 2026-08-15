@@ -1,57 +1,74 @@
-# QuickView v6.22.3 - RAW+JPEG Folding, Interactive Minimap, Loupe & Performance Boost
-**Release Date**: 2026-07-17
+# QuickView v6.31.0.0 - Faster TIFF, Built-in Print Preview, Windows 11 Look & Smarter Controls
+**Release Date**: 2026-08-14
 
-> [!IMPORTANT]
-> **Introducing Pre-release Update Channel**
-> Starting from this version, we have introduced a new **Pre-release** update channel. You can now toggle this option in the **Settings** menu. By switching to the Pre-release channel, you will receive our latest bleeding-edge updates first, allowing you to help us test new features and provide early feedback. 
-> To ensure software stability, public Stable versions will be released shortly after a Pre-release version has undergone a testing period without any new bug reports.
-
-Welcome to QuickView v6.22.3! This release introduces highly requested features designed to declutter your photo-culling workflow, check image sharpness with ease, and experience a massive speed boost when viewing large images.
+Welcome to QuickView v6.31.0.0! This is the first stable release since v6.22.3. It brings together the features we already tested on the Pre-release channel — big TIFF files open much faster, printing has a real preview, Windows 11 looks more native, and everyday viewing is easier to control.
 
 ---
 
-### 📸 Clean Up Your Gallery: RAW+JPEG Pairing & Folding (#201)
-*Contributed by Zhou Ying (@zorange)*
-If you shoot in RAW+JPEG dual formats, your gallery can quickly get cluttered with duplicate images. This version introduces smart folding to keep your workspace clean.
-- **Unified Photo Grid**: Automatically folds same-name RAW and JPEG (or other rendered) images into a single item in the gallery. No more duplicates!
-- **How to Enable**: This feature is **disabled by default**. Go to **Settings > Image** and check the option to enable RAW+JPEG pairing.
-- **Instantly Swap Formats**: Once enabled, you can quickly swap the visible layer of a photo to its RAW file by pressing the RAW toggle button on the toolbar or using your custom shortcut.
-- **Side-by-Side Comparison**: Want to see how the camera's JPEG processing compares to the RAW sensor data? Press `Shift + C` to compare the two components of a paired image side-by-side.
-- **Flexible Deletion**: When you delete a folded pair, QuickView will ask if you want to delete only the JPEG, only the RAW file, or both together.
+### 🖼️ Huge TIFF Files Open Faster, and More Formats Look Right
+Opening large TIFF files used to feel slow. This version uses a new built-in TIFF reader (no extra library, so the app stays small).
+- **Much faster TIFF**: In our tests, a 12.8-megapixel TIFF dropped from about **1.9 seconds to 360 milliseconds**.
+- **Giant 16-bit TIFF**: Very large 16-bit TIFF files now load and display correctly.
+- **CMYK TIFF**: Print-oriented CMYK TIFF files show the right colors instead of looking wrong or failing to open.
+- **Huge images stay complete**: When you zoom into extremely large photos, tiles no longer go missing and the app no longer keeps the CPU busy for no reason.
 
-### 🔍 Check Focus Instantly: Detail Loupe (#201, #216)
-*Contributed by Zhou Ying (@zorange) & Core Team*
-A precision tool built specifically for photographers to cull photos and quickly check sharpness.
-- **Press-and-Hold Magnifier**: When an image is zoomed out (smaller than its original size), simply **press and hold the `L` key** (customizable) to pop up a local magnifier showing the pixels under your cursor at 100% size. Release the key to hide it instantly.
-- **Live Resize**: Need a larger inspection window? While **holding down the `L` key, scroll your mouse wheel** to dynamically resize the magnifier box.
-- **Synced Comparison**: When comparing two images side-by-side, activating the Loupe will magnify the exact same area on both panes simultaneously.
-- **Visual Options**: Customize your magnifier's shape (Circle or Square) and enjoy a high-contrast border that makes it easy to spot even on dark photos.
+If a rare TIFF still looks wrong, please report it — the custom reader is built for speed and size, and we want to hear about any odd files.
 
-### 🗺️ Navigate Large Images: Interactive Minimap (#215, #216)
-- **Navigator Map**: When you zoom deep into an image, a miniature overview map will appear in the top corner of the screen. 
-- **Drag-to-Pan**: Simply click and drag the highlighted viewport box inside the Minimap to quickly slide and pan across different sections of your image, eliminating the need for tedious manual scrolling.
-- **Improved UI**: Added high-contrast borders and a soft shadow under the close button to ensure the Minimap remains legible on any image background.
+### 🖨️ Print With a Real Preview
+The old Windows Photo Printing Wizard is gone.
+- **Our own print window**: See the page before you print, including a live **grayscale** preview.
+- **Poster / tiling**: Print one photo across several pages when you need a large print.
+- **Remembers your choices**: Paper size, orientation, and printer options are kept for next time.
 
-### 🔄 Safer File Actions & Multi-Level Undo (#216)
-- **Mistake-Friendly Actions**: You can now undo file renaming, image rotations, and mirror flips.
-- **Recycle Bin Confirmation**: Added a setting to toggle the Recycle Bin delete confirmation prompt on or off.
-- **Gallery Deletion**: Right-click any thumbnail directly in the filmstrip gallery to delete the file immediately.
+### 🪟 A More Native Windows 11 Look
+- **Mica menus and window**: On Windows 11, the main window and right-click menus can use the system Mica material so they match the rest of the desktop.
+- **Windows 10 is still supported**: Older Windows keeps a compatible look. Acrylic is still available if you prefer it.
 
-### 🎨 Better Colors & Photoshop PSD/PSB Support (#214, #144)
-- **Flawless PSD/PSB View**: Completely fixed transparency bugs when viewing Photoshop PSD/PSB files. Say goodbye to weird color noise or background grid leaks (#214).
-- **Accurate Colors**: Upgraded color profile management to read modern multi-language color profiles (#144). QuickView now accurately displays the native bit-depth and color gamut of AVIF, JXL, and RAW files without losing fidelity.
+### 🎞️ Gallery and Filmstrip, Your Way
+- **Drag to resize**: Pull the filmstrip edge to make the thumbnail bar taller or shorter.
+- **When it appears**: You can now adjust how close the mouse must be, how long to hover, and how long it waits before hiding.
+- **Stay open while you browse**: New option to keep the gallery visible after you click a thumbnail.
+- **Slideshow crash fixed**: Slideshow mode no longer crashes after certain display resets.
+- **Cleaner bar**: Slimmer arrows, tighter margins, and a smaller pin button.
 
-### ⚡ Blazing Fast Speeds & Smoother Animations (#206, #212, #205, #144, #209, #202)
-- **Turbocharged RAW Loading**: Rewrote the core image decoding loop to leverage modern processor instructions. Loading RAW files from high-end cameras is now up to several times faster.
-- **Low Memory Usage**: Loading very large TIFF images now consumes significantly less memory (#206).
-- **Stutter-Free Gallery**: Fixed an issue where the filmstrip gallery would stutter or freeze during slideshows (#201). Transitions and auto-scrolling are now butter-smooth.
-- **System Integration**: Fixed taskbar title truncation bugs (#202) and resolved hotkey conflicts when typing with input methods (IME) (#209).
-- **Dynamic Localization**: Resolves Japanese fallback glyph issues on non-English locales (#212).
-- **Russian Translation Update**: *Contributed by Dmitry Yerokhin (@Dimmitrius)* (#205).
+### 🗺️ Minimap and Zoom That Match the Photo
+- **Show the minimap with `M`**: Wake it up from the keyboard whenever you need a map of a zoomed image.
+- **Scroll on the map to pan**: Hover the minimap and use the mouse wheel to move around.
+- **Very long or very wide photos**: Clicking and dragging on the map now lands on the right place.
+- **True 100%**: 100% zoom uses the photo’s real pixel size, so it matches what you expect.
+- **Locked window, still works**: Fit and 100% shortcuts work correctly when the window size is locked.
+- **Fullscreen and pixel-art**: Fullscreen zoom no longer jumps to the wrong size, and pixel-art mode stays sharp.
+- **Small SVG files**: Tiny SVG graphics now fit the window instead of appearing too small or too large.
+
+### ⚙️ Settings You Can Save, and Shortcuts That Do What You Mean
+- **Import / export settings**: Back up your configuration, or copy it to another PC, from Settings.
+- **Switch back to Stable**: If you tried the Pre-release update channel, you can now switch back to Stable without getting stuck.
+- **Show or hide OSD tips**: Turn those on-screen messages off if you prefer a quieter view.
+- **Show in Explorer**: New shortcut to jump to the current file in File Explorer.
+- **Choose what double-click does**: Keep the smart Fit / 100% / original-size cycle, or use double-click to swap wheel actions or switch to pan mode.
+- **Larger keyboard pan steps**: The pan-distance sliders now go higher if you like bigger jumps.
+- **Your color for overflow edges**: Pick the color of the indicators that show when the image is larger than the window.
+- **Locked window stays locked**: A smart double-click will no longer resize the window when window lock is on.
+
+### 🔍 Compare, Focus, and File Explorer
+- **Cleaner compare view**: Side-by-side compare no longer draws overflow edges, and the selection highlight is easier to see.
+- **Focus goes back to your last app**: Closing QuickView returns the keyboard to the program you came from (Explorer, a browser, another viewer, and so on).
+- **Same order as Explorer**: The gallery follows the folder’s current sort in File Explorer.
+
+### 🐛 Fixes You’ll Notice
+- **HDR Pro expands again**: In the full info panel (and in compare), the HDR Pro row once more opens the extra HDR details.
+- **Settings clicks work**: Sliders, buttons, and dropdowns in Settings hit the right control again.
+- **OSD looks right**: On-screen tips are no longer stuck fully opaque.
+- **No more jumping window**: Changing UI scale no longer clips the interface or makes the window jump.
+- **Opening another file**: Starting a new image no longer leaves the previous program in the wrong focus state.
+
+### 🌐 Translations and Formats
+- **Japanese text**: Clearer About page and labels. *Thank you, @coolvitto (#227).*
+- **JPEG XL**: Updated the JXL engine for better transparency and more reliable viewing of large JXL files.
 
 ---
 
 ### ❤️ Special Thanks
-This release wouldn't be possible without our amazing contributors:
-- **Zhou Ying (@zorange)** for designing and implementing the RAW+JPEG folding system, the detail Loupe, and standardizing extension classifications.
-- **Dmitry Yerokhin (@Dimmitrius)** for updating and correcting the Russian localizations.
+- **@coolvitto** for the Japanese translation update (#227).
+
+**Full Changelog**: https://github.com/justnullname/QuickView/compare/v6.22.3...v6.31.0.0

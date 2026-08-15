@@ -73,15 +73,37 @@ jobs:
             --arg c "$RELEASE_BODY" \
             '{version: $v, url: $u, url_x64: $u_x64, url_arm64: $u_arm, sha256_x64: $sha_x64, sha256_arm64: $sha_arm, date: $d, changelog: $c}')
           
+          # $1 > $2 using Debian/Ubuntu sort -V (dotted numeric versions).
+          version_gt() {
+            local a="${1#v}" b="${2#v}"
+            [ -z "$b" ] && return 0
+            [ "$a" = "$b" ] && return 1
+            [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)" = "$a" ]
+          }
+          
+          # Current pre-release channel version on gh-pages (empty if missing).
+          PRE_VERSION=""
+          if git fetch origin gh-pages --depth=1; then
+            PRE_VERSION=$(git show origin/gh-pages:version-prerelease.json 2>/dev/null | jq -r '.version // empty' || true)
+          fi
+          echo "Current pre-release channel version: '${PRE_VERSION:-<none>}'"
+          
           if [ "$IS_PRERELEASE" = "true" ]; then
             echo "$JSON_DATA" > public/version-prerelease.json
             echo "=== Generated Pre-release JSON Content ==="
             cat public/version-prerelease.json
           else
             echo "$JSON_DATA" > public/version.json
-            echo "$JSON_DATA" > public/version-prerelease.json
             echo "=== Generated Stable JSON Content ==="
             cat public/version.json
+            # Promote stable onto the pre-release channel only when it is newer
+            # than the channel's current version (do not clobber a newer preview).
+            if version_gt "$VERSION" "$PRE_VERSION"; then
+              echo "$JSON_DATA" > public/version-prerelease.json
+              echo "Stable $VERSION > pre-release '${PRE_VERSION:-<none>}' — also updated version-prerelease.json"
+            else
+              echo "Stable $VERSION is not greater than pre-release '$PRE_VERSION' — left version-prerelease.json unchanged"
+            fi
           fi
 
       - name: Deploy to GitHub Pages

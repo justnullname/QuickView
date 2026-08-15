@@ -1459,7 +1459,7 @@ bool CheckWritePermission(const std::wstring& path) {
     return true;
 }
 
-std::wstring GetConfigPath(bool forcePortableCheck = false) {
+std::wstring GetConfigPath(bool forcePortableCheck) {
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     std::wstring exeDir = exePath;

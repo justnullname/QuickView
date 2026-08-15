@@ -388,6 +388,8 @@ std::string UpdateManager::CalculateSHA256(const std::wstring& filePath) {
 }
 
 bool UpdateManager::CompareVersions(const std::string& current, const std::string& remote) {
+    // Channel switch can be a downgrade (pre-release -> stable). Treat any
+    // mismatch with the selected channel's remote version as an update.
     // Remove "v" prefix if exists
     std::string c = (current.size() > 0 && current[0] == 'v') ? current.substr(1) : current;
     std::string r = (remote.size() > 0 && remote[0] == 'v') ? remote.substr(1) : remote;
@@ -418,8 +420,7 @@ bool UpdateManager::CompareVersions(const std::string& current, const std::strin
     for (size_t i = 0; i < std::max(vc.size(), vr.size()); i++) {
         int Ic = (i < vc.size()) ? vc[i] : 0;
         int Ir = (i < vr.size()) ? vr[i] : 0;
-        if (Ir > Ic) return true;  // Remote is newer
-        if (Ir < Ic) return false; // Remote is older
+        if (Ir != Ic) return true; // Remote differs (upgrade or channel downgrade)
     }
     return false; // Equal
 }

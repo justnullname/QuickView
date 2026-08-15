@@ -1008,6 +1008,11 @@ void SettingsOverlay::BuildMenu() {
     itemUpdateChannel.pIntVal = &g_config.UpdateChannel;
     itemUpdateChannel.options = { AppStrings::Settings_Option_UpdateStable, AppStrings::Settings_Option_UpdatePreRelease };
     itemUpdateChannel.tooltipText = AppStrings::Settings_Tooltip_PreRelease;
+    itemUpdateChannel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        SaveConfig();
+        overlay->m_dismissedVersion.clear();
+        UpdateManager::Get().StartBackgroundCheck(0);
+    };
     tabGeneral.items.push_back(itemUpdateChannel);
     
     // Pro Habits
@@ -2544,6 +2549,27 @@ void SettingsOverlay::BuildMenu() {
         }
     };
     tabAdvanced.items.push_back(itemCustomEditor);
+
+    SettingsItem itemConfigIO = { AppStrings::Settings_Header_ConfigManagement, OptionType::DualActionButton };
+    itemConfigIO.buttonText = AppStrings::Settings_Action_ImportTheme;
+    itemConfigIO.buttonText2 = AppStrings::Settings_Action_ExportTheme;
+    itemConfigIO.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (QuickView::UI::ConfigIO::ImportConfig(overlay->m_hwnd)) {
+            AppStrings::SetLanguage((AppStrings::Language)g_config.Language);
+            overlay->m_brushBg.Reset();
+            g_runtime.SyncFrom(g_config);
+            ApplyWindowTheme(overlay->m_hwnd);
+            SetWindowPos(overlay->m_hwnd, g_config.AlwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+                         0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            overlay->m_pendingRebuild = true;
+            overlay->m_needsLayoutRebuild = true;
+            if (overlay->m_hwnd) InvalidateRect(overlay->m_hwnd, NULL, FALSE);
+        }
+    };
+    itemConfigIO.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        QuickView::UI::ConfigIO::ExportConfig(overlay->m_hwnd);
+    };
+    tabAdvanced.items.push_back(itemConfigIO);
     
     // Reset Settings
     SettingsItem itemReset = { AppStrings::Settings_Label_Reset, OptionType::ActionButton };

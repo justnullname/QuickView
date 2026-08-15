@@ -335,6 +335,11 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
             return result;
         }
 
+        if (PointInRect(x, y, m_hdrDetailsToggleRect)) {
+            result.type = UIHitResult::HdrDetailsToggle;
+            return result;
+        }
+
         if (PointInRect(x, y, m_lastHUDRect)) {
             result.type = UIHitResult::InfoRow; 
             result.rowIndex = -2; // Default for empty HUD space
@@ -407,6 +412,11 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
                 result.rowIndex = (int)i;
                 
                 const auto& row = m_infoGrid[i];
+                if (row.label && wcscmp(row.label, L"HDR Pro") == 0) {
+                    result.type = UIHitResult::HdrDetailsToggle;
+                    m_hoverRowIndex = (int)i;
+                    return result;
+                }
                 // Determine what to copy
                 if (row.label && wcscmp(row.label, L"File") == 0) {
                     result.payload = g_imagePath;
@@ -3474,6 +3484,9 @@ void UIRenderer::BuildInfoGrid() {
     CombineHash(stateHash, currentZoom);
     CombineHash(stateHash, g_imagePath);
     CombineHash(stateHash, g_config.InfoPanelFullItemsNormal);
+    CombineHash(stateHash, g_config.InfoPanelFullItemsCompare);
+    CombineHash(stateHash, g_runtime.ShowCompareInfo);
+    CombineHash(stateHash, g_runtime.ShowHdrDetailsExpanded);
     CombineHash(stateHash, g_currentMetadata.IsFullMetadataLoaded);
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
@@ -4956,6 +4969,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     CombineHash(stateHash, rightMeta.HasSharpness);
     CombineHash(stateHash, leftMeta.HasEntropy);
     CombineHash(stateHash, rightMeta.HasEntropy);
+    CombineHash(stateHash, g_runtime.ShowHdrDetailsExpanded);
     
     if (m_compareLeftRows.empty() || m_lastCompareStateHash != stateHash) {
         
@@ -5195,6 +5209,7 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     y += headerH;
 
     m_compareRowRects.clear();
+    m_hdrDetailsToggleRect = {};
     m_hoverInfoRow = InfoRow{}; // Clear previous hover state to prevent sticky tooltips
 
     for (const auto& group : hudGroups) {
@@ -5239,6 +5254,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 
             D2D1_RECT_F rowRect = D2D1::RectF(panelX + 4*s, y, panelX + panelW - 4*s, y + rowH);
             m_compareRowRects.push_back(rowRect);
+            if (label == L"HDR Pro") {
+                m_hdrDetailsToggleRect = rowRect;
+            }
 
             if (PointInRect((float)m_lastMousePos.x, (float)m_lastMousePos.y, rowRect)) {
                 ComPtr<ID2D1SolidColorBrush> brushHover;

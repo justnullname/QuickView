@@ -1,5 +1,28 @@
 # Changelog
 
+## [6.31.0.0] - Faster TIFF, Built-in Print Preview, Windows 11 Look & Smarter Controls
+**Release Date**: 2026-08-14
+
+First stable release since v6.22.3. Collects pre-release work through v6.29 plus follow-up fixes on main. Does **not** include later pre-release experiments (crop, export panel, WebView2 SVG host, WMF/EMF).
+
+### ✨ Features & UX
+- **Faster built-in TIFF reader**: Replaced WIC TIFF with a compact custom decoder (12.8MP test: ~1.9s → ~360ms). Added CMYK TIFF, more robust LZW, and correct loading of giant 16-bit TIFFs.
+- **Custom print preview (#220)**: Replaced the Windows Photo Printing Wizard with a built-in preview, live grayscale, poster/tiling, and remembered printer settings.
+- **Windows 11 Mica (#219)**: Native Mica on the window and context menus, with Windows 10-compatible backdrops.
+- **Filmstrip control**: Drag-to-resize height; trigger height, dwell, and exit delay; option to keep the gallery open after a thumbnail click; visual polish.
+- **Minimap (#224)**: `M` to show the map, hover-wheel panning, and correct click/drag on ultra-long or ultra-wide images.
+- **Settings**: Import/export configuration; switch from Pre-release back to Stable; Show OSD toggle; Show in Explorer hotkey; customizable left double-click; higher keyboard pan-step limits; custom overflow-indicator colors.
+- **Compare (#223)**: Overflow edges hidden in compare; selection indicator adapted.
+
+### 🐛 Bug Fixes
+- HDR Pro row expands again in the full info panel and compare HUD.
+- True 100% zoom uses the image’s real pixel size; Fit/100% work with a locked window; fullscreen zoom and pixel-art stay correct (#221, #231, #235).
+- Locked window no longer resizes on smart double-click.
+- Closing QuickView restores focus to the previous app; gallery sort follows Explorer (#226, #233).
+- Settings controls click correctly; OSD transparency fixed; window no longer jumps or clips when UI scale changes.
+- Slideshow crash after device reset; small SVG fit; Titan tiles no longer go missing or peg the CPU.
+- Japanese translation update (#227, @coolvitto). JPEG XL updated to libjxl 0.12.0.
+
 ## [6.22.3] - RAW+JPEG Folding, Minimap & Performance Optimization
 **Release Date**: 2026-07-17
 

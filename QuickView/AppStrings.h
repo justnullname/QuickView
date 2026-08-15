@@ -527,6 +527,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_Reset;
     extern const wchar_t* Settings_Action_Restore;
     extern const wchar_t* Settings_Action_Done;
+    extern const wchar_t* Settings_Header_ConfigManagement;
 
     // Removed duplicated Color Management declarations
     

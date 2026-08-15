@@ -2,23 +2,29 @@
 #include "ThemeSystem.h"
 #include "yyjson.h"
 #include <commdlg.h>
+#include <cstring>
 #include <shlwapi.h>
 
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shlwapi.lib")
 
+extern AppConfig g_config;
 extern void SaveConfig(); // Defined in main.cpp
-namespace QuickView::UI::ThemeSystem {
 
-    static std::wstring ShowFileDialog(HWND hwnd, bool isSave) {
+namespace {
+
+    std::wstring ShowFileDialog(HWND hwnd, bool isSave, const wchar_t* filter, const wchar_t* defExt, const wchar_t* defaultName = nullptr) {
         wchar_t szFile[MAX_PATH] = { 0 };
+        if (isSave && defaultName && defaultName[0]) {
+            wcsncpy_s(szFile, defaultName, _TRUNCATE);
+        }
         OPENFILENAMEW ofn = {}; ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
         ofn.lpstrFile = szFile;
         ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrFilter = L"QuickView Theme (*.qvtheme)\0*.qvtheme\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFilter = filter;
         ofn.nFilterIndex = 1;
-        ofn.lpstrDefExt = L"qvtheme";
+        ofn.lpstrDefExt = defExt;
         ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
         if (isSave) {
@@ -30,8 +36,88 @@ namespace QuickView::UI::ThemeSystem {
         return L"";
     }
 
+    bool LooksLikeQuickViewIni(const std::wstring& path) {
+        HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) return false;
+
+        char buf[4096] = {};
+        DWORD bytesRead = 0;
+        BOOL ok = ReadFile(hFile, buf, sizeof(buf) - 1, &bytesRead, nullptr);
+        CloseHandle(hFile);
+        if (!ok || bytesRead < 4) return false;
+
+        size_t i = 0;
+        bool utf16le = false;
+        if (bytesRead >= 3 &&
+            static_cast<unsigned char>(buf[0]) == 0xEF &&
+            static_cast<unsigned char>(buf[1]) == 0xBB &&
+            static_cast<unsigned char>(buf[2]) == 0xBF) {
+            i = 3;
+        } else if (bytesRead >= 2 &&
+            static_cast<unsigned char>(buf[0]) == 0xFF &&
+            static_cast<unsigned char>(buf[1]) == 0xFE) {
+            utf16le = true;
+            i = 2;
+        }
+
+        auto skipWs = [&]() {
+            if (utf16le) {
+                while (i + 1 < bytesRead) {
+                    wchar_t ch = static_cast<unsigned char>(buf[i]) |
+                                 (static_cast<wchar_t>(static_cast<unsigned char>(buf[i + 1])) << 8);
+                    if (ch != L' ' && ch != L'\t' && ch != L'\r' && ch != L'\n') break;
+                    i += 2;
+                }
+            } else {
+                while (i < bytesRead && (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '\r' || buf[i] == '\n')) ++i;
+            }
+        };
+        skipWs();
+
+        if (utf16le) {
+            if (i + 1 < bytesRead) {
+                wchar_t ch = static_cast<unsigned char>(buf[i]) |
+                             (static_cast<wchar_t>(static_cast<unsigned char>(buf[i + 1])) << 8);
+                if (ch == L'{') return false;
+            }
+        } else if (i < bytesRead && buf[i] == '{') {
+            return false;
+        }
+
+        auto containsAscii = [&](const char* needle) -> bool {
+            const size_t n = strlen(needle);
+            if (n == 0 || n > bytesRead) return false;
+            for (size_t p = 0; p + n <= bytesRead; ++p) {
+                if (memcmp(buf + p, needle, n) == 0) return true;
+            }
+            return false;
+        };
+        auto containsUtf16Le = [&](const wchar_t* needle) -> bool {
+            const size_t n = wcslen(needle);
+            if (n == 0 || (n * 2) > bytesRead) return false;
+            for (size_t p = 0; p + n * 2 <= bytesRead; p += 2) {
+                bool match = true;
+                for (size_t k = 0; k < n; ++k) {
+                    wchar_t ch = static_cast<unsigned char>(buf[p + k * 2]) |
+                                 (static_cast<wchar_t>(static_cast<unsigned char>(buf[p + k * 2 + 1])) << 8);
+                    if (ch != needle[k]) { match = false; break; }
+                }
+                if (match) return true;
+            }
+            return false;
+        };
+
+        return containsAscii("[General]") || containsAscii("[Theme]") || containsAscii("[View]") ||
+               containsUtf16Le(L"[General]") || containsUtf16Le(L"[Theme]") || containsUtf16Le(L"[View]");
+    }
+
+}
+
+namespace QuickView::UI::ThemeSystem {
+
     bool ExportTheme(HWND hwnd, const AppConfig& config) {
-        std::wstring path = ShowFileDialog(hwnd, true);
+        std::wstring path = ShowFileDialog(hwnd, true,
+            L"QuickView Theme (*.qvtheme)\0*.qvtheme\0All Files (*.*)\0*.*\0", L"qvtheme");
         if (path.empty()) return false;
 
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
@@ -91,7 +177,8 @@ namespace QuickView::UI::ThemeSystem {
     }
 
     bool ImportTheme(HWND hwnd, AppConfig& config) {
-        std::wstring path = ShowFileDialog(hwnd, false);
+        std::wstring path = ShowFileDialog(hwnd, false,
+            L"QuickView Theme (*.qvtheme)\0*.qvtheme\0All Files (*.*)\0*.*\0", L"qvtheme");
         if (path.empty()) return false;
 
         HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -171,4 +258,41 @@ namespace QuickView::UI::ThemeSystem {
         yyjson_doc_free(doc);
         return true;
     }
+}
+
+namespace QuickView::UI::ConfigIO {
+
+    bool ExportConfig(HWND hwnd) {
+        ::SaveConfig();
+        std::wstring dest = ShowFileDialog(hwnd, true,
+            L"QuickView Config (*.ini)\0*.ini\0All Files (*.*)\0*.*\0", L"ini", L"QuickView.ini");
+        if (dest.empty()) return false;
+
+        std::wstring src = GetConfigPath();
+        if (src.empty() || GetFileAttributesW(src.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+        if (_wcsicmp(src.c_str(), dest.c_str()) == 0) return true;
+        return CopyFileW(src.c_str(), dest.c_str(), FALSE) != FALSE;
+    }
+
+    bool ImportConfig(HWND hwnd) {
+        std::wstring src = ShowFileDialog(hwnd, false,
+            L"QuickView Config (*.ini)\0*.ini\0All Files (*.*)\0*.*\0", L"ini");
+        if (src.empty()) return false;
+        if (!LooksLikeQuickViewIni(src)) return false;
+
+        const bool portable = g_config.PortableMode;
+        std::wstring dest = GetConfigPath();
+        if (dest.empty()) return false;
+
+        if (_wcsicmp(src.c_str(), dest.c_str()) != 0) {
+            if (!CopyFileW(src.c_str(), dest.c_str(), FALSE)) return false;
+        }
+
+        LoadConfig();
+        g_config.PortableMode = portable;
+        g_config.EnforceGlassSafetyLimits();
+        ::SaveConfig();
+        return true;
+    }
+
 }

@@ -16,3 +16,14 @@ namespace QuickView::UI::ThemeSystem {
     bool ImportTheme(HWND hwnd, AppConfig& config);
 
 }
+
+namespace QuickView::UI::ConfigIO {
+
+    /// Exports the live QuickView.ini to a user-chosen path.
+    bool ExportConfig(HWND hwnd);
+
+    /// Imports a QuickView.ini over the live config and reloads it.
+    /// PortableMode of the current install is preserved.
+    bool ImportConfig(HWND hwnd);
+
+}
