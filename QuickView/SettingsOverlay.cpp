@@ -818,6 +818,8 @@ void SettingsOverlay::SetUIScale(float scale) {
     m_uiScale = scale;
     m_textFormatHeader.Reset();
     m_textFormatItem.Reset();
+    m_textFormatBadge.Reset();
+    m_textFormatStepper.Reset();
 }
 
 void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
@@ -866,13 +868,15 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     }
 
-    if (!m_textFormatHeader || !m_textFormatItem || !m_textFormatBadge) {
+    if (!m_textFormatHeader || !m_textFormatItem || !m_textFormatBadge || !m_textFormatStepper) {
         float scaledHeader = fontSizeHeader * m_uiScale;
         float scaledItem = fontSizeItem * m_uiScale;
         float scaledBadge = 7.5f * m_uiScale; // Micro font size for NEW badge
+        float scaledStepper = 15.5f * m_uiScale; // Enhanced size for ⊖ / ⊕ icons
         m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledHeader, AppStrings::CurrentLocale, &m_textFormatHeader);
         m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledItem, AppStrings::CurrentLocale, &m_textFormatItem);
         m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledBadge, AppStrings::CurrentLocale, &m_textFormatBadge);
+        m_dwriteFactory->CreateTextFormat(fontFace, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, scaledStepper, AppStrings::CurrentLocale, &m_textFormatStepper);
     }
 
     if (m_textFormatItem) {
@@ -882,6 +886,10 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
     if (m_textFormatBadge) {
         m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+    if (m_textFormatStepper) {
+        m_textFormatStepper->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        m_textFormatStepper->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     }
 
     // Load App Icon from Resource removed (refactored to native Vector D2D)
@@ -2740,6 +2748,9 @@ void SettingsOverlay::BuildMenu() {
 }
 
 void SettingsOverlay::SetVisible(bool visible) {
+    if (!visible && m_pFocusedSlider) {
+        CommitInput();
+    }
     m_visible = visible;
     m_pActiveCombo = nullptr;
     m_comboHoverIdx = -1;
@@ -3674,20 +3685,19 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 }
                 case OptionType::Slider: {
                   const float s = m_uiScale;
-                  const float trackW = 150.0f * s;
-                  const float padding = 12.0f * s;
-                  const float valueW = 80.0f * s;
-                  const float buttonW = 28.0f * s;
+                  const float val = (item.pFloatVal ? *item.pFloatVal : item.minVal);
+                  bool hasReset = (item.onReset != nullptr);
+                  const auto fullGeom = QuickView::ComputeSliderFullGeom(
+                      controlRect.left, controlRect.right, item.rect.top, item.rect.bottom, s, val, item.minVal, item.maxVal, hasReset);
 
-                  // Track + right pad + knob radius so a min-value knob is still hittable.
                   const float knobPad = QuickView::SliderKnobHitRadius();
                   item.interactRect = D2D1::RectF(
-                      controlRect.right - (trackW + padding) - knobPad, item.rect.top,
-                      controlRect.right, item.rect.bottom);
+                      fullGeom.minusRect.left, item.rect.top,
+                      fullGeom.trackRect.right + knobPad, item.rect.bottom);
 
-                  if (item.onReset) {
-                    float buttonX = controlRect.right -
-                                    (trackW + padding + valueW + buttonW);
+                  if (hasReset) {
+                    float buttonW = 18.0f * s;
+                    float buttonX = controlRect.left;
                     item.interactRect2 =
                         D2D1::RectF(buttonX, item.rect.top, buttonX + buttonW,
                                     item.rect.bottom);
@@ -3698,8 +3708,6 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     m_textFormatItem->SetParagraphAlignment(
                         DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-                    // Visual baseline adjustment: Emojis often sit slightly
-                    // higher than text
                     D2D1_RECT_F emojiRect = item.interactRect2;
                     emojiRect.top += 1.0f * s;
                     emojiRect.bottom += 1.0f * s;
@@ -3707,25 +3715,16 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                                   item.isHovered2 ? m_brushText.Get()
                                                   : m_brushTextDim.Get());
 
-                    // [Fix] Restore default alignment (CENTER for vertical,
-                    // LEADING for horizontal)
                     m_textFormatItem->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_LEADING);
                     m_textFormatItem->SetParagraphAlignment(
                         DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                   }
 
-                  if (item.isDisabled) {
-                    DrawSlider(pRT, controlRect,
-                               (item.pFloatVal ? *item.pFloatVal : 0.0f),
-                               item.minVal, item.maxVal, false,
-                               item.displayFormat, true);
-                  } else {
-                    DrawSlider(pRT, controlRect,
-                               (item.pFloatVal ? *item.pFloatVal : 0.0f),
-                               item.minVal, item.maxVal, isHovered,
-                               item.displayFormat);
-                  }
+                  int subPart = (&item == m_pHoverItem) ? m_hoverSliderSubPart : 0;
+                  bool isInputFocused = (&item == m_pFocusedSlider);
+                  DrawSlider(pRT, controlRect, val, item.minVal, item.maxVal, isHovered,
+                             item.displayFormat, item.isDisabled, subPart, item.step, isInputFocused, hasReset);
                 } break;
                 case OptionType::Segment:
                     item.interactRect = controlRect;
@@ -4062,15 +4061,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
     float visibleH = hudH - 60.0f * s;
     float overflow = m_settingsContentHeight - visibleH;
     if (overflow > 0) {
-        float maxScroll = overflow;
-        float thumbRatio = visibleH / m_settingsContentHeight;
-        float thumbH = std::max(20.0f * s, visibleH * thumbRatio);
-        float scrollProgress = -m_scrollOffset / maxScroll;
-        float thumbY = hudY + 50.0f * s + (visibleH - thumbH) * scrollProgress;
-
-        D2D1_RECT_F thumbRect = D2D1::RectF(hudX + hudW - 8.0f * s, thumbY, hudX + hudW - 4.0f * s, thumbY + thumbH);
+        D2D1_RECT_F thumbRect = GetScrollbarThumbRect();
+        D2D1_COLOR_F thumbColor = (m_isDraggingScrollbar || m_isHoveringScrollbar) ? palette.accent : palette.subtleTint;
         ComPtr<ID2D1SolidColorBrush> scrollBrush;
-        pRT->CreateSolidColorBrush(palette.subtleTint, &scrollBrush);
+        pRT->CreateSolidColorBrush(thumbColor, &scrollBrush);
         pRT->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 2.0f * s, 2.0f * s), scrollBrush.Get());
     }
 
@@ -4089,6 +4083,40 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
     }
 } 
 
+D2D1_RECT_F SettingsOverlay::GetScrollbarTrackRect() const {
+    const float s = m_uiScale;
+    const float trackTop = m_hudY + 50.0f * s;
+    const float trackBottom = m_hudY + HUD_HEIGHT * s - 10.0f * s;
+    const float hitW = 16.0f * s;
+    return D2D1::RectF(m_hudX + HUD_WIDTH * s - hitW, trackTop, m_hudX + HUD_WIDTH * s, trackBottom);
+}
+
+D2D1_RECT_F SettingsOverlay::GetScrollbarThumbRect() const {
+    const float s = m_uiScale;
+    const float trackTop = m_hudY + 50.0f * s;
+    const float visibleH = HUD_HEIGHT * s - 60.0f * s;
+    const float overflow = m_settingsContentHeight - visibleH;
+    if (overflow <= 0.0f || m_settingsContentHeight <= 0.0f) return D2D1::RectF(0, 0, 0, 0);
+
+    const float thumbRatio = visibleH / m_settingsContentHeight;
+    const float thumbH = (std::max)(24.0f * s, visibleH * thumbRatio);
+    const float scrollProgress = -m_scrollOffset / overflow;
+    const float thumbY = trackTop + (visibleH - thumbH) * std::clamp(scrollProgress, 0.0f, 1.0f);
+    return D2D1::RectF(m_hudX + HUD_WIDTH * s - 8.0f * s, thumbY, m_hudX + HUD_WIDTH * s - 4.0f * s, thumbY + thumbH);
+}
+
+void SettingsOverlay::ClampScroll() {
+    if (m_scrollOffset > 0.0f) m_scrollOffset = 0.0f;
+    const float s = m_uiScale;
+    const float visibleH = HUD_HEIGHT * s - 60.0f * s;
+    const float overflow = m_settingsContentHeight - visibleH;
+    if (overflow > 0.0f) {
+        if (m_scrollOffset < -overflow) m_scrollOffset = -overflow;
+    } else {
+        m_scrollOffset = 0.0f;
+    }
+}
+
 bool SettingsOverlay::OnMouseWheel(float delta) {
     if (m_showUpdateToast && m_toastTotalHeight > 0) {
         // Scroll Logic inverted: wheel down (negative) -> scroll down (increase Y)
@@ -4101,59 +4129,252 @@ bool SettingsOverlay::OnMouseWheel(float delta) {
     if (!m_visible) return false;
 
     // Auto-collapse open dropdown when scrolling content
-    if (m_pActiveCombo) {
+                     if (m_pActiveCombo) {
         m_pActiveCombo = nullptr;
         m_comboHoverIdx = -1;
     }
 
-    // 1. Slider adjustment via scroll wheel
-    if (m_pHoverItem && m_pHoverItem->type == OptionType::Slider && !m_pHoverItem->isDisabled && m_pHoverItem->pFloatVal) {
-        const float stepSize = QuickView::EffectiveStep(
-            m_pHoverItem->step, m_pHoverItem->minVal, m_pHoverItem->maxVal, m_pHoverItem->displayFormat);
-        *m_pHoverItem->pFloatVal = QuickView::QuantizeSliderValue(
-            *m_pHoverItem->pFloatVal + delta * stepSize,
-            m_pHoverItem->minVal, m_pHoverItem->maxVal, stepSize);
-        
-        if (m_pHoverItem->onLiveUpdate) {
-            m_pHoverItem->onLiveUpdate(this, m_pHoverItem);
-        }
-        return true;
-    }
-    
-    // delta is normalized in main.cpp to 1.0 or -1.0. Map to pixel scroll speed.
-    // E.g. delta > 0 -> Scroll Up (increase offset), delta < 0 -> Scroll Down (decrease offset)
+    // Scroll Settings Content (delta > 0 -> Scroll Up, delta < 0 -> Scroll Down)
     m_scrollOffset += delta * 60.0f * m_uiScale;
-
-    if (m_scrollOffset > 0.0f) m_scrollOffset = 0.0f;
-    
-    // Bottom Limit
-    float visibleH = HUD_HEIGHT * m_uiScale - 60.0f * m_uiScale;
-    float overflow = m_settingsContentHeight - visibleH;
-    if (overflow < 0) overflow = 0;
-    float minScroll = -overflow;
-    if (m_scrollOffset < minScroll) m_scrollOffset = minScroll;
-    
+    ClampScroll();
     return true;
 }
 
-// ----------------------------------------------------------------------------
-// Widget Drawing Components
-// ----------------------------------------------------------------------------
+void SettingsOverlay::CommitInput() {
+    if (!m_pFocusedSlider) return;
+    SettingsItem* item = m_pFocusedSlider;
+    m_pFocusedSlider = nullptr;
+    m_sliderInputStarted = false;
+
+    if (item->onChange) {
+        item->onChange(this, item);
+    }
+    extern void SaveConfig();
+    SaveConfig();
+}
+
+void SettingsOverlay::CancelInput() {
+    if (!m_pFocusedSlider) return;
+    if (m_pFocusedSlider->pFloatVal) {
+        *m_pFocusedSlider->pFloatVal = m_sliderPreEditVal;
+        if (m_pFocusedSlider->onLiveUpdate) {
+            m_pFocusedSlider->onLiveUpdate(this, m_pFocusedSlider);
+        }
+    }
+    m_pFocusedSlider = nullptr;
+    m_sliderInputStarted = false;
+}
+
+bool SettingsOverlay::OnKeyDown(WPARAM key) {
+    if (!m_visible) return false;
+
+    // 0. In-place Capsule Direct Input Handling
+    if (m_pFocusedSlider) {
+        if (key == VK_ESCAPE) {
+            CancelInput();
+            return true;
+        }
+        if (key == VK_RETURN) {
+            CommitInput();
+            return true;
+        }
+        if (key == VK_BACK) {
+            if (!m_sliderInputStarted) {
+                m_sliderInputStarted = true;
+                m_sliderInputLen = 0;
+                m_sliderInputBuf[0] = L'\0';
+            } else if (m_sliderInputLen > 0) {
+                m_sliderInputLen--;
+                m_sliderInputBuf[m_sliderInputLen] = L'\0';
+            }
+
+            if (m_sliderInputLen > 0 && m_pFocusedSlider->pFloatVal) {
+                float newVal = QuickView::ParseSliderInput(
+                    m_sliderInputBuf, *m_pFocusedSlider->pFloatVal,
+                    m_pFocusedSlider->minVal, m_pFocusedSlider->maxVal,
+                    m_pFocusedSlider->displayFormat, m_pFocusedSlider->step);
+                *m_pFocusedSlider->pFloatVal = newVal;
+                if (m_pFocusedSlider->onLiveUpdate) {
+                    m_pFocusedSlider->onLiveUpdate(this, m_pFocusedSlider);
+                }
+            }
+            return true;
+        }
+        // Consume arrow/page keys when inputting
+        return true;
+    }
+    
+    const float s = m_uiScale;
+    const float pageStep = (HUD_HEIGHT - 60.0f) * 0.8f * s;
+    const float lineStep = 40.0f * s;
+    
+    switch (key) {
+        case VK_UP:
+            m_scrollOffset += lineStep;
+            ClampScroll();
+            return true;
+        case VK_DOWN:
+            m_scrollOffset -= lineStep;
+            ClampScroll();
+            return true;
+        case VK_PRIOR: // Page Up
+            m_scrollOffset += pageStep;
+            ClampScroll();
+            return true;
+        case VK_NEXT: // Page Down
+            m_scrollOffset -= pageStep;
+            ClampScroll();
+            return true;
+        case VK_HOME:
+            m_scrollOffset = 0.0f;
+            return true;
+        case VK_END:
+            m_scrollOffset = -999999.0f;
+            ClampScroll();
+            return true;
+        default:
+            break;
+    }
+    return false;
+}
+
+bool SettingsOverlay::OnChar(WPARAM wParam) {
+    if (!m_visible || !m_pFocusedSlider || m_pFocusedSlider->isDisabled || !m_pFocusedSlider->pFloatVal) {
+        return false;
+    }
+
+    wchar_t c = (wchar_t)wParam;
+    if (c == VK_ESCAPE || c == VK_RETURN || c == VK_BACK) {
+        return true; // Handled in OnKeyDown
+    }
+
+    bool isDigit = (c >= L'0' && c <= L'9');
+    bool isDot = (c == L'.');
+
+    bool allowDecimal = true;
+    if (m_pFocusedSlider->displayFormat && wcsstr(m_pFocusedSlider->displayFormat, L"%.0f") != nullptr &&
+        !(m_pFocusedSlider->maxVal <= 1.05f && wcsstr(m_pFocusedSlider->displayFormat, L"%%") != nullptr)) {
+        allowDecimal = false;
+    }
+
+    if (isDot && !allowDecimal) {
+        return true;
+    }
+
+    if (isDot && (wcschr(m_sliderInputBuf, L'.') != nullptr)) {
+        return true;
+    }
+
+    if (isDigit || isDot) {
+        if (!m_sliderInputStarted) {
+            m_sliderInputStarted = true;
+            m_sliderInputLen = 0;
+            m_sliderInputBuf[0] = L'\0';
+            if (isDot) {
+                m_sliderInputBuf[m_sliderInputLen++] = L'0';
+            }
+        }
+
+        if (m_sliderInputLen < (int)std::size(m_sliderInputBuf) - 1) {
+            m_sliderInputBuf[m_sliderInputLen++] = c;
+            m_sliderInputBuf[m_sliderInputLen] = L'\0';
+        }
+
+        float newVal = QuickView::ParseSliderInput(
+            m_sliderInputBuf, *m_pFocusedSlider->pFloatVal,
+            m_pFocusedSlider->minVal, m_pFocusedSlider->maxVal,
+            m_pFocusedSlider->displayFormat, m_pFocusedSlider->step);
+        
+        *m_pFocusedSlider->pFloatVal = newVal;
+        if (m_pFocusedSlider->onLiveUpdate) {
+            m_pFocusedSlider->onLiveUpdate(this, m_pFocusedSlider);
+        }
+        return true;
+    }
+
+    return true;
+}
+
+void SettingsOverlay::OnVScroll(WPARAM wParam, [[maybe_unused]] LPARAM lParam) {
+    if (!m_visible) return;
+    const float s = m_uiScale;
+    const float pageStep = (HUD_HEIGHT - 60.0f) * 0.8f * s;
+    const float lineStep = 40.0f * s;
+    
+    int code = LOWORD(wParam);
+    switch (code) {
+        case SB_LINEUP:
+            m_scrollOffset += lineStep;
+            break;
+        case SB_LINEDOWN:
+            m_scrollOffset -= lineStep;
+            break;
+        case SB_PAGEUP:
+            m_scrollOffset += pageStep;
+            break;
+        case SB_PAGEDOWN:
+            m_scrollOffset -= pageStep;
+            break;
+        case SB_TOP:
+            m_scrollOffset = 0.0f;
+            break;
+        case SB_BOTTOM:
+            m_scrollOffset = -999999.0f;
+            break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION: {
+            short pos = HIWORD(wParam);
+            float visibleH = HUD_HEIGHT * s - 60.0f * s;
+            float overflow = m_settingsContentHeight - visibleH;
+            if (overflow > 0.0f) {
+                m_scrollOffset = - (float)pos / 100.0f * overflow;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    ClampScroll();
+}
+
+SettingsAction SettingsOverlay::OnMButtonDown(float x, float y) {
+    if (!m_visible) return SettingsAction::None;
+    const float s = m_uiScale;
+    float contentX = m_hudX + SIDEBAR_WIDTH * s;
+    float contentRight = m_hudX + HUD_WIDTH * s;
+    float hudBottom = m_hudY + HUD_HEIGHT * s;
+    
+    if (x >= contentX && x <= contentRight && y >= m_hudY && y <= hudBottom) {
+        m_isMiddlePanning = true;
+        m_dragPanStartY = y;
+        m_dragPanStartOffset = m_scrollOffset;
+        return SettingsAction::RepaintStatic;
+    }
+    return SettingsAction::None;
+}
+
+SettingsAction SettingsOverlay::OnMButtonUp([[maybe_unused]] float x, [[maybe_unused]] float y) {
+    if (m_isMiddlePanning) {
+        m_isMiddlePanning = false;
+        return SettingsAction::RepaintStatic;
+    }
+    return SettingsAction::None;
+}
 
 void SettingsOverlay::DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, bool isOn, bool isHovered) {
-    // Width 44, Height 22
-    float w = 44.0f;
-    float h = 22.0f;
-    // Align Right
+    const float s = m_uiScale;
+    float w = 44.0f * s;
+    float h = 22.0f * s;
     float x = rect.right - w;
     float y = rect.top + (rect.bottom - rect.top - h) / 2.0f;
     D2D1_RECT_F toggleRect = D2D1::RectF(x, y, x + w, y + h);
 
-    // Background
-    ComPtr<ID2D1SolidColorBrush> brush = isOn ? m_brushAccent : m_brushControlBg;
-    if (isHovered && !isOn) {
-        // Lighter gray if hovered and off
-        // We can just use opacity or new brush. Keeping simple.
+    // Background pill
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (isOn) {
+        brush = m_brushAccent;
+    } else {
+        brush = isHovered ? m_brushBorder : m_brushControlBg;
     }
     pRT->FillRoundedRectangle(D2D1::RoundedRect(toggleRect, h/2, h/2), brush.Get());
 
@@ -4165,52 +4386,95 @@ void SettingsOverlay::DrawToggle(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     pRT->FillEllipse(knob, m_brushText.Get());
 }
 
-void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, float val, float minV, float maxV, bool isHovered, const wchar_t* format, bool isDisabled) {
+void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rect, float val,
+                                 float minV, float maxV, bool isHovered,
+                                 const wchar_t* format, bool isDisabled,
+                                 int subPartHover, [[maybe_unused]] float step,
+                                 bool isInputFocused, bool hasReset) {
     const float s = m_uiScale;
-    const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
-        rect.right, rect.top, rect.bottom, s, val, minV, maxV);
-    const float w = g.TrackWidth();
-    const float h = g.trackH;
-    const float x = g.trackLeft;
-    const float y = g.trackY;
+    const QuickView::SliderFullGeom g = QuickView::ComputeSliderFullGeom(
+        rect.left, rect.right, rect.top, rect.bottom, s, val, minV, maxV, hasReset);
 
-    // Track Background
-    D2D1_RECT_F trackRect = D2D1::RectF(x, y, x + w, y + h);
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(trackRect, h/2, h/2), m_brushControlBg.Get());
+    bool isMinusHover = (subPartHover == 1 && !isDisabled);
+    bool isValueHover = (subPartHover == 2 && !isDisabled);
+    bool isPlusHover  = (subPartHover == 3 && !isDisabled);
+    bool isTrackHover = (subPartHover == 4 && !isDisabled) || (isHovered && !isDisabled);
+
+    // 1. [-] Minus Character (⊖) - Larger stepper font (15.5pt), no solid button background
+    IDWriteTextFormat* pStepperFormat = m_textFormatStepper ? m_textFormatStepper.Get() : m_textFormatItem.Get();
+    pStepperFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    pStepperFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    pRT->DrawText(L"⊖", 1, pStepperFormat, g.minusRect,
+                  isDisabled ? m_brushTextDim.Get() : (isMinusHover ? m_brushAccent.Get() : m_brushTextDim.Get()));
+
+    // 2. [Value] In-place Capsule Input Box - Transparent background with clean minimalist border
+    if (isInputFocused) {
+        pRT->DrawRoundedRectangle(
+            D2D1::RoundedRect(g.valueRect, 3.0f * s, 3.0f * s),
+            m_brushAccent.Get(), 1.5f * s);
+    } else if (isValueHover) {
+        pRT->DrawRoundedRectangle(
+            D2D1::RoundedRect(g.valueRect, 3.0f * s, 3.0f * s),
+            m_brushAccent.Get(), 1.0f * s);
+    } else {
+        pRT->DrawRoundedRectangle(
+            D2D1::RoundedRect(g.valueRect, 3.0f * s, 3.0f * s),
+            m_brushBorder.Get(), 1.0f * s);
+    }
+
+    wchar_t buf[64];
+    if (isInputFocused) {
+        bool showCursor = ((GetTickCount() / 500) % 2 == 0);
+        if (m_sliderInputLen == 0) {
+            swprintf_s(buf, showCursor ? L"|" : L" ");
+        } else {
+            swprintf_s(buf, showCursor ? L"%.*s|" : L"%.*s", m_sliderInputLen, m_sliderInputBuf);
+        }
+    } else {
+        if (format == nullptr || format[0] == L'\0') {
+            swprintf_s(buf, L"%.1f", val);
+        } else {
+            float displayVal = val;
+            if (maxV <= 1.05f && wcsstr(format, L"%%") != nullptr) {
+                displayVal *= 100.0f;
+            }
+            swprintf_s(buf, format, displayVal);
+        }
+    }
+
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    pRT->DrawText(buf, (UINT32)wcslen(buf), m_textFormatItem.Get(), g.valueRect,
+                  isDisabled ? m_brushTextDim.Get() : ((isInputFocused || isValueHover) ? m_brushAccent.Get() : m_brushText.Get()));
+
+    // 3. [+] Plus Character (⊕) - Larger stepper font (15.5pt), no solid button background
+    pRT->DrawText(L"⊕", 1, pStepperFormat, g.plusRect,
+                  isDisabled ? m_brushTextDim.Get() : (isPlusHover ? m_brushAccent.Get() : m_brushTextDim.Get()));
+
+    // Restore text alignment defaults
+    m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    // 4. Extended Track Background
+    pRT->FillRoundedRectangle(
+        D2D1::RoundedRect(g.trackRect, g.trackH / 2, g.trackH / 2),
+        m_brushControlBg.Get());
 
     if (!isDisabled) {
         // Active Track
-        D2D1_RECT_F activeRect = D2D1::RectF(x, y, g.knobX, y + h);
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(activeRect, h/2, h/2), m_brushAccent.Get());
+        D2D1_RECT_F activeRect = D2D1::RectF(g.trackRect.left, g.trackY, g.knobX, g.trackY + g.trackH);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(activeRect, g.trackH / 2, g.trackH / 2), m_brushAccent.Get());
 
         // Knob
-        float knobR = isHovered ? 8.0f : 6.0f;
-        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(g.knobX, y + h/2), knobR, knobR);
+        float knobR = isTrackHover ? 8.0f : 6.0f;
+        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(g.knobX, g.trackY + g.trackH / 2), knobR, knobR);
         pRT->FillEllipse(knob, m_brushText.Get());
     } else {
         // Disabled Knob (Gray)
         float knobR = 5.0f * s;
-        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(g.knobX, y + h/2), knobR, knobR);
+        D2D1_ELLIPSE knob = D2D1::Ellipse(D2D1::Point2F(g.knobX, g.trackY + g.trackH / 2), knobR, knobR);
         pRT->FillEllipse(knob, m_brushTextDim.Get());
     }
-    
-    // Optional: Draw Value Text next to slider?
-    wchar_t buf[32];
-    if (format == nullptr || format[0] == L'\0') {
-        swprintf_s(buf, L"%.1f", val);
-    } else {
-        // Smart scaling: if format is percentage and maxVal is 1.0 (internal float scale), multiply by 100 for display
-        float displayVal = val;
-        if (maxV <= 1.05f && wcsstr(format, L"%%") != nullptr) {
-            displayVal *= 100.0f;
-        }
-        swprintf_s(buf, format, displayVal);
-    }
-
-    // Adjust right bounds based on format length to avoid clipping
-    float leftBound = x - 80.0f * s;
-    D2D1_RECT_F valRect = D2D1::RectF(leftBound, rect.top, x - 10.0f * s, rect.bottom);
-    pRT->DrawText(buf, (UINT32)wcslen(buf), m_textFormatItem.Get(), valRect, m_brushTextDim.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE); 
 }
 
 std::vector<float> SettingsOverlay::CalculateSegmentWidths(const std::vector<std::wstring_view>& options, float totalW) {
@@ -4350,8 +4614,6 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
             return SettingsAction::RepaintStatic; 
         }
-        // If Modal, maybe block interaction with rest? 
-        // For now, allow passthrough if outside toast (dimmer handles visual block)
     }
 
     if (!m_visible) return SettingsAction::None;
@@ -4359,12 +4621,38 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
     m_lastMouseX = x;
     m_lastMouseY = y;
 
-    // Calculate HUD bounds (must match Render)
-    // NOTE: We need window size. For now, use cached/known values or assume calling code passes them.
-    // A better approach is to store m_lastWinW/m_lastWinH. For now, apply simple logic.
-    // This function is called with screen coords - we need to transform.
+    // 0. Dragging Scrollbar?
+    if (m_isDraggingScrollbar) {
+        const float s = m_uiScale;
+        const float visibleH = HUD_HEIGHT * s - 60.0f * s;
+        const float overflow = m_settingsContentHeight - visibleH;
+        if (overflow > 0.0f) {
+            const float thumbRatio = visibleH / m_settingsContentHeight;
+            const float thumbH = (std::max)(24.0f * s, visibleH * thumbRatio);
+            const float scrollableH = visibleH - thumbH;
+            if (scrollableH > 0.0f) {
+                float dy = y - m_dragScrollStartY;
+                float deltaOffset = -(dy / scrollableH) * overflow;
+                m_scrollOffset = m_dragScrollStartOffset + deltaOffset;
+                ClampScroll();
+            }
+        }
+        g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
+        ::SetCursor(g_currentCursor);
+        return SettingsAction::RepaintStatic;
+    }
 
-    // 0. Active Combo Logic (Priority)
+    // 0b. Middle-Button Panning?
+    if (m_isMiddlePanning) {
+        float dy = y - m_dragPanStartY;
+        m_scrollOffset = m_dragPanStartOffset + dy;
+        ClampScroll();
+        g_currentCursor = ::LoadCursor(NULL, IDC_SIZEALL);
+        ::SetCursor(g_currentCursor);
+        return SettingsAction::RepaintStatic;
+    }
+
+    // Active Combo Logic (Priority)
     if (m_pActiveCombo) {
         D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
         const float s = m_uiScale;
@@ -4374,8 +4662,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         if (x >= dropRect.left && x <= dropRect.right && y >= dropRect.top && y <= dropRect.bottom) {
              g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
              int idx = (int)((y - dropRect.top) / itemH);
-             // Scroll support? For now assume simple clamp
-             if (idx >= 0 && idx < count) { // TODO: Add scroll offset logic if > maxItems
+             if (idx >= 0 && idx < count) {
                  if (m_comboHoverIdx != idx) {
                      m_comboHoverIdx = idx;
                      return SettingsAction::RepaintStatic;
@@ -4385,21 +4672,21 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         } else {
              m_comboHoverIdx = -1;
         }
-        // If outside dropdown but inside window, fallthrough? 
-        // No, standard behavior is overlay blocks underlying hover?
-        // Let's allow underlying hover but click will close combo.
     }
 
     // 1. Dragging Slider?
     if (m_pActiveSlider && m_pActiveSlider->pFloatVal) {
-        const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
-            m_pActiveSlider->rect.right, m_pActiveSlider->rect.top, m_pActiveSlider->rect.bottom,
-            m_uiScale, *m_pActiveSlider->pFloatVal, m_pActiveSlider->minVal, m_pActiveSlider->maxVal);
+        float ctrlLeft = m_pActiveSlider->rect.left + LABEL_COLUMN_WIDTH * m_uiScale;
+        float ctrlRight = m_pActiveSlider->rect.right;
+        bool hasReset = (m_pActiveSlider->onReset != nullptr);
+        const auto fullGeom = QuickView::ComputeSliderFullGeom(
+            ctrlLeft, ctrlRight, m_pActiveSlider->rect.top, m_pActiveSlider->rect.bottom,
+            m_uiScale, *m_pActiveSlider->pFloatVal, m_pActiveSlider->minVal, m_pActiveSlider->maxVal, hasReset);
         const float step = QuickView::EffectiveStep(
             m_pActiveSlider->step, m_pActiveSlider->minVal, m_pActiveSlider->maxVal,
             m_pActiveSlider->displayFormat);
-        const float newVal = QuickView::ValueFromX(
-            g, x, m_pActiveSlider->minVal, m_pActiveSlider->maxVal, step);
+        const float newVal = QuickView::ValueFromFullGeomX(
+            fullGeom, x, m_pActiveSlider->minVal, m_pActiveSlider->maxVal, step);
         if (*m_pActiveSlider->pFloatVal != newVal) {
             *m_pActiveSlider->pFloatVal = newVal;
             if (m_pActiveSlider->onLiveUpdate) m_pActiveSlider->onLiveUpdate(this, m_pActiveSlider);
@@ -4407,9 +4694,11 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         return SettingsAction::RepaintStatic;
     }
 
-    // 2. Hit Test Items (Using stored item.rect which is already in screen coords from Render)
+    // 2. Hit Test Items
     SettingsItem* oldHover = m_pHoverItem;
     m_pHoverItem = nullptr;
+    int oldSubPartHover = m_hoverSliderSubPart;
+    m_hoverSliderSubPart = 0;
     int oldLinkHover = m_hoverLinkIndex;
     m_hoverLinkIndex = -1;
     bool oldCopyHover = m_isHoveringCopyright;
@@ -4417,6 +4706,12 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
     SettingsItem* oldTooltipHover = m_pHoverTooltipItem;
     m_pHoverTooltipItem = nullptr;
+
+    bool oldScrollbarHover = m_isHoveringScrollbar;
+    D2D1_RECT_F trackRect = GetScrollbarTrackRect();
+    float visibleH = HUD_HEIGHT * m_uiScale - 60.0f * m_uiScale;
+    m_isHoveringScrollbar = (m_settingsContentHeight > visibleH) &&
+                            (x >= trackRect.left && x <= trackRect.right && y >= trackRect.top && y <= trackRect.bottom);
 
     // Default Cursor for Overlay
     g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
@@ -4437,9 +4732,8 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
 
     if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
         for (auto& item : m_tabs[m_activeTab].items) {
-            // Must be within visible vertical bounds (accounting for clip rect)
             if (y >= hudY && y <= hudBottom) {
-                // Tooltip Hit Testing (Takes priority over general item interaction if small icon clicked)
+                // Tooltip Hit Testing
                 if (item.tooltipText != nullptr && item.tooltipText[0] != L'\0') {
                     if (x >= item.tooltipIconRect.left && x <= item.tooltipIconRect.right &&
                         y >= item.tooltipIconRect.top && y <= item.tooltipIconRect.bottom) {
@@ -4447,15 +4741,31 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                     }
                 }
 
-                // Knob at min sits half outside the track; test it even if interactRect is stale.
-                if (item.type == OptionType::Slider && !item.isDisabled) {
-                    const float val = item.pFloatVal ? *item.pFloatVal : item.minVal;
-                    const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
-                        item.rect.right, item.rect.top, item.rect.bottom,
-                        m_uiScale, val, item.minVal, item.maxVal);
-                    if (QuickView::HitTestSlider(g, x, y, item.rect.top, item.rect.bottom, item.rect.right)) {
+                // Slider Full Geom Hit Testing
+                if (item.type == OptionType::Slider && !item.isDisabled && item.pFloatVal) {
+                    const float val = *item.pFloatVal;
+                    float ctrlLeft = item.rect.left + LABEL_COLUMN_WIDTH * m_uiScale;
+                    float ctrlRight = item.rect.right;
+                    bool hasReset = (item.onReset != nullptr);
+                    const auto fullGeom = QuickView::ComputeSliderFullGeom(
+                        ctrlLeft, ctrlRight, item.rect.top, item.rect.bottom,
+                        m_uiScale, val, item.minVal, item.maxVal, hasReset);
+
+                    if (QuickView::HitTestMinusBtn(fullGeom, x, y)) {
                         m_pHoverItem = &item;
-                        item.isHovered = true;
+                        m_hoverSliderSubPart = 1; // Minus
+                        g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+                    } else if (QuickView::HitTestValueBadge(fullGeom, x, y)) {
+                        m_pHoverItem = &item;
+                        m_hoverSliderSubPart = 2; // Value badge
+                        g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+                    } else if (QuickView::HitTestPlusBtn(fullGeom, x, y)) {
+                        m_pHoverItem = &item;
+                        m_hoverSliderSubPart = 3; // Plus
+                        g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
+                    } else if (QuickView::HitTestSliderTrack(fullGeom, x, y, item.rect.top, item.rect.bottom)) {
+                        m_pHoverItem = &item;
+                        m_hoverSliderSubPart = 4; // Track/Knob
                         g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
                     }
                 }
@@ -4466,23 +4776,13 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                            y >= item.interactRect2.top && y <= item.interactRect2.bottom);
 
                 if (inR1 || inR2) {
-                    m_pHoverItem = &item;
+                    if (!m_pHoverItem) {
+                        m_pHoverItem = &item;
+                    }
                     item.isHovered = inR1;
                     item.isHovered2 = inR2;
 
                     if (inR1 || inR2) g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
-
-                    // Add slider specific hover cursor if not already handled by inR1/inR2
-                    if (item.type == OptionType::Slider && !item.isDisabled) {
-                        const float val = item.pFloatVal ? *item.pFloatVal : item.minVal;
-                        const QuickView::SliderGeom g = QuickView::ComputeSliderGeom(
-                            item.rect.right, item.rect.top, item.rect.bottom,
-                            m_uiScale, val, item.minVal, item.maxVal);
-                        if (QuickView::HitTestSlider(g, x, y, item.rect.top, item.rect.bottom, item.rect.right)) {
-                            g_currentCursor = ::LoadCursor(NULL, IDC_HAND);
-                            m_pHoverItem = &item;
-                        }
-                    }
 
                     // Sub-item Hit Testing
                     if (item.type == OptionType::AboutLinks) {
@@ -4519,7 +4819,10 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
         }
     }
 
-    return ((oldHover != m_pHoverItem) || (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) || (oldTooltipHover != m_pHoverTooltipItem) || m_visible) ? SettingsAction::RepaintStatic : SettingsAction::None;
+    return ((oldHover != m_pHoverItem) || (oldSubPartHover != m_hoverSliderSubPart) ||
+            (oldLinkHover != m_hoverLinkIndex) || (oldCopyHover != m_isHoveringCopyright) ||
+            (oldTooltipHover != m_pHoverTooltipItem) || (oldScrollbarHover != m_isHoveringScrollbar) ||
+            m_visible) ? SettingsAction::RepaintStatic : SettingsAction::None;
 }
 
 SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
@@ -4590,6 +4893,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         float tabY = backH;
         for (int i = 0; i < (int)m_tabs.size(); ++i) {
             if (localY >= tabY && localY <= tabY + tabH) {
+                if (m_pFocusedSlider) CommitInput();
                 if (m_activeTab != i) {
                     m_activeTab = i;
                     m_scrollOffset = 0.0f;
@@ -4598,14 +4902,41 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
             }
             tabY += tabStep;
         }
+        if (m_pFocusedSlider) CommitInput();
         return SettingsAction::DragWindow; // Clicked sidebar blank area - native drag
+    }
+
+    // 2. Scrollbar Click (priority over general content background)
+    float visibleH = HUD_HEIGHT * s - 60.0f * s;
+    float overflow = m_settingsContentHeight - visibleH;
+    if (overflow > 0.0f) {
+        D2D1_RECT_F trackRect = GetScrollbarTrackRect();
+        if (x >= trackRect.left && x <= trackRect.right && y >= trackRect.top && y <= trackRect.bottom) {
+            if (m_pFocusedSlider) CommitInput();
+            D2D1_RECT_F thumbRect = GetScrollbarThumbRect();
+            if (y >= thumbRect.top && y <= thumbRect.bottom) {
+                m_isDraggingScrollbar = true;
+                m_dragScrollStartY = y;
+                m_dragScrollStartOffset = m_scrollOffset;
+                return SettingsAction::RepaintStatic;
+            } else if (y < thumbRect.top) {
+                m_scrollOffset += visibleH * 0.8f;
+                ClampScroll();
+                return SettingsAction::RepaintStatic;
+            } else if (y > thumbRect.bottom) {
+                m_scrollOffset -= visibleH * 0.8f;
+                ClampScroll();
+                return SettingsAction::RepaintStatic;
+            }
+        }
     }
 
     // 3. Active Combo Processing
     if (m_pActiveCombo) {
+        if (m_pFocusedSlider) CommitInput();
         D2D1_RECT_F dropRect = GetComboDropdownRect(m_pActiveCombo);
-        const float s = m_uiScale;
-        float itemH = ITEM_HEIGHT * s;
+        const float sc = m_uiScale;
+        float itemH = ITEM_HEIGHT * sc;
         int count = (int)m_pActiveCombo->options.size();
         
         // Click inside Dropdown?
@@ -4625,9 +4956,6 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
         
         // Click inside the Button itself? (Toggle Close)
-        [[maybe_unused]] float btnHeight = m_pActiveCombo->rect.bottom - m_pActiveCombo->rect.top - 10; // Approx
-        // Actually we can reuse HitTest logic below, but we need to intercept Before closing.
-        // If we click on the Active Combo Item again -> Toggle Close.
         if (x >= m_pActiveCombo->rect.left && x <= m_pActiveCombo->rect.right && 
             y >= m_pActiveCombo->rect.top && y <= m_pActiveCombo->rect.bottom) {
             m_pActiveCombo = nullptr;
@@ -4636,21 +4964,14 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
         // Click outside -> Close
         m_pActiveCombo = nullptr;
-        [[maybe_unused]] SettingsAction extraAction = SettingsAction::None;
-        
-        // Check if we clicked another item immediately?
-        // Fallthrough to standard logic to pick up new click?
-        // Yes, but we must return RepaintAll because we closed the combo.
-        // If we return RepaintAll, the caller will repaint.
-        // We can let fallthrough happen, but we must ensure we return IsRepaint needed.
-        // Let's just Return RepaintAll and consume click?
-        // Better UX: Close combo AND click the new thing.
-        // Proceed...
-        // But strictly: `OnLButtonDown` returns an action.
-        // If we proceed, `m_pActiveCombo` is now null.
     }
 
-    // 2. Content Click (uses hover item)
+    // Commit any active in-place input if clicking outside its value capsule
+    if (m_pFocusedSlider && (m_pHoverItem != m_pFocusedSlider || m_hoverSliderSubPart != 2)) {
+        CommitInput();
+    }
+
+    // 4. Content Click (uses hover item)
     if (m_pHoverItem) {
         // ComboBox Open
         if (m_pHoverItem->type == OptionType::ComboBox) {
@@ -4680,6 +5001,65 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
               return SettingsAction::RepaintAll;
             }
 
+            const float step = QuickView::EffectiveStep(
+                m_pHoverItem->step, m_pHoverItem->minVal, m_pHoverItem->maxVal, m_pHoverItem->displayFormat);
+
+            // 1. Minus button [⊖]
+            if (m_hoverSliderSubPart == 1) {
+                if (m_pFocusedSlider) CommitInput();
+                float currentVal = *m_pHoverItem->pFloatVal;
+                float newVal = QuickView::QuantizeSliderValue(currentVal - step, m_pHoverItem->minVal, m_pHoverItem->maxVal, step);
+                if (newVal != currentVal) {
+                    *m_pHoverItem->pFloatVal = newVal;
+                    if (m_pHoverItem->onLiveUpdate) m_pHoverItem->onLiveUpdate(this, m_pHoverItem);
+                    if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+                    extern void SaveConfig();
+                    SaveConfig();
+                }
+                return SettingsAction::RepaintStatic;
+            }
+
+            // 2. Value badge [Val] -> In-place capsule direct editing
+            if (m_hoverSliderSubPart == 2) {
+                if (m_pFocusedSlider != m_pHoverItem) {
+                    if (m_pFocusedSlider) {
+                        CommitInput();
+                    }
+                    m_pFocusedSlider = m_pHoverItem;
+                    m_sliderInputStarted = false;
+                    m_sliderPreEditVal = *m_pHoverItem->pFloatVal;
+
+                    float displayVal = *m_pHoverItem->pFloatVal;
+                    if (m_pHoverItem->maxVal <= 1.05f && m_pHoverItem->displayFormat && wcsstr(m_pHoverItem->displayFormat, L"%%")) {
+                        displayVal *= 100.0f;
+                        swprintf_s(m_sliderInputBuf, L"%.0f", displayVal);
+                    } else if (m_pHoverItem->displayFormat && wcsstr(m_pHoverItem->displayFormat, L"%.0f")) {
+                        swprintf_s(m_sliderInputBuf, L"%.0f", displayVal);
+                    } else {
+                        swprintf_s(m_sliderInputBuf, L"%.2f", displayVal);
+                    }
+                    m_sliderInputLen = (int)wcslen(m_sliderInputBuf);
+                }
+                return SettingsAction::RepaintStatic;
+            }
+
+            // 3. Plus button [⊕]
+            if (m_hoverSliderSubPart == 3) {
+                if (m_pFocusedSlider) CommitInput();
+                float currentVal = *m_pHoverItem->pFloatVal;
+                float newVal = QuickView::QuantizeSliderValue(currentVal + step, m_pHoverItem->minVal, m_pHoverItem->maxVal, step);
+                if (newVal != currentVal) {
+                    *m_pHoverItem->pFloatVal = newVal;
+                    if (m_pHoverItem->onLiveUpdate) m_pHoverItem->onLiveUpdate(this, m_pHoverItem);
+                    if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+                    extern void SaveConfig();
+                    SaveConfig();
+                }
+                return SettingsAction::RepaintStatic;
+            }
+
+            // 4. Track/Knob Drag
+            if (m_pFocusedSlider) CommitInput();
             m_pActiveSlider = m_pHoverItem;
             OnMouseMove(x, y);
             return SettingsAction::RepaintStatic;
@@ -4687,8 +5067,8 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         // Segment
         if (m_pHoverItem->type == OptionType::Segment && m_pHoverItem->pIntVal) {
             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
-             const float s = m_uiScale;
-             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * s;
+             const float sc = m_uiScale;
+             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * sc;
              float controlW = m_pHoverItem->rect.right - controlX;
              
              if (x >= controlX && x <= controlX + controlW) {
@@ -4789,10 +5169,9 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
         // Button
         if (m_pHoverItem->type == OptionType::ActionButton) {
-            // Ignore click if disabled (but still consume the click event)
             if (m_pHoverItem->isDisabled) return SettingsAction::RepaintStatic;
             if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
-            m_pHoverItem->isActivated = true; // Mark as activated for visual feedback
+            m_pHoverItem->isActivated = true;
             return SettingsAction::RepaintAll;
         }
         if (m_pHoverItem->type == OptionType::DualActionButton) {
@@ -4810,7 +5189,6 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
         }
         // About: Update Button
         if (m_pHoverItem->type == OptionType::AboutVersionCard) {
-            // Full width hit test (item.rect)
             if (x >= m_pHoverItem->rect.left && x <= m_pHoverItem->rect.right && y >= m_pHoverItem->rect.top && y <= m_pHoverItem->rect.bottom) {
                  if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
             }
@@ -4826,26 +5204,23 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                  ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
              }
              else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) {
-                 // Trigger Handoff to Main Window logic
                  return SettingsAction::OpenHelp;
              }
              return SettingsAction::None;
         }
         // Custom Color Row: Checkbox vs Button
         if (m_pHoverItem->type == OptionType::CustomColorRow) {
-             const float s = m_uiScale;
-             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * s;
+             const float sc = m_uiScale;
+             float controlX = m_pHoverItem->rect.left + LABEL_COLUMN_WIDTH * sc;
              bool isCanvasRow = (m_pHoverItem->pFloatVal == nullptr);
              
              if (isCanvasRow) {
-                 // Canvas row: split into grid toggle (left) and color button (right)
-                 if (x < controlX + 140.0f * s) {
+                 if (x < controlX + 140.0f * sc) {
                      g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
                  } else {
                      if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
                  }
              } else {
-                 // Generic color picker: entire area triggers color picker
                  if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
              }
              return SettingsAction::RepaintAll;
@@ -4857,16 +5232,17 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
     float contentRight = m_hudX + HUD_WIDTH * m_uiScale;
 
     if (x >= contentX && x <= contentRight && y >= m_hudY && y <= m_hudY + HUD_HEIGHT * m_uiScale) {
-        // If clicked in content area but not on an item, do nothing (prevent dragging window if they miss a button)
-        // Actually native drag is nice on blank areas.
         return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
     }
 
-    // Clicked outside content?
     return (m_pActiveCombo) ? SettingsAction::RepaintAll : SettingsAction::DragWindow;
 }
 
 SettingsAction SettingsOverlay::OnLButtonUp([[maybe_unused]] float x, [[maybe_unused]] float y) {
+    if (m_isDraggingScrollbar) {
+        m_isDraggingScrollbar = false;
+        return SettingsAction::RepaintStatic;
+    }
     if (m_pActiveSlider) {
         SettingsItem* activeSlider = m_pActiveSlider;
         m_pActiveSlider = nullptr;

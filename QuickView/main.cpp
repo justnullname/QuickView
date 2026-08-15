@@ -10044,17 +10044,26 @@ SKIP_EDGE_NAV:;
     }
 
     case WM_MBUTTONDOWN: {
-        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsCapturingHotkey()) {
-            KeyCombo captured;
-            captured.virtualKey = VK_MBUTTON;
-            captured.modifiers = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) captured.modifiers |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000)   captured.modifiers |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000)    captured.modifiers |= 4;
-            
-            g_settingsOverlay.OnHotkeyCaptured(captured);
-            RequestRepaint(PaintLayer::Static);
-            return 0;
+        if (g_settingsOverlay.IsVisible()) {
+            if (g_settingsOverlay.IsCapturingHotkey()) {
+                KeyCombo captured;
+                captured.virtualKey = VK_MBUTTON;
+                captured.modifiers = 0;
+                if (GetKeyState(VK_CONTROL) & 0x8000) captured.modifiers |= 1;
+                if (GetKeyState(VK_SHIFT) & 0x8000)   captured.modifiers |= 2;
+                if (GetKeyState(VK_MENU) & 0x8000)    captured.modifiers |= 4;
+                
+                g_settingsOverlay.OnHotkeyCaptured(captured);
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
+            POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+            SettingsAction act = g_settingsOverlay.OnMButtonDown((float)pt.x, (float)pt.y);
+            if (act != SettingsAction::None) {
+                SetCapture(hwnd);
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
         }
 
         // Check custom hotkeys for VK_MBUTTON
@@ -10101,8 +10110,17 @@ SKIP_EDGE_NAV:;
         return 0;
     }
     case WM_MBUTTONUP: {
-        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsCapturingHotkey()) {
-            return 0;
+        if (g_settingsOverlay.IsVisible()) {
+            if (g_settingsOverlay.IsCapturingHotkey()) {
+                return 0;
+            }
+            POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+            SettingsAction act = g_settingsOverlay.OnMButtonUp((float)pt.x, (float)pt.y);
+            ReleaseCapture();
+            if (act != SettingsAction::None) {
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
         }
 
         // Check if matching custom hotkey combination
@@ -11629,6 +11647,14 @@ SKIP_EDGE_NAV:;
         return 0;
     }
 
+    case WM_VSCROLL: {
+        if (g_settingsOverlay.IsVisible()) {
+            g_settingsOverlay.OnVScroll(wParam, lParam);
+            RequestRepaint(PaintLayer::Static);
+            return 0;
+        }
+        break;
+    }
     
     case WM_DROPFILES: {
         if (!CheckUnsavedChanges(hwnd)) return 0;
@@ -11706,6 +11732,12 @@ SKIP_EDGE_NAV:;
         break;
 
     case WM_CHAR: {
+        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsInputFocused()) {
+            if (g_settingsOverlay.OnChar(wParam)) {
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
+        }
         if (g_cropState.IsActive && g_cropState.FocusedField != CropState::InputField::None) {
             int baseExif = g_renderExifOrientation;
             const auto& pane = GetPaneContext(PaneSlot::Primary);
@@ -11921,8 +11953,18 @@ SKIP_EDGE_NAV:;
 
         // Settings handling
         if (g_settingsOverlay.IsVisible()) {
+            if (g_settingsOverlay.IsInputFocused()) {
+                if (g_settingsOverlay.OnKeyDown(wParam)) {
+                    RequestRepaint(PaintLayer::Static);
+                    return 0;
+                }
+            }
             if (wParam == VK_ESCAPE) {
                 g_settingsOverlay.Toggle(); // Close (which handles window restore)
+                RequestRepaint(PaintLayer::Static);
+                return 0;
+            }
+            if (g_settingsOverlay.OnKeyDown(wParam)) {
                 RequestRepaint(PaintLayer::Static);
                 return 0;
             }
