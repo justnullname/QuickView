@@ -299,12 +299,25 @@ HitTestResult UIRenderer::HitTest(float x, float y) {
     bool hideInfoPanel = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || (g_gallery.IsVisible() && !isFilmstripActive);
     bool hideHud = g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible;
 
-    bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo && !hideHud && !isHotspotShowing;
+    bool isMouseInPanel = (m_lastInfoPanelRect.right > m_lastInfoPanelRect.left &&
+                           x >= m_lastInfoPanelRect.left && x <= m_lastInfoPanelRect.right &&
+                           y >= m_lastInfoPanelRect.top && y <= m_lastInfoPanelRect.bottom);
+    bool isMouseInHud = (m_lastHUDRect.right > m_lastHUDRect.left &&
+                         x >= m_lastHUDRect.left && x <= m_lastHUDRect.right &&
+                         y >= m_lastHUDRect.top && y <= m_lastHUDRect.bottom);
+
+    bool hudVisible = IsCompareModeActive() && g_runtime.ShowCompareInfo && !hideHud;
+    if (hudVisible) {
+        bool overlapsHotspot = (m_lastHUDRect.top < neckH && m_lastHUDRect.right > cx - neckW && m_lastHUDRect.left < cx + neckW);
+        if (isHotspotShowing && overlapsHotspot && !isMouseInHud) {
+            hudVisible = false;
+        }
+    }
     
     bool infoPanelVisible = g_runtime.ShowInfoPanel && !hideInfoPanel;
     if (infoPanelVisible) {
         bool overlapsHotspot = (m_lastInfoPanelRect.top < neckH && m_lastInfoPanelRect.right > cx - neckW && m_lastInfoPanelRect.left < cx + neckW);
-        if (isHotspotShowing && overlapsHotspot) {
+        if (isHotspotShowing && overlapsHotspot && !isMouseInPanel) {
             infoPanelVisible = false;
         }
     }
@@ -3904,7 +3917,9 @@ void UIRenderer::DrawCompactInfo(ID2D1DeviceContext* dc) {
                      m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
     bool isHotspotShowing = !g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
     bool overlapsHotspot = (panelRect.top < neckH && panelRect.right > cx - neckW && panelRect.left < cx + neckW);
-    if (isHotspotShowing && overlapsHotspot) {
+    bool isMouseInPanel = (m_lastMousePos.x >= panelRect.left && m_lastMousePos.x <= panelRect.right && 
+                           m_lastMousePos.y >= panelRect.top && m_lastMousePos.y <= panelRect.bottom);
+    if (isHotspotShowing && overlapsHotspot && !isMouseInPanel) {
         m_lastInfoPanelRect = {};
         return;
     }
@@ -4212,7 +4227,9 @@ void UIRenderer::DrawInfoPanel(ID2D1DeviceContext* dc) {
                      m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
     bool isHotspotShowing = !g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * s) && (m_height >= 200.0f * s) && isInNeck;
     bool overlapsHotspot = (panelRect.top < neckH && panelRect.right > cx - neckW && panelRect.left < cx + neckW);
-    if (isHotspotShowing && overlapsHotspot) {
+    bool isMouseInPanel = (m_lastMousePos.x >= panelRect.left && m_lastMousePos.x <= panelRect.right && 
+                           m_lastMousePos.y >= panelRect.top && m_lastMousePos.y <= panelRect.bottom);
+    if (isHotspotShowing && overlapsHotspot && !isMouseInPanel) {
         m_lastInfoPanelRect = {};
         return;
     }
@@ -4677,15 +4694,8 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
         return;
     }
     
-    // Smart Overlap Avoidance: Hide HUD if top gallery filmstrip is visible or triggering hotspot is active
     extern GalleryOverlay g_gallery;
-    float cx = m_width / 2.0f;
-    float neckH = 40.0f * sUI;
-    float neckW = 200.0f * sUI;
-    bool isInNeck = (m_lastMousePos.y >= 0 && m_lastMousePos.y < neckH &&
-                     m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
-    bool isHotspotShowing = !g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * sUI) && (m_height >= 200.0f * sUI) && isInNeck;
-    if (g_gallery.IsVisible() || isHotspotShowing || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) {
+    if (g_gallery.IsVisible() || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) {
         m_lastHUDRect = {};
         m_hudToggleLiteRect = {};
         m_panelToggleRect = {};
@@ -4835,7 +4845,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                          m_lastMousePos.x >= cx - neckW && m_lastMousePos.x <= cx + neckW);
         bool isHotspotShowing = !g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2) && (m_width >= 300.0f * sUI) && (m_height >= 200.0f * sUI) && isInNeck;
         bool overlapsHotspot = (panelRect.top < neckH && panelRect.right > cx - neckW && panelRect.left < cx + neckW);
-        if (isHotspotShowing && overlapsHotspot) {
+        bool isMouseInPanel = (m_lastMousePos.x >= panelRect.left && m_lastMousePos.x <= panelRect.right && 
+                               m_lastMousePos.y >= panelRect.top && m_lastMousePos.y <= panelRect.bottom);
+        if (isHotspotShowing && overlapsHotspot && !isMouseInPanel) {
             m_lastHUDRect = {};
             m_hudToggleLiteRect = {};
             return;
