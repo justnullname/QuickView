@@ -37,48 +37,13 @@ extern HCURSOR g_currentCursor;
 extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
 
 namespace {
-static float MeasureStringWidth(const wchar_t* text, float fontSize) {
+inline float MeasureStringWidth(const wchar_t* text, float fontSize) {
     if (!text || !*text) return 0.0f;
-
-    struct CacheEntry { wchar_t t[32]; float s; float w; };
-    static CacheEntry s_cache[16];
-    static int s_cacheHead = 0;
-    static int s_cacheSize = 0;
-
-    for (int i = 0; i < s_cacheSize; ++i) {
-        if (s_cache[i].s == fontSize && wcscmp(s_cache[i].t, text) == 0) return s_cache[i].w;
+    float w = 0.0f;
+    for (const wchar_t* p = text; *p; ++p) {
+        w += (*p > 127) ? (fontSize * 0.95f) : (fontSize * 0.55f);
     }
-
-    static ComPtr<IDWriteFactory> pDW;
-    static ComPtr<IDWriteTextFormat> pFmt;
-    static float s_lastSize = 0.0f;
-    if (s_lastSize != fontSize) {
-        s_lastSize = fontSize;
-        pFmt.Reset();
-    }
-    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    if (pDW && !pFmt) {
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"zh-CN", &pFmt);
-    }
-    
-    float width = (float)wcslen(text) * fontSize * 0.6f;
-    if (pDW && pFmt) {
-        ComPtr<IDWriteTextLayout> pLayout;
-        if (SUCCEEDED(pDW->CreateTextLayout(text, (UINT32)wcslen(text), pFmt.Get(), 2000.0f, 100.0f, &pLayout))) {
-            DWRITE_TEXT_METRICS metrics = {};
-            pLayout->GetMetrics(&metrics);
-            width = metrics.widthIncludingTrailingWhitespace;
-        }
-    }
-    
-    if (wcslen(text) < 32) {
-        int idx = (s_cacheSize < 16) ? s_cacheSize++ : s_cacheHead;
-        wcscpy_s(s_cache[idx].t, 32, text);
-        s_cache[idx].s = fontSize;
-        s_cache[idx].w = width;
-        if (s_cacheSize >= 16) s_cacheHead = (s_cacheHead + 1) % 16;
-    }
-    return width;
+    return w;
 }
 }
 extern bool IsImageModified();
@@ -431,7 +396,7 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
         autoMatchedIndex = embeddedItemIndex;
     } else {
         // [User Request] Use exactly the same parameter resolution as Info Panel (UIRenderer::DrawInfoPanel)
-        std::wstring colorText = primaryMetadata.ColorSpace;
+        std::wstring_view colorText = primaryMetadata.ColorSpace;
         if (colorText.empty() || colorText == L"Uncalibrated") {
             const wchar_t* primaries = QuickView::ToString(primaryMetadata.colorInfo.primaries);
             if (primaries && wcscmp(primaries, L"Unknown") != 0) {
@@ -445,13 +410,13 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
             }
         }
 
-        if (colorText.find(L"Display P3") != std::wstring::npos || colorText.find(L"P3") != std::wstring::npos) {
+        if (colorText.find(L"Display P3") != std::wstring_view::npos || colorText.find(L"P3") != std::wstring_view::npos) {
             autoMatchedIndex = p3Index;
-        } else if (colorText.find(L"Adobe") != std::wstring::npos) {
+        } else if (colorText.find(L"Adobe") != std::wstring_view::npos) {
             autoMatchedIndex = adobeRgbIndex;
-        } else if (colorText.find(L"ProPhoto") != std::wstring::npos) {
+        } else if (colorText.find(L"ProPhoto") != std::wstring_view::npos) {
             autoMatchedIndex = proPhotoIndex;
-        } else if (colorText.find(L"sRGB") != std::wstring::npos) {
+        } else if (colorText.find(L"sRGB") != std::wstring_view::npos) {
             autoMatchedIndex = srgbIndex;
         }
     }
@@ -1301,35 +1266,30 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     }
 
     if (textFormat) {
-        static ComPtr<IDWriteFactory> pDW;
-        static ComPtr<IDWriteTextFormat> fmtTitle;
-        static float s_lastTitleScale = 0.0f;
-        if (s_lastTitleScale != s) {
-            s_lastTitleScale = s;
-            fmtTitle.Reset();
-        }
-        if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-        if (pDW && !fmtTitle) {
-            pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 17.0f * s, L"zh-CN", &fmtTitle);
-        }
-
         ComPtr<ID2D1SolidColorBrush> titleBrush;
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(0.95f, 0.95f, 0.98f, 1.0f), &titleBrush);
         D2D1_RECT_F titleRect = { m_panelRect.left + 28.0f*s, curY, m_panelRect.right - 28.0f*s, curY + 26.0f*s };
-        IDWriteTextFormat* useTitleFmt = fmtTitle ? fmtTitle.Get() : textFormat;
-        useTitleFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        useTitleFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(titleText.c_str(), (UINT32)titleText.length(), useTitleFmt, titleRect, titleBrush.Get());
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        dc->DrawText(titleText.c_str(), (UINT32)titleText.length(), textFormat, titleRect, titleBrush.Get());
     }
 
+    QuickView::UI::WidgetPalette widgetPal = {};
+    widgetPal.accent = accentClr;
+    widgetPal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
+    widgetPal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+    widgetPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+    widgetPal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f) : D2D1::ColorF(0.75f, 0.75f, 0.80f);
+    widgetPal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+
     // 5. Width & Height Capsules + Reset Buttons ([↺] [W] [🔒] [H] [↺])
-    DrawResetButton(dc, layout.widthResetRect, HoverState::WidthResetBtn, textFormat);
+    QuickView::UI::GeekWidgets::DrawResetButton(dc, layout.widthResetRect, m_hoverState == HoverState::WidthResetBtn, textFormat, s, widgetPal);
 
     DrawCapsule(dc, layout.widthRect, L"W", 
         (m_focusedState == HoverState::WidthCapsule) ? m_inputBuf : std::to_wstring(m_targetWidth), 
         HoverState::WidthCapsule, textFormat);
 
-    // Lock button: Pure vector lock icon (No background, highlight when locked, 0 font dependency)
+    // Lock button: Pure vector lock icon
     {
         bool isLockHovered = (m_hoverState == HoverState::LockBtn);
         ComPtr<ID2D1SolidColorBrush> lockIconBrush;
@@ -1345,7 +1305,7 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         (m_focusedState == HoverState::HeightCapsule) ? m_inputBuf : std::to_wstring(m_targetHeight), 
         HoverState::HeightCapsule, textFormat);
 
-    DrawResetButton(dc, layout.heightResetRect, HoverState::HeightResetBtn, textFormat);
+    QuickView::UI::GeekWidgets::DrawResetButton(dc, layout.heightResetRect, m_hoverState == HoverState::HeightResetBtn, textFormat, s, widgetPal);
 
     // 6. Format Selection Dropdown
     DrawFormatDropdown(dc, layout.formatDropdownRect, layout, textFormat);
@@ -1361,7 +1321,6 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     }
 
     // 7. Preserve EXIF Checkbox & Embed ICC Checkbox & ICC Dropdown & Size
-    // Label
     DrawCheckbox(dc, layout.preserveMetadataCheckboxRect, L"EXIF", m_preserveMetadata, HoverState::PreserveMetadataCheckbox, textFormat);
     DrawCheckbox(dc, layout.checkboxRect, AppStrings::Dialog_EmbedICC,
                  m_embedIcc, HoverState::EmbedIccCheckbox, textFormat);
@@ -1408,49 +1367,8 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     }
 }
 
-void ExportPanel::DrawResetButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, HoverState id, IDWriteTextFormat* textFormat) {
-    (void)textFormat;
-    float s = m_uiScale;
-    bool isHovered = (m_hoverState == id);
-    bool isLight = IsLightThemeActive();
-
-    // Draw subtle fill background ONLY when hovered (No border line!)
-    if (isHovered) {
-        ComPtr<ID2D1SolidColorBrush> bgBrush;
-        D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f);
-        dc->CreateSolidColorBrush(bgClr, &bgBrush);
-        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 5.0f * s, 5.0f * s), bgBrush.Get());
-    }
-
-    ComPtr<ID2D1SolidColorBrush> iconBrush;
-    D2D1_COLOR_F iconClr = isHovered 
-        ? (isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f))
-        : (isLight ? D2D1::ColorF(0.3f, 0.3f, 0.35f, 0.85f) : D2D1::ColorF(0.7f, 0.7f, 0.75f, 0.85f));
-    dc->CreateSolidColorBrush(iconClr, &iconBrush);
-
-    static ComPtr<IDWriteFactory> pDW;
-    static ComPtr<IDWriteTextFormat> fmtIcon;
-    static float s_lastIconScale = 0.0f;
-    if (s_lastIconScale != s) {
-        s_lastIconScale = s;
-        fmtIcon.Reset();
-    }
-    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    if (pDW && !fmtIcon) {
-        pDW->CreateTextFormat(L"Segoe UI Symbol", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f * s, L"zh-CN", &fmtIcon);
-    }
-
-    if (fmtIcon) {
-        fmtIcon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        fmtIcon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        const wchar_t* resetChar = L"↺";
-        dc->DrawText(resetChar, 1, fmtIcon.Get(), rect, iconBrush.Get());
-    }
-}
-
-void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat) {
-    (void)label;
-    (void)textFormat;
+void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, [[maybe_unused]] const std::wstring& label, const std::wstring& value, HoverState id, IDWriteTextFormat* textFormat) {
+    if (!dc) return;
     float s = m_uiScale;
     bool isHovered = (m_hoverState == id);
     bool isFocused = (m_focusedState == id);
@@ -1461,61 +1379,93 @@ void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, c
         accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
     }
 
-    // Input Background (Pill radius = H / 2)
     float pillRadius = (rect.bottom - rect.top) * 0.5f;
-    ComPtr<ID2D1SolidColorBrush> bgBrush;
-    D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.12f, 0.12f, 0.14f, 1.0f);
-    dc->CreateSolidColorBrush(bgClr, &bgBrush);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), bgBrush.Get());
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.12f, 0.12f, 0.14f, 1.0f), &brush))) return;
 
-    // Standard Input Border
-    ComPtr<ID2D1SolidColorBrush> borderBrush;
-    D2D1_COLOR_F borderClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(0.35f, 0.35f, 0.35f, 1.0f);
-    dc->CreateSolidColorBrush(borderClr, &borderBrush);
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), borderBrush.Get(), 1.0f*s);
+    // 1. Background Fill
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), brush.Get());
 
-    // Accent Focus Ring
+    // 2. Border
     if (isFocused) {
-        ComPtr<ID2D1SolidColorBrush> focusBrush;
-        dc->CreateSolidColorBrush(accentClr, &focusBrush);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), focusBrush.Get(), 1.5f*s);
+        brush->SetColor(accentClr);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), brush.Get(), 1.5f * s);
     } else if (isHovered) {
-        ComPtr<ID2D1SolidColorBrush> hoverBrush;
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.40f) : D2D1::ColorF(0.6f, 0.6f, 0.6f, 1.0f), &hoverBrush);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), hoverBrush.Get(), 1.0f*s);
+        brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.40f) : D2D1::ColorF(0.6f, 0.6f, 0.6f, 1.0f));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), brush.Get(), 1.0f * s);
+    } else {
+        brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(0.35f, 0.35f, 0.35f, 1.0f));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), brush.Get(), 1.0f * s);
     }
 
-    // Blink Caret for Input Indication
-    std::wstring displayValue = value;
-    if (isFocused) {
-        uint64_t ms = GetTickCount64();
-        if ((ms / 500) % 2 == 0) {
-            displayValue += L"|";
+    // 3. Value Text
+    if (textFormat) {
+        wchar_t displayBuf[32];
+        if (isFocused && ((GetTickCount64() / 500) % 2 == 0)) {
+            swprintf_s(displayBuf, L"%s|", value.c_str());
+        } else {
+            swprintf_s(displayBuf, L"%s", value.c_str());
         }
-    }
-
-    static ComPtr<IDWriteFactory> pDW;
-    static ComPtr<IDWriteTextFormat> fmtNumber;
-    static float s_lastNumScale = 0.0f;
-    if (s_lastNumScale != s) {
-        s_lastNumScale = s;
-        fmtNumber.Reset();
-    }
-    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    if (pDW && !fmtNumber) {
-        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f * s, L"zh-CN", &fmtNumber);
-    }
-
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f), &textBrush);
-
-    IDWriteTextFormat* formatToUse = fmtNumber ? fmtNumber.Get() : textFormat;
-    if (formatToUse) {
-        formatToUse->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        formatToUse->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(displayValue.c_str(), (UINT32)displayValue.length(), formatToUse, rect, textBrush.Get());
+        brush->SetColor(isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f));
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        dc->DrawText(displayBuf, static_cast<UINT32>(wcslen(displayBuf)), textFormat, rect, brush.Get());
     }
 }
+
+namespace {
+void DrawDropdownPopupInternal(
+    ID2D1DeviceContext* dc,
+    const D2D1_RECT_F& popupRect,
+    float popupY,
+    float itemH,
+    int visibleCount,
+    int selectedIndex,
+    int hoverIndex,
+    const std::vector<std::wstring>& itemNames,
+    float s,
+    bool isLight,
+    IDWriteTextFormat* textFormat) {
+    if (!dc || visibleCount <= 0) return;
+
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.98f, 0.98f, 1.0f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.98f), &brush))) return;
+
+    // Background & Border
+    dc->FillRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f * s, 6.0f * s), brush.Get());
+    brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f * s, 6.0f * s), brush.Get(), 1.0f * s);
+
+    if (textFormat) {
+        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    for (int i = 0; i < visibleCount && i < static_cast<int>(itemNames.size()); ++i) {
+        D2D1_RECT_F itemRect = { popupRect.left + 2.0f * s, popupY + i * itemH, popupRect.right - 2.0f * s, popupY + (i + 1) * itemH };
+
+        if (i == hoverIndex) {
+            brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f));
+            dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f * s, 4.0f * s), brush.Get());
+        } else if (i == selectedIndex) {
+            brush->SetColor(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f));
+            dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f * s, 4.0f * s), brush.Get());
+        }
+
+        if (textFormat) {
+            D2D1_RECT_F textRect = { itemRect.left + 8.0f * s, itemRect.top, itemRect.right - 4.0f * s, itemRect.bottom };
+            wchar_t itemBuf[128];
+            if (i == selectedIndex) {
+                swprintf_s(itemBuf, L"✓ %s", itemNames[i].c_str());
+            } else {
+                swprintf_s(itemBuf, L"%s", itemNames[i].c_str());
+            }
+            brush->SetColor(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f));
+            dc->DrawText(itemBuf, static_cast<UINT32>(wcslen(itemBuf)), textFormat, textRect, brush.Get());
+        }
+    }
+}
+} // namespace
 
 void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat) {
     if (!dc) return;
@@ -1542,44 +1492,50 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 
     // 2. Draw Floating Popup if Opened
     if (m_formatDropdownOpen && !m_availableFormats.empty()) {
-        D2D1_RECT_F popupRect = layout.formatPopupRect;
-        float popupY = layout.formatPopupY;
-        float itemH = layout.formatItemH;
-        int visibleCount = layout.visibleFormatCount;
-
-        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush, textBrush;
-        D2D1_COLOR_F popBgClr = isLight ? D2D1::ColorF(0.98f, 0.98f, 1.0f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.98f);
-        dc->CreateSolidColorBrush(popBgClr, &popBgBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f), &popBorderBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f), &itemHoverBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f), &selectedBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
-
-        dc->FillRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBgBrush.Get());
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBorderBrush.Get(), 1.0f*s);
-
-        if (textFormat) {
-            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        std::vector<std::wstring> names;
+        names.reserve(layout.visibleFormatCount);
+        for (int i = 0; i < layout.visibleFormatCount && i < static_cast<int>(m_availableFormats.size()); ++i) {
+            names.push_back(m_availableFormats[i].DisplayName);
         }
+        int hoverIdx = (m_hoverState == HoverState::FormatDropdownItem) ? m_hoverFormatItemIndex : -1;
+        DrawDropdownPopupInternal(dc, layout.formatPopupRect, layout.formatPopupY, layout.formatItemH,
+                                 layout.visibleFormatCount, m_selectedFormatIndex, hoverIdx, names, s, isLight, textFormat);
+    }
+}
 
-        for (int i = 0; i < visibleCount; ++i) {
-            D2D1_RECT_F itemRect = { popupRect.left + 2.0f*s, popupY + i * itemH, popupRect.right - 2.0f*s, popupY + (i + 1) * itemH };
-            
-            if (i == m_hoverFormatItemIndex && m_hoverState == HoverState::FormatDropdownItem) {
-                dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f*s, 4.0f*s), itemHoverBrush.Get());
-            } else if (i == m_selectedFormatIndex) {
-                dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f*s, 4.0f*s), selectedBrush.Get());
-            }
+void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat) {
+    if (!dc) return;
+    float s = m_uiScale;
+    bool isLight = IsLightThemeActive();
 
-            D2D1_RECT_F textRect = { itemRect.left + 8.0f*s, itemRect.top, itemRect.right - 4.0f*s, itemRect.bottom };
-            std::wstring itemText = m_availableFormats[i].DisplayName;
-            if (i == m_selectedFormatIndex) itemText = L"✓ " + itemText;
+    // 1. Draw Closed Dropdown Pill using GeekWidgets
+    std::wstring label = L"sRGB";
+    if (m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
+        label = m_iccProfiles[m_selectedIccIndex].displayName;
+    }
 
-            if (textFormat) {
-                dc->DrawText(itemText.c_str(), (UINT32)itemText.length(), textFormat, textRect, textBrush.Get());
-            }
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
+    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
+    pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
+    pal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f);
+
+    QuickView::UI::GeekWidgets::DrawPillComboBox(
+        dc, rect, label, m_iccDropdownOpen, (m_hoverState == HoverState::IccDropdownBtn), false,
+        textFormat, s, pal);
+
+    // 2. Draw Floating Popup if Opened
+    if (m_iccDropdownOpen && !m_iccProfiles.empty()) {
+        std::vector<std::wstring> names;
+        names.reserve(layout.visibleIccCount);
+        for (int i = 0; i < layout.visibleIccCount && i < static_cast<int>(m_iccProfiles.size()); ++i) {
+            names.push_back(m_iccProfiles[i].displayName);
         }
+        int hoverIdx = (m_hoverState == HoverState::IccDropdownItem) ? m_hoverIccItemIndex : -1;
+        DrawDropdownPopupInternal(dc, layout.iccPopupRect, layout.popupY, layout.itemH,
+                                 layout.visibleIccCount, m_selectedIccIndex, hoverIdx, names, s, isLight, textFormat);
     }
 }
 
@@ -1636,72 +1592,6 @@ void ExportPanel::ExecutePendingAction() {
         ::TryExitCropMode(m_hwnd, true);
     } else if (act == PendingAction::CloseApp) {
         ::PostMessage(m_hwnd, WM_CLOSE, 0, 0);
-    }
-}
-
-void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const PanelLayout& layout, IDWriteTextFormat* textFormat) {
-    if (!dc) return;
-    float s = m_uiScale;
-    bool isLight = IsLightThemeActive();
-
-    // 1. Draw Closed Dropdown Pill using GeekWidgets
-    std::wstring label = L"sRGB";
-    if (m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
-        label = m_iccProfiles[m_selectedIccIndex].displayName;
-    }
-
-    QuickView::UI::WidgetPalette pal = {};
-    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
-    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
-    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
-    pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
-    pal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f);
-
-    QuickView::UI::GeekWidgets::DrawPillComboBox(
-        dc, rect, label, m_iccDropdownOpen, (m_hoverState == HoverState::IccDropdownBtn), false,
-        textFormat, s, pal);
-
-    // 2. Draw Floating Popup if Opened (Top-Most Z-Order)
-    if (m_iccDropdownOpen && !m_iccProfiles.empty()) {
-        D2D1_RECT_F popupRect = layout.iccPopupRect;
-        float popupY = layout.popupY;
-        float itemH = layout.itemH;
-        int visibleCount = layout.visibleIccCount;
-
-        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush, textBrush;
-        D2D1_COLOR_F popBgClr = isLight ? D2D1::ColorF(0.98f, 0.98f, 1.0f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.98f);
-        dc->CreateSolidColorBrush(popBgClr, &popBgBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f), &popBorderBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f), &itemHoverBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f), &selectedBrush);
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
-
-        dc->FillRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBgBrush.Get());
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBorderBrush.Get(), 1.0f*s);
-
-        if (textFormat) {
-            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
-
-        for (int i = 0; i < visibleCount; ++i) {
-            D2D1_RECT_F itemRect = { popupRect.left + 2.0f*s, popupY + i * itemH, popupRect.right - 2.0f*s, popupY + (i + 1) * itemH };
-            
-            if (i == m_hoverIccItemIndex && m_hoverState == HoverState::IccDropdownItem) {
-                dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f*s, 4.0f*s), itemHoverBrush.Get());
-            } else if (i == m_selectedIccIndex) {
-                dc->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f*s, 4.0f*s), selectedBrush.Get());
-            }
-
-            D2D1_RECT_F textRect = { itemRect.left + 8.0f*s, itemRect.top, itemRect.right - 4.0f*s, itemRect.bottom };
-            std::wstring itemText = m_iccProfiles[i].displayName;
-            if (i == m_selectedIccIndex) itemText = L"✓ " + itemText;
-
-            if (textFormat) {
-                dc->DrawText(itemText.c_str(), (UINT32)itemText.length(), textFormat, textRect, textBrush.Get());
-            }
-        }
     }
 }
 

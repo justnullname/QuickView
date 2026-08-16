@@ -40,7 +40,16 @@ struct WidgetPalette {
 
 namespace GeekWidgets {
 
-// Compute segment item widths based on text metrics
+// Compute segment item widths based on text metrics (Zero-alloc span version)
+void CalculateSegmentWidths(
+    IDWriteFactory* dwriteFactory,
+    IDWriteTextFormat* textFormat,
+    std::span<const std::wstring_view> options,
+    float totalW,
+    float uiScale,
+    std::span<float> outWidths);
+
+// Compute segment item widths (Vector fallback)
 std::vector<float> CalculateSegmentWidths(
     IDWriteFactory* dwriteFactory,
     IDWriteTextFormat* textFormat,

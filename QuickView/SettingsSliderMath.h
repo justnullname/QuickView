@@ -101,13 +101,19 @@ inline float ValueFromPillX(const SliderPillGeom& g, float x, float minV, float 
     return QuantizeSliderValue(minV + t * (maxV - minV), minV, maxV, step);
 }
 
-inline float ParseSliderInput(const std::wstring& input, float currentVal, float minV, float maxV,
+inline float ParseSliderInput(std::wstring_view input, float currentVal, float minV, float maxV,
                               const wchar_t* displayFormat, float itemStep) {
     if (input.empty()) return currentVal;
 
+    wchar_t numBuf[64];
+    size_t copyLen = (std::min)(input.length(), sizeof(numBuf) / sizeof(wchar_t) - 1);
+    wcsncpy_s(numBuf, input.data(), copyLen);
+    numBuf[copyLen] = L'\0';
+
     wchar_t* endPtr = nullptr;
-    double parsed = wcstod(input.c_str(), &endPtr);
-    if (endPtr == input.c_str()) return currentVal;
+    double parsed = wcstod(numBuf, &endPtr);
+    if (endPtr == numBuf) return currentVal;
+    if (std::isnan(parsed) || std::isinf(parsed)) return currentVal;
 
     float val = static_cast<float>(parsed);
 

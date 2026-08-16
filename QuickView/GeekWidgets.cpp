@@ -11,19 +11,23 @@ using Microsoft::WRL::ComPtr;
 
 namespace QuickView::UI::GeekWidgets {
 
-std::vector<float> CalculateSegmentWidths(
+void CalculateSegmentWidths(
     IDWriteFactory* dwriteFactory,
     IDWriteTextFormat* textFormat,
     std::span<const std::wstring_view> options,
     float totalW,
-    float uiScale) {
-    if (options.empty()) return {};
+    float uiScale,
+    std::span<float> outWidths) {
+    const size_t count = options.size();
+    if (count == 0 || outWidths.size() < count) return;
 
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
-    std::vector<float> textWidths(options.size(), 0.0f);
+    const size_t maxItems = (std::min)(count, static_cast<size_t>(16));
+    float textWidths[16] = { 0 };
+
     float totalTextW = 0.0f;
 
-    for (size_t i = 0; i < options.size(); i++) {
+    for (size_t i = 0; i < maxItems; i++) {
         std::wstring_view opt = options[i];
         if (dwriteFactory && textFormat) {
             ComPtr<IDWriteTextLayout> layout;
@@ -42,39 +46,49 @@ std::vector<float> CalculateSegmentWidths(
     }
 
     const float padPerItem = 16.0f * s;
-    float naturalTotal = totalTextW + static_cast<float>(options.size()) * padPerItem;
+    const float naturalTotal = totalTextW + static_cast<float>(maxItems) * padPerItem;
 
-    std::vector<float> widths(options.size(), 0.0f);
     if (naturalTotal <= totalW) {
-        float remaining = totalW - naturalTotal;
-        float extraPerItem = remaining / static_cast<float>(options.size());
-        for (size_t i = 0; i < options.size(); i++) {
-            widths[i] = textWidths[i] + padPerItem + extraPerItem;
+        const float remaining = totalW - naturalTotal;
+        const float extraPerItem = remaining / static_cast<float>(maxItems);
+        for (size_t i = 0; i < maxItems; i++) {
+            outWidths[i] = textWidths[i] + padPerItem + extraPerItem;
         }
     } else {
-        for (size_t i = 0; i < options.size(); i++) {
-            widths[i] = totalW * (textWidths[i] / totalTextW);
+        const float factor = (totalTextW > 0.001f) ? (totalW / totalTextW) : (totalW / static_cast<float>(maxItems));
+        for (size_t i = 0; i < maxItems; i++) {
+            outWidths[i] = textWidths[i] * factor;
         }
     }
+}
+
+std::vector<float> CalculateSegmentWidths(
+    IDWriteFactory* dwriteFactory,
+    IDWriteTextFormat* textFormat,
+    std::span<const std::wstring_view> options,
+    float totalW,
+    float uiScale) {
+    std::vector<float> widths(options.size(), 0.0f);
+    CalculateSegmentWidths(dwriteFactory, textFormat, options, totalW, uiScale, widths);
     return widths;
 }
 
 void DrawChevronLeft(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, ID2D1Brush* brush, float uiScale) {
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
-    float cx = (rect.left + rect.right) * 0.5f;
-    float cy = (rect.top + rect.bottom) * 0.5f;
-    float w2 = 2.0f * s;
-    float h2 = 4.0f * s;
+    const float cx = (rect.left + rect.right) * 0.5f;
+    const float cy = (rect.top + rect.bottom) * 0.5f;
+    const float w2 = 2.0f * s;
+    const float h2 = 4.0f * s;
     dc->DrawLine(D2D1::Point2F(cx + w2, cy - h2), D2D1::Point2F(cx - w2, cy), brush, 1.4f * s);
     dc->DrawLine(D2D1::Point2F(cx - w2, cy), D2D1::Point2F(cx + w2, cy + h2), brush, 1.4f * s);
 }
 
 void DrawChevronRight(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, ID2D1Brush* brush, float uiScale) {
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
-    float cx = (rect.left + rect.right) * 0.5f;
-    float cy = (rect.top + rect.bottom) * 0.5f;
-    float w2 = 2.0f * s;
-    float h2 = 4.0f * s;
+    const float cx = (rect.left + rect.right) * 0.5f;
+    const float cy = (rect.top + rect.bottom) * 0.5f;
+    const float w2 = 2.0f * s;
+    const float h2 = 4.0f * s;
     dc->DrawLine(D2D1::Point2F(cx - w2, cy - h2), D2D1::Point2F(cx + w2, cy), brush, 1.4f * s);
     dc->DrawLine(D2D1::Point2F(cx + w2, cy), D2D1::Point2F(cx - w2, cy + h2), brush, 1.4f * s);
 }
@@ -89,71 +103,84 @@ void DrawPillButton(
     float uiScale,
     const WidgetPalette& palette,
     const GeekIcons::VectorIcon* icon) {
+    if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
     const float radius = h * 0.5f;
 
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
+
+    D2D1_COLOR_F bgClr, borderClr, textClr;
+    bool hasBorder = false;
 
     if (state == ButtonState::Disabled) {
-        dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-        dc->CreateSolidColorBrush(palette.border, &borderBrush);
-        dc->CreateSolidColorBrush(palette.textDim, &textBrush);
+        bgClr = palette.controlBg;
+        borderClr = palette.border;
+        textClr = palette.textDim;
+        hasBorder = true;
     } else if (style == ButtonStyle::Primary) {
         if (state == ButtonState::Hovered) {
-            D2D1_COLOR_F hoverAccent = palette.accent;
-            hoverAccent.r = (std::min)(1.0f, hoverAccent.r * 1.15f);
-            hoverAccent.g = (std::min)(1.0f, hoverAccent.g * 1.15f);
-            hoverAccent.b = (std::min)(1.0f, hoverAccent.b * 1.15f);
-            dc->CreateSolidColorBrush(hoverAccent, &bgBrush);
+            bgClr = palette.accent;
+            bgClr.r = (std::min)(1.0f, bgClr.r * 1.15f);
+            bgClr.g = (std::min)(1.0f, bgClr.g * 1.15f);
+            bgClr.b = (std::min)(1.0f, bgClr.b * 1.15f);
         } else {
-            dc->CreateSolidColorBrush(palette.accent, &bgBrush);
+            bgClr = palette.accent;
         }
-        dc->CreateSolidColorBrush(palette.white, &textBrush);
+        textClr = palette.white;
     } else if (style == ButtonStyle::Destructive) {
         if (state == ButtonState::Hovered) {
-            dc->CreateSolidColorBrush(palette.error, &bgBrush);
-            dc->CreateSolidColorBrush(palette.white, &textBrush);
+            bgClr = palette.error;
+            textClr = palette.white;
         } else {
-            dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-            dc->CreateSolidColorBrush(palette.border, &borderBrush);
-            dc->CreateSolidColorBrush(palette.error, &textBrush);
+            bgClr = palette.controlBg;
+            borderClr = palette.border;
+            textClr = palette.error;
+            hasBorder = true;
         }
-    } else { // Secondary / Subtle
+    } else { // Secondary / Subtle / Ghost
         if (state == ButtonState::Hovered) {
-            dc->CreateSolidColorBrush(palette.accent, &bgBrush);
-            dc->CreateSolidColorBrush(palette.white, &textBrush);
+            bgClr = palette.accent;
+            textClr = palette.white;
         } else {
-            dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-            dc->CreateSolidColorBrush(palette.border, &borderBrush);
-            dc->CreateSolidColorBrush(palette.text, &textBrush);
+            bgClr = (style == ButtonStyle::Ghost) ? D2D1::ColorF(0, 0, 0, 0.0f) : palette.controlBg;
+            borderClr = (style == ButtonStyle::Ghost) ? D2D1::ColorF(0, 0, 0, 0.0f) : palette.border;
+            textClr = palette.text;
+            hasBorder = (style != ButtonStyle::Ghost);
         }
     }
 
-    if (bgBrush) {
-        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), bgBrush.Get());
-    }
-    if (borderBrush) {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), borderBrush.Get(), 1.0f * s);
+    // 1. Background Fill
+    if (bgClr.a > 0.001f) {
+        brush->SetColor(bgClr);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
     }
 
-    // Text and Icon layout
-    if (textFormat && textBrush) {
+    // 2. Border
+    if (hasBorder && borderClr.a > 0.001f) {
+        brush->SetColor(borderClr);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.0f * s);
+    }
+
+    // 3. Text and Icon
+    if (textFormat) {
+        brush->SetColor(textClr);
         if (icon != nullptr) {
             const float iconPad = 12.0f * s;
             const float iconSize = (std::min)(h * 0.55f, 18.0f * s);
             D2D1_RECT_F iconRect = D2D1::RectF(rect.left + iconPad, (rect.top + rect.bottom - iconSize) * 0.5f,
                                                rect.left + iconPad + iconSize, (rect.top + rect.bottom + iconSize) * 0.5f);
-            QuickView::UI::GeekIconRenderer::DrawVectorIcon(dc, *icon, iconRect, textBrush.Get());
+            QuickView::UI::GeekIconRenderer::DrawVectorIcon(dc, *icon, iconRect, brush.Get());
 
             D2D1_RECT_F textRect = D2D1::RectF(iconRect.right + 8.0f * s, rect.top, rect.right - iconPad, rect.bottom);
             textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, textRect, textBrush.Get());
+            dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, textRect, brush.Get());
         } else {
             textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, rect, textBrush.Get());
+            dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, rect, brush.Get());
         }
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
@@ -171,27 +198,26 @@ void DrawSegmentGroup(
     const WidgetPalette& palette,
     const float* customColorRGB,
     IDWriteFactory* dwriteFactory) {
-    if (options.empty()) return;
+    const size_t count = options.size();
+    if (count == 0 || !dc) return;
 
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
     const float radius = h * 0.5f;
     const float totalW = rect.right - rect.left;
 
-    std::vector<float> itemWidths = CalculateSegmentWidths(dwriteFactory, textFormat, options, totalW, s);
+    const size_t maxItems = (std::min)(count, static_cast<size_t>(16));
+    float itemWidths[16] = { 0 };
+    CalculateSegmentWidths(dwriteFactory, textFormat, options, totalW, s, std::span<float>(itemWidths, maxItems));
 
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush, textDimBrush, whiteBrush, selBrush;
-    dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-    dc->CreateSolidColorBrush(palette.border, &borderBrush);
-    dc->CreateSolidColorBrush(palette.text, &textBrush);
-    dc->CreateSolidColorBrush(palette.textDim, &textDimBrush);
-    dc->CreateSolidColorBrush(palette.white, &whiteBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
     // 1. Background Container
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), bgBrush.Get());
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
 
-    // 2. Selected Highlight (Flush Segment: inherits outer pill curvature at ends)
-    if (selectedIdx >= 0 && selectedIdx < static_cast<int>(options.size())) {
+    // 2. Selected Highlight (Flush Segment)
+    if (selectedIdx >= 0 && selectedIdx < static_cast<int>(count)) {
         float selX = rect.left;
         for (int i = 0; i < selectedIdx; ++i) {
             selX += itemWidths[i];
@@ -199,29 +225,29 @@ void DrawSegmentGroup(
         D2D1_RECT_F selRect = D2D1::RectF(selX, rect.top, selX + itemWidths[selectedIdx], rect.bottom);
 
         if (!isDisabled && customColorRGB != nullptr) {
-            D2D1_COLOR_F cClr = D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f);
-            dc->CreateSolidColorBrush(cClr, &selBrush);
+            brush->SetColor(D2D1::ColorF(customColorRGB[0], customColorRGB[1], customColorRGB[2], 1.0f));
         } else {
-            dc->CreateSolidColorBrush(isDisabled ? palette.controlBg : palette.accent, &selBrush);
+            brush->SetColor(isDisabled ? palette.controlBg : palette.accent);
         }
 
         dc->PushAxisAlignedClip(selRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), selBrush.Get());
+        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
         dc->PopAxisAlignedClip();
     }
 
     // 3. Outer Border
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), borderBrush.Get(), 1.0f * s);
+    brush->SetColor(palette.border);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.0f * s);
 
     // 4. Flat vertical dividers (Full top-to-bottom)
     dc->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     float divX = rect.left;
-    for (size_t i = 0; i + 1 < options.size(); i++) {
+    for (size_t i = 0; i + 1 < count; i++) {
         divX += itemWidths[i];
         dc->DrawLine(
             D2D1::Point2F(divX, rect.top),
             D2D1::Point2F(divX, rect.bottom),
-            borderBrush.Get(), 1.0f * s);
+            brush.Get(), 1.0f * s);
     }
     dc->PopAxisAlignedClip();
 
@@ -231,11 +257,11 @@ void DrawSegmentGroup(
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
         float curX = rect.left;
-        for (size_t i = 0; i < options.size(); i++) {
+        for (size_t i = 0; i < count; i++) {
             D2D1_RECT_F tRect = D2D1::RectF(curX, rect.top, curX + itemWidths[i], rect.bottom);
             bool isSel = (static_cast<int>(i) == selectedIdx);
-            ID2D1SolidColorBrush* tb = isDisabled ? textDimBrush.Get() : (isSel ? whiteBrush.Get() : textBrush.Get());
-            dc->DrawText(options[i].data(), static_cast<UINT32>(options[i].length()), textFormat, tRect, tb);
+            brush->SetColor(isDisabled ? palette.textDim : (isSel ? palette.white : palette.text));
+            dc->DrawText(options[i].data(), static_cast<UINT32>(options[i].length()), textFormat, tRect, brush.Get());
             curX += itemWidths[i];
         }
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -253,6 +279,7 @@ void DrawDualActionButton(
     IDWriteTextFormat* textFormat,
     float uiScale,
     const WidgetPalette& palette) {
+    if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = groupRect.bottom - groupRect.top;
     const float radius = h * 0.5f;
@@ -261,34 +288,27 @@ void DrawDualActionButton(
     D2D1_RECT_F r1 = D2D1::RectF(groupRect.left, groupRect.top, midX, groupRect.bottom);
     D2D1_RECT_F r2 = D2D1::RectF(midX, groupRect.top, groupRect.right, groupRect.bottom);
 
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, accentBrush, textBrush, textDimBrush, whiteBrush;
-    dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-    dc->CreateSolidColorBrush(palette.border, &borderBrush);
-    dc->CreateSolidColorBrush(palette.accent, &accentBrush);
-    dc->CreateSolidColorBrush(palette.text, &textBrush);
-    dc->CreateSolidColorBrush(palette.textDim, &textDimBrush);
-    dc->CreateSolidColorBrush(palette.white, &whiteBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
     // 1. Background Pill Container
-    dc->FillRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), bgBrush.Get());
+    dc->FillRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), brush.Get());
 
-    // 2. Hover Highlights (Clip-filled Pill)
-    if (hover1 && !isDisabled) {
-        dc->PushAxisAlignedClip(r1, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->FillRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), accentBrush.Get());
-        dc->PopAxisAlignedClip();
-    } else if (hover2 && !isDisabled) {
-        dc->PushAxisAlignedClip(r2, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->FillRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), accentBrush.Get());
+    // 2. Hover Highlights
+    if ((hover1 || hover2) && !isDisabled) {
+        brush->SetColor(palette.accent);
+        dc->PushAxisAlignedClip(hover1 ? r1 : r2, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), brush.Get());
         dc->PopAxisAlignedClip();
     }
 
     // 3. Outer Border
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), borderBrush.Get(), 1.0f * s);
+    brush->SetColor(palette.border);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(groupRect, radius, radius), brush.Get(), 1.0f * s);
 
-    // 4. Middle Divider (Full top-to-bottom)
+    // 4. Middle Divider
     dc->PushAxisAlignedClip(groupRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    dc->DrawLine(D2D1::Point2F(midX, groupRect.top), D2D1::Point2F(midX, groupRect.bottom), borderBrush.Get(), 1.0f * s);
+    dc->DrawLine(D2D1::Point2F(midX, groupRect.top), D2D1::Point2F(midX, groupRect.bottom), brush.Get(), 1.0f * s);
     dc->PopAxisAlignedClip();
 
     // 5. Button Texts
@@ -296,12 +316,12 @@ void DrawDualActionButton(
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        ID2D1SolidColorBrush* t1b = isDisabled ? textDimBrush.Get() : (hover1 ? whiteBrush.Get() : textBrush.Get());
-        dc->DrawText(text1.data(), static_cast<UINT32>(text1.length()), textFormat, r1, t1b);
+        brush->SetColor(isDisabled ? palette.textDim : (hover1 ? palette.white : palette.text));
+        dc->DrawText(text1.data(), static_cast<UINT32>(text1.length()), textFormat, r1, brush.Get());
 
         if (!text2.empty()) {
-            ID2D1SolidColorBrush* t2b = isDisabled ? textDimBrush.Get() : (hover2 ? whiteBrush.Get() : textBrush.Get());
-            dc->DrawText(text2.data(), static_cast<UINT32>(text2.length()), textFormat, r2, t2b);
+            brush->SetColor(isDisabled ? palette.textDim : (hover2 ? palette.white : palette.text));
+            dc->DrawText(text2.data(), static_cast<UINT32>(text2.length()), textFormat, r2, brush.Get());
         }
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
@@ -320,6 +340,7 @@ void DrawPillSlider(
     IDWriteTextFormat* textFormat,
     float uiScale,
     const WidgetPalette& palette) {
+    if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
     const float radius = h * 0.5f;
@@ -327,69 +348,64 @@ void DrawPillSlider(
     const D2D1_RECT_F leftArrowRect = D2D1::RectF(rect.left, rect.top, rect.left + arrowW, rect.bottom);
     const D2D1_RECT_F rightArrowRect = D2D1::RectF(rect.right - arrowW, rect.top, rect.right, rect.bottom);
 
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, accentBrush, textBrush, textDimBrush, whiteBrush, errorBrush;
-    dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-    dc->CreateSolidColorBrush(palette.border, &borderBrush);
-    dc->CreateSolidColorBrush(palette.accent, &accentBrush);
-    dc->CreateSolidColorBrush(palette.text, &textBrush);
-    dc->CreateSolidColorBrush(palette.textDim, &textDimBrush);
-    dc->CreateSolidColorBrush(palette.white, &whiteBrush);
-    dc->CreateSolidColorBrush(palette.error, &errorBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
     // 1. Background Pill Container
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), bgBrush.Get());
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
 
-    // 2. Accent Progress Bar Fill (Subtle semi-transparent)
+    // 2. Accent Progress Bar Fill
     if (!isDisabled && fillRatio > 0.001f) {
         D2D1_COLOR_F accentColor = palette.accent;
         accentColor.a = 0.38f;
-        ComPtr<ID2D1SolidColorBrush> progressBrush;
-        dc->CreateSolidColorBrush(accentColor, &progressBrush);
+        brush->SetColor(accentColor);
 
-        float totalW = rect.right - rect.left;
-        D2D1_RECT_F progressRect = D2D1::RectF(rect.left, rect.top, rect.left + fillRatio * totalW, rect.bottom);
+        const float totalW = rect.right - rect.left;
+        const D2D1_RECT_F progressRect = D2D1::RectF(rect.left, rect.top, rect.left + fillRatio * totalW, rect.bottom);
 
         dc->PushAxisAlignedClip(progressRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), progressBrush.Get());
+        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
         dc->PopAxisAlignedClip();
     }
 
     // 3. Stepper Buttons & Vertical Dividers (When Hovered)
     if (isHovered && !isDisabled) {
-        bool isLeftHovered = (subPartHover == SliderSubPart::LeftStepper);
-        bool isRightHovered = (subPartHover == SliderSubPart::RightStepper);
+        const bool isLeftHovered = (subPartHover == SliderSubPart::LeftStepper);
+        const bool isRightHovered = (subPartHover == SliderSubPart::RightStepper);
 
-        if (isLeftHovered) {
-            dc->PushAxisAlignedClip(leftArrowRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush.Get());
-            dc->PopAxisAlignedClip();
-        } else if (isRightHovered) {
-            dc->PushAxisAlignedClip(rightArrowRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush.Get());
+        if (isLeftHovered || isRightHovered) {
+            brush->SetColor(palette.accent);
+            dc->PushAxisAlignedClip(isLeftHovered ? leftArrowRect : rightArrowRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
             dc->PopAxisAlignedClip();
         }
 
         // Full top-to-bottom vertical dividers
+        brush->SetColor(palette.border);
         dc->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->DrawLine(D2D1::Point2F(leftArrowRect.right, rect.top), D2D1::Point2F(leftArrowRect.right, rect.bottom), borderBrush.Get(), 1.0f * s);
-        dc->DrawLine(D2D1::Point2F(rightArrowRect.left, rect.top), D2D1::Point2F(rightArrowRect.left, rect.bottom), borderBrush.Get(), 1.0f * s);
+        dc->DrawLine(D2D1::Point2F(leftArrowRect.right, rect.top), D2D1::Point2F(leftArrowRect.right, rect.bottom), brush.Get(), 1.0f * s);
+        dc->DrawLine(D2D1::Point2F(rightArrowRect.left, rect.top), D2D1::Point2F(rightArrowRect.left, rect.bottom), brush.Get(), 1.0f * s);
         dc->PopAxisAlignedClip();
 
-        ID2D1Brush* leftArrowBrush = isLeftHovered ? whiteBrush.Get() : textDimBrush.Get();
-        ID2D1Brush* rightArrowBrush = isRightHovered ? whiteBrush.Get() : textDimBrush.Get();
-        DrawChevronLeft(dc, leftArrowRect, leftArrowBrush, s);
-        DrawChevronRight(dc, rightArrowRect, rightArrowBrush, s);
+        brush->SetColor(isLeftHovered ? palette.white : palette.textDim);
+        DrawChevronLeft(dc, leftArrowRect, brush.Get(), s);
+        brush->SetColor(isRightHovered ? palette.white : palette.textDim);
+        DrawChevronRight(dc, rightArrowRect, brush.Get(), s);
     }
 
     // 4. Border (Focus, Error, Hover or Normal)
     if (isInputError) {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), errorBrush.Get(), 1.5f * s);
+        brush->SetColor(palette.error);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.5f * s);
     } else if (isInputFocused) {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush.Get(), 1.5f * s);
+        brush->SetColor(palette.accent);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.5f * s);
     } else if (isHovered && !isDisabled) {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush.Get(), 1.0f * s);
+        brush->SetColor(palette.accent);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.0f * s);
     } else {
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), borderBrush.Get(), 1.0f * s);
+        brush->SetColor(palette.border);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.0f * s);
     }
 
     // 5. Value Text
@@ -397,8 +413,8 @@ void DrawPillSlider(
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        ID2D1SolidColorBrush* tb = isInputError ? errorBrush.Get() : (isDisabled ? textDimBrush.Get() : textBrush.Get());
-        dc->DrawText(displayText.data(), static_cast<UINT32>(displayText.length()), textFormat, rect, tb);
+        brush->SetColor(isInputError ? palette.error : (isDisabled ? palette.textDim : palette.text));
+        dc->DrawText(displayText.data(), static_cast<UINT32>(displayText.length()), textFormat, rect, brush.Get());
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 }
@@ -413,24 +429,24 @@ void DrawPillComboBox(
     IDWriteTextFormat* textFormat,
     float uiScale,
     const WidgetPalette& palette) {
+    if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
     const float radius = h * 0.5f;
 
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush, textDimBrush, accentBrush;
-    dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-    dc->CreateSolidColorBrush(palette.border, &borderBrush);
-    dc->CreateSolidColorBrush(palette.text, &textBrush);
-    dc->CreateSolidColorBrush(palette.textDim, &textDimBrush);
-    dc->CreateSolidColorBrush(palette.accent, &accentBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), bgBrush.Get());
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), isOpen ? accentBrush.Get() : borderBrush.Get(), (isOpen ? 1.5f : 1.0f) * s);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
+
+    brush->SetColor(isOpen ? palette.accent : palette.border);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), (isOpen ? 1.5f : 1.0f) * s);
 
     if (textFormat) {
         D2D1_RECT_F textRect = D2D1::RectF(rect.left + 14.0f * s, rect.top, rect.right - 30.0f * s, rect.bottom);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, textRect, isDisabled ? textDimBrush.Get() : textBrush.Get());
+        brush->SetColor(isDisabled ? palette.textDim : palette.text);
+        dc->DrawText(text.data(), static_cast<UINT32>(text.length()), textFormat, textRect, brush.Get());
     }
 
     D2D1_RECT_F arrowRect = D2D1::RectF(rect.right - 28.0f * s, rect.top, rect.right - 4.0f * s, rect.bottom);
@@ -438,8 +454,9 @@ void DrawPillComboBox(
     const float acx = (arrowRect.left + arrowRect.right) * 0.5f;
     const float acy = (arrowRect.top + arrowRect.bottom) * 0.5f;
     D2D1_RECT_F arrowIconRect = D2D1::RectF(acx - aside * 0.5f, acy - aside * 0.5f, acx + aside * 0.5f, acy + aside * 0.5f);
+    brush->SetColor(palette.textDim);
     QuickView::UI::GeekIconRenderer::DrawVectorIcon(
-        dc, *(isOpen ? Icons::ComboUp : Icons::ComboDown), arrowIconRect, textDimBrush.Get());
+        dc, *(isOpen ? Icons::ComboUp : Icons::ComboDown), arrowIconRect, brush.Get());
 }
 
 void DrawResetButton(
@@ -449,19 +466,18 @@ void DrawResetButton(
     IDWriteTextFormat* textFormat,
     float uiScale,
     const WidgetPalette& palette) {
+    if (!dc) return;
     const float s = uiScale > 0.0f ? uiScale : 1.0f;
     const float h = rect.bottom - rect.top;
     const float radius = h * 0.5f;
 
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, whiteBrush, textDimBrush;
-    dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-    dc->CreateSolidColorBrush(palette.accent, &borderBrush);
-    dc->CreateSolidColorBrush(palette.white, &whiteBrush);
-    dc->CreateSolidColorBrush(palette.textDim, &textDimBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
     if (isHovered) {
-        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), bgBrush.Get());
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), borderBrush.Get(), 1.0f * s);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get());
+        brush->SetColor(palette.accent);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.Get(), 1.0f * s);
     }
 
     if (textFormat) {
@@ -469,7 +485,8 @@ void DrawResetButton(
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         D2D1_RECT_F emojiRect = rect;
         emojiRect.top += 1.0f * s;
-        dc->DrawText(L"↺", 1, textFormat, emojiRect, isHovered ? whiteBrush.Get() : textDimBrush.Get());
+        brush->SetColor(isHovered ? palette.white : palette.textDim);
+        dc->DrawText(L"↺", 1, textFormat, emojiRect, brush.Get());
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 }
@@ -493,36 +510,28 @@ void DrawCircleCheckbox(
     const float cx = rect.left + radius;
     D2D1_ELLIPSE circle = D2D1::Ellipse(D2D1::Point2F(cx, cy), radius, radius);
 
-    ComPtr<ID2D1SolidColorBrush> accentBrush, borderBrush, whiteBrush, textBrush;
-    dc->CreateSolidColorBrush(isDisabled ? palette.controlBg : palette.accent, &accentBrush);
-    dc->CreateSolidColorBrush(isHovered ? palette.accent : palette.border, &borderBrush);
-    dc->CreateSolidColorBrush(palette.white, &whiteBrush);
-    dc->CreateSolidColorBrush(isDisabled ? palette.textDim : palette.text, &textBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
     if (checked) {
-        // Outer ring (Accent color)
-        dc->DrawEllipse(circle, accentBrush.Get(), 1.4f * s);
+        brush->SetColor(isDisabled ? palette.controlBg : palette.accent);
+        dc->DrawEllipse(circle, brush.Get(), 1.4f * s);
 
-        // Inner solid dot (Accent color, smaller circle)
         const float innerRadius = radius * 0.58f;
         D2D1_ELLIPSE innerCircle = D2D1::Ellipse(D2D1::Point2F(cx, cy), innerRadius, innerRadius);
-        dc->FillEllipse(innerCircle, accentBrush.Get());
+        dc->FillEllipse(innerCircle, brush.Get());
     } else {
-        // Subtle background fill
-        ComPtr<ID2D1SolidColorBrush> innerBg;
-        dc->CreateSolidColorBrush(palette.controlBg, &innerBg);
-        dc->FillEllipse(circle, innerBg.Get());
-
-        // Hollow outer ring
-        dc->DrawEllipse(circle, borderBrush.Get(), 1.2f * s);
+        dc->FillEllipse(circle, brush.Get());
+        brush->SetColor(isHovered ? palette.accent : palette.border);
+        dc->DrawEllipse(circle, brush.Get(), 1.2f * s);
     }
 
-    // Draw Label Text
     if (!label.empty() && textFormat) {
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         D2D1_RECT_F textRect = D2D1::RectF(rect.left + circleSize + 6.0f * s, rect.top, rect.right, rect.bottom);
-        dc->DrawText(label.data(), static_cast<UINT32>(label.length()), textFormat, textRect, textBrush.Get());
+        brush->SetColor(isDisabled ? palette.textDim : palette.text);
+        dc->DrawText(label.data(), static_cast<UINT32>(label.length()), textFormat, textRect, brush.Get());
     }
 }
 
@@ -537,7 +546,7 @@ void DrawLockIcon(
     const float cx = (rect.left + rect.right) * 0.5f;
     const float cy = (rect.top + rect.bottom) * 0.5f;
 
-    // Lock Body (6px radius rounded rect)
+    // Lock Body
     const float bodyHalfW = 6.0f * s;
     const float bodyTop = cy - 1.0f * s;
     const float bodyBottom = cy + 7.0f * s;
@@ -546,15 +555,15 @@ void DrawLockIcon(
 
     // Lock Keyhole dot
     ComPtr<ID2D1SolidColorBrush> holeBrush;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f), &holeBrush);
-    dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy + 2.5f * s), 1.2f * s, 1.2f * s), holeBrush.Get());
+    if (SUCCEEDED(dc->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f), &holeBrush))) {
+        dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy + 2.5f * s), 1.2f * s, 1.2f * s), holeBrush.Get());
+    }
 
-    // Lock Shackle (U-shaped arch)
+    // Lock Shackle
     const float shackleHalfW = 3.5f * s;
     const float strokeW = 1.6f * s;
 
     if (isLocked) {
-        // Closed U-shackle
         D2D1_POINT_2F leftBase = D2D1::Point2F(cx - shackleHalfW, bodyTop + 0.5f * s);
         D2D1_POINT_2F leftTop = D2D1::Point2F(cx - shackleHalfW, cy - 5.5f * s);
         D2D1_POINT_2F rightTop = D2D1::Point2F(cx + shackleHalfW, cy - 5.5f * s);
@@ -564,7 +573,6 @@ void DrawLockIcon(
         dc->DrawLine(leftTop, rightTop, brush, strokeW);
         dc->DrawLine(rightTop, rightBase, brush, strokeW);
     } else {
-        // Open lifted shackle (elevated and open on right)
         D2D1_POINT_2F leftBase = D2D1::Point2F(cx - shackleHalfW, bodyTop + 0.5f * s);
         D2D1_POINT_2F leftTop = D2D1::Point2F(cx - shackleHalfW, cy - 7.5f * s);
         D2D1_POINT_2F rightTop = D2D1::Point2F(cx + shackleHalfW, cy - 7.5f * s);
@@ -594,39 +602,32 @@ void DrawPillStepper(
     const float radius = H * 0.5f;
     const float btnW = 20.0f * s;
 
-    // 1. Background Fill
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush, textDimBrush, whiteBrush, hoverBrush;
-    dc->CreateSolidColorBrush(palette.controlBg, &bgBrush);
-    dc->CreateSolidColorBrush(isFocused ? palette.accent : (isHovered ? palette.accent : palette.border), &borderBrush);
-    dc->CreateSolidColorBrush(palette.text, &textBrush);
-    dc->CreateSolidColorBrush(palette.textDim, &textDimBrush);
-    dc->CreateSolidColorBrush(palette.white, &whiteBrush);
-    dc->CreateSolidColorBrush(palette.hoverTint.a > 0.01f ? palette.hoverTint : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), &hoverBrush);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.controlBg, &brush))) return;
 
     D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(rect, radius, radius);
-    dc->FillRoundedRectangle(roundedRect, bgBrush.Get());
+    dc->FillRoundedRectangle(roundedRect, brush.Get());
 
     // 2. Hover Stepper Buttons Highlight
-    D2D1_RECT_F incRect = D2D1::RectF(rect.right - btnW, rect.top, rect.right, rect.top + H * 0.5f);
-    D2D1_RECT_F decRect = D2D1::RectF(rect.right - btnW, rect.top + H * 0.5f, rect.right, rect.bottom);
+    const D2D1_RECT_F incRect = D2D1::RectF(rect.right - btnW, rect.top, rect.right, rect.top + H * 0.5f);
+    const D2D1_RECT_F decRect = D2D1::RectF(rect.right - btnW, rect.top + H * 0.5f, rect.right, rect.bottom);
 
-    if (hoverSubPart == 1) { // Inc
-        dc->PushAxisAlignedClip(incRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->FillRoundedRectangle(roundedRect, hoverBrush.Get());
-        dc->PopAxisAlignedClip();
-    } else if (hoverSubPart == 2) { // Dec
-        dc->PushAxisAlignedClip(decRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        dc->FillRoundedRectangle(roundedRect, hoverBrush.Get());
+    if (hoverSubPart == 1 || hoverSubPart == 2) {
+        brush->SetColor(palette.hoverTint.a > 0.01f ? palette.hoverTint : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f));
+        dc->PushAxisAlignedClip(hoverSubPart == 1 ? incRect : decRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        dc->FillRoundedRectangle(roundedRect, brush.Get());
         dc->PopAxisAlignedClip();
     }
 
     // 3. Outer Pill Border
-    dc->DrawRoundedRectangle(roundedRect, borderBrush.Get(), isFocused ? 1.5f * s : 1.0f * s);
+    brush->SetColor(isFocused ? palette.accent : (isHovered ? palette.accent : palette.border));
+    dc->DrawRoundedRectangle(roundedRect, brush.Get(), isFocused ? 1.5f * s : 1.0f * s);
 
-    // 4. Dividers (Full top-to-bottom vertical line & horizontal stepper line)
+    // 4. Dividers
+    brush->SetColor(palette.border);
     dc->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    dc->DrawLine(D2D1::Point2F(rect.right - btnW, rect.top), D2D1::Point2F(rect.right - btnW, rect.bottom), borderBrush.Get(), 1.0f * s);
-    dc->DrawLine(D2D1::Point2F(rect.right - btnW, rect.top + H * 0.5f), D2D1::Point2F(rect.right, rect.top + H * 0.5f), borderBrush.Get(), 1.0f * s);
+    dc->DrawLine(D2D1::Point2F(rect.right - btnW, rect.top), D2D1::Point2F(rect.right - btnW, rect.bottom), brush.Get(), 1.0f * s);
+    dc->DrawLine(D2D1::Point2F(rect.right - btnW, rect.top + H * 0.5f), D2D1::Point2F(rect.right, rect.top + H * 0.5f), brush.Get(), 1.0f * s);
     dc->PopAxisAlignedClip();
 
     // 5. Pure Vector Up/Down Arrows
@@ -636,33 +637,37 @@ void DrawPillStepper(
     const float arrHalfW = 3.0f * s;
     const float arrHalfH = 2.0f * s;
 
-    // Up Arrow (▲)
-    ID2D1Brush* incBrush = (hoverSubPart == 1) ? whiteBrush.Get() : textDimBrush.Get();
-    dc->DrawLine(D2D1::Point2F(arrX - arrHalfW, upY + arrHalfH), D2D1::Point2F(arrX, upY - arrHalfH), incBrush, 1.3f * s);
-    dc->DrawLine(D2D1::Point2F(arrX, upY - arrHalfH), D2D1::Point2F(arrX + arrHalfW, upY + arrHalfH), incBrush, 1.3f * s);
+    brush->SetColor((hoverSubPart == 1) ? palette.white : palette.textDim);
+    dc->DrawLine(D2D1::Point2F(arrX - arrHalfW, upY + arrHalfH), D2D1::Point2F(arrX, upY - arrHalfH), brush.Get(), 1.3f * s);
+    dc->DrawLine(D2D1::Point2F(arrX, upY - arrHalfH), D2D1::Point2F(arrX + arrHalfW, upY + arrHalfH), brush.Get(), 1.3f * s);
 
-    // Down Arrow (▼)
-    ID2D1Brush* decBrush = (hoverSubPart == 2) ? whiteBrush.Get() : textDimBrush.Get();
-    dc->DrawLine(D2D1::Point2F(arrX - arrHalfW, downY - arrHalfH), D2D1::Point2F(arrX, downY + arrHalfH), decBrush, 1.3f * s);
-    dc->DrawLine(D2D1::Point2F(arrX, downY + arrHalfH), D2D1::Point2F(arrX + arrHalfW, downY - arrHalfH), decBrush, 1.3f * s);
+    brush->SetColor((hoverSubPart == 2) ? palette.white : palette.textDim);
+    dc->DrawLine(D2D1::Point2F(arrX - arrHalfW, downY - arrHalfH), D2D1::Point2F(arrX, downY + arrHalfH), brush.Get(), 1.3f * s);
+    dc->DrawLine(D2D1::Point2F(arrX, downY + arrHalfH), D2D1::Point2F(arrX + arrHalfW, downY - arrHalfH), brush.Get(), 1.3f * s);
 
-    // 6. Label and Value Text
+    // 6. Label and Value Text (Zero heap allocation)
     if (textFormat) {
-        float textTotalW = rect.right - btnW - rect.left - 12.0f * s;
-        float labelW = textTotalW * 0.45f;
-        D2D1_RECT_F labelRect = D2D1::RectF(rect.left + 6.0f * s, rect.top, rect.left + 6.0f * s + labelW, rect.bottom);
-        D2D1_RECT_F valueRect = D2D1::RectF(rect.left + 6.0f * s + labelW, rect.top, rect.right - btnW - 4.0f * s, rect.bottom);
+        const float textTotalW = rect.right - btnW - rect.left - 12.0f * s;
+        const float labelW = textTotalW * 0.45f;
+        const D2D1_RECT_F labelRect = D2D1::RectF(rect.left + 6.0f * s, rect.top, rect.left + 6.0f * s + labelW, rect.bottom);
+        const D2D1_RECT_F valueRect = D2D1::RectF(rect.left + 6.0f * s + labelW, rect.top, rect.right - btnW - 4.0f * s, rect.bottom);
 
-        // Draw Label:
-        std::wstring fullLabel = std::wstring(label) + L":";
+        wchar_t fullLabel[64];
+        swprintf_s(fullLabel, L"%.*s:", static_cast<int>(label.length()), label.data());
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
         textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(fullLabel.c_str(), static_cast<UINT32>(fullLabel.length()), textFormat, labelRect, textDimBrush.Get());
+        brush->SetColor(palette.textDim);
+        dc->DrawText(fullLabel, static_cast<UINT32>(wcslen(fullLabel)), textFormat, labelRect, brush.Get());
 
-        // Draw Value + Suffix
-        std::wstring fullVal = std::wstring(valueText) + (isFocused ? L"|" : L"") + std::wstring(suffix);
+        wchar_t fullVal[64];
+        if (isFocused) {
+            swprintf_s(fullVal, L"%.*s|%.*s", static_cast<int>(valueText.length()), valueText.data(), static_cast<int>(suffix.length()), suffix.data());
+        } else {
+            swprintf_s(fullVal, L"%.*s%.*s", static_cast<int>(valueText.length()), valueText.data(), static_cast<int>(suffix.length()), suffix.data());
+        }
         textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        dc->DrawText(fullVal.c_str(), static_cast<UINT32>(fullVal.length()), textFormat, valueRect, textBrush.Get());
+        brush->SetColor(palette.text);
+        dc->DrawText(fullVal, static_cast<UINT32>(wcslen(fullVal)), textFormat, valueRect, brush.Get());
     }
 }
 
@@ -674,17 +679,20 @@ std::optional<float> ValidateAndParseSliderInput(
     float itemStep) {
     if (input.empty()) return std::nullopt;
 
-    // Strip leading/trailing whitespace
     size_t start = input.find_first_not_of(L" \t\r\n");
     if (start == std::wstring_view::npos) return std::nullopt;
     size_t end = input.find_last_not_of(L" \t\r\n");
     std::wstring_view trimmed = input.substr(start, end - start + 1);
 
-    std::wstring str(trimmed);
+    wchar_t numBuf[64];
+    size_t copyLen = (std::min)(trimmed.length(), sizeof(numBuf) / sizeof(wchar_t) - 1);
+    wcsncpy_s(numBuf, trimmed.data(), copyLen);
+    numBuf[copyLen] = L'\0';
+
     wchar_t* endPtr = nullptr;
-    double parsed = wcstod(str.c_str(), &endPtr);
-    if (endPtr == str.c_str()) {
-        return std::nullopt; // Not a valid number
+    double parsed = wcstod(numBuf, &endPtr);
+    if (endPtr == numBuf) {
+        return std::nullopt;
     }
     if (std::isnan(parsed) || std::isinf(parsed)) {
         return std::nullopt;
@@ -692,7 +700,6 @@ std::optional<float> ValidateAndParseSliderInput(
 
     float val = static_cast<float>(parsed);
 
-    // Percentage format with 0.0~1.0 internal scale
     const bool isUnitPercentage = (maxV <= 1.05f) && displayFormat && (wcsstr(displayFormat, L"%%") != nullptr);
     if (isUnitPercentage) {
         if (val > 1.05f) {
@@ -700,7 +707,6 @@ std::optional<float> ValidateAndParseSliderInput(
         }
     }
 
-    // Strict boundary validation: if out of range, fail validation
     if (val < minV || val > maxV) {
         return std::nullopt;
     }

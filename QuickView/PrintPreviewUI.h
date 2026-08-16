@@ -100,7 +100,7 @@ private:
 
     void RenderNumericCapsule(ID2D1DeviceContext* ctx, int id, const D2D1_RECT_F& rect, const wchar_t* name,
                               float* pValue, int16_t* pIntValue, float minVal, float maxVal, float step,
-                              float scaleFactor = 1.0f, int decimalPlaces = 0);
+                              float scaleFactor = 1.0f, int decimalPlaces = 0, IDWriteTextFormat* fmtCapsule = nullptr);
     void DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, const wchar_t* text, bool isHovered, bool isSelected = false);
     void RenderAlignmentGrid(ID2D1DeviceContext* ctx, float cx, float& cy, float panelWidth, 
                              IDWriteTextFormat* fmtHeader, IDWriteTextFormat* fmtBtn, 

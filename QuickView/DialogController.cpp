@@ -73,13 +73,14 @@ void DialogController::Render(ID2D1DeviceContext* context) {
     GetClientRect(m_hwnd, &clientRect);
     D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
     DialogLayout layout = CalculateDialogLayout(size);
+    bool isLight = IsLightThemeActive();
+
+    ComPtr<ID2D1SolidColorBrush> pBrush;
+    D2D1_COLOR_F dimmerClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 0.4f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f);
+    if (FAILED(context->CreateSolidColorBrush(dimmerClr, &pBrush))) return;
 
     // Overlay (background dimming)
-    ComPtr<ID2D1SolidColorBrush> pOverlayBrush;
-    bool isLight = IsLightThemeActive();
-    D2D1_COLOR_F dimmerClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 0.4f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.4f);
-    context->CreateSolidColorBrush(dimmerClr, &pOverlayBrush);
-    context->FillRectangle(D2D1::RectF(0, 0, size.width, size.height), pOverlayBrush.Get());
+    context->FillRectangle(D2D1::RectF(0, 0, size.width, size.height), pBrush.Get());
 
     // Box Background (Geek Glass or Fallback)
     bool useGlass = g_uiRenderer && g_uiRenderer->GetBackgroundCommandList();
@@ -103,26 +104,24 @@ void DialogController::Render(ID2D1DeviceContext* context) {
 
         // [Material Boost] Consistency for Dialog Density
         float masterOpacity = g_config.GlassModalsOpacity / 100.0f;
-        ComPtr<ID2D1SolidColorBrush> materialBrush;
         D2D1_COLOR_F fillerColor = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
-        context->CreateSolidColorBrush(fillerColor, &materialBrush);
-        if (materialBrush) {
-            materialBrush->SetOpacity(masterOpacity);
-            context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), materialBrush.Get());
-        }
+        pBrush->SetColor(fillerColor);
+        pBrush->SetOpacity(masterOpacity);
+        context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBrush.Get());
+        pBrush->SetOpacity(1.0f);
 
         geekGlass.DrawGeekGlassToppings(context, config);
     } else {
-        ComPtr<ID2D1SolidColorBrush> pBgBrush;
         D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.97f, 1.0f) : D2D1::ColorF(0.08f, 0.08f, 0.10f, 1.0f);
-        context->CreateSolidColorBrush(D2D1::ColorF(bgClr.r, bgClr.g, bgClr.b, g_config.GlassModalsOpacity / 100.0f), &pBgBrush);
-        context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBgBrush.Get());
+        pBrush->SetColor(D2D1::ColorF(bgClr.r, bgClr.g, bgClr.b, g_config.GlassModalsOpacity / 100.0f));
+        context->FillRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBrush.Get());
     }
 
     // Border
-    ComPtr<ID2D1SolidColorBrush> pBorderBrush;
-    context->CreateSolidColorBrush(m_context.Dialog.AccentColor, &pBorderBrush);
-    context->DrawRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBorderBrush.Get(), 2.0f * g_uiScale);
+    D2D1_COLOR_F accentColor = m_context.Dialog.AccentColor;
+    if (accentColor.a <= 0.01f) accentColor = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pBrush->SetColor(accentColor);
+    context->DrawRoundedRectangle(D2D1::RoundedRect(layout.Box, 10.0f * g_uiScale, 10.0f * g_uiScale), pBrush.Get(), 2.0f * g_uiScale);
 
     // Fonts
     static ComPtr<IDWriteFactory> pDW;
@@ -158,13 +157,8 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         }
     }
 
-    // Theme-aware Text Brushes
+    // Theme-aware Text Colors
     D2D1_COLOR_F txtClr = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
-    D2D1_COLOR_F txtDimClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
-
-    ComPtr<ID2D1SolidColorBrush> pTextBrush, pGrayTextBrush;
-    context->CreateSolidColorBrush(txtClr, &pTextBrush);
-    context->CreateSolidColorBrush(txtDimClr, &pGrayTextBrush);
 
     // Title
     std::wstring displayTitle = m_context.Dialog.Title;
@@ -175,8 +169,9 @@ void DialogController::Render(ID2D1DeviceContext* context) {
 
     float titleTop = layout.Box.top + 18;
     float titleBottom = layout.Box.top + 48;
+    pBrush->SetColor(txtClr);
     context->DrawText(displayTitle.c_str(), (UINT32)displayTitle.length(), fmtTitle.Get(), 
-        D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        D2D1::RectF(layout.Box.left + 25, titleTop, layout.Box.right - 25, titleBottom), pBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
     // Message
     float msgTop = titleBottom + 8;
@@ -189,35 +184,38 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         msgBottom = layout.Input.top - 10.0f * g_uiScale;
     }
 
-    context->DrawText(m_context.Dialog.Message.c_str(), (UINT32)m_context.Dialog.Message.length(), fmtBody.Get(), 
-        D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    if (!m_context.Dialog.Message.empty()) {
+        pBrush->SetColor(txtClr);
+        context->DrawText(m_context.Dialog.Message.c_str(), (UINT32)m_context.Dialog.Message.length(), fmtBody.Get(), 
+            D2D1::RectF(layout.Box.left + 25, msgTop, layout.Box.right - 25, msgBottom), pBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
 
-    // [Input Mode] Draw Input Field Background (Pill-shaped)
+    // Input Control
     if (m_context.Dialog.HasInput) {
-        float inputRadius = (layout.Input.bottom - layout.Input.top) * 0.5f;
-        ComPtr<ID2D1SolidColorBrush> pInputBg;
-        D2D1_COLOR_F inputBgClr = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.12f, 0.12f, 0.12f, 1.0f);
-        context->CreateSolidColorBrush(inputBgClr, &pInputBg);
-        context->FillRoundedRectangle(D2D1::RoundedRect(layout.Input, inputRadius, inputRadius), pInputBg.Get());
+        float inputRadius = 6.0f;
+        D2D1_COLOR_F inputBgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f);
+        pBrush->SetColor(inputBgClr);
+        context->FillRoundedRectangle(D2D1::RoundedRect(layout.Input, inputRadius, inputRadius), pBrush.Get());
 
         // Border
-        ComPtr<ID2D1SolidColorBrush> pInputBorder;
         D2D1_COLOR_F inputBordClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(0.35f, 0.35f, 0.35f, 1.0f);
-        context->CreateSolidColorBrush(inputBordClr, &pInputBorder);
+        pBrush->SetColor(inputBordClr);
         D2D1_RECT_F borderRect = layout.Input;
-        context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, inputRadius, inputRadius), pInputBorder.Get(), 1.0f);
+        context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, inputRadius, inputRadius), pBrush.Get(), 1.0f);
 
         // Focus Highlight
         if (m_context.Dialog.hEdit && GetFocus() == m_context.Dialog.hEdit) {
-             context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, inputRadius, inputRadius), pBorderBrush.Get(), 2.0f);
+            pBrush->SetColor(accentColor);
+            context->DrawRoundedRectangle(D2D1::RoundedRect(borderRect, inputRadius, inputRadius), pBrush.Get(), 2.0f);
         }
     }
 
     // Quality Info
     if (!m_context.Dialog.QualityText.empty()) {
         float qualityY = layout.Checkbox.top - 45.0f;
+        pBrush->SetColor(accentColor);
         context->DrawText(m_context.Dialog.QualityText.c_str(), (UINT32)m_context.Dialog.QualityText.length(), fmtBody.Get(), 
-            D2D1::RectF(layout.Box.left + 30, qualityY, layout.Box.right - 30, qualityY + 25), pBorderBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            D2D1::RectF(layout.Box.left + 30, qualityY, layout.Box.right - 30, qualityY + 25), pBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
     // Checkbox (GeekWidgets Circular Checkbox)

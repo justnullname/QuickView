@@ -60,22 +60,26 @@ struct SettingsThemePalette {
     D2D1_COLOR_F disabledFill;
     D2D1_COLOR_F subtleTint;
     D2D1_COLOR_F shadow;
+
+    constexpr operator QuickView::UI::WidgetPalette() const noexcept {
+        return {
+            .accent = accent,
+            .controlBg = controlBg,
+            .border = border,
+            .text = text,
+            .textDim = textDim,
+            .white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+            .error = error,
+            .subtleTint = subtleTint,
+            .hoverTint = hoverTint,
+            .panelBg = panelBg,
+            .shadow = shadow,
+        };
+    }
 };
 
 inline QuickView::UI::WidgetPalette ToWidgetPalette(const SettingsThemePalette& p) {
-    return {
-        .accent = p.accent,
-        .controlBg = p.controlBg,
-        .border = p.border,
-        .text = p.text,
-        .textDim = p.textDim,
-        .white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
-        .error = p.error,
-        .subtleTint = p.subtleTint,
-        .hoverTint = p.hoverTint,
-        .panelBg = p.panelBg,
-        .shadow = p.shadow,
-    };
+    return static_cast<QuickView::UI::WidgetPalette>(p);
 }
 
 SettingsThemePalette GetSettingsThemePalette() {
@@ -5148,26 +5152,24 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
     int maxItems = 16;
     int visibleItems = (count > maxItems) ? maxItems : count;
     
-    // 1. Dropdown Background (100% Opaque solid panel background)
-    D2D1_COLOR_F opaqueBg = palette.panelBg;
-    opaqueBg.a = 1.0f; // Force 100% opaque
-    ComPtr<ID2D1SolidColorBrush> brushOpaqueBg;
-    pRT->CreateSolidColorBrush(opaqueBg, &brushOpaqueBg);
-
-    // 2. Dropdown Shadow
+    // 1. Dropdown Shadow
     D2D1_RECT_F shadowRect = D2D1::RectF(dropRect.left - 2.0f * s, dropRect.top + 2.0f * s, dropRect.right + 2.0f * s, dropRect.bottom + 4.0f * s);
-    ComPtr<ID2D1SolidColorBrush> shadowBrush;
-    pRT->CreateSolidColorBrush(palette.shadow, &shadowBrush);
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(shadowRect, radius + 2.0f * s, radius + 2.0f * s), shadowBrush.Get());
+    if (m_brushBg) {
+        m_brushBg->SetColor(palette.shadow);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(shadowRect, radius + 2.0f * s, radius + 2.0f * s), m_brushBg.Get());
 
-    // 3. Dropdown Container Background & Border
-    pRT->FillRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), brushOpaqueBg.Get());
+        // 2. Dropdown Container Background (100% Opaque solid panel background)
+        D2D1_COLOR_F opaqueBg = palette.panelBg;
+        opaqueBg.a = 1.0f;
+        m_brushBg->SetColor(opaqueBg);
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBg.Get());
+    }
     pRT->DrawRoundedRectangle(D2D1::RoundedRect(dropRect, radius, radius), m_brushBorder.Get(), 1.0f * s);
     
-    // 4. Items (with clipping & inner item rounded highlights)
+    // 3. Items (with clipping & inner item rounded highlights)
     pRT->PushAxisAlignedClip(dropRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     
-    int startIdx = 0; // TODO: Scroll
+    int startIdx = 0;
     
     for (int i = 0; i < visibleItems; i++) {
         int idx = startIdx + i;
@@ -5184,10 +5186,9 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
         } else {
             // Selected
             bool isSel = (m_pActiveCombo->pIntVal && *m_pActiveCombo->pIntVal == idx);
-            if (isSel) {
-                ComPtr<ID2D1SolidColorBrush> tint;
-                pRT->CreateSolidColorBrush(palette.subtleTint, &tint);
-                pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), tint.Get());
+            if (isSel && m_brushBg) {
+                m_brushBg->SetColor(palette.subtleTint);
+                pRT->FillRoundedRectangle(D2D1::RoundedRect(itemRect, itemRadius, itemRadius), m_brushBg.Get());
             }
         }
         

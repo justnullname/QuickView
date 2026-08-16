@@ -50,3 +50,13 @@ TEST(GeekWidgetsTests, NullSafetyChecks) {
     DrawLockIcon(nullptr, r, true, nullptr, 1.0f);
     DrawPillStepper(nullptr, r, L"Copies", L"1", L"", false, false, 0, nullptr, 1.0f, pal);
 }
+
+TEST(GeekWidgetsTests, CalculateSegmentWidthsSpan) {
+    std::wstring_view opts[] = { L"Portrait", L"Landscape" };
+    float widths[2] = { 0.f, 0.f };
+    CalculateSegmentWidths(nullptr, nullptr, opts, 200.f, 1.0f, widths);
+    EXPECT_GT(widths[0], 0.f);
+    EXPECT_GT(widths[1], 0.f);
+    EXPECT_NEAR(widths[0] + widths[1], 200.f, 0.01f);
+}
+

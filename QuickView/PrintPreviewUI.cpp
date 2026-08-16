@@ -317,7 +317,8 @@ void PrintPreviewUI::RenderNumericCapsule(
     float maxVal, 
     float step,
     float scaleFactor, 
-    int decimalPlaces
+    int decimalPlaces,
+    IDWriteTextFormat* fmtCapsule
 ) {
     float H = rect.bottom - rect.top;
     float btnW = 20.0f;
@@ -387,15 +388,10 @@ void PrintPreviewUI::RenderNumericCapsule(
         else if (m_hoveredDec) hoverSub = 2;
     }
 
-    ComPtr<IDWriteFactory> pDW;
-    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    ComPtr<IDWriteTextFormat> fmt;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::CurrentLocale, &fmt);
-
     QuickView::UI::GeekWidgets::DrawPillStepper(
         ctx, rect, name, valueBuf, suffixBuf,
         (m_focusedCapsuleId == id), (m_hoveredCapsuleId == id), hoverSub,
-        fmt.Get(), 1.0f, pal);
+        fmtCapsule, 1.0f, pal);
 }
 
 void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
@@ -709,6 +705,9 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     ComPtr<IDWriteTextFormat> fmtHeader;
     pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, AppStrings::CurrentLocale, &fmtHeader);
 
+    ComPtr<IDWriteTextFormat> fmtCapsule;
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::CurrentLocale, &fmtCapsule);
+
     auto strs = GetPrintStrings();
 
     // 1. Printer Selector
@@ -724,7 +723,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     // 2. Copies Capsule and Rotate Button on same row
     std::wstring rotText = std::wstring(strs.rotate) + L": " + std::to_wstring(m_settings.rotationAngle) + L"°";
     m_ui.btnRotate = D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 28);
-    RenderNumericCapsule(ctx, 1, D2D1::RectF(cx, cy, cx + 140, cy + 28), strs.copies, nullptr, &m_settings.copies, 1.0f, 999.0f, 1.0f, 1.0f, 0);
+    RenderNumericCapsule(ctx, 1, D2D1::RectF(cx, cy, cx + 140, cy + 28), strs.copies, nullptr, &m_settings.copies, 1.0f, 999.0f, 1.0f, 1.0f, 0, fmtCapsule.Get());
     DrawButton(ctx, m_ui.btnRotate, rotText.c_str(), false);
     cy += 35;
 
@@ -768,7 +767,7 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
 
     // Custom Scale Capsule
     if (m_settings.layoutMode == PrintLayoutMode::Custom) {
-        RenderNumericCapsule(ctx, 2, D2D1::RectF(cx, cy, cx + panelWidth, cy + 28), strs.scale, &m_settings.customScale, nullptr, 0.05f, 100.0f, 0.05f, 100.0f, 0);
+        RenderNumericCapsule(ctx, 2, D2D1::RectF(cx, cy, cx + panelWidth, cy + 28), strs.scale, &m_settings.customScale, nullptr, 0.05f, 100.0f, 0.05f, 100.0f, 0, fmtCapsule.Get());
         cy += 35;
     }
 
@@ -776,11 +775,11 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     ctx->DrawText(strs.margins, (UINT32)wcslen(strs.margins), fmtHeader.Get(), D2D1::RectF(cx, cy, cx + panelWidth, cy + 20), panelTextBrush.Get());
     cy += 22;
 
-    RenderNumericCapsule(ctx, 3, D2D1::RectF(cx, cy, cx + 140, cy + 24), strs.left, &m_settings.marginLeft, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1);
-    RenderNumericCapsule(ctx, 4, D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 24), strs.right, &m_settings.marginRight, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1);
+    RenderNumericCapsule(ctx, 3, D2D1::RectF(cx, cy, cx + 140, cy + 24), strs.left, &m_settings.marginLeft, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1, fmtCapsule.Get());
+    RenderNumericCapsule(ctx, 4, D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 24), strs.right, &m_settings.marginRight, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1, fmtCapsule.Get());
     cy += 28;
-    RenderNumericCapsule(ctx, 5, D2D1::RectF(cx, cy, cx + 140, cy + 24), strs.top, &m_settings.marginTop, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1);
-    RenderNumericCapsule(ctx, 6, D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 24), strs.bottom, &m_settings.marginBottom, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1);
+    RenderNumericCapsule(ctx, 5, D2D1::RectF(cx, cy, cx + 140, cy + 24), strs.top, &m_settings.marginTop, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1, fmtCapsule.Get());
+    RenderNumericCapsule(ctx, 6, D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 24), strs.bottom, &m_settings.marginBottom, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1, fmtCapsule.Get());
     cy += 32;
 
     // 7. Alignment九宫格 (Centered with GeekWidgets Button styling)
