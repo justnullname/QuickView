@@ -222,4 +222,5 @@ private:
   void EnsureVisible(int index, const D2D1_SIZE_F &size, bool smooth = true);
   __declspec(noinline) D2D1_RECT_F GetItemRect(int index, float winW) const;
   int HitTest(float x, float y);
+  void CommitSelectionState();
 };

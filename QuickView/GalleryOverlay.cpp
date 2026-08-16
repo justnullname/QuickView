@@ -1314,11 +1314,7 @@ bool GalleryOverlay::OnKeyDown(UINT key) {
             
         case VK_RETURN:
             if (m_selectedIndex >= 0) {
-                if (!m_isPinned) {
-                    Close(true);
-                } else if (m_mode == GalleryMode::FullGrid) {
-                    SetMode(GalleryMode::Filmstrip);
-                }
+                CommitSelectionState();
             }
             return true;
             
@@ -1736,13 +1732,7 @@ bool GalleryOverlay::OnLButtonUp(int x, int y, int& outSelectedIndex) {
         if (idx >= 0) {
             m_selectedIndex = idx;
             outSelectedIndex = idx;
-            if (!m_isPinned) {
-                if (!g_config.GalleryKeepVisibleOnThumbnailClick) {
-                    Close(true);
-                }
-            } else if (m_mode == GalleryMode::FullGrid) {
-                SetMode(GalleryMode::Filmstrip);
-            }
+            CommitSelectionState();
             return true; // Clicked and selected a cell
         }
     }
@@ -1874,3 +1864,17 @@ void GalleryOverlay::SetMouseInGallery(bool inGallery) {
         }
     }
 }
+
+void GalleryOverlay::CommitSelectionState() {
+    if (m_mode == GalleryMode::FullGrid) {
+        if (m_isPinned || g_config.GalleryKeepVisibleOnThumbnailClick) {
+            SetMode(GalleryMode::Filmstrip);
+        } else {
+            Close(true);
+        }
+    } else if (!m_isPinned && !g_config.GalleryKeepVisibleOnThumbnailClick) {
+        Close(true);
+    }
+}
+
+

@@ -12013,14 +12013,16 @@ SKIP_EDGE_NAV:;
         // Gallery handling
         if (g_gallery.IsVisible()) {
             if (g_gallery.OnKeyDown(wParam)) {
-                if (g_gallery.GetMode() == GalleryMode::Hidden) {
-                    SetCursor(LoadCursor(nullptr, IDC_ARROW));
-                    const int idx = g_gallery.GetSelectedIndex();
-                    if (wParam == VK_RETURN && idx >= 0) {
-                        FinishGallery(hwnd, GalleryFinishKind::Commit, idx);
-                    } else {
-                        FinishGallery(hwnd, GalleryFinishKind::Dismiss);
+                const int idx = g_gallery.GetSelectedIndex();
+                if (wParam == VK_RETURN && idx >= 0) {
+                    FinishGallery(hwnd, GalleryFinishKind::Commit, idx);
+                    if (g_gallery.GetMode() == GalleryMode::Hidden) {
+                        SetCursor(LoadCursor(nullptr, IDC_ARROW));
                     }
+                    RequestRepaint(PaintLayer::All);
+                } else if (g_gallery.GetMode() == GalleryMode::Hidden) {
+                    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                    FinishGallery(hwnd, GalleryFinishKind::Dismiss);
                     RequestRepaint(PaintLayer::All);
                 } else {
                     RequestRepaint(PaintLayer::All);
