@@ -50,10 +50,11 @@ public:
     ID2D1DeviceContext* BeginPendingUpdate(UINT width, UINT height, bool isTitan = false, UINT fullWidth = 0, UINT fullHeight = 0, bool allowOversizedStandard = false, DXGI_FORMAT surfaceFormatOverride = DXGI_FORMAT_UNKNOWN, bool hasAlpha = true);
     HRESULT EndPendingUpdate();
     
-    // PlayPingPongCrossFade: Animate transition from Active to Pending.
-    // Caller is responsible for the final Commit after any transform/state sync.
-    // isTransparent: If true, cross-fade both layers. If false, only fade out old.
-    HRESULT PlayPingPongCrossFade(float durationMs);
+    // SwapLayers: Instantly swap Active and Pending layers (0ms GPU layer swap, zero crossfade latency).
+    HRESULT SwapLayers();
+    
+    // HideActiveImage: Instantly set all image layer opacities to 0.0f and commit, used during transitions.
+    HRESULT HideActiveImage();
     
     // [Infinity Engine] Cascade Rendering
     // Draws visible tiles into the context, falling back to lower LODs if needed.

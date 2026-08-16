@@ -320,7 +320,6 @@ const wchar_t *Settings_Action_ImportTheme = nullptr;
 const wchar_t *Settings_Label_CanvasColor = nullptr;
 const wchar_t *Settings_Label_Overlay = nullptr;
 const wchar_t *Settings_Label_ShowGrid = nullptr;
-const wchar_t *Settings_Label_CrossFade = nullptr;
 const wchar_t *Settings_Label_AlwaysOnTop = nullptr;
 const wchar_t *Settings_Label_LockWindow = nullptr;
 const wchar_t *Settings_Tooltip_LockWindow = nullptr;
@@ -896,7 +895,6 @@ struct LanguageTable {
     const wchar_t *Settings_Label_CanvasColor;
     const wchar_t *Settings_Label_Overlay;
     const wchar_t *Settings_Label_ShowGrid;
-    const wchar_t *Settings_Label_CrossFade;
     const wchar_t *Settings_Label_AlwaysOnTop;
     const wchar_t *Settings_Label_LockWindow;
     const wchar_t *Settings_Tooltip_LockWindow;
@@ -1473,7 +1471,6 @@ static const LanguageTable Table_EN = {
     L"Canvas Color", // Settings_Label_CanvasColor
     L"Overlay", // Settings_Label_Overlay
     L"Show Grid Overlay", // Settings_Label_ShowGrid
-    L"Image Transition Fade", // Settings_Label_CrossFade
     L"Always on Top", // Settings_Label_AlwaysOnTop
     L"Lock Window", // Settings_Label_LockWindow
     L"Controls whether the program locks the window border by default on startup, rather than following image scaling.", // Settings_Tooltip_LockWindow
@@ -2050,7 +2047,6 @@ static const LanguageTable Table_CN = {
     L"画布颜色", // Settings_Label_CanvasColor
     L"叠加层", // Settings_Label_Overlay
     L"显示网格", // Settings_Label_ShowGrid
-    L"图片切换淡入淡出", // Settings_Label_CrossFade
     L"窗口置顶", // Settings_Label_AlwaysOnTop
     L"锁定窗口", // Settings_Label_LockWindow
     L"此处控制程序启动时默认锁定窗口边框，不跟随图片缩放。", // Settings_Tooltip_LockWindow
@@ -2627,7 +2623,6 @@ static const LanguageTable Table_TW = {
     L"畫布顏色", // Settings_Label_CanvasColor
     L"疊加層", // Settings_Label_Overlay
     L"顯示網格", // Settings_Label_ShowGrid
-    L"圖片切換淡入淡出", // Settings_Label_CrossFade
     L"視窗置頂", // Settings_Label_AlwaysOnTop
     L"鎖定視窗", // Settings_Label_LockWindow
     L"此處控制程式啟動時預設鎖定視窗邊框，不跟隨圖片縮放。", // Settings_Tooltip_LockWindow
@@ -3204,7 +3199,6 @@ static const LanguageTable Table_JA = {
     L"キャンバスの色", // Settings_Label_CanvasColor
     L"オーバーレイ", // Settings_Label_Overlay
     L"グリッドオーバーレイを表示", // Settings_Label_ShowGrid
-    L"画像切り替えのフェード", // Settings_Label_CrossFade
     L"常に手前に表示", // Settings_Label_AlwaysOnTop
     L"ウィンドウを固定", // Settings_Label_LockWindow
     L"起動時に画像の倍率に追従せず、既定でウィンドウ枠を固定するかどうかを制御します。", // Settings_Tooltip_LockWindow
@@ -3781,7 +3775,6 @@ static const LanguageTable Table_RU = {
     L"Цвет холста", // Settings_Label_CanvasColor
     L"Наложение", // Settings_Label_Overlay
     L"Показывать сетку", // Settings_Label_ShowGrid
-    L"Плавный переход между изображениями", // Settings_Label_CrossFade
     L"Поверх всех окон", // Settings_Label_AlwaysOnTop
     L"Заблокировать окно", // Settings_Label_LockWindow
     L"Определяет, будут ли блокироваться границы окна по умолчанию при запуске, а не после масштабирования изображения.", // Settings_Tooltip_LockWindow
@@ -4358,7 +4351,6 @@ static const LanguageTable Table_DE = {
     L"Leinwandfarbe", // Settings_Label_CanvasColor
     L"Überlagerung", // Settings_Label_Overlay
     L"Raster anzeigen", // Settings_Label_ShowGrid
-    L"Bildübergang ausblenden", // Settings_Label_CrossFade
     L"Immer im Vordergrund", // Settings_Label_AlwaysOnTop
     L"Fenstergröße sperren", // Settings_Label_LockWindow
     L"Legt fest, ob das Programm beim Start standardmäßig den Fensterrahmen sperrt, anstatt der Bildskalierung zu folgen.", // Settings_Tooltip_LockWindow
@@ -4935,7 +4927,6 @@ static const LanguageTable Table_ES = {
     L"Color del lienzo", // Settings_Label_CanvasColor
     L"Superposición", // Settings_Label_Overlay
     L"Mostrar cuadrícula", // Settings_Label_ShowGrid
-    L"Desvanecimiento de transición de imagen", // Settings_Label_CrossFade
     L"Siempre visible", // Settings_Label_AlwaysOnTop
     L"Bloquear ventana", // Settings_Label_LockWindow
     L"Controla si el programa bloquea el borde de la ventana de forma predeterminada al inicio, sin seguir la escala de la imagen.", // Settings_Tooltip_LockWindow
@@ -5512,7 +5503,6 @@ static const LanguageTable Table_FR = {
     L"Canvas Color", // Settings_Label_CanvasColor
     L"Overlay", // Settings_Label_Overlay
     L"Show Grid Overlay", // Settings_Label_ShowGrid
-    L"Image Transition Fade", // Settings_Label_CrossFade
     L"Always on Top", // Settings_Label_AlwaysOnTop
     L"Lock Window", // Settings_Label_LockWindow
     L"Controls whether the program locks the window border by default on startup, rather than following image scaling.", // Settings_Tooltip_LockWindow
@@ -6094,7 +6084,6 @@ void Apply(const LanguageTable& t) {
   Settings_Label_CanvasColor = t.Settings_Label_CanvasColor;
   Settings_Label_Overlay = t.Settings_Label_Overlay;
   Settings_Label_ShowGrid = t.Settings_Label_ShowGrid;
-  Settings_Label_CrossFade = t.Settings_Label_CrossFade;
   Settings_Label_AlwaysOnTop = t.Settings_Label_AlwaysOnTop;
   Settings_Label_LockWindow = t.Settings_Label_LockWindow;
   Settings_Tooltip_LockWindow = t.Settings_Tooltip_LockWindow;

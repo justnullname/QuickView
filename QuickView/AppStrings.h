@@ -333,7 +333,6 @@ namespace AppStrings {
     extern const wchar_t* Settings_Tooltip_BackdropEffectsTip;
     extern const wchar_t* Settings_Label_Overlay;
     extern const wchar_t* Settings_Label_ShowGrid;
-    extern const wchar_t* Settings_Label_CrossFade;
     extern const wchar_t* Settings_Label_AlwaysOnTop;
     extern const wchar_t* Settings_Label_LockWindow;
     extern const wchar_t* Settings_Tooltip_LockWindow;

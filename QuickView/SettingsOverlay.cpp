@@ -1526,9 +1526,6 @@ void SettingsOverlay::BuildMenu() {
         tabVisuals.items.push_back({ AppStrings::Settings_Label_ShowGrid, OptionType::Toggle, &g_config.CanvasShowGrid });
     }
 
-    // Cross Fade Toggle
-    tabVisuals.items.push_back({ AppStrings::Settings_Label_CrossFade, OptionType::Toggle, &g_config.EnableCrossFade });
-    
     tabVisuals.items.push_back({ AppStrings::Settings_Header_Window, OptionType::Header });
     SettingsItem itemSmooth = { AppStrings::Settings_Label_EnableSmoothScaling, OptionType::Toggle, &g_config.EnableSmoothScaling };
     itemSmooth.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
@@ -2614,10 +2611,12 @@ void SettingsOverlay::BuildMenu() {
          DeleteFileW((exeDir + L"\\QuickView.ini").c_str());
          DeleteFileW((appDataDir + L"\\QuickView.ini").c_str());
          
-         // 2. Reset In-Memory Config
+         // 2. Reset In-Memory Config (Preserving UpdateChannel)
+         int preservedUpdateChannel = g_config.UpdateChannel;
          g_config = AppConfig(); 
-          extern void SaveConfig();
-          SaveConfig();
+         g_config.UpdateChannel = preservedUpdateChannel;
+         extern void SaveConfig();
+         SaveConfig();
          for (auto& binding : g_hotkeys) {
              binding.combo = binding.defaultCombo;
          }

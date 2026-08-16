@@ -55,7 +55,6 @@ extern bool g_isNavigatingToTitan; // [Fix] Restrict decode progress bar to Tita
 extern ViewState& g_viewState;  // [v3.2] For Nav Indicators
 extern CImageLoader::ImageMetadata& g_currentMetadata;  // [v3.2] For Info Panel
 extern std::wstring& g_imagePath;  // [v3.2] For Info Panel
-extern bool g_slowMotionMode; // [Debug] Slow-motion crossfade mode
 extern AppConfig g_config;
 extern int g_renderExifOrientation;
 extern int GetCurrentZoomPercent(); // [v3.2.3] For Info Panel Zoom Display
@@ -895,8 +894,8 @@ void UIRenderer::RenderStaticLayer(ID2D1DeviceContext* dc, HWND hwnd) {
         DrawBorderIndicators(dc);
     }
 
-    // Minimap / Navigator (disabled in Crop Mode)
-    if (g_config.ShowNavigator != 2 && !isAnyOverlayActive && !g_cropState.IsActive) {
+    // Minimap / Navigator (disabled in Crop Mode and Overlays)
+    if (!isAnyOverlayActive && !g_cropState.IsActive) {
         DrawNavigator(dc);
     }
 
@@ -2180,7 +2179,6 @@ void UIRenderer::DrawDebugHUD(ID2D1DeviceContext* dc) {
     
     DrawToggle(L"Fast [Ctl1]", g_runtime.EnableScout);
     DrawToggle(L"Heavy[Ctl2]", g_runtime.EnableHeavy);
-    DrawToggle(L"SlowM[Ctl3]", g_slowMotionMode);
     DrawToggle(L"Grid [Ctl4]", m_showTileGrid);
     DrawToggle(L"HdrSm[Ctl5]", g_runtime.ForceHdrSimulation);
     DrawToggle(L"GPU TM", g_runtime.LastFrameGpuToneMapped);

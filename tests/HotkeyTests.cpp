@@ -62,11 +62,24 @@ TEST(HotkeyTest, HotkeyActionToStringAndParsing) {
     EXPECT_EQ(HotkeyActionToString(HotkeyAction::CopyPixels), L"CopyPixels");
     EXPECT_EQ(HotkeyActionToString(HotkeyAction::CopyFileItem), L"CopyFile");
     EXPECT_EQ(HotkeyActionToString(HotkeyAction::CopyPath), L"CopyPath");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::ToggleInfoPanel), L"ToggleInfoPanel");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::ToggleExifPanel), L"ToggleExifPanel");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::ToggleGallery), L"ToggleGallery");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::ToggleCompare), L"ToggleCompare");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::ComparePair), L"ComparePair");
+    EXPECT_EQ(HotkeyActionToString(HotkeyAction::RenderRaw), L"RenderRaw");
 
     EXPECT_EQ(StringToHotkeyAction(L"CopyPixels"), HotkeyAction::CopyPixels);
     EXPECT_EQ(StringToHotkeyAction(L"CopyImage"), HotkeyAction::CopyPixels); // Backward compatibility
     EXPECT_EQ(StringToHotkeyAction(L"CopyFile"), HotkeyAction::CopyFileItem);
     EXPECT_EQ(StringToHotkeyAction(L"CopyFileItem"), HotkeyAction::CopyFileItem);
     EXPECT_EQ(StringToHotkeyAction(L"CopyPath"), HotkeyAction::CopyPath);
+    EXPECT_EQ(StringToHotkeyAction(L"ToggleInfoPanel"), HotkeyAction::ToggleInfoPanel);
+    EXPECT_EQ(StringToHotkeyAction(L"ToggleExifPanel"), HotkeyAction::ToggleExifPanel);
+    EXPECT_EQ(StringToHotkeyAction(L"ToggleGallery"), HotkeyAction::ToggleGallery);
+    EXPECT_EQ(StringToHotkeyAction(L"ToggleCompare"), HotkeyAction::ToggleCompare);
+    EXPECT_EQ(StringToHotkeyAction(L"ComparePair"), HotkeyAction::ComparePair);
+    EXPECT_EQ(StringToHotkeyAction(L"RenderRaw"), HotkeyAction::RenderRaw);
 }
+
 

@@ -297,9 +297,6 @@ CImageLoader::ImageMetadata& g_currentMetadata = g_panes[0].metadata;
 ViewState& g_viewState = g_panes[0].view;
 static bool g_isImageDirty = true; // Feature: Conditional Image Repaint (DComp Optimization)
 static bool g_isBlurry = false; // For Motion Blur (Ghost)
-static bool g_isCrossFading = false;
-bool g_slowMotionMode = false; // [Debug] Slow crossfade for timing analysis
-static ComPtr<ID2D1Bitmap> g_ghostBitmap; // For Cross-Fade
 
 // [v10.5] Animation Control
 static bool g_animPlaying = true;
@@ -333,11 +330,11 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::FlipH, KeyCombo{ 'H', 0 }, KeyCombo{ 'H', 0 } },
     HotkeyBinding{ HotkeyAction::FlipV, KeyCombo{ 'V', 0 }, KeyCombo{ 'V', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleAnimation, KeyCombo{ VK_SPACE, 0 }, KeyCombo{ VK_SPACE, 0 } },
-    HotkeyBinding{ HotkeyAction::AnimNextFrame, KeyCombo{ 'N', 0 }, KeyCombo{ 'N', 0 } },
-    HotkeyBinding{ HotkeyAction::AnimPrevFrame, KeyCombo{ 'P', 0 }, KeyCombo{ 'P', 0 } },
-    HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'G', 0 }, KeyCombo{ 'G', 0 } },
-    HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
-    HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'E', 1 }, KeyCombo{ 'E', 1 } }, // Ctrl + E
+    HotkeyBinding{ HotkeyAction::AnimNextFrame, KeyCombo{ VK_RIGHT, 4 }, KeyCombo{ VK_RIGHT, 4 } }, // Alt + Right
+    HotkeyBinding{ HotkeyAction::AnimPrevFrame, KeyCombo{ VK_LEFT, 4 }, KeyCombo{ VK_LEFT, 4 } },   // Alt + Left
+    HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'T', 0 }, KeyCombo{ 'T', 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ VK_TAB, 0 }, KeyCombo{ VK_TAB, 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleMinimap, KeyCombo{ 'M', 0 }, KeyCombo{ 'M', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleFullscreen, KeyCombo{ VK_F11, 0 }, KeyCombo{ VK_F11, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleSpan, KeyCombo{ VK_F11, 1 }, KeyCombo{ VK_F11, 1 } }, // Ctrl + F11
@@ -351,8 +348,8 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::CopyFileItem, KeyCombo{ 'C', 3 }, KeyCombo{ 'C', 3 } },   // Ctrl + Shift + C (1 | 2 = 3)
     HotkeyBinding{ HotkeyAction::CopyPath, KeyCombo{ 'C', 5 }, KeyCombo{ 'C', 5 } },  // Ctrl + Alt + C (1 | 4 = 5)
     HotkeyBinding{ HotkeyAction::ShowInExplorer, KeyCombo{ VK_RETURN, 1 }, KeyCombo{ VK_RETURN, 1 } }, // Ctrl + Enter
-    HotkeyBinding{ HotkeyAction::ToggleCompare, KeyCombo{ VK_F6, 0 }, KeyCombo{ VK_F6, 0 } },
-    HotkeyBinding{ HotkeyAction::ComparePair, KeyCombo{ VK_F6, 2 }, KeyCombo{ VK_F6, 2 } }, // Shift + F6: rendered vs RAW
+    HotkeyBinding{ HotkeyAction::ToggleCompare, KeyCombo{ 'C', 0 }, KeyCombo{ 'C', 0 } },
+    HotkeyBinding{ HotkeyAction::ComparePair, KeyCombo{ 'C', 2 }, KeyCombo{ 'C', 2 } }, // Shift + C: rendered vs RAW
     HotkeyBinding{ HotkeyAction::AlwaysOnTop, KeyCombo{ 'T', 1 }, KeyCombo{ 'T', 1 } }, // Ctrl + T
     HotkeyBinding{ HotkeyAction::ToggleDebugHud, KeyCombo{ VK_F12, 0 }, KeyCombo{ VK_F12, 0 } },
     HotkeyBinding{ HotkeyAction::Print, KeyCombo{ 'P', 1 }, KeyCombo{ 'P', 1 } }, // Ctrl + P
@@ -2438,7 +2435,7 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
     g_lastFitOffset = D2D1::Point2F((winW - vs.VisualSize.width * g_lastFitScale) * 0.5f,
                                     (winH - vs.VisualSize.height * g_lastFitScale) * 0.5f);
 
-    g_compEngine->PlayPingPongCrossFade(0.0f);
+    g_compEngine->SwapLayers();
     SyncDCompState(hwnd, winW, winH);
     g_compEngine->Commit();
     return true;
@@ -2573,7 +2570,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         if (!ctx) return false;
         ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // Transparent
         g_compEngine->EndPendingUpdate();
-        g_compEngine->PlayPingPongCrossFade(0); // Instant
+        g_compEngine->SwapLayers(); // Instant
         g_compEngine->Commit();
         return true;
     }
@@ -2654,7 +2651,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
             }
         }
 
-        g_compEngine->PlayPingPongCrossFade(0);
+        g_compEngine->SwapLayers();
         g_compEngine->SetWebViewMode(true);
         g_compEngine->SetWebViewProxyOpacity(0.0f); // Force hide proxy immediately to prevent ghosting
 
@@ -2915,17 +2912,8 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     // Track surface size for WM_MOUSEWHEEL and WM_SIZE calculations
     g_lastSurfaceSize = D2D1::SizeF((float)surfW, (float)surfH);
     
-    // [Fix] Enable smooth cross-fade transition.
-    // Use 150ms fade to eliminate transparent flicker.
-    // For fast upgrades (same image, new surface size), swap instantly to avoid scale-jump artifacts.
-    bool enableCrossFade = g_config.EnableCrossFade;
-    float baseFadeMs = 90.0f;
-    if (g_slideshowState.IsActive) {
-        enableCrossFade = false; // Disable all slideshow transitions
-        baseFadeMs = 0.0f;
-    }
-    float fadeMs = (isFastUpgrade || !enableCrossFade) ? 0.0f : baseFadeMs;
-    g_compEngine->PlayPingPongCrossFade(fadeMs);
+    // Instant GPU Layer Swap (0ms latency, zero cross-fade overhead)
+    g_compEngine->SwapLayers();
     if (g_compEngine->IsInitialized()) {
         SyncDCompState(hwnd, (float)winW, (float)winH);
     }
@@ -3481,6 +3469,11 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex) {
                     });
                 }
             } else if (resolved != pane.path) {
+                // Instantly hide stale image layer so it never flashes while loading the new image
+                if (g_compEngine && g_compEngine->IsInitialized()) {
+                    g_compEngine->HideActiveImage();
+                }
+                pane.resource.Reset();
                 pane.navigator.SetIndex(commitIndex);
                 LoadImageAsync(hwnd, resolved.c_str());
             }
@@ -4983,7 +4976,6 @@ void SaveConfig() {
     WriteConfigBool(L"View", L"EnableSmoothScaling", g_config.EnableSmoothScaling, iniPath.c_str());
 
     // Control
-    WriteConfigBool(L"Controls", L"EnableCrossFade", g_config.EnableCrossFade, iniPath.c_str());
     WriteConfigInt(L"Controls", L"ZoomModeIn", g_config.ZoomModeIn, iniPath.c_str());
     WriteConfigInt(L"Controls", L"ZoomModeOut", g_config.ZoomModeOut, iniPath.c_str());
     WriteConfigBool(L"Controls", L"InvertWheel", g_config.InvertWheel, iniPath.c_str());
@@ -5293,7 +5285,6 @@ void LoadConfig() {
     g_config.EnableSmoothScaling = GetPrivateProfileIntW(L"View", L"EnableSmoothScaling", 0, iniPath.c_str()) != 0;
 
     // Control
-    g_config.EnableCrossFade = GetPrivateProfileIntW(L"Controls", L"EnableCrossFade", 1, iniPath.c_str()) != 0;
     g_config.ZoomModeIn = GetPrivateProfileIntW(L"Controls", L"ZoomModeIn", 0, iniPath.c_str());
     if (g_config.ZoomModeIn < 0 || g_config.ZoomModeIn > 3) g_config.ZoomModeIn = 0;
     g_config.ZoomModeOut = GetPrivateProfileIntW(L"Controls", L"ZoomModeOut", 0, iniPath.c_str());
@@ -11938,7 +11929,6 @@ SKIP_EDGE_NAV:;
             switch(wParam) {
                 case '1': g_runtime.EnableScout = !g_runtime.EnableScout; handled = true; break;
                 case '2': g_runtime.EnableHeavy = !g_runtime.EnableHeavy; handled = true; break;
-                case '3': g_slowMotionMode = !g_slowMotionMode; handled = true; break;
                 case '4': 
                     g_showTileGrid = !g_showTileGrid; 
                     QV_LOG("Main_DebugToggle", TraceLoggingBool(g_showTileGrid, "TileGrid"));
@@ -15019,8 +15009,6 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     }
     g_isNavigatingToTitan = ShouldUsePhase2TitanDebounce(path, fileSize);
     
-    g_isCrossFading = false;
-    g_ghostBitmap = nullptr; // Clear previous ghost
     g_isBlurry = true; // Reset for new image
     g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
     g_lastSurfaceSize = {0, 0}; // [Fix] Clear stale surface size to prevents layout bugs

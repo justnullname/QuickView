@@ -477,7 +477,7 @@ bool CompareController::RenderComposite(HWND hwnd) {
     }
 
     g_compEngine->EndPendingUpdate();
-    g_compEngine->PlayPingPongCrossFade(0.0f);
+    g_compEngine->SwapLayers();
 
     VisualState vs{};
     vs.PhysicalSize = D2D1::SizeF((float)winW, (float)winH);

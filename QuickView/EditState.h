@@ -651,7 +651,6 @@ struct AppConfig {
     int InfoPanelAlignY = 0; // 0=Top, 1=Bottom
 
     // --- Control ---
-    bool EnableCrossFade = true;        // Enable cross-fade animation when changing images
     int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     bool InvertWheel = false;

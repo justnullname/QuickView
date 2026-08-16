@@ -781,8 +781,7 @@ HRESULT CompositionEngine::EndPendingUpdate() {
     return S_OK;
 }
 
-HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs) {
-    
+HRESULT CompositionEngine::SwapLayers() {
     int pendingIndex = (m_activeLayerIndex + 1) % 2;
     // Image A is ALWAYS Top. Image B is ALWAYS Bottom.
     bool pendingIsTop = (pendingIndex == 0); // ImageA is index 0
@@ -793,50 +792,35 @@ HRESULT CompositionEngine::PlayPingPongCrossFade(float durationMs) {
         return E_FAIL;
     }
 
-    if (durationMs > 0) {
-        ComPtr<IDCompositionAnimation> animIn, animOut;
-        m_device->CreateAnimation(&animIn);
-        m_device->CreateAnimation(&animOut);
-        
-        float duration = durationMs / 1000.0f;
-        
-        // Old layer: Fade Out (1 -> 0)
-        animOut->AddCubic(0.0, 1.0f, -1.0f / duration, 0.0f, 0.0f);
-        animOut->End(duration, 0.0f);
-        
-        if (pendingIsTop) {
-            // Pending = Top (A), will become active
-            topVisual->SetOpacity(1.0f);  // New: Always 100%
-            bottomVisual->SetOpacity(animOut.Get());  // Old: Fade out
-        } else {
-            // Pending = Bottom (B), will become active
-            bottomVisual->SetOpacity(1.0f);  // New: Always 100%
-            topVisual->SetOpacity(animOut.Get());  // Old: Fade out
-        }
+    // Instant Switch (0ms latency, zero animation allocation)
+    if (pendingIsTop) {
+        topVisual->SetOpacity(1.0f);
+        bottomVisual->SetOpacity(0.0f); // Force hide background
     } else {
-        // Instant Switch
-        if (pendingIsTop) {
-            topVisual->SetOpacity(1.0f);
-            bottomVisual->SetOpacity(0.0f); // Force hide background
-        } else {
-            topVisual->SetOpacity(0.0f); // Force hide background
-            bottomVisual->SetOpacity(1.0f);
-        }
+        topVisual->SetOpacity(0.0f); // Force hide background
+        bottomVisual->SetOpacity(1.0f);
     }
     
     // Swap active index
     m_activeLayerIndex = pendingIndex;
-    
-    // [Fix] Don't hide Tile Layer here. RenderTitanView / OnPaint should manage its visibility.
-    // Hiding it here causes conflicts in Titan mode when a base layer upgrade triggers a cross-fade.
-    /*
-    ComPtr<IDCompositionVisual3> tileVisual;
-    if (SUCCEEDED(m_tileLayer.visual.As(&tileVisual))) {
-        tileVisual->SetOpacity(0.0f);
-    }
-    */
-    
     return S_OK;
+}
+
+HRESULT CompositionEngine::HideActiveImage() {
+    ComPtr<IDCompositionVisual3> topVisual, bottomVisual;
+    if (SUCCEEDED(m_imageA.visual.As(&topVisual))) {
+        topVisual->SetOpacity(0.0f);
+    }
+    if (SUCCEEDED(m_imageB.visual.As(&bottomVisual))) {
+        bottomVisual->SetOpacity(0.0f);
+    }
+    if (m_imageOverlayVisual) {
+        ComPtr<IDCompositionVisual3> overlayVisual;
+        if (SUCCEEDED(m_imageOverlayVisual.As(&overlayVisual))) {
+            overlayVisual->SetOpacity(0.0f);
+        }
+    }
+    return Commit();
 }
 
 void CompositionEngine::SetImageInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE mode) {
@@ -1525,7 +1509,7 @@ HRESULT CompositionEngine::SetWebViewMode(bool enabled) {
         SetVisualOpacitySafe(m_imageOverlayVisual.Get(), 0.0f);
     } else {
         // Restore the active image layer. Pending layer stays at whatever
-        // PlayPingPongCrossFade last set (typically 0 until next swap).
+        // SwapLayers last set (typically 0 until next swap).
         auto& activeLayer = (m_activeLayerIndex == 0) ? m_imageA : m_imageB;
         auto& pendingLayer = (m_activeLayerIndex == 0) ? m_imageB : m_imageA;
         SetVisualOpacitySafe(activeLayer.visual.Get(), 1.0f);
