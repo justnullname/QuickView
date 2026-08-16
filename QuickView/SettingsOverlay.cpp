@@ -3468,10 +3468,6 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 contentY = badgeY + badgeH + 16.0f * s;
                 
-                // Define overall item.rect for scrolling / basic containment
-                item.rect = D2D1::RectF(contentX, headerRect.top, contentX + contentW, contentY);
-                item.interactRect = {};
-                
                 // Draw limit warning feedback if active
                 if (!item.statusText.empty() && item.statusSetTime > 0) {
                      if (GetTickCount() - item.statusSetTime > 3000) {
@@ -3485,6 +3481,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     pRT->DrawText(item.statusText.c_str(), (UINT32)item.statusText.length(), m_textFormatItem.Get(), statusR, statusBrush.Get());
                     contentY += 18.0f * s;
                 }
+
+                // Define overall item.rect and interactRect for scrolling / containment hit testing
+                item.rect = D2D1::RectF(contentX, headerRect.top, contentX + contentW, contentY);
+                item.interactRect = item.rect;
                 
                 m_settingsContentHeight = (contentY - startContentY > m_settingsContentHeight) ? (contentY - startContentY) : m_settingsContentHeight;
                 continue;
@@ -4608,6 +4608,7 @@ SettingsAction SettingsOverlay::OnMouseMove(float x, float y) {
                         } else {
                             m_pHoverItem = nullptr;
                             item.isHovered = false;
+                            g_currentCursor = ::LoadCursor(NULL, IDC_ARROW);
                         }
                     }
                     
