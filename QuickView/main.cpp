@@ -7828,22 +7828,65 @@ bool ScreenToImageSpace(HWND hwnd, int screenX, int screenY, float& imgX, float&
     return true;
 }
 
-static bool IsMouseOverUI(HWND hwnd, int x, int y) {
+static inline bool IsInTopHotspot(POINT pt, float winW, float winH) {
+    if (winW < 300.0f * g_uiScale || winH < 200.0f * g_uiScale) return false;
+    const float halfW = 15.0f * g_uiScale;
+    const float maxY = 32.0f * g_uiScale;
+    const float cx = winW * 0.5f;
+    return (pt.y >= 0 && pt.y <= maxY && pt.x >= cx - halfW && pt.x <= cx + halfW);
+}
+
+static inline int HitTestEdgeNavZone(HWND hwnd, POINT pt, float winW, float winH) {
+    if (g_imagePath.empty() || !g_config.EdgeNavClick || winW <= 50.0f || winH <= 100.0f) return 0;
+    if (g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::FullGrid) return 0;
+    if (IsCompareModeActive()) {
+        if (g_config.DisableEdgeNavInCompare || !AppContext::GetInstance().CompareCtrl) return 0;
+        return AppContext::GetInstance().CompareCtrl->HitTestEdgeZone(hwnd, pt) ? 1 : 0;
+    }
+    if (g_config.NavIndicator == 0) {
+        D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, winW, winH);
+        return HitTestNavButtonInPane(pt, fullRect);
+    }
+    const float edgeMargin = 64.0f * g_uiScale;
+    if (pt.y > winH * 0.30f && pt.y < winH * 0.70f) {
+        if (pt.x < edgeMargin) return -1;
+        if (pt.x > winW - edgeMargin) return 1;
+    }
+    return 0;
+}
+
+__declspec(noinline) static bool IsMouseOverUI(HWND hwnd, int x, int y) {
+    if (g_cropState.IsActive || AppContext::GetInstance().Loupe.active) return true;
+    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible()) return true;
+    if (AppContext::GetInstance().DialogCtrl && (AppContext::GetInstance().DialogCtrl->IsActive() || AppContext::GetInstance().Dialog.IsVisible)) return true;
+    if (QuickView::PrintPreviewUI::GetInstance().IsVisible() || QuickView::ExportPanel::GetInstance().IsVisible()) return true;
+
+    POINT pt = { x, y };
+    if (HitTestWindowControlButton(pt) != -1) return true;
+    if (HitTestMinimaps(pt).minimapIdx != -1) return true;
+    if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)x, (float)y)) return true;
+
     RECT rcClient; GetClientRect(hwnd, &rcClient);
     float winW = (float)(rcClient.right - rcClient.left);
     float winH = (float)(rcClient.bottom - rcClient.top);
 
-    POINT pt = { x, y };
-    auto miniHit = HitTestMinimaps(pt);
-    if (miniHit.minimapIdx != -1) return true;
-
     if (g_gallery.IsVisible() && g_gallery.HitTestArea(x, y, winW, winH)) return true;
-    if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible) return true;
-    if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)x, (float)y)) return true;
+
     if (g_uiRenderer) {
         auto hit = g_uiRenderer->HitTest((float)x, (float)y);
         if (hit.type != UIHitResult::None) return true;
     }
+
+    if (!g_imagePath.empty() && !g_gallery.IsVisible() && (g_config.GalleryTriggerMode == 1 || g_config.GalleryTriggerMode == 2)) {
+        if (IsInTopHotspot(pt, winW, winH)) return true;
+    }
+
+    if (HitTestEdgeNavZone(hwnd, pt, winW, winH) != 0) return true;
+
+    if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl && AppContext::GetInstance().CompareCtrl->IsNearCompareDivider(hwnd, pt)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -9292,19 +9335,10 @@ case WM_DESTROY: {
               g_currentCursor = LoadCursor(nullptr, IDC_SIZEALL);
           } else if (!g_imagePath.empty() && g_config.EdgeNavClick && (!g_gallery.IsVisible() || (g_gallery.GetMode() != GalleryMode::FullGrid && !hasGallery)) && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !AppContext::GetInstance().Dialog.IsVisible) {
               bool hoverEdge = false;
-              if (g_config.NavIndicator == 0) {
-                  if (IsCompareModeActive() && !g_config.DisableEdgeNavInCompare) {
-                      hoverEdge = AppContext::GetInstance().CompareCtrl->HitTestEdgeNav(hwnd, pt);
-                  } else if (!IsCompareModeActive()) {
-                      D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, winW, winH);
-                      hoverEdge = (HitTestNavButtonInPane(pt, fullRect) != 0);
-                  }
+              if (IsCompareModeActive()) {
+                  if (!g_config.DisableEdgeNavInCompare) hoverEdge = AppContext::GetInstance().CompareCtrl->HitTestEdgeNav(hwnd, pt);
               } else {
-                  if (IsCompareModeActive()) {
-                      hoverEdge = (GetPaneContext(PaneSlot::Primary).view.EdgeHoverLeft != 0) || (GetPaneContext(PaneSlot::Primary).view.EdgeHoverRight != 0);
-                  } else {
-                      hoverEdge = (GetPaneContext(PaneSlot::Primary).view.EdgeHoverState != 0);
-                  }
+                  hoverEdge = (HitTestEdgeNavZone(hwnd, pt, winW, winH) != 0);
               }
               if (hoverEdge) g_currentCursor = LoadCursor(nullptr, IDC_HAND);
           }
@@ -9340,13 +9374,7 @@ case WM_DESTROY: {
                       RequestRepaint(PaintLayer::Dynamic);
                   }
                   
-                  // Set hand cursor if hovering hotspot button (18px icon with 6px comfort margin)
-                  float iconSize = 18.0f * g_uiScale;
-                  float iconY = 8.0f * g_uiScale;
-                  float clickHalfW = iconSize / 2.0f + 6.0f * g_uiScale;
-                  float clickMaxY = iconY + iconSize + 6.0f * g_uiScale;
-                  
-                  if (pt.y >= 0 && pt.y <= clickMaxY && pt.x >= cx - clickHalfW && pt.x <= cx + clickHalfW) {
+                  if (IsInTopHotspot(pt, (float)w, (float)h)) {
                       if (!g_uiRenderer || !g_uiRenderer->IsMouseOverInfoPanel(pt)) {
                           g_currentCursor = LoadCursor(nullptr, IDC_HAND);
                       }
@@ -9356,8 +9384,6 @@ case WM_DESTROY: {
 
           // Top Hover Gallery Trigger Detection
           if (!g_imagePath.empty() && w >= 300.0f * g_uiScale && h >= 200.0f * g_uiScale && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible()) {
-              float cx = w / 2.0f;
-              
               bool inGalleryTriggerZone = false;
               if (g_config.GalleryTriggerMode == 0) {
                   // Mode 0: Auto hover zone dynamically scaled across window width, avoiding top-right caption buttons
@@ -9368,12 +9394,8 @@ case WM_DESTROY: {
                   float triggerH = g_config.GalleryTriggerAreaHeight * g_uiScale;
                   inGalleryTriggerZone = (pt.y >= 0 && pt.y < triggerH && pt.x >= leftBound && pt.x <= rightBound);
               } else if (g_config.GalleryTriggerMode == 1) {
-                  // Mode 1: Hotspot Hover. Trigger ONLY when mouse is near the center button (comfort area symmetry: 30px wide, 32px high)
-                  float iconSize = 18.0f * g_uiScale;
-                  float iconY = 8.0f * g_uiScale;
-                  float clickHalfW = iconSize / 2.0f + 6.0f * g_uiScale;
-                  float clickMaxY = iconY + iconSize + 6.0f * g_uiScale;
-                  inGalleryTriggerZone = (pt.y >= 0 && pt.y <= clickMaxY && pt.x >= cx - clickHalfW && pt.x <= cx + clickHalfW);
+                  // Mode 1: Hotspot Hover. Trigger ONLY when mouse is near the center button
+                  inGalleryTriggerZone = IsInTopHotspot(pt, (float)w, (float)h);
               }
               
               if (inGalleryTriggerZone && g_uiRenderer && g_uiRenderer->IsMouseOverInfoPanel(pt)) {
@@ -9891,19 +9913,9 @@ SKIP_EDGE_NAV:;
 
         
     case WM_LBUTTONDBLCLK: {
-        if (g_cropState.IsActive) return 0;
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
-        RECT rcClient; GetClientRect(hwnd, &rcClient);
-        float winW = (float)(rcClient.right - rcClient.left);
-        float winH = (float)(rcClient.bottom - rcClient.top);
-        bool insideGallery = g_gallery.IsVisible() && g_gallery.HitTestArea(pt.x, pt.y, winW, winH);
-        if (insideGallery || g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || QuickView::PrintPreviewUI::GetInstance().IsVisible() || QuickView::ExportPanel::GetInstance().IsVisible()) return 0;
-        if (g_toolbar.IsVisible() && g_toolbar.HitTest((float)pt.x, (float)pt.y)) {
-            return 0;
-        }
-        if (g_uiRenderer) {
-            auto hit = g_uiRenderer->HitTest((float)pt.x, (float)pt.y);
-            if (hit.type != UIHitResult::None) return 0;
+        if (IsMouseOverUI(hwnd, pt.x, pt.y)) {
+            return 0; // Completely block double-click on ANY UI layer, overlay, floating bar, control or hotspot
         }
 
         if (g_config.DoubleClickMode == 3) {
@@ -10415,24 +10427,11 @@ SKIP_EDGE_NAV:;
         if (!g_imagePath.empty() && !g_gallery.IsVisible() && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && g_config.GalleryTriggerMode == 2) {
             if (!g_uiRenderer || !g_uiRenderer->IsMouseOverInfoPanel(pt)) {
                 RECT rcWnd; GetClientRect(hwnd, &rcWnd);
-                float winH = (float)(rcWnd.bottom - rcWnd.top);
-                float winW = (float)(rcWnd.right - rcWnd.left);
-                if (winW >= 300.0f * g_uiScale && winH >= 200.0f * g_uiScale) {
-                    float cx = (rcWnd.right - rcWnd.left) / 2.0f;
-                    
-                    float iconSize = 18.0f * g_uiScale;
-                    float iconY = 8.0f * g_uiScale;
-                    float clickHalfW = iconSize / 2.0f + 6.0f * g_uiScale;
-                    float clickMaxY = iconY + iconSize + 6.0f * g_uiScale;
-                    
-                    if (pt.y >= 0 && pt.y <= clickMaxY && pt.x >= cx - clickHalfW && pt.x <= cx + clickHalfW) {
-                        if (!g_gallery.IsVisible()) {
-                            SaveOverlayWindowState(hwnd);
-                            g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
-                            RequestRepaint(PaintLayer::All);
-                        }
-                        return 0;
-                    }
+                if (IsInTopHotspot(pt, (float)(rcWnd.right - rcWnd.left), (float)(rcWnd.bottom - rcWnd.top))) {
+                    SaveOverlayWindowState(hwnd);
+                    g_gallery.Open(GetPaneContext(PaneSlot::Primary).navigator.Index(), GalleryMode::Filmstrip);
+                    RequestRepaint(PaintLayer::All);
+                    return 0;
                 }
             }
         }
@@ -10608,28 +10607,10 @@ SKIP_EDGE_NAV:;
         }
 
         // Edge Navigation Zone Check - Record start, handle in LBUTTONUP
-        // Zone: Left/Right 15%, Vertical range depends on NavIndicator mode
         RECT rcCheck; GetClientRect(hwnd, &rcCheck);
         int w = rcCheck.right - rcCheck.left;
         int h = rcCheck.bottom - rcCheck.top;
-        bool inEdgeZone = false;
-        if (g_config.EdgeNavClick && (!g_gallery.IsVisible() || (g_gallery.GetMode() != GalleryMode::FullGrid && !g_gallery.HitTestArea(pt.x, pt.y, (float)w, (float)h))) && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !AppContext::GetInstance().Dialog.IsVisible) {
-            if (IsCompareModeActive()) {
-                if (!g_config.DisableEdgeNavInCompare) {
-                    inEdgeZone = AppContext::GetInstance().CompareCtrl->HitTestEdgeZone(hwnd, pt);
-                }
-            } else if (w > 50 && h > 100) {
-                if (g_config.NavIndicator == 0) {
-                    D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, (float)w, (float)h);
-                    inEdgeZone = (HitTestNavButtonInPane(pt, fullRect) != 0);
-                } else {
-                    float edgeMargin = 64.0f * g_uiScale;
-                    bool inHRange = (pt.x < edgeMargin) || (pt.x > w - edgeMargin);
-                    bool inVRange = (pt.y > h * 0.30) && (pt.y < h * 0.70);
-                    inEdgeZone = inHRange && inVRange;
-                }
-            }
-        }
+        bool inEdgeZone = HitTestEdgeNavZone(hwnd, pt, (float)w, (float)h) && !g_settingsOverlay.IsVisible() && !g_helpOverlay.IsVisible() && !AppContext::GetInstance().Dialog.IsVisible;
         
         // Record Drag Start for click detection
         GetPaneContext(PaneSlot::Primary).view.DragStartPos = pt;
@@ -11338,23 +11319,8 @@ SKIP_EDGE_NAV:;
                         }
                     }
                 } else {
-                    bool clickValid = false;
-                    int direction = 0;
-                    if (g_config.NavIndicator == 0) {
-                        D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, (float)width, (float)height);
-                        direction = HitTestNavButtonInPane(pt, fullRect);
-                        clickValid = (direction != 0);
-                    } else {
-                        float edgeMargin = 64.0f * g_uiScale;
-                        bool inHRange = (pt.x < edgeMargin) || (pt.x > width - edgeMargin);
-                        bool inVRange = (pt.y > height * 0.30) && (pt.y < height * 0.70);
-                        if (inHRange && inVRange) {
-                            clickValid = true;
-                            direction = (pt.x < edgeMargin) ? -1 : 1;
-                        }
-                    }
-
-                    if (clickValid && direction != 0) {
+                    int direction = HitTestEdgeNavZone(hwnd, pt, (float)width, (float)height);
+                    if (direction != 0) {
                         ReleaseCapture();
                         Navigate(hwnd, direction);
                         return 0;

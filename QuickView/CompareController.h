@@ -40,6 +40,7 @@ public:
     void UpdateEdgeHoverStates(HWND hwnd, POINT ptClient);
     bool HitTestEdgeZone(HWND hwnd, POINT ptClient) const;
     int HandleEdgeNavClick(HWND hwnd, POINT ptClient);
+    bool IsNearCompareDivider(HWND hwnd, POINT ptClient, float threshold = 6.0f) const;
 
 private:
     AppContext& m_context;
@@ -50,7 +51,6 @@ private:
     std::optional<LRESULT> OnLButtonUp(HWND hwnd, int x, int y);
     std::optional<LRESULT> OnMouseMove(HWND hwnd, int x, int y);
     std::optional<LRESULT> OnKeyDown(HWND hwnd, WPARAM key);
-    bool IsNearCompareDivider(HWND hwnd, POINT ptClient, float threshold = 6.0f) const;
 };
 
 inline bool IsCompareModeActive() {
