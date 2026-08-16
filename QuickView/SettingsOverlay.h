@@ -191,8 +191,12 @@ private:
     int m_activeTab = 0;
     
     SettingsItem* m_pHoverItem = nullptr;
-    int m_hoverSliderSubPart = 0; // 0: None, 1: Minus, 2: Value Badge, 3: Plus, 4: Track/Knob
+    int m_hoverSliderSubPart = 0; // 0: None, 1: Left Arrow (<), 2: Body (Scrub/Edit), 3: Right Arrow (>), 4: Reset
     SettingsItem* m_pActiveSlider = nullptr; 
+    bool m_isSliderDragging = false;
+    float m_sliderDragStartX = 0.0f;
+    float m_sliderDragStartY = 0.0f;
+    float m_sliderDragStartVal = 0.0f;
     SettingsItem* m_pActiveCombo = nullptr; 
     int m_comboHoverIdx = -1;
 
@@ -202,6 +206,10 @@ private:
     int m_sliderInputLen = 0;
     bool m_sliderInputStarted = false;
     float m_sliderPreEditVal = 0.0f;
+    bool m_sliderInputError = false;
+    DWORD m_sliderInputErrorTime = 0;
+    void StartCaretTimer();
+    void StopCaretTimer();
 
     // Scrollbar state
     float m_scrollOffset = 0.0f;

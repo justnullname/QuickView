@@ -285,9 +285,10 @@ void HelpOverlay::Render(ID2D1RenderTarget* pRT, float winW, float winH) {
     // Close Button [ X ]
     m_closeRect = D2D1::RectF(x + panelW - 40.0f * s, y + 12.0f * s, x + panelW - 12.0f * s, y + 40.0f * s);
     
-    // Check hover
+    // Check hover (Circular close button)
     if (m_hoverClose) {
-        pRT->FillRoundedRectangle(D2D1::RoundedRect(m_closeRect, 4.0f * s, 4.0f * s), m_brushCloseBg.Get());
+        float closeR = (m_closeRect.bottom - m_closeRect.top) * 0.5f;
+        pRT->FillRoundedRectangle(D2D1::RoundedRect(m_closeRect, closeR, closeR), m_brushCloseBg.Get());
     }
     const float cw = m_closeRect.right - m_closeRect.left;
     const float ch = m_closeRect.bottom - m_closeRect.top;

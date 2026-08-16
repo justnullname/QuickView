@@ -305,6 +305,7 @@ static bool g_showAnimDirtyRect = false; // [v10.5] Dirty rect debug overlay
 OSDState g_osd; // Removed static, explicitly Global
 QuickView::PendingClipboardSnapshot g_pendingClipboard;
 bool g_pendingRegistryCheck = false;
+static const UINT_PTR TIMER_ID_SETTINGS_CARET = 991;
 static const UINT_PTR TIMER_ID_REGISTRY_CHECK = 993;
 
 DWORD g_toolbarHideTime = 0; // For auto-hide delay
@@ -592,6 +593,9 @@ static float GetMinWindowWidth() {
     if (g_helpOverlay.IsVisible()) {
         defaultMinW = std::max(defaultMinW, 500.0f * g_uiScale + 50.0f * g_uiScale);
     }
+    if (QuickView::ExportPanel::GetInstance().IsVisible()) {
+        defaultMinW = std::max(defaultMinW, 490.0f * g_uiScale + 30.0f * g_uiScale);
+    }
     if (GalleryMinApplies()) {
         defaultMinW = std::max(defaultMinW, GetEffectiveGalleryMinSize());
     }
@@ -623,6 +627,9 @@ static float GetMinWindowHeight() {
     }
     if (g_helpOverlay.IsVisible()) {
         defaultMinH = std::max(defaultMinH, 600.0f * g_uiScale + 50.0f * g_uiScale);
+    }
+    if (QuickView::ExportPanel::GetInstance().IsVisible()) {
+        defaultMinH = std::max(defaultMinH, 390.0f * g_uiScale + 30.0f * g_uiScale);
     }
     if (GalleryMinApplies() && (g_gallery.GetMode() == GalleryMode::FullGrid
             || g_gallerySession.intent != GalleryIntent::None)) {
@@ -5792,6 +5799,7 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
         // Closing overlay:
         // Fade-out still reports IsVisible(); only an actually open gallery must block shrink.
         if (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible()
+            || QuickView::ExportPanel::GetInstance().IsVisible()
             || g_gallery.GetMode() != GalleryMode::Hidden
             || AppContext::GetInstance().Dialog.IsVisible) {
             return;
@@ -8420,6 +8428,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
 
+        if (wParam == TIMER_ID_SETTINGS_CARET) {
+            bool hasActiveInput = g_settingsOverlay.IsInputFocused() || 
+                                  QuickView::ExportPanel::GetInstance().IsInputFocused() || 
+                                  (g_cropState.IsActive && g_cropState.FocusedField != CropState::InputField::None);
+            if (hasActiveInput) {
+                RequestRepaint(PaintLayer::All);
+            } else {
+                KillTimer(hwnd, TIMER_ID_SETTINGS_CARET);
+            }
+            return 0;
+        }
+
         static const UINT_PTR OSD_TIMER_ID = 994;
         
         if (wParam == IDT_ANIMATION) {
@@ -10662,17 +10682,20 @@ SKIP_EDGE_NAV:;
                         g_cropState.FocusedField = CropState::InputField::Width;
                         swprintf_s(g_cropState.InputBuffer, L"%d", (int)std::round(g_cropState.CropRight - g_cropState.CropLeft));
                         g_cropState.InputLen = (int)wcslen(g_cropState.InputBuffer);
+                        SetTimer(hwnd, TIMER_ID_SETTINGS_CARET, 500, nullptr);
                         RequestRepaint(PaintLayer::All);
                         return 0;
                     } else if (hitCapsule(g_cropState.HeightCapsuleRect)) {
                         g_cropState.FocusedField = CropState::InputField::Height;
                         swprintf_s(g_cropState.InputBuffer, L"%d", (int)std::round(g_cropState.CropBottom - g_cropState.CropTop));
                         g_cropState.InputLen = (int)wcslen(g_cropState.InputBuffer);
+                        SetTimer(hwnd, TIMER_ID_SETTINGS_CARET, 500, nullptr);
                         RequestRepaint(PaintLayer::All);
                         return 0;
                     } else {
                         if (g_cropState.FocusedField != CropState::InputField::None) {
                             g_cropState.FocusedField = CropState::InputField::None;
+                            KillTimer(hwnd, TIMER_ID_SETTINGS_CARET);
                             RequestRepaint(PaintLayer::All);
                         }
                     }

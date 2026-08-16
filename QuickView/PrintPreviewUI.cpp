@@ -4,6 +4,7 @@
 #include "EditState.h"
 #include "OSDState.h"
 #include "AppStrings.h"
+#include "GeekWidgets.h"
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <wrl/client.h>
@@ -78,7 +79,7 @@ static PrintStrings GetPrintStrings() {
                 L"色彩模式: 灰階", L"色彩模式: 彩色", L"排版模式",
                 L"適應", L"填充", L"原始", L"自訂", L"比例",
                 L"邊距 (mm)", L"左", L"右", L"上", L"下",
-                L"對齊方式", L"海報拼貼模式", L"☑ 開啟分頁拼貼 (點擊預覽圖單元格可停用)", L"☐ 開啟分頁拼貼",
+                L"對齊方式", L"海報拼貼模式", L"開啟分頁拼貼 (點擊預覽圖單元格可停用)", L"開啟分頁拼貼",
                 L"取消", L"列印", L"列印工作已成功傳送至印表機。", L"列印失敗。錯誤代碼: 0x"
             };
         }
@@ -87,7 +88,7 @@ static PrintStrings GetPrintStrings() {
             L"色彩模式: 灰度", L"色彩模式: 彩色", L"排版模式",
             L"适应", L"填充", L"原始", L"自定义", L"比例",
             L"边距 (mm)", L"左", L"右", L"上", L"下",
-            L"对齐方式", L"海报拼贴模式", L"☑ 开启切片拼贴 (点击预览图单元格可禁用)", L"☐ 开启切片拼贴",
+            L"对齐方式", L"海报拼贴模式", L"开启切片拼贴 (点击预览图单元格可禁用)", L"开启切片拼贴",
             L"取消", L"打印", L"打印任务已成功发送到打印机。", L"打印失败。错误代码: 0x"
         };
     }
@@ -97,7 +98,7 @@ static PrintStrings GetPrintStrings() {
             L"カラーモード: グレースケール", L"カラーモード: カラー", L"レイアウトモード",
             L"自動調整", L"引き伸ばし", L"元のサイズ", L"カスタム", L"倍率",
             L"余白 (mm)", L"左", L"右", L"上", L"下",
-            L"配置", L"ポスター印刷モード", L"☑ タイリングを有効にする (クリックで切り替え)", L"☐ タイリングを有効にする",
+            L"配置", L"ポスター印刷モード", L"タイリングを有効にする (クリックで切り替え)", L"タイリングを有効にする",
             L"キャンセル", L"印刷", L"印刷ジョブがプリンターに送信されました。", L"印刷に失敗しました。エラーコード: 0x"
         };
     }
@@ -107,7 +108,7 @@ static PrintStrings GetPrintStrings() {
             L"Цвет: Оттенки серого", L"Цвет: Цветной", L"Режим макета",
             L"По разм.", L"Заполнить", L"1:1", L"Особый", L"Масштаб",
             L"Поля (мм)", L"Лев", L"Прав", L"Верх", L"Низ",
-            L"Выравнивание", L"Режим постера", L"☑ Разделение на страницы (нажмите для переключения)", L"☐ Разделение на страницы",
+            L"Выравнивание", L"Режим постера", L"Разделение на страницы (нажмите для переключения)", L"Разделение на страницы",
             L"Отмена", L"Печать", L"Задание печати успешно отправлено.", L"Ошибка печати. Код: 0x"
         };
     }
@@ -117,7 +118,7 @@ static PrintStrings GetPrintStrings() {
             L"Farbmodus: Graustufen", L"Farbmodus: Farbe", L"Layout-Modus",
             L"Passend", L"Füllen", L"1:1", L"Benutz.", L"Skalierung",
             L"Ränder (mm)", L"Links", L"Rechts", L"Oben", L"Unten",
-            L"Ausrichtung", L"Postermodus", L"☑ Kachelung aktivieren (Klicken zum Deaktivieren)", L"☐ Kachelung aktivieren",
+            L"Ausrichtung", L"Postermodus", L"Kachelung aktivieren (Klicken zum Deaktivieren)", L"Kachelung aktivieren",
             L"Abbrechen", L"Drucken", L"Druckauftrag erfolgreich gesendet.", L"Druckfehler. Code: 0x"
         };
     }
@@ -127,7 +128,7 @@ static PrintStrings GetPrintStrings() {
             L"Modo de color: Escala de grises", L"Modo de color: Color", L"Modo de diseño",
             L"Ajustar", L"Rellenar", L"1:1", L"Personal.", L"Escala",
             L"Márgenes (mm)", L"Izq", L"Der", L"Sup", L"Inf",
-            L"Alineación", L"Modo póster", L"☑ Activar mosaico (clic para alternar)", L"☐ Activar mosaico",
+            L"Alineación", L"Modo póster", L"Activar mosaico (clic para alternar)", L"Activar mosaico",
             L"Cancelar", L"Imprimir", L"Trabajo de impresión enviado con éxito.", L"Error de impresión. Código: 0x"
         };
     }
@@ -137,7 +138,7 @@ static PrintStrings GetPrintStrings() {
             L"Couleur: Niveaux de gris", L"Couleur: Couleur", L"Mode de mise en page",
             L"Ajuster", L"Remplir", L"Taille réelle", L"Personnal.", L"Échelle",
             L"Marges (mm)", L"Gauche", L"Droite", L"Haut", L"Bas",
-            L"Alignement", L"Mode poster", L"☑ Activer le pavage (cliquez pour basculer)", L"☐ Activer le pavage",
+            L"Alignement", L"Mode poster", L"Activer le pavage (cliquez pour basculer)", L"Activer le pavage",
             L"Annuler", L"Imprimer", L"Tâche d'impression envoyée avec succès.", L"Erreur d'impression. Code: 0x"
         };
     }
@@ -147,7 +148,7 @@ static PrintStrings GetPrintStrings() {
         L"Color Mode: Grayscale", L"Color Mode: Color", L"Layout Mode",
         L"Fit", L"Fill", L"1:1", L"Custom", L"Scale",
         L"Margins (mm)", L"Left", L"Right", L"Top", L"Bottom",
-        L"Alignment", L"Poster Mode", L"☑ Enable Tiling (Click cells to toggle)", L"☐ Enable Tiling",
+        L"Alignment", L"Poster Mode", L"Enable Tiling (Click cells to toggle)", L"Enable Tiling",
         L"Cancel", L"Print", L"Print job completed successfully.", L"Print job failed. Error: 0x"
     };
 }
@@ -237,34 +238,72 @@ void PrintPreviewUI::Hide() {
 
 void PrintPreviewUI::DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, const wchar_t* text, bool isHovered, bool isSelected) {
     bool isLight = IsLightTheme();
-    
-    ComPtr<ID2D1SolidColorBrush> bgBrush;
-    D2D1_COLOR_F bgClr = isSelected ? D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f) 
-                                    : (isHovered ? (isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f) : D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f)) 
-                                                 : (isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.15f, 0.15f, 0.15f, 1.0f)));
-    ctx->CreateSolidColorBrush(bgClr, &bgBrush);
-    ctx->FillRoundedRectangle(D2D1::RoundedRect(rect, 4.0f, 4.0f), bgBrush.Get());
 
-    ComPtr<ID2D1SolidColorBrush> borderBrush;
-    ctx->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.8f, 0.8f, 0.8f, 1.0f) : D2D1::ColorF(0.4f, 0.4f, 0.4f, 1.0f), &borderBrush);
-    ctx->DrawRoundedRectangle(D2D1::RoundedRect(rect, 4.0f, 4.0f), borderBrush.Get(), 1.0f);
+    using namespace QuickView::UI;
+    ButtonStyle style = isSelected ? ButtonStyle::Primary : ButtonStyle::Secondary;
+    ButtonState state = isHovered ? ButtonState::Hovered : ButtonState::Normal;
 
-    ComPtr<ID2D1SolidColorBrush> txtBrush;
-    D2D1_COLOR_F txtClr = isSelected ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : (isLight ? D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f));
-    ctx->CreateSolidColorBrush(txtClr, &txtBrush);
+    WidgetPalette pal = {};
+    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+    pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+    pal.textDim = pal.text;
+    pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
 
-    ComPtr<IDWriteFactory> pDW;
-    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
-    ComPtr<IDWriteTextFormat> fmt;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmt);
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    static ComPtr<IDWriteFactory> pDW;
+    static ComPtr<IDWriteTextFormat> fmt;
+    if (!pDW) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
+    if (pDW && !fmt) {
+        pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmt);
+    }
 
-    ctx->DrawText(text, (UINT32)wcslen(text), fmt.Get(), rect, txtBrush.Get());
+    GeekWidgets::DrawPillButton(ctx, rect, text, style, state, fmt.Get(), 1.0f, pal);
 }
 
-void PrintPreviewUI::DrawRadio(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, const wchar_t* text, bool isSelected) {
-    DrawButton(ctx, rect, text, false, isSelected);
+void PrintPreviewUI::RenderAlignmentGrid(
+    ID2D1DeviceContext* ctx, 
+    float cx, 
+    float& cy, 
+    float panelWidth, 
+    IDWriteTextFormat* fmtHeader, 
+    IDWriteTextFormat* fmtBtn, 
+    ID2D1SolidColorBrush* panelTextBrush, 
+    const QuickView::UI::WidgetPalette& pal) {
+    auto strs = GetPrintStrings();
+    if (fmtHeader) {
+        ctx->DrawText(strs.alignment, static_cast<UINT32>(wcslen(strs.alignment)), fmtHeader, D2D1::RectF(cx, cy, cx + panelWidth, cy + 20), panelTextBrush);
+    }
+    cy += 22;
+    const wchar_t* alignArrows[9] = { L"↖", L"↑", L"↗", L"←", L"•", L"→", L"↙", L"↓", L"↘" };
+    PrintAlignment aligns[9] = {
+        PrintAlignment::TopLeft, PrintAlignment::TopCenter, PrintAlignment::TopRight,
+        PrintAlignment::CenterLeft, PrintAlignment::Center, PrintAlignment::CenterRight,
+        PrintAlignment::BottomLeft, PrintAlignment::BottomCenter, PrintAlignment::BottomRight
+    };
+    
+    float cellSize = 28.0f;
+    float gap = 4.0f;
+    float gridW = 3 * cellSize + 2 * gap;
+    float startGridX = cx + (panelWidth - gridW) / 2.0f;
+    
+    for (int i = 0; i < 9; i++) {
+        int row = i / 3;
+        int col = i % 3;
+        m_ui.alignGrid[i] = D2D1::RectF(
+            startGridX + col * (cellSize + gap), 
+            cy + row * (cellSize + gap), 
+            startGridX + col * (cellSize + gap) + cellSize, 
+            cy + row * (cellSize + gap) + cellSize
+        );
+        
+        bool isSelected = (m_settings.alignment == aligns[i]);
+        QuickView::UI::ButtonState btnState = QuickView::UI::ButtonState::Normal;
+        QuickView::UI::ButtonStyle style = isSelected ? QuickView::UI::ButtonStyle::Primary : QuickView::UI::ButtonStyle::Secondary;
+        
+        QuickView::UI::GeekWidgets::DrawPillButton(ctx, m_ui.alignGrid[i], alignArrows[i], style, btnState, fmtBtn, 1.0f, pal);
+    }
+    cy += 3 * (cellSize + gap) + 12.0f;
 }
 
 void PrintPreviewUI::RenderNumericCapsule(
@@ -308,34 +347,6 @@ void PrintPreviewUI::RenderNumericCapsule(
     
     m_capsules.push_back(cap);
 
-    bool isLight = IsLightTheme();
-    
-    // Draw background
-    ComPtr<ID2D1SolidColorBrush> bgBrush;
-    ctx->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.15f, 0.15f, 0.15f, 1.0f), &bgBrush);
-    D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(rect, 4.0f, 4.0f);
-    ctx->FillRoundedRectangle(&roundedRect, bgBrush.Get());
-
-    // Hover background for spinner buttons
-    if (m_hoveredCapsuleId == id) {
-        ComPtr<ID2D1SolidColorBrush> hoverBrush;
-        ctx->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f) : D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f), &hoverBrush);
-        if (m_hoveredInc) {
-            ctx->FillRectangle(cap.incRect, hoverBrush.Get());
-        } else if (m_hoveredDec) {
-            ctx->FillRectangle(cap.decRect, hoverBrush.Get());
-        }
-    }
-
-    // Draw Border
-    ComPtr<ID2D1SolidColorBrush> borderBrush;
-    ctx->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.8f, 0.8f, 0.8f, 1.0f) : D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f), &borderBrush);
-    ctx->DrawRoundedRectangle(&roundedRect, borderBrush.Get(), 1.0f);
-
-    // Draw separator lines
-    ctx->DrawLine(D2D1::Point2F(rect.right - btnW, rect.top), D2D1::Point2F(rect.right - btnW, rect.bottom), borderBrush.Get());
-    ctx->DrawLine(D2D1::Point2F(rect.right - btnW, rect.top + H / 2.0f), D2D1::Point2F(rect.right, rect.top + H / 2.0f), borderBrush.Get());
-
     // Format the numeric value string
     float val = pIntValue ? (float)*pIntValue : *pValue;
     wchar_t valueBuf[64];
@@ -343,7 +354,6 @@ void PrintPreviewUI::RenderNumericCapsule(
     
     // Build value display string
     if (m_focusedCapsuleId == id && m_capsuleInputStarted) {
-        // Show the direct input buffer
         swprintf_s(valueBuf, L"%.*s", m_capsuleInputLen, m_capsuleInputBuf);
     } else {
         float displayVal = val * scaleFactor;
@@ -361,59 +371,31 @@ void PrintPreviewUI::RenderNumericCapsule(
         wcscpy_s(suffixBuf, L" mm");
     }
 
-    // Create text resources
+    bool isLight = IsLightTheme();
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.15f, 0.15f, 0.15f, 1.0f);
+    pal.border = isLight ? D2D1::ColorF(0.8f, 0.8f, 0.8f, 1.0f) : D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f);
+    pal.text = isLight ? D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    pal.textDim = isLight ? D2D1::ColorF(0.4f, 0.4f, 0.45f, 1.0f) : D2D1::ColorF(0.7f, 0.7f, 0.75f, 1.0f);
+    pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    pal.hoverTint = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+
+    int hoverSub = 0;
+    if (m_hoveredCapsuleId == id) {
+        if (m_hoveredInc) hoverSub = 1;
+        else if (m_hoveredDec) hoverSub = 2;
+    }
+
     ComPtr<IDWriteFactory> pDW;
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(pDW.GetAddressOf()));
     ComPtr<IDWriteTextFormat> fmt;
     pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, AppStrings::CurrentLocale, &fmt);
-    
-    ComPtr<ID2D1SolidColorBrush> txtBrush;
-    ctx->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &txtBrush);
 
-    // Draw label name (left-aligned)
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    D2D1_RECT_F namePadded = cap.labelRect;
-    namePadded.left += 4.0f;
-    namePadded.right -= 2.0f;
-    wchar_t nameWithColon[64];
-    swprintf_s(nameWithColon, L"%s:", name);
-    ctx->DrawText(nameWithColon, (UINT32)wcslen(nameWithColon), fmt.Get(), namePadded, txtBrush.Get());
-
-    // Draw numeric value (left-aligned in value rect)
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    D2D1_RECT_F valPadded = cap.valueRect;
-    valPadded.left += 4.0f;
-    wchar_t fullValue[80];
-    
-    // Add static blue cursor if focused
-    if (m_focusedCapsuleId == id) {
-        swprintf_s(fullValue, L"%s%s%s", valueBuf, L"|", suffixBuf);
-    } else {
-        swprintf_s(fullValue, L"%s%s", valueBuf, suffixBuf);
-    }
-    
-    // Use blue brush for the cursor if possible, but simplest is just draw text.
-    // To strictly color just the cursor, we'd need DWrite TextLayout.
-    // As a simple alternative, we just draw the text normally.
-    ctx->DrawText(fullValue, (UINT32)wcslen(fullValue), fmt.Get(), valPadded, txtBrush.Get());
-
-    // Draw spinner arrows
-    ComPtr<IDWriteTextFormat> fmtArrow;
-    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 8.0f, AppStrings::CurrentLocale, &fmtArrow);
-    fmtArrow->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    fmtArrow->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-    ctx->DrawText(L"▲", 1, fmtArrow.Get(), cap.incRect, txtBrush.Get());
-    ctx->DrawText(L"▼", 1, fmtArrow.Get(), cap.decRect, txtBrush.Get());
-
-    // Draw focus indicator on VALUE rect only (not entire capsule)
-    // Draw focus indicator on VALUE rect only (not entire capsule)
-    if (m_focusedCapsuleId == id) {
-        ComPtr<ID2D1SolidColorBrush> focusBrush;
-        ctx->CreateSolidColorBrush(D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f), &focusBrush);
-        ctx->DrawRectangle(cap.valueRect, focusBrush.Get(), 1.5f);
-    }
+    QuickView::UI::GeekWidgets::DrawPillStepper(
+        ctx, rect, name, valueBuf, suffixBuf,
+        (m_focusedCapsuleId == id), (m_hoveredCapsuleId == id), hoverSub,
+        fmt.Get(), 1.0f, pal);
 }
 
 void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
@@ -746,11 +728,23 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     DrawButton(ctx, m_ui.btnRotate, rotText.c_str(), false);
     cy += 35;
 
-    // 3. Orientation Row (Portrait / Landscape)
-    m_ui.radioPortrait = D2D1::RectF(cx, cy, cx + 140, cy + 28);
-    m_ui.radioLandscape = D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 28);
-    DrawRadio(ctx, m_ui.radioPortrait, strs.portrait, !m_settings.isLandscape);
-    DrawRadio(ctx, m_ui.radioLandscape, strs.landscape, m_settings.isLandscape);
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = D2D1::ColorF(g_config.ThemeCustomAccentR, g_config.ThemeCustomAccentG, g_config.ThemeCustomAccentB, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.95f, 0.95f, 0.95f, 1.0f) : D2D1::ColorF(0.18f, 0.18f, 0.20f, 1.0f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+    pal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+    pal.textDim = pal.text;
+    pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+
+    ComPtr<IDWriteTextFormat> fmtBtn;
+    pDW->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, AppStrings::CurrentLocale, &fmtBtn);
+
+    // 3. Orientation Row (Portrait / Landscape) as Pill Segment Group
+    D2D1_RECT_F orientRect = D2D1::RectF(cx, cy, cx + panelWidth, cy + 28);
+    m_ui.radioPortrait = D2D1::RectF(cx, cy, cx + panelWidth * 0.5f, cy + 28);
+    m_ui.radioLandscape = D2D1::RectF(cx + panelWidth * 0.5f, cy, cx + panelWidth, cy + 28);
+    std::wstring_view orientOpts[2] = { strs.portrait, strs.landscape };
+    QuickView::UI::GeekWidgets::DrawSegmentGroup(ctx, orientRect, orientOpts, m_settings.isLandscape ? 1 : 0, -1, false, fmtBtn.Get(), 1.0f, pal);
     cy += 35;
 
     // 4. Color Mode
@@ -758,19 +752,18 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     DrawButton(ctx, m_ui.btnGrayscale, m_settings.grayscale ? strs.colorGrayscale : strs.colorColor, false, m_settings.grayscale);
     cy += 35;
 
-    // 5. Layout Mode
+    // 5. Layout Mode as Pill Segment Group
     ctx->DrawText(strs.layoutMode, (UINT32)wcslen(strs.layoutMode), fmtHeader.Get(), D2D1::RectF(cx, cy, cx + panelWidth, cy + 20), panelTextBrush.Get());
     cy += 22;
-    float colW = (panelWidth - 15) / 4.0f;
+    D2D1_RECT_F layoutRect = D2D1::RectF(cx, cy, cx + panelWidth, cy + 28);
+    float colW = panelWidth / 4.0f;
     m_ui.btnLayoutFit = D2D1::RectF(cx, cy, cx + colW, cy + 28);
-    m_ui.btnLayoutFill = D2D1::RectF(cx + colW + 5, cy, cx + 2*colW + 5, cy + 28);
-    m_ui.btnLayoutOrig = D2D1::RectF(cx + 2*colW + 10, cy, cx + 3*colW + 10, cy + 28);
-    m_ui.btnLayoutCustom = D2D1::RectF(cx + 3*colW + 15, cy, cx + panelWidth, cy + 28);
+    m_ui.btnLayoutFill = D2D1::RectF(cx + colW, cy, cx + 2*colW, cy + 28);
+    m_ui.btnLayoutOrig = D2D1::RectF(cx + 2*colW, cy, cx + 3*colW, cy + 28);
+    m_ui.btnLayoutCustom = D2D1::RectF(cx + 3*colW, cy, cx + panelWidth, cy + 28);
     
-    DrawRadio(ctx, m_ui.btnLayoutFit, strs.layoutFit, m_settings.layoutMode == PrintLayoutMode::Fit);
-    DrawRadio(ctx, m_ui.btnLayoutFill, strs.layoutFill, m_settings.layoutMode == PrintLayoutMode::Fill);
-    DrawRadio(ctx, m_ui.btnLayoutOrig, strs.layoutOrig, m_settings.layoutMode == PrintLayoutMode::Original);
-    DrawRadio(ctx, m_ui.btnLayoutCustom, strs.layoutCustom, m_settings.layoutMode == PrintLayoutMode::Custom);
+    std::wstring_view layoutOpts[4] = { strs.layoutFit, strs.layoutFill, strs.layoutOrig, strs.layoutCustom };
+    QuickView::UI::GeekWidgets::DrawSegmentGroup(ctx, layoutRect, layoutOpts, static_cast<int>(m_settings.layoutMode), -1, false, fmtBtn.Get(), 1.0f, pal);
     cy += 35;
 
     // Custom Scale Capsule
@@ -790,33 +783,17 @@ void PrintPreviewUI::Render(ID2D1DeviceContext* ctx, float winW, float winH) {
     RenderNumericCapsule(ctx, 6, D2D1::RectF(cx + 150, cy, cx + panelWidth, cy + 24), strs.bottom, &m_settings.marginBottom, nullptr, 0.0f, 100.0f, 1.0f, 1.0f, 1);
     cy += 32;
 
-    // 7. Alignment九宫格 (Centered)
-    ctx->DrawText(strs.alignment, (UINT32)wcslen(strs.alignment), fmtHeader.Get(), D2D1::RectF(cx, cy, cx + panelWidth, cy + 20), panelTextBrush.Get());
-    cy += 22;
-    const wchar_t* alignArrows[9] = { L"↖", L"↑", L"↗", L"←", L"•", L"→", L"↙", L"↓", L"↘" };
-    PrintAlignment aligns[9] = {
-        PrintAlignment::TopLeft, PrintAlignment::TopCenter, PrintAlignment::TopRight,
-        PrintAlignment::CenterLeft, PrintAlignment::Center, PrintAlignment::CenterRight,
-        PrintAlignment::BottomLeft, PrintAlignment::BottomCenter, PrintAlignment::BottomRight
-    };
-    
-    float gridW = 3 * 32.0f - 4.0f;
-    float startGridX = cx + (panelWidth - gridW) / 2.0f;
-    
-    for (int i = 0; i < 9; i++) {
-        int row = i / 3;
-        int col = i % 3;
-        m_ui.alignGrid[i] = D2D1::RectF(startGridX + col * 32, cy + row * 32, startGridX + col * 32 + 28, cy + row * 32 + 28);
-        DrawRadio(ctx, m_ui.alignGrid[i], alignArrows[i], m_settings.alignment == aligns[i]);
-    }
-    cy += 3 * 32.0f + 15.0f;
+    // 7. Alignment九宫格 (Centered with GeekWidgets Button styling)
+    RenderAlignmentGrid(ctx, cx, cy, panelWidth, fmtHeader.Get(), fmtBtn.Get(), panelTextBrush.Get(), pal);
 
-    // 8. Poster Mode (Multi-Page Tiling)
+    // 8. Poster Mode (Multi-Page Tiling Checkbox)
     ctx->DrawText(strs.posterMode, (UINT32)wcslen(strs.posterMode), fmtHeader.Get(), D2D1::RectF(cx, cy, cx + panelWidth, cy + 20), panelTextBrush.Get());
     cy += 22;
-    m_ui.btnPosterMode = D2D1::RectF(cx, cy, cx + panelWidth, cy + 28);
-    DrawButton(ctx, m_ui.btnPosterMode, m_settings.printMultiPage ? strs.enableTiling : strs.disableTiling, false, m_settings.printMultiPage);
-    cy += 35;
+    m_ui.btnPosterMode = D2D1::RectF(cx, cy, cx + panelWidth, cy + 24);
+    QuickView::UI::GeekWidgets::DrawCircleCheckbox(
+        ctx, m_ui.btnPosterMode, strs.enableTiling, m_settings.printMultiPage, false, false,
+        fmtBtn.Get(), 1.0f, pal);
+    cy += 32;
 
     // Cancel / Print bottom buttons
     m_ui.btnCancel = D2D1::RectF(modalRect.right - 220, modalRect.bottom - 45, modalRect.right - 120, modalRect.bottom - 15);

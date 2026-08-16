@@ -7,30 +7,15 @@
 
 namespace QuickView {
 
-struct SliderGeom {
-    float trackLeft = 0.f;
-    float trackRight = 0.f;
-    float trackY = 0.f;
-    float trackH = 0.f;
-    float knobX = 0.f;
-
-    float TrackWidth() const { return trackRight - trackLeft; }
+struct SliderPillGeom {
+    D2D1_RECT_F rect = {};           // Overall pill container rect (aligned for all sliders/combos/segments)
+    D2D1_RECT_F leftArrowRect = {};  // Left stepper (<) hit rect
+    D2D1_RECT_F rightArrowRect = {}; // Right stepper (>) hit rect
+    D2D1_RECT_F progressRect = {};   // Filled progress bar rect inside pill
+    D2D1_RECT_F resetRect = {};      // Standalone Reset button rect (placed outside on the left)
+    float fillRatio = 0.0f;          // Normalized 0.0f ~ 1.0f
+    float radius = 0.0f;             // Corner radius = height / 2 (Pill shape)
 };
-
-struct SliderFullGeom {
-    D2D1_RECT_F minusRect = {};
-    D2D1_RECT_F valueRect = {};
-    D2D1_RECT_F plusRect = {};
-    D2D1_RECT_F trackRect = {};
-    float knobX = 0.f;
-    float trackY = 0.f;
-    float trackH = 0.f;
-
-    float TrackWidth() const { return trackRect.right - trackRect.left; }
-};
-
-// Draw uses an 8px hovered knob. Hit tests must include the full disc.
-inline float SliderKnobHitRadius() { return 8.f; }
 
 inline float QuantizeSliderValue(float v, float minV, float maxV, float step) {
     if (maxV < minV) std::swap(minV, maxV);
@@ -53,103 +38,66 @@ inline float EffectiveStep(float itemStep, float minV, float maxV, const wchar_t
     return raw;
 }
 
-inline SliderFullGeom ComputeSliderFullGeom(float controlLeft, float controlRight,
+inline SliderPillGeom ComputeSliderPillGeom(float controlLeft, float controlRight,
                                             float itemTop, float itemBottom,
                                             float uiScale, float val, float minV, float maxV,
                                             bool hasReset = false) {
     const float s = uiScale > 0.f ? uiScale : 1.f;
     const float padRight = 8.f * s;
-    const float btnW = 20.f * s;
-    const float btnH = 24.f * s;
-    const float valW = 54.f * s;
-    const float gap = 5.f * s;
-    const float trackGap = 12.f * s;
+    const float h = 24.f * s;
     const float cy = itemTop + (itemBottom - itemTop) * 0.5f;
 
-    SliderFullGeom g;
-    g.trackH = 4.f * s;
-    g.trackY = cy - g.trackH * 0.5f;
+    SliderPillGeom g;
+    g.radius = h * 0.5f;
 
-    float curX = controlLeft;
+    // All sliders strictly span from controlLeft to controlRight - padRight (same length as button groups & comboboxes)
+    float sliderLeft = controlLeft;
+    float sliderRight = (std::max)(sliderLeft + 60.f * s, controlRight - padRight);
+    g.rect = D2D1::RectF(sliderLeft, cy - h * 0.5f, sliderRight, cy + h * 0.5f);
+
+    // Standalone reset button is positioned outside on the left
     if (hasReset) {
-        float resetW = 18.f * s;
-        curX += (resetW + 6.f * s);
+        const float resetW = 18.f * s;
+        const float resetGap = 6.f * s;
+        g.resetRect = D2D1::RectF(controlLeft - resetW - resetGap, cy - h * 0.5f, controlLeft - resetGap, cy + h * 0.5f);
+    } else {
+        g.resetRect = {};
     }
 
-    // 1. Minus Button ⊖ (Left aligned to controlLeft)
-    g.minusRect = D2D1::RectF(curX, cy - btnH * 0.5f, curX + btnW, cy + btnH * 0.5f);
-    curX += (btnW + gap);
-
-    // 2. Value Capsule Box
-    g.valueRect = D2D1::RectF(curX, cy - btnH * 0.5f, curX + valW, cy + btnH * 0.5f);
-    curX += (valW + gap);
-
-    // 3. Plus Button ⊕
-    g.plusRect = D2D1::RectF(curX, cy - btnH * 0.5f, curX + btnW, cy + btnH * 0.5f);
-    curX += (btnW + trackGap);
-
-    // 4. Extended Track (Fills remaining space to controlRight)
-    float trackLeft = curX;
-    float trackRight = (std::max)(trackLeft + 40.f * s, controlRight - padRight);
-    g.trackRect = D2D1::RectF(trackLeft, g.trackY, trackRight, g.trackY + g.trackH);
+    const float arrowW = 22.f * s;
+    g.leftArrowRect = D2D1::RectF(g.rect.left, g.rect.top, g.rect.left + arrowW, g.rect.bottom);
+    g.rightArrowRect = D2D1::RectF(g.rect.right - arrowW, g.rect.top, g.rect.right, g.rect.bottom);
 
     const float span = (maxV > minV) ? (maxV - minV) : 1.f;
-    const float t = std::clamp((val - minV) / span, 0.f, 1.f);
-    g.knobX = trackLeft + t * (trackRight - trackLeft);
+    g.fillRatio = std::clamp((val - minV) / span, 0.f, 1.f);
+    float totalW = g.rect.right - g.rect.left;
+    g.progressRect = D2D1::RectF(g.rect.left, g.rect.top, g.rect.left + g.fillRatio * totalW, g.rect.bottom);
 
     return g;
 }
 
-inline SliderGeom ComputeSliderGeom(float controlLeft, float controlRight,
-                                    float itemTop, float itemBottom,
-                                    float uiScale, float val, float minV, float maxV,
-                                    bool hasReset = false) {
-    SliderFullGeom full = ComputeSliderFullGeom(controlLeft, controlRight, itemTop, itemBottom, uiScale, val, minV, maxV, hasReset);
-    SliderGeom g;
-    g.trackLeft = full.trackRect.left;
-    g.trackRight = full.trackRect.right;
-    g.trackY = full.trackY;
-    g.trackH = full.trackH;
-    g.knobX = full.knobX;
-    return g;
+// Returns: 0 = None, 1 = Left Arrow (<), 2 = Center Body (Scrub/Edit), 3 = Right Arrow (>), 4 = Reset Button
+inline int HitTestSliderPill(const SliderPillGeom& g, float x, float y) {
+    if (g.resetRect.right > g.resetRect.left) {
+        if (x >= g.resetRect.left && x <= g.resetRect.right && y >= g.resetRect.top && y <= g.resetRect.bottom) {
+            return 4; // Reset button in front (outside left)
+        }
+    }
+    if (x < g.rect.left || x > g.rect.right || y < g.rect.top || y > g.rect.bottom) {
+        return 0;
+    }
+    if (x <= g.leftArrowRect.right) {
+        return 1; // Left stepper (<)
+    }
+    if (x >= g.rightArrowRect.left) {
+        return 3; // Right stepper (>)
+    }
+    return 2; // Center body (Scrub / Click to edit)
 }
 
-inline bool HitTestSliderTrack(const SliderFullGeom& g, float x, float y, float itemTop, float itemBottom) {
-    const float r = SliderKnobHitRadius();
-    const float left = (std::min)(g.trackRect.left, g.knobX) - r;
-    const float right = (std::max)(g.trackRect.right, g.knobX) + r;
-    return x >= left && x <= right && y >= itemTop && y <= itemBottom;
-}
-
-inline bool HitTestSlider(const SliderGeom& g, float x, float y,
-                          float itemTop, float itemBottom, float itemRight) {
-    const float r = SliderKnobHitRadius();
-    const float left = (std::min)(g.trackLeft, g.knobX) - r;
-    const float right = (std::max)(itemRight, g.trackRight + r);
-    return x >= left && x <= right && y >= itemTop && y <= itemBottom;
-}
-
-inline bool HitTestMinusBtn(const SliderFullGeom& g, float x, float y) {
-    return x >= g.minusRect.left - 4.f && x <= g.minusRect.right + 4.f && y >= g.minusRect.top - 4.f && y <= g.minusRect.bottom + 4.f;
-}
-
-inline bool HitTestPlusBtn(const SliderFullGeom& g, float x, float y) {
-    return x >= g.plusRect.left - 4.f && x <= g.plusRect.right + 4.f && y >= g.plusRect.top - 4.f && y <= g.plusRect.bottom + 4.f;
-}
-
-inline bool HitTestValueBadge(const SliderFullGeom& g, float x, float y) {
-    return x >= g.valueRect.left && x <= g.valueRect.right && y >= g.valueRect.top - 4.f && y <= g.valueRect.bottom + 4.f;
-}
-
-inline float ValueFromX(const SliderGeom& g, float x, float minV, float maxV, float step) {
-    const float w = g.TrackWidth();
-    const float t = (w > 0.f) ? std::clamp((x - g.trackLeft) / w, 0.f, 1.f) : 0.f;
-    return QuantizeSliderValue(minV + t * (maxV - minV), minV, maxV, step);
-}
-
-inline float ValueFromFullGeomX(const SliderFullGeom& g, float x, float minV, float maxV, float step) {
-    const float w = g.TrackWidth();
-    const float t = (w > 0.f) ? std::clamp((x - g.trackRect.left) / w, 0.f, 1.f) : 0.f;
+inline float ValueFromPillX(const SliderPillGeom& g, float x, float minV, float maxV, float step) {
+    const float w = g.rect.right - g.rect.left;
+    const float t = (w > 0.f) ? std::clamp((x - g.rect.left) / w, 0.f, 1.f) : 0.f;
     return QuantizeSliderValue(minV + t * (maxV - minV), minV, maxV, step);
 }
 
@@ -176,4 +124,3 @@ inline float ParseSliderInput(const std::wstring& input, float currentVal, float
 }
 
 } // namespace QuickView
-

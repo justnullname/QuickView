@@ -1405,8 +1405,11 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             if (!layout) return;
 
             DWRITE_TEXT_METRICS tm; layout->GetMetrics(&tm);
-            float padH = 20.0f * s, padV = 10.0f * s;
-            float tw = tm.width + padH * 2, th = tm.height + padV * 2;
+            float padV = 8.0f * s;
+            float th = tm.height + padV * 2.0f;
+            float pillRadius = th * 0.5f;
+            float padH = std::max(20.0f * s, th * 0.55f);
+            float tw = tm.width + padH * 2.0f;
             D2D1_RECT_F r = D2D1::RectF(centerX - tw/2, centerY - th/2, centerX + tw/2, centerY + th/2);
             
             bool glassDrawn = false;
@@ -1419,7 +1422,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                 QuickView::UI::GeekGlass::GeekGlassConfig config;
                 config.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
                 config.panelBounds = r;
-                config.cornerRadius = 6.0f * s;
+                config.cornerRadius = pillRadius;
                 config.enableGeekGlass = g_config.EnableGeekGlass;
                 config.tintProfile = g_config.GlassTintProfile;
                 config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, g_config.GlassTintAlpha);
@@ -1448,7 +1451,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
                     float baseAlpha = (g_config.GlassOsdOpacity / 100.0f);
                     D2D1_COLOR_F boosterColor = D2D1::ColorF(fillerBase.r, fillerBase.g, fillerBase.b, baseAlpha);
                     dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
-                    dc->FillRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s), boosterBrush.Get());
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius), boosterBrush.Get());
                     
                     // Draw reflections and borders last
                     geekGlass.DrawGeekGlassToppings(dc, config);
@@ -1457,7 +1460,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             }
 
             if (!glassDrawn) {
-                dc->FillRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s), bgBrush.Get());
+                dc->FillRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius), bgBrush.Get());
             }
             dc->DrawTextLayout(D2D1::Point2F(r.left + padH, r.top + padV), layout.Get(), textBrush.Get());
         };
@@ -1471,7 +1474,6 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     if (m_osdText.empty()) return;
 
     // Standard OSD Drawing
-    float paddingH = 20.0f * s; (void)paddingH;
     float paddingV = 10.0f * s;
     
     ComPtr<IDWriteTextLayout> textLayout;
@@ -1483,12 +1485,16 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     }
     
     float toastW = 300.0f * s, toastH = 50.0f * s;
+    float paddingH = 24.0f * s;
     if (textLayout) {
         DWRITE_TEXT_METRICS metrics;
         textLayout->GetMetrics(&metrics);
-        toastW = metrics.width + paddingH * 2;
-        toastH = metrics.height + paddingV * 2;
+        toastH = metrics.height + paddingV * 2.0f;
+        paddingH = std::max(24.0f * s, toastH * 0.55f);
+        toastW = metrics.width + paddingH * 2.0f;
     }
+
+    float pillRadius = toastH * 0.5f;
 
     // Calculate Window Width/Height for alignment
     RECT rc; GetClientRect(hwnd, &rc);
@@ -1515,7 +1521,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
         QuickView::UI::GeekGlass::GeekGlassConfig config;
         config.theme = IsLightThemeActive() ? QuickView::UI::GeekGlass::ThemeMode::Light : QuickView::UI::GeekGlass::ThemeMode::Dark;
         config.panelBounds = bgRect;
-        config.cornerRadius = 8.0f * s;
+        config.cornerRadius = pillRadius;
         config.enableGeekGlass = g_config.EnableGeekGlass;
         config.tintProfile = g_config.GlassTintProfile;
         config.customTintColor = D2D1::ColorF(g_config.GlassCustomTintR, g_config.GlassCustomTintG, g_config.GlassCustomTintB, g_config.GlassTintAlpha);
@@ -1544,7 +1550,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
             float baseAlpha = (g_config.GlassOsdOpacity / 100.0f);
             D2D1_COLOR_F boosterColor = D2D1::ColorF(fillerBase.r, fillerBase.g, fillerBase.b, baseAlpha);
             dc->CreateSolidColorBrush(boosterColor, &boosterBrush);
-            dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, 8.0f * s, 8.0f * s), boosterBrush.Get());
+            dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, pillRadius, pillRadius), boosterBrush.Get());
 
             // Draw reflections and borders last
             geekGlass.DrawGeekGlassToppings(dc, config);
@@ -1553,7 +1559,7 @@ void UIRenderer::DrawOSD(ID2D1DeviceContext* dc, HWND hwnd) {
     }
 
     if (!glassDrawnMain) {
-        dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, 8.0f * s, 8.0f * s), bgBrush.Get());
+        dc->FillRoundedRectangle(D2D1::RoundedRect(bgRect, pillRadius, pillRadius), bgBrush.Get());
     }
     
     if (textLayout && textBrush) {
@@ -5852,8 +5858,10 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
         btnBgStopsCol.Get(), &btnBgBrush);
   }
 
+  const float pillRadius = (r.bottom - r.top) * 0.5f;
+
   if (btnBgBrush) {
-    dc->FillRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s),
+    dc->FillRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius),
                              btnBgBrush.Get());
   } else {
     ComPtr<ID2D1SolidColorBrush> fallbackBrush;
@@ -5865,7 +5873,7 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
                           ? D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.2f)
                           : D2D1::ColorF(0.2f, 0.6f, 1.0f, 0.35f);
     dc->CreateSolidColorBrush(fallbackColor, &fallbackBrush);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s),
+    dc->FillRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius),
                              fallbackBrush.Get());
   }
 
@@ -5878,7 +5886,7 @@ void UIRenderer::DrawWelcomeButton(ID2D1DeviceContext *dc, const D2D1_RECT_F &r,
   }
   ComPtr<ID2D1SolidColorBrush> borderBrush;
   dc->CreateSolidColorBrush(btnBorderColor, &borderBrush);
-  dc->DrawRoundedRectangle(D2D1::RoundedRect(r, 6.0f * s, 6.0f * s),
+  dc->DrawRoundedRectangle(D2D1::RoundedRect(r, pillRadius, pillRadius),
                            borderBrush.Get(), 1.0f);
 
   // Interactive Micro-displacement (0-overhead elastic touch)
@@ -6292,15 +6300,18 @@ void UIRenderer::DrawCropOverlay(ID2D1DeviceContext* dc, HWND hwnd) {
     int cropW = (int)std::round(g_cropState.CropRight - g_cropState.CropLeft);
     int cropH = (int)std::round(g_cropState.CropBottom - g_cropState.CropTop);
     
+    uint64_t ms = GetTickCount64();
+    bool showCaret = ((ms / 500) % 2 == 0);
+
     wchar_t wStr[32], hStr[32];
     if (g_cropState.FocusedField == CropState::InputField::Width) {
-        swprintf_s(wStr, L"%s|", g_cropState.InputBuffer);
+        swprintf_s(wStr, L"%s%s", g_cropState.InputBuffer, showCaret ? L"|" : L"");
     } else {
         swprintf_s(wStr, L"%d", cropW);
     }
     
     if (g_cropState.FocusedField == CropState::InputField::Height) {
-        swprintf_s(hStr, L"%s|", g_cropState.InputBuffer);
+        swprintf_s(hStr, L"%s%s", g_cropState.InputBuffer, showCaret ? L"|" : L"");
     } else {
         swprintf_s(hStr, L"%d", cropH);
     }

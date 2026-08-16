@@ -98,6 +98,7 @@ set(QUICKVIEW_SOURCES
     QuickView/PreviewExtractor.cpp
     QuickView/ImageEngine.cpp
     QuickView/CompositionEngine.cpp
+    QuickView/GeekWidgets.cpp
     QuickView/UIRenderer.cpp
     QuickView/HeavyLanePool.cpp
     QuickView/TileMemoryManager.cpp
@@ -390,6 +391,11 @@ add_executable(QuickViewTests
     tests/SettingsSliderMathTests.cpp
     tests/SvgNeedsFallbackTests.cpp
     tests/MetafileCodecTests.cpp
+    tests/GeekWidgetsTests.cpp
+    QuickView/GeekWidgets.cpp
+    QuickView/GeekIconLibrary.cpp
+    QuickView/GeekIconData.cpp
+    QuickView/GeekIconRenderer.cpp
     QuickView/OffscreenWebView2.cpp
     QuickView/LosslessTransform.cpp
     QuickView/ImageLoaderSimd.cpp

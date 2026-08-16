@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include "GeekGlass.h"
 #include "ImageExporter.h"
+#include "GeekWidgets.h"
 #include <string>
 #include <vector>
 
@@ -85,7 +86,9 @@ public:
     void Hide();
     bool IsVisible() const { return m_isVisible; }
     bool IsInputFocused() const { 
-        return m_isVisible && (m_focusedState == HoverState::WidthCapsule || m_focusedState == HoverState::HeightCapsule); 
+        return m_isVisible && (m_focusedState == HoverState::WidthCapsule || 
+                               m_focusedState == HoverState::HeightCapsule ||
+                               m_focusedState == HoverState::QualityInput); 
     }
 
     // Input Handling (Returns true if event was consumed)
@@ -151,6 +154,9 @@ private:
         LosslessCheckbox,
         PreserveMetadataCheckbox,
         QualitySlider,
+        QualityInput,
+        QualityLeftStepper,
+        QualityRightStepper,
         EmbedIccCheckbox,
         IccDropdownBtn,
         IccDropdownItem,
@@ -171,6 +177,10 @@ private:
     bool m_preserveMetadata = true;
     int m_jpegQuality = 90;
     bool m_isDraggingQuality = false;
+    float m_qualityDragStartX = 0.0f;
+    int m_qualityDragStartVal = 90;
+    bool m_qualityDragged = false;
+    QuickView::UI::GeekWidgets::SliderSubPart m_qualitySliderSubPart = QuickView::UI::GeekWidgets::SliderSubPart::None;
     bool m_embedIcc = true;
 
     // ICC Profiles Selection

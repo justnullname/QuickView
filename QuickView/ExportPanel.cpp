@@ -7,6 +7,7 @@
 #include "CompositionEngine.h"
 #include "EditState.h"
 #include "HeavyLanePool.h"
+#include "GeekWidgets.h"
 #include "ImageLoader.h"
 #include "RenderEngine.h"
 #include <commdlg.h>
@@ -32,6 +33,8 @@ extern void RequestRepaint(QuickView::PaintLayer layer);
 extern void DiscardChanges();
 extern void ReloadCurrentImage(HWND hwnd);
 extern void ReleaseImageResources();
+extern HCURSOR g_currentCursor;
+extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
 
 namespace {
 static float MeasureStringWidth(const wchar_t* text, float fontSize) {
@@ -146,20 +149,20 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
         l.showLosslessCheckbox = true;
         l.showQualitySlider = true;
 
-        l.losslessCheckboxRect = D2D1::RectF(startX + padX, curY, startX + padX + 130.0f * s, curY + 24.0f * s);
-        l.qualityRect = D2D1::RectF(startX + padX + 135.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
-        l.qualityTrackRect = D2D1::RectF(l.qualityRect.left + 55.0f * s, curY + 10.0f * s, l.qualityRect.right - 47.0f * s, curY + 14.0f * s);
+        l.losslessCheckboxRect = D2D1::RectF(startX + padX, curY + 2.0f * s, startX + padX + 130.0f * s, curY + 26.0f * s);
+        l.qualityRect = D2D1::RectF(startX + padX + 135.0f * s, curY, startX + panelWidth - padX, curY + 28.0f * s);
+        l.qualityTrackRect = l.qualityRect;
     } else if (showLossless) {
         curY += 36.0f * s;
         l.showLosslessCheckbox = true;
         l.showQualitySlider = false;
-        l.losslessCheckboxRect = D2D1::RectF(startX + padX, curY, startX + panelWidth - padX, curY + 24.0f * s);
+        l.losslessCheckboxRect = D2D1::RectF(startX + padX, curY + 2.0f * s, startX + panelWidth - padX, curY + 26.0f * s);
     } else if (showQuality) {
         curY += 36.0f * s;
         l.showLosslessCheckbox = false;
         l.showQualitySlider = true;
-        l.qualityRect = D2D1::RectF(startX + padX, curY, startX + panelWidth - padX, curY + 24.0f * s);
-        l.qualityTrackRect = D2D1::RectF(l.qualityRect.left + 55.0f * s, curY + 10.0f * s, l.qualityRect.right - 47.0f * s, curY + 14.0f * s);
+        l.qualityRect = D2D1::RectF(startX + padX, curY, startX + panelWidth - padX, curY + 28.0f * s);
+        l.qualityTrackRect = l.qualityRect;
     } else {
         l.showLosslessCheckbox = false;
         l.showQualitySlider = false;
@@ -168,31 +171,34 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     // 4. Preserve EXIF Checkbox & Embed ICC Checkbox & Dropdown & Size Label (Multi-language Dynamic Flow Layout)
     curY += 38.0f * s;
     float boxSize = 16.0f * s;
-    float textMargin = 8.0f * s;
+    float textMargin = 5.0f * s;
 
     // 4.1 Preserve EXIF Checkbox
     float exifTextW = MeasureStringWidth(L"EXIF", 13.0f * s);
     float exifTotalW = boxSize + textMargin + exifTextW;
     l.preserveMetadataCheckboxRect = D2D1::RectF(startX + padX, curY, startX + padX + exifTotalW, curY + 24.0f * s);
 
-    // 4.2 Embed ICC Checkbox (16px gap after EXIF)
-    float gap1 = 16.0f * s;
+    // 4.2 Embed ICC Checkbox (8px gap after EXIF)
+    float gap1 = 8.0f * s;
     float iccLeft = l.preserveMetadataCheckboxRect.right + gap1;
     const wchar_t* embedIccStr = (AppStrings::Dialog_EmbedICC && *AppStrings::Dialog_EmbedICC) ? AppStrings::Dialog_EmbedICC : L"Embed ICC";
     float iccTextW = MeasureStringWidth(embedIccStr, 13.0f * s);
     float iccTotalW = boxSize + textMargin + iccTextW;
     l.checkboxRect = D2D1::RectF(iccLeft, curY, iccLeft + iccTotalW, curY + 24.0f * s);
 
-    // 4.3 ICC Dropdown (3px gap after Embed ICC)
-    float gap2 = 3.0f * s;
-    float dropdownLeft = l.checkboxRect.right + gap2;
-    float maxDropdownRight = startX + panelWidth - padX - 90.0f * s; // Keep 90px space for Size label
-    float dropdownRight = (std::min)(dropdownLeft + 120.0f * s, maxDropdownRight);
-    if (dropdownRight < dropdownLeft + 60.0f * s) dropdownRight = dropdownLeft + 60.0f * s;
-    l.iccDropdownRect = D2D1::RectF(dropdownLeft, curY + 1.0f * s, dropdownRight, curY + 23.0f * s);
+    // 4.3 Size Estimate Label (Positioned from right edge towards left)
+    float rowRight = startX + panelWidth - padX;
+    float sizeTextW = MeasureStringWidth(m_estimatedSizeStr.empty() ? L"~999.9 MB" : m_estimatedSizeStr.c_str(), 13.0f * s) + 6.0f * s;
+    if (sizeTextW < 65.0f * s) sizeTextW = 65.0f * s;
+    l.sizeRect = D2D1::RectF(rowRight - sizeTextW, curY, rowRight, curY + 24.0f * s);
 
-    // 4.4 Size Estimate Label
-    l.sizeRect = D2D1::RectF(l.iccDropdownRect.right + 6.0f * s, curY, startX + panelWidth - padX, curY + 24.0f * s);
+    // 4.4 ICC Dropdown (Occupies remaining space between Checkbox and Size label with 6px margins)
+    float dropdownLeft = l.checkboxRect.right + 6.0f * s;
+    float dropdownRight = l.sizeRect.left - 6.0f * s;
+    if (dropdownRight < dropdownLeft + 50.0f * s) {
+        dropdownRight = dropdownLeft + 50.0f * s;
+    }
+    l.iccDropdownRect = D2D1::RectF(dropdownLeft, curY + 1.0f * s, dropdownRight, curY + 23.0f * s);
 
     // 5. Bottom Action Row Buttons
     curY += 40.0f * s;
@@ -263,7 +269,10 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_inputStarted = false;
     m_lockAspectRatio = true;
     
-
+    // Expand window if needed to accommodate ExportPanel
+    if (m_hwnd) {
+        AdjustWindowForOverlay(m_hwnd, false);
+    }
 
     // Initialize WIC Formats (Sorted Alphabetically)
     m_availableFormats = ImageExporter::GetSupportedExportFormats();
@@ -493,6 +502,11 @@ void ExportPanel::Hide() {
     m_iccDropdownOpen = false;
     m_formatDropdownOpen = false;
     ++m_estimateGeneration; // Cancel any running background estimate
+
+    // Restore/shrink window if needed when closing ExportPanel
+    if (m_hwnd) {
+        AdjustWindowForOverlay(m_hwnd, true);
+    }
 }
 
 bool ExportPanel::CanOverwriteOriginal() const {
@@ -644,11 +658,29 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
         } else if (layout.showQualitySlider && (m_focusedState == HoverState::QualitySlider || hit(layout.qualityRect))) {
-            m_isDraggingQuality = true;
-            if (layout.qualityTrackRect.right > layout.qualityTrackRect.left) {
-                float ratio = (x - layout.qualityTrackRect.left) / (layout.qualityTrackRect.right - layout.qualityTrackRect.left);
-                m_jpegQuality = std::clamp((int)std::round(1.0f + ratio * 99.0f), 1, 100);
+            auto subPart = QuickView::UI::GeekWidgets::HitTestSliderPill(layout.qualityRect, x, y, m_uiScale);
+            if (subPart == QuickView::UI::GeekWidgets::SliderSubPart::LeftStepper) {
+                // Left stepper (-)
+                m_jpegQuality = std::max(1, m_jpegQuality - 1);
                 TriggerAsyncEstimate();
+                m_focusedState = HoverState::None;
+                ::KillTimer(m_hwnd, 991);
+            } else if (subPart == QuickView::UI::GeekWidgets::SliderSubPart::RightStepper) {
+                // Right stepper (+)
+                m_jpegQuality = std::min(100, m_jpegQuality + 1);
+                TriggerAsyncEstimate();
+                m_focusedState = HoverState::None;
+                ::KillTimer(m_hwnd, 991);
+            } else {
+                // Main body: Start Dragging (if user moves) or activate input (if user clicks in-place)
+                m_isDraggingQuality = true;
+                m_qualityDragStartX = x;
+                m_qualityDragStartVal = m_jpegQuality;
+                m_qualityDragged = false;
+                if (m_focusedState != HoverState::QualityInput) {
+                    m_focusedState = HoverState::None;
+                    ::KillTimer(m_hwnd, 991);
+                }
             }
             m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
@@ -682,6 +714,7 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_inputLen = (int)wcslen(m_inputBuf);
             m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
+            ::SetTimer(m_hwnd, 991, 500, nullptr);
         } else if (m_focusedState == HoverState::LockBtn) {
             m_lockAspectRatio = !m_lockAspectRatio;
             m_focusedState = HoverState::None;
@@ -703,20 +736,27 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_iccDropdownOpen = !m_iccDropdownOpen;
             m_formatDropdownOpen = false;
             m_focusedState = HoverState::None;
+        } else if (m_focusedState == HoverState::OverwriteBtn) {
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+            CommitSave(true);
+        } else if (m_focusedState == HoverState::SaveAsBtn) {
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
+            CommitSave(false);
         } else if (m_focusedState == HoverState::CancelBtn) {
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
             m_pendingAction = PendingAction::None;
             Hide();
             ::RequestRepaint(PaintLayer::All);
         } else if (m_focusedState == HoverState::DiscardBtn) {
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
             Hide();
-            ::DiscardChanges();
             ::TryExitCropMode(m_hwnd, true);
-            ::RequestRepaint(PaintLayer::All);
             ExecutePendingAction();
-        } else if (m_focusedState == HoverState::OverwriteBtn) {
-            CommitSave(true);
-        } else if (m_focusedState == HoverState::SaveAsBtn) {
-            CommitSave(false);
+            ::RequestRepaint(PaintLayer::All);
         } else {
             m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
@@ -738,11 +778,26 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
 }
 
 bool ExportPanel::OnLButtonUp(float x, float y) {
-    (void)x;
     (void)y;
     if (!m_isVisible) return false;
     
-    m_isDraggingQuality = false;
+    if (m_isDraggingQuality) {
+        m_isDraggingQuality = false;
+        if (!m_qualityDragged && std::abs(x - m_qualityDragStartX) < 3.0f * m_uiScale) {
+            // In-place click on slider main body -> Activate text input
+            m_focusedState = HoverState::QualityInput;
+            m_inputStarted = true;
+            swprintf_s(m_inputBuf, L"%d", m_jpegQuality);
+            m_inputLen = (int)wcslen(m_inputBuf);
+            ::SetTimer(m_hwnd, 991, 500, nullptr);
+            g_currentCursor = ::LoadCursor(nullptr, IDC_IBEAM);
+            ::SetCursor(g_currentCursor);
+            RequestRepaint(PaintLayer::All);
+        } else if (m_qualityDragged) {
+            // Drag finished -> Submit and trigger async file size estimate calculation once
+            TriggerAsyncEstimate();
+        }
+    }
     return true; // Modal overlay — consume all mouse events
 }
 
@@ -752,20 +807,28 @@ bool ExportPanel::OnMouseMove(float x, float y) {
     RECT rc; GetClientRect(m_hwnd, &rc);
     PanelLayout layout = ComputeLayout((float)(rc.right - rc.left), (float)(rc.bottom - rc.top));
 
-    if (m_isDraggingQuality && layout.showQualitySlider && layout.qualityTrackRect.right > layout.qualityTrackRect.left) {
-        float ratio = (x - layout.qualityTrackRect.left) / (layout.qualityTrackRect.right - layout.qualityTrackRect.left);
-        int newQ = std::clamp((int)std::round(1.0f + ratio * 99.0f), 1, 100);
-        if (newQ != m_jpegQuality) {
-            m_jpegQuality = newQ;
-            TriggerAsyncEstimate();
-            RequestRepaint(PaintLayer::All);
+    if (m_isDraggingQuality && layout.showQualitySlider && layout.qualityRect.right > layout.qualityRect.left) {
+        float dx = x - m_qualityDragStartX;
+        if (std::abs(dx) >= 3.0f * m_uiScale) {
+            m_qualityDragged = true;
+            // Drag step: 1% per 2.5px drag sensitivity
+            float pixelsPerUnit = 2.5f * m_uiScale;
+            int deltaVal = (int)std::round(dx / pixelsPerUnit);
+            int newQ = std::clamp(m_qualityDragStartVal + deltaVal, 1, 100);
+            if (newQ != m_jpegQuality) {
+                m_jpegQuality = newQ;
+                // Instant smooth visual update during drag (estimate is triggered on mouse up)
+                RequestRepaint(PaintLayer::All);
+            }
         }
+        ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEWE));
         return true;
     }
 
     HoverState newState = HoverState::None;
     int newHoverIccIndex = -1;
     int newHoverFormatIndex = -1;
+    QuickView::UI::GeekWidgets::SliderSubPart qualitySubPart = QuickView::UI::GeekWidgets::SliderSubPart::None;
 
     auto hit = [x, y](const D2D1_RECT_F& r) {
         return r.right > r.left && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
@@ -799,7 +862,10 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         else if (hit(layout.lockRect)) newState = HoverState::LockBtn;
         else if (hit(layout.formatDropdownRect)) newState = HoverState::FormatDropdownBtn;
         else if (layout.showLosslessCheckbox && hit(layout.losslessCheckboxRect)) newState = HoverState::LosslessCheckbox;
-        else if (layout.showQualitySlider && hit(layout.qualityRect)) newState = HoverState::QualitySlider;
+        else if (layout.showQualitySlider && hit(layout.qualityRect)) {
+            newState = HoverState::QualitySlider;
+            qualitySubPart = QuickView::UI::GeekWidgets::HitTestSliderPill(layout.qualityRect, x, y, m_uiScale);
+        }
         else if (hit(layout.checkboxRect)) newState = HoverState::EmbedIccCheckbox;
         else if (hit(layout.iccDropdownRect)) newState = HoverState::IccDropdownBtn;
         else if (hit(layout.preserveMetadataCheckboxRect)) newState = HoverState::PreserveMetadataCheckbox;
@@ -809,20 +875,30 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         else if (hit(layout.discardRect)) newState = HoverState::DiscardBtn;
     }
 
-    // Mouse Cursor Management for ExportPanel
+    // Mouse Cursor Management for ExportPanel (Coordinate with WM_SETCURSOR via g_currentCursor)
+    HCURSOR targetCursor = nullptr;
     if (newState == HoverState::WidthCapsule || newState == HoverState::HeightCapsule) {
-        ::SetCursor(::LoadCursor(nullptr, IDC_IBEAM));
+        targetCursor = ::LoadCursor(nullptr, IDC_IBEAM);
+    } else if (newState == HoverState::QualitySlider) {
+        targetCursor = QuickView::UI::GeekWidgets::GetSliderCursor(qualitySubPart, m_focusedState == HoverState::QualityInput);
     } else if (newState != HoverState::None) {
-        ::SetCursor(::LoadCursor(nullptr, IDC_HAND));
+        targetCursor = ::LoadCursor(nullptr, IDC_HAND);
     } else {
-        ::SetCursor(::LoadCursor(nullptr, IDC_ARROW));
+        targetCursor = ::LoadCursor(nullptr, IDC_ARROW);
     }
 
-    // Trigger repaint instantly on state OR hovered item index change for dynamic response
-    if (m_hoverState != newState || m_hoverIccItemIndex != newHoverIccIndex || m_hoverFormatItemIndex != newHoverFormatIndex) {
+    g_currentCursor = targetCursor;
+    ::SetCursor(g_currentCursor);
+
+    // Trigger repaint instantly on state, subPart, OR hovered item index change for dynamic response
+    if (m_hoverState != newState || 
+        m_hoverIccItemIndex != newHoverIccIndex || 
+        m_hoverFormatItemIndex != newHoverFormatIndex ||
+        m_qualitySliderSubPart != qualitySubPart) {
         m_hoverState = newState;
         m_hoverIccItemIndex = newHoverIccIndex;
         m_hoverFormatItemIndex = newHoverFormatIndex;
+        m_qualitySliderSubPart = qualitySubPart;
         RequestRepaint(PaintLayer::All);
     }
 
@@ -863,6 +939,7 @@ bool ExportPanel::OnKeyDown(WPARAM wParam) {
         if (m_focusedState != HoverState::None) {
             m_focusedState = HoverState::None;
             m_inputStarted = false;
+            ::KillTimer(m_hwnd, 991);
         } else {
             m_pendingAction = PendingAction::None;
             Hide();
@@ -872,7 +949,9 @@ bool ExportPanel::OnKeyDown(WPARAM wParam) {
         return true;
     }
 
-    if (m_focusedState != HoverState::WidthCapsule && m_focusedState != HoverState::HeightCapsule) return false;
+    if (m_focusedState != HoverState::WidthCapsule && 
+        m_focusedState != HoverState::HeightCapsule &&
+        m_focusedState != HoverState::QualityInput) return false;
 
     if (wParam == VK_BACK) {
         if (m_inputLen > 0) {
@@ -886,6 +965,7 @@ bool ExportPanel::OnKeyDown(WPARAM wParam) {
     } else if (wParam == VK_RETURN) {
         m_focusedState = HoverState::None;
         m_inputStarted = false;
+        ::KillTimer(m_hwnd, 991);
         RequestRepaint(PaintLayer::All);
         return true;
     }
@@ -894,7 +974,9 @@ bool ExportPanel::OnKeyDown(WPARAM wParam) {
 }
 
 bool ExportPanel::OnChar(WPARAM wParam) {
-    if (!m_isVisible || (m_focusedState != HoverState::WidthCapsule && m_focusedState != HoverState::HeightCapsule)) return false;
+    if (!m_isVisible || (m_focusedState != HoverState::WidthCapsule && 
+                         m_focusedState != HoverState::HeightCapsule &&
+                         m_focusedState != HoverState::QualityInput)) return false;
 
     wchar_t c = (wchar_t)wParam;
     if (c >= L'0' && c <= L'9') {
@@ -934,6 +1016,8 @@ void ExportPanel::ApplyInput() {
         if (m_lockAspectRatio && m_cropHeight > 0) {
             m_targetWidth = (int)std::round((float)m_targetHeight * m_cropWidth / m_cropHeight);
         }
+    } else if (m_focusedState == HoverState::QualityInput) {
+        m_jpegQuality = std::clamp(val, 1, 100);
     }
 }
 
@@ -1244,11 +1328,17 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
         (m_focusedState == HoverState::WidthCapsule) ? m_inputBuf : std::to_wstring(m_targetWidth), 
         HoverState::WidthCapsule, textFormat);
 
-    // Lock button border outline
-    ComPtr<ID2D1SolidColorBrush> lockBorderBrush;
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.1f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f), &lockBorderBrush);
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(layout.lockRect, 4.0f*s, 4.0f*s), lockBorderBrush.Get(), 1.0f*s);
-    DrawButton(dc, layout.lockRect, m_lockAspectRatio ? L"🔒" : L"🔓", HoverState::LockBtn, D2D1::ColorF(0.0f,0.0f,0.0f,0.0f), textFormat);
+    // Lock button: Pure vector lock icon (No background, highlight when locked, 0 font dependency)
+    {
+        bool isLockHovered = (m_hoverState == HoverState::LockBtn);
+        ComPtr<ID2D1SolidColorBrush> lockIconBrush;
+        D2D1_COLOR_F lockClr = m_lockAspectRatio ? accentClr : 
+            (isLockHovered ? (isLight ? D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f) : D2D1::ColorF(0.9f, 0.9f, 0.9f, 1.0f))
+                           : (isLight ? D2D1::ColorF(0.4f, 0.4f, 0.45f, 0.9f) : D2D1::ColorF(0.65f, 0.65f, 0.70f, 0.9f)));
+        dc->CreateSolidColorBrush(lockClr, &lockIconBrush);
+
+        QuickView::UI::GeekWidgets::DrawLockIcon(dc, layout.lockRect, m_lockAspectRatio, lockIconBrush.Get(), s);
+    }
 
     DrawCapsule(dc, layout.heightRect, L"H", 
         (m_focusedState == HoverState::HeightCapsule) ? m_inputBuf : std::to_wstring(m_targetHeight), 
@@ -1370,27 +1460,28 @@ void ExportPanel::DrawCapsule(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, c
         accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
     }
 
-    // Input Background (Radius = 6px)
+    // Input Background (Pill radius = H / 2)
+    float pillRadius = (rect.bottom - rect.top) * 0.5f;
     ComPtr<ID2D1SolidColorBrush> bgBrush;
     D2D1_COLOR_F bgClr = isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.12f, 0.12f, 0.14f, 1.0f);
     dc->CreateSolidColorBrush(bgClr, &bgBrush);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), bgBrush.Get());
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), bgBrush.Get());
 
     // Standard Input Border
     ComPtr<ID2D1SolidColorBrush> borderBrush;
     D2D1_COLOR_F borderClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(0.35f, 0.35f, 0.35f, 1.0f);
     dc->CreateSolidColorBrush(borderClr, &borderBrush);
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), borderBrush.Get(), 1.0f*s);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), borderBrush.Get(), 1.0f*s);
 
     // Accent Focus Ring
     if (isFocused) {
         ComPtr<ID2D1SolidColorBrush> focusBrush;
         dc->CreateSolidColorBrush(accentClr, &focusBrush);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), focusBrush.Get(), 2.0f*s);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), focusBrush.Get(), 1.5f*s);
     } else if (isHovered) {
         ComPtr<ID2D1SolidColorBrush> hoverBrush;
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.40f) : D2D1::ColorF(0.6f, 0.6f, 0.6f, 1.0f), &hoverBrush);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), hoverBrush.Get(), 1.5f*s);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, pillRadius, pillRadius), hoverBrush.Get(), 1.0f*s);
     }
 
     // Blink Caret for Input Indication
@@ -1430,31 +1521,23 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
     float s = m_uiScale;
     bool isLight = IsLightThemeActive();
 
-    // 1. Draw Closed Dropdown Button
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush;
-    D2D1_COLOR_F bgClr;
-    if (m_hoverState == HoverState::FormatDropdownBtn || m_formatDropdownOpen) {
-        bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
-    } else {
-        bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
-    }
-    dc->CreateSolidColorBrush(bgClr, &bgBrush);
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f), &borderBrush);
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
-
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 4.0f*s, 4.0f*s), bgBrush.Get());
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 4.0f*s, 4.0f*s), borderBrush.Get(), 1.0f*s);
-
-    std::wstring label = L"JPEG Image (*.jpg)  ▼";
+    // 1. Draw Closed Dropdown Pill using GeekWidgets
+    std::wstring label = L"JPEG Image (*.jpg)";
     if (m_selectedFormatIndex >= 0 && m_selectedFormatIndex < (int)m_availableFormats.size()) {
-        label = m_availableFormats[m_selectedFormatIndex].DisplayName + L"  ▼";
+        label = m_availableFormats[m_selectedFormatIndex].DisplayName;
     }
 
-    if (textFormat) {
-        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(label.c_str(), (UINT32)label.length(), textFormat, rect, textBrush.Get());
-    }
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
+    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
+    pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
+    pal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f);
+
+    QuickView::UI::GeekWidgets::DrawPillComboBox(
+        dc, rect, label, m_formatDropdownOpen, (m_hoverState == HoverState::FormatDropdownBtn), false,
+        textFormat, s, pal);
 
     // 2. Draw Floating Popup if Opened
     if (m_formatDropdownOpen && !m_availableFormats.empty()) {
@@ -1463,12 +1546,13 @@ void ExportPanel::DrawFormatDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
         float itemH = layout.formatItemH;
         int visibleCount = layout.visibleFormatCount;
 
-        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush;
+        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush, textBrush;
         D2D1_COLOR_F popBgClr = isLight ? D2D1::ColorF(0.98f, 0.98f, 1.0f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.98f);
         dc->CreateSolidColorBrush(popBgClr, &popBgBrush);
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f), &popBorderBrush);
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f), &itemHoverBrush);
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f), &selectedBrush);
+        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
 
         dc->FillRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBgBrush.Get());
         dc->DrawRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBorderBrush.Get(), 1.0f*s);
@@ -1503,44 +1587,20 @@ void ExportPanel::DrawCheckbox(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, 
     bool isHovered = (m_hoverState == id);
     bool isLight = IsLightThemeActive();
 
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
+    if (pal.accent.a <= 0.01f) {
+        pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
     }
+    pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
+    pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.92f, 0.92f, 0.95f, 1.0f);
+    pal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f);
+    pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
 
-    float boxSize = 16.0f * s;
-    D2D1_RECT_F boxRect = { rect.left, rect.top + (rect.bottom - rect.top - boxSize) * 0.5f, rect.left + boxSize, rect.top + (rect.bottom - rect.top - boxSize) * 0.5f + boxSize };
-
-    ComPtr<ID2D1SolidColorBrush> boxBg;
-    dc->CreateSolidColorBrush(checked ? accentClr : (isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f)), &boxBg);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(boxRect, 3.0f*s, 3.0f*s), boxBg.Get());
-
-    ComPtr<ID2D1SolidColorBrush> boxBorder;
-    dc->CreateSolidColorBrush(checked ? accentClr : (isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.3f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.4f)), &boxBorder);
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(boxRect, 3.0f*s, 3.0f*s), boxBorder.Get(), 1.0f*s);
-
-    if (isHovered) {
-        ComPtr<ID2D1SolidColorBrush> highlightBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.3f), &highlightBrush);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(boxRect, 3.0f*s, 3.0f*s), highlightBrush.Get(), 1.5f*s);
-    }
-
-    if (checked) {
-        ComPtr<ID2D1SolidColorBrush> checkMarkBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &checkMarkBrush);
-        dc->DrawLine(D2D1::Point2F(boxRect.left + 3.5f*s, boxRect.top + 8.0f*s), D2D1::Point2F(boxRect.left + 6.5f*s, boxRect.top + 11.5f*s), checkMarkBrush.Get(), 2.0f*s);
-        dc->DrawLine(D2D1::Point2F(boxRect.left + 6.5f*s, boxRect.top + 11.5f*s), D2D1::Point2F(boxRect.right - 3.5f*s, boxRect.top + 4.5f*s), checkMarkBrush.Get(), 2.0f*s);
-    }
-
-    if (textFormat) {
-        ComPtr<ID2D1SolidColorBrush> txtBrush;
-        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f,0.15f,0.18f) : D2D1::ColorF(0.92f,0.92f,0.95f), &txtBrush);
-        
-        D2D1_RECT_F txtRect = { boxRect.right + 8.0f*s, rect.top, rect.right, rect.bottom };
-        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(label.c_str(), (UINT32)label.length(), textFormat, txtRect, txtBrush.Get());
-    }
+    QuickView::UI::GeekWidgets::DrawCircleCheckbox(
+        dc, rect, label, checked, isHovered, false,
+        textFormat, s, pal);
 }
 
 void ExportPanel::DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const std::wstring& text, HoverState id, D2D1_COLOR_F baseColor, IDWriteTextFormat* textFormat) {
@@ -1548,33 +1608,19 @@ void ExportPanel::DrawButton(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, co
     bool isHovered = (m_hoverState == id);
     bool isFocused = (m_focusedState == id);
 
-    if (isHovered) {
-        baseColor.r = (std::min)(1.0f, baseColor.r + 0.08f);
-        baseColor.g = (std::min)(1.0f, baseColor.g + 0.08f);
-        baseColor.b = (std::min)(1.0f, baseColor.b + 0.08f);
-    }
-    
-    ComPtr<ID2D1SolidColorBrush> bgBrush;
-    dc->CreateSolidColorBrush(baseColor, &bgBrush);
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), bgBrush.Get());
+    using namespace QuickView::UI;
+    ButtonStyle style = (baseColor.a > 0.6f) ? ButtonStyle::Primary : ButtonStyle::Secondary;
+    ButtonState state = (isHovered || isFocused) ? ButtonState::Hovered : ButtonState::Normal;
 
-    if (isFocused || isHovered) {
-        ComPtr<ID2D1SolidColorBrush> highlightBrush;
-        dc->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f), &highlightBrush);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 6.0f*s, 6.0f*s), highlightBrush.Get(), 1.5f*s);
-    }
+    WidgetPalette pal = {};
+    pal.accent = baseColor;
+    pal.controlBg = baseColor;
+    pal.border = IsLightThemeActive() ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.15f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
+    pal.text = IsLightThemeActive() ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+    pal.textDim = pal.text;
+    pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
 
-    if (!textFormat) return;
-
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    bool isLight = IsLightThemeActive();
-    bool isSecondary = (baseColor.a < 0.5f);
-    D2D1_COLOR_F textColor = isSecondary ? (isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f)) : D2D1::ColorF(D2D1::ColorF::White);
-    dc->CreateSolidColorBrush(textColor, &textBrush);
-
-    textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    dc->DrawText(text.c_str(), (UINT32)text.length(), textFormat, rect, textBrush.Get());
+    GeekWidgets::DrawPillButton(dc, rect, text, style, state, textFormat, s, pal);
 }
 
 void ExportPanel::ExecutePendingAction() {
@@ -1597,31 +1643,23 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
     float s = m_uiScale;
     bool isLight = IsLightThemeActive();
 
-    // 1. Draw Closed Dropdown Button
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, textBrush;
-    D2D1_COLOR_F bgClr;
-    if (m_hoverState == HoverState::IccDropdownBtn || m_iccDropdownOpen) {
-        bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
-    } else {
-        bgClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
-    }
-    dc->CreateSolidColorBrush(bgClr, &bgBrush);
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f), &borderBrush);
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
-
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, 4.0f*s, 4.0f*s), bgBrush.Get());
-    dc->DrawRoundedRectangle(D2D1::RoundedRect(rect, 4.0f*s, 4.0f*s), borderBrush.Get(), 1.0f*s);
-
-    std::wstring label = L"sRGB  ▼";
+    // 1. Draw Closed Dropdown Pill using GeekWidgets
+    std::wstring label = L"sRGB";
     if (m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
-        label = m_iccProfiles[m_selectedIccIndex].displayName + L"  ▼";
+        label = m_iccProfiles[m_selectedIccIndex].displayName;
     }
 
-    if (textFormat) {
-        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(label.c_str(), (UINT32)label.length(), textFormat, rect, textBrush.Get());
-    }
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
+    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
+    pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
+    pal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f);
+
+    QuickView::UI::GeekWidgets::DrawPillComboBox(
+        dc, rect, label, m_iccDropdownOpen, (m_hoverState == HoverState::IccDropdownBtn), false,
+        textFormat, s, pal);
 
     // 2. Draw Floating Popup if Opened (Top-Most Z-Order)
     if (m_iccDropdownOpen && !m_iccProfiles.empty()) {
@@ -1630,12 +1668,13 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
         float itemH = layout.itemH;
         int visibleCount = layout.visibleIccCount;
 
-        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush;
+        ComPtr<ID2D1SolidColorBrush> popBgBrush, popBorderBrush, itemHoverBrush, selectedBrush, textBrush;
         D2D1_COLOR_F popBgClr = isLight ? D2D1::ColorF(0.98f, 0.98f, 1.0f, 0.98f) : D2D1::ColorF(0.12f, 0.12f, 0.15f, 0.98f);
         dc->CreateSolidColorBrush(popBgClr, &popBgBrush);
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f), &popBorderBrush);
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.35f), &itemHoverBrush);
         dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.08f) : D2D1::ColorF(0.0f, 0.48f, 0.8f, 0.18f), &selectedBrush);
+        dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f), &textBrush);
 
         dc->FillRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBgBrush.Get());
         dc->DrawRoundedRectangle(D2D1::RoundedRect(popupRect, 6.0f*s, 6.0f*s), popBorderBrush.Get(), 1.0f*s);
@@ -1666,64 +1705,39 @@ void ExportPanel::DrawIccDropdown(ID2D1DeviceContext* dc, const D2D1_RECT_F& rec
 }
 
 void ExportPanel::DrawQualitySlider(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const D2D1_RECT_F& trackRect, IDWriteTextFormat* textFormat) {
+    (void)trackRect;
     if (rect.right <= rect.left || !dc) return;
+    float s = m_uiScale;
     bool isLight = IsLightThemeActive();
 
-    // 1. Label "Quality:"
-    std::wstring label = L"Quality:";
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    D2D1_COLOR_F textClr = isLight ? D2D1::ColorF(0.2f, 0.2f, 0.25f, 1.0f) : D2D1::ColorF(0.85f, 0.85f, 0.9f, 1.0f);
-    dc->CreateSolidColorBrush(textClr, &textBrush);
-    D2D1_RECT_F labelRect = D2D1::RectF(rect.left, rect.top, trackRect.left - 8.0f * m_uiScale, rect.bottom);
-    if (textFormat) {
-        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(label.c_str(), (UINT32)label.length(), textFormat, labelRect, textBrush.Get());
+    float fillRatio = (float)(m_jpegQuality - 1) / 99.0f;
+    fillRatio = std::clamp(fillRatio, 0.0f, 1.0f);
+
+    wchar_t dispBuf[32];
+    bool isInputMode = (m_focusedState == HoverState::QualityInput);
+    if (isInputMode) {
+        uint64_t ms = GetTickCount64();
+        bool showCaret = ((ms / 500) % 2 == 0);
+        swprintf_s(dispBuf, L"%s%s", m_inputBuf, showCaret ? L"|" : L"");
+    } else {
+        swprintf_s(dispBuf, L"Quality: %d%%", m_jpegQuality);
     }
 
-    // 2. Track Background
-    ComPtr<ID2D1SolidColorBrush> trackBgBrush;
-    D2D1_COLOR_F trackClr = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f);
-    dc->CreateSolidColorBrush(trackClr, &trackBgBrush);
-    D2D1_ROUNDED_RECT roundedTrack = D2D1::RoundedRect(trackRect, 2.0f * m_uiScale, 2.0f * m_uiScale);
-    dc->FillRoundedRectangle(roundedTrack, trackBgBrush.Get());
+    QuickView::UI::WidgetPalette pal = {};
+    pal.accent = AppContext::GetInstance().Dialog.AccentColor;
+    if (pal.accent.a <= 0.01f) pal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+    pal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f);
+    pal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f);
+    pal.text = isLight ? D2D1::ColorF(0.15f, 0.15f, 0.18f, 1.0f) : D2D1::ColorF(0.88f, 0.88f, 0.92f, 1.0f);
+    pal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.40f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.80f, 1.0f);
+    pal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
 
-    // 3. Accent Active Fill
-    float ratio = (float)(m_jpegQuality - 1) / 99.0f;
-    ratio = std::clamp(ratio, 0.0f, 1.0f);
-    float handleX = trackRect.left + ratio * (trackRect.right - trackRect.left);
+    bool isHovered = (m_hoverState == HoverState::QualitySlider || m_isDraggingQuality);
 
-    D2D1_COLOR_F accentClr = AppContext::GetInstance().Dialog.AccentColor;
-    if (accentClr.a <= 0.01f) {
-        accentClr = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
-    }
-    ComPtr<ID2D1SolidColorBrush> accentBrush;
-    dc->CreateSolidColorBrush(accentClr, &accentBrush);
-
-    if (handleX > trackRect.left) {
-        D2D1_RECT_F fillRect = D2D1::RectF(trackRect.left, trackRect.top, handleX, trackRect.bottom);
-        D2D1_ROUNDED_RECT roundedFill = D2D1::RoundedRect(fillRect, 2.0f * m_uiScale, 2.0f * m_uiScale);
-        dc->FillRoundedRectangle(roundedFill, accentBrush.Get());
-    }
-
-    // 4. Handle Circle
-    float radius = (m_hoverState == HoverState::QualitySlider || m_isDraggingQuality) ? 7.0f * m_uiScale : 5.5f * m_uiScale;
-    D2D1_ELLIPSE handleEllipse = D2D1::Ellipse(D2D1::Point2F(handleX, (trackRect.top + trackRect.bottom) * 0.5f), radius, radius);
-    dc->FillEllipse(handleEllipse, accentBrush.Get());
-
-    ComPtr<ID2D1SolidColorBrush> handleBorderBrush;
-    dc->CreateSolidColorBrush(isLight ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) : D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.0f), &handleBorderBrush);
-    dc->DrawEllipse(handleEllipse, handleBorderBrush.Get(), 1.5f * m_uiScale);
-
-    // 5. Value Text
-    wchar_t valBuf[16];
-    swprintf_s(valBuf, L"%d%%", m_jpegQuality);
-    D2D1_RECT_F valRect = D2D1::RectF(trackRect.right + 6.0f * m_uiScale, rect.top, rect.right, rect.bottom);
-    if (textFormat) {
-        textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawText(valBuf, (UINT32)wcslen(valBuf), textFormat, valRect, textBrush.Get());
-    }
+    QuickView::UI::GeekWidgets::DrawPillSlider(
+        dc, rect, fillRatio, dispBuf,
+        isHovered, m_qualitySliderSubPart, isInputMode, false, false,
+        textFormat, s, pal);
 }
 
 } // namespace QuickView

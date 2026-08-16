@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "PrintManager.h"
+#include "GeekWidgets.h"
 
 namespace QuickView {
 
@@ -21,8 +22,6 @@ public:
     void Show(HWND hwnd, const std::wstring& imagePath, float imageWidth, float imageHeight);
     void Hide();
     bool IsVisible() const { return m_isVisible; }
-    
-
 
     void Render(ID2D1DeviceContext* ctx, float winW, float winH);
 
@@ -99,14 +98,13 @@ private:
     bool m_hoveredDec = false;
     bool m_hoveredInc = false;
 
-
-
     void RenderNumericCapsule(ID2D1DeviceContext* ctx, int id, const D2D1_RECT_F& rect, const wchar_t* name,
                               float* pValue, int16_t* pIntValue, float minVal, float maxVal, float step,
-                              float scaleFactor, int decimalPlaces);
-
+                              float scaleFactor = 1.0f, int decimalPlaces = 0);
     void DrawButton(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, const wchar_t* text, bool isHovered, bool isSelected = false);
-    void DrawRadio(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, const wchar_t* text, bool isSelected);
+    void RenderAlignmentGrid(ID2D1DeviceContext* ctx, float cx, float& cy, float panelWidth, 
+                             IDWriteTextFormat* fmtHeader, IDWriteTextFormat* fmtBtn, 
+                             ID2D1SolidColorBrush* panelTextBrush, const QuickView::UI::WidgetPalette& pal);
 };
 
-}
+} // namespace QuickView
