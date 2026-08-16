@@ -16,6 +16,7 @@ extern class CRenderEngine* g_pRenderEngine;
 
 extern AppConfig g_config;
 extern CompositionEngine* g_compEngine;
+extern float g_uiScale;
 
 // Official DWM system-backdrop constants (Win11 22H2+). Defined here so we do not
 // depend on a particular SDK shipping the enum under a given name.
@@ -142,14 +143,15 @@ void GeekContextMenu::ShowMenu(HWND parent, int sx, int sy,
     menu->m_isTouch = isTouch;
     menu->m_originPt = { sx, sy };
 
-    // DPI of the monitor under the cursor
+    // Scale: follow global g_uiScale with monitor DPI fallback
     HMONITOR hMon = MonitorFromPoint({ sx, sy }, MONITOR_DEFAULTTONEAREST);
     UINT dpiX = 96, dpiY = 96;
     using GetDpiForMonitorFn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
     static auto pGetDpi = reinterpret_cast<GetDpiForMonitorFn>(
         GetProcAddress(GetModuleHandleW(L"shcore.dll"), "GetDpiForMonitor"));
     if (pGetDpi) pGetDpi(hMon, 0 /* MDT_EFFECTIVE_DPI */, &dpiX, &dpiY);
-    menu->m_scale = dpiX / 96.0f;
+    menu->m_monitorDpiScale = dpiX / 96.0f;
+    menu->m_scale = (::g_uiScale > 0.0f) ? ::g_uiScale : (dpiX / 96.0f);
 
     menu->CalculateLayout();
     SIZE winSize = menu->GetWindowSize();
@@ -220,6 +222,7 @@ void GeekContextMenu::ShowSubmenuPopup(HWND parent, int sx, int sy,
     sub->m_isLight = parentMenu->m_isLight;
     sub->m_isTouch = parentMenu->m_isTouch;
     sub->m_scale = parentMenu->m_scale;
+    sub->m_monitorDpiScale = parentMenu->m_monitorDpiScale;
     sub->m_originPt = { sx, sy };
 
     sub->CalculateLayout();
@@ -852,9 +855,15 @@ void GeekContextMenu::RenderSeparator(float y) {
     }
 }
 
+float GeekContextMenu::GetDwmCornerRadiusDIP() const {
+    if (!g_config.RoundedCorners) return 0.0f;
+    float physicalRadius = CORNER_R * m_monitorDpiScale;
+    return (m_scale > 0.0f) ? (physicalRadius / m_scale) : CORNER_R;
+}
+
 void GeekContextMenu::RenderBevel() {
     auto sz = m_d2dContext->GetSize();
-    const float cr = g_config.RoundedCorners ? CORNER_R : 0.0f;
+    const float cr = GetDwmCornerRadiusDIP();
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
         D2D1::RectF(0.5f, 0.5f, sz.width - 0.5f, sz.height - 0.5f), cr, cr);
     if (m_bevelLightBrush)
@@ -1130,7 +1139,7 @@ void GeekContextMenu::RenderAndUI() {
     // When using Mica or Mica Alt (MenuBackdropStyle != 0), tint film opacity is forced to 0.
     config.opacity = (g_config.MenuBackdropStyle != 0) ? 0.0f : std::clamp(g_config.GlassMenusOpacity / 100.0f, 0.0f, 1.0f);
     config.panelBounds = D2D1::RectF(0, 0, dipW, dipH);
-    config.cornerRadius = g_config.RoundedCorners ? CORNER_R : 0.0f;
+    config.cornerRadius = GetDwmCornerRadiusDIP();
     config.track = QuickView::UI::GeekGlass::RenderTrack::TrackB_DWM;
 
     m_glassEngine.DrawGeekGlassPanel(m_d2dContext.Get(), config);

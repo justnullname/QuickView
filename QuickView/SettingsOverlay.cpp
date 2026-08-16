@@ -812,7 +812,7 @@ void SettingsOverlay::Init(ID2D1DeviceContext* pRT, HWND hwnd) {
 }
 
 void SettingsOverlay::SetUIScale(float scale) {
-    if (scale < 1.0f) scale = 1.0f;
+    if (scale < 0.75f) scale = 0.75f;
     if (scale > 4.0f) scale = 4.0f;
     if (fabsf(m_uiScale - scale) < 0.001f) return;
     m_uiScale = scale;
@@ -1535,19 +1535,33 @@ void SettingsOverlay::BuildMenu() {
     tabVisuals.items.push_back(itemSmooth);
 
 
-    SettingsItem itemUiScale = {
-        AppStrings::Settings_Label_UIScale,
-        OptionType::Segment,
-        nullptr,
-        nullptr,
-        &g_config.UIScalePreset,
-        nullptr,
-        0,
-        0,
-        { AppStrings::Settings_Option_Auto, L"90%", L"100%", L"110%", L"125%" }
+    static float s_uiScalePresetVal = (float)g_config.UIScalePreset;
+    s_uiScalePresetVal = (float)g_config.UIScalePreset;
+    SettingsItem itemUiScale;
+    itemUiScale.label = AppStrings::Settings_Label_UIScale;
+    itemUiScale.type = OptionType::Slider;
+    itemUiScale.pFloatVal = &s_uiScalePresetVal;
+    itemUiScale.minVal = 0.0f;
+    itemUiScale.maxVal = 11.0f;
+    itemUiScale.step = 1.0f;
+    itemUiScale.isNewOption = true;
+    itemUiScale.options = { AppStrings::Settings_Option_Auto, L"75%", L"90%", L"100%", L"110%", L"125%", L"150%", L"175%", L"200%", L"225%", L"250%", L"300%" };
+    itemUiScale.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+        if (item && item->pFloatVal) {
+            int idx = (int)roundf(*item->pFloatVal);
+            if (idx < 0) idx = 0;
+            if (idx > 11) idx = 11;
+            *item->pFloatVal = (float)idx;
+        }
     };
-    itemUiScale.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-        if (g_config.UIScalePreset < 0 || g_config.UIScalePreset > 4) g_config.UIScalePreset = 0;
+    itemUiScale.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+        if (item && item->pFloatVal) {
+            int idx = (int)roundf(*item->pFloatVal);
+            if (idx < 0) idx = 0;
+            if (idx > 11) idx = 11;
+            g_config.UIScalePreset = idx;
+            *item->pFloatVal = (float)idx;
+        }
         SaveConfig();
     };
     tabVisuals.items.push_back(itemUiScale);
@@ -3724,7 +3738,7 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                   int subPart = (&item == m_pHoverItem) ? m_hoverSliderSubPart : 0;
                   bool isInputFocused = (&item == m_pFocusedSlider);
                   DrawSlider(pRT, controlRect, val, item.minVal, item.maxVal, isHovered,
-                             item.displayFormat, item.isDisabled, subPart, item.step, isInputFocused, hasReset);
+                             item.displayFormat, item.isDisabled, subPart, item.step, isInputFocused, hasReset, item.options);
                 } break;
                 case OptionType::Segment:
                     item.interactRect = controlRect;
@@ -4390,13 +4404,14 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
                                  float minV, float maxV, bool isHovered,
                                  const wchar_t* format, bool isDisabled,
                                  int subPartHover, [[maybe_unused]] float step,
-                                 bool isInputFocused, bool hasReset) {
+                                 bool isInputFocused, bool hasReset,
+                                 const std::vector<std::wstring_view>& options) {
     const float s = m_uiScale;
     const QuickView::SliderFullGeom g = QuickView::ComputeSliderFullGeom(
         rect.left, rect.right, rect.top, rect.bottom, s, val, minV, maxV, hasReset);
 
     bool isMinusHover = (subPartHover == 1 && !isDisabled);
-    bool isValueHover = (subPartHover == 2 && !isDisabled);
+    bool isValueHover = (subPartHover == 2 && !isDisabled && options.empty());
     bool isPlusHover  = (subPartHover == 3 && !isDisabled);
     bool isTrackHover = (subPartHover == 4 && !isDisabled) || (isHovered && !isDisabled);
 
@@ -4408,7 +4423,7 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
                   isDisabled ? m_brushTextDim.Get() : (isMinusHover ? m_brushAccent.Get() : m_brushTextDim.Get()));
 
     // 2. [Value] In-place Capsule Input Box - Transparent background with clean minimalist border
-    if (isInputFocused) {
+    if (isInputFocused && options.empty()) {
         pRT->DrawRoundedRectangle(
             D2D1::RoundedRect(g.valueRect, 3.0f * s, 3.0f * s),
             m_brushAccent.Get(), 1.5f * s);
@@ -4423,7 +4438,12 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     }
 
     wchar_t buf[64];
-    if (isInputFocused) {
+    if (!options.empty()) {
+        int idx = (int)roundf(val);
+        if (idx < 0) idx = 0;
+        if (idx >= (int)options.size()) idx = (int)options.size() - 1;
+        swprintf_s(buf, L"%.*s", (int)options[idx].size(), options[idx].data());
+    } else if (isInputFocused) {
         bool showCursor = ((GetTickCount() / 500) % 2 == 0);
         if (m_sliderInputLen == 0) {
             swprintf_s(buf, showCursor ? L"|" : L" ");
@@ -4445,7 +4465,7 @@ void SettingsOverlay::DrawSlider(ID2D1DeviceContext* pRT, const D2D1_RECT_F& rec
     m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     pRT->DrawText(buf, (UINT32)wcslen(buf), m_textFormatItem.Get(), g.valueRect,
-                  isDisabled ? m_brushTextDim.Get() : ((isInputFocused || isValueHover) ? m_brushAccent.Get() : m_brushText.Get()));
+                  isDisabled ? m_brushTextDim.Get() : (((isInputFocused && options.empty()) || isValueHover) ? m_brushAccent.Get() : m_brushText.Get()));
 
     // 3. [+] Plus Character (⊕) - Larger stepper font (15.5pt), no solid button background
     pRT->DrawText(L"⊕", 1, pStepperFormat, g.plusRect,
@@ -5015,13 +5035,14 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                     if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
                     extern void SaveConfig();
                     SaveConfig();
+                    return SettingsAction::RepaintAll;
                 }
                 return SettingsAction::RepaintStatic;
             }
 
-            // 2. Value badge [Val] -> In-place capsule direct editing
+            // 2. Value badge [Val] -> In-place capsule direct editing (Disabled if options is non-empty)
             if (m_hoverSliderSubPart == 2) {
-                if (m_pFocusedSlider != m_pHoverItem) {
+                if (m_pHoverItem->options.empty() && m_pFocusedSlider != m_pHoverItem) {
                     if (m_pFocusedSlider) {
                         CommitInput();
                     }
@@ -5054,6 +5075,7 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
                     if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
                     extern void SaveConfig();
                     SaveConfig();
+                    return SettingsAction::RepaintAll;
                 }
                 return SettingsAction::RepaintStatic;
             }
@@ -5074,20 +5096,20 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
              if (x >= controlX && x <= controlX + controlW) {
                  std::vector<float> itemWidths = CalculateSegmentWidths(m_pHoverItem->options, controlW);
                  float currentX = controlX;
-                 int idx = -1;
-                 for (size_t i = 0; i < itemWidths.size(); ++i) {
-                     if (x >= currentX && x < currentX + itemWidths[i]) {
-                         idx = (int)i;
-                         break;
+                 for (size_t i = 0; i < m_pHoverItem->options.size(); i++) {
+                     if (x >= currentX && x <= currentX + itemWidths[i]) {
+                         int targetIdx = (int)i;
+                         if (*m_pHoverItem->pIntVal != targetIdx) {
+                             *m_pHoverItem->pIntVal = targetIdx;
+                             [[maybe_unused]] int effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+                             if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
+                         }
+                         return SettingsAction::RepaintAll;
                      }
                      currentX += itemWidths[i];
                  }
-                 if (idx >= 0 && idx < (int)m_pHoverItem->options.size()) {
-                     *m_pHoverItem->pIntVal = idx;
-                     if (m_pHoverItem->onChange) m_pHoverItem->onChange(this, m_pHoverItem);
-                 }
              }
-             return SettingsAction::RepaintAll;
+             return SettingsAction::RepaintStatic;
         }
         // Input Option Type Click
         if (m_pHoverItem->type == OptionType::Input) {
@@ -5261,7 +5283,7 @@ SettingsAction SettingsOverlay::OnLButtonUp([[maybe_unused]] float x, [[maybe_un
             m_needsLayoutRebuild = false;
             BuildMenu();
         }
-        return SettingsAction::RepaintStatic;
+        return SettingsAction::RepaintAll;
     }
     return SettingsAction::None; // Consume if visible
 }
@@ -5335,7 +5357,7 @@ D2D1_RECT_F SettingsOverlay::GetComboDropdownRect(const SettingsItem* item) cons
 
     float itemH = ITEM_HEIGHT * s;
     int count = (int)item->options.size();
-    int maxItems = 8;
+    int maxItems = 16;
     int visibleItems = (count > maxItems) ? maxItems : count;
     float dropH = visibleItems * itemH;
 
@@ -5361,7 +5383,7 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
     const float s = m_uiScale;
     float itemH = ITEM_HEIGHT * s;
     int count = (int)m_pActiveCombo->options.size();
-    int maxItems = 8;
+    int maxItems = 16;
     int visibleItems = (count > maxItems) ? maxItems : count;
     
     // Shadow / Background

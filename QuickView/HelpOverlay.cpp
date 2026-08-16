@@ -22,7 +22,7 @@ void HelpOverlay::Init(ID2D1RenderTarget* pRT, HWND hwnd) {
 }
 
 void HelpOverlay::SetUIScale(float scale) {
-    if (scale < 1.0f) scale = 1.0f;
+    if (scale < 0.75f) scale = 0.75f;
     if (scale > 4.0f) scale = 4.0f;
     if (fabsf(m_uiScale - scale) < 0.001f) return;
     m_uiScale = scale;

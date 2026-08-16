@@ -563,7 +563,7 @@ struct AppConfig {
     bool SortArchivesByNameAscending = true;
     bool ConfirmDelete = true;
     bool PortableMode = false;
-    int UIScalePreset = 0;               // 0=Auto(DPI), 1=90%, 2=100%, 3=110%, 4=125%
+    int UIScalePreset = 0;               // 0=Auto(DPI), 1=75%, 2=90%, 3=100%, 4=110%, 5=125%, 6=150%, 7=175%, 8=200%, 9=225%, 10=250%, 11=300%
 
     // --- View ---
     int ThemeMode = 0;                  // 0=Auto, 1=Dark, 2=Light, 3=Custom

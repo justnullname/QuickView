@@ -608,6 +608,10 @@ static float GetMinWindowWidth() {
         }
     }
 
+    if (g_imagePath.empty() && !g_gallery.IsVisible()) {
+        defaultMinW = std::max(defaultMinW, 460.0f * g_uiScale);
+    }
+
     return defaultMinW;
 }
 
@@ -628,6 +632,9 @@ static float GetMinWindowHeight() {
         defaultMinH = std::max(defaultMinH, GetEffectiveGalleryMinSize());
     } else if (g_gallery.GetMode() == GalleryMode::Filmstrip) {
         defaultMinH = std::max(defaultMinH, 180.0f * g_uiScale + 50.0f * g_uiScale);
+    }
+    if (g_imagePath.empty() && !g_gallery.IsVisible()) {
+        defaultMinH = std::max(defaultMinH, 380.0f * g_uiScale);
     }
     if (AppContext::GetInstance().Dialog.IsVisible) {
         float titleHeight = 35.0f;
@@ -1350,9 +1357,8 @@ static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex = -
 static std::wstring PickFolder(HWND hwnd, const std::wstring& initialPath = L"");
 
 static void ApplyUIScale(float scale) {
-    if (scale < 1.0f) scale = 1.0f;
+    if (scale < 0.75f) scale = 0.75f;
     if (scale > 4.0f) scale = 4.0f;
-    if (fabsf(g_uiScale - scale) < 0.001f) return;
     g_uiScale = scale;
 
     if (g_uiRenderer) {
@@ -1365,10 +1371,17 @@ static void ApplyUIScale(float scale) {
 
 static float ResolveUIScale(UINT dpi) {
     switch (g_config.UIScalePreset) {
-    case 1: return 0.90f;
-    case 2: return 1.00f;
-    case 3: return 1.10f;
-    case 4: return 1.25f;
+    case 1: return 0.75f;
+    case 2: return 0.90f;
+    case 3: return 1.00f;
+    case 4: return 1.10f;
+    case 5: return 1.25f;
+    case 6: return 1.50f;
+    case 7: return 1.75f;
+    case 8: return 2.00f;
+    case 9: return 2.25f;
+    case 10: return 2.50f;
+    case 11: return 3.00f;
     default:
         return (float)dpi / 96.0f;
     }
@@ -1382,7 +1395,7 @@ static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
     if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
     g_windowDpi = dpi;
     ApplyUIScale(ResolveUIScale(dpi));
-    if (hwnd && (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible)) {
+    if (hwnd && (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || g_imagePath.empty())) {
         AdjustWindowForOverlay(hwnd, false);
     }
 }
@@ -5116,9 +5129,9 @@ void LoadConfig() {
     if (uiScalePreset == -1) {
         // Migration from old config: 0=Auto, 1=Manual(100%)
         int uiScaleMode = GetPrivateProfileIntW(L"General", L"UIScaleMode", 0, iniPath.c_str());
-        uiScalePreset = (uiScaleMode == 1) ? 2 : 0;
+        uiScalePreset = (uiScaleMode == 1) ? 3 : 0;
     }
-    if (uiScalePreset < 0 || uiScalePreset > 4) uiScalePreset = 0;
+    if (uiScalePreset < 0 || uiScalePreset > 11) uiScalePreset = 0;
     g_config.UIScalePreset = uiScalePreset;
 
     // Theme & Geek Glass
@@ -7311,8 +7324,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     RegisterClassExW(&wcex);
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
-    int winW = 800;
-    int winH = 600;
+
+    UINT primaryDpi = GetDpiForSystem();
+    if (primaryDpi == 0) primaryDpi = USER_DEFAULT_SCREEN_DPI;
+    float initScale = ResolveUIScale(primaryDpi);
+    if (initScale < 0.75f) initScale = 0.75f;
+    if (initScale > 4.0f) initScale = 4.0f;
+    g_uiScale = initScale;
+
+    int defaultW = (int)std::lround(800.0f * initScale);
+    int defaultH = (int)std::lround(600.0f * initScale);
+    if (defaultW > (int)(screenW * 0.9f)) defaultW = (int)(screenW * 0.9f);
+    if (defaultH > (int)(screenH * 0.9f)) defaultH = (int)(screenH * 0.9f);
+
+    int winW = defaultW;
+    int winH = defaultH;
     int xPos = (screenW - winW) / 2;
     int yPos = (screenH - winH) / 2;
 
@@ -7542,6 +7568,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
     g_settingsOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
     g_helpOverlay.Init(g_renderEngine->GetDeviceContext(), hwnd);
+    ApplyUIScale(g_uiScale);
     DragAcceptFiles(hwnd, TRUE);
     
     // Apply Always on Top
@@ -10860,8 +10887,12 @@ SKIP_EDGE_NAV:;
         }
         if (g_settingsOverlay.IsVisible()) {
              SettingsAction action = g_settingsOverlay.OnLButtonUp((float)pt.x, (float)pt.y);
-             if (action == SettingsAction::RepaintAll) RequestRepaint(PaintLayer::All);
-             else if (action == SettingsAction::RepaintStatic) RequestRepaint(PaintLayer::Static);
+             if (action == SettingsAction::RepaintAll) {
+                 RefreshWindowDpi(hwnd);
+                 RequestRepaint(PaintLayer::All);
+             } else if (action == SettingsAction::RepaintStatic) {
+                 RequestRepaint(PaintLayer::Static);
+             }
              return 0; // Consume event (prevent fallthrough to Image Repaint)
         }
         

@@ -170,7 +170,8 @@ private:
                     float minV, float maxV, bool isHovered,
                     const wchar_t* format = nullptr, bool isDisabled = false,
                     int subPartHover = 0, float step = 0.0f, bool isInputFocused = false,
-                    bool hasReset = false);
+                    bool hasReset = false,
+                    const std::vector<std::wstring_view>& options = {});
     std::vector<float> CalculateSegmentWidths(const std::vector<std::wstring_view>& options, float totalW);
     void DrawSegment(ID2D1DeviceContext *pRT, const D2D1_RECT_F &rect,
                      int selectedIdx, const std::vector<std::wstring_view> &options,

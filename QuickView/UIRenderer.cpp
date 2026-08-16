@@ -173,7 +173,7 @@ HRESULT UIRenderer::Initialize(CompositionEngine* compEngine, IDWriteFactory* dw
 }
 
 void UIRenderer::SetUIScale(float scale) {
-    if (scale < 1.0f) scale = 1.0f;
+    if (scale < 0.75f) scale = 0.75f;
     if (scale > 4.0f) scale = 4.0f;
     if (fabsf(m_uiScale - scale) < 0.001f) return;
 

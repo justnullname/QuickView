@@ -208,6 +208,8 @@ private:
     bool m_isLight = false;
     bool m_isTouch = false;
     float m_scale = 1.0f;
+    float m_monitorDpiScale = 1.0f;
+    float GetDwmCornerRadiusDIP() const;
 
     // Animation
     float m_animT = 0.0f;
