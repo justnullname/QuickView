@@ -755,6 +755,7 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_iccDropdownOpen = false;
             Hide();
             ::TryExitCropMode(m_hwnd, true);
+            ::DiscardChanges();
             ExecutePendingAction();
             ::RequestRepaint(PaintLayer::All);
         } else {

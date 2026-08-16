@@ -11045,7 +11045,7 @@ SKIP_EDGE_NAV:;
                     break;
                 }
                 case ToolbarButtonID::CropCancel: {
-                    TryExitCropMode(hwnd, false);
+                    TryExitCropMode(hwnd, true);
                     break;
                 }
                 case ToolbarButtonID::Pin: {
@@ -12057,7 +12057,7 @@ SKIP_EDGE_NAV:;
 
         if (g_cropState.IsActive && !QuickView::ExportPanel::GetInstance().IsVisible()) {
             if (wParam == VK_ESCAPE) {
-                TryExitCropMode(hwnd);
+                TryExitCropMode(hwnd, true);
                 return 0;
             }
             if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_UP || wParam == VK_DOWN) {
@@ -17543,7 +17543,7 @@ void TryExitCropMode(HWND hwnd, bool forceQuit) {
         QuickView::ExportPanel::GetInstance().Show(hwnd, targetWidth, targetHeight, g_imagePath, QuickView::PendingAction::ExitCropMode);
         return;
     }
-    g_cropState.IsActive = false;
+    g_cropState.Reset();
     g_toolbar.SetCropMode(false);
     RequestRepaint(PaintLayer::All);
 }
