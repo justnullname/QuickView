@@ -8921,9 +8921,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_runtime.screenHeight = HIWORD(lParam);
             if (g_imageEngine) g_imageEngine->UpdateConfig(g_runtime);
             
-            // [Fix] Commit after SyncDCompState to ensure background and layout changes 
-            // are atomically presented when recovering from minimization.
-            if (forceCommit && g_compEngine) {
+            // [Fix] Windows 10 DComp Restore & Synchronous Resize Presentation:
+            // Synchronously render to present fully painted UI and image in the same atomic frame,
+            // completely eliminating blank surface flicker during window edge dragging.
+            if (LOWORD(lParam) > 0 && HIWORD(lParam) > 0) {
+                OnPaint(hwnd);
+            } else if (forceCommit && g_compEngine) {
                 g_compEngine->Commit();
             }
         }
@@ -13507,15 +13510,11 @@ void OnResize(HWND hwnd, UINT width, UINT height) {
         RequestRepaint(PaintLayer::All);
     }
     if (g_compEngine) {
-        // [Fix] Atomic Update for Rotated Image Lag
-        // 1. ResizeSurfaces: Updates UI layer backing stores (No Commit)
-        // 2. SyncDCompState: Updates Background and Image Transforms (Commits both)
-        // This ensures UI resize and Image visual jump happen in the SAME frame.
+        // ResizeSurfaces: Updates UI layer backing stores (re-created with new dimensions, without premature Commit).
         g_compEngine->ResizeSurfaces(width, height);
         if (!g_deferProgrammaticZoomResizeSync) {
             SyncDCompState(hwnd, (float)width, (float)height);
         }
-        g_compEngine->Commit();
         
         // [SVG Sync] Trigger lazy re-render after window resize settles.
         // During active resize, SyncDCompState handles smooth pixel scaling.

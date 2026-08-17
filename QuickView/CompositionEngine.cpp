@@ -1070,7 +1070,7 @@ HRESULT CompositionEngine::Resize(UINT width, UINT height) {
 // Does NOT Commit. Allows caller to batch Transform updates (SyncDCompState) in same frame.
 HRESULT CompositionEngine::ResizeSurfaces(UINT width, UINT height) {
     if (width == 0 || height == 0) return S_OK;
-    // if (width == m_width && height == m_height) return S_OK; // Always allow refresh
+    if (width == m_width && height == m_height) return S_OK;
     
     m_width = width;
     m_height = height;
