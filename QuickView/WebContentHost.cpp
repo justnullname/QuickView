@@ -703,14 +703,6 @@ HRESULT WebContentHost::SyncRasterScaleToDisplay(float displayZoom, UINT maxText
     const float z = (std::max)(displayZoom, 0.05f);
     const float rMax = GetMaxRasterScale();
     const float cur = rasterScale_ > 0.0f ? rasterScale_ : 1.0f;
-    float viewportCap = rMax;
-    RECT client{};
-    if (hwnd_ && GetClientRect(hwnd_, &client) && client.right > 0 && client.bottom > 0) {
-        viewportCap = ComputeViewportRasterCap(
-            static_cast<float>(contentW_), static_cast<float>(contentH_),
-            static_cast<float>(client.right), static_cast<float>(client.bottom));
-    }
-
     float target = ComputeTrackedRasterScale(z, static_cast<float>(contentW_),
                                              static_cast<float>(contentH_), maxTextureDim_);
 
@@ -726,7 +718,7 @@ HRESULT WebContentHost::SyncRasterScaleToDisplay(float displayZoom, UINT maxText
         return S_OK;
     }
 
-    target = (std::min)(target, viewportCap);
+    target = (std::min)(target, rMax);
 
     const float rel = std::abs(target - cur) / cur;
     if (rel < kRasterRelEpsilon) {

@@ -2012,7 +2012,6 @@ static void EnterOverlayMode(HWND hwnd) {
     // Clear background to fully transparent so user can see through
     g_compEngine->UpdateBackground((float)g_compEngine->GetWidth(), (float)g_compEngine->GetHeight(),
                                    D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false);
-    g_compEngine->Commit();
 
     // Disable DWM system backdrop and frame extension in overlay mode to eliminate system background color
     ApplyWindowTheme(hwnd);
@@ -2044,7 +2043,6 @@ static void ExitOverlayMode(HWND hwnd) {
 
     // Restore opacity to 100%
     g_compEngine->SetRootOpacity(1.0f);
-    g_compEngine->Commit();
 
     // Restore topmost state
     if (!g_runtime.WasAlwaysOnTopBeforeOverlay) {
@@ -2069,7 +2067,6 @@ static void ExitOverlayMode(HWND hwnd) {
     RECT bgRc{};
     GetClientRect(hwnd, &bgRc);
     SyncDCompState(hwnd, (float)bgRc.right, (float)bgRc.bottom);
-    g_compEngine->Commit();
 
     g_osd.Show(hwnd, AppStrings::OSD_OverlayModeOff, false);
     InvalidateRect(hwnd, nullptr, FALSE);
@@ -2084,7 +2081,6 @@ static void AdjustOverlayAlpha(HWND hwnd, int delta) {
 
     float opacity = newAlpha / 255.0f;
     g_compEngine->SetRootOpacity(opacity);
-    g_compEngine->Commit();
 
     g_toolbar.SetOverlayAlpha(g_runtime.OverlayAlpha);
 
@@ -2444,7 +2440,6 @@ static bool UpgradeSvgSurface(HWND hwnd, ImageResource& res) {
 
     g_compEngine->SwapLayers();
     SyncDCompState(hwnd, winW, winH);
-    g_compEngine->Commit();
     return true;
 }
 
@@ -2578,7 +2573,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // Transparent
         g_compEngine->EndPendingUpdate();
         g_compEngine->SwapLayers(); // Instant
-        g_compEngine->Commit();
         return true;
     }
     
@@ -2674,7 +2668,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
                 (fitH - (float)logicalH * g_lastFitScale) * 0.5f);
         }
 
-        g_compEngine->Commit();
         return true;
     }
 
@@ -2924,7 +2917,6 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
     if (g_compEngine->IsInitialized()) {
         SyncDCompState(hwnd, (float)winW, (float)winH);
     }
-    g_compEngine->Commit();
     return true;
 }
 
@@ -6572,7 +6564,6 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
             displayPanY += galleryH / 2.0f;
 
             if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-
                 VisualState surfaceVs{};
                 float currentScale = 1.0f;
                 // [Fix] Maintain aspect ratio and sync zoom during interactive resize by uniformly scaling the old surface.
@@ -6588,7 +6579,7 @@ void SyncDCompState([[maybe_unused]] HWND hwnd, float winW, float winH, bool ani
                 surfaceVs.IsRotated90 = false;
                 surfaceVs.FlipX = 1.0f;
                 surfaceVs.FlipY = 1.0f;
-                g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, galleryH / 2.0f, animationDurationMs);
+                g_compEngine->UpdateTransformMatrix(surfaceVs, winW, winH, 1.0f, 0.0f, galleryH / 2.0f, 0.0f);
                 
                 // Use adaptive interpolation even during SVG viewport resizing to keep it smooth
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE interpMode = GetOptimalDCompInterpolationMode(currentScale, g_lastSurfaceSize.width, g_lastSurfaceSize.height);
@@ -7883,10 +7874,6 @@ __declspec(noinline) static bool IsMouseOverUI(HWND hwnd, int x, int y) {
 
     if (HitTestEdgeNavZone(hwnd, pt, winW, winH) != 0) return true;
 
-    if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl && AppContext::GetInstance().CompareCtrl->IsNearCompareDivider(hwnd, pt)) {
-        return true;
-    }
-
     return false;
 }
 
@@ -8541,7 +8528,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == IDT_SVG_RERENDER) {
              KillTimer(hwnd, IDT_SVG_RERENDER);
              if (GetPaneContext(PaneSlot::Primary).resource.isSvg) {
-                 UpgradeSvgSurface(hwnd, GetPaneContext(PaneSlot::Primary).resource);
+                 g_isImageDirty = true;
+                 RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
              }
              return 0;
         }
@@ -8608,9 +8596,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
 
-        // Debug HUD Refresh (996)
+        // Debug HUD Refresh Timer (996) - intentionally high frequency for FPS display
         if (wParam == 996) {
-             RequestRepaint(PaintLayer::Dynamic);
+            if (g_showDebugHUD) {
+                MarkDynamicLayerDirty();
+            } else {
+                KillTimer(hwnd, 996);
+            }
+            return 0;
         }
         
         // OSD Timer (999) - Heartbeat/Expiration check
@@ -8655,16 +8648,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // Timer stays alive but only marks dirty during animation
             } else {
                 KillTimer(hwnd, 997);
-            }
-        }
-        
-        // Debug HUD Refresh Timer (996) - intentionally high frequency for FPS display
-        // This is acceptable for debug mode, but KillTimer when not needed
-        if (wParam == 996) {
-            if (g_showDebugHUD) {
-                MarkDynamicLayerDirty();  // Debug HUD needs frequent updates for FPS
-            } else {
-                KillTimer(hwnd, 996);
             }
         }
         
@@ -11484,11 +11467,8 @@ SKIP_EDGE_NAV:;
                     GetPaneContext(PaneSlot::Primary).view.PanX += dx;
                     RECT rc; GetClientRect(hwnd, &rc);
                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-                        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
-                    } else {
-                        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                    }
+                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+                    RefreshSvgSurfaceAfterZoom(hwnd);
                 }
             } else {
                 // Vertical Pan over minimap
@@ -11507,11 +11487,8 @@ SKIP_EDGE_NAV:;
                     GetPaneContext(PaneSlot::Primary).view.PanY += dy;
                     RECT rc; GetClientRect(hwnd, &rc);
                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-                        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
-                    } else {
-                        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                    }
+                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+                    RefreshSvgSurfaceAfterZoom(hwnd);
                 }
             }
             return 0;
@@ -11539,11 +11516,8 @@ SKIP_EDGE_NAV:;
                     GetPaneContext(PaneSlot::Primary).view.PanX += dx;
                     RECT rc; GetClientRect(hwnd, &rc);
                     SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                    if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-                        RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
-                    } else {
-                        RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                    }
+                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+                    RefreshSvgSurfaceAfterZoom(hwnd);
                 }
                 return 0;
             }
@@ -11593,11 +11567,8 @@ SKIP_EDGE_NAV:;
                 GetPaneContext(PaneSlot::Primary).view.PanY += dy;
                 RECT rc; GetClientRect(hwnd, &rc);
                 SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
-                    RequestRepaint(PaintLayer::Image | PaintLayer::Dynamic | PaintLayer::Static);
-                } else {
-                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
-                }
+                RequestRepaint(PaintLayer::Dynamic | PaintLayer::Static);
+                RefreshSvgSurfaceAfterZoom(hwnd);
             }
             return 0;
         }
@@ -13338,7 +13309,6 @@ SKIP_EDGE_NAV:;
                  if (g_compEngine && g_compEngine->IsInitialized()) {
                      RECT rc; GetClientRect(hwnd, &rc);
                      SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                     g_compEngine->Commit();
                  }
              }
              RequestRepaint(PaintLayer::All);
@@ -14204,7 +14174,6 @@ void ProcessEngineEvents(HWND hwnd) {
                     if (g_compEngine && g_compEngine->IsInitialized()) {
                         RECT rc; GetClientRect(hwnd, &rc);
                         SyncDCompState(hwnd, (float)rc.right, (float)rc.bottom);
-                        g_compEngine->Commit();
                     }
 
                     // WebContent: remount + reveal after overscan has been armed hidden.
@@ -16095,7 +16064,6 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
               }
 
          }
-         // Static: edge overflow indicators + minimap (WebView has no Image-layer pixels).
          RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
     }
 

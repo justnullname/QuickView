@@ -487,7 +487,7 @@ bool CompareController::RenderComposite(HWND hwnd) {
     vs.FlipX = 1.0f;
     vs.FlipY = 1.0f;
     g_compEngine->UpdateTransformMatrix(vs, (float)winW, (float)winH, 1.0f, 0.0f, 0.0f);
-    g_compEngine->Commit();
+    // Defer DComp commit to OnPaint to present composite image and compare UI atomically
     return true;
 }
 
