@@ -83,3 +83,34 @@ TEST(SettingsSliderMath, ParseSliderInputFloat) {
     EXPECT_NEAR(ParseSliderInput(L"2.75", 1.0f, 0.1f, 3.0f, L"%.1fx", 0.1f), 2.8f, 0.01f);
     EXPECT_FLOAT_EQ(ParseSliderInput(L"invalid", 1.0f, 0.1f, 3.0f, L"%.1fx", 0.1f), 1.0f); // Fallback
 }
+
+TEST(SettingsSliderMath, KeyboardStepQuantization) {
+    const float minV = 0.0f;
+    const float maxV = 100.0f;
+    const float step = EffectiveStep(0.0f, minV, maxV, L"%.0f %%");
+    EXPECT_FLOAT_EQ(step, 1.0f);
+
+    // Normal step right (+)
+    float val = 50.0f;
+    val = QuantizeSliderValue(val + step, minV, maxV, step);
+    EXPECT_FLOAT_EQ(val, 51.0f);
+
+    // Normal step left (-)
+    val = QuantizeSliderValue(val - step, minV, maxV, step);
+    EXPECT_FLOAT_EQ(val, 50.0f);
+
+    // Shift accelerated step (5x)
+    const float mult = 5.0f;
+    val = QuantizeSliderValue(val + step * mult, minV, maxV, step);
+    EXPECT_FLOAT_EQ(val, 55.0f);
+
+    // Clamping to boundaries
+    val = 98.0f;
+    val = QuantizeSliderValue(val + step * mult, minV, maxV, step);
+    EXPECT_FLOAT_EQ(val, 100.0f);
+
+    val = 2.0f;
+    val = QuantizeSliderValue(val - step * mult, minV, maxV, step);
+    EXPECT_FLOAT_EQ(val, 0.0f);
+}
+

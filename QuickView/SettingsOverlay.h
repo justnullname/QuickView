@@ -182,6 +182,15 @@ private:
     void RenderUpdateToast(ID2D1DeviceContext* pRT, float hudX, float hudY, float hudW, float hudH);
     void RenderTooltip(ID2D1DeviceContext* pRT);
 
+    // Keyboard navigation helper methods
+    bool IsItemInteractive(const SettingsItem& item) const;
+    void FocusNextItem(bool forward);
+    void EnsureFocusedItemVisible();
+    void SwitchTab(int delta);
+    int GetFirstInteractiveItemIndex(int tabIdx) const;
+    void ResetKeyboardFocus();
+    void HandleItemKeyboardActivation(SettingsItem& item, WPARAM key);
+
     D2D1_RECT_F GetScrollbarTrackRect() const;
     D2D1_RECT_F GetScrollbarThumbRect() const;
     void ClampScroll();
@@ -190,6 +199,12 @@ private:
     float m_opacity = 0.0f; 
     int m_activeTab = 0;
     
+    // Keyboard navigation focus state
+    int m_focusedItemIdx = -1;
+    int m_focusedTagIdx = 0;
+    int m_focusedPartIdx = 0; // Sub-focus for DualActionButton / CustomColorRow / AboutLinks
+    bool m_isKeyboardNavActive = false;
+
     SettingsItem* m_pHoverItem = nullptr;
     int m_hoverSliderSubPart = 0; // 0: None, 1: Left Arrow (<), 2: Body (Scrub/Edit), 3: Right Arrow (>), 4: Reset
     SettingsItem* m_pActiveSlider = nullptr; 

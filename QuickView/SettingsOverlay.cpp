@@ -2782,6 +2782,117 @@ void SettingsOverlay::BuildMenu() {
     m_tabs.push_back(tabAbout);
 }
 
+bool SettingsOverlay::IsItemInteractive(const SettingsItem& item) const {
+    if (item.isDisabled) return false;
+    switch (item.type) {
+        case OptionType::Toggle:
+        case OptionType::Slider:
+        case OptionType::Segment:
+        case OptionType::ComboBox:
+        case OptionType::ActionButton:
+        case OptionType::DualActionButton:
+        case OptionType::CustomColorRow:
+        case OptionType::Input:
+        case OptionType::HotkeyBindRow:
+        case OptionType::TagCloud:
+        case OptionType::AboutVersionCard:
+        case OptionType::AboutLinks:
+            return true;
+        default:
+            return false;
+    }
+}
+
+int SettingsOverlay::GetFirstInteractiveItemIndex(int tabIdx) const {
+    if (tabIdx < 0 || tabIdx >= (int)m_tabs.size()) return -1;
+    const auto& items = m_tabs[tabIdx].items;
+    for (int i = 0; i < (int)items.size(); ++i) {
+        if (IsItemInteractive(items[i])) return i;
+    }
+    return -1;
+}
+
+void SettingsOverlay::ResetKeyboardFocus() {
+    m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
+    m_focusedTagIdx = 0;
+    m_focusedPartIdx = 0;
+    m_isKeyboardNavActive = false;
+}
+
+void SettingsOverlay::SwitchTab(int delta) {
+    if (m_tabs.empty()) return;
+    if (m_pFocusedSlider) CommitInput();
+    m_pActiveCombo = nullptr;
+    m_comboHoverIdx = -1;
+    m_pActiveSlider = nullptr;
+    m_pHoverItem = nullptr;
+
+    int newTab = (m_activeTab + delta) % (int)m_tabs.size();
+    if (newTab < 0) newTab += (int)m_tabs.size();
+    m_activeTab = newTab;
+    m_scrollOffset = 0.0f;
+    m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
+    m_focusedTagIdx = 0;
+    m_focusedPartIdx = 0;
+    m_isKeyboardNavActive = true;
+}
+
+void SettingsOverlay::FocusNextItem(bool forward) {
+    if (m_activeTab < 0 || m_activeTab >= (int)m_tabs.size()) return;
+    auto& items = m_tabs[m_activeTab].items;
+    if (items.empty()) return;
+
+    int count = (int)items.size();
+    int start = (m_focusedItemIdx >= 0 && m_focusedItemIdx < count) ? m_focusedItemIdx : (forward ? -1 : count);
+    int step = forward ? 1 : -1;
+    
+    int nextIdx = start + step;
+    while (nextIdx >= 0 && nextIdx < count) {
+        if (IsItemInteractive(items[nextIdx])) {
+            m_focusedItemIdx = nextIdx;
+            m_focusedTagIdx = 0;
+            m_focusedPartIdx = 0;
+            m_isKeyboardNavActive = true;
+            EnsureFocusedItemVisible();
+            return;
+        }
+        nextIdx += step;
+    }
+
+    // Wrap around if not reached start
+    nextIdx = forward ? 0 : count - 1;
+    while (nextIdx != start && nextIdx >= 0 && nextIdx < count) {
+        if (IsItemInteractive(items[nextIdx])) {
+            m_focusedItemIdx = nextIdx;
+            m_focusedTagIdx = 0;
+            m_focusedPartIdx = 0;
+            m_isKeyboardNavActive = true;
+            EnsureFocusedItemVisible();
+            return;
+        }
+        nextIdx += step;
+    }
+}
+
+void SettingsOverlay::EnsureFocusedItemVisible() {
+    if (m_activeTab < 0 || m_activeTab >= (int)m_tabs.size()) return;
+    auto& items = m_tabs[m_activeTab].items;
+    if (m_focusedItemIdx < 0 || m_focusedItemIdx >= (int)items.size()) return;
+
+    const float s = m_uiScale;
+    const float viewTop = m_hudY + 50.0f * s;
+    const float viewBottom = m_hudY + HUD_HEIGHT * s - 10.0f * s;
+    const auto& item = items[m_focusedItemIdx];
+
+    if (item.rect.top < viewTop) {
+        m_scrollOffset += (viewTop - item.rect.top);
+        ClampScroll();
+    } else if (item.rect.bottom > viewBottom) {
+        m_scrollOffset -= (item.rect.bottom - viewBottom);
+        ClampScroll();
+    }
+}
+
 void SettingsOverlay::SetVisible(bool visible) {
     if (!visible && m_pFocusedSlider) {
         CommitInput();
@@ -2801,6 +2912,12 @@ void SettingsOverlay::SetVisible(bool visible) {
     if (m_visible) {
         RebuildMenu(); // Ensure strings are up-to-date
         m_opacity = 0.0f;
+        if (m_focusedItemIdx < 0) {
+            m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
+        }
+        m_focusedTagIdx = 0;
+        m_focusedPartIdx = 0;
+        m_isKeyboardNavActive = false;
         
         // Hide toolbar and filmstrip gallery when settings pop up
         g_toolbar.SetVisible(false);
@@ -2818,6 +2935,11 @@ void SettingsOverlay::SetVisible(bool visible) {
              AdjustWindowForOverlay(m_hwnd, false);
         }
     } else {
+        m_focusedItemIdx = -1;
+        m_focusedTagIdx = 0;
+        m_focusedPartIdx = 0;
+        m_isKeyboardNavActive = false;
+
         // ... (Cleanup if needed)
         extern void SaveConfig();
         SaveConfig();
@@ -3036,6 +3158,17 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             tabY += 45.0f * s;
         }
 
+        // Draw Minimalist Keyboard Navigation Hints at Sidebar Bottom
+        float hintY = hudY + hudH - 36.0f * s;
+        D2D1_RECT_F hintRect1 = D2D1::RectF(hudX + 8.0f * s, hintY, hudX + sidebarW - 8.0f * s, hintY + 14.0f * s);
+        D2D1_RECT_F hintRect2 = D2D1::RectF(hudX + 8.0f * s, hintY + 16.0f * s, hudX + sidebarW - 8.0f * s, hintY + 30.0f * s);
+        
+        m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        m_textFormatBadge->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        pRT->DrawText(L"↑↓ Move  ←→ Adjust", 19, m_textFormatBadge.Get(), hintRect1, m_brushTextDim.Get());
+        pRT->DrawText(L"Enter OK  ^Tab Switch", 21, m_textFormatBadge.Get(), hintRect2, m_brushTextDim.Get());
+        m_textFormatBadge->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+
         // 3. Content Area (Right portion of HUD)
         float contentX = hudX + sidebarW + padding;
         float contentY = hudY + 50.0f * s + m_scrollOffset;
@@ -3053,30 +3186,22 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
         if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
             auto& currentTab = m_tabs[m_activeTab];
 
-            for (auto& item : currentTab.items) {
+            for (size_t itemIdx = 0; itemIdx < currentTab.items.size(); ++itemIdx) {
+                auto& item = currentTab.items[itemIdx];
+                bool isFocused = m_isKeyboardNavActive && (static_cast<int>(itemIdx) == m_focusedItemIdx);
                 float rowHeight = itemH;
                 
                 // Pinned Check
                 bool isPinned = (item.type == OptionType::AboutSystemInfo || item.type == OptionType::CopyrightLabel);
-                // Note: Logic continues...
-                // Only replacing the START of the function up to content logic loop start
-                // Actually I need to be careful not to cut off the function body.
-                // The loop is HUGE. I should only replace the TOP part.
                 
-                // Let's use ReplacementChunks to only swap the Header check
                 if (!isPinned) {
-                 // We can simply track contentY at start of loop iteration? 
-                 // No, contentY is top of CURRENT item.
-                 // Wait, loop renders item then adds to contentY. 
-                 // So at start of NEXT iteration, contentY is bottom of PREVIOUS item.
-                 // So we can just update height at start of iteration using current contentY?
-                 m_settingsContentHeight = contentY - startContentY;
-            }
+                    m_settingsContentHeight = contentY - startContentY;
+                }
 
-            // Calculate Rect for Hit Testing & Layout Anchor
-            item.rect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + rowHeight);
-            item.interactRect = {};
-            item.interactRect2 = {};
+                // Calculate Rect for Hit Testing & Layout Anchor
+                item.rect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + rowHeight);
+                item.interactRect = {};
+                item.interactRect2 = {};
 
 
             // 1. Header Type
@@ -3202,6 +3327,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                 ButtonState state = (m_pHoverItem == &item) ? ButtonState::Hovered : ButtonState::Normal;
                 GeekWidgets::DrawPillButton(pRT, btnRect, text, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
 
+                if (isFocused) {
+                    float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
+                    pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                }
+
                 contentY += 52.0f * s; // Button + Padding
                 continue;
             }
@@ -3217,7 +3347,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      float linkR = (r.github.bottom - r.github.top) * 0.5f;
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.github, linkR, linkR);
                      if (m_hoverLinkIndex == 0) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
-                     pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f * s); 
+                     bool isBtnFocused = (isFocused && m_focusedPartIdx == 0);
+                     pRT->DrawRoundedRectangle(rr, isBtnFocused ? m_brushAccent.Get() : m_brushBorder.Get(), isBtnFocused ? 1.5f * s : 1.0f * s); 
                      
                      float w = r.github.right - r.github.left;
                      float iconW = 20.0f * s;
@@ -3250,7 +3381,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      float linkR = (r.issues.bottom - r.issues.top) * 0.5f;
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.issues, linkR, linkR);
                      if (m_hoverLinkIndex == 1) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
-                     pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f * s); 
+                     bool isBtnFocused = (isFocused && m_focusedPartIdx == 1);
+                     pRT->DrawRoundedRectangle(rr, isBtnFocused ? m_brushAccent.Get() : m_brushBorder.Get(), isBtnFocused ? 1.5f * s : 1.0f * s); 
                      
                      float w = r.issues.right - r.issues.left;
                      float iconW = 20.0f * s;
@@ -3283,7 +3415,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      float linkR = (r.keys.bottom - r.keys.top) * 0.5f;
                      D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r.keys, linkR, linkR);
                      if (m_hoverLinkIndex == 2) pRT->FillRoundedRectangle(rr, m_brushControlBg.Get());
-                     pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.0f * s); 
+                     bool isBtnFocused = (isFocused && m_focusedPartIdx == 2);
+                     pRT->DrawRoundedRectangle(rr, isBtnFocused ? m_brushAccent.Get() : m_brushBorder.Get(), isBtnFocused ? 1.5f * s : 1.0f * s); 
                      
                      float w = r.keys.right - r.keys.left;
                      float iconW = 20.0f * s;
@@ -3467,6 +3600,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         pRT->DrawText(displayText.c_str(), (UINT32)displayText.length(), m_textFormatItem.Get(), badgeRect, m_brushTextDim.Get());
                     }
 
+                    if (isFocused && m_focusedTagIdx == (int)item.optionRects.size() - 1) {
+                        pRT->DrawRoundedRectangle(rr, m_brushAccent.Get(), 1.5f * s);
+                    }
+
                     badgeX += badgeW + badgeGapX;
                 }
 
@@ -3556,6 +3693,18 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
 
             // 2. Normal Item Row
             
+            // Row Highlight for Keyboard Focus
+            if (isFocused && !isPinned) {
+                ComPtr<ID2D1SolidColorBrush> brushFocusRow;
+                D2D1_COLOR_F rowFocusClr = palette.accent;
+                rowFocusClr.a = 0.08f;
+                pRT->CreateSolidColorBrush(rowFocusClr, &brushFocusRow);
+                if (brushFocusRow) {
+                    D2D1_RECT_F rowHighlightRect = D2D1::RectF(contentX - 4.0f * s, contentY - 1.0f * s, contentX + contentW + 4.0f * s, contentY + rowHeight + 1.0f * s);
+                    pRT->FillRoundedRectangle(D2D1::RoundedRect(rowHighlightRect, 4.0f * s, 4.0f * s), brushFocusRow.Get());
+                }
+            }
+
             // Label
             float labelWidth = (LABEL_COLUMN_WIDTH - 20.0f) * s; 
             D2D1_RECT_F labelRect = D2D1::RectF(contentX, contentY, contentX + labelWidth, contentY + rowHeight);
@@ -3648,6 +3797,12 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         }
                     } else {
                         DrawToggle(pRT, controlRect, (item.pBoolVal ? *item.pBoolVal : false), isHovered);
+                        if (isFocused) {
+                            float togH = item.interactRect.bottom - item.interactRect.top;
+                            float togR = togH * 0.5f;
+                            pRT->DrawRoundedRectangle(D2D1::RoundedRect(item.interactRect, togR, togR), m_brushAccent.Get(), 1.5f * s);
+                        }
+
                         // Status text (e.g., "Restart required")
                         // Auto-hide after 3 seconds
                         if (!item.statusText.empty() && item.statusSetTime > 0) {
@@ -3704,6 +3859,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     pRT->FillRoundedRectangle(D2D1::RoundedRect(inputRect, inputRadius, inputRadius), m_brushControlBg.Get());
                     pRT->DrawRoundedRectangle(D2D1::RoundedRect(inputRect, inputRadius, inputRadius), brushBorder.Get(), 1.0f * s);
                     
+                    if (isFocused) {
+                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(inputRect, inputRadius, inputRadius), m_brushAccent.Get(), 1.5f * s);
+                    }
+
                     std::wstring valText = item.pStrVal ? *item.pStrVal : L"";
                     D2D1_RECT_F textRect = D2D1::RectF(inputRect.left + 12.0f * s, inputRect.top, inputRect.right - 12.0f * s, inputRect.bottom);
                     m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -3752,6 +3911,9 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                   bool isInputFocused = (&item == m_pFocusedSlider);
                   DrawSlider(pRT, controlRect, val, item.minVal, item.maxVal, isHovered,
                              item.displayFormat, item.isDisabled, subPart, item.step, isInputFocused, hasReset, item.options);
+                  if (isFocused && !isInputFocused) {
+                      pRT->DrawRoundedRectangle(D2D1::RoundedRect(pillGeom.rect, pillGeom.radius, pillGeom.radius), m_brushAccent.Get(), 1.5f * s);
+                  }
                 } break;
                 case OptionType::Segment:
                     item.interactRect = controlRect;
@@ -3760,6 +3922,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                         DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, true, item.pFloatVal);
                     } else {
                         DrawSegment(pRT, controlRect, (item.pIntVal ? *item.pIntVal : 0), item.options, false, item.pFloatVal);
+                    }
+                    if (isFocused) {
+                        float segR = 12.0f * s;
+                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(controlRect, segR, segR), m_brushAccent.Get(), 1.5f * s);
                     }
                     break;
                  case OptionType::ActionButton: {
@@ -3782,6 +3948,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      const auto palette = GetSettingsThemePalette();
 
                      GeekWidgets::DrawPillButton(pRT, btnRect, btnText, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                     if (isFocused) {
+                         float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
+                         pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                     }
                      break;
                  }
                  case OptionType::DualActionButton: {
@@ -3801,6 +3971,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                          pRT, groupRect, item.buttonText, item.buttonText2 ? item.buttonText2 : L"",
                          item.isHovered, item.isHovered2, item.isDisabled,
                          m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+                     if (isFocused) {
+                         D2D1_RECT_F subR = (m_focusedPartIdx == 0) ? item.interactRect : item.interactRect2;
+                         float btnR = (subR.bottom - subR.top) * 0.5f;
+                         pRT->DrawRoundedRectangle(D2D1::RoundedRect(subR, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                     }
                      break;
                  }
                  case OptionType::CustomColorRow: {
@@ -3852,6 +4027,17 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), colorBrush.Get());
                      pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushBorder.Get(), 1.0f * s);
                      
+                     if (isFocused) {
+                         if (isCanvasRow && m_focusedPartIdx == 0) {
+                             float toggleW = 44.0f * s;
+                             D2D1_RECT_F toggleRect = D2D1::RectF(controlRect.left, controlRect.top, controlRect.left + toggleW, controlRect.bottom);
+                             float togR = (toggleRect.bottom - toggleRect.top) * 0.5f;
+                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(toggleRect, togR, togR), m_brushAccent.Get(), 1.5f * s);
+                         } else {
+                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                         }
+                     }
+
                      float luminance = 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
                      ComPtr<ID2D1SolidColorBrush> textBrush;
                      if (luminance > 0.5f) {
@@ -3883,6 +4069,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                   DrawComboBox(pRT, comboRect,
                                (item.pIntVal ? *item.pIntVal : 0), item.options,
                                isOpen);
+                  if (isFocused) {
+                      float cbR = (comboRect.bottom - comboRect.top) * 0.5f;
+                      pRT->DrawRoundedRectangle(D2D1::RoundedRect(comboRect, cbR, cbR), m_brushAccent.Get(), 1.5f * s);
+                  }
                   break;
                 }
                 case OptionType::HotkeyBindRow: {
@@ -3913,6 +4103,11 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                     ButtonState state = isHovered ? ButtonState::Hovered : ButtonState::Normal;
                     GeekWidgets::DrawPillButton(pRT, btnRect, btnText, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
                     
+                    if (isFocused && !isThisCapturing) {
+                        float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
+                        pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
+                    }
+
                     if (!item.statusText.empty() && item.statusSetTime > 0) {
                          if (GetTickCount() - item.statusSetTime > 3000) {
                              item.statusText.clear();
@@ -4096,10 +4291,265 @@ void SettingsOverlay::CancelInput() {
     m_sliderInputStarted = false;
 }
 
+void SettingsOverlay::HandleItemKeyboardActivation(SettingsItem& item, WPARAM key) {
+    const bool isShiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    extern void SaveConfig();
+
+    switch (item.type) {
+        case OptionType::Toggle: {
+            if (key == VK_SPACE || key == VK_RETURN) {
+                if (item.pBoolVal) {
+                    *item.pBoolVal = !(*item.pBoolVal);
+                    if (item.onChange) item.onChange(this, &item);
+                    SaveConfig();
+                }
+            }
+            break;
+        }
+        case OptionType::Slider: {
+            if (item.pFloatVal) {
+                const float step = QuickView::EffectiveStep(
+                    item.step, item.minVal, item.maxVal, item.displayFormat);
+                const float multiplier = isShiftDown ? 5.0f : 1.0f;
+
+                if (key == VK_LEFT || key == VK_OEM_MINUS || key == VK_SUBTRACT) {
+                    float currentVal = *item.pFloatVal;
+                    float newVal = QuickView::QuantizeSliderValue(currentVal - step * multiplier, item.minVal, item.maxVal, step);
+                    if (newVal != currentVal) {
+                        *item.pFloatVal = newVal;
+                        if (item.onLiveUpdate) item.onLiveUpdate(this, &item);
+                        if (item.onChange) item.onChange(this, &item);
+                        SaveConfig();
+                    }
+                } else if (key == VK_RIGHT || key == VK_OEM_PLUS || key == VK_ADD) {
+                    float currentVal = *item.pFloatVal;
+                    float newVal = QuickView::QuantizeSliderValue(currentVal + step * multiplier, item.minVal, item.maxVal, step);
+                    if (newVal != currentVal) {
+                        *item.pFloatVal = newVal;
+                        if (item.onLiveUpdate) item.onLiveUpdate(this, &item);
+                        if (item.onChange) item.onChange(this, &item);
+                        SaveConfig();
+                    }
+                } else if (key == VK_RETURN || key == VK_SPACE) {
+                    if (item.options.empty()) {
+                        m_pFocusedSlider = &item;
+                        m_sliderInputStarted = false;
+                        m_sliderPreEditVal = *item.pFloatVal;
+                        m_sliderInputLen = 0;
+                        m_sliderInputBuf[0] = L'\0';
+                        m_sliderInputError = false;
+                        StartCaretTimer();
+                    }
+                } else if (key == VK_BACK || key == 'R') {
+                    if (item.onReset) {
+                        item.onReset(this, &item);
+                        SaveConfig();
+                    }
+                }
+            }
+            break;
+        }
+        case OptionType::Segment: {
+            if (item.pIntVal && !item.options.empty()) {
+                int count = (int)item.options.size();
+                int current = *item.pIntVal;
+                if (key == VK_LEFT) {
+                    int next = (std::max)(0, current - 1);
+                    if (next != current) {
+                        *item.pIntVal = next;
+                        if (item.onChange) item.onChange(this, &item);
+                        SaveConfig();
+                    }
+                } else if (key == VK_RIGHT) {
+                    int next = (std::min)(count - 1, current + 1);
+                    if (next != current) {
+                        *item.pIntVal = next;
+                        if (item.onChange) item.onChange(this, &item);
+                        SaveConfig();
+                    }
+                } else if (key == VK_SPACE || key == VK_RETURN) {
+                    *item.pIntVal = (current + 1) % count;
+                    if (item.onChange) item.onChange(this, &item);
+                    SaveConfig();
+                }
+            }
+            break;
+        }
+        case OptionType::ComboBox: {
+            if (key == VK_SPACE || key == VK_RETURN) {
+                m_pActiveCombo = &item;
+                m_comboHoverIdx = item.pIntVal ? *item.pIntVal : 0;
+            } else if (item.pIntVal && !item.options.empty()) {
+                int count = (int)item.options.size();
+                int current = *item.pIntVal;
+                if (key == VK_LEFT) {
+                    int next = (current > 0) ? current - 1 : count - 1;
+                    *item.pIntVal = next;
+                    if (item.onChange) item.onChange(this, &item);
+                    SaveConfig();
+                } else if (key == VK_RIGHT) {
+                    int next = (current + 1) % count;
+                    *item.pIntVal = next;
+                    if (item.onChange) item.onChange(this, &item);
+                    SaveConfig();
+                }
+            }
+            break;
+        }
+        case OptionType::ActionButton: {
+            if (key == VK_SPACE || key == VK_RETURN) {
+                if (item.onChange) item.onChange(this, &item);
+            }
+            break;
+        }
+        case OptionType::DualActionButton: {
+            if (key == VK_LEFT) {
+                m_focusedPartIdx = 0;
+            } else if (key == VK_RIGHT) {
+                m_focusedPartIdx = 1;
+            } else if (key == VK_SPACE || key == VK_RETURN) {
+                if (m_focusedPartIdx == 0 && item.onChange) {
+                    item.onChange(this, &item);
+                } else if (m_focusedPartIdx == 1 && item.onChange2) {
+                    item.onChange2(this, &item);
+                }
+            }
+            break;
+        }
+        case OptionType::CustomColorRow: {
+            bool isCanvasRow = (item.pFloatVal == nullptr);
+            if (isCanvasRow) {
+                if (key == VK_LEFT) {
+                    m_focusedPartIdx = 0; // Grid toggle
+                } else if (key == VK_RIGHT) {
+                    m_focusedPartIdx = 1; // Color button
+                } else if (key == VK_SPACE || key == VK_RETURN) {
+                    if (m_focusedPartIdx == 0) {
+                        g_config.CanvasShowGrid = !g_config.CanvasShowGrid;
+                        SaveConfig();
+                    } else if (item.onChange) {
+                        item.onChange(this, &item);
+                    }
+                }
+            } else {
+                if (key == VK_SPACE || key == VK_RETURN) {
+                    if (item.onChange) item.onChange(this, &item);
+                }
+            }
+            break;
+        }
+        case OptionType::Input: {
+            if (key == VK_SPACE || key == VK_RETURN) {
+                if (item.pStrVal) {
+                    std::wstring title = AppStrings::Dialog_FixedZoomTitle;
+                    std::wstring msg = AppStrings::Dialog_FixedZoomMsg;
+                    std::wstring result = AppContext::GetInstance().DialogCtrl->ShowInputDialog(
+                        m_hwnd, title, msg, *item.pStrVal, L"OK");
+                    if (!result.empty()) {
+                        *item.pStrVal = result;
+                        if (item.onChange) item.onChange(this, &item);
+                        SaveConfig();
+                    }
+                }
+            } else if (key == VK_BACK || key == 'R') {
+                if (item.onReset) {
+                    item.onReset(this, &item);
+                    SaveConfig();
+                }
+            }
+            break;
+        }
+        case OptionType::HotkeyBindRow: {
+            if (key == VK_SPACE || key == VK_RETURN) {
+                m_capturingHotkey = true;
+                m_capturingAction = item.hotkeyAction;
+                m_pendingRebuild = true;
+            } else if (key == VK_DELETE || key == VK_BACK) {
+                auto idx = static_cast<size_t>(item.hotkeyAction);
+                if (idx < g_hotkeys.size()) {
+                    g_hotkeys[idx].combo = {0, 0};
+                    SaveConfig();
+                    m_pendingRebuild = true;
+                }
+            }
+            break;
+        }
+        case OptionType::TagCloud: {
+            int tagCount = (int)item.options.size();
+            if (tagCount > 0) {
+                if (key == VK_LEFT) {
+                    m_focusedTagIdx = (m_focusedTagIdx > 0) ? m_focusedTagIdx - 1 : tagCount - 1;
+                } else if (key == VK_RIGHT) {
+                    m_focusedTagIdx = (m_focusedTagIdx + 1) % tagCount;
+                } else if (key == VK_SPACE || key == VK_RETURN) {
+                    if (m_focusedTagIdx >= 0 && m_focusedTagIdx < tagCount && item.pStrVal) {
+                        std::wstring_view clickedOpt = item.options[m_focusedTagIdx];
+                        std::wstring currentStr = *item.pStrVal;
+                        std::vector<std::wstring> activeItems = SplitString(currentStr, L',');
+
+                        auto it = std::find(activeItems.begin(), activeItems.end(), clickedOpt);
+                        if (it != activeItems.end()) {
+                            activeItems.erase(it);
+                        } else {
+                            if (item.tagCloudNoLimit || (int)activeItems.size() < kInfoPanelLiteMaxItems) {
+                                activeItems.push_back(std::wstring(clickedOpt));
+                            } else {
+                                item.statusText = L"Limit reached (max 8 items)";
+                                item.statusColor = D2D1::ColorF(1.0f, 0.35f, 0.35f, 1.0f);
+                                item.statusSetTime = GetTickCount();
+                            }
+                        }
+
+                        std::wstring newStr;
+                        for (size_t i = 0; i < activeItems.size(); ++i) {
+                            if (i > 0) newStr += L",";
+                            newStr += activeItems[i];
+                        }
+                        *item.pStrVal = newStr;
+                        if (item.onChange) item.onChange(this, &item);
+                        SaveConfig();
+                    }
+                }
+            }
+            break;
+        }
+        case OptionType::AboutVersionCard: {
+            if (key == VK_SPACE || key == VK_RETURN) {
+                if (item.onChange) item.onChange(this, &item);
+            }
+            break;
+        }
+        case OptionType::AboutLinks: {
+            if (key == VK_LEFT) {
+                m_focusedPartIdx = (m_focusedPartIdx > 0) ? m_focusedPartIdx - 1 : 2;
+            } else if (key == VK_RIGHT) {
+                m_focusedPartIdx = (m_focusedPartIdx + 1) % 3;
+            } else if (key == VK_SPACE || key == VK_RETURN) {
+                if (m_focusedPartIdx == 0) {
+                    ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView", NULL, NULL, SW_SHOWNORMAL);
+                } else if (m_focusedPartIdx == 1) {
+                    ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
+                } else if (m_focusedPartIdx == 2) {
+                    extern HelpOverlay g_helpOverlay;
+                    g_helpOverlay.SetVisible(true);
+                }
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 bool SettingsOverlay::OnKeyDown(WPARAM key) {
     if (!m_visible) return false;
 
-    // 0. In-place Capsule Direct Input Handling
+    // 0. Modal Update Toast / Hotkey Capture
+    if (m_showUpdateToast || m_capturingHotkey) {
+        return false;
+    }
+
+    // 1. In-place Capsule Direct Input Handling
     if (m_pFocusedSlider) {
         if (key == VK_ESCAPE) {
             CancelInput();
@@ -4134,38 +4584,111 @@ bool SettingsOverlay::OnKeyDown(WPARAM key) {
         // Consume arrow/page keys when inputting
         return true;
     }
-    
+
+    // 2. Active ComboBox Dropdown Handling
+    if (m_pActiveCombo) {
+        int optCount = (int)m_pActiveCombo->options.size();
+        if (key == VK_ESCAPE) {
+            m_pActiveCombo = nullptr;
+            return true;
+        }
+        if (key == VK_UP) {
+            if (m_comboHoverIdx < 0) m_comboHoverIdx = m_pActiveCombo->pIntVal ? *m_pActiveCombo->pIntVal : 0;
+            m_comboHoverIdx = (m_comboHoverIdx > 0) ? m_comboHoverIdx - 1 : optCount - 1;
+            return true;
+        }
+        if (key == VK_DOWN) {
+            if (m_comboHoverIdx < 0) m_comboHoverIdx = m_pActiveCombo->pIntVal ? *m_pActiveCombo->pIntVal : 0;
+            m_comboHoverIdx = (m_comboHoverIdx + 1) % optCount;
+            return true;
+        }
+        if (key == VK_RETURN || key == VK_SPACE) {
+            if (m_comboHoverIdx >= 0 && m_comboHoverIdx < optCount && m_pActiveCombo->pIntVal) {
+                if (*m_pActiveCombo->pIntVal != m_comboHoverIdx) {
+                    *m_pActiveCombo->pIntVal = m_comboHoverIdx;
+                    if (m_pActiveCombo->onChange) m_pActiveCombo->onChange(this, m_pActiveCombo);
+                    extern void SaveConfig();
+                    SaveConfig();
+                }
+            }
+            m_pActiveCombo = nullptr;
+            return true;
+        }
+        return true;
+    }
+
+    const bool isCtrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool isShiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+
+    // 3. Tab Switching (Ctrl+Tab, Ctrl+Shift+Tab, '[' / ']', or '1'~'6')
+    if ((isCtrlDown && key == VK_TAB) || (!isCtrlDown && !isShiftDown && key == VK_OEM_6 /* ']' */)) {
+        SwitchTab(isShiftDown ? -1 : 1);
+        return true;
+    }
+    if ((isCtrlDown && isShiftDown && key == VK_TAB) || (!isCtrlDown && !isShiftDown && key == VK_OEM_4 /* '[' */)) {
+        SwitchTab(-1);
+        return true;
+    }
+    if (!isCtrlDown && !isShiftDown && key >= '1' && key <= '9') {
+        int targetTab = (int)(key - '1');
+        if (targetTab < (int)m_tabs.size()) {
+            OpenTab(targetTab);
+            m_isKeyboardNavActive = true;
+            return true;
+        }
+    }
+
+    // 4. Focus Navigation (Tab, Shift+Tab, Up/Down, J/K)
+    if (key == VK_TAB) {
+        FocusNextItem(!isShiftDown);
+        return true;
+    }
+    if (key == VK_DOWN || key == 'J') {
+        FocusNextItem(true);
+        return true;
+    }
+    if (key == VK_UP || key == 'K') {
+        FocusNextItem(false);
+        return true;
+    }
+
+    // 5. Page-level Scrolling (PageUp, PageDown, Home, End)
     const float s = m_uiScale;
     const float pageStep = (HUD_HEIGHT - 60.0f) * 0.8f * s;
-    const float lineStep = 40.0f * s;
-    
-    switch (key) {
-        case VK_UP:
-            m_scrollOffset += lineStep;
-            ClampScroll();
-            return true;
-        case VK_DOWN:
-            m_scrollOffset -= lineStep;
-            ClampScroll();
-            return true;
-        case VK_PRIOR: // Page Up
-            m_scrollOffset += pageStep;
-            ClampScroll();
-            return true;
-        case VK_NEXT: // Page Down
-            m_scrollOffset -= pageStep;
-            ClampScroll();
-            return true;
-        case VK_HOME:
-            m_scrollOffset = 0.0f;
-            return true;
-        case VK_END:
-            m_scrollOffset = -999999.0f;
-            ClampScroll();
-            return true;
-        default:
-            break;
+    if (key == VK_PRIOR) { // Page Up
+        m_scrollOffset += pageStep;
+        ClampScroll();
+        return true;
     }
+    if (key == VK_NEXT) { // Page Down
+        m_scrollOffset -= pageStep;
+        ClampScroll();
+        return true;
+    }
+    if (key == VK_HOME) {
+        m_scrollOffset = 0.0f;
+        m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
+        m_isKeyboardNavActive = true;
+        return true;
+    }
+    if (key == VK_END) {
+        m_scrollOffset = -999999.0f;
+        ClampScroll();
+        return true;
+    }
+
+    // 6. Item-specific Manipulation
+    if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
+        auto& currentTab = m_tabs[m_activeTab];
+        if (m_focusedItemIdx >= 0 && m_focusedItemIdx < (int)currentTab.items.size()) {
+            SettingsItem& item = currentTab.items[m_focusedItemIdx];
+            if (IsItemInteractive(item)) {
+                HandleItemKeyboardActivation(item, key);
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -4781,6 +5304,18 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
 
     // 4. Content Click (uses hover item)
     if (m_pHoverItem) {
+        // Sync keyboard focus with clicked item
+        if (m_activeTab >= 0 && m_activeTab < (int)m_tabs.size()) {
+            auto& currentItems = m_tabs[m_activeTab].items;
+            for (int i = 0; i < (int)currentItems.size(); ++i) {
+                if (&currentItems[i] == m_pHoverItem) {
+                    m_focusedItemIdx = i;
+                    m_isKeyboardNavActive = false;
+                    break;
+                }
+            }
+        }
+
         // ComboBox Open
         if (m_pHoverItem->type == OptionType::ComboBox) {
              if (m_pActiveCombo == m_pHoverItem) {
@@ -5107,6 +5642,9 @@ void SettingsOverlay::OpenTab(int index) {
         m_pHoverItem = nullptr;
         m_activeTab = index;
         m_scrollOffset = 0.0f;
+        m_focusedItemIdx = GetFirstInteractiveItemIndex(m_activeTab);
+        m_focusedTagIdx = 0;
+        m_focusedPartIdx = 0;
         SetVisible(true);
     }
 }
