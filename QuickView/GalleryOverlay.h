@@ -33,7 +33,7 @@ public:
   bool OnLButtonUp(int x, int y, int &outSelectedIndex);
 
   // State Control
-  void Open(int currentIndex, GalleryMode targetMode = GalleryMode::Filmstrip);
+  void Open(int currentIndex, GalleryMode targetMode = GalleryMode::Filmstrip, bool freezeDismissal = false);
   void Close(bool keepSelection = false); // Default: reset selection
 
   // FullGrid expand slider: 2-column min-thumb client width, and [min, max] window range.
@@ -183,6 +183,7 @@ private:
 
   // Pin (persistent) mode
   bool m_isPinned = false;
+  bool m_freezeDismissalUntilEnter = false;
   bool m_pinHover = false;
 
   // Hotspot ripple animation

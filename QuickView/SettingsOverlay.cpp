@@ -2115,7 +2115,8 @@ void SettingsOverlay::BuildMenu() {
         item.hotkeyAction = action;
         
         if (action == HotkeyAction::EnterCropMode || action == HotkeyAction::SaveAs ||
-            action == HotkeyAction::CopyPixels || action == HotkeyAction::CopyFileItem || action == HotkeyAction::CopyPath) {
+            action == HotkeyAction::CopyPixels || action == HotkeyAction::CopyFileItem || action == HotkeyAction::CopyPath ||
+            action == HotkeyAction::ToggleFilmstrip || action == HotkeyAction::ToggleSettings) {
             item.isNewOption = true;
         }
         if (action == HotkeyAction::EnterCropMode) {
@@ -3191,6 +3192,8 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             else if (item.type == OptionType::AboutVersionCard) {
                 // Now acting as "Check for Updates" Button (Full Width Pill)
                 D2D1_RECT_F btnRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 36.0f * s);
+                item.rect = btnRect;
+                item.interactRect = btnRect;
                 bool isUpToDate = (item.statusText == L"Up to date");
                 std::wstring text = item.statusText.empty() ? item.buttonText : item.statusText;
                 
@@ -3204,7 +3207,10 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
             }
             else if (item.type == OptionType::AboutLinks) {
                 // 3 Columns: GitHub, Issues, Hotkeys (Pill Buttons)
-                LinkRects r = GetLinkButtonRects(D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 32.0f * s), s);
+                D2D1_RECT_F linksRect = D2D1::RectF(contentX, contentY, contentX + contentW, contentY + 32.0f * s);
+                item.rect = linksRect;
+                item.interactRect = linksRect;
+                LinkRects r = GetLinkButtonRects(linksRect, s);
 
                 // GitHub
                 {
@@ -4985,14 +4991,16 @@ SettingsAction SettingsOverlay::OnLButtonDown(float x, float y) {
              LinkRects r = GetLinkButtonRects(m_pHoverItem->rect, m_uiScale);
              if (x >= r.github.left && x <= r.github.right && y >= r.github.top && y <= r.github.bottom) {
                  ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView", NULL, NULL, SW_SHOWNORMAL);
+                 return SettingsAction::RepaintStatic;
              }
              else if (x >= r.issues.left && x <= r.issues.right && y >= r.issues.top && y <= r.issues.bottom) {
                  ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/issues", NULL, NULL, SW_SHOWNORMAL);
+                 return SettingsAction::RepaintStatic;
              }
              else if (x >= r.keys.left && x <= r.keys.right && y >= r.keys.top && y <= r.keys.bottom) {
-                 ShellExecuteW(NULL, L"open", L"https://github.com/justnullname/QuickView/blob/master/KEYBOARD_SHORTCUTS.md", NULL, NULL, SW_SHOWNORMAL);
+                 return SettingsAction::OpenHelp;
              }
-             return SettingsAction::None;
+             return SettingsAction::RepaintStatic;
         }
         // Custom Color Row: Checkbox vs Button
         if (m_pHoverItem->type == OptionType::CustomColorRow) {

@@ -182,12 +182,14 @@ enum class HotkeyAction : uint8_t {
     AnimNextFrame,     // Animation Next Frame
     AnimPrevFrame,     // Animation Previous Frame
     ToggleGallery,     // Toggle Gallery Overlay
+    ToggleFilmstrip,   // Toggle Filmstrip Gallery
     ToggleInfoPanel,   // Toggle Info Panel (Lite)
     ToggleExifPanel,   // Toggle Exif Panel (Full)
     ToggleMinimap,     // Toggle Minimap visibility (Hotkey M)
     ToggleFullscreen,  // Toggle Fullscreen
     ToggleSpan,        // Toggle Span Displays
     ToggleSlideshow,   // Toggle Slideshow Mode
+    ToggleSettings,    // Toggle Settings Overlay (Hotkey S)
     RenderRaw,         // Toggle RAW decode / switch to the paired RAW
     OpenFile,          // Open File Dialog
     EditFile,          // Edit with External Editor
@@ -247,6 +249,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::AnimNextFrame: return L"AnimNextFrame";
         case HotkeyAction::AnimPrevFrame: return L"AnimPrevFrame";
         case HotkeyAction::ToggleGallery: return L"ToggleGallery";
+        case HotkeyAction::ToggleFilmstrip: return L"ToggleFilmstrip";
         case HotkeyAction::ToggleInfoPanel: return L"ToggleInfoPanel";
         case HotkeyAction::ToggleExifPanel: return L"ToggleExifPanel";
         case HotkeyAction::ToggleMinimap: return L"ToggleMinimap";
@@ -273,6 +276,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::OverlayTogglePassthrough: return L"OverlayTogglePassthrough";
         case HotkeyAction::Help: return L"Help";
         case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
+        case HotkeyAction::ToggleSettings: return L"ToggleSettings";
         case HotkeyAction::Exit: return L"Exit";
         case HotkeyAction::Loupe: return L"Loupe";
         case HotkeyAction::Undo: return L"Undo";
@@ -308,6 +312,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"AnimNextFrame") return HotkeyAction::AnimNextFrame;
     if (sv == L"AnimPrevFrame") return HotkeyAction::AnimPrevFrame;
     if (sv == L"ToggleGallery") return HotkeyAction::ToggleGallery;
+    if (sv == L"ToggleFilmstrip") return HotkeyAction::ToggleFilmstrip;
     if (sv == L"ToggleInfoPanel") return HotkeyAction::ToggleInfoPanel;
     if (sv == L"ToggleExifPanel") return HotkeyAction::ToggleExifPanel;
     if (sv == L"ToggleMinimap") return HotkeyAction::ToggleMinimap;
@@ -334,6 +339,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"OverlayTogglePassthrough") return HotkeyAction::OverlayTogglePassthrough;
     if (sv == L"Help") return HotkeyAction::Help;
     if (sv == L"ToggleSlideshow") return HotkeyAction::ToggleSlideshow;
+    if (sv == L"ToggleSettings" || sv == L"Settings") return HotkeyAction::ToggleSettings;
     if (sv == L"Exit") return HotkeyAction::Exit;
     if (sv == L"Loupe") return HotkeyAction::Loupe;
     if (sv == L"Undo") return HotkeyAction::Undo;

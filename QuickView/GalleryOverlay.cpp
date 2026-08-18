@@ -138,7 +138,7 @@ void GalleryOverlay::Initialize(ThumbnailManager* pThumbMgr, FileNavigator* pNav
         m_preferredCellWidth = (float)std::clamp(g_config.GalleryThumbnailSize, 80, 300);
 }
 
-void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
+void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode, bool freezeDismissal) {
     if (m_pNav) {
         m_pNav->EnsureMaterialized();
         m_pNav->SyncWithExplorer();
@@ -177,6 +177,7 @@ void GalleryOverlay::Open(int currentIndex, GalleryMode targetMode) {
     m_expandHoverTimer = 0.0f;
     m_isLButtonDown = false;
     m_dragMode = DragMode::None;
+    m_freezeDismissalUntilEnter = freezeDismissal;
     
     RequestRepaint(QuickView::PaintLayer::Gallery);
 }
@@ -187,6 +188,7 @@ void GalleryOverlay::Close(bool keepSelection) {
     m_mode = GalleryMode::Hidden;
     m_expandHoverTimer = 0.0f;
     m_gridSliderDragging = false;
+    m_freezeDismissalUntilEnter = false;
     if (!keepSelection) {
         m_selectedIndex = -1;
     }
@@ -382,7 +384,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
         }
 
         extern bool g_isDraggingFilmstrip;
-        if (!menuOpen && !m_mouseInGallery && !m_isPinned && !g_isDraggingFilmstrip && !g_imagePath.empty() && m_mode != GalleryMode::FullGrid && m_targetGridProgress < 0.5f) {
+        if (!menuOpen && !m_mouseInGallery && !m_isPinned && !m_freezeDismissalUntilEnter && !g_isDraggingFilmstrip && !g_imagePath.empty() && m_mode != GalleryMode::FullGrid && m_targetGridProgress < 0.5f) {
             m_dismissalTimer += deltaTime;
             if (m_dismissalTimer >= g_config.GalleryExitDelay) {
                 Close(true);
@@ -1849,6 +1851,9 @@ int GalleryOverlay::HitTest(float x, float y) {
 }
 
 void GalleryOverlay::SetMouseInGallery(bool inGallery) {
+    if (inGallery) {
+        m_freezeDismissalUntilEnter = false;
+    }
     if (m_mouseInGallery != inGallery) {
         m_mouseInGallery = inGallery;
         if (inGallery) {

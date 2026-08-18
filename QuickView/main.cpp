@@ -334,12 +334,14 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::AnimNextFrame, KeyCombo{ VK_RIGHT, 4 }, KeyCombo{ VK_RIGHT, 4 } }, // Alt + Right
     HotkeyBinding{ HotkeyAction::AnimPrevFrame, KeyCombo{ VK_LEFT, 4 }, KeyCombo{ VK_LEFT, 4 } },   // Alt + Left
     HotkeyBinding{ HotkeyAction::ToggleGallery, KeyCombo{ 'T', 0 }, KeyCombo{ 'T', 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleFilmstrip, KeyCombo{ 'T', 2 }, KeyCombo{ 'T', 2 } }, // Shift + T
     HotkeyBinding{ HotkeyAction::ToggleInfoPanel, KeyCombo{ VK_TAB, 0 }, KeyCombo{ VK_TAB, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleExifPanel, KeyCombo{ 'I', 0 }, KeyCombo{ 'I', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleMinimap, KeyCombo{ 'M', 0 }, KeyCombo{ 'M', 0 } },
     HotkeyBinding{ HotkeyAction::ToggleFullscreen, KeyCombo{ VK_F11, 0 }, KeyCombo{ VK_F11, 0 } },
     HotkeyBinding{ HotkeyAction::ToggleSpan, KeyCombo{ VK_F11, 1 }, KeyCombo{ VK_F11, 1 } }, // Ctrl + F11
     HotkeyBinding{ HotkeyAction::ToggleSlideshow, KeyCombo{ VK_F10, 0 }, KeyCombo{ VK_F10, 0 } },
+    HotkeyBinding{ HotkeyAction::ToggleSettings, KeyCombo{ 'S', 0 }, KeyCombo{ 'S', 0 } },
     HotkeyBinding{ HotkeyAction::RenderRaw, KeyCombo{ 'D', 0 }, KeyCombo{ 'D', 0 } }, // Decode RAW / switch to paired RAW
     HotkeyBinding{ HotkeyAction::OpenFile, KeyCombo{ 'O', 0 }, KeyCombo{ 'O', 0 } },
     HotkeyBinding{ HotkeyAction::EditFile, KeyCombo{ 'E', 0 }, KeyCombo{ 'E', 0 } },
@@ -1356,6 +1358,7 @@ DWORD g_lastOverlayCloseTime = 0;
 static void SaveOverlayWindowState(HWND hwnd);
 static void RestoreOverlayWindowState(HWND hwnd);
 static void ShowGallery(HWND hwnd);
+static void ShowFilmstrip(HWND hwnd);
 static bool OpenPathOrDirectory(HWND hwnd, const std::wstring& path, bool clearThumbCache = true);
 static void FinishGallery(HWND hwnd, GalleryFinishKind kind, int commitIndex = -1);
 static std::wstring PickFolder(HWND hwnd, const std::wstring& initialPath = L"");
@@ -3507,6 +3510,20 @@ static void ShowGallery(HWND hwnd) {
     auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
     nav.EnsureMaterialized();
     g_gallery.Open(std::max(nav.Index(), 0), GalleryMode::FullGrid);
+    RequestRepaint(PaintLayer::All);
+    SetTimer(hwnd, 998, 16, nullptr);
+}
+
+static void ShowFilmstrip(HWND hwnd) {
+    if (g_gallerySession.intent == GalleryIntent::None) {
+        g_gallerySession.intent = GalleryIntent::OverlayBrowse;
+    }
+    if (!g_gallery.IsVisible()) SaveOverlayWindowState(hwnd);
+
+    AdjustWindowForOverlay(hwnd, false);
+    auto& nav = GetPaneContext(PaneSlot::Primary).navigator;
+    nav.EnsureMaterialized();
+    g_gallery.Open(std::max(nav.Index(), 0), GalleryMode::Filmstrip, true);
     RequestRepaint(PaintLayer::All);
     SetTimer(hwnd, 998, 16, nullptr);
 }
@@ -10036,6 +10053,10 @@ SKIP_EDGE_NAV:;
     }
 
     case WM_RBUTTONDOWN: {
+        if (g_settingsOverlay.IsVisible()) {
+            return 0;
+        }
+
         POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
         RECT rcClient; GetClientRect(hwnd, &rcClient);
         float winW = (float)(rcClient.right - rcClient.left);
@@ -10104,8 +10125,8 @@ SKIP_EDGE_NAV:;
             if (act != SettingsAction::None) {
                 SetCapture(hwnd);
                 RequestRepaint(PaintLayer::Static);
-                return 0;
             }
+            return 0;
         }
 
         // Check custom hotkeys for VK_MBUTTON
@@ -10161,8 +10182,8 @@ SKIP_EDGE_NAV:;
             ReleaseCapture();
             if (act != SettingsAction::None) {
                 RequestRepaint(PaintLayer::Static);
-                return 0;
             }
+            return 0;
         }
 
         // Check if matching custom hotkey combination
@@ -10250,16 +10271,18 @@ SKIP_EDGE_NAV:;
         int button = GET_XBUTTON_WPARAM(wParam);
         uint16_t vk = (button == XBUTTON1) ? VK_XBUTTON1 : VK_XBUTTON2;
 
-        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsCapturingHotkey()) {
-            KeyCombo captured;
-            captured.virtualKey = vk;
-            captured.modifiers = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) captured.modifiers |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000)   captured.modifiers |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000)    captured.modifiers |= 4;
-            
-            g_settingsOverlay.OnHotkeyCaptured(captured);
-            RequestRepaint(PaintLayer::Static);
+        if (g_settingsOverlay.IsVisible()) {
+            if (g_settingsOverlay.IsCapturingHotkey()) {
+                KeyCombo captured;
+                captured.virtualKey = vk;
+                captured.modifiers = 0;
+                if (GetKeyState(VK_CONTROL) & 0x8000) captured.modifiers |= 1;
+                if (GetKeyState(VK_SHIFT) & 0x8000)   captured.modifiers |= 2;
+                if (GetKeyState(VK_MENU) & 0x8000)    captured.modifiers |= 4;
+                
+                g_settingsOverlay.OnHotkeyCaptured(captured);
+                RequestRepaint(PaintLayer::Static);
+            }
             return TRUE;
         }
 
@@ -11725,11 +11748,13 @@ SKIP_EDGE_NAV:;
         break;
 
     case WM_CHAR: {
-        if (g_settingsOverlay.IsVisible() && g_settingsOverlay.IsInputFocused()) {
-            if (g_settingsOverlay.OnChar(wParam)) {
-                RequestRepaint(PaintLayer::Static);
-                return 0;
+        if (g_settingsOverlay.IsVisible()) {
+            if (g_settingsOverlay.IsInputFocused()) {
+                if (g_settingsOverlay.OnChar(wParam)) {
+                    RequestRepaint(PaintLayer::Static);
+                }
             }
+            return 0;
         }
         if (g_cropState.IsActive && g_cropState.FocusedField != CropState::InputField::None) {
             int baseExif = g_renderExifOrientation;
@@ -11960,6 +11985,7 @@ SKIP_EDGE_NAV:;
                 RequestRepaint(PaintLayer::Static);
                 return 0;
             }
+            return 0; // Block all unhandled hotkeys from leaking to background image view
         }
         
         // Help handling
@@ -12096,6 +12122,10 @@ SKIP_EDGE_NAV:;
     }
     
     case WM_RBUTTONUP: {
+        if (g_settingsOverlay.IsVisible()) {
+            return 0;
+        }
+
         const bool wasRightDragZoom = GetPaneContext(PaneSlot::Primary).view.IsRightButtonDragZoom;
         const bool wasRightButtonDown = GetPaneContext(PaneSlot::Primary).view.IsRightButtonDown;
         if (wasRightDragZoom || wasRightButtonDown) {
@@ -16907,6 +16937,16 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         return true;
 
+    case HotkeyAction::ToggleFilmstrip:
+        if (g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::Filmstrip) {
+            g_gallery.Close(true);
+            FinishGallery(hwnd, GalleryFinishKind::Dismiss);
+            RequestRepaint(PaintLayer::All);
+        } else {
+            ShowFilmstrip(hwnd);
+        }
+        return true;
+
     case HotkeyAction::ToggleInfoPanel:
         if (IsCompareModeActive()) {
             ToggleCompareHUD(hwnd, 0);
@@ -17195,6 +17235,10 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         }
         g_helpOverlay.Toggle();
         RequestRepaint(PaintLayer::Static);
+        return true;
+
+    case HotkeyAction::ToggleSettings:
+        SendMessage(hwnd, WM_COMMAND, IDM_SETTINGS, 0);
         return true;
 
     case HotkeyAction::ToggleSlideshow:

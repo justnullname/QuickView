@@ -594,7 +594,7 @@ const wchar_t *Settings_Option_SlideshowNormal = nullptr;
 const wchar_t *Settings_Option_SlideshowSpotlight = nullptr;
 
 // --- Static Constants ---
-const wchar_t *Settings_Text_Copyright = L"Copyright \u00A9 2025-%s Vivor Loong (Github@justnullname)";
+const wchar_t *Settings_Text_Copyright = L"\u00A9 2025\u2013%s Vivor Loong (GitHub: @justnullname)";
 const wchar_t *Settings_Text_License = L"Licensed under GNU GPL v3.0";
 
 // ----------------------------------------------------------------
@@ -1224,9 +1224,9 @@ static const LanguageTable Table_EN = {
     L"Entered Crop Mode", // OSD_EnterCropMode
     L"Copied crop selection", // OSD_CropCopied
     L"Crop", // Context_Crop
-    L"Always save lossless transforms", // Checkbox_AlwaysSaveLossless
-    L"Always save edge-adapted", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Always save re-encoded", // Checkbox_AlwaysSaveLossy
+    L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
+    L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
+    L"Always Save Re-Encoded", // Checkbox_AlwaysSaveLossy
     L"Directly to Recycle Bin, do not confirm again", // Checkbox_NeverConfirmDelete
     L"Cannot decode HEIC - Install HEVC Video Extension", // OSD_HEICCodecMissing
     L"Cannot decode HEIC", // Dialog_HEICTitle
@@ -1248,7 +1248,7 @@ static const LanguageTable Table_EN = {
     L"Loop", // Settings_Label_NavLoopMode
     L"Sort Order", // Settings_Label_SortOrder
     L"Descending", // Settings_Label_SortDescending
-    L"Always sort archives by name", // Settings_Label_SortArchivesByNameAscending
+    L"Always Sort Archives by Name", // Settings_Label_SortArchivesByNameAscending
     L"Confirm Before Delete", // Settings_Label_ConfirmDel
     L"Portable Mode / Cleanup", // Settings_Label_Portable
     L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application directory instead of AppData.", // Settings_Tooltip_Portable
@@ -1376,7 +1376,7 @@ static const LanguageTable Table_EN = {
     L"Aggressive", // Settings_Option_MemAggressive
     L"On-Demand", // Settings_Option_MemOnDemand
     L"Smart: Automatically reclaim memory only when system RAM < 4GB.\n" L"Aggressive: Keep memory reserved for absolute 0ns allocation speed.\n" L"On-Demand: Always reclaim idle memory to save physical RAM.", // Settings_Tooltip_MemoryReclaim
-    L"Show update regions button in animation", // Settings_Label_ShowDirtyRect
+    L"Show Update Regions Button in Animation", // Settings_Label_ShowDirtyRect
     L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.", // Settings_Tooltip_ShowDirtyRect
     L"Copied!", // OSD_Copied
     L"Pixels copied to clipboard!", // OSD_PixelsCopied
@@ -1442,7 +1442,7 @@ static const LanguageTable Table_EN = {
     L"Standard (1.5px)", // Settings_Option_StrokeStandard
     L"Fine (1.0px)", // Settings_Option_StrokeFine
     L"Tint Profile", // Settings_Header_GlassTint
-    L"Color logic", // Settings_Label_TintProfile
+    L"Color Logic", // Settings_Label_TintProfile
     L"Auto (Adaptive)", // Settings_Option_TintAuto
     L"Custom Color", // Settings_Option_TintCustom
     L"Manual Tint", // Settings_Label_GlassCustomColor
@@ -1488,9 +1488,9 @@ static const LanguageTable Table_EN = {
     L"Auto", // Settings_Option_NavigatorAuto
     L"On", // Settings_Option_NavigatorOn
     L"Off", // Settings_Option_NavigatorOff
-    L"Keep window size on navigation", // Settings_Label_KeepWindowSizeOnNav
-    L"Remember last window size and position", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Adapt small images", // Settings_Label_UpscaleSmallImagesWhenLocked
+    L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
+    L"Remember Last Window Size and Position", // Settings_Label_RememberLastWindowSizeAndPosition
+    L"Adapt Small Images", // Settings_Label_UpscaleSmallImagesWhenLocked
     L"Smooth Window Scaling (GPU)", // Settings_Label_EnableSmoothScaling
     L"EXIF Panel Mode", // Settings_Label_ExifMode
     L"Toolbar Info Default", // Settings_Label_ToolbarInfoDefault
@@ -1640,7 +1640,7 @@ static const LanguageTable Table_EN = {
     L"Size", // Settings_Option_SortSize
     L"Type", // Settings_Option_SortType
     L"Loop", // Settings_Option_NavLoop
-    L"Through subfolders", // Settings_Option_NavThrough
+    L"Through Subfolders", // Settings_Option_NavThrough
     L"Linear: Basic smoothing", // Settings_Option_Linear
     L"Nearest: Extreme sharpness", // Settings_Option_Nearest
     L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
@@ -1711,7 +1711,7 @@ static const LanguageTable Table_EN = {
     L"Ref: ", // HUD_Label_Ref
     L"Gallery Filmstrip (Top Hover)", // Settings_Header_GalleryTrigger
     L"Trigger Mode", // Settings_Label_GalleryTriggerMode
-    L"Keep visible after clicking thumbnail", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
+    L"Keep Visible After Clicking Thumbnail", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"This feature will automatically enable Window Lock and Keep Window Size On Navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
     L"Auto Hover", // Settings_Option_GalleryTriggerAuto
     L"Hotspot Hover", // Settings_Option_GalleryTriggerDelay
@@ -1739,7 +1739,7 @@ static const LanguageTable Table_EN = {
     L"Info Panel Full/Lite Zoom", // Settings_Label_InfoPanelScale
     L"Items in Normal Mode", // Settings_Label_ItemsInNormalMode
     L"Items in Compare Mode", // Settings_Label_ItemsInCompareMode
-    L"Separator preset", // Settings_Label_SeparatorPreset
+    L"Separator Preset", // Settings_Label_SeparatorPreset
     L"Normal", // Settings_Option_SlideshowNormal
     L"Spotlight", // Settings_Option_SlideshowSpotlight
     L"Magnifier Shape", // Settings_Label_LoupeShape
@@ -4322,7 +4322,7 @@ static const LanguageTable Table_DE = {
     L"Standard (1.5px)", // Settings_Option_StrokeStandard
     L"Fine (1.0px)", // Settings_Option_StrokeFine
     L"Tint Profile", // Settings_Header_GlassTint
-    L"Color logic", // Settings_Label_TintProfile
+    L"Color Logic", // Settings_Label_TintProfile
     L"Auto (Adaptive)", // Settings_Option_TintAuto
     L"Custom Color", // Settings_Option_TintCustom
     L"Manual Tint", // Settings_Label_GlassCustomColor
@@ -5256,9 +5256,9 @@ static const LanguageTable Table_FR = {
     L"Mode recadrage activé", // OSD_EnterCropMode
     L"Sélection de recadrage copiée", // OSD_CropCopied
     L"Recadrer", // Context_Crop
-    L"Always save lossless transforms", // Checkbox_AlwaysSaveLossless
-    L"Always save edge-adapted", // Checkbox_AlwaysSaveEdgeAdapted
-    L"Always save re-encoded", // Checkbox_AlwaysSaveLossy
+    L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
+    L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
+    L"Always Save Re-Encoded", // Checkbox_AlwaysSaveLossy
     L"Envoyer directement à la corbeille sans confirmer", // Checkbox_NeverConfirmDelete
     L"Cannot decode HEIC - Install HEVC Video Extension", // OSD_HEICCodecMissing
     L"Cannot decode HEIC", // Dialog_HEICTitle
@@ -5408,7 +5408,7 @@ static const LanguageTable Table_FR = {
     L"Aggressive (Max Perf)", // Settings_Option_MemAggressive
     L"On-Demand (Min RAM)", // Settings_Option_MemOnDemand
     L"Smart: Balance performance and RAM.\nAggressive: Maximize performance, high memory usage.\nOn-Demand: Release memory immediately when idle.", // Settings_Tooltip_MemoryReclaim
-    L"Show update regions button in animation", // Settings_Label_ShowDirtyRect
+    L"Show Update Regions Button in Animation", // Settings_Label_ShowDirtyRect
     L"Show the update region debug button in animation mode to visualize which parts of the frame are being redrawn.", // Settings_Tooltip_ShowDirtyRect
     L"Copied!", // OSD_Copied
     L"Pixels copiés dans le presse-papiers !", // OSD_PixelsCopied
@@ -5474,7 +5474,7 @@ static const LanguageTable Table_FR = {
     L"Standard (1.5px)", // Settings_Option_StrokeStandard
     L"Fine (1.0px)", // Settings_Option_StrokeFine
     L"Tint Profile", // Settings_Header_GlassTint
-    L"Color logic", // Settings_Label_TintProfile
+    L"Color Logic", // Settings_Label_TintProfile
     L"Auto (Adaptive)", // Settings_Option_TintAuto
     L"Custom Color", // Settings_Option_TintCustom
     L"Manual Tint", // Settings_Label_GlassCustomColor
@@ -5520,9 +5520,9 @@ static const LanguageTable Table_FR = {
     L"Auto", // Settings_Option_NavigatorAuto
     L"On", // Settings_Option_NavigatorOn
     L"Off", // Settings_Option_NavigatorOff
-    L"Keep window size on navigation", // Settings_Label_KeepWindowSizeOnNav
-    L"Remember last window size and position", // Settings_Label_RememberLastWindowSizeAndPosition
-    L"Adapt small images", // Settings_Label_UpscaleSmallImagesWhenLocked
+    L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
+    L"Remember Last Window Size and Position", // Settings_Label_RememberLastWindowSizeAndPosition
+    L"Adapt Small Images", // Settings_Label_UpscaleSmallImagesWhenLocked
     L"Smooth Window Scaling (GPU)", // Settings_Label_EnableSmoothScaling
     L"EXIF Panel Mode", // Settings_Label_ExifMode
     L"Toolbar Info Default", // Settings_Label_ToolbarInfoDefault
@@ -5672,7 +5672,7 @@ static const LanguageTable Table_FR = {
     L"Size", // Settings_Option_SortSize
     L"Type", // Settings_Option_SortType
     L"Loop", // Settings_Option_NavLoop
-    L"Through subfolders", // Settings_Option_NavThrough
+    L"Through Subfolders", // Settings_Option_NavThrough
     L"Linear: Basic smoothing", // Settings_Option_Linear
     L"Nearest: Extreme sharpness", // Settings_Option_Nearest
     L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
@@ -6746,6 +6746,9 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     case HotkeyAction::ToggleGallery:
         raw = AppStrings::Context_HUDGallery;
         break;
+    case HotkeyAction::ToggleFilmstrip:
+        raw = AppStrings::Settings_Header_GalleryTrigger;
+        break;
     case HotkeyAction::ToggleInfoPanel:
         raw = AppStrings::Context_LiteInfoPanel;
         break;
@@ -6859,6 +6862,9 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         break;
     case HotkeyAction::Help:
         raw = AppStrings::Settings_Link_Hotkeys;
+        break;
+    case HotkeyAction::ToggleSettings:
+        raw = AppStrings::Context_Settings;
         break;
     case HotkeyAction::Exit:
         raw = AppStrings::Context_Exit;

@@ -20,7 +20,7 @@ def run_conversion(input_path, output_path):
 
     # Define the static constants that are defined once and not translated
     static_constants = {
-        "Settings_Text_Copyright": 'L"Copyright \\u00A9 2025-%s Vivor Loong (Github@justnullname)"',
+        "Settings_Text_Copyright": 'L"\\u00A9 2025\\u2013%s Vivor Loong (GitHub: @justnullname)"',
         "Settings_Text_License": 'L"Licensed under GNU GPL v3.0"'
     }
 

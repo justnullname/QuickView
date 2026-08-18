@@ -105,17 +105,17 @@ if(WIN32 AND VS_INSTALL_PATH)
 endif()
 
 # 3. Define LLVM Search Hints
-set(LLVM_HINTS
+set(LLVM_HINTS)
+if(VS_INSTALL_PATH)
+    list(APPEND LLVM_HINTS "${VS_INSTALL_PATH}/VC/Tools/Llvm/x64/bin")
+    list(APPEND LLVM_HINTS "${VS_INSTALL_PATH}/VC/Tools/Llvm/bin")
+endif()
+list(APPEND LLVM_HINTS
     "$ENV{LLVM_INSTALL_DIR}/bin"
     "C:/Program Files/LLVM/bin"
     "C:/Program Files (x86)/LLVM/bin"
     "D:/Program Files/LLVM/bin"
 )
-
-if(VS_INSTALL_PATH)
-    list(APPEND LLVM_HINTS "${VS_INSTALL_PATH}/VC/Tools/Llvm/x64/bin")
-    list(APPEND LLVM_HINTS "${VS_INSTALL_PATH}/VC/Tools/Llvm/bin")
-endif()
 
 # 4. Locate LLVM Core Tools
 find_program(ADAPTIVE_CLANG_CL clang-cl HINTS ${LLVM_HINTS})
