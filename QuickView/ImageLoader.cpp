@@ -914,7 +914,8 @@ HRESULT DecodeMetafileBuffer(const uint8_t *data, size_t size,
     return E_OUTOFMEMORY;
   }
 
-  if (!QuickView::Metafile::Rasterize(hemf, outW, outH, pixels, stride)) {
+  bool hasAlpha = false;
+  if (!QuickView::Metafile::Rasterize(hemf, outW, outH, pixels, stride, &hasAlpha)) {
     if (!ctx.allocator)
       _aligned_free(pixels);
     DeleteEnhMetaFile(hemf);
@@ -931,8 +932,8 @@ HRESULT DecodeMetafileBuffer(const uint8_t *data, size_t size,
   result.metadata.Width = static_cast<UINT>(outW);
   result.metadata.Height = static_cast<UINT>(outH);
   result.metadata.Format = QuickView::Metafile::KindName(kind);
-  result.metadata.LoaderName = L"GDI Metafile";
-  result.metadata.hasAlpha = false;
+  result.metadata.LoaderName = L"GDI+ Metafile";
+  result.metadata.hasAlpha = hasAlpha;
   result.metadata.DpiX = dpiX;
   result.metadata.DpiY = dpiY;
   result.metadata.colorInfo.dataSpace = QuickView::PixelDataSpace::EncodedSdr;

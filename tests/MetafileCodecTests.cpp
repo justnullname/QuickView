@@ -106,3 +106,149 @@ TEST(MetafileCodec, RasterizeGdiCreatedEmf) {
     }
     EXPECT_TRUE(foundRed);
 }
+
+TEST(MetafileCodec, RasterizeTransparentEmfPreservesAlpha) {
+    HDC screen = GetDC(nullptr);
+    // 100x100 pixels at 96 DPI in HIMETRIC (0.01 mm): 100 * 2540 / 96 = 2645
+    RECT rclFrame{0, 0, 100 * 2540 / 96, 100 * 2540 / 96};
+    HDC meta = CreateEnhMetaFileW(screen, nullptr, &rclFrame, L"QuickView transparent test\0");
+    ASSERT_TRUE(meta != nullptr);
+    // Draw a small red rectangle in the center (25..75), leaving background border untouched
+    RECT rc{25, 25, 75, 75};
+    HBRUSH brush = CreateSolidBrush(RGB(255, 0, 0));
+    FillRect(meta, &rc, brush);
+    DeleteObject(brush);
+    HENHMETAFILE hemf = CloseEnhMetaFile(meta);
+    ReleaseDC(nullptr, screen);
+    ASSERT_TRUE(hemf != nullptr);
+
+    int logicalW = 0, logicalH = 0;
+    ASSERT_TRUE(MeasureViaGdi(hemf, 96, 96, logicalW, logicalH));
+
+    int w = 0, h = 0;
+    ChooseRasterSize(logicalW, logicalH, 0, 0, w, h);
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4, 0);
+    bool hasAlpha = false;
+    ASSERT_TRUE(Rasterize(hemf, w, h, pixels.data(), w * 4, &hasAlpha));
+    DeleteEnhMetaFile(hemf);
+
+    // Should detect transparency
+    EXPECT_TRUE(hasAlpha);
+
+    // Corner pixel (0,0) must be completely transparent (A = 0)
+    EXPECT_EQ(pixels[3], 0);
+
+    // Center pixel must have alpha > 0 and red color
+    const int midX = w / 2;
+    const int midY = h / 2;
+    const size_t midIdx = (static_cast<size_t>(midY) * w + midX) * 4;
+    EXPECT_EQ(pixels[midIdx + 0], 0);   // B
+    EXPECT_EQ(pixels[midIdx + 1], 0);   // G
+    EXPECT_EQ(pixels[midIdx + 2], 255); // R
+    EXPECT_EQ(pixels[midIdx + 3], 255); // A
+}
+
+TEST(MetafileCodec, RasterizeOpaqueEmfHasOpaquePixels) {
+    HDC screen = GetDC(nullptr);
+    HDC meta = CreateEnhMetaFileW(screen, nullptr, nullptr, L"QuickView opaque test\0");
+    ASSERT_TRUE(meta != nullptr);
+    RECT rc{0, 0, 100, 100};
+    HBRUSH brush = CreateSolidBrush(RGB(0, 128, 255));
+    FillRect(meta, &rc, brush);
+    DeleteObject(brush);
+    HENHMETAFILE hemf = CloseEnhMetaFile(meta);
+    ReleaseDC(nullptr, screen);
+    ASSERT_TRUE(hemf != nullptr);
+
+    int logicalW = 0, logicalH = 0;
+    ASSERT_TRUE(MeasureViaGdi(hemf, 96, 96, logicalW, logicalH));
+
+    int w = 0, h = 0;
+    ChooseRasterSize(logicalW, logicalH, 0, 0, w, h);
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4, 0);
+    bool hasAlpha = true;
+    ASSERT_TRUE(Rasterize(hemf, w, h, pixels.data(), w * 4, &hasAlpha));
+    DeleteEnhMetaFile(hemf);
+
+    // Center region of opaque fill must be solid opaque (A=255) and blue
+    const int midX = w / 2;
+    const int midY = h / 2;
+    const size_t midIdx = (static_cast<size_t>(midY) * w + midX) * 4;
+    EXPECT_EQ(pixels[midIdx + 0], 255); // B
+    EXPECT_EQ(pixels[midIdx + 1], 128); // G
+    EXPECT_EQ(pixels[midIdx + 2], 0);   // R
+    EXPECT_EQ(pixels[midIdx + 3], 255); // A
+}
+
+TEST(MetafileCodec, RasterizeEmfPlusAntiAliasing) {
+    EnsureGdiplusInitialized();
+    IStream *stream = SHCreateMemStream(nullptr, 0);
+    ASSERT_TRUE(stream != nullptr);
+    HDC screen = GetDC(nullptr);
+    Gdiplus::RectF frame(0, 0, 100, 100);
+    {
+        Gdiplus::Metafile metaRecord(stream, screen, frame, Gdiplus::MetafileFrameUnitPixel, Gdiplus::EmfTypeEmfPlusDual);
+        Gdiplus::Graphics g(&metaRecord);
+        g.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+        Gdiplus::SolidBrush brush(Gdiplus::Color(255, 0, 200, 0));
+        g.FillEllipse(&brush, 10.0f, 10.0f, 80.0f, 80.0f);
+    }
+    ReleaseDC(nullptr, screen);
+
+    STATSTG stat{};
+    stream->Stat(&stat, STATFLAG_NONAME);
+    const size_t sz = static_cast<size_t>(stat.cbSize.QuadPart);
+    ASSERT_GT(sz, 0u);
+    std::vector<uint8_t> buf(sz);
+    LARGE_INTEGER zero{};
+    stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+    ULONG readBytes = 0;
+    stream->Read(buf.data(), static_cast<ULONG>(sz), &readBytes);
+    stream->Release();
+
+    int w = 200, h = 200;
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4, 0);
+    bool hasAlpha = false;
+    ASSERT_TRUE(RasterizeBuffer(buf.data(), buf.size(), w, h, pixels.data(), w * 4, &hasAlpha));
+    EXPECT_TRUE(hasAlpha);
+
+    // Verify that GDI+ anti-aliasing generated smooth subpixel edges (0 < Alpha < 255)
+    bool foundAntiAliasedEdge = false;
+    for (int i = 0; i < w * h; ++i) {
+        uint8_t a = pixels[i * 4 + 3];
+        if (a > 0 && a < 255) {
+            foundAntiAliasedEdge = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundAntiAliasedEdge);
+
+    // Verify transparent corner
+    EXPECT_EQ(pixels[3], 0);
+}
+
+TEST(MetafileCodec, RasterizeBufferMemoryStream) {
+    HDC screen = GetDC(nullptr);
+    RECT rclFrame{0, 0, 100 * 2540 / 96, 100 * 2540 / 96};
+    HDC meta = CreateEnhMetaFileW(screen, nullptr, &rclFrame, L"QuickView buffer test\0");
+    ASSERT_TRUE(meta != nullptr);
+    RECT rc{10, 10, 90, 90};
+    HBRUSH brush = CreateSolidBrush(RGB(200, 100, 50));
+    FillRect(meta, &rc, brush);
+    DeleteObject(brush);
+    HENHMETAFILE hemf = CloseEnhMetaFile(meta);
+    ReleaseDC(nullptr, screen);
+    ASSERT_TRUE(hemf != nullptr);
+
+    const UINT bytesLen = GetEnhMetaFileBits(hemf, 0, nullptr);
+    ASSERT_GT(bytesLen, 0u);
+    std::vector<uint8_t> buffer(bytesLen);
+    GetEnhMetaFileBits(hemf, bytesLen, buffer.data());
+    DeleteEnhMetaFile(hemf);
+
+    int w = 200, h = 200;
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4, 0);
+    bool hasAlpha = false;
+    ASSERT_TRUE(RasterizeBuffer(buffer.data(), buffer.size(), w, h, pixels.data(), w * 4, &hasAlpha));
+    EXPECT_TRUE(hasAlpha);
+}

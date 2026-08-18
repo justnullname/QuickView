@@ -371,6 +371,7 @@ target_link_libraries(QuickView PRIVATE
     shlwapi.lib
     shell32.lib
     mscms.lib
+    gdiplus.lib
     ${QV_WEBVIEW2_LIB}
 )
 
@@ -421,6 +422,7 @@ target_link_libraries(QuickViewTests PRIVATE
     shlwapi.lib 
     shell32.lib 
     mscms.lib
+    gdiplus.lib
     unrar-mini
     ZLIB::ZLIB
     libjpeg-turbo::turbojpeg-static

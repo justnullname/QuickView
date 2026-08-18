@@ -1,9 +1,12 @@
 #pragma once
 
-// WMF / EMF (and EMF+ Dual) via GDI — no third-party, no WebView.
+// WMF / EMF (and EMF+ Dual) via GDI+ with true alpha and anti-aliasing.
 // Office exports these as the Windows-native vector path into Word/Excel.
 
 #include <windows.h>
+#include <objidl.h>
+#include <gdiplus.h>
+#include <shlwapi.h>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -17,6 +20,22 @@ inline constexpr uint32_t kEmfSignature = 0x464D4520u; // " EMF"
 inline constexpr int kHimetricPerInch = 2540;
 inline constexpr int kMaxEdge = 8192;
 inline constexpr int kRasterScale = 2;
+
+inline void EnsureGdiplusInitialized() {
+    struct GdiplusLifecycle {
+        ULONG_PTR token = 0;
+        GdiplusLifecycle() {
+            Gdiplus::GdiplusStartupInput input;
+            Gdiplus::GdiplusStartup(&token, &input, nullptr);
+        }
+        ~GdiplusLifecycle() {
+            if (token) {
+                Gdiplus::GdiplusShutdown(token);
+            }
+        }
+    };
+    static GdiplusLifecycle s_gdiplusLifecycle;
+}
 
 inline uint16_t ReadLE16(const uint8_t *p) {
     return static_cast<uint16_t>(p[0] | (static_cast<uint16_t>(p[1]) << 8));
@@ -164,8 +183,104 @@ inline void ChooseRasterSize(int logicalW, int logicalH, int targetW, int target
     outH = h;
 }
 
-inline bool Rasterize(HENHMETAFILE hemf, int width, int height,
-                      uint8_t *dst, int stride) {
+inline bool RasterizeGdiplus(Gdiplus::Metafile &metafile, int width, int height,
+                             uint8_t *dst, int stride, bool *outHasAlpha = nullptr) {
+    if (metafile.GetLastStatus() != Gdiplus::Ok || width < 1 || height < 1 || !dst || stride < width * 4) {
+        return false;
+    }
+
+    const Gdiplus::Rect destRect(0, 0, width, height);
+
+    // 1. Render on Black Background (Alpha=255, RGB=0,0,0)
+    Gdiplus::Bitmap bmpBlack(width, height, PixelFormat32bppPARGB);
+    if (bmpBlack.GetLastStatus() != Gdiplus::Ok) return false;
+    {
+        Gdiplus::Graphics gBlack(&bmpBlack);
+        if (gBlack.GetLastStatus() != Gdiplus::Ok) return false;
+        gBlack.Clear(Gdiplus::Color(255, 0, 0, 0));
+        gBlack.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+        gBlack.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+        gBlack.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+        gBlack.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+        gBlack.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+        if (gBlack.DrawImage(&metafile, destRect) != Gdiplus::Ok) return false;
+    }
+
+    // 2. Render on White Background (Alpha=255, RGB=255,255,255)
+    Gdiplus::Bitmap bmpWhite(width, height, PixelFormat32bppPARGB);
+    if (bmpWhite.GetLastStatus() != Gdiplus::Ok) return false;
+    {
+        Gdiplus::Graphics gWhite(&bmpWhite);
+        if (gWhite.GetLastStatus() != Gdiplus::Ok) return false;
+        gWhite.Clear(Gdiplus::Color(255, 255, 255, 255));
+        gWhite.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+        gWhite.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+        gWhite.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+        gWhite.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+        gWhite.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+        if (gWhite.DrawImage(&metafile, destRect) != Gdiplus::Ok) return false;
+    }
+
+    // 3. Extract pixels and reconstruct mathematical alpha channel with anti-aliasing
+    Gdiplus::BitmapData dataBlack{};
+    Gdiplus::BitmapData dataWhite{};
+    const Gdiplus::Rect lockRect(0, 0, width, height);
+    if (bmpBlack.LockBits(&lockRect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &dataBlack) != Gdiplus::Ok) {
+        return false;
+    }
+    if (bmpWhite.LockBits(&lockRect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &dataWhite) != Gdiplus::Ok) {
+        bmpBlack.UnlockBits(&dataBlack);
+        return false;
+    }
+
+    const uint8_t *srcBlack = static_cast<const uint8_t *>(dataBlack.Scan0);
+    const uint8_t *srcWhite = static_cast<const uint8_t *>(dataWhite.Scan0);
+    const int strideBlack = dataBlack.Stride;
+    const int strideWhite = dataWhite.Stride;
+    bool hasAlpha = false;
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *rowB = srcBlack + static_cast<size_t>(y) * strideBlack;
+        const uint8_t *rowW = srcWhite + static_cast<size_t>(y) * strideWhite;
+        uint8_t *rowDst = dst + static_cast<size_t>(y) * stride;
+
+        for (int x = 0; x < width; ++x) {
+            const int b0 = rowB[x * 4 + 0];
+            const int g0 = rowB[x * 4 + 1];
+            const int r0 = rowB[x * 4 + 2];
+
+            const int b1 = rowW[x * 4 + 0];
+            const int g1 = rowW[x * 4 + 1];
+            const int r1 = rowW[x * 4 + 2];
+
+            const int diffB = b1 - b0;
+            const int diffG = g1 - g0;
+            const int diffR = r1 - r0;
+            const int maxDiff = (std::max)({diffB, diffG, diffR, 0});
+            const int alphaVal = (std::clamp)(255 - maxDiff, 0, 255);
+
+            rowDst[x * 4 + 0] = static_cast<uint8_t>(b0);
+            rowDst[x * 4 + 1] = static_cast<uint8_t>(g0);
+            rowDst[x * 4 + 2] = static_cast<uint8_t>(r0);
+            rowDst[x * 4 + 3] = static_cast<uint8_t>(alphaVal);
+
+            if (alphaVal < 255) {
+                hasAlpha = true;
+            }
+        }
+    }
+
+    bmpWhite.UnlockBits(&dataWhite);
+    bmpBlack.UnlockBits(&dataBlack);
+
+    if (outHasAlpha) {
+        *outHasAlpha = hasAlpha;
+    }
+    return true;
+}
+
+inline bool RasterizeFallbackGdi(HENHMETAFILE hemf, int width, int height,
+                                 uint8_t *dst, int stride, bool *outHasAlpha = nullptr) {
     if (!hemf || !dst || width < 1 || height < 1 || stride < width * 4) {
         return false;
     }
@@ -207,13 +322,68 @@ inline bool Rasterize(HENHMETAFILE hemf, int width, int height,
     const uint8_t *src = static_cast<const uint8_t *>(bits);
     for (int y = 0; y < height; ++y) {
         uint8_t *row = dst + static_cast<size_t>(y) * stride;
-        memcpy(row, src + static_cast<size_t>(y) * srcStride, static_cast<size_t>(srcStride));
+        std::memcpy(row, src + static_cast<size_t>(y) * srcStride, static_cast<size_t>(srcStride));
         for (int x = 0; x < width; ++x) {
             row[x * 4 + 3] = 255;
         }
     }
     DeleteObject(dib);
+    if (outHasAlpha) {
+        *outHasAlpha = false;
+    }
     return true;
+}
+
+inline bool Rasterize(HENHMETAFILE hemf, int width, int height,
+                      uint8_t *dst, int stride, bool *outHasAlpha = nullptr) {
+    if (!hemf || !dst || width < 1 || height < 1 || stride < width * 4) {
+        return false;
+    }
+
+    EnsureGdiplusInitialized();
+
+    // 1. Try high-quality GDI+ vector rasterization with anti-aliasing and true alpha
+    {
+        Gdiplus::Metafile metafile(hemf, FALSE);
+        if (metafile.GetLastStatus() == Gdiplus::Ok) {
+            if (RasterizeGdiplus(metafile, width, height, dst, stride, outHasAlpha)) {
+                return true;
+            }
+        }
+    }
+
+    // 2. Fallback to legacy GDI PlayEnhMetaFile
+    return RasterizeFallbackGdi(hemf, width, height, dst, stride, outHasAlpha);
+}
+
+inline bool RasterizeBuffer(const uint8_t *data, size_t size, int width, int height,
+                            uint8_t *dst, int stride, bool *outHasAlpha = nullptr) {
+    if (!data || size == 0 || !dst || width < 1 || height < 1 || stride < width * 4) {
+        return false;
+    }
+
+    EnsureGdiplusInitialized();
+
+    // 1. Try GDI+ directly from memory stream (preserves native EMF+ dual/plus records)
+    IStream *stream = SHCreateMemStream(data, static_cast<UINT>(size));
+    if (stream) {
+        Gdiplus::Metafile metafile(stream);
+        stream->Release();
+        if (metafile.GetLastStatus() == Gdiplus::Ok) {
+            if (RasterizeGdiplus(metafile, width, height, dst, stride, outHasAlpha)) {
+                return true;
+            }
+        }
+    }
+
+    // 2. Fallback via OpenHemf
+    HENHMETAFILE hemf = OpenHemf(data, size);
+    if (hemf) {
+        const bool ok = Rasterize(hemf, width, height, dst, stride, outHasAlpha);
+        DeleteEnhMetaFile(hemf);
+        return ok;
+    }
+    return false;
 }
 
 inline bool MeasureViaGdi(HENHMETAFILE hemf, int dpiX, int dpiY, int &outW, int &outH) {
