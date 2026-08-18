@@ -380,6 +380,7 @@ const wchar_t *Settings_Label_FixedZoomLevels = nullptr;
 const wchar_t *Dialog_FixedZoomTitle = nullptr;
 const wchar_t *Dialog_FixedZoomMsg = nullptr;
 const wchar_t *Settings_Label_ZoomModeIn = nullptr;
+const wchar_t *Settings_Tooltip_ZoomModeIn = nullptr;
 const wchar_t *Settings_Label_ZoomModeOut = nullptr;
 const wchar_t *Settings_Label_LeftDrag = nullptr;
 const wchar_t *Settings_Label_MiddleDrag = nullptr;
@@ -389,6 +390,8 @@ const wchar_t *Settings_Label_ShowOSD = nullptr;
 const wchar_t *Settings_Label_DisableEdgeNavInCompare = nullptr;
 const wchar_t *Settings_Label_NavIndicator = nullptr;
 const wchar_t *Settings_Label_AutoRotate = nullptr;
+const wchar_t *Settings_Label_FsrSharpness = nullptr;
+const wchar_t *Settings_Tooltip_FsrSharpness = nullptr;
 const wchar_t *Settings_Label_CMS = nullptr;
 const wchar_t *Settings_Label_AdvancedColor = nullptr;
 const wchar_t *Settings_Label_HdrToneMapping = nullptr;
@@ -496,6 +499,7 @@ const wchar_t *Settings_Option_NavThrough = nullptr;
 const wchar_t *Settings_Option_Linear = nullptr;
 const wchar_t *Settings_Option_Nearest = nullptr;
 const wchar_t *Settings_Option_HighQualityCubic = nullptr;
+const wchar_t *Settings_Option_FSR = nullptr;
 const wchar_t *Settings_Option_ZoomAuto = nullptr;
 const wchar_t *Settings_Option_Auto = nullptr;
 const wchar_t *Settings_Option_Eco = nullptr;
@@ -952,6 +956,7 @@ struct LanguageTable {
     const wchar_t *Dialog_FixedZoomTitle;
     const wchar_t *Dialog_FixedZoomMsg;
     const wchar_t *Settings_Label_ZoomModeIn;
+    const wchar_t *Settings_Tooltip_ZoomModeIn;
     const wchar_t *Settings_Label_ZoomModeOut;
     const wchar_t *Settings_Label_LeftDrag;
     const wchar_t *Settings_Label_MiddleDrag;
@@ -961,6 +966,8 @@ struct LanguageTable {
     const wchar_t *Settings_Label_DisableEdgeNavInCompare;
     const wchar_t *Settings_Label_NavIndicator;
     const wchar_t *Settings_Label_AutoRotate;
+    const wchar_t *Settings_Label_FsrSharpness;
+    const wchar_t *Settings_Tooltip_FsrSharpness;
     const wchar_t *Settings_Label_CMS;
     const wchar_t *Settings_Label_AdvancedColor;
     const wchar_t *Settings_Label_HdrToneMapping;
@@ -1068,6 +1075,7 @@ struct LanguageTable {
     const wchar_t *Settings_Option_Linear;
     const wchar_t *Settings_Option_Nearest;
     const wchar_t *Settings_Option_HighQualityCubic;
+    const wchar_t *Settings_Option_FSR;
     const wchar_t *Settings_Option_ZoomAuto;
     const wchar_t *Settings_Option_Auto;
     const wchar_t *Settings_Option_Eco;
@@ -1528,6 +1536,7 @@ static const LanguageTable Table_EN = {
     L"Edit Zoom Levels", // Dialog_FixedZoomTitle
     L"Enter comma-separated zoom ratios (e.g. 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"Zoom Mode (In)", // Settings_Label_ZoomModeIn
+    L"Select upscaling algorithm:\n• Auto: Smart content-aware detection (FSR for photos/CG, Nearest for pixel art)\n• Linear: Fast bilinear smoothing\n• Nearest: Sharp pixel grid for pixel art\n• HQ Cubic: Ultra-smooth bicubic filter\n• AMD FSR 1.0: Edge-adaptive spatial super-resolution with RCAS sharpening", // Settings_Tooltip_ZoomModeIn
     L"Zoom Mode (Out)", // Settings_Label_ZoomModeOut
     L"Left Drag", // Settings_Label_LeftDrag
     L"Middle Drag", // Settings_Label_MiddleDrag
@@ -1537,6 +1546,8 @@ static const LanguageTable Table_EN = {
     L"Disable in Compare Mode", // Settings_Label_DisableEdgeNavInCompare
     L"Nav Indicator", // Settings_Label_NavIndicator
     L"Auto Rotate (EXIF)", // Settings_Label_AutoRotate
+    L"FSR Sharpness", // Settings_Label_FsrSharpness
+    L"Adjust edge sharpness for AMD FSR 1.0 spatial super-resolution.", // Settings_Tooltip_FsrSharpness
     L"Color Management", // Settings_Label_CMS
     L"Advanced Color (HDR)", // Settings_Label_AdvancedColor
     L"HDR Tone Mapping", // Settings_Label_HdrToneMapping
@@ -1644,6 +1655,7 @@ static const LanguageTable Table_EN = {
     L"Linear: Basic smoothing", // Settings_Option_Linear
     L"Nearest: Extreme sharpness", // Settings_Option_Nearest
     L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"Auto", // Settings_Option_ZoomAuto
     L"Auto", // Settings_Option_Auto
     L"Eco", // Settings_Option_Eco
@@ -2104,6 +2116,7 @@ static const LanguageTable Table_CN = {
     L"编辑固定缩放级别", // Dialog_FixedZoomTitle
     L"输入逗号分隔的缩放级别 (例如 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"放大插值算法", // Settings_Label_ZoomModeIn
+    L"选择放大时的图像插值算法：\n• 自动 (Auto)：智能内容感知（摄影/CG 自动启用 FSR 边缘超分，像素画/超大放大自动切换最近邻）\n• 线性 (Linear)：基础快速双线性平滑\n• 最近邻 (Nearest)：像素画/点阵图专用，呈现真实锐利像素格\n• 高质量双三次 (HQ Cubic)：极端平滑过渡，消除噪点与马赛克\n• AMD FSR 1.0：空间边缘自适应超分辨率与局部对比度锐化", // Settings_Tooltip_ZoomModeIn
     L"缩小插值算法", // Settings_Label_ZoomModeOut
     L"左键拖动", // Settings_Label_LeftDrag
     L"中键拖动", // Settings_Label_MiddleDrag
@@ -2113,6 +2126,8 @@ static const LanguageTable Table_CN = {
     L"在对比模式下禁用", // Settings_Label_DisableEdgeNavInCompare
     L"翻页指示器", // Settings_Label_NavIndicator
     L"自动旋转 (EXIF)", // Settings_Label_AutoRotate
+    L"FSR 锐化强度", // Settings_Label_FsrSharpness
+    L"调节 AMD FSR 1.0 空间自适应超分辨率的边缘锐化强度。", // Settings_Tooltip_FsrSharpness
     L"色彩管理 (CMS)", // Settings_Label_CMS
     L"高级色彩与 HDR (scRGB)", // Settings_Label_AdvancedColor
     L"HDR 色调映射", // Settings_Label_HdrToneMapping
@@ -2220,6 +2235,7 @@ static const LanguageTable Table_CN = {
     L"线性 (Linear)：基础平滑", // Settings_Option_Linear
     L"最近邻 (Nearest)：极端锐利", // Settings_Option_Nearest
     L"高质量双三次 (HQ Cubic)：极端平滑", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"自动", // Settings_Option_ZoomAuto
     L"自动", // Settings_Option_Auto
     L"节能", // Settings_Option_Eco
@@ -2680,6 +2696,7 @@ static const LanguageTable Table_TW = {
     L"編輯固定縮放級別", // Dialog_FixedZoomTitle
     L"輸入逗號分隔的縮放級別 (例如 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"放大插值演算法", // Settings_Label_ZoomModeIn
+    L"選擇放大時的影像插值演算法：\n• 自動 (Auto)：智慧內容感知（攝影/CG 自動啟用 FSR 邊緣超解析度，像素畫/超大放大自動切換最近鄰）\n• 線性 (Linear)：基礎快速雙線性平滑\n• 最近鄰 (Nearest)：像素畫/點陣圖專用，呈現真實銳利像素格\n• 高品質雙三次 (HQ Cubic)：極端平滑過渡，消除噪點與馬賽克\n• AMD FSR 1.0：空間邊緣自適應超解析度與局部對比度銳化", // Settings_Tooltip_ZoomModeIn
     L"縮小插值演算法", // Settings_Label_ZoomModeOut
     L"左鍵拖曳", // Settings_Label_LeftDrag
     L"中鍵拖曳", // Settings_Label_MiddleDrag
@@ -2689,6 +2706,8 @@ static const LanguageTable Table_TW = {
     L"在對比模式下停用", // Settings_Label_DisableEdgeNavInCompare
     L"翻頁指示器", // Settings_Label_NavIndicator
     L"自動旋轉 (EXIF)", // Settings_Label_AutoRotate
+    L"FSR 銳化強度", // Settings_Label_FsrSharpness
+    L"調節 AMD FSR 1.0 空間自適應超解析度的邊緣銳化強度。", // Settings_Tooltip_FsrSharpness
     L"色彩管理 (CMS)", // Settings_Label_CMS
     L"高級色彩與 HDR (scRGB)", // Settings_Label_AdvancedColor
     L"HDR 色調映射", // Settings_Label_HdrToneMapping
@@ -2796,6 +2815,7 @@ static const LanguageTable Table_TW = {
     L"線性 (Linear)：基礎平滑", // Settings_Option_Linear
     L"最近鄰 (Nearest)：極端銳利", // Settings_Option_Nearest
     L"高品質雙三次 (HQ Cubic)：極端平滑", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"自動", // Settings_Option_ZoomAuto
     L"自動", // Settings_Option_Auto
     L"節能", // Settings_Option_Eco
@@ -3256,6 +3276,7 @@ static const LanguageTable Table_JA = {
     L"ズーム倍率を編集", // Dialog_FixedZoomTitle
     L"カンマ区切りでズーム倍率を入力してください (例: 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"ズームモード (拡大)", // Settings_Label_ZoomModeIn
+    L"拡大時の補間アルゴリズムを選択：\n• 自動 (Auto)：コンテンツ認識（写真/CG は FSR 超解像、ドット絵はニアレストを自動適用）\n• バイリニア (Linear)：高速な線形平滑化\n• ニアレスト (Nearest)：ドット絵/ピクセルアート用、シャープな格子感を維持\n• HQ バイキュービック (HQ Cubic)：極めて滑らかな高精度補間\n• AMD FSR 1.0：エッジ適応型空間超解像とコントラスト適応シャープニング", // Settings_Tooltip_ZoomModeIn
     L"ズームモード (縮小)", // Settings_Label_ZoomModeOut
     L"左ドラッグ", // Settings_Label_LeftDrag
     L"中ドラッグ", // Settings_Label_MiddleDrag
@@ -3265,6 +3286,8 @@ static const LanguageTable Table_JA = {
     L"比較モードでは無効化", // Settings_Label_DisableEdgeNavInCompare
     L"ナビゲーションインジケーター", // Settings_Label_NavIndicator
     L"自動回転 (EXIF)", // Settings_Label_AutoRotate
+    L"FSR シャープネス", // Settings_Label_FsrSharpness
+    L"AMD FSR 1.0 空間超解像のエッジ強調強度を調整します。", // Settings_Tooltip_FsrSharpness
     L"カラーマネジメント", // Settings_Label_CMS
     L"高度なカラー (HDR)", // Settings_Label_AdvancedColor
     L"HDR トーンマッピング", // Settings_Label_HdrToneMapping
@@ -3372,6 +3395,7 @@ static const LanguageTable Table_JA = {
     L"バイリニア: 基本的な平滑化", // Settings_Option_Linear
     L"ニアレストネイバー : 極限の鮮明さ", // Settings_Option_Nearest
     L"HQ バイキュービック : 高精度な平滑化", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"自動", // Settings_Option_ZoomAuto
     L"自動", // Settings_Option_Auto
     L"エコ", // Settings_Option_Eco
@@ -3832,6 +3856,7 @@ static const LanguageTable Table_RU = {
     L"Редактировать масштабы", // Dialog_FixedZoomTitle
     L"Введите масштабы через запятую (например, 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"Увеличить", // Settings_Label_ZoomModeIn
+    L"Алгоритм масштабирования при увеличении:\n• Авто: Умное распознавание (FSR для фото, По соседним для пиксель-арта)\n• Линейный: Базовое сглаживание\n• По соседним: Четкая пиксельная сетка\n• HQ кубический: Максимально плавный фильтр\n• AMD FSR 1.0: Пространственное суперразрешение FSR с повышением резкости", // Settings_Tooltip_ZoomModeIn
     L"Уменьшить", // Settings_Label_ZoomModeOut
     L"Перетаскивание левой кнопкой", // Settings_Label_LeftDrag
     L"Перетаскивание средней кнопкой", // Settings_Label_MiddleDrag
@@ -3841,6 +3866,8 @@ static const LanguageTable Table_RU = {
     L"Отключить в режиме сравнения", // Settings_Label_DisableEdgeNavInCompare
     L"Индикатор навигации", // Settings_Label_NavIndicator
     L"Автоповорот (EXIF)", // Settings_Label_AutoRotate
+    L"Резкость FSR", // Settings_Label_FsrSharpness
+    L"Настройка резкости краев для масштабирования AMD FSR 1.0.", // Settings_Tooltip_FsrSharpness
     L"Управление цветом (CMS)", // Settings_Label_CMS
     L"Расширенный цвет (HDR)", // Settings_Label_AdvancedColor
     L"Тональная компрессия HDR", // Settings_Label_HdrToneMapping
@@ -3948,6 +3975,7 @@ static const LanguageTable Table_RU = {
     L"Линейный (простое сглаживание)", // Settings_Option_Linear
     L"По соседним (макс. резкость)", // Settings_Option_Nearest
     L"HQ кубический (макс. сглаживание)", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"Авто", // Settings_Option_ZoomAuto
     L"Авто", // Settings_Option_Auto
     L"Эко", // Settings_Option_Eco
@@ -4408,6 +4436,7 @@ static const LanguageTable Table_DE = {
     L"Zoomstufen bearbeiten", // Dialog_FixedZoomTitle
     L"Geben Sie kommagetrennte Zoomstufen ein (z. B. 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"Vergrößerungsmodus", // Settings_Label_ZoomModeIn
+    L"Skalierungsalgorithmus für die Vergrößerung:\n• Auto: Intelligente Inhaltserkennung (FSR für Fotos/CG, Nächster für Pixel-Art)\n• Linear: Schnelle bilineare Glättung\n• Nächster: Scharfes Pixelraster für Pixel-Art\n• HQ Kubisch: Extrem sanfter bikubischer Filter\n• AMD FSR 1.0: Kantenadaptive räumliche Super-Resolution mit RCAS-Schärfung", // Settings_Tooltip_ZoomModeIn
     L"Verkleinerungsmodus", // Settings_Label_ZoomModeOut
     L"Links ziehen", // Settings_Label_LeftDrag
     L"Mitte ziehen", // Settings_Label_MiddleDrag
@@ -4417,6 +4446,8 @@ static const LanguageTable Table_DE = {
     L"Im Vergleichsmodus deaktivieren", // Settings_Label_DisableEdgeNavInCompare
     L"Navigationsanzeige", // Settings_Label_NavIndicator
     L"Automatisch drehen (EXIF)", // Settings_Label_AutoRotate
+    L"FSR-Schärfe", // Settings_Label_FsrSharpness
+    L"Passen Sie die Kantenschärfe für AMD FSR 1.0 Super-Resolution an.", // Settings_Tooltip_FsrSharpness
     L"Farbmanagement (CMS)", // Settings_Label_CMS
     L"Erweiterte Farbe (HDR)", // Settings_Label_AdvancedColor
     L"HDR-Tonzuordnung", // Settings_Label_HdrToneMapping
@@ -4524,6 +4555,7 @@ static const LanguageTable Table_DE = {
     L"Linear: Grundglättung", // Settings_Option_Linear
     L"Nächster: Extreme Schärfe", // Settings_Option_Nearest
     L"HQ Kubisch: Extreme Glättung", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"Auto", // Settings_Option_ZoomAuto
     L"Auto", // Settings_Option_Auto
     L"Öko", // Settings_Option_Eco
@@ -4984,6 +5016,7 @@ static const LanguageTable Table_ES = {
     L"Editar niveles de zoom", // Dialog_FixedZoomTitle
     L"Introduzca niveles de zoom separados por comas (p. ej., 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"Modo de acercar", // Settings_Label_ZoomModeIn
+    L"Algoritmo de interpolación al ampliar:\n• Auto: Detección inteligente (FSR para fotos/CG, Cercano para pixel art)\n• Lineal: Suavizado bilineal rápido\n• Cercano: Cuadrícula de píxeles nítida para pixel art\n• Cúbico HQ: Filtro bicúbico ultrasuave\n• AMD FSR 1.0: Superresolución espacial adaptativa con nitidez RCAS", // Settings_Tooltip_ZoomModeIn
     L"Modo de alejar", // Settings_Label_ZoomModeOut
     L"Arrastrar izquierdo", // Settings_Label_LeftDrag
     L"Arrastrar central", // Settings_Label_MiddleDrag
@@ -4993,6 +5026,8 @@ static const LanguageTable Table_ES = {
     L"Desactivar en modo de comparación", // Settings_Label_DisableEdgeNavInCompare
     L"Indicador navegación", // Settings_Label_NavIndicator
     L"Rotar automático (EXIF)", // Settings_Label_AutoRotate
+    L"Nitidez FSR", // Settings_Label_FsrSharpness
+    L"Ajusta la nitidez de bordes para la superresolución AMD FSR 1.0.", // Settings_Tooltip_FsrSharpness
     L"Gestión de color (CMS)", // Settings_Label_CMS
     L"Color avanzado (HDR)", // Settings_Label_AdvancedColor
     L"Mapeo de tonos HDR", // Settings_Label_HdrToneMapping
@@ -5100,6 +5135,7 @@ static const LanguageTable Table_ES = {
     L"Lineal: Suavizado básico", // Settings_Option_Linear
     L"Cercano: Extrema nitidez", // Settings_Option_Nearest
     L"Cúbico HQ: Extremo suavizado", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"Auto", // Settings_Option_ZoomAuto
     L"Automático", // Settings_Option_Auto
     L"Eco", // Settings_Option_Eco
@@ -5560,6 +5596,7 @@ static const LanguageTable Table_FR = {
     L"Edit Zoom Levels", // Dialog_FixedZoomTitle
     L"Enter comma-separated zoom ratios (e.g. 0.5, 1, 2):", // Dialog_FixedZoomMsg
     L"Zoom Mode (In)", // Settings_Label_ZoomModeIn
+    L"Algorithme de mise à l'échelle lors du zoom :\n• Auto : Détection intelligente (FSR pour photos/CG, Plus proche pour pixel art)\n• Linéaire : Lissage bilinéaire rapide\n• Plus proche : Grille nette pour le pixel art\n• HQ Cubique : Filtrage bicubique ultra-fluide\n• AMD FSR 1.0 : Super-résolution spatiale adaptative avec netteté RCAS", // Settings_Tooltip_ZoomModeIn
     L"Zoom Mode (Out)", // Settings_Label_ZoomModeOut
     L"Left Drag", // Settings_Label_LeftDrag
     L"Middle Drag", // Settings_Label_MiddleDrag
@@ -5569,6 +5606,8 @@ static const LanguageTable Table_FR = {
     L"Désactiver en mode comparaison", // Settings_Label_DisableEdgeNavInCompare
     L"Indicateur de navigation", // Settings_Label_NavIndicator
     L"Rotation automatique (EXIF)", // Settings_Label_AutoRotate
+    L"Netteté FSR", // Settings_Label_FsrSharpness
+    L"Ajuste la netteté des contours pour la super-résolution AMD FSR 1.0.", // Settings_Tooltip_FsrSharpness
     L"Gestion des couleurs (CMS)", // Settings_Label_CMS
     L"Couleurs avancées (HDR)", // Settings_Label_AdvancedColor
     L"Mappage de tons HDR", // Settings_Label_HdrToneMapping
@@ -5676,6 +5715,7 @@ static const LanguageTable Table_FR = {
     L"Linear: Basic smoothing", // Settings_Option_Linear
     L"Nearest: Extreme sharpness", // Settings_Option_Nearest
     L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
+    L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
     L"Auto", // Settings_Option_ZoomAuto
     L"Auto", // Settings_Option_Auto
     L"Eco", // Settings_Option_Eco
@@ -6141,6 +6181,7 @@ void Apply(const LanguageTable& t) {
   Dialog_FixedZoomTitle = t.Dialog_FixedZoomTitle;
   Dialog_FixedZoomMsg = t.Dialog_FixedZoomMsg;
   Settings_Label_ZoomModeIn = t.Settings_Label_ZoomModeIn;
+  Settings_Tooltip_ZoomModeIn = t.Settings_Tooltip_ZoomModeIn;
   Settings_Label_ZoomModeOut = t.Settings_Label_ZoomModeOut;
   Settings_Label_LeftDrag = t.Settings_Label_LeftDrag;
   Settings_Label_MiddleDrag = t.Settings_Label_MiddleDrag;
@@ -6150,6 +6191,8 @@ void Apply(const LanguageTable& t) {
   Settings_Label_DisableEdgeNavInCompare = t.Settings_Label_DisableEdgeNavInCompare;
   Settings_Label_NavIndicator = t.Settings_Label_NavIndicator;
   Settings_Label_AutoRotate = t.Settings_Label_AutoRotate;
+  Settings_Label_FsrSharpness = t.Settings_Label_FsrSharpness;
+  Settings_Tooltip_FsrSharpness = t.Settings_Tooltip_FsrSharpness;
   Settings_Label_CMS = t.Settings_Label_CMS;
   Settings_Label_AdvancedColor = t.Settings_Label_AdvancedColor;
   Settings_Label_HdrToneMapping = t.Settings_Label_HdrToneMapping;
@@ -6257,6 +6300,7 @@ void Apply(const LanguageTable& t) {
   Settings_Option_Linear = t.Settings_Option_Linear;
   Settings_Option_Nearest = t.Settings_Option_Nearest;
   Settings_Option_HighQualityCubic = t.Settings_Option_HighQualityCubic;
+  Settings_Option_FSR = t.Settings_Option_FSR;
   Settings_Option_ZoomAuto = t.Settings_Option_ZoomAuto;
   Settings_Option_Auto = t.Settings_Option_Auto;
   Settings_Option_Eco = t.Settings_Option_Eco;

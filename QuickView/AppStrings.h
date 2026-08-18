@@ -422,6 +422,7 @@ namespace AppStrings {
     extern const wchar_t* Dialog_FixedZoomTitle;
     extern const wchar_t* Dialog_FixedZoomMsg;
     extern const wchar_t* Settings_Label_ZoomModeIn;
+    extern const wchar_t* Settings_Tooltip_ZoomModeIn;
     extern const wchar_t* Settings_Label_ZoomModeOut;
     extern const wchar_t* Settings_Label_LeftDrag;
     extern const wchar_t* Settings_Label_MiddleDrag;
@@ -454,6 +455,7 @@ namespace AppStrings {
     extern const wchar_t* Settings_Option_Linear;
     extern const wchar_t* Settings_Option_Nearest;
     extern const wchar_t* Settings_Option_HighQualityCubic;
+    extern const wchar_t* Settings_Option_FSR;
 
     // Image
     extern const wchar_t* Settings_Header_Render;
@@ -462,6 +464,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Header_System;
     
     extern const wchar_t* Settings_Label_AutoRotate;
+    extern const wchar_t* Settings_Label_FsrSharpness;
+    extern const wchar_t* Settings_Tooltip_FsrSharpness;
     extern const wchar_t* Settings_Label_CMS;
     extern const wchar_t* Settings_Label_AdvancedColor;
     extern const wchar_t* Settings_Label_CmsFallback;

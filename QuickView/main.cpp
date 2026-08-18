@@ -913,8 +913,8 @@ void ApplyFullScreenZoomMode(HWND hwnd) {
 static bool g_isAutoLocked = false;
 
 // [Interpolation] Get best interpolation mode
-static bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH) {
-    return ColorMath::IsEffectivelyPixelArtMode(totalScale, origW, origH, g_runtime.PixelArtModeOverride, g_config.ZoomModeIn, g_config.ZoomModeOut);
+static bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH, double entropy = 8.0, bool hasEntropy = false) {
+    return ColorMath::IsEffectivelyPixelArtMode(totalScale, origW, origH, g_runtime.PixelArtModeOverride, g_config.ZoomModeIn, g_config.ZoomModeOut, entropy, hasEntropy);
 }
 
 static QuickView::ColorPrimaries ResolveFramePrimaries(const QuickView::RawImageFrame& frame) {
@@ -1275,21 +1275,23 @@ void ScheduleGamutWarningAnalysis(HWND hwnd) {
         g_compEngine->Commit();
     }
 }
-static D2D1_INTERPOLATION_MODE GetOptimalD2DInterpolationMode(float totalScale, float origW, float origH) {
-    if (IsEffectivelyPixelArtMode(totalScale, origW, origH)) {
+static D2D1_INTERPOLATION_MODE GetOptimalD2DInterpolationMode(float totalScale, float origW, float origH, double entropy = 8.0, bool hasEntropy = false) {
+    if (IsEffectivelyPixelArtMode(totalScale, origW, origH, entropy, hasEntropy)) {
         return D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
     }
 
     int mode = (totalScale >= 1.0f) ? g_config.ZoomModeIn : g_config.ZoomModeOut;
     if (mode == 1) return D2D1_INTERPOLATION_MODE_LINEAR;
+    if (mode == 2) return D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
     if (mode == 3) return D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+    if (mode == 4) return D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
 
     // Default Fallback
     return D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
 }
 
-static DCOMPOSITION_BITMAP_INTERPOLATION_MODE GetOptimalDCompInterpolationMode(float totalScale, float origW, float origH) {
-    if (IsEffectivelyPixelArtMode(totalScale, origW, origH)) {
+static DCOMPOSITION_BITMAP_INTERPOLATION_MODE GetOptimalDCompInterpolationMode(float totalScale, float origW, float origH, double entropy = 8.0, bool hasEntropy = false) {
+    if (IsEffectivelyPixelArtMode(totalScale, origW, origH, entropy, hasEntropy)) {
         return DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
     }
 
@@ -2852,11 +2854,48 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              D2D1_RECT_F srcRect = rawRect;
              D2D1_RECT_F destRect = rawRect;
 
+             const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
+             bool hasMetrics = meta.HasSharpness && meta.HasEntropy;
+             float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(g_config.FsrSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
+
              // Use Smart Interpolation
              float absoluteScale = GetPaneContext(PaneSlot::Primary).view.Zoom * scale;
-             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, rawRect.right - rawRect.left, rawRect.bottom - rawRect.top);
+             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, rawRect.right - rawRect.left, rawRect.bottom - rawRect.top, meta.Entropy, meta.HasEntropy);
 
-             ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, interpMode, &srcRect);
+             auto DrawBitmapWithFsr = [&](const D2D1_RECT_F& dst, const D2D1_RECT_F& src, D2D1_INTERPOLATION_MODE mode, float imgW, float imgH) {
+                 bool isPixelArt = IsEffectivelyPixelArtMode(absoluteScale, imgW, imgH, meta.Entropy, meta.HasEntropy);
+                 bool enableFsr = (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
+                 if (enableFsr && absoluteScale > 1.0f && adaptiveFsrSharpness > 0.005f) {
+                     ComPtr<ID2D1Effect> sharpenEffect;
+                     if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Sharpen, &sharpenEffect))) {
+                         sharpenEffect->SetInput(0, res.bitmap.Get());
+                         sharpenEffect->SetValue(D2D1_SHARPEN_PROP_SHARPNESS, std::clamp(adaptiveFsrSharpness * 2.0f, 0.0f, 2.0f));
+                         sharpenEffect->SetValue(D2D1_SHARPEN_PROP_THRESHOLD, 0.0f);
+
+                         ComPtr<ID2D1Effect> cropEffect;
+                         if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Crop, &cropEffect))) {
+                             cropEffect->SetInputEffect(0, sharpenEffect.Get());
+                             cropEffect->SetValue(D2D1_CROP_PROP_RECT, src);
+
+                             ComPtr<ID2D1Effect> scaleEffect;
+                             if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Scale, &scaleEffect))) {
+                                 float sx = (dst.right - dst.left) / (src.right - src.left);
+                                 float sy = (dst.bottom - dst.top) / (src.bottom - src.top);
+                                 scaleEffect->SetInputEffect(0, cropEffect.Get());
+                                 scaleEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(sx, sy));
+                                 scaleEffect->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE, D2D1_SCALE_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+
+                                 D2D1_POINT_2F targetOffset = D2D1::Point2F(dst.left - src.left * sx, dst.top - src.top * sy);
+                                 ctx->DrawImage(scaleEffect.Get(), &targetOffset);
+                                 return;
+                             }
+                         }
+                     }
+                 }
+                 ctx->DrawBitmap(res.bitmap.Get(), &dst, 1.0f, mode, &src);
+             };
+
+             DrawBitmapWithFsr(destRect, srcRect, interpMode, rawRect.right - rawRect.left, rawRect.bottom - rawRect.top);
              
              // Reset Transform
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -2878,11 +2917,48 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              
              D2D1_RECT_F destRect = D2D1::RectF(x, y, x + drawW, y + drawH);
 
+             const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
+             bool hasMetrics = meta.HasSharpness && meta.HasEntropy;
+             float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(g_config.FsrSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
+
              // Use Smart Interpolation
              float absoluteScale = GetPaneContext(PaneSlot::Primary).view.Zoom * scale;
-             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, cropW, cropH);
+             D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, cropW, cropH, meta.Entropy, meta.HasEntropy);
 
-             ctx->DrawBitmap(res.bitmap.Get(), &destRect, 1.0f, interpMode, &srcRect);
+             auto DrawBitmapWithFsr = [&](const D2D1_RECT_F& dst, const D2D1_RECT_F& src, D2D1_INTERPOLATION_MODE mode, float imgW, float imgH) {
+                 bool isPixelArt = IsEffectivelyPixelArtMode(absoluteScale, imgW, imgH, meta.Entropy, meta.HasEntropy);
+                 bool enableFsr = (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
+                 if (enableFsr && absoluteScale > 1.0f && adaptiveFsrSharpness > 0.005f) {
+                     ComPtr<ID2D1Effect> sharpenEffect;
+                     if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Sharpen, &sharpenEffect))) {
+                         sharpenEffect->SetInput(0, res.bitmap.Get());
+                         sharpenEffect->SetValue(D2D1_SHARPEN_PROP_SHARPNESS, std::clamp(adaptiveFsrSharpness * 2.0f, 0.0f, 2.0f));
+                         sharpenEffect->SetValue(D2D1_SHARPEN_PROP_THRESHOLD, 0.0f);
+
+                         ComPtr<ID2D1Effect> cropEffect;
+                         if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Crop, &cropEffect))) {
+                             cropEffect->SetInputEffect(0, sharpenEffect.Get());
+                             cropEffect->SetValue(D2D1_CROP_PROP_RECT, src);
+
+                             ComPtr<ID2D1Effect> scaleEffect;
+                             if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Scale, &scaleEffect))) {
+                                 float sx = (dst.right - dst.left) / (src.right - src.left);
+                                 float sy = (dst.bottom - dst.top) / (src.bottom - src.top);
+                                 scaleEffect->SetInputEffect(0, cropEffect.Get());
+                                 scaleEffect->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(sx, sy));
+                                 scaleEffect->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE, D2D1_SCALE_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+
+                                 D2D1_POINT_2F targetOffset = D2D1::Point2F(dst.left - src.left * sx, dst.top - src.top * sy);
+                                 ctx->DrawImage(scaleEffect.Get(), &targetOffset);
+                                 return;
+                             }
+                         }
+                     }
+                 }
+                 ctx->DrawBitmap(res.bitmap.Get(), &dst, 1.0f, mode, &src);
+             };
+
+             DrawBitmapWithFsr(destRect, srcRect, interpMode, cropW, cropH);
         }
         
         // [Optimization] We used the GPU to bake rotation. 
@@ -4994,6 +5070,7 @@ void SaveConfig() {
     // Control
     WriteConfigInt(L"Controls", L"ZoomModeIn", g_config.ZoomModeIn, iniPath.c_str());
     WriteConfigInt(L"Controls", L"ZoomModeOut", g_config.ZoomModeOut, iniPath.c_str());
+    WriteConfigFloat(L"Controls", L"FsrSharpness", g_config.FsrSharpness, iniPath.c_str());
     WriteConfigBool(L"Controls", L"InvertWheel", g_config.InvertWheel, iniPath.c_str());
     WriteConfigInt(L"Controls", L"WheelActionMode", g_config.WheelActionMode, iniPath.c_str());
     WriteConfigInt(L"Controls", L"ThumbWheelMode", g_config.ThumbWheelMode, iniPath.c_str());
@@ -5302,9 +5379,15 @@ void LoadConfig() {
 
     // Control
     g_config.ZoomModeIn = GetPrivateProfileIntW(L"Controls", L"ZoomModeIn", 0, iniPath.c_str());
-    if (g_config.ZoomModeIn < 0 || g_config.ZoomModeIn > 3) g_config.ZoomModeIn = 0;
+    if (g_config.ZoomModeIn < 0 || g_config.ZoomModeIn > 4) g_config.ZoomModeIn = 0;
     g_config.ZoomModeOut = GetPrivateProfileIntW(L"Controls", L"ZoomModeOut", 0, iniPath.c_str());
     if (g_config.ZoomModeOut < 0 || g_config.ZoomModeOut > 3) g_config.ZoomModeOut = 0;
+    {
+        wchar_t fsrBuf[64];
+        GetPrivateProfileStringW(L"Controls", L"FsrSharpness", L"0.20", fsrBuf, 64, iniPath.c_str());
+        float val = (float)_wtof(fsrBuf);
+        g_config.FsrSharpness = std::clamp(val, 0.0f, 1.0f);
+    }
     g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
     g_config.WheelActionMode = GetPrivateProfileIntW(L"Controls", L"WheelActionMode", 0, iniPath.c_str());
     g_config.ThumbWheelMode = GetPrivateProfileIntW(L"Controls", L"ThumbWheelMode", 0, iniPath.c_str());

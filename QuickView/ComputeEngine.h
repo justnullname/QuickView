@@ -140,6 +140,17 @@ public:
         ID3D11Texture2D** outTexture);
 
     /// <summary>
+    /// Execute AMD FidelityFX Super Resolution 1.0 (EASU + RCAS) on GPU.
+    /// Upscales srcTexture to outTexture (dstW x dstH) with edge-adaptive reconstruction and contrast-adaptive sharpening.
+    /// </summary>
+    HRESULT ExecuteFsr1Upscale(
+        ID3D11Texture2D* srcTexture,
+        UINT srcW, UINT srcH,
+        UINT dstW, UINT dstH,
+        float sharpness,
+        ID3D11Texture2D** outTexture);
+
+    /// <summary>
     /// Generate Mipmaps for a texture.
     /// </summary>
     HRESULT GenerateMips(ID3D11Texture2D* pTexture);
@@ -165,11 +176,15 @@ private:
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToSdr;
     ComPtr<ID3D11ComputeShader> m_csToneMapHdrToHdr;
     ComPtr<ID3D11ComputeShader> m_csComposeGainMap;
+    ComPtr<ID3D11ComputeShader> m_csFsrEasu;
+    ComPtr<ID3D11ComputeShader> m_csFsrRcas;
 
     ComPtr<ID3D11ComputeShader> m_csGamutLut;
 
     ComPtr<ID3D11Buffer> m_toneMapConstantBuffer;
     ComPtr<ID3D11Buffer> m_gainMapConstantBuffer;
+    ComPtr<ID3D11Buffer> m_fsrEasuConstantBuffer;
+    ComPtr<ID3D11Buffer> m_fsrRcasConstantBuffer;
 
     ComPtr<ID3D11Buffer> m_gamutLutConstantBuffer;
     ComPtr<ID3D11Buffer> m_gamutCounterBuffer;       // GPU atomic overflow counter (RWStructuredBuffer<uint>)

@@ -11908,8 +11908,8 @@ void CImageLoader::ComputeHistogramFromFrame(
     }
   }
 
-  // Laplacian Sharpness (sampled)
-  if ((UINT)frame.width > lapStep * 2 && (UINT)frame.height > lapStep * 2) {
+  // Laplacian Sharpness (sampled with fixed 1-pixel kernel radius)
+  if ((UINT)frame.width > 2 && (UINT)frame.height > 2) {
     auto getLumaAt = [&](const uint8_t *rowPtr, UINT x) -> int {
       if (isFloat) {
         const float *px = (const float *)rowPtr + x * 4;
@@ -11924,15 +11924,16 @@ void CImageLoader::ComputeHistogramFromFrame(
       }
     };
 
-    for (UINT y = lapStep; y + lapStep < (UINT)frame.height; y += lapStep) {
-      const uint8_t *rowPrev = ptr + (UINT64)(y - lapStep) * stride;
+    UINT sampleStep = std::max(1u, lapStep);
+    for (UINT y = 1; y + 1 < (UINT)frame.height; y += sampleStep) {
+      const uint8_t *rowPrev = ptr + (UINT64)(y - 1) * stride;
       const uint8_t *rowCurr = ptr + (UINT64)y * stride;
-      const uint8_t *rowNext = ptr + (UINT64)(y + lapStep) * stride;
+      const uint8_t *rowNext = ptr + (UINT64)(y + 1) * stride;
 
-      for (UINT x = lapStep; x + lapStep < (UINT)frame.width; x += lapStep) {
+      for (UINT x = 1; x + 1 < (UINT)frame.width; x += sampleStep) {
         const int center = getLumaAt(rowCurr, x);
-        const int left = getLumaAt(rowCurr, x - lapStep);
-        const int right = getLumaAt(rowCurr, x + lapStep);
+        const int left = getLumaAt(rowCurr, x - 1);
+        const int right = getLumaAt(rowCurr, x + 1);
         const int up = getLumaAt(rowPrev, x);
         const int down = getLumaAt(rowNext, x);
         const int lap = (up + down + left + right) - 4 * center;

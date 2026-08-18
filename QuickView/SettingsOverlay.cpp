@@ -2164,14 +2164,47 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ AppStrings::Settings_Header_Render, OptionType::Header });
 
     // Zoom Mode In
-    SettingsItem itemZoomIn = { AppStrings::Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} };
+    SettingsItem itemZoomIn = { AppStrings::Settings_Label_ZoomModeIn, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeIn), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic, AppStrings::Settings_Option_FSR} };
+    itemZoomIn.tooltipText = AppStrings::Settings_Tooltip_ZoomModeIn;
+    itemZoomIn.isNewOption = true;
     itemZoomIn.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
         SaveConfig();
+        if (overlay) overlay->m_pendingRebuild = true;
         extern HWND g_mainHwnd;
         extern void RefreshImageDisplay(HWND hwnd);
         RefreshImageDisplay(g_mainHwnd);
     };
     tabImage.items.push_back(itemZoomIn);
+
+    // FSR Sharpness Slider
+    SettingsItem itemFsrSharpness = { AppStrings::Settings_Label_FsrSharpness, OptionType::Slider, nullptr, &g_config.FsrSharpness };
+    itemFsrSharpness.tooltipText = AppStrings::Settings_Tooltip_FsrSharpness;
+    itemFsrSharpness.minVal = 0.0f;
+    itemFsrSharpness.maxVal = 1.0f;
+    itemFsrSharpness.step = 0.05f;
+    itemFsrSharpness.displayFormat = L"%.2f";
+    itemFsrSharpness.isDisabled = (g_config.ZoomModeIn != 4);
+    itemFsrSharpness.isNewOption = true;
+    itemFsrSharpness.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        SaveConfig();
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    itemFsrSharpness.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    itemFsrSharpness.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        g_config.FsrSharpness = 0.20f;
+        SaveConfig();
+        if (overlay) overlay->m_pendingRebuild = true;
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    tabImage.items.push_back(itemFsrSharpness);
 
     // Zoom Mode Out
     SettingsItem itemZoomOut = { AppStrings::Settings_Label_ZoomModeOut, OptionType::ComboBox, nullptr, nullptr, BindEnum(&g_config.ZoomModeOut), nullptr, 0, 0, {AppStrings::Settings_Option_ZoomAuto, AppStrings::Settings_Option_Linear, AppStrings::Settings_Option_Nearest, AppStrings::Settings_Option_HighQualityCubic} };

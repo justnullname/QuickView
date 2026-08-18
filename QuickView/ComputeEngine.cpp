@@ -43,6 +43,153 @@ void CSGenMips(uint3 id : SV_DispatchThreadID)
 }
 )";
 
+static const char* HLSL_FSR_EASU = R"(
+Texture2D<float4> InputTexture : register(t0);
+RWTexture2D<float4> OutputTexture : register(u0);
+
+cbuffer FsrEasuCB : register(b0)
+{
+    float2 InputSize;
+    float2 OutputSize;
+    float2 InputSizeInv;
+    float2 OutputSizeInv;
+};
+
+float FsrLuma(float3 rgb) {
+    return dot(rgb, float3(0.2126, 0.7152, 0.0722));
+}
+
+float FsrWeight(float x) {
+    float x2 = x * x;
+    return saturate(1.0 - 0.5 * x2) * saturate(1.0 - 0.25 * x2);
+}
+
+[numthreads(8, 8, 1)]
+void CSFSR_EASU(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)OutputSize.x || id.y >= (uint)OutputSize.y) return;
+
+    float2 uv = (float2(id.xy) + 0.5) * OutputSizeInv;
+    float2 srcPos = uv * InputSize - 0.5;
+    int2 basePos = int2(floor(srcPos));
+    float2 f = frac(srcPos);
+
+    int2 maxSrc = int2(InputSize) - 1;
+
+    float4 c00 = InputTexture[clamp(basePos + int2(0, 0), int2(0, 0), maxSrc)];
+    float4 c10 = InputTexture[clamp(basePos + int2(1, 0), int2(0, 0), maxSrc)];
+    float4 c01 = InputTexture[clamp(basePos + int2(0, 1), int2(0, 0), maxSrc)];
+    float4 c11 = InputTexture[clamp(basePos + int2(1, 1), int2(0, 0), maxSrc)];
+
+    float4 cN  = InputTexture[clamp(basePos + int2(0, -1), int2(0, 0), maxSrc)];
+    float4 cS  = InputTexture[clamp(basePos + int2(0, 2),  int2(0, 0), maxSrc)];
+    float4 cW  = InputTexture[clamp(basePos + int2(-1, 0), int2(0, 0), maxSrc)];
+    float4 cE  = InputTexture[clamp(basePos + int2(2, 0),  int2(0, 0), maxSrc)];
+
+    float l00 = FsrLuma(c00.rgb);
+    float l10 = FsrLuma(c10.rgb);
+    float l01 = FsrLuma(c01.rgb);
+    float l11 = FsrLuma(c11.rgb);
+    float lN  = FsrLuma(cN.rgb);
+    float lS  = FsrLuma(cS.rgb);
+    float lW  = FsrLuma(cW.rgb);
+    float lE  = FsrLuma(cE.rgb);
+
+    float dx = (l10 - l00) + (l11 - l01) + 0.5 * (lE - lW);
+    float dy = (l01 - l00) + (l11 - l10) + 0.5 * (lS - lN);
+    float gradLen = sqrt(dx * dx + dy * dy) + 1e-5;
+    float2 dir = float2(dx, dy) / gradLen;
+
+    float d00_tan = dot(float2(0.0, 0.0) - f, float2(-dir.y, dir.x));
+    float d00_nor = dot(float2(0.0, 0.0) - f, dir);
+    float d10_tan = dot(float2(1.0, 0.0) - f, float2(-dir.y, dir.x));
+    float d10_nor = dot(float2(1.0, 0.0) - f, dir);
+    float d01_tan = dot(float2(0.0, 1.0) - f, float2(-dir.y, dir.x));
+    float d01_nor = dot(float2(0.0, 1.0) - f, dir);
+    float d11_tan = dot(float2(1.0, 1.0) - f, float2(-dir.y, dir.x));
+    float d11_nor = dot(float2(1.0, 1.0) - f, dir);
+
+    float stretch = clamp(gradLen * 4.0, 1.0, 3.0);
+    float w00 = FsrWeight(length(float2(d00_tan, d00_nor * stretch)));
+    float w10 = FsrWeight(length(float2(d10_tan, d10_nor * stretch)));
+    float w01 = FsrWeight(length(float2(d01_tan, d01_nor * stretch)));
+    float w11 = FsrWeight(length(float2(d11_tan, d11_nor * stretch)));
+
+    float4 minColor = min(min(c00, c10), min(c01, c11));
+    float4 maxColor = max(max(c00, c10), max(c01, c11));
+
+    float totalW = w00 + w10 + w01 + w11;
+    if (totalW < 1e-4) {
+        totalW = 1.0;
+        w00 = 1.0; w10 = 0.0; w01 = 0.0; w11 = 0.0;
+    }
+
+    float4 outColor = (c00 * w00 + c10 * w10 + c01 * w01 + c11 * w11) / totalW;
+    outColor = clamp(outColor, minColor, maxColor);
+
+    OutputTexture[id.xy] = outColor;
+}
+)";
+
+static const char* HLSL_FSR_RCAS = R"(
+Texture2D<float4> InputTexture : register(t0);
+RWTexture2D<float4> OutputTexture : register(u0);
+
+cbuffer FsrRcasCB : register(b0)
+{
+    float Sharpness;
+    uint Width;
+    uint Height;
+    uint _pad;
+};
+
+float RcasLuma(float3 rgb) {
+    return dot(rgb, float3(0.2126, 0.7152, 0.0722));
+}
+
+[numthreads(8, 8, 1)]
+void CSFSR_RCAS(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= Width || id.y >= Height) return;
+
+    int2 coord = int2(id.xy);
+    int2 maxCoord = int2(Width - 1, Height - 1);
+
+    float4 e = InputTexture[coord];
+    float4 b = InputTexture[clamp(coord + int2(0, -1), int2(0, 0), maxCoord)];
+    float4 d = InputTexture[clamp(coord + int2(-1, 0), int2(0, 0), maxCoord)];
+    float4 f = InputTexture[clamp(coord + int2(1, 0),  int2(0, 0), maxCoord)];
+    float4 h = InputTexture[clamp(coord + int2(0, 1),  int2(0, 0), maxCoord)];
+
+    float eL = RcasLuma(e.rgb);
+    float bL = RcasLuma(b.rgb);
+    float dL = RcasLuma(d.rgb);
+    float fL = RcasLuma(f.rgb);
+    float hL = RcasLuma(h.rgb);
+
+    float minL = min(min(bL, dL), min(fL, hL));
+    float maxL = max(max(bL, dL), max(fL, hL));
+    minL = min(minL, eL);
+    maxL = max(maxL, eL);
+
+    float contrast = maxL - minL;
+    float hit = min(minL, 1.0 - maxL);
+    float w = 0.0;
+    if (contrast > 1e-4) {
+        float lobe = -hit / (4.0 * contrast + 1e-4);
+        float sharpnessFactor = exp2(-clamp(Sharpness * 2.5, 0.0, 3.0));
+        w = lobe * sharpnessFactor;
+        w = clamp(w, -0.25, 0.0);
+    }
+
+    float4 sharpened = (e + w * (b + d + f + h)) / (1.0 + 4.0 * w);
+    sharpened.rgb = clamp(sharpened.rgb, 0.0, 1.0);
+    sharpened.a = e.a;
+
+    OutputTexture[id.xy] = sharpened;
+}
+)";
+
 static const char* HLSL_ToneMapHdrToSdr = R"(
 Texture2D<float4> SrcTex : register(t0);
 RWTexture2D<unorm float4> DstTex : register(u0);
@@ -599,6 +746,29 @@ HRESULT ComputeEngine::CompileShaders() {
     hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csGamutLut);
     if (FAILED(hr)) return hr;
 
+    // 8. AMD FSR 1.0 (EASU & RCAS)
+    blob.Reset(); errorBlob.Reset();
+    hr = D3DCompile(HLSL_FSR_EASU, strlen(HLSL_FSR_EASU), nullptr, nullptr, nullptr, "CSFSR_EASU", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) {
+            QV_LOG("Shader_Error", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Message"));
+        }
+        return hr;
+    }
+    hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csFsrEasu);
+    if (FAILED(hr)) return hr;
+
+    blob.Reset(); errorBlob.Reset();
+    hr = D3DCompile(HLSL_FSR_RCAS, strlen(HLSL_FSR_RCAS), nullptr, nullptr, nullptr, "CSFSR_RCAS", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) {
+            QV_LOG("Shader_Error", TraceLoggingString((char*)errorBlob->GetBufferPointer(), "Message"));
+        }
+        return hr;
+    }
+    hr = m_d3dDevice->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &m_csFsrRcas);
+    if (FAILED(hr)) return hr;
+
     // Constant Buffers
     D3D11_BUFFER_DESC cbDesc = {};
     cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
@@ -615,6 +785,14 @@ HRESULT ComputeEngine::CompileShaders() {
 
     cbDesc.ByteWidth = 16;
     hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_gamutLutConstantBuffer);
+    if (FAILED(hr)) return hr;
+
+    cbDesc.ByteWidth = 32; // sizeof(FsrEasuConstants)
+    hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_fsrEasuConstantBuffer);
+    if (FAILED(hr)) return hr;
+
+    cbDesc.ByteWidth = 16; // sizeof(FsrRcasConstants)
+    hr = m_d3dDevice->CreateBuffer(&cbDesc, nullptr, &m_fsrRcasConstantBuffer);
     if (FAILED(hr)) return hr;
 
     // GPU atomic counter for gamut overflow reduction (RWStructuredBuffer<uint>)
@@ -1346,6 +1524,129 @@ HRESULT QuickView::ComputeEngine::ComposeGainMap(
 
     m_d3dContext->Flush();
     *outTexture = pDst.Detach();
+    return S_OK;
+}
+
+HRESULT QuickView::ComputeEngine::ExecuteFsr1Upscale(
+    ID3D11Texture2D* srcTexture,
+    UINT srcW, UINT srcH,
+    UINT dstW, UINT dstH,
+    float sharpness,
+    ID3D11Texture2D** outTexture)
+{
+    if (!m_valid || !srcTexture || !outTexture || srcW == 0 || srcH == 0 || dstW == 0 || dstH == 0) return E_INVALIDARG;
+    if (!m_csFsrEasu || !m_csFsrRcas || !m_fsrEasuConstantBuffer || !m_fsrRcasConstantBuffer) return E_FAIL;
+
+    // 1. Create intermediate texture for EASU output (dstW x dstH, RGBA8)
+    D3D11_TEXTURE2D_DESC easuDstDesc = {};
+    easuDstDesc.Width = dstW;
+    easuDstDesc.Height = dstH;
+    easuDstDesc.MipLevels = 1;
+    easuDstDesc.ArraySize = 1;
+    easuDstDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    easuDstDesc.SampleDesc.Count = 1;
+    easuDstDesc.Usage = D3D11_USAGE_DEFAULT;
+    easuDstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+
+    ComPtr<ID3D11Texture2D> pEasuTex;
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&easuDstDesc, nullptr, &pEasuTex);
+    if (FAILED(hr)) return hr;
+
+    // 2. Create final texture for RCAS output (dstW x dstH)
+    D3D11_TEXTURE2D_DESC rcasDstDesc = easuDstDesc;
+    rcasDstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+
+    ComPtr<ID3D11Texture2D> pRcasTex;
+    hr = m_d3dDevice->CreateTexture2D(&rcasDstDesc, nullptr, &pRcasTex);
+    if (FAILED(hr)) return hr;
+
+    // 3. Create views for Pass 1 (EASU)
+    ComPtr<ID3D11ShaderResourceView> pSrcSRV;
+    ComPtr<ID3D11UnorderedAccessView> pEasuUAV;
+    hr = m_d3dDevice->CreateShaderResourceView(srcTexture, nullptr, &pSrcSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pEasuTex.Get(), nullptr, &pEasuUAV);
+    if (FAILED(hr)) return hr;
+
+    // 4. Upload EASU Constant Buffer
+    struct FsrEasuConstants {
+        float InputSize[2];
+        float OutputSize[2];
+        float InputSizeInv[2];
+        float OutputSizeInv[2];
+    } easuCB;
+    easuCB.InputSize[0] = (float)srcW; easuCB.InputSize[1] = (float)srcH;
+    easuCB.OutputSize[0] = (float)dstW; easuCB.OutputSize[1] = (float)dstH;
+    easuCB.InputSizeInv[0] = 1.0f / (float)srcW; easuCB.InputSizeInv[1] = 1.0f / (float)srcH;
+    easuCB.OutputSizeInv[0] = 1.0f / (float)dstW; easuCB.OutputSizeInv[1] = 1.0f / (float)dstH;
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(m_d3dContext->Map(m_fsrEasuConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &easuCB, sizeof(easuCB));
+        m_d3dContext->Unmap(m_fsrEasuConstantBuffer.Get(), 0);
+    }
+
+    // 5. Dispatch Pass 1 (EASU)
+    m_d3dContext->CSSetShader(m_csFsrEasu.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* easuSRVs[] = { pSrcSRV.Get() };
+    m_d3dContext->CSSetShaderResources(0, 1, easuSRVs);
+    ID3D11UnorderedAccessView* easuUAVs[] = { pEasuUAV.Get() };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, easuUAVs, nullptr);
+    ID3D11Buffer* easuCBs[] = { m_fsrEasuConstantBuffer.Get() };
+    m_d3dContext->CSSetConstantBuffers(0, 1, easuCBs);
+
+    m_d3dContext->Dispatch((dstW + 7) / 8, (dstH + 7) / 8, 1);
+
+    // Unbind UAV & SRV before Pass 2
+    ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+    ID3D11ShaderResourceView* nullSRV[] = { nullptr };
+    m_d3dContext->CSSetShaderResources(0, 1, nullSRV);
+
+    // 6. Create views for Pass 2 (RCAS)
+    ComPtr<ID3D11ShaderResourceView> pEasuSRV;
+    ComPtr<ID3D11UnorderedAccessView> pRcasUAV;
+    hr = m_d3dDevice->CreateShaderResourceView(pEasuTex.Get(), nullptr, &pEasuSRV);
+    if (FAILED(hr)) return hr;
+    hr = m_d3dDevice->CreateUnorderedAccessView(pRcasTex.Get(), nullptr, &pRcasUAV);
+    if (FAILED(hr)) return hr;
+
+    // 7. Upload RCAS Constant Buffer
+    struct FsrRcasConstants {
+        float Sharpness;
+        uint32_t Width;
+        uint32_t Height;
+        uint32_t _pad;
+    } rcasCB;
+    rcasCB.Sharpness = std::clamp(sharpness, 0.0f, 1.0f);
+    rcasCB.Width = dstW;
+    rcasCB.Height = dstH;
+    rcasCB._pad = 0;
+
+    if (SUCCEEDED(m_d3dContext->Map(m_fsrRcasConstantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &rcasCB, sizeof(rcasCB));
+        m_d3dContext->Unmap(m_fsrRcasConstantBuffer.Get(), 0);
+    }
+
+    // 8. Dispatch Pass 2 (RCAS)
+    m_d3dContext->CSSetShader(m_csFsrRcas.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* rcasSRVs[] = { pEasuSRV.Get() };
+    m_d3dContext->CSSetShaderResources(0, 1, rcasSRVs);
+    ID3D11UnorderedAccessView* rcasUAVs[] = { pRcasUAV.Get() };
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, rcasUAVs, nullptr);
+    ID3D11Buffer* rcasCBs[] = { m_fsrRcasConstantBuffer.Get() };
+    m_d3dContext->CSSetConstantBuffers(0, 1, rcasCBs);
+
+    m_d3dContext->Dispatch((dstW + 7) / 8, (dstH + 7) / 8, 1);
+
+    // 9. Cleanup state
+    m_d3dContext->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+    m_d3dContext->CSSetShaderResources(0, 1, nullSRV);
+    m_d3dContext->CSSetConstantBuffers(0, 1, nullptr);
+    m_d3dContext->CSSetShader(nullptr, nullptr, 0);
+
+    m_d3dContext->Flush();
+    *outTexture = pRcasTex.Detach();
     return S_OK;
 }
 

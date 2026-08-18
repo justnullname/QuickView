@@ -114,3 +114,20 @@ TEST(SettingsSliderMath, KeyboardStepQuantization) {
     EXPECT_FLOAT_EQ(val, 0.0f);
 }
 
+TEST(SettingsSliderMath, FsrSharpnessSliderStepAndQuantization) {
+    const float minV = 0.0f;
+    const float maxV = 1.0f;
+    const float explicitStep = 0.05f;
+
+    // Test explicit step quantization
+    EXPECT_NEAR(QuantizeSliderValue(0.23f, minV, maxV, explicitStep), 0.25f, 0.001f);
+    EXPECT_NEAR(QuantizeSliderValue(0.21f, minV, maxV, explicitStep), 0.20f, 0.001f);
+    EXPECT_NEAR(QuantizeSliderValue(-0.1f, minV, maxV, explicitStep), 0.00f, 0.001f);
+    EXPECT_NEAR(QuantizeSliderValue(1.50f, minV, maxV, explicitStep), 1.00f, 0.001f);
+
+    // Test slider user string input parsing
+    EXPECT_NEAR(ParseSliderInput(L"0.35", 0.20f, minV, maxV, L"%.2f", explicitStep), 0.35f, 0.001f);
+    EXPECT_NEAR(ParseSliderInput(L"0.8", 0.20f, minV, maxV, L"%.2f", explicitStep), 0.80f, 0.001f);
+    EXPECT_NEAR(ParseSliderInput(L"invalid", 0.20f, minV, maxV, L"%.2f", explicitStep), 0.20f, 0.001f);
+}
+

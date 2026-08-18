@@ -37,7 +37,16 @@ QuickView::ColorPrimaries GuessPrimariesFromPath(const std::wstring& path);
 
 float SrgbToLinear(float v);
 
-// Interpolation heuristics
-bool IsEffectivelyPixelArtMode(float totalScale, float origW, float origH, int pixelArtModeOverride, int zoomModeIn, int zoomModeOut);
+// Interpolation heuristics (Content-Aware)
+bool IsEffectivelyPixelArtMode(
+    float totalScale, float origW, float origH,
+    int pixelArtModeOverride, int zoomModeIn, int zoomModeOut,
+    double entropy = 8.0, bool hasEntropy = false);
+
+float GetAdaptiveFsrSharpness(
+    float baseSharpness,
+    double sharpness,
+    double entropy,
+    bool hasMetrics);
 
 } // namespace ColorMath

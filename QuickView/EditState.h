@@ -657,8 +657,9 @@ struct AppConfig {
     int InfoPanelAlignY = 0; // 0=Top, 1=Bottom
 
     // --- Control ---
-    int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
+    int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic, 4=AMD FSR 1.0
     int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
+    float FsrSharpness = 0.20f;         // 0.0f to 1.0f (RCAS sharpness for AMD FSR 1.0)
     bool InvertWheel = false;
     int WheelActionMode = 0;            // 0=Zoom, 1=Navigate
     int ThumbWheelMode = 0;             // 0=Navigate, 1=Zoom
