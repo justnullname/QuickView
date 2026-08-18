@@ -7070,7 +7070,10 @@ static bool TryRunToolProcessFromCommandLine(int* outExitCode) {
 // [Phase 0] Master flag - true if this process runs the pipe server.
 static bool g_isMasterProcess = false;
 static bool g_isExitingWithPrintJobs = false;
-static HWND g_hPreviousForegroundWindow = nullptr;
+
+// [Focus Management] Track whether the app was cleanly launched from Desktop with no subsequent window switches.
+static bool g_restoreDesktopOnCleanExit = false;
+static bool g_hasBeenForeground = false;
 
 static HWND GetTopLevelWindow(HWND hwnd) {
     if (!hwnd || !IsWindow(hwnd)) return nullptr;
@@ -7081,11 +7084,22 @@ static HWND GetTopLevelWindow(HWND hwnd) {
 
 static bool IsDesktopWindowHWND(HWND hwnd) {
     if (!hwnd || !IsWindow(hwnd)) return false;
-    wchar_t className[64] = {0};
-    GetClassNameW(hwnd, className, 64);
-    if (wcscmp(className, L"Progman") == 0 || wcscmp(className, L"WorkerW") == 0 ||
-        wcscmp(className, L"SHELLDLL_DefView") == 0 || wcscmp(className, L"SysListView32") == 0) {
-        return true;
+    HWND hShell = GetShellWindow();
+    if (hwnd == hShell) return true;
+
+    HWND hRoot = GetTopLevelWindow(hwnd);
+    if (hRoot == hShell) return true;
+
+    HWND checkWindows[] = { hwnd, hRoot };
+    for (HWND h : checkWindows) {
+        if (!h || !IsWindow(h)) continue;
+        wchar_t className[64] = {0};
+        GetClassNameW(h, className, 64);
+        if (wcscmp(className, L"Progman") == 0 || wcscmp(className, L"WorkerW") == 0 ||
+            wcscmp(className, L"SHELLDLL_DefView") == 0 || wcscmp(className, L"SysListView32") == 0 ||
+            wcscmp(className, L"DirectUIHWND") == 0) {
+            return true;
+        }
     }
     return false;
 }
@@ -7111,75 +7125,94 @@ static HWND GetDesktopListViewHWND(HWND* pTopDesktopOut = nullptr) {
     if (hDefView) {
         HWND hListView = FindWindowExW(hDefView, nullptr, L"SysListView32", nullptr);
         if (hListView) return hListView;
+        HWND hDirectUI = FindWindowExW(hDefView, nullptr, L"DirectUIHWND", nullptr);
+        if (hDirectUI) return hDirectUI;
         return hDefView;
     }
     return hProgman;
 }
 
-static void RestorePreviousForegroundWindow() {
-    HWND hTarget = g_hPreviousForegroundWindow;
+// Dedicated focus restore for Desktop launch to prevent intermediate background windows from stealing focus
+static void RestoreDesktopFocus() {
     HWND hShell = GetShellWindow();
-    bool isDesktop = false;
+    HWND hProgman = FindWindowW(L"Progman", nullptr);
+    HWND hTarget = hShell ? hShell : hProgman;
+    HWND hTopDesktop = nullptr;
+    HWND hListView = GetDesktopListViewHWND(&hTopDesktop);
 
-    if (!hTarget || !IsWindow(hTarget) || hTarget == hShell || IsDesktopWindowHWND(hTarget)) {
-        isDesktop = true;
-        hTarget = hShell ? hShell : FindWindowW(L"Progman", nullptr);
-    }
+    DWORD currentThread = GetCurrentThreadId();
 
     if (hTarget && IsWindow(hTarget)) {
-        HWND hRoot = isDesktop ? hTarget : GetTopLevelWindow(hTarget);
-        if (!hRoot || !IsWindow(hRoot)) hRoot = hTarget;
-
-        if (!isDesktop && IsIconic(hRoot)) {
-            g_hPreviousForegroundWindow = nullptr;
-            return;
+        DWORD targetPid = 0;
+        DWORD targetThread = GetWindowThreadProcessId(hTarget, &targetPid);
+        if (targetPid != 0) {
+            AllowSetForegroundWindow(targetPid);
         }
 
-        DWORD targetPid = 0;
-        DWORD targetThread = GetWindowThreadProcessId(hRoot, &targetPid);
-        
-        // Grant foreground focus permission to target process (e.g. Explorer, Directory Opus, etc.)
-        AllowSetForegroundWindow(targetPid != 0 ? targetPid : ASFW_ANY);
-
-        DWORD currentThread = GetCurrentThreadId();
         if (targetThread != 0 && targetThread != currentThread) {
             AttachThreadInput(currentThread, targetThread, TRUE);
-            SetForegroundWindow(hRoot);
-            BringWindowToTop(hRoot);
+            SetForegroundWindow(hTarget);
+            BringWindowToTop(hTarget);
             AttachThreadInput(currentThread, targetThread, FALSE);
         } else {
-            SetForegroundWindow(hRoot);
-            BringWindowToTop(hRoot);
-        }
-
-        if (isDesktop) {
-            HWND hTopDesktop = nullptr;
-            HWND hListView = GetDesktopListViewHWND(&hTopDesktop);
-            if (hTopDesktop && hTopDesktop != hTarget) {
-                DWORD topThread = GetWindowThreadProcessId(hTopDesktop, nullptr);
-                if (topThread != 0 && topThread != currentThread) {
-                    AttachThreadInput(currentThread, topThread, TRUE);
-                    SetForegroundWindow(hTopDesktop);
-                    BringWindowToTop(hTopDesktop);
-                    AttachThreadInput(currentThread, topThread, FALSE);
-                } else {
-                    SetForegroundWindow(hTopDesktop);
-                    BringWindowToTop(hTopDesktop);
-                }
-            }
-            if (hListView && IsWindow(hListView)) {
-                DWORD listThread = GetWindowThreadProcessId(hListView, nullptr);
-                if (listThread != 0 && listThread != currentThread) {
-                    AttachThreadInput(currentThread, listThread, TRUE);
-                    SetFocus(hListView);
-                    AttachThreadInput(currentThread, listThread, FALSE);
-                } else {
-                    SetFocus(hListView);
-                }
-            }
+            SetForegroundWindow(hTarget);
+            BringWindowToTop(hTarget);
         }
     }
-    g_hPreviousForegroundWindow = nullptr;
+
+    if (hTopDesktop && IsWindow(hTopDesktop) && hTopDesktop != hTarget) {
+        DWORD topPid = 0;
+        DWORD topThread = GetWindowThreadProcessId(hTopDesktop, &topPid);
+        if (topPid != 0) {
+            AllowSetForegroundWindow(topPid);
+        }
+        if (topThread != 0 && topThread != currentThread) {
+            AttachThreadInput(currentThread, topThread, TRUE);
+            SetForegroundWindow(hTopDesktop);
+            BringWindowToTop(hTopDesktop);
+            AttachThreadInput(currentThread, topThread, FALSE);
+        } else {
+            SetForegroundWindow(hTopDesktop);
+            BringWindowToTop(hTopDesktop);
+        }
+    }
+
+    if (hListView && IsWindow(hListView)) {
+        DWORD listThread = GetWindowThreadProcessId(hListView, nullptr);
+        if (listThread != 0 && listThread != currentThread) {
+            AttachThreadInput(currentThread, listThread, TRUE);
+            SetFocus(hListView);
+            AttachThreadInput(currentThread, listThread, FALSE);
+        } else {
+            SetFocus(hListView);
+        }
+    }
+}
+
+static void HandoverFocusOnClose(HWND hwnd) {
+    // 1. Check if QuickView is currently foreground BEFORE hiding
+    HWND hCurrentFg = GetForegroundWindow();
+    HWND hMyRoot = GetTopLevelWindow(hwnd);
+    const bool isForeground = (hCurrentFg && GetTopLevelWindow(hCurrentFg) == hMyRoot);
+
+    if (!isForeground) {
+        // User is active in another app (or closing from taskbar in background).
+        // Hide window silently and never touch system foreground.
+        ShowWindow(hwnd, SW_HIDE);
+        g_restoreDesktopOnCleanExit = false;
+        return;
+    }
+
+    if (g_restoreDesktopOnCleanExit) {
+        // First hide window, then immediately restore Desktop focus
+        ShowWindow(hwnd, SW_HIDE);
+        RestoreDesktopFocus();
+    } else {
+        // Standard hide, let Windows User32 manage Z-Order handover naturally
+        ShowWindow(hwnd, SW_HIDE);
+    }
+
+    g_restoreDesktopOnCleanExit = false;
 }
 
 // Helper to force window to foreground and take focus
@@ -7187,15 +7220,6 @@ static void ForceForegroundWindow(HWND hwnd) {
     if (!hwnd) return;
     
     HWND hForeground = GetForegroundWindow();
-    if (hForeground && hForeground != hwnd) {
-        HWND hRootFg = GetTopLevelWindow(hForeground);
-        HWND hMyRoot = GetTopLevelWindow(hwnd);
-        // Protect pre-existing captured caller window if valid
-        if (hRootFg && hRootFg != hMyRoot && (!g_hPreviousForegroundWindow || IsDesktopWindowHWND(g_hPreviousForegroundWindow))) {
-            g_hPreviousForegroundWindow = hRootFg;
-        }
-    }
-
     DWORD idThreadForeground = GetWindowThreadProcessId(hForeground, NULL);
     DWORD idThreadCurrent = GetCurrentThreadId();
     
@@ -7240,16 +7264,16 @@ HCURSOR g_currentCursor = nullptr;
 int g_initialCmdShow = SW_SHOW;
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCmdLine, int nCmdShow) {
-    // Early capture of foreground window before any QuickView initialization/window creation
+    // Early capture of foreground window state before any QuickView initialization/window creation
     HWND hCmdFg = QuickView::ProcessRouter::ParseFgCaller();
     if (hCmdFg) {
-        g_hPreviousForegroundWindow = GetTopLevelWindow(hCmdFg);
+        g_restoreDesktopOnCleanExit = IsDesktopWindowHWND(hCmdFg) || (hCmdFg == GetShellWindow());
     } else {
         HWND hEarlyFg = GetForegroundWindow();
         if (hEarlyFg) {
-            g_hPreviousForegroundWindow = GetTopLevelWindow(hEarlyFg);
+            g_restoreDesktopOnCleanExit = IsDesktopWindowHWND(hEarlyFg) || (hEarlyFg == GetShellWindow());
         } else {
-            g_hPreviousForegroundWindow = GetShellWindow() ? GetShellWindow() : FindWindowW(L"Progman", nullptr);
+            g_restoreDesktopOnCleanExit = true; // Fallback to desktop if early fg is null (desktop clicking)
         }
     }
 
@@ -7415,16 +7439,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
             // Callback runs on pipe server thread.
             if (payload.path.empty()) return;
             HWND h = static_cast<HWND>(context);
-            if (payload.hFgCaller && IsWindow(payload.hFgCaller)) {
-                g_hPreviousForegroundWindow = payload.hFgCaller;
+            bool isDesktop = (payload.hFgCaller && (IsDesktopWindowHWND(payload.hFgCaller) || payload.hFgCaller == GetShellWindow()));
+            if (!payload.hFgCaller) {
+                HWND hFg = GetForegroundWindow();
+                if (hFg && (IsDesktopWindowHWND(hFg) || hFg == GetShellWindow())) {
+                    isDesktop = true;
+                }
             }
+            g_restoreDesktopOnCleanExit = isDesktop;
             if (g_config.SingleInstance) {
                 // Replace current image: marshal to UI thread via PostMessage.
                 auto* heapPath = new std::wstring(std::move(payload.path));
                 PostMessageW(h, WM_ROUTED_OPEN, 0, reinterpret_cast<LPARAM>(heapPath));
             } else {
                 // Multi-window: spawn independent child viewer process.
-                QuickView::ProcessRouter::SpawnViewer(payload.path);
+                QuickView::ProcessRouter::SpawnViewer(payload.path, payload.hFgCaller);
             }
         }, hwnd);
     }
@@ -7966,10 +7995,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_ACTIVATE:
-        if (LOWORD(wParam) != WA_INACTIVE && g_runtime.SortOrder == 0) {
-            GetPaneContext(PaneSlot::Primary).navigator.SyncWithExplorer();
-        }
-        if (LOWORD(wParam) == WA_INACTIVE) {
+        if (LOWORD(wParam) != WA_INACTIVE) {
+            g_hasBeenForeground = true;
+            if (g_runtime.SortOrder == 0) {
+                GetPaneContext(PaneSlot::Primary).navigator.SyncWithExplorer();
+            }
+        } else if (LOWORD(wParam) == WA_INACTIVE) {
+            // User switched away to another window/application -> invalidate clean desktop restore
+            if (g_hasBeenForeground) {
+                g_restoreDesktopOnCleanExit = false;
+            }
+
             // [Loupe] When the window loses focus, ensure the loupe state is reset and mouse pointer is restored, in case the key release event is lost
             if (AppContext::GetInstance().Loupe.active) {
                 AppContext::GetInstance().Loupe.active = false;
@@ -9028,10 +9064,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
 
-        // Hide window first so User32 won't wipe out focus during window destruction
-        ShowWindow(hwnd, SW_HIDE);
-
-        RestorePreviousForegroundWindow();
+        // Execute smart focus handover and hide window
+        HandoverFocusOnClose(hwnd);
 
         if (QuickView::PrintManager::GetInstance().HasActiveJobs()) {
             g_isExitingWithPrintJobs = true;
