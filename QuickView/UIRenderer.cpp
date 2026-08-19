@@ -579,11 +579,10 @@ void UIRenderer::SetCompareOSD(const std::wstring& left, const std::wstring& rig
     m_osdText = L"COMPARE"; // dummy
     MarkOSDDirty();
 }
+
 RECT UIRenderer::CalculateOSDDirtyRect() {
-    // OSD Position
     const float s = m_uiScale;
-    
-    float paddingH = 30.0f * s; (void)paddingH; (void)paddingH;
+    float paddingH = 30.0f * s; (void)paddingH;
     float paddingV = 15.0f * s; (void)paddingV;
     float maxOSDWidth = 800.0f * s;  // Estimated max
     float maxOSDHeight = 80.0f * s;  // Estimated max
@@ -597,6 +596,9 @@ RECT UIRenderer::CalculateOSDDirtyRect() {
     
     if (m_osdPos == OSDPosition::Top) {
         y = 60.0f * s; // Top offset
+    } else if (m_osdPos == OSDPosition::TopRight) {
+        x = m_width - toastW - 20.0f * s;
+        y = 55.0f * s;
     } else {
         y = m_height - toastH - 100.0f * s; // Bottom offset
     }
@@ -610,6 +612,7 @@ RECT UIRenderer::CalculateOSDDirtyRect() {
     
     // Merge with previous frame rect (to clear old position)
     if (m_lastOSDRect.right > 0) {
+        x = std::min(x, m_lastOSDRect.left);
         y = std::min(y, m_lastOSDRect.top);
         right = std::max(right, m_lastOSDRect.right);
         bottom = std::max(bottom, m_lastOSDRect.bottom);

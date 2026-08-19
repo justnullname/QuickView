@@ -392,6 +392,21 @@ const wchar_t *Settings_Label_NavIndicator = nullptr;
 const wchar_t *Settings_Label_AutoRotate = nullptr;
 const wchar_t *Settings_Label_FsrSharpness = nullptr;
 const wchar_t *Settings_Tooltip_FsrSharpness = nullptr;
+const wchar_t *Settings_Tab_Plugins = nullptr;
+const wchar_t *Settings_Header_Plugins_SR = nullptr;
+const wchar_t *Settings_Label_EnableSrPlugin = nullptr;
+const wchar_t *Settings_Tooltip_EnableSrPlugin = nullptr;
+const wchar_t *Settings_Label_SrPluginModule = nullptr;
+const wchar_t *Settings_Label_SrDebounce = nullptr;
+const wchar_t *Settings_Tooltip_SrDebounce = nullptr;
+const wchar_t *Settings_Label_SrSharpness = nullptr;
+const wchar_t *Settings_Tooltip_SrSharpness = nullptr;
+const wchar_t *Settings_Label_SrDenoise = nullptr;
+const wchar_t *Settings_Tooltip_SrDenoise = nullptr;
+const wchar_t *Settings_Label_SrDownload = nullptr;
+const wchar_t *Settings_Tooltip_SrDownload = nullptr;
+const wchar_t *Settings_Option_SrPlugin_Anime4K = nullptr;
+const wchar_t *Settings_Option_SrPlugin_Ref = nullptr;
 const wchar_t *Settings_Label_CMS = nullptr;
 const wchar_t *Settings_Label_AdvancedColor = nullptr;
 const wchar_t *Settings_Label_HdrToneMapping = nullptr;
@@ -968,6 +983,21 @@ struct LanguageTable {
     const wchar_t *Settings_Label_AutoRotate;
     const wchar_t *Settings_Label_FsrSharpness;
     const wchar_t *Settings_Tooltip_FsrSharpness;
+    const wchar_t *Settings_Tab_Plugins;
+    const wchar_t *Settings_Header_Plugins_SR;
+    const wchar_t *Settings_Label_EnableSrPlugin;
+    const wchar_t *Settings_Tooltip_EnableSrPlugin;
+    const wchar_t *Settings_Label_SrPluginModule;
+    const wchar_t *Settings_Label_SrDebounce;
+    const wchar_t *Settings_Tooltip_SrDebounce;
+    const wchar_t *Settings_Label_SrSharpness;
+    const wchar_t *Settings_Tooltip_SrSharpness;
+    const wchar_t *Settings_Label_SrDenoise;
+    const wchar_t *Settings_Tooltip_SrDenoise;
+    const wchar_t *Settings_Label_SrDownload;
+    const wchar_t *Settings_Tooltip_SrDownload;
+    const wchar_t *Settings_Option_SrPlugin_Anime4K;
+    const wchar_t *Settings_Option_SrPlugin_Ref;
     const wchar_t *Settings_Label_CMS;
     const wchar_t *Settings_Label_AdvancedColor;
     const wchar_t *Settings_Label_HdrToneMapping;
@@ -1548,6 +1578,21 @@ static const LanguageTable Table_EN = {
     L"Auto Rotate (EXIF)", // Settings_Label_AutoRotate
     L"FSR Sharpness", // Settings_Label_FsrSharpness
     L"Adjust edge sharpness for AMD FSR 1.0 spatial super-resolution.", // Settings_Tooltip_FsrSharpness
+    L"Plugins", // Settings_Tab_Plugins
+    L"Super-Resolution AI Engine", // Settings_Header_Plugins_SR
+    L"Enable AI Super-Resolution", // Settings_Label_EnableSrPlugin
+    L"Enable external neural upscaling / super-resolution plugin (.qvx) from plugins folder.", // Settings_Tooltip_EnableSrPlugin
+    L"Plugin Module", // Settings_Label_SrPluginModule
+    L"Zoom Settle Delay (Debounce)", // Settings_Label_SrDebounce
+    L"Delay in milliseconds (0 - 5000 ms) before neural super-resolution triggers after zoom settles.\nMaintains smooth interpolation during interaction and reconstructs ultra-crisp AI details once settled.", // Settings_Tooltip_SrDebounce
+    L"AI Sharpness", // Settings_Label_SrSharpness
+    L"Adjust edge sharpening strength for AI super-resolution plugin.", // Settings_Tooltip_SrSharpness
+    L"AI Denoise", // Settings_Label_SrDenoise
+    L"Adjust pre-denoising strength for neural super-resolution.", // Settings_Tooltip_SrDenoise
+    L"Download / Update Plugins", // Settings_Label_SrDownload
+    L"Download or update super-resolution plugin from official release.", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (Fast Zero-Dependency)", // Settings_Option_SrPlugin_Anime4K
+    L"Official Reference D3D11 Plugin", // Settings_Option_SrPlugin_Ref
     L"Color Management", // Settings_Label_CMS
     L"Advanced Color (HDR)", // Settings_Label_AdvancedColor
     L"HDR Tone Mapping", // Settings_Label_HdrToneMapping
@@ -2128,6 +2173,21 @@ static const LanguageTable Table_CN = {
     L"自动旋转 (EXIF)", // Settings_Label_AutoRotate
     L"FSR 锐化强度", // Settings_Label_FsrSharpness
     L"调节 AMD FSR 1.0 空间自适应超分辨率的边缘锐化强度。", // Settings_Tooltip_FsrSharpness
+    L"插件", // Settings_Tab_Plugins
+    L"超分辨率 AI 引擎", // Settings_Header_Plugins_SR
+    L"启用 AI 超分辨率插件", // Settings_Label_EnableSrPlugin
+    L"启用 plugins 目录下的外部神经放大与超分辨率插件 (.qvx)。", // Settings_Tooltip_EnableSrPlugin
+    L"超分插件模块", // Settings_Label_SrPluginModule
+    L"缩放静止防抖延迟", // Settings_Label_SrDebounce
+    L"缩放停止后触发 AI 神经超分的等待时间 (0 - 5000 毫秒)。\n缩放交互过程中保持当前放大插值算法的流畅度，静止后无缝重构成 AI 极清画质。", // Settings_Tooltip_SrDebounce
+    L"AI 锐化强度", // Settings_Label_SrSharpness
+    L"调节 AI 超分辨率插件的边缘轮廓锐化强度。", // Settings_Tooltip_SrSharpness
+    L"AI 去噪强度", // Settings_Label_SrDenoise
+    L"调节 AI 神经超分的预降噪处理强度。", // Settings_Tooltip_SrDenoise
+    L"下载 / 更新插件", // Settings_Label_SrDownload
+    L"从官方发布源自动下载最新超分插件包并放置于 plugins/ 目录。", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (内置极速 0 依赖)", // Settings_Option_SrPlugin_Anime4K
+    L"官方参考 D3D11 插件", // Settings_Option_SrPlugin_Ref
     L"色彩管理 (CMS)", // Settings_Label_CMS
     L"高级色彩与 HDR (scRGB)", // Settings_Label_AdvancedColor
     L"HDR 色调映射", // Settings_Label_HdrToneMapping
@@ -2708,6 +2768,21 @@ static const LanguageTable Table_TW = {
     L"自動旋轉 (EXIF)", // Settings_Label_AutoRotate
     L"FSR 銳化強度", // Settings_Label_FsrSharpness
     L"調節 AMD FSR 1.0 空間自適應超解析度的邊緣銳化強度。", // Settings_Tooltip_FsrSharpness
+    L"外掛程式", // Settings_Tab_Plugins
+    L"超解析度 AI 引擎", // Settings_Header_Plugins_SR
+    L"啟用 AI 超解析度外掛程式", // Settings_Label_EnableSrPlugin
+    L"啟用 plugins 目錄下的外部神經放大與超解析度外掛程式 (.qvx)。", // Settings_Tooltip_EnableSrPlugin
+    L"超分外掛程式模組", // Settings_Label_SrPluginModule
+    L"縮放靜止防抖延遲", // Settings_Label_SrDebounce
+    L"縮放停止後觸發 AI 神經超分的等待時間 (0 - 5000 毫秒)。\n縮放互動過程中保持當前放大插值演算法的流暢度，靜止後無縫重構成 AI 極清畫質。", // Settings_Tooltip_SrDebounce
+    L"AI 銳化強度", // Settings_Label_SrSharpness
+    L"調節 AI 超解析度外掛程式的邊緣輪廓銳化強度。", // Settings_Tooltip_SrSharpness
+    L"AI 去噪強度", // Settings_Label_SrDenoise
+    L"調節 AI 神經超分的預降噪處理強度。", // Settings_Tooltip_SrDenoise
+    L"下載 / 更新外掛程式", // Settings_Label_SrDownload
+    L"從官方發布源自動下載最新超分外掛程式包並放置於 plugins/ 目錄。", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (內建極速 0 依賴)", // Settings_Option_SrPlugin_Anime4K
+    L"官方參考 D3D11 外掛程式", // Settings_Option_SrPlugin_Ref
     L"色彩管理 (CMS)", // Settings_Label_CMS
     L"高級色彩與 HDR (scRGB)", // Settings_Label_AdvancedColor
     L"HDR 色調映射", // Settings_Label_HdrToneMapping
@@ -3288,6 +3363,21 @@ static const LanguageTable Table_JA = {
     L"自動回転 (EXIF)", // Settings_Label_AutoRotate
     L"FSR シャープネス", // Settings_Label_FsrSharpness
     L"AMD FSR 1.0 空間超解像のエッジ強調強度を調整します。", // Settings_Tooltip_FsrSharpness
+    L"プラグイン", // Settings_Tab_Plugins
+    L"超解像 AI エンジン", // Settings_Header_Plugins_SR
+    L"AI 超解像プラグインを有効化", // Settings_Label_EnableSrPlugin
+    L"plugins フォルダ内の外部超解像プラグイン (.qvx) を有効にします。", // Settings_Tooltip_EnableSrPlugin
+    L"超解像プラグインモジュール", // Settings_Label_SrPluginModule
+    L"ズーム停止時デバウンス遅延", // Settings_Label_SrDebounce
+    L"ズーム操作停止後に AI 超解像をトリガーする遅延時間 (0 - 5000 ミリ秒)。\n操作中は高速補間を維持し、停止後に超高画質 AI 復元を行います。", // Settings_Tooltip_SrDebounce
+    L"AI シャープネス", // Settings_Label_SrSharpness
+    L"AI 超解像プラグインのエッジシャープネス強度を調整します。", // Settings_Tooltip_SrSharpness
+    L"AI ノイズ低減", // Settings_Label_SrDenoise
+    L"AI 超解像の事前ノイズ除去強度を調整します。", // Settings_Tooltip_SrDenoise
+    L"プラグインのダウンロード / 更新", // Settings_Label_SrDownload
+    L"公式リリースから最新の超解像プラグインを自動ダウンロードします。", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (超高速・ゼロ依存)", // Settings_Option_SrPlugin_Anime4K
+    L"公式リファレンス D3D11 プラグイン", // Settings_Option_SrPlugin_Ref
     L"カラーマネジメント", // Settings_Label_CMS
     L"高度なカラー (HDR)", // Settings_Label_AdvancedColor
     L"HDR トーンマッピング", // Settings_Label_HdrToneMapping
@@ -3868,6 +3958,21 @@ static const LanguageTable Table_RU = {
     L"Автоповорот (EXIF)", // Settings_Label_AutoRotate
     L"Резкость FSR", // Settings_Label_FsrSharpness
     L"Настройка резкости краев для масштабирования AMD FSR 1.0.", // Settings_Tooltip_FsrSharpness
+    L"Плагины", // Settings_Tab_Plugins
+    L"AI Движок сверхразрешения", // Settings_Header_Plugins_SR
+    L"Включить AI масштабирование", // Settings_Label_EnableSrPlugin
+    L"Включить внешний плагин сверхразрешения (.qvx) из папки plugins.", // Settings_Tooltip_EnableSrPlugin
+    L"Модуль плагина", // Settings_Label_SrPluginModule
+    L"Задержка после зума (Debounce)", // Settings_Label_SrDebounce
+    L"Задержка в миллисекундах (0 - 5000 мс) перед запуском нейросетевого сверхразрешения после остановки зума.", // Settings_Tooltip_SrDebounce
+    L"AI Резкость", // Settings_Label_SrSharpness
+    L"Настройка резкости краев для AI плагина.", // Settings_Tooltip_SrSharpness
+    L"AI Шумоподавление", // Settings_Label_SrDenoise
+    L"Настройка предварительного шумоподавления для AI сверхразрешения.", // Settings_Tooltip_SrDenoise
+    L"Скачать / Обновить плагины", // Settings_Label_SrDownload
+    L"Скачать или обновить плагины из официального репозитория.", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (Быстрый без зависимостей)", // Settings_Option_SrPlugin_Anime4K
+    L"Официальный D3D11 референс-плагин", // Settings_Option_SrPlugin_Ref
     L"Управление цветом (CMS)", // Settings_Label_CMS
     L"Расширенный цвет (HDR)", // Settings_Label_AdvancedColor
     L"Тональная компрессия HDR", // Settings_Label_HdrToneMapping
@@ -4448,6 +4553,21 @@ static const LanguageTable Table_DE = {
     L"Automatisch drehen (EXIF)", // Settings_Label_AutoRotate
     L"FSR-Schärfe", // Settings_Label_FsrSharpness
     L"Passen Sie die Kantenschärfe für AMD FSR 1.0 Super-Resolution an.", // Settings_Tooltip_FsrSharpness
+    L"Plugins", // Settings_Tab_Plugins
+    L"Super-Resolution KI-Engine", // Settings_Header_Plugins_SR
+    L"KI-Super-Resolution aktivieren", // Settings_Label_EnableSrPlugin
+    L"Externes KI-Upscaling / Super-Resolution-Plugin (.qvx) aus dem plugins-Ordner aktivieren.", // Settings_Tooltip_EnableSrPlugin
+    L"Plugin-Modul", // Settings_Label_SrPluginModule
+    L"Zoom-Ruheverzögerung (Debounce)", // Settings_Label_SrDebounce
+    L"Verzögerung in Millisekunden (0 - 5000 ms), bevor die neuronale Super-Resolution nach dem Zoomen ausgelöst wird.", // Settings_Tooltip_SrDebounce
+    L"KI-Schärfe", // Settings_Label_SrSharpness
+    L"Kantenschärfe für KI-Super-Resolution-Plugin anpassen.", // Settings_Tooltip_SrSharpness
+    L"KI-Rauschunterdrückung", // Settings_Label_SrDenoise
+    L"Vorab-Rauschunterdrückung für neuronale Super-Resolution anpassen.", // Settings_Tooltip_SrDenoise
+    L"Plugins herunterladen / aktualisieren", // Settings_Label_SrDownload
+    L"Super-Resolution-Plugin aus offiziellem Release herunterladen oder aktualisieren.", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (Extrem schnell, 0 Abhängigkeiten)", // Settings_Option_SrPlugin_Anime4K
+    L"Offizielles D3D11-Referenz-Plugin", // Settings_Option_SrPlugin_Ref
     L"Farbmanagement (CMS)", // Settings_Label_CMS
     L"Erweiterte Farbe (HDR)", // Settings_Label_AdvancedColor
     L"HDR-Tonzuordnung", // Settings_Label_HdrToneMapping
@@ -5028,6 +5148,21 @@ static const LanguageTable Table_ES = {
     L"Rotar automático (EXIF)", // Settings_Label_AutoRotate
     L"Nitidez FSR", // Settings_Label_FsrSharpness
     L"Ajusta la nitidez de bordes para la superresolución AMD FSR 1.0.", // Settings_Tooltip_FsrSharpness
+    L"Complementos", // Settings_Tab_Plugins
+    L"Motor IA de Superresolución", // Settings_Header_Plugins_SR
+    L"Activar superresolución IA", // Settings_Label_EnableSrPlugin
+    L"Habilita el complemento de superresolución / escalado por IA (.qvx) desde la carpeta plugins.", // Settings_Tooltip_EnableSrPlugin
+    L"Módulo de complemento", // Settings_Label_SrPluginModule
+    L"Retardo tras zoom (Debounce)", // Settings_Label_SrDebounce
+    L"Retardo en milisegundos (0 - 5000 ms) antes de activar la superresolución neuronal tras finalizar el zoom.", // Settings_Tooltip_SrDebounce
+    L"Nitidez IA", // Settings_Label_SrSharpness
+    L"Ajusta la nitidez del complemento de superresolución IA.", // Settings_Tooltip_SrSharpness
+    L"Reducción de ruido IA", // Settings_Label_SrDenoise
+    L"Ajusta la reducción de ruido previa para superresolución IA.", // Settings_Tooltip_SrDenoise
+    L"Descargar / Actualizar complementos", // Settings_Label_SrDownload
+    L"Descargar o actualizar complementos desde el repositorio oficial.", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (Ultrarrápido, 0 dependencias)", // Settings_Option_SrPlugin_Anime4K
+    L"Complemento oficial D3D11 de referencia", // Settings_Option_SrPlugin_Ref
     L"Gestión de color (CMS)", // Settings_Label_CMS
     L"Color avanzado (HDR)", // Settings_Label_AdvancedColor
     L"Mapeo de tonos HDR", // Settings_Label_HdrToneMapping
@@ -5608,6 +5743,21 @@ static const LanguageTable Table_FR = {
     L"Rotation automatique (EXIF)", // Settings_Label_AutoRotate
     L"Netteté FSR", // Settings_Label_FsrSharpness
     L"Ajuste la netteté des contours pour la super-résolution AMD FSR 1.0.", // Settings_Tooltip_FsrSharpness
+    L"Plugins", // Settings_Tab_Plugins
+    L"Moteur IA de super-résolution", // Settings_Header_Plugins_SR
+    L"Activer la super-résolution IA", // Settings_Label_EnableSrPlugin
+    L"Activer le plugin de super-résolution IA (.qvx) externe depuis le dossier plugins.", // Settings_Tooltip_EnableSrPlugin
+    L"Module du plugin", // Settings_Label_SrPluginModule
+    L"Délai d'attente après zoom (Debounce)", // Settings_Label_SrDebounce
+    L"Délai en millisecondes (0 - 5000 ms) avant le déclenchement de la super-résolution neuronale après l'arrêt du zoom.", // Settings_Tooltip_SrDebounce
+    L"Netteté IA", // Settings_Label_SrSharpness
+    L"Ajuster la netteté du plugin de super-résolution IA.", // Settings_Tooltip_SrSharpness
+    L"Débruitage IA", // Settings_Label_SrDenoise
+    L"Ajuster le pré-débruitage pour la super-résolution IA.", // Settings_Tooltip_SrDenoise
+    L"Télécharger / Mettre à jour les plugins", // Settings_Label_SrDownload
+    L"Télécharger ou mettre à jour les plugins depuis la release officielle.", // Settings_Tooltip_SrDownload
+    L"Anime4K v4.0 CNN (Ultra-rapide, 0 dépendance)", // Settings_Option_SrPlugin_Anime4K
+    L"Plugin officiel D3D11 de référence", // Settings_Option_SrPlugin_Ref
     L"Gestion des couleurs (CMS)", // Settings_Label_CMS
     L"Couleurs avancées (HDR)", // Settings_Label_AdvancedColor
     L"Mappage de tons HDR", // Settings_Label_HdrToneMapping
@@ -6193,6 +6343,21 @@ void Apply(const LanguageTable& t) {
   Settings_Label_AutoRotate = t.Settings_Label_AutoRotate;
   Settings_Label_FsrSharpness = t.Settings_Label_FsrSharpness;
   Settings_Tooltip_FsrSharpness = t.Settings_Tooltip_FsrSharpness;
+  Settings_Tab_Plugins = t.Settings_Tab_Plugins;
+  Settings_Header_Plugins_SR = t.Settings_Header_Plugins_SR;
+  Settings_Label_EnableSrPlugin = t.Settings_Label_EnableSrPlugin;
+  Settings_Tooltip_EnableSrPlugin = t.Settings_Tooltip_EnableSrPlugin;
+  Settings_Label_SrPluginModule = t.Settings_Label_SrPluginModule;
+  Settings_Label_SrDebounce = t.Settings_Label_SrDebounce;
+  Settings_Tooltip_SrDebounce = t.Settings_Tooltip_SrDebounce;
+  Settings_Label_SrSharpness = t.Settings_Label_SrSharpness;
+  Settings_Tooltip_SrSharpness = t.Settings_Tooltip_SrSharpness;
+  Settings_Label_SrDenoise = t.Settings_Label_SrDenoise;
+  Settings_Tooltip_SrDenoise = t.Settings_Tooltip_SrDenoise;
+  Settings_Label_SrDownload = t.Settings_Label_SrDownload;
+  Settings_Tooltip_SrDownload = t.Settings_Tooltip_SrDownload;
+  Settings_Option_SrPlugin_Anime4K = t.Settings_Option_SrPlugin_Anime4K;
+  Settings_Option_SrPlugin_Ref = t.Settings_Option_SrPlugin_Ref;
   Settings_Label_CMS = t.Settings_Label_CMS;
   Settings_Label_AdvancedColor = t.Settings_Label_AdvancedColor;
   Settings_Label_HdrToneMapping = t.Settings_Label_HdrToneMapping;
@@ -7037,4 +7202,11 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
     if (!raw) return L"";
     return needsCleaning ? CleanLabel(raw) : std::wstring(raw);
 }
+
+const wchar_t* Settings_Label_SrModel = L"AI Model";
+const wchar_t* Settings_Tooltip_SrModel = L"Select active Super-Resolution neural network model";
+const wchar_t* Settings_Header_PluginParams = L"Plugin Parameters";
+const wchar_t* Settings_Button_Download = L"Download";
+
 }
+

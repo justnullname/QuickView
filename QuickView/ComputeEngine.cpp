@@ -3,6 +3,7 @@
 static constexpr const char* CURRENT_MODULE = "ComputeEngine";
 
 #include "ComputeEngine.h"
+#include "Plugin/PluginHost.h"
 #include <d3dcompiler.h>
 #include <algorithm>
 
@@ -829,9 +830,30 @@ HRESULT ComputeEngine::CompileShaders() {
 }
 
 HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int height, int stride, PixelFormat srcFormat, ID3D11Texture2D** outTexture) {
-    if (!m_valid || !outTexture) return E_FAIL;
+    if (!m_valid || !outTexture || width <= 0 || height <= 0 || !srcPixels) return E_INVALIDARG;
 
-    // 1. Create Staging Texture (Immutable for fastest upload)
+    bool isHdrFloat = (srcFormat == PixelFormat::R32G32B32A32_FLOAT || srcFormat == PixelFormat::R16G16B16A16_FLOAT);
+
+    // 1. For standard SDR formats (BGRA/BGRX/RGBA), directly create DEFAULT texture without Compute Shader dispatch (100% Thread-Safe)
+    if (!isHdrFloat && srcFormat != PixelFormat::R16G16B16A16_UNORM) {
+        D3D11_TEXTURE2D_DESC directDesc = {};
+        directDesc.Width = width;
+        directDesc.Height = height;
+        directDesc.MipLevels = 1;
+        directDesc.ArraySize = 1;
+        directDesc.Format = (srcFormat == PixelFormat::RGBA8888) ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
+        directDesc.SampleDesc.Count = 1;
+        directDesc.Usage = D3D11_USAGE_DEFAULT;
+        directDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+        D3D11_SUBRESOURCE_DATA initData = {};
+        initData.pSysMem = srcPixels;
+        initData.SysMemPitch = stride > 0 ? stride : width * 4;
+
+        return m_d3dDevice->CreateTexture2D(&directDesc, &initData, outTexture);
+    }
+
+    // 2. Create Staging Texture (Immutable for HDR upload)
     D3D11_TEXTURE2D_DESC srcDesc = {};
     srcDesc.Width = width;
     srcDesc.Height = height;
@@ -839,23 +861,22 @@ HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int
     srcDesc.ArraySize = 1;
     srcDesc.Format = (srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? DXGI_FORMAT_R32G32B32A32_FLOAT : 
                      (srcFormat == PixelFormat::R16G16B16A16_FLOAT) ? DXGI_FORMAT_R16G16B16A16_FLOAT :
-                     ((srcFormat == PixelFormat::R16G16B16A16_UNORM) ? DXGI_FORMAT_R16G16B16A16_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM);
+                     DXGI_FORMAT_R16G16B16A16_UNORM;
     srcDesc.SampleDesc.Count = 1;
     srcDesc.Usage = D3D11_USAGE_IMMUTABLE;
     srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     
     D3D11_SUBRESOURCE_DATA initData = {};
     initData.pSysMem = srcPixels;
-    initData.SysMemPitch = stride > 0 ? stride : width * ((srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? 16 : 
-                                                          ((srcFormat == PixelFormat::R16G16B16A16_UNORM || srcFormat == PixelFormat::R16G16B16A16_FLOAT) ? 8 : 4));
+    initData.SysMemPitch = stride > 0 ? stride : width * ((srcFormat == PixelFormat::R32G32B32A32_FLOAT) ? 16 : 8);
     
     ComPtr<ID3D11Texture2D> pSrc;
     HRESULT hr = m_d3dDevice->CreateTexture2D(&srcDesc, &initData, &pSrc);
     if (FAILED(hr)) return hr;
 
-    // 2. Create Destination Texture (UAV)
+    // 3. Create Destination Texture (UAV + SRV + RTV)
     D3D11_TEXTURE2D_DESC dstDesc = srcDesc;
-    dstDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    dstDesc.Format = isHdrFloat ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
     dstDesc.Usage = D3D11_USAGE_DEFAULT;
     dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
     
@@ -1648,6 +1669,62 @@ HRESULT QuickView::ComputeEngine::ExecuteFsr1Upscale(
     m_d3dContext->Flush();
     *outTexture = pRcasTex.Detach();
     return S_OK;
+}
+
+HRESULT QuickView::ComputeEngine::ExecuteSuperResolution(
+    ID3D11Texture2D* srcTexture,
+    UINT srcW, UINT srcH,
+    UINT dstW, UINT dstH,
+    float sharpness,
+    SimplePredicate checkCancel,
+    ID3D11Texture2D** outTexture)
+{
+    if (!m_valid || !srcTexture || !outTexture || srcW == 0 || srcH == 0 || dstW == 0 || dstH == 0) {
+        return E_INVALIDARG;
+    }
+
+    // 1. Attempt Plugin Execution (if enabled and present)
+    auto& host = PluginHost::Instance();
+    if (host.IsSrPluginEnabled() && host.EnsureSrContext(m_d3dDevice.Get())) {
+        // Create destination texture for plugin output
+        D3D11_TEXTURE2D_DESC srcDesc{};
+        srcTexture->GetDesc(&srcDesc);
+
+        D3D11_TEXTURE2D_DESC dstDesc = srcDesc;
+        dstDesc.Width = dstW;
+        dstDesc.Height = dstH;
+        dstDesc.MipLevels = 1;
+        dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+
+        ComPtr<ID3D11Texture2D> pDstTex;
+        HRESULT hr = m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDstTex);
+        if (SUCCEEDED(hr)) {
+            auto cancelWrapper = [](void* ctx) -> bool {
+                if (!ctx) return false;
+                auto* pred = static_cast<SimplePredicate*>(ctx);
+                return (*pred)();
+            };
+
+            int32_t srRes = host.ExecuteSrUpscaleGpu(
+                m_d3dDevice.Get(),
+                srcTexture, srcW, srcH,
+                pDstTex.Get(), dstW, dstH,
+                checkCancel ? cancelWrapper : nullptr,
+                checkCancel ? &checkCancel : nullptr
+            );
+
+            if (srRes == (int32_t)S_OK) {
+                *outTexture = pDstTex.Detach();
+                return S_OK;
+            } else if (srRes == (int32_t)E_ABORT) {
+                return E_ABORT;
+            }
+            // If plugin failed, fall through to built-in FSR 1.0
+        }
+    }
+
+    // 2. Built-in Fallback: AMD FSR 1.0 (EASU + RCAS)
+    return ExecuteFsr1Upscale(srcTexture, srcW, srcH, dstW, dstH, sharpness, outTexture);
 }
 
 } // namespace QuickView

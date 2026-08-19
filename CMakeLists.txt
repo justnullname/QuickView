@@ -116,6 +116,7 @@ set(QUICKVIEW_SOURCES
     QuickView/OffscreenWebView2.cpp
     QuickView/WebContentHost.cpp
     QuickView/WebViewThumbService.cpp
+    QuickView/Plugin/PluginHost.cpp
     
     # Third party manually included
     third_party/yyjson/yyjson.c
@@ -376,6 +377,39 @@ target_link_libraries(QuickView PRIVATE
 )
 
 # ============================================================================
+# Super-Resolution Plugins (QVX)
+# ============================================================================
+add_library(sr_sample_d3d11 SHARED plugins/sr_sample_d3d11.cpp)
+set_target_properties(sr_sample_d3d11 PROPERTIES
+    SUFFIX ".qvx"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins"
+)
+target_include_directories(sr_sample_d3d11 PRIVATE QuickView)
+target_link_libraries(sr_sample_d3d11 PRIVATE d3d11.lib d3dcompiler.lib dxgi.lib)
+
+add_library(sr_anime4k_d3d11 SHARED plugins/sr_anime4k_d3d11.cpp)
+set_target_properties(sr_anime4k_d3d11 PROPERTIES
+    SUFFIX ".qvx"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins"
+)
+target_include_directories(sr_anime4k_d3d11 PRIVATE QuickView)
+target_link_libraries(sr_anime4k_d3d11 PRIVATE d3d11.lib d3dcompiler.lib dxgi.lib)
+
+add_library(sr_realesrgan_d3d11 SHARED plugins/sr_realesrgan_d3d11.cpp)
+set_target_properties(sr_realesrgan_d3d11 PROPERTIES
+    SUFFIX ".qvx"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins"
+)
+target_include_directories(sr_realesrgan_d3d11 PRIVATE QuickView)
+target_link_libraries(sr_realesrgan_d3d11 PRIVATE d3d11.lib d3dcompiler.lib dxgi.lib shlwapi.lib)
+
+# ============================================================================
 # Unit Tests
 # ============================================================================
 find_package(GTest CONFIG REQUIRED)
@@ -393,6 +427,7 @@ add_executable(QuickViewTests
     tests/SvgNeedsFallbackTests.cpp
     tests/MetafileCodecTests.cpp
     tests/GeekWidgetsTests.cpp
+    tests/PluginHostTests.cpp
     QuickView/GeekWidgets.cpp
     QuickView/GeekIconLibrary.cpp
     QuickView/GeekIconData.cpp
@@ -408,6 +443,7 @@ add_executable(QuickViewTests
     QuickView/ArchiveVFS.cpp 
     QuickView/exif.cpp
     QuickView/QuickViewETW.cpp
+    QuickView/Plugin/PluginHost.cpp
     QuickView/pch.cpp
 )
 target_precompile_headers(QuickViewTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
@@ -419,16 +455,19 @@ target_link_libraries(QuickViewTests PRIVATE
     windowscodecs.lib 
     dxgi.lib 
     d3d11.lib 
+    d3dcompiler.lib
     shlwapi.lib 
     shell32.lib 
     mscms.lib
     gdiplus.lib
+    winhttp.lib
     unrar-mini
     ZLIB::ZLIB
     libjpeg-turbo::turbojpeg-static
 )
 target_include_directories(QuickViewTests PRIVATE QuickView third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
+add_dependencies(QuickViewTests sr_sample_d3d11 sr_anime4k_d3d11)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)
 
 # ============================================================================

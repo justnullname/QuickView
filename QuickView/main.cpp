@@ -41,6 +41,7 @@ static UINT GetSvgSurfaceSizeLimit();
 #include "AppStrings.h"
 #include "ContextMenu.h"
 #include "UndoManager.h"
+#include "Plugin/PluginHost.h"
 #include <shlobj.h>
 #pragma comment(lib, "shlwapi.lib")
 #include "SupportedExtensions.h"
@@ -149,8 +150,10 @@ void UpdateTargetColorSpaceForEngine(HWND hwnd);
 #define WM_UPDATE_FOUND  (WM_APP + 2)
 #define WM_ENGINE_EVENT  (WM_APP + 3)
 #define WM_ROUTED_OPEN   (WM_APP + 10)  // [Phase 0] Reserved for pipe-routed file open
+#define WM_SR_COMPLETED  (WM_APP + 60)  // [QVX-SR] Background Neural Super-Resolution finished
 // WebContentHost::kCommitMessage (WM_APP+55) — document ready, need DComp Commit
 constexpr UINT_PTR TIMER_ID_STARTUP_SHOW = 992;
+constexpr UINT_PTR TIMER_ID_SR_DEBOUNCE = 3001;
 
 
 
@@ -2472,7 +2475,7 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
         originalW = (float)GetPaneContext(PaneSlot::Primary).metadata.Width;
         originalH = (float)GetPaneContext(PaneSlot::Primary).metadata.Height;
     } else {
-        D2D1_SIZE_F bmpSize = res.bitmap->GetSize();
+        D2D1_SIZE_F bmpSize = res.GetSize();
         originalW = bmpSize.width;
         originalH = bmpSize.height;
     }
@@ -2506,9 +2509,8 @@ static D2D1_SIZE_U ComputeDesiredBitmapSurfaceSize(UINT winW, UINT winH, const I
     }
 
     float desiredScale = fitScale * GetPaneContext(PaneSlot::Primary).view.Zoom;
-    // [Quality Optimization] For bitmaps, cap at original size (1.0) for large images 
-    // but allow upscaling to fit (fitScale) for small images for smooth display.
-    float qualityCap = std::max(1.0f, fitScale);
+    // [Quality Optimization] Allow surface expansion up to srScale for super-resolution textures
+    float qualityCap = std::max(1.0f, fitScale) * (res.srScale > 1.01f ? res.srScale : 1.0f);
     if (desiredScale > qualityCap) desiredScale = qualityCap;
 
     if (!(desiredScale > 0.0f)) return D2D1::SizeU(0, 0);
@@ -2593,8 +2595,9 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
             float maxW = screenW * maxSizePercent;
             float maxH = screenH * maxSizePercent;
             
-            float contentW = (res.isSvg || res.isWebView) ? res.svgW : (res.bitmap ? res.bitmap->GetSize().width : 800.0f);
-            float contentH = (res.isSvg || res.isWebView) ? res.svgH : (res.bitmap ? res.bitmap->GetSize().height : 600.0f);
+            D2D1_SIZE_F resSize = res.GetSize();
+            float contentW = resSize.width > 0.0f ? resSize.width : 800.0f;
+            float contentH = resSize.height > 0.0f ? resSize.height : 600.0f;
             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
             if (!res.isSvg && !res.isWebView && editState.HasCrop) {
                 contentW = (float)(editState.CropRight - editState.CropLeft);
@@ -2759,7 +2762,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         // === Bitmap Path (Legacy) ===
         if (!res.bitmap) return false;
         
-        D2D1_SIZE_F bmpSize = res.bitmap->GetSize();
+        D2D1_SIZE_F bmpSize = res.GetSize();
         const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
         
         // Handle EXIF Orientation (GPU Pre-Rotation)
@@ -2769,8 +2772,9 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
         int effOrientation = GetEffectiveExifOrientation(g_renderExifOrientation, editState);
         if (!g_config.AutoRotate) effOrientation = 1;
 
-        float imgW = bmpSize.width;
-        float imgH = bmpSize.height;
+        float srScale = (res.srScale > 0.001f) ? res.srScale : 1.0f;
+        float imgW = bmpSize.width / srScale;
+        float imgH = bmpSize.height / srScale;
         
         // Swap dimensions for portrait orientations (5-8) to ensure Surface matches Window shape
         bool isSwapped = (orientation >= 5 && orientation <= 8);
@@ -2817,6 +2821,9 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
             rawRect = MapOrientedRectToRawRect(orientedCropRect, imgW, imgH, effOrientation);
         }
 
+        // Physical sampling rectangle inside res.bitmap (scaled by srScale)
+        D2D1_RECT_F physSrcRect = D2D1::RectF(rawRect.left * srScale, rawRect.top * srScale, rawRect.right * srScale, rawRect.bottom * srScale);
+
         // GPU Rotation Matrix Calculation
         // Goal: Map the source bitmap to the destination surface center, rotated and scaled.
         if (orientation > 1) {
@@ -2851,12 +2858,14 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              
              ctx->SetTransform(CombineWithCurrentTransform(ctx, m));
              
-             D2D1_RECT_F srcRect = rawRect;
+             D2D1_RECT_F srcRect = physSrcRect;
              D2D1_RECT_F destRect = rawRect;
 
              const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
              bool hasMetrics = meta.HasSharpness && meta.HasEntropy;
-             float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(g_config.FsrSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
+             bool isSrPluginActive = QuickView::PluginHost::Instance().IsSrPluginEnabled();
+             float effectiveSharpness = isSrPluginActive ? QuickView::PluginHost::Instance().GetSrSharpness() : g_config.FsrSharpness;
+             float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(effectiveSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
 
              // Use Smart Interpolation
              float absoluteScale = GetPaneContext(PaneSlot::Primary).view.Zoom * scale;
@@ -2901,7 +2910,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              ctx->SetTransform(D2D1::Matrix3x2F::Identity());
         } else {
              // Standard Path (Optimization: No Matrix overhead)
-             D2D1_RECT_F srcRect = rawRect;
+             D2D1_RECT_F srcRect = physSrcRect;
              float cropW = rawRect.right - rawRect.left;
              float cropH = rawRect.bottom - rawRect.top;
 
@@ -2919,7 +2928,9 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
 
              const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
              bool hasMetrics = meta.HasSharpness && meta.HasEntropy;
-             float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(g_config.FsrSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
+             bool isSrPluginActive = QuickView::PluginHost::Instance().IsSrPluginEnabled();
+             float effectiveSharpness = isSrPluginActive ? QuickView::PluginHost::Instance().GetSrSharpness() : g_config.FsrSharpness;
+             float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(effectiveSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
 
              // Use Smart Interpolation
              float absoluteScale = GetPaneContext(PaneSlot::Primary).view.Zoom * scale;
@@ -3811,7 +3822,7 @@ static D2D1_SIZE_F GetLogicalImageSize() {
         return D2D1::SizeF(512.0f, 512.0f);
     }
 
-    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 8192 || GetPaneContext(PaneSlot::Primary).metadata.Height > 8192) {
+    if (GetPaneContext(PaneSlot::Primary).metadata.Width > 0 && GetPaneContext(PaneSlot::Primary).metadata.Height > 0) {
         return D2D1::SizeF((float)GetPaneContext(PaneSlot::Primary).metadata.Width, (float)GetPaneContext(PaneSlot::Primary).metadata.Height);
     }
 
@@ -5071,6 +5082,7 @@ void SaveConfig() {
     WriteConfigInt(L"Controls", L"ZoomModeIn", g_config.ZoomModeIn, iniPath.c_str());
     WriteConfigInt(L"Controls", L"ZoomModeOut", g_config.ZoomModeOut, iniPath.c_str());
     WriteConfigFloat(L"Controls", L"FsrSharpness", g_config.FsrSharpness, iniPath.c_str());
+    WriteConfigInt(L"Controls", L"SrDebounceDelayMs", g_config.SrDebounceDelayMs, iniPath.c_str());
     WriteConfigBool(L"Controls", L"InvertWheel", g_config.InvertWheel, iniPath.c_str());
     WriteConfigInt(L"Controls", L"WheelActionMode", g_config.WheelActionMode, iniPath.c_str());
     WriteConfigInt(L"Controls", L"ThumbWheelMode", g_config.ThumbWheelMode, iniPath.c_str());
@@ -5168,6 +5180,9 @@ void SaveConfig() {
         std::wstring valStr = KeyComboToString(binding.combo);
         WritePrivateProfileStringW(L"Hotkeys", std::wstring(actionName).c_str(), valStr.c_str(), iniPath.c_str());
     }
+
+    // Super-Resolution Plugins
+    QuickView::PluginHost::Instance().SaveConfig(iniPath.c_str());
 }
 
 void LoadConfig() {
@@ -5388,6 +5403,9 @@ void LoadConfig() {
         float val = (float)_wtof(fsrBuf);
         g_config.FsrSharpness = std::clamp(val, 0.0f, 1.0f);
     }
+    g_config.SrDebounceDelayMs = GetPrivateProfileIntW(L"Controls", L"SrDebounceDelayMs", 150, iniPath.c_str());
+    if (g_config.SrDebounceDelayMs < 0 || g_config.SrDebounceDelayMs > 5000) g_config.SrDebounceDelayMs = 150;
+    QuickView::PluginHost::Instance().SetSrDebounceDelayMs(g_config.SrDebounceDelayMs);
     g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
     g_config.WheelActionMode = GetPrivateProfileIntW(L"Controls", L"WheelActionMode", 0, iniPath.c_str());
     g_config.ThumbWheelMode = GetPrivateProfileIntW(L"Controls", L"ThumbWheelMode", 0, iniPath.c_str());
@@ -5573,6 +5591,9 @@ void LoadConfig() {
         binding.combo = StringToKeyCombo(std::wstring_view(bufCombo));
     }
     ParseFixedZoomLevels();
+
+    // Super-Resolution Plugins
+    QuickView::PluginHost::Instance().LoadConfig(iniPath.c_str());
 }
 
 
@@ -6331,6 +6352,131 @@ void RefreshImageDisplay(HWND hwnd) {
         // Fallback: If not in cache, do a full asynchronous reload
         void ReloadCurrentImage(HWND hwnd);
         ReloadCurrentImage(hwnd);
+    }
+}
+
+struct AsyncSrResult {
+    uint64_t requestId = 0;
+    std::wstring imagePath;
+    std::string modelId;
+    float modelScale = 4.0f;
+    ComPtr<ID3D11Texture2D> srTexture;
+    bool hasAlpha = false;
+    double durationMs = 0.0;
+    HRESULT hr = E_FAIL;
+};
+
+static std::atomic<uint64_t> s_srRequestSeq{0};
+static std::atomic<bool> s_isSrInProgress{false};
+
+// [QVX-SR] Single-Pass Promoted SR Texture Controller with Zero-Recomputation Viewport Caching
+static void TriggerDebouncedSuperResolution(HWND hwnd) {
+    if (!QuickView::PluginHost::Instance().IsSrPluginEnabled()) return;
+    if (!g_renderEngine || !g_pImageEngine) return;
+
+    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    if (!primaryPane.resource || primaryPane.path.empty()) return;
+
+    auto frame = primaryPane.currentFrame;
+    if (!frame || !frame->pixels) {
+        frame = g_pImageEngine->GetCachedImage(primaryPane.path);
+    }
+    if (!frame || !frame->pixels) return;
+
+    VisualState vs = GetVisualState();
+    RECT rcClient{};
+    GetClientRect(hwnd, &rcClient);
+    float winW = (float)rcClient.right;
+    float winH = (float)rcClient.bottom;
+    float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
+    float effWinH = winH - galleryH;
+    if (effWinH < 1.0f) effWinH = 1.0f;
+
+    float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+    float nativeW = (float)(vs.IsRotated90 ? primaryPane.metadata.Height : primaryPane.metadata.Width);
+    if (nativeW <= 0.0f) nativeW = vs.VisualSize.width;
+
+    float currentDisplayedW = vs.VisualSize.width * baseFit * primaryPane.view.Zoom;
+    float pixelStretchRatio = (nativeW > 0.0f) ? (currentDisplayedW / nativeW) : 1.0f;
+
+    std::string activeModelId = QuickView::PluginHost::Instance().GetSrModelId();
+    float modelScale = QuickView::PluginHost::Instance().GetCurrentSrModelScale();
+    if (modelScale < 2.0f) modelScale = 2.0f;
+
+    // Cache the original 1.0x native bitmap if not yet stored
+    if (!primaryPane.resource.baseNormalBitmap && primaryPane.resource.bitmap && primaryPane.resource.currentSrLevel <= 1.0f) {
+        primaryPane.resource.baseNormalBitmap = primaryPane.resource.bitmap;
+    }
+
+    if (pixelStretchRatio > 1.001f) {
+        // --- CASE 1: Zoom In (> 100%) -> Use Promoted SR Texture ---
+
+        // Check if we already have the promoted full-resolution SR texture cached
+        if (primaryPane.resource.promotedSrBitmap && primaryPane.resource.promotedModelId == activeModelId) {
+            if (primaryPane.resource.bitmap != primaryPane.resource.promotedSrBitmap) {
+                primaryPane.resource.bitmap = primaryPane.resource.promotedSrBitmap;
+                primaryPane.resource.srScale = primaryPane.resource.promotedSrScale;
+                primaryPane.resource.currentSrLevel = primaryPane.resource.promotedSrScale;
+                RenderImageToDComp(hwnd, primaryPane.resource, true);
+                SyncDCompState(hwnd, winW, winH, false);
+                RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
+            }
+            return; // Zero recomputation! Instantly reuse 4x texture.
+        }
+
+        // If already in progress for this request sequence, avoid duplicate threads
+        if (s_isSrInProgress.load()) {
+            return;
+        }
+
+        uint64_t curReqId = ++s_srRequestSeq;
+        s_isSrInProgress.store(true);
+
+        // Immediate OSD feedback on UI thread
+        g_osd.Show(hwnd, L"神经网络计算中 (AI Upscaling)...", false, false, D2D1::ColorF(1.0f, 0.85f, 0.2f), OSDPosition::Bottom, 10000);
+        RequestRepaint(PaintLayer::Dynamic);
+
+        std::wstring curPath = primaryPane.path;
+        bool hasAlpha = (frame->format != QuickView::PixelFormat::BGRX8888);
+        std::thread([hwnd, curReqId, curPath, activeModelId, modelScale, frame, hasAlpha]() {
+            ComPtr<ID3D11Texture2D> srTex;
+            HRESULT hr = g_renderEngine ? g_renderEngine->GenerateSuperResolutionTexture(*frame, modelScale, &srTex) : E_FAIL;
+
+            auto* res = new AsyncSrResult();
+            res->requestId = curReqId;
+            res->imagePath = curPath;
+            res->modelId = activeModelId;
+            res->modelScale = modelScale;
+            res->srTexture = srTex;
+            res->hasAlpha = hasAlpha;
+            res->durationMs = QuickView::PluginHost::Instance().GetLastDurationMs();
+            res->hr = hr;
+
+            PostMessageW(hwnd, WM_SR_COMPLETED, 0, reinterpret_cast<LPARAM>(res));
+        }).detach();
+
+    } else {
+        // --- CASE 2: Zoom <= 100% -> Exact fallback to 1.0x native frame ---
+        if (primaryPane.resource.currentSrLevel > 1.0f) {
+            if (primaryPane.resource.baseNormalBitmap) {
+                primaryPane.resource.bitmap = primaryPane.resource.baseNormalBitmap;
+            } else {
+                ComPtr<ID2D1Bitmap> normalBitmap;
+                CRenderEngine::RenderPipelineOptions opts;
+                opts.hasOverrides = true;
+                opts.effectiveCmsMode = g_runtime.GetEffectiveCmsMode(g_config.ColorManagement);
+                if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*frame, &normalBitmap, &opts)) && normalBitmap) {
+                    primaryPane.resource.baseNormalBitmap = normalBitmap;
+                    primaryPane.resource.bitmap = normalBitmap;
+                }
+            }
+
+            primaryPane.resource.srScale = 1.0f;
+            primaryPane.resource.currentSrLevel = 1.0f;
+            RenderImageToDComp(hwnd, primaryPane.resource, true);
+            SyncDCompState(hwnd, winW, winH, false);
+            RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
+        }
     }
 }
 
@@ -7769,6 +7915,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     g_imageEngine.reset();
     g_imageLoader.reset(); // Holds WIC factory
     g_renderEngine.reset(); // Holds D2D/D3D device
+    QuickView::PluginHost::Instance().Shutdown();
     
     DiscardChanges(); 
     CoUninitialize(); 
@@ -8252,6 +8399,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (SUCCEEDED(g_renderEngine->UploadRawFrameToGPU(*nextFrame, &newBitmap))) {
                 GetPaneContext(PaneSlot::Primary).resource.bitmap = newBitmap;
                 GetPaneContext(PaneSlot::Primary).resource.frameMeta = nextFrame->frameMeta;
+                GetPaneContext(PaneSlot::Primary).currentFrame = nextFrame;
 
                 // Update Surface but defer DComp Commit to OnPaint to avoid stuttering
                 RenderImageToDComp(hwnd, GetPaneContext(PaneSlot::Primary).resource, true);
@@ -8265,6 +8413,59 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
     }
+    // [QVX-SR] Background Neural Super-Resolution finished
+    case WM_SR_COMPLETED: {
+        s_isSrInProgress.store(false);
+        auto* res = reinterpret_cast<AsyncSrResult*>(lParam);
+        if (!res) return 0;
+
+        std::unique_ptr<AsyncSrResult> autoDelete(res);
+        auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+
+        if (SUCCEEDED(res->hr) && res->srTexture && res->requestId == s_srRequestSeq.load() && primaryPane.path == res->imagePath) {
+            ComPtr<ID2D1Bitmap> srBitmap;
+            if (g_renderEngine && SUCCEEDED(g_renderEngine->CreateBitmapFromD3DTexture(res->srTexture.Get(), res->hasAlpha, &srBitmap)) && srBitmap) {
+                primaryPane.resource.promotedSrBitmap = srBitmap;
+                primaryPane.resource.promotedSrScale = res->modelScale;
+                primaryPane.resource.promotedModelId = res->modelId;
+
+                VisualState vs = GetVisualState();
+                RECT rcClient{};
+                GetClientRect(hwnd, &rcClient);
+                float winW = (float)rcClient.right;
+                float winH = (float)rcClient.bottom;
+                float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
+                float effWinH = winH - galleryH;
+                if (effWinH < 1.0f) effWinH = 1.0f;
+
+                float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
+                float nativeW = (float)(vs.IsRotated90 ? primaryPane.metadata.Height : primaryPane.metadata.Width);
+                if (nativeW <= 0.0f) nativeW = vs.VisualSize.width;
+
+                float currentDisplayedW = vs.VisualSize.width * baseFit * primaryPane.view.Zoom;
+                float pixelStretchRatio = (nativeW > 0.0f) ? (currentDisplayedW / nativeW) : 1.0f;
+
+                if (pixelStretchRatio > 1.001f) {
+                    primaryPane.resource.bitmap = srBitmap;
+                    primaryPane.resource.srScale = res->modelScale;
+                    primaryPane.resource.currentSrLevel = res->modelScale;
+                    RenderImageToDComp(hwnd, primaryPane.resource, true);
+                    SyncDCompState(hwnd, winW, winH, false);
+                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
+                }
+
+                wchar_t msg[128];
+                swprintf_s(msg, L"✓ AI 超分完成: %.0fx (耗时: %.1fms)",
+                           res->modelScale,
+                           res->durationMs);
+                g_osd.Show(hwnd, msg, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f), OSDPosition::Bottom, 2000);
+            }
+        } else if (FAILED(res->hr) && res->requestId == s_srRequestSeq.load()) {
+            g_osd.Show(hwnd, L"✗ AI 超分执行失败", true, false, D2D1::ColorF(1.0f, 0.3f, 0.3f), OSDPosition::Bottom, 3000);
+        }
+        return 0;
+    }
+
     // Print job finished
     case WM_APP + 98: {
         HRESULT hrPrint = static_cast<HRESULT>(wParam);
@@ -8571,6 +8772,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
 
+        if (wParam == TIMER_ID_SR_DEBOUNCE) {
+            KillTimer(hwnd, TIMER_ID_SR_DEBOUNCE);
+            TriggerDebouncedSuperResolution(hwnd);
+            return 0;
+        }
+
         // [Startup Optimization] Handle deferred registry check
         if (wParam == TIMER_ID_REGISTRY_CHECK) {
             KillTimer(hwnd, TIMER_ID_REGISTRY_CHECK);
@@ -8746,7 +8953,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (wParam == OSD_TIMER_ID) {
              RequestRepaint(PaintLayer::Dynamic);  // Heartbeat for smooth fade
              if (!g_osd.IsVisible()) {
-                 KillTimer(hwnd, OSD_TIMER_ID);
+                 if (s_isSrInProgress.load()) {
+                     // Auto-resume background neural SR status when transient zoom OSD expires
+                     g_osd.Show(hwnd, L"神经网络计算中 (AI Upscaling)...", false, false, D2D1::ColorF(1.0f, 0.85f, 0.2f), OSDPosition::Bottom, 10000);
+                 } else {
+                     KillTimer(hwnd, OSD_TIMER_ID);
+                 }
              }
         }
 
@@ -13996,6 +14208,7 @@ void ProcessEngineEvents(HWND hwnd) {
                          if (evt.rawFrame) {
                              GetPaneContext(PaneSlot::Primary).resource.animator = evt.rawFrame->animator;
                              GetPaneContext(PaneSlot::Primary).resource.frameMeta = evt.rawFrame->frameMeta;
+                             GetPaneContext(PaneSlot::Primary).currentFrame = evt.rawFrame;
                          }
 
                          resourceReady = true;
@@ -15894,31 +16107,20 @@ void OnPaint(HWND hwnd) {
         // Sync pin state
         g_uiRenderer->SetPinActive(g_config.AlwaysOnTop);
         
-        // Sync OSD state
+        // Sync OSD state (Instant cut, zero fade animation)
         if (g_osd.IsVisible()) {
-            float elapsed = (GetTickCount() - g_osd.StartTime) / 1000.0f;
-            float totalSecs = g_osd.Duration / 1000.0f;
-            float progress = (totalSecs > 0) ? (elapsed / totalSecs) : 1.0f;
-            float opacity = 1.0f;
-            if (g_config.GlassUIAnimations && progress > 0.5f) { // Fade only when animations enabled
-                opacity = 1.0f - (progress - 0.5f) / 0.5f;
+            // Resolve text color from OSDState
+            D2D1_COLOR_F osdColor = g_osd.CustomColor;
+            if (osdColor.a == 0.0f) {
+                // No custom color - use default based on type
+                if (g_osd.IsError) osdColor = D2D1::ColorF(D2D1::ColorF::Red);
+                else if (g_osd.IsWarning) osdColor = D2D1::ColorF(D2D1::ColorF::Yellow);
+                else osdColor = D2D1::ColorF(D2D1::ColorF::White);
             }
-            if (opacity > 0) {
-                // Resolve text color from OSDState
-                D2D1_COLOR_F osdColor = g_osd.CustomColor;
-                if (osdColor.a == 0.0f) {
-                    // No custom color - use default based on type
-                    if (g_osd.IsError) osdColor = D2D1::ColorF(D2D1::ColorF::Red);
-                    else if (g_osd.IsWarning) osdColor = D2D1::ColorF(D2D1::ColorF::Yellow);
-                    else osdColor = D2D1::ColorF(D2D1::ColorF::White);
-                }
-                if (g_osd.IsCompareOSD) {
-                    g_uiRenderer->SetCompareOSD(g_osd.MessageLeft, g_osd.MessageRight, opacity, osdColor);
-                } else {
-                    g_uiRenderer->SetOSD(g_osd.Message, opacity, osdColor, g_osd.Position);
-                }
+            if (g_osd.IsCompareOSD) {
+                g_uiRenderer->SetCompareOSD(g_osd.MessageLeft, g_osd.MessageRight, 1.0f, osdColor);
             } else {
-                g_uiRenderer->SetOSD(L"", 0);
+                g_uiRenderer->SetOSD(g_osd.Message, 1.0f, osdColor, g_osd.Position);
             }
         } else {
             g_uiRenderer->SetOSD(L"", 0);
@@ -16215,6 +16417,13 @@ void PerformSmartZoom(HWND hwnd, float newTotalScale, const POINT* centerPt, boo
     }
 
     RefreshSvgSurfaceAfterZoom(hwnd);
+
+    // [QVX-SR] Trigger debounced Super-Resolution upscale when zoom settles
+    if (QuickView::PluginHost::Instance().IsSrPluginEnabled()) {
+        if (g_config.SrDebounceDelayMs > 0) {
+            SetTimer(hwnd, TIMER_ID_SR_DEBOUNCE, (UINT)g_config.SrDebounceDelayMs, nullptr);
+        }
+    }
 }
 
 

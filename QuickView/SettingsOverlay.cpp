@@ -7,6 +7,7 @@
 #include "GalleryOverlay.h"
 #include "AppStrings.h"
 #include "ImageEngine.h"
+#include "Plugin/PluginHost.h"
 #include "DialogController.h"
 #include "OSDState.h"
 #include <algorithm>
@@ -2514,6 +2515,420 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossy, OptionType::Toggle, &g_config.AlwaysSaveLossy });
     m_tabs.push_back(tabImage);
 
+    // --- 5. Plugins ---
+    SettingsTab tabPlugins;
+    tabPlugins.name = AppStrings::Settings_Tab_Plugins;
+    tabPlugins.icon = Icons::FixExt;
+
+    tabPlugins.items.push_back({ AppStrings::Settings_Header_Plugins_SR, OptionType::Header });
+
+    // 1. Enable AI SR Plugin Toggle
+    static bool s_srPluginEnabled = QuickView::PluginHost::Instance().IsSrPluginEnabled();
+    s_srPluginEnabled = QuickView::PluginHost::Instance().IsSrPluginEnabled();
+    SettingsItem itemSrPlugin = { AppStrings::Settings_Label_EnableSrPlugin, OptionType::Toggle, &s_srPluginEnabled };
+    itemSrPlugin.tooltipText = AppStrings::Settings_Tooltip_EnableSrPlugin;
+    itemSrPlugin.isNewOption = true;
+    itemSrPlugin.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        QuickView::PluginHost::Instance().SetSrPluginEnabled(s_srPluginEnabled);
+        SaveConfig();
+        if (overlay) overlay->m_pendingRebuild = true;
+        extern HWND g_mainHwnd;
+        extern void RefreshImageDisplay(HWND hwnd);
+        RefreshImageDisplay(g_mainHwnd);
+    };
+    tabPlugins.items.push_back(itemSrPlugin);
+
+    // 2. Data-Driven Dynamic Plugin Scanner & Selector
+    static std::vector<QuickView::PluginCandidate> s_candidates;
+    static std::vector<std::wstring> s_candDisplayNames;
+    static std::vector<std::wstring_view> s_candOptionViews;
+    static int s_pluginChoiceIndex = 0;
+
+    s_candidates = QuickView::PluginHost::Instance().ScanPluginsDirectory(L"");
+    s_candDisplayNames.clear();
+    s_candOptionViews.clear();
+    s_pluginChoiceIndex = 0;
+
+    std::wstring currentPath = QuickView::PluginHost::Instance().GetSrPluginPath();
+
+    auto isSamePath = [](const std::wstring& p1, const std::wstring& p2) {
+        if (p1 == p2) return true;
+        wchar_t f1[MAX_PATH], f2[MAX_PATH];
+        wcsncpy_s(f1, p1.c_str(), MAX_PATH);
+        wcsncpy_s(f2, p2.c_str(), MAX_PATH);
+        PathStripPathW(f1);
+        PathStripPathW(f2);
+        return _wcsicmp(f1, f2) == 0;
+    };
+
+    for (size_t i = 0; i < s_candidates.size(); ++i) {
+        std::wstring nameWide;
+        if (!s_candidates[i].pluginName.empty()) {
+            wchar_t wbuf[128] = { 0 };
+            MultiByteToWideChar(CP_UTF8, 0, s_candidates[i].pluginName.c_str(), -1, wbuf, 128);
+            nameWide = wbuf;
+        } else {
+            wchar_t fname[MAX_PATH];
+            wcsncpy_s(fname, s_candidates[i].filePath.c_str(), MAX_PATH);
+            PathStripPathW(fname);
+            nameWide = fname;
+        }
+        s_candDisplayNames.push_back(std::move(nameWide));
+        if (isSamePath(s_candidates[i].filePath, currentPath) || (currentPath.empty() && i == 0)) {
+            s_pluginChoiceIndex = static_cast<int>(i);
+        }
+    }
+
+    if (s_candDisplayNames.empty()) {
+        s_candDisplayNames.push_back(L"No Plugins Found (Check plugins/ folder)");
+    }
+    for (const auto& s : s_candDisplayNames) {
+        s_candOptionViews.push_back(s);
+    }
+
+    SettingsItem itemSrChoice = { AppStrings::Settings_Label_SrPluginModule, OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_pluginChoiceIndex), nullptr, 0, 0, s_candOptionViews };
+    itemSrChoice.isDisabled = !s_srPluginEnabled || s_candidates.empty();
+    itemSrChoice.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        if (!s_candidates.empty() && s_pluginChoiceIndex >= 0 && s_pluginChoiceIndex < (int)s_candidates.size()) {
+            QuickView::PluginHost::Instance().SetSrPluginPath(s_candidates[s_pluginChoiceIndex].filePath);
+            SaveConfig();
+            if (overlay) overlay->m_pendingRebuild = true;
+            extern HWND g_mainHwnd;
+            extern void RefreshImageDisplay(HWND hwnd);
+            RefreshImageDisplay(g_mainHwnd);
+        }
+    };
+    tabPlugins.items.push_back(itemSrChoice);
+
+    // 3. Data-Driven Dynamic Model Selector & Downloader (if active plugin exports models)
+    static std::vector<QuickView::SrModelEntry> s_models;
+    static std::vector<std::wstring> s_modelDisplayNames;
+    static std::vector<std::wstring_view> s_modelOptionViews;
+    static int s_modelChoiceIndex = 0;
+
+    s_models = QuickView::PluginHost::Instance().GetCurrentSrModels();
+    s_modelDisplayNames.clear();
+    s_modelOptionViews.clear();
+    s_modelChoiceIndex = 0;
+
+    if (!s_models.empty()) {
+        std::string currentModelId = QuickView::PluginHost::Instance().GetSrModelId();
+        for (size_t i = 0; i < s_models.size(); ++i) {
+            wchar_t wbuf[128] = { 0 };
+            MultiByteToWideChar(CP_UTF8, 0, s_models[i].displayName.c_str(), -1, wbuf, 128);
+            std::wstring mName = wbuf;
+            if (!s_models[i].isInstalled) {
+                mName += L" [Download Required]";
+            }
+            s_modelDisplayNames.push_back(std::move(mName));
+            if (s_models[i].modelId == currentModelId || (currentModelId.empty() && i == 0)) {
+                s_modelChoiceIndex = static_cast<int>(i);
+            }
+        }
+        for (const auto& s : s_modelDisplayNames) {
+            s_modelOptionViews.push_back(s);
+        }
+
+        SettingsItem itemModel = { AppStrings::Settings_Label_SrModel, OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_modelChoiceIndex), nullptr, 0, 0, s_modelOptionViews };
+        itemModel.tooltipText = AppStrings::Settings_Tooltip_SrModel;
+        itemModel.isDisabled = !s_srPluginEnabled;
+        itemModel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (!s_models.empty() && s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size()) {
+                QuickView::PluginHost::Instance().SetSrModelId(s_models[s_modelChoiceIndex].modelId);
+                SaveConfig();
+                if (overlay) overlay->m_pendingRebuild = true;
+                extern HWND g_mainHwnd;
+                extern void RefreshImageDisplay(HWND hwnd);
+                RefreshImageDisplay(g_mainHwnd);
+            }
+        };
+        tabPlugins.items.push_back(itemModel);
+
+        // If selected model is not installed locally, show Download button
+        if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size() && !s_models[s_modelChoiceIndex].isInstalled && !s_models[s_modelChoiceIndex].downloadUrl.empty()) {
+            static std::wstring s_dlBtnText;
+            std::string curUrl = s_models[s_modelChoiceIndex].downloadUrl;
+            if (curUrl.find(".zip") != std::string::npos) {
+                s_dlBtnText = L"Download Official Models (~45 MB)";
+            } else {
+                uint64_t bytes = s_models[s_modelChoiceIndex].fileSizeBytes;
+                s_dlBtnText = L"Download Model (~" + std::to_wstring((bytes + 1024 * 1024 - 1) / (1024 * 1024)) + L" MB)";
+            }
+            SettingsItem itemDl = { L"Model Asset", OptionType::ActionButton };
+            itemDl.buttonText = s_dlBtnText;
+            itemDl.isDisabled = !s_srPluginEnabled;
+            itemDl.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+                if (!item) return;
+                if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size()) {
+                    std::string url = s_models[s_modelChoiceIndex].downloadUrl;
+                    std::string filename = s_models[s_modelChoiceIndex].modelId + ".bin";
+                    std::wstring wFilename(filename.begin(), filename.end());
+
+                    item->progress = 0.0f;
+                    item->isSuccess = false;
+                    item->isFailed = false;
+                    item->buttonText = L"Connecting (0%)...";
+                    item->isDisabled = true;
+
+                    extern HWND g_mainHwnd;
+                    if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+
+                    std::thread([overlay, item, wFilename, url]() {
+                        struct ProgressData {
+                            SettingsOverlay* overlay;
+                            SettingsItem* item;
+                        };
+                        ProgressData progData{ overlay, item };
+
+                        auto progressCb = [](float progress, bool finished, bool success, void* uData) {
+                            auto* pData = static_cast<ProgressData*>(uData);
+                            if (!pData || !pData->item) return;
+
+                            extern HWND g_mainHwnd;
+                            if (finished) {
+                                if (success) {
+                                    pData->item->progress = 1.0f;
+                                    pData->item->isSuccess = true;
+                                    pData->item->isFailed = false;
+                                    pData->item->buttonText = L"✓ Download Complete";
+                                } else {
+                                    pData->item->progress = -1.0f;
+                                    pData->item->isSuccess = false;
+                                    pData->item->isFailed = true;
+                                    pData->item->buttonText = L"✗ Download Failed (Retry)";
+                                    pData->item->isDisabled = false;
+                                }
+                            } else {
+                                pData->item->progress = (progress >= 0.0f) ? progress : 0.5f;
+                                int percent = static_cast<int>(pData->item->progress * 100.0f);
+                                if (percent > 100) percent = 100;
+                                pData->item->buttonText = L"Downloading (" + std::to_wstring(percent) + L"%)...";
+                            }
+
+                            if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+                        };
+
+                        bool ok = QuickView::PluginHost::Instance().DownloadModel(wFilename, url, progressCb, &progData);
+
+                        if (ok) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+                            if (overlay) overlay->m_pendingRebuild = true;
+                            extern void RefreshImageDisplay(HWND hwnd);
+                            if (g_mainHwnd) RefreshImageDisplay(g_mainHwnd);
+                        } else {
+                            if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+                        }
+                    }).detach();
+                }
+            };
+            tabPlugins.items.push_back(itemDl);
+        }
+
+        // Open Models Directory Action Button
+        SettingsItem itemOpenDir = { L"Model Directory", OptionType::ActionButton };
+        itemOpenDir.buttonText = L"Open 'plugins/models' Folder";
+        itemOpenDir.isDisabled = !s_srPluginEnabled;
+        itemOpenDir.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            QuickView::PluginHost::Instance().OpenModelsDirectory();
+        };
+        tabPlugins.items.push_back(itemOpenDir);
+    }
+
+    // 4. Zoom Settle Debounce Delay (0ms ~ 5000ms, step 50ms)
+    static float s_srDebounceFloat = (float)g_config.SrDebounceDelayMs;
+    s_srDebounceFloat = (float)g_config.SrDebounceDelayMs;
+    SettingsItem itemDebounce = { AppStrings::Settings_Label_SrDebounce, OptionType::Slider, nullptr, &s_srDebounceFloat };
+    itemDebounce.tooltipText = AppStrings::Settings_Tooltip_SrDebounce;
+    itemDebounce.minVal = 0.0f;
+    itemDebounce.maxVal = 5000.0f;
+    itemDebounce.step = 50.0f;
+    itemDebounce.displayFormat = L"%.0f ms";
+    itemDebounce.isDisabled = !s_srPluginEnabled;
+    itemDebounce.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        g_config.SrDebounceDelayMs = (int)(s_srDebounceFloat + 0.5f);
+        QuickView::PluginHost::Instance().SetSrDebounceDelayMs(g_config.SrDebounceDelayMs);
+        SaveConfig();
+    };
+    itemDebounce.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        s_srDebounceFloat = 150.0f;
+        g_config.SrDebounceDelayMs = 150;
+        QuickView::PluginHost::Instance().SetSrDebounceDelayMs(150);
+        SaveConfig();
+        if (overlay) overlay->m_pendingRebuild = true;
+    };
+    tabPlugins.items.push_back(itemDebounce);
+
+    // 5. Data-Driven Dynamic Parameter Reflection
+    static std::vector<QuickView::SrParamEntry> s_dynParams;
+    static float s_dynFloats[32] = { 0 };
+    static int s_dynInts[32] = { 0 };
+    static bool s_dynBools[32] = { false };
+    static std::wstring s_paramLabels[32];
+    static std::wstring s_paramTooltips[32];
+    static std::vector<std::vector<std::wstring>> s_enumOptionLabels;
+    static std::vector<std::vector<std::wstring_view>> s_enumOptionViews;
+
+    s_dynParams = QuickView::PluginHost::Instance().GetCurrentSrParams();
+    s_enumOptionLabels.clear();
+    s_enumOptionViews.clear();
+
+    if (!s_dynParams.empty()) {
+        tabPlugins.items.push_back({ AppStrings::Settings_Header_PluginParams, OptionType::Header });
+
+        for (size_t i = 0; i < s_dynParams.size() && i < 32; ++i) {
+            const auto& p = s_dynParams[i];
+            wchar_t wLabel[128] = { 0 };
+            MultiByteToWideChar(CP_UTF8, 0, p.desc.label ? p.desc.label : p.desc.id, -1, wLabel, 128);
+            s_paramLabels[i] = wLabel;
+
+            const wchar_t* pTooltip = nullptr;
+            if (p.desc.tooltip && p.desc.tooltip[0] != '\0') {
+                wchar_t wTip[256] = { 0 };
+                MultiByteToWideChar(CP_UTF8, 0, p.desc.tooltip, -1, wTip, 256);
+                s_paramTooltips[i] = wTip;
+                pTooltip = s_paramTooltips[i].c_str();
+            }
+
+            if (p.desc.type == QVX_PARAM_TYPE_FLOAT) {
+                s_dynFloats[i] = p.currentValue;
+                SettingsItem itemParam = { s_paramLabels[i], OptionType::Slider, nullptr, &s_dynFloats[i] };
+                itemParam.tooltipText = pTooltip;
+                itemParam.minVal = p.desc.float_param.min_val;
+                itemParam.maxVal = p.desc.float_param.max_val;
+                itemParam.step = p.desc.float_param.step;
+                itemParam.displayFormat = L"%.2f";
+                itemParam.isDisabled = !s_srPluginEnabled;
+                itemParam.isNewOption = true;
+
+                itemParam.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pFloatVal) return;
+                    int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pFloatVal);
+                        SaveConfig();
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                itemParam.onLiveUpdate = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pFloatVal) return;
+                    int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pFloatVal);
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                itemParam.onReset = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pFloatVal) return;
+                    int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        float defVal = s_dynParams[idx].desc.float_param.default_val;
+                        *item->pFloatVal = defVal;
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, defVal);
+                        SaveConfig();
+                        if (overlay) overlay->m_pendingRebuild = true;
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                tabPlugins.items.push_back(itemParam);
+            } else if (p.desc.type == QVX_PARAM_TYPE_BOOL) {
+                s_dynBools[i] = (p.currentValue != 0.0f);
+                SettingsItem itemParam = { s_paramLabels[i], OptionType::Toggle, &s_dynBools[i] };
+                itemParam.tooltipText = pTooltip;
+                itemParam.isDisabled = !s_srPluginEnabled;
+                itemParam.isNewOption = true;
+
+                itemParam.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pBoolVal) return;
+                    int idx = static_cast<int>(item->pBoolVal - s_dynBools);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, *item->pBoolVal ? 1.0f : 0.0f);
+                        SaveConfig();
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                tabPlugins.items.push_back(itemParam);
+            } else if (p.desc.type == QVX_PARAM_TYPE_INT) {
+                s_dynFloats[i] = p.currentValue;
+                SettingsItem itemParam = { s_paramLabels[i], OptionType::Slider, nullptr, &s_dynFloats[i] };
+                itemParam.tooltipText = pTooltip;
+                itemParam.minVal = static_cast<float>(p.desc.int_param.min_val);
+                itemParam.maxVal = static_cast<float>(p.desc.int_param.max_val);
+                itemParam.step = static_cast<float>(p.desc.int_param.step > 0 ? p.desc.int_param.step : 1);
+                itemParam.displayFormat = L"%.0f";
+                itemParam.isDisabled = !s_srPluginEnabled;
+
+                itemParam.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pFloatVal) return;
+                    int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        float quantVal = static_cast<float>(static_cast<int>(*item->pFloatVal + 0.5f));
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, quantVal);
+                        SaveConfig();
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                itemParam.onReset = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pFloatVal) return;
+                    int idx = static_cast<int>(item->pFloatVal - s_dynFloats);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        float defVal = static_cast<float>(s_dynParams[idx].desc.int_param.default_val);
+                        *item->pFloatVal = defVal;
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, defVal);
+                        SaveConfig();
+                        if (overlay) overlay->m_pendingRebuild = true;
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                tabPlugins.items.push_back(itemParam);
+            } else if (p.desc.type == QVX_PARAM_TYPE_ENUM && p.desc.enum_param.options && p.desc.enum_param.option_count > 0) {
+                s_dynInts[i] = static_cast<int>(p.currentValue);
+                std::vector<std::wstring> optStrs;
+                std::vector<std::wstring_view> optViews;
+                for (uint32_t o = 0; o < p.desc.enum_param.option_count; ++o) {
+                    wchar_t optW[128] = { 0 };
+                    MultiByteToWideChar(CP_UTF8, 0, p.desc.enum_param.options[o].label, -1, optW, 128);
+                    optStrs.push_back(optW);
+                }
+                s_enumOptionLabels.push_back(std::move(optStrs));
+                const auto& curStrs = s_enumOptionLabels.back();
+                for (const auto& s : curStrs) {
+                    optViews.push_back(s);
+                }
+                s_enumOptionViews.push_back(std::move(optViews));
+
+                SettingsItem itemParam = { s_paramLabels[i], OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_dynInts[i]), nullptr, 0, 0, s_enumOptionViews.back() };
+                itemParam.tooltipText = pTooltip;
+                itemParam.isDisabled = !s_srPluginEnabled;
+                itemParam.onChange = []([[maybe_unused]] SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item || !item->pIntVal) return;
+                    int idx = static_cast<int>(item->pIntVal - s_dynInts);
+                    if (idx >= 0 && idx < static_cast<int>(s_dynParams.size())) {
+                        QuickView::PluginHost::Instance().SetParamValue(s_dynParams[idx].desc.id, static_cast<float>(*item->pIntVal));
+                        SaveConfig();
+                        extern HWND g_mainHwnd;
+                        extern void RefreshImageDisplay(HWND hwnd);
+                        RefreshImageDisplay(g_mainHwnd);
+                    }
+                };
+                tabPlugins.items.push_back(itemParam);
+            }
+        }
+    }
+
+    m_tabs.push_back(tabPlugins);
+
     // --- 5. Advanced ---
     SettingsTab tabAdvanced;
     tabAdvanced.name = AppStrings::Settings_Tab_Advanced;
@@ -3981,8 +4396,67 @@ void SettingsOverlay::Render(ID2D1DeviceContext* pRT, float winW, float winH) {
                      const auto palette = GetSettingsThemePalette();
 
                      GeekWidgets::DrawPillButton(pRT, btnRect, btnText, style, state, m_textFormatItem.Get(), s, ToWidgetPalette(palette));
+
+                     float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
+
+                     // 1. Semi-transparent progress fill if downloading (0.0f ~ 1.0f)
+                     if (item.progress >= 0.0f && item.progress <= 1.0f) {
+                         pRT->PushAxisAlignedClip(btnRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                         float progW = (btnRect.right - btnRect.left) * std::clamp(item.progress, 0.0f, 1.0f);
+                         D2D1_RECT_F progRect = D2D1::RectF(btnRect.left, btnRect.top, btnRect.left + progW, btnRect.bottom);
+
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushProg;
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.55f, 1.0f, 0.40f), &brushProg);
+                         if (brushProg) {
+                             pRT->FillRectangle(progRect, brushProg.Get());
+                         }
+                         pRT->PopAxisAlignedClip();
+                     }
+
+                     // 2. Success green feedback
+                     if (item.isSuccess) {
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSuccessBg;
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSuccessBorder;
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.80f, 0.38f, 0.35f), &brushSuccessBg);
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.88f, 0.40f, 0.95f), &brushSuccessBorder);
+                         if (brushSuccessBg) {
+                             pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushSuccessBg.Get());
+                         }
+                         if (brushSuccessBorder) {
+                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushSuccessBorder.Get(), 1.5f * s);
+                         }
+                     }
+
+                     // 3. Failure red feedback
+                     if (item.isFailed) {
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushFailBg;
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushFailBorder;
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.90f, 0.18f, 0.18f, 0.35f), &brushFailBg);
+                         pRT->CreateSolidColorBrush(D2D1::ColorF(0.95f, 0.22f, 0.22f, 0.95f), &brushFailBorder);
+                         if (brushFailBg) {
+                             pRT->FillRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushFailBg.Get());
+                         }
+                         if (brushFailBorder) {
+                             pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), brushFailBorder.Get(), 1.5f * s);
+                         }
+                     }
+
+                     // Re-draw centered text if progress or feedback is active so it sits clearly on top of the fill
+                     if (item.progress >= 0.0f || item.isSuccess || item.isFailed) {
+                         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushText;
+                         D2D1::ColorF textColor = D2D1::ColorF(D2D1::ColorF::White);
+                         if (item.isSuccess) textColor = D2D1::ColorF(0.85f, 1.0f, 0.85f);
+                         if (item.isFailed) textColor = D2D1::ColorF(1.0f, 0.85f, 0.85f);
+                         pRT->CreateSolidColorBrush(textColor, &brushText);
+                         if (brushText && m_textFormatItem) {
+                             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                             m_textFormatItem->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                             pRT->DrawText(btnText.c_str(), static_cast<UINT32>(btnText.length()), m_textFormatItem.Get(), btnRect, brushText.Get());
+                             m_textFormatItem->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                         }
+                     }
+
                      if (isFocused) {
-                         float btnR = (btnRect.bottom - btnRect.top) * 0.5f;
                          pRT->DrawRoundedRectangle(D2D1::RoundedRect(btnRect, btnR, btnR), m_brushAccent.Get(), 1.5f * s);
                      }
                      break;

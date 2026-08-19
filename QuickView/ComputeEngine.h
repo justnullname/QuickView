@@ -151,6 +151,18 @@ public:
         ID3D11Texture2D** outTexture);
 
     /// <summary>
+    /// Unified Super-Resolution Dispatcher.
+    /// Attempts QVX plugin execution first with cancellation check; gracefully falls back to built-in FSR 1.0.
+    /// </summary>
+    HRESULT ExecuteSuperResolution(
+        ID3D11Texture2D* srcTexture,
+        UINT srcW, UINT srcH,
+        UINT dstW, UINT dstH,
+        float sharpness,
+        SimplePredicate checkCancel,
+        ID3D11Texture2D** outTexture);
+
+    /// <summary>
     /// Generate Mipmaps for a texture.
     /// </summary>
     HRESULT GenerateMips(ID3D11Texture2D* pTexture);

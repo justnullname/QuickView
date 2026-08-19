@@ -466,6 +466,26 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_AutoRotate;
     extern const wchar_t* Settings_Label_FsrSharpness;
     extern const wchar_t* Settings_Tooltip_FsrSharpness;
+    // Plugins
+    extern const wchar_t* Settings_Tab_Plugins;
+    extern const wchar_t* Settings_Header_Plugins_SR;
+    extern const wchar_t* Settings_Label_EnableSrPlugin;
+    extern const wchar_t* Settings_Tooltip_EnableSrPlugin;
+    extern const wchar_t* Settings_Label_SrPluginModule;
+    extern const wchar_t* Settings_Label_SrModel;
+    extern const wchar_t* Settings_Tooltip_SrModel;
+    extern const wchar_t* Settings_Label_SrDebounce;
+    extern const wchar_t* Settings_Tooltip_SrDebounce;
+    extern const wchar_t* Settings_Header_PluginParams;
+    extern const wchar_t* Settings_Label_SrSharpness;
+    extern const wchar_t* Settings_Tooltip_SrSharpness;
+    extern const wchar_t* Settings_Label_SrDenoise;
+    extern const wchar_t* Settings_Tooltip_SrDenoise;
+    extern const wchar_t* Settings_Label_SrDownload;
+    extern const wchar_t* Settings_Tooltip_SrDownload;
+    extern const wchar_t* Settings_Button_Download;
+    extern const wchar_t* Settings_Option_SrPlugin_Anime4K;
+    extern const wchar_t* Settings_Option_SrPlugin_Ref;
     extern const wchar_t* Settings_Label_CMS;
     extern const wchar_t* Settings_Label_AdvancedColor;
     extern const wchar_t* Settings_Label_CmsFallback;

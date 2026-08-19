@@ -90,6 +90,10 @@ struct SettingsItem {
     float step = 0.0f; // If 0.0f, defaults to 1% of the (maxVal - minVal) range.
     bool tagCloudNoLimit = false;
     bool tagCloudNoSort = false;
+
+    float progress = -1.0f; // < 0.0f: disabled, 0.0f ~ 1.0f: semi-transparent progress fill
+    bool isSuccess = false; // Green indicator
+    bool isFailed = false;  // Red indicator
 };
 
 struct SettingsTab {

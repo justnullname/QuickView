@@ -11,6 +11,7 @@
 #include "EditState.h"
 #include "ImageTypes.h" // [Direct D2D] RawImageFrame
 #include "ImageLoaderSimd.h"
+#include "Plugin/PluginHost.h"
 #include <DirectXPackedVector.h>
 
 
@@ -2810,8 +2811,9 @@ CRenderEngine::UploadRawFrameToGPU(const QuickView::RawImageFrame &frame,
   if (!rawBitmap) {
     D2D1_BITMAP_PROPERTIES1 propsWithContext = props;
     propsWithContext.colorContext = srcContext.Get();
+
     // [Optimization] GPU Compute for non-native format conversion (RGBA/BGRX)
-    if (m_computeEngine && m_computeEngine->IsAvailable() &&
+    if (!rawBitmap && m_computeEngine && m_computeEngine->IsAvailable() &&
         frame.format != QuickView::PixelFormat::BGRA8888 &&
         frame.pixels) {
       ComPtr<ID3D11Texture2D> pTex;
@@ -3041,4 +3043,90 @@ bool TryLoadProfileBytesForPrimaries(QuickView::ColorPrimaries primaries, std::v
 
     cmsCloseProfile(hProfile);
     return !outBytes->empty();
+}
+
+HRESULT CRenderEngine::GenerateSuperResolutionTexture(
+    const QuickView::RawImageFrame& frame, float targetScale, ID3D11Texture2D** outTexture) {
+  if (!outTexture) return E_POINTER;
+  *outTexture = nullptr;
+
+  if (!m_computeEngine || !m_computeEngine->IsAvailable() || !frame.pixels ||
+      frame.width == 0 || frame.height == 0) {
+    return E_FAIL;
+  }
+
+  ComPtr<ID3D11Texture2D> pSrcTex;
+  HRESULT hr = m_computeEngine->UploadAndConvert(
+      frame.pixels, (int)frame.width, (int)frame.height, (int)frame.stride, frame.format,
+      &pSrcTex);
+  if (FAILED(hr) || !pSrcTex) return hr;
+
+  float modelScale = QuickView::PluginHost::Instance().GetCurrentSrModelScale();
+  uint32_t scaleMultiplier = (modelScale >= 3.0f) ? 4 : 2;
+  if (targetScale >= 3.5f) scaleMultiplier = 4;
+  uint32_t targetW = (uint32_t)frame.width * scaleMultiplier;
+  uint32_t targetH = (uint32_t)frame.height * scaleMultiplier;
+
+  ComPtr<ID3D11Texture2D> pSrTex;
+  float sharpness = QuickView::PluginHost::Instance().GetSrSharpness();
+
+  hr = m_computeEngine->ExecuteSuperResolution(
+      pSrcTex.Get(), (uint32_t)frame.width, (uint32_t)frame.height,
+      targetW, targetH, sharpness, {}, &pSrTex);
+
+  if (SUCCEEDED(hr) && pSrTex) {
+    *outTexture = pSrTex.Detach();
+    return S_OK;
+  }
+  return hr;
+}
+
+HRESULT CRenderEngine::CreateBitmapFromD3DTexture(
+    ID3D11Texture2D* pTexture, bool hasAlpha, ID2D1Bitmap** outBitmap) {
+  if (!outBitmap) return E_POINTER;
+  *outBitmap = nullptr;
+  if (!pTexture || !m_d2dContext) return E_INVALIDARG;
+
+  ComPtr<IDXGISurface> dxgiSurface;
+  HRESULT hr = pTexture->QueryInterface(IID_PPV_ARGS(&dxgiSurface));
+  if (FAILED(hr)) return hr;
+
+  D3D11_TEXTURE2D_DESC texDesc{};
+  pTexture->GetDesc(&texDesc);
+
+  D2D1_BITMAP_PROPERTIES1 computeProps = {};
+  computeProps.pixelFormat.format = texDesc.Format;
+  computeProps.pixelFormat.alphaMode = (texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || hasAlpha)
+                                       ? D2D1_ALPHA_MODE_PREMULTIPLIED : D2D1_ALPHA_MODE_IGNORE;
+  computeProps.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+  computeProps.dpiX = 96.0f;
+  computeProps.dpiY = 96.0f;
+
+  if (texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+      ComPtr<ID2D1ColorContext> scRgbContext;
+      if (SUCCEEDED(m_d2dContext->CreateColorContext(D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scRgbContext))) {
+          computeProps.colorContext = scRgbContext.Get();
+      }
+  }
+
+  ComPtr<ID2D1Bitmap1> d2dBitmap;
+  hr = m_d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface.Get(), &computeProps, &d2dBitmap);
+  if (SUCCEEDED(hr) && d2dBitmap) {
+    *outBitmap = d2dBitmap.Detach();
+    return S_OK;
+  }
+  return hr;
+}
+
+HRESULT CRenderEngine::GenerateSuperResolutionBitmap(
+    const QuickView::RawImageFrame& frame, float targetScale, ID2D1Bitmap** outBitmap) {
+  if (!outBitmap) return E_POINTER;
+  *outBitmap = nullptr;
+
+  ComPtr<ID3D11Texture2D> pSrTex;
+  HRESULT hr = GenerateSuperResolutionTexture(frame, targetScale, &pSrTex);
+  if (FAILED(hr) || !pSrTex) return hr;
+
+  bool hasAlpha = (frame.format != QuickView::PixelFormat::BGRX8888);
+  return CreateBitmapFromD3DTexture(pSrTex.Get(), hasAlpha, outBitmap);
 }

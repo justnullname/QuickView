@@ -69,6 +69,7 @@ public:
         int effectiveCmsMode = 1;
         bool enableSoftProofing = false;
         std::wstring softProofProfilePath;
+        mutable float outSrScale = 1.0f; // [QVX-SR] Output scaling density (1.0f or 2.0f)
     };
 
 
@@ -119,6 +120,21 @@ public:
     /// <param name="options">Optional rendering pipeline options (CMS and Soft Proofing)</param>
     /// <returns>S_OK on success, error code on failure</returns>
     HRESULT UploadRawFrameToGPU(const QuickView::RawImageFrame& frame, ID2D1Bitmap** outBitmap, const RenderPipelineOptions* options = nullptr);
+
+    /// <summary>
+    /// Execute GPU Super-Resolution on a frame to produce a 2x or 4x high-density D2D bitmap.
+    /// </summary>
+    HRESULT GenerateSuperResolutionBitmap(const QuickView::RawImageFrame& frame, float targetScale, ID2D1Bitmap** outBitmap);
+
+    /// <summary>
+    /// Thread-safe pure D3D11 Super-Resolution computation (Safe for worker threads).
+    /// </summary>
+    HRESULT GenerateSuperResolutionTexture(const QuickView::RawImageFrame& frame, float targetScale, ID3D11Texture2D** outTexture);
+
+    /// <summary>
+    /// Fast wrapper to create D2D bitmap from a D3D11 texture on main UI thread.
+    /// </summary>
+    HRESULT CreateBitmapFromD3DTexture(ID3D11Texture2D* pTexture, bool hasAlpha, ID2D1Bitmap** outBitmap);
 
     /// <summary>
     /// Estimate the peak luminance of a floating point frame (scRGB) using SIMD.

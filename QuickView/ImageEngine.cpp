@@ -772,10 +772,8 @@ std::vector<EngineEvent> ImageEngine::PollState() {
              m_pendingPaths.erase(e.filePath);
         }
 
-        // [v8.11 Fix] Cache ALL FullReady events (both current and prefetch)
-        // Previously, only non-current (prefetch) images were cached.
-        // This caused the bug where viewed images weren't cached for return navigation.
-        if (e.type == EventType::FullReady && e.rawFrame && e.rawFrame->IsValid()) {
+        // [v8.11 Fix] Cache ALL FullReady/PreviewReady events (both cold-start FastLane and Heavy prefetch)
+        if ((e.type == EventType::FullReady || (e.type == EventType::PreviewReady && !e.isScaled)) && e.rawFrame && e.rawFrame->IsValid()) {
             std::wstring fmtUpper = e.metadata.Format;
             std::transform(fmtUpper.begin(), fmtUpper.end(), fmtUpper.begin(), ::towupper);
             const bool isJxl = (fmtUpper == L"JXL");

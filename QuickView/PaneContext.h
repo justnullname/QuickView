@@ -40,10 +40,12 @@ struct PaneContext {
     int CmsModeOverride = -1;
     bool EnableSoftProofing = false;
     std::wstring SoftProofProfilePath;
+    std::shared_ptr<QuickView::RawImageFrame> currentFrame;
 
     void Reset() {
         resource.Reset();
         path.clear();
+        currentFrame.reset();
         editState.Reset();
         view.Reset();
         metadata = {};
