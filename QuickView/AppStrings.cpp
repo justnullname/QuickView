@@ -112,7 +112,6 @@ const wchar_t *Context_ShowInExplorer = nullptr;
 const wchar_t *Context_OpenFolder = nullptr;
 const wchar_t *Context_CopyPixels = nullptr;
 const wchar_t *Context_CopyFile = nullptr;
-const wchar_t *Context_CopyImage = nullptr;
 const wchar_t *Context_CopyPath = nullptr;
 const wchar_t *Context_Print = nullptr;
 const wchar_t *Context_RotateCW = nullptr;
@@ -335,9 +334,6 @@ const wchar_t *Settings_Label_ShowBorderIndicator = nullptr;
 const wchar_t *Settings_Tooltip_ShowBorderIndicator = nullptr;
 const wchar_t *Settings_Label_ShowNavigator = nullptr;
 const wchar_t *Settings_Tooltip_ShowNavigator = nullptr;
-const wchar_t *Settings_Option_NavigatorAuto = nullptr;
-const wchar_t *Settings_Option_NavigatorOn = nullptr;
-const wchar_t *Settings_Option_NavigatorOff = nullptr;
 const wchar_t *Settings_Label_KeepWindowSizeOnNav = nullptr;
 const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition = nullptr;
 const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked = nullptr;
@@ -347,7 +343,6 @@ const wchar_t *Settings_Label_ToolbarInfoDefault = nullptr;
 const wchar_t *Settings_Label_OpenFullScreenMode = nullptr;
 const wchar_t *Settings_Label_FullScreenZoomMode = nullptr;
 const wchar_t *Settings_Option_FitScreen = nullptr;
-const wchar_t *Settings_Option_AutoFit = nullptr;
 const wchar_t *Settings_Label_InvertWheel = nullptr;
 const wchar_t *Settings_Label_ZoomSnapDamping = nullptr;
 const wchar_t *Settings_Label_MouseAnchorZoom = nullptr;
@@ -415,6 +410,15 @@ const wchar_t *Settings_Label_SrDownload = nullptr;
 const wchar_t *Settings_Tooltip_SrDownload = nullptr;
 const wchar_t *Settings_Option_SrPlugin_Anime4K = nullptr;
 const wchar_t *Settings_Option_SrPlugin_Ref = nullptr;
+const wchar_t *OSD_SrProcessing = nullptr;
+const wchar_t *OSD_SrSuccessFormat = nullptr;
+const wchar_t *OSD_SrSuccessFormatSimple = nullptr;
+const wchar_t *OSD_SrFailed = nullptr;
+const wchar_t *OSD_SrPluginDisabledOrMissing = nullptr;
+const wchar_t *Dialog_Title_SelectSrModel = nullptr;
+const wchar_t *Dialog_Msg_SelectSrModel = nullptr;
+const wchar_t *Dialog_Checkbox_RememberSrModelChoice = nullptr;
+const wchar_t *Dialog_Button_OK = nullptr;
 const wchar_t *Settings_Label_CMS = nullptr;
 const wchar_t *Settings_Label_AdvancedColor = nullptr;
 const wchar_t *Settings_Label_HdrToneMapping = nullptr;
@@ -523,7 +527,6 @@ const wchar_t *Settings_Option_Linear = nullptr;
 const wchar_t *Settings_Option_Nearest = nullptr;
 const wchar_t *Settings_Option_HighQualityCubic = nullptr;
 const wchar_t *Settings_Option_FSR = nullptr;
-const wchar_t *Settings_Option_ZoomAuto = nullptr;
 const wchar_t *Settings_Option_Auto = nullptr;
 const wchar_t *Settings_Option_Eco = nullptr;
 const wchar_t *Settings_Option_Balanced = nullptr;
@@ -717,7 +720,6 @@ struct LanguageTable {
     const wchar_t *Context_OpenFolder;
     const wchar_t *Context_CopyPixels;
     const wchar_t *Context_CopyFile;
-    const wchar_t *Context_CopyImage;
     const wchar_t *Context_CopyPath;
     const wchar_t *Context_Print;
     const wchar_t *Context_RotateCW;
@@ -937,9 +939,6 @@ struct LanguageTable {
     const wchar_t *Settings_Tooltip_ShowBorderIndicator;
     const wchar_t *Settings_Label_ShowNavigator;
     const wchar_t *Settings_Tooltip_ShowNavigator;
-    const wchar_t *Settings_Option_NavigatorAuto;
-    const wchar_t *Settings_Option_NavigatorOn;
-    const wchar_t *Settings_Option_NavigatorOff;
     const wchar_t *Settings_Label_KeepWindowSizeOnNav;
     const wchar_t *Settings_Label_RememberLastWindowSizeAndPosition;
     const wchar_t *Settings_Label_UpscaleSmallImagesWhenLocked;
@@ -949,7 +948,6 @@ struct LanguageTable {
     const wchar_t *Settings_Label_OpenFullScreenMode;
     const wchar_t *Settings_Label_FullScreenZoomMode;
     const wchar_t *Settings_Option_FitScreen;
-    const wchar_t *Settings_Option_AutoFit;
     const wchar_t *Settings_Label_InvertWheel;
     const wchar_t *Settings_Label_ZoomSnapDamping;
     const wchar_t *Settings_Label_MouseAnchorZoom;
@@ -1014,6 +1012,15 @@ struct LanguageTable {
     const wchar_t *Settings_Tooltip_SrDownload;
     const wchar_t *Settings_Option_SrPlugin_Anime4K;
     const wchar_t *Settings_Option_SrPlugin_Ref;
+    const wchar_t *OSD_SrProcessing;
+    const wchar_t *OSD_SrSuccessFormat;
+    const wchar_t *OSD_SrSuccessFormatSimple;
+    const wchar_t *OSD_SrFailed;
+    const wchar_t *OSD_SrPluginDisabledOrMissing;
+    const wchar_t *Dialog_Title_SelectSrModel;
+    const wchar_t *Dialog_Msg_SelectSrModel;
+    const wchar_t *Dialog_Checkbox_RememberSrModelChoice;
+    const wchar_t *Dialog_Button_OK;
     const wchar_t *Settings_Label_CMS;
     const wchar_t *Settings_Label_AdvancedColor;
     const wchar_t *Settings_Label_HdrToneMapping;
@@ -1122,7 +1129,6 @@ struct LanguageTable {
     const wchar_t *Settings_Option_Nearest;
     const wchar_t *Settings_Option_HighQualityCubic;
     const wchar_t *Settings_Option_FSR;
-    const wchar_t *Settings_Option_ZoomAuto;
     const wchar_t *Settings_Option_Auto;
     const wchar_t *Settings_Option_Eco;
     const wchar_t *Settings_Option_Balanced;
@@ -1320,7 +1326,6 @@ static const LanguageTable Table_EN = {
     L"Open Folder", // Context_OpenFolder
     L"Copy Pixels\tCtrl+C", // Context_CopyPixels
     L"Copy File\tCtrl+Shift+C", // Context_CopyFile
-    L"Copy Pixels\tCtrl+C", // Context_CopyImage
     L"Copy Path\tCtrl+Alt+C", // Context_CopyPath
     L"Print\tCtrl+P", // Context_Print
     L"Rotate 90\x00B0 CW\tR", // Context_RotateCW
@@ -1540,9 +1545,6 @@ static const LanguageTable Table_EN = {
     L"Shows an indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
     L"Show Minimap", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"On", // Settings_Option_NavigatorOn
-    L"Off", // Settings_Option_NavigatorOff
     L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
     L"Remember Last Window Size and Position", // Settings_Label_RememberLastWindowSizeAndPosition
     L"Adapt Small Images", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -1552,7 +1554,6 @@ static const LanguageTable Table_EN = {
     L"Open Fullscreen", // Settings_Label_OpenFullScreenMode
     L"Fullscreen Zoom Mode", // Settings_Label_FullScreenZoomMode
     L"Fit to Screen", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
     L"Invert Wheel", // Settings_Label_InvertWheel
     L"Zoom 100% Snap Damping", // Settings_Label_ZoomSnapDamping
     L"Mouse-Anchored Window Zoom", // Settings_Label_MouseAnchorZoom
@@ -1617,6 +1618,15 @@ static const LanguageTable Table_EN = {
     L"Download or update super-resolution plugin from official release.", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (Fast Zero-Dependency)", // Settings_Option_SrPlugin_Anime4K
     L"Official Reference D3D11 Plugin", // Settings_Option_SrPlugin_Ref
+    L"AI Super-Resolution Processing...", // OSD_SrProcessing
+    L"✓ AI Upscale Ready: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
+    L"✓ AI Upscale Ready: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ AI Super-Resolution Failed", // OSD_SrFailed
+    L"AI Super-Resolution plugin is not enabled or not installed", // OSD_SrPluginDisabledOrMissing
+    L"Select AI Super-Resolution Model", // Dialog_Title_SelectSrModel
+    L"Choose the AI Super-Resolution model to execute:", // Dialog_Msg_SelectSrModel
+    L"Remember choice and do not prompt on manual trigger", // Dialog_Checkbox_RememberSrModelChoice
+    L"OK", // Dialog_Button_OK
     L"Color Management", // Settings_Label_CMS
     L"Advanced Color (HDR)", // Settings_Label_AdvancedColor
     L"HDR Tone Mapping", // Settings_Label_HdrToneMapping
@@ -1725,7 +1735,6 @@ static const LanguageTable Table_EN = {
     L"Nearest: Extreme sharpness", // Settings_Option_Nearest
     L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"Auto", // Settings_Option_ZoomAuto
     L"Auto", // Settings_Option_Auto
     L"Eco", // Settings_Option_Eco
     L"Balanced", // Settings_Option_Balanced
@@ -1923,7 +1932,6 @@ static const LanguageTable Table_CN = {
     L"打开文件夹", // Context_OpenFolder
     L"复制像素\tCtrl+C", // Context_CopyPixels
     L"复制文件\tCtrl+Shift+C", // Context_CopyFile
-    L"复制像素\tCtrl+C", // Context_CopyImage
     L"复制路径\tCtrl+Alt+C", // Context_CopyPath
     L"打印\tCtrl+P", // Context_Print
     L"顺时针旋转 90\x00B0\tR", // Context_RotateCW
@@ -2143,9 +2151,6 @@ static const LanguageTable Table_CN = {
     L"在图片超出窗口边框的方向上显示提示线条。", // Settings_Tooltip_ShowBorderIndicator
     L"显示缩略导航图", // Settings_Label_ShowNavigator
     L"鼠标位于导航图上方时，使用滚轮 / 拇指滚轮 (Shift + 滚轮) 可直接平移图片", // Settings_Tooltip_ShowNavigator
-    L"自动", // Settings_Option_NavigatorAuto
-    L"开启", // Settings_Option_NavigatorOn
-    L"关闭", // Settings_Option_NavigatorOff
     L"导航时保持窗口尺寸不变", // Settings_Label_KeepWindowSizeOnNav
     L"记住最后窗口位置和尺寸", // Settings_Label_RememberLastWindowSizeAndPosition
     L"小于窗口尺寸图片适应窗口", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -2155,7 +2160,6 @@ static const LanguageTable Table_CN = {
     L"打开时全屏", // Settings_Label_OpenFullScreenMode
     L"全屏时缩放模式", // Settings_Label_FullScreenZoomMode
     L"适应屏幕", // Settings_Option_FitScreen
-    L"自动", // Settings_Option_AutoFit
     L"反转滚轮", // Settings_Label_InvertWheel
     L"缩放 100% 吸附阻尼", // Settings_Label_ZoomSnapDamping
     L"窗口缩放以鼠标为中线", // Settings_Label_MouseAnchorZoom
@@ -2220,6 +2224,15 @@ static const LanguageTable Table_CN = {
     L"从官方发布源自动下载最新超分插件包并放置于 plugins/ 目录。", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (内置极速 0 依赖)", // Settings_Option_SrPlugin_Anime4K
     L"官方参考 D3D11 插件", // Settings_Option_SrPlugin_Ref
+    L"AI 超分辨率计算中...", // OSD_SrProcessing
+    L"✓ AI 超分完成: %s [%.0fx] (耗时: %.1f ms)", // OSD_SrSuccessFormat
+    L"✓ AI 超分完成: %s (耗时: %.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ AI 超分辨率执行失败", // OSD_SrFailed
+    L"AI 超分辨率插件未启用或未安装", // OSD_SrPluginDisabledOrMissing
+    L"选择 AI 超分辨率模型", // Dialog_Title_SelectSrModel
+    L"请选择要应用的 AI 超分辨率模型：", // Dialog_Msg_SelectSrModel
+    L"记住选择，下次手动触发直接使用", // Dialog_Checkbox_RememberSrModelChoice
+    L"确定", // Dialog_Button_OK
     L"色彩管理 (CMS)", // Settings_Label_CMS
     L"高级色彩与 HDR (scRGB)", // Settings_Label_AdvancedColor
     L"HDR 色调映射", // Settings_Label_HdrToneMapping
@@ -2328,7 +2341,6 @@ static const LanguageTable Table_CN = {
     L"最近邻 (Nearest)：极端锐利", // Settings_Option_Nearest
     L"高质量双三次 (HQ Cubic)：极端平滑", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"自动", // Settings_Option_ZoomAuto
     L"自动", // Settings_Option_Auto
     L"节能", // Settings_Option_Eco
     L"平衡", // Settings_Option_Balanced
@@ -2526,7 +2538,6 @@ static const LanguageTable Table_TW = {
     L"開啟資料夾", // Context_OpenFolder
     L"複製像素\tCtrl+C", // Context_CopyPixels
     L"複製檔案\tCtrl+Shift+C", // Context_CopyFile
-    L"複製像素\tCtrl+C", // Context_CopyImage
     L"複製路徑\tCtrl+Alt+C", // Context_CopyPath
     L"列印\tCtrl+P", // Context_Print
     L"順時針旋轉 90\x00B0\tR", // Context_RotateCW
@@ -2746,9 +2757,6 @@ static const LanguageTable Table_TW = {
     L"在圖片超出視窗邊框的方向上顯示提示線條。", // Settings_Tooltip_ShowBorderIndicator
     L"顯示縮略導航圖", // Settings_Label_ShowNavigator
     L"滑鼠位於導航圖上方時，使用滾輪 / 側鍵滾輪 (Shift + 滾輪) 可直接平移圖片", // Settings_Tooltip_ShowNavigator
-    L"自動", // Settings_Option_NavigatorAuto
-    L"開啟", // Settings_Option_NavigatorOn
-    L"關閉", // Settings_Option_NavigatorOff
     L"導航時保持視窗尺寸不變", // Settings_Label_KeepWindowSizeOnNav
     L"記住最後視窗位置和尺寸", // Settings_Label_RememberLastWindowSizeAndPosition
     L"小於視窗尺寸圖片適應視窗", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -2758,7 +2766,6 @@ static const LanguageTable Table_TW = {
     L"開啟時全螢幕", // Settings_Label_OpenFullScreenMode
     L"全螢幕縮放模式", // Settings_Label_FullScreenZoomMode
     L"適應螢幕", // Settings_Option_FitScreen
-    L"自動", // Settings_Option_AutoFit
     L"反轉滾輪", // Settings_Label_InvertWheel
     L"縮放 100% 吸附阻尼", // Settings_Label_ZoomSnapDamping
     L"視窗縮放以滑鼠為中線", // Settings_Label_MouseAnchorZoom
@@ -2823,6 +2830,15 @@ static const LanguageTable Table_TW = {
     L"從官方發布源自動下載最新超分外掛程式包並放置於 plugins/ 目錄。", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (內建極速 0 依賴)", // Settings_Option_SrPlugin_Anime4K
     L"官方參考 D3D11 外掛程式", // Settings_Option_SrPlugin_Ref
+    L"AI 超解析度計算中...", // OSD_SrProcessing
+    L"✓ AI 超解析度完成: %s [%.0fx] (耗時: %.1f ms)", // OSD_SrSuccessFormat
+    L"✓ AI 超解析度完成: %s (耗時: %.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ AI 超解析度執行失敗", // OSD_SrFailed
+    L"AI 超解析度外掛程式未啟用或未安裝", // OSD_SrPluginDisabledOrMissing
+    L"選擇 AI 超解析度模型", // Dialog_Title_SelectSrModel
+    L"請選擇要套用的 AI 超解析度模型：", // Dialog_Msg_SelectSrModel
+    L"記住選擇，下次手動觸發直接使用", // Dialog_Checkbox_RememberSrModelChoice
+    L"確定", // Dialog_Button_OK
     L"色彩管理 (CMS)", // Settings_Label_CMS
     L"高級色彩與 HDR (scRGB)", // Settings_Label_AdvancedColor
     L"HDR 色調映射", // Settings_Label_HdrToneMapping
@@ -2931,7 +2947,6 @@ static const LanguageTable Table_TW = {
     L"最近鄰 (Nearest)：極端銳利", // Settings_Option_Nearest
     L"高品質雙三次 (HQ Cubic)：極端平滑", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"自動", // Settings_Option_ZoomAuto
     L"自動", // Settings_Option_Auto
     L"節能", // Settings_Option_Eco
     L"平衡", // Settings_Option_Balanced
@@ -3129,7 +3144,6 @@ static const LanguageTable Table_JA = {
     L"フォルダーを開く", // Context_OpenFolder
     L"ピクセルをコピー\tCtrl+C", // Context_CopyPixels
     L"ファイルをコピー\tCtrl+Shift+C", // Context_CopyFile
-    L"ピクセルをコピー\tCtrl+C", // Context_CopyImage
     L"パスをコピー\tCtrl+Alt+C", // Context_CopyPath
     L"印刷\tCtrl+P", // Context_Print
     L"右に90\x00B0回転\tR", // Context_RotateCW
@@ -3349,9 +3363,6 @@ static const LanguageTable Table_JA = {
     L"画像がウィンドウ枠からはみ出している方向にインジケーター線を表示します。", // Settings_Tooltip_ShowBorderIndicator
     L"ミニマップを表示", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"自動", // Settings_Option_NavigatorAuto
-    L"オン", // Settings_Option_NavigatorOn
-    L"オフ", // Settings_Option_NavigatorOff
     L"画像移動時にウィンドウサイズを維持", // Settings_Label_KeepWindowSizeOnNav
     L"前回のウィンドウサイズと位置を記憶", // Settings_Label_RememberLastWindowSizeAndPosition
     L"小さい画像を拡大適応", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -3361,7 +3372,6 @@ static const LanguageTable Table_JA = {
     L"全画面で開く", // Settings_Label_OpenFullScreenMode
     L"全画面ズームモード", // Settings_Label_FullScreenZoomMode
     L"画面に合わせる", // Settings_Option_FitScreen
-    L"自動", // Settings_Option_AutoFit
     L"ホイールの回転を反転", // Settings_Label_InvertWheel
     L"100% ズーム吸着ダンピング", // Settings_Label_ZoomSnapDamping
     L"マウス位置基準のウィンドウズーム", // Settings_Label_MouseAnchorZoom
@@ -3426,6 +3436,15 @@ static const LanguageTable Table_JA = {
     L"公式リリースから最新の超解像プラグインを自動ダウンロードします。", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (超高速・ゼロ依存)", // Settings_Option_SrPlugin_Anime4K
     L"公式リファレンス D3D11 プラグイン", // Settings_Option_SrPlugin_Ref
+    L"AI 超解像処理中...", // OSD_SrProcessing
+    L"✓ AI 超解像完了: %s [%.0fx] (処理時間: %.1f ms)", // OSD_SrSuccessFormat
+    L"✓ AI 超解像完了: %s (処理時間: %.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ AI 超解像の実行に失敗しました", // OSD_SrFailed
+    L"AI 超解像プラグインが無効または未インストールです", // OSD_SrPluginDisabledOrMissing
+    L"AI 超解像モデルを選択", // Dialog_Title_SelectSrModel
+    L"適用する AI 超解像モデルを選択してください:", // Dialog_Msg_SelectSrModel
+    L"選択を記憶し、次回の手動実行時に再確認しない", // Dialog_Checkbox_RememberSrModelChoice
+    L"OK", // Dialog_Button_OK
     L"カラーマネジメント", // Settings_Label_CMS
     L"高度なカラー (HDR)", // Settings_Label_AdvancedColor
     L"HDR トーンマッピング", // Settings_Label_HdrToneMapping
@@ -3534,7 +3553,6 @@ static const LanguageTable Table_JA = {
     L"ニアレストネイバー : 極限の鮮明さ", // Settings_Option_Nearest
     L"HQ バイキュービック : 高精度な平滑化", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"自動", // Settings_Option_ZoomAuto
     L"自動", // Settings_Option_Auto
     L"エコ", // Settings_Option_Eco
     L"バランス", // Settings_Option_Balanced
@@ -3732,7 +3750,6 @@ static const LanguageTable Table_RU = {
     L"Открыть папку", // Context_OpenFolder
     L"Скопировать пиксели\tCtrl+C", // Context_CopyPixels
     L"Скопировать файл\tCtrl+Shift+C", // Context_CopyFile
-    L"Скопировать пиксели\tCtrl+C", // Context_CopyImage
     L"Скопировать путь\tCtrl+Alt+C", // Context_CopyPath
     L"Печать\tCtrl+P", // Context_Print
     L"Повернуть на 90\x00B0 вправо\tR", // Context_RotateCW
@@ -3952,9 +3969,6 @@ static const LanguageTable Table_RU = {
     L"Показывает индикаторную линию в направлении, где изображение выходит за границы окна.", // Settings_Tooltip_ShowBorderIndicator
     L"Показывать мини-карту", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Авто", // Settings_Option_NavigatorAuto
-    L"Вкл", // Settings_Option_NavigatorOn
-    L"Выкл", // Settings_Option_NavigatorOff
     L"Не менять размер окна при навигации", // Settings_Label_KeepWindowSizeOnNav
     L"Запоминать последние размер и положение окна", // Settings_Label_RememberLastWindowSizeAndPosition
     L"Адаптировать мелкие изображения", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -3964,7 +3978,6 @@ static const LanguageTable Table_RU = {
     L"Полноэкранный режим при открытии", // Settings_Label_OpenFullScreenMode
     L"Масштаб в полноэкранном режиме", // Settings_Label_FullScreenZoomMode
     L"Вписывать", // Settings_Option_FitScreen
-    L"Авто", // Settings_Option_AutoFit
     L"Инвертировать действие колёсика", // Settings_Label_InvertWheel
     L"Задержка привязки зума (100%)", // Settings_Label_ZoomSnapDamping
     L"Масштабировать окно от позиции мыши", // Settings_Label_MouseAnchorZoom
@@ -4029,6 +4042,15 @@ static const LanguageTable Table_RU = {
     L"Скачать или обновить плагины из официального репозитория.", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (Быстрый без зависимостей)", // Settings_Option_SrPlugin_Anime4K
     L"Официальный D3D11 референс-плагин", // Settings_Option_SrPlugin_Ref
+    L"Идет обработка сверхразрешения ИИ...", // OSD_SrProcessing
+    L"✓ ИИ Сверхразрешение готово: %s [%.0fx] (%.1f мс)", // OSD_SrSuccessFormat
+    L"✓ ИИ Сверхразрешение готово: %s (%.1f мс)", // OSD_SrSuccessFormatSimple
+    L"✗ Ошибка выполнения ИИ сверхразрешения", // OSD_SrFailed
+    L"Плагин ИИ сверхразрешения отключен или не установлен", // OSD_SrPluginDisabledOrMissing
+    L"Выбор модели ИИ сверхразрешения", // Dialog_Title_SelectSrModel
+    L"Выберите модель ИИ сверхразрешения для применения:", // Dialog_Msg_SelectSrModel
+    L"Запомнить выбор и не запрашивать при ручном запуске", // Dialog_Checkbox_RememberSrModelChoice
+    L"ОК", // Dialog_Button_OK
     L"Управление цветом (CMS)", // Settings_Label_CMS
     L"Расширенный цвет (HDR)", // Settings_Label_AdvancedColor
     L"Тональная компрессия HDR", // Settings_Label_HdrToneMapping
@@ -4137,7 +4159,6 @@ static const LanguageTable Table_RU = {
     L"По соседним (макс. резкость)", // Settings_Option_Nearest
     L"HQ кубический (макс. сглаживание)", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"Авто", // Settings_Option_ZoomAuto
     L"Авто", // Settings_Option_Auto
     L"Эко", // Settings_Option_Eco
     L"Баланс", // Settings_Option_Balanced
@@ -4335,7 +4356,6 @@ static const LanguageTable Table_DE = {
     L"Ordner öffnen", // Context_OpenFolder
     L"Pixel kopieren\tStrg+C", // Context_CopyPixels
     L"Datei kopieren\tStrg+Umschalt+C", // Context_CopyFile
-    L"Pixel kopieren\tStrg+C", // Context_CopyImage
     L"Pfad kopieren\tStrg+Alt+C", // Context_CopyPath
     L"Drucken\tStrg+P", // Context_Print
     L"90\x00B0 im Uhrzeigersinn\tR", // Context_RotateCW
@@ -4555,9 +4575,6 @@ static const LanguageTable Table_DE = {
     L"Zeigt eine Indikatorlinie in der Richtung an, in der das Bild die Fenstergrenzen überschreitet.", // Settings_Tooltip_ShowBorderIndicator
     L"Minimap anzeigen", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"An", // Settings_Option_NavigatorOn
-    L"Aus", // Settings_Option_NavigatorOff
     L"Fenstergröße bei Navigation beibehalten", // Settings_Label_KeepWindowSizeOnNav
     L"Letzte Fensterposition und -größe merken", // Settings_Label_RememberLastWindowSizeAndPosition
     L"Kleine Bilder anpassen", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -4567,7 +4584,6 @@ static const LanguageTable Table_DE = {
     L"Im Vollbildmodus öffnen", // Settings_Label_OpenFullScreenMode
     L"Vollbild-Zoom-Modus", // Settings_Label_FullScreenZoomMode
     L"An Bildschirm anpassen", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
     L"Mausrad invertieren", // Settings_Label_InvertWheel
     L"Zoom 100% Einrast-Dämpfung", // Settings_Label_ZoomSnapDamping
     L"Fensterzoom am Mauszeiger ausrichten", // Settings_Label_MouseAnchorZoom
@@ -4632,6 +4648,15 @@ static const LanguageTable Table_DE = {
     L"Super-Resolution-Plugin aus offiziellem Release herunterladen oder aktualisieren.", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (Extrem schnell, 0 Abhängigkeiten)", // Settings_Option_SrPlugin_Anime4K
     L"Offizielles D3D11-Referenz-Plugin", // Settings_Option_SrPlugin_Ref
+    L"KI-Super-Resolution wird berechnet...", // OSD_SrProcessing
+    L"✓ KI-Super-Resolution fertig: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
+    L"✓ KI-Super-Resolution fertig: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ KI-Super-Resolution fehlgeschlagen", // OSD_SrFailed
+    L"KI-Super-Resolution-Plugin ist deaktiviert oder nicht installiert", // OSD_SrPluginDisabledOrMissing
+    L"KI-Super-Resolution-Modell auswählen", // Dialog_Title_SelectSrModel
+    L"Wählen Sie das anzuwendende KI-Super-Resolution-Modell:", // Dialog_Msg_SelectSrModel
+    L"Auswahl merken und bei manuellem Auslösen nicht erneut fragen", // Dialog_Checkbox_RememberSrModelChoice
+    L"OK", // Dialog_Button_OK
     L"Farbmanagement (CMS)", // Settings_Label_CMS
     L"Erweiterte Farbe (HDR)", // Settings_Label_AdvancedColor
     L"HDR-Tonzuordnung", // Settings_Label_HdrToneMapping
@@ -4740,7 +4765,6 @@ static const LanguageTable Table_DE = {
     L"Nächster: Extreme Schärfe", // Settings_Option_Nearest
     L"HQ Kubisch: Extreme Glättung", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"Auto", // Settings_Option_ZoomAuto
     L"Auto", // Settings_Option_Auto
     L"Öko", // Settings_Option_Eco
     L"Ausgewogen", // Settings_Option_Balanced
@@ -4938,7 +4962,6 @@ static const LanguageTable Table_ES = {
     L"Abrir carpeta", // Context_OpenFolder
     L"Copiar píxeles\tCtrl+C", // Context_CopyPixels
     L"Copiar archivo\tCtrl+Shift+C", // Context_CopyFile
-    L"Copiar píxeles\tCtrl+C", // Context_CopyImage
     L"Copiar ruta\tCtrl+Alt+C", // Context_CopyPath
     L"Imprimir\tCtrl+P", // Context_Print
     L"Girar 90\x00B0 horario\tR", // Context_RotateCW
@@ -5158,9 +5181,6 @@ static const LanguageTable Table_ES = {
     L"Muestra una línea indicadora en la dirección donde la imagen excede los límites de la ventana.", // Settings_Tooltip_ShowBorderIndicator
     L"Mostrar minimapa", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"Activar", // Settings_Option_NavigatorOn
-    L"Desactivar", // Settings_Option_NavigatorOff
     L"Mantener el tamaño de la ventana al navegar", // Settings_Label_KeepWindowSizeOnNav
     L"Recordar el último tamaño y posición de la ventana", // Settings_Label_RememberLastWindowSizeAndPosition
     L"Adaptar imágenes pequeñas", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -5170,7 +5190,6 @@ static const LanguageTable Table_ES = {
     L"Abrir en pantalla completa", // Settings_Label_OpenFullScreenMode
     L"Modo de zoom a pantalla completa", // Settings_Label_FullScreenZoomMode
     L"Ajustar a pantalla", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
     L"Invertir rueda", // Settings_Label_InvertWheel
     L"Amortiguación de ajuste 100%", // Settings_Label_ZoomSnapDamping
     L"Zoom de ventana anclado al raton", // Settings_Label_MouseAnchorZoom
@@ -5235,6 +5254,15 @@ static const LanguageTable Table_ES = {
     L"Descargar o actualizar complementos desde el repositorio oficial.", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (Ultrarrápido, 0 dependencias)", // Settings_Option_SrPlugin_Anime4K
     L"Complemento oficial D3D11 de referencia", // Settings_Option_SrPlugin_Ref
+    L"Procesando superresolución IA...", // OSD_SrProcessing
+    L"✓ Superresolución IA completada: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
+    L"✓ Superresolución IA completada: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ Error al ejecutar superresolución IA", // OSD_SrFailed
+    L"El plugin de superresolución IA no está habilitado o no está instalado", // OSD_SrPluginDisabledOrMissing
+    L"Seleccionar modelo de superresolución IA", // Dialog_Title_SelectSrModel
+    L"Seleccione el modelo de superresolución IA que desea aplicar:", // Dialog_Msg_SelectSrModel
+    L"Recordar elección y no preguntar al activar manualmente", // Dialog_Checkbox_RememberSrModelChoice
+    L"Aceptar", // Dialog_Button_OK
     L"Gestión de color (CMS)", // Settings_Label_CMS
     L"Color avanzado (HDR)", // Settings_Label_AdvancedColor
     L"Mapeo de tonos HDR", // Settings_Label_HdrToneMapping
@@ -5343,7 +5371,6 @@ static const LanguageTable Table_ES = {
     L"Cercano: Extrema nitidez", // Settings_Option_Nearest
     L"Cúbico HQ: Extremo suavizado", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"Auto", // Settings_Option_ZoomAuto
     L"Automático", // Settings_Option_Auto
     L"Eco", // Settings_Option_Eco
     L"Equilibrado", // Settings_Option_Balanced
@@ -5541,7 +5568,6 @@ static const LanguageTable Table_FR = {
     L"Open Folder", // Context_OpenFolder
     L"Copier les pixels\tCtrl+C", // Context_CopyPixels
     L"Copier le fichier\tCtrl+Shift+C", // Context_CopyFile
-    L"Copier les pixels\tCtrl+C", // Context_CopyImage
     L"Copy Path\tCtrl+Alt+C", // Context_CopyPath
     L"Print\tCtrl+P", // Context_Print
     L"Rotate 90\x00B0 CW\tR", // Context_RotateCW
@@ -5761,9 +5787,6 @@ static const LanguageTable Table_FR = {
     L"Shows an indicator line in the direction where the image exceeds the window borders.", // Settings_Tooltip_ShowBorderIndicator
     L"Show Minimap", // Settings_Label_ShowNavigator
     L"When mouse is over minimap, Wheel / Thumb Wheel (Shift + Wheel) pans image", // Settings_Tooltip_ShowNavigator
-    L"Auto", // Settings_Option_NavigatorAuto
-    L"On", // Settings_Option_NavigatorOn
-    L"Off", // Settings_Option_NavigatorOff
     L"Keep Window Size on Navigation", // Settings_Label_KeepWindowSizeOnNav
     L"Remember Last Window Size and Position", // Settings_Label_RememberLastWindowSizeAndPosition
     L"Adapt Small Images", // Settings_Label_UpscaleSmallImagesWhenLocked
@@ -5773,7 +5796,6 @@ static const LanguageTable Table_FR = {
     L"Open Fullscreen", // Settings_Label_OpenFullScreenMode
     L"Fullscreen Zoom Mode", // Settings_Label_FullScreenZoomMode
     L"Fit to Screen", // Settings_Option_FitScreen
-    L"Auto", // Settings_Option_AutoFit
     L"Invert Wheel", // Settings_Label_InvertWheel
     L"Zoom 100% Snap Damping", // Settings_Label_ZoomSnapDamping
     L"Mouse-Anchored Window Zoom", // Settings_Label_MouseAnchorZoom
@@ -5838,6 +5860,15 @@ static const LanguageTable Table_FR = {
     L"Télécharger ou mettre à jour les plugins depuis la release officielle.", // Settings_Tooltip_SrDownload
     L"Anime4K v4.0 CNN (Ultra-rapide, 0 dépendance)", // Settings_Option_SrPlugin_Anime4K
     L"Plugin officiel D3D11 de référence", // Settings_Option_SrPlugin_Ref
+    L"Calcul de super-résolution IA en cours...", // OSD_SrProcessing
+    L"✓ Super-résolution IA prête: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
+    L"✓ Super-résolution IA prête: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
+    L"✗ Échec de la super-résolution IA", // OSD_SrFailed
+    L"Le plugin de super-résolution IA n'est pas activé ou non installé", // OSD_SrPluginDisabledOrMissing
+    L"Sélectionner le modèle de super-résolution IA", // Dialog_Title_SelectSrModel
+    L"Choisissez le modèle de super-résolution IA à appliquer :", // Dialog_Msg_SelectSrModel
+    L"Mémoriser le choix et ne plus demander lors du déclenchement manuel", // Dialog_Checkbox_RememberSrModelChoice
+    L"OK", // Dialog_Button_OK
     L"Gestion des couleurs (CMS)", // Settings_Label_CMS
     L"Couleurs avancées (HDR)", // Settings_Label_AdvancedColor
     L"Mappage de tons HDR", // Settings_Label_HdrToneMapping
@@ -5946,7 +5977,6 @@ static const LanguageTable Table_FR = {
     L"Nearest: Extreme sharpness", // Settings_Option_Nearest
     L"HQ Cubic: Extreme smoothing", // Settings_Option_HighQualityCubic
     L"AMD FSR 1.0 (EASU/RCAS)", // Settings_Option_FSR
-    L"Auto", // Settings_Option_ZoomAuto
     L"Auto", // Settings_Option_Auto
     L"Eco", // Settings_Option_Eco
     L"Balanced", // Settings_Option_Balanced
@@ -6144,7 +6174,6 @@ void Apply(const LanguageTable& t) {
   Context_OpenFolder = t.Context_OpenFolder;
   Context_CopyPixels = t.Context_CopyPixels;
   Context_CopyFile = t.Context_CopyFile;
-  Context_CopyImage = t.Context_CopyImage;
   Context_CopyPath = t.Context_CopyPath;
   Context_Print = t.Context_Print;
   Context_RotateCW = t.Context_RotateCW;
@@ -6369,9 +6398,6 @@ void Apply(const LanguageTable& t) {
   Settings_Tooltip_ShowBorderIndicator = t.Settings_Tooltip_ShowBorderIndicator;
   Settings_Label_ShowNavigator = t.Settings_Label_ShowNavigator;
   Settings_Tooltip_ShowNavigator = t.Settings_Tooltip_ShowNavigator;
-  Settings_Option_NavigatorAuto = t.Settings_Option_NavigatorAuto;
-  Settings_Option_NavigatorOn = t.Settings_Option_NavigatorOn;
-  Settings_Option_NavigatorOff = t.Settings_Option_NavigatorOff;
   Settings_Label_KeepWindowSizeOnNav = t.Settings_Label_KeepWindowSizeOnNav;
   Settings_Label_RememberLastWindowSizeAndPosition = t.Settings_Label_RememberLastWindowSizeAndPosition;
   Settings_Label_UpscaleSmallImagesWhenLocked = t.Settings_Label_UpscaleSmallImagesWhenLocked;
@@ -6381,7 +6407,6 @@ void Apply(const LanguageTable& t) {
   Settings_Label_OpenFullScreenMode = t.Settings_Label_OpenFullScreenMode;
   Settings_Label_FullScreenZoomMode = t.Settings_Label_FullScreenZoomMode;
   Settings_Option_FitScreen = t.Settings_Option_FitScreen;
-  Settings_Option_AutoFit = t.Settings_Option_AutoFit;
   Settings_Label_InvertWheel = t.Settings_Label_InvertWheel;
   Settings_Label_ZoomSnapDamping = t.Settings_Label_ZoomSnapDamping;
   Settings_Label_MouseAnchorZoom = t.Settings_Label_MouseAnchorZoom;
@@ -6446,6 +6471,15 @@ void Apply(const LanguageTable& t) {
   Settings_Tooltip_SrDownload = t.Settings_Tooltip_SrDownload;
   Settings_Option_SrPlugin_Anime4K = t.Settings_Option_SrPlugin_Anime4K;
   Settings_Option_SrPlugin_Ref = t.Settings_Option_SrPlugin_Ref;
+  OSD_SrProcessing = t.OSD_SrProcessing;
+  OSD_SrSuccessFormat = t.OSD_SrSuccessFormat;
+  OSD_SrSuccessFormatSimple = t.OSD_SrSuccessFormatSimple;
+  OSD_SrFailed = t.OSD_SrFailed;
+  OSD_SrPluginDisabledOrMissing = t.OSD_SrPluginDisabledOrMissing;
+  Dialog_Title_SelectSrModel = t.Dialog_Title_SelectSrModel;
+  Dialog_Msg_SelectSrModel = t.Dialog_Msg_SelectSrModel;
+  Dialog_Checkbox_RememberSrModelChoice = t.Dialog_Checkbox_RememberSrModelChoice;
+  Dialog_Button_OK = t.Dialog_Button_OK;
   Settings_Label_CMS = t.Settings_Label_CMS;
   Settings_Label_AdvancedColor = t.Settings_Label_AdvancedColor;
   Settings_Label_HdrToneMapping = t.Settings_Label_HdrToneMapping;
@@ -6554,7 +6588,6 @@ void Apply(const LanguageTable& t) {
   Settings_Option_Nearest = t.Settings_Option_Nearest;
   Settings_Option_HighQualityCubic = t.Settings_Option_HighQualityCubic;
   Settings_Option_FSR = t.Settings_Option_FSR;
-  Settings_Option_ZoomAuto = t.Settings_Option_ZoomAuto;
   Settings_Option_Auto = t.Settings_Option_Auto;
   Settings_Option_Eco = t.Settings_Option_Eco;
   Settings_Option_Balanced = t.Settings_Option_Balanced;

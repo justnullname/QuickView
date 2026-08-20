@@ -6394,6 +6394,7 @@ struct AsyncSrResult {
     float modelScale = 4.0f;
     ComPtr<ID3D11Texture2D> srTexture;
     bool hasAlpha = false;
+    bool isManual = false;
     double durationMs = 0.0;
     HRESULT hr = E_FAIL;
 };
@@ -6405,7 +6406,7 @@ static std::atomic<bool> s_isSrInProgress{false};
 static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false) {
     if (!QuickView::PluginHost::Instance().IsSrPluginEnabled()) {
         if (forceManual) {
-            g_osd.Show(hwnd, L"AI 超分辨率插件未启用或未安装", true, false, D2D1::ColorF(1.0f, 0.4f, 0.4f), OSDPosition::Bottom, 3000);
+            g_osd.Show(hwnd, AppStrings::OSD_SrPluginDisabledOrMissing, true, false, D2D1::ColorF(1.0f, 0.4f, 0.4f), OSDPosition::Bottom, 3000);
             RequestRepaint(PaintLayer::Dynamic);
         }
         return;
@@ -6489,6 +6490,13 @@ static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false)
                     primaryPane.resource.bitmap = primaryPane.resource.promotedSrBitmap;
                     primaryPane.resource.srScale = primaryPane.resource.promotedSrScale;
                     primaryPane.resource.currentSrLevel = primaryPane.resource.promotedSrScale;
+                }
+                if (forceManual && QuickView::PluginHost::Instance().IsSrOpenInCompareMode() && AppContext::GetInstance().CompareCtrl) {
+                    if (!IsCompareModeActive()) {
+                        AppContext::GetInstance().CompareCtrl->EnterSrCompareMode(hwnd);
+                    }
+                    RequestRepaint(PaintLayer::All);
+                } else if (!IsCompareModeActive()) {
                     RenderImageToDComp(hwnd, primaryPane.resource, true);
                     SyncDCompState(hwnd, winW, winH, false);
                     RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
@@ -6508,12 +6516,12 @@ static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false)
         s_isSrInProgress.store(true);
 
         // Immediate OSD feedback on UI thread
-        g_osd.Show(hwnd, L"神经网络计算中 (AI Upscaling)...", false, false, D2D1::ColorF(1.0f, 0.85f, 0.2f), OSDPosition::Bottom, 10000);
+        g_osd.Show(hwnd, AppStrings::OSD_SrProcessing, false, false, D2D1::ColorF(1.0f, 0.85f, 0.2f), OSDPosition::Bottom, 10000);
         RequestRepaint(PaintLayer::Dynamic);
 
         std::wstring curPath = primaryPane.path;
         bool hasAlpha = (frame->format != QuickView::PixelFormat::BGRX8888);
-        std::thread([hwnd, curReqId, curPath, activeModelId, targetScale, frame, hasAlpha]() {
+        std::thread([hwnd, curReqId, curPath, activeModelId, targetScale, frame, hasAlpha, forceManual]() {
             ComPtr<ID3D11Texture2D> srTex;
             HRESULT hr = g_renderEngine ? g_renderEngine->GenerateSuperResolutionTexture(*frame, targetScale, &srTex) : E_FAIL;
 
@@ -6524,6 +6532,7 @@ static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false)
             res->modelScale = targetScale;
             res->srTexture = srTex;
             res->hasAlpha = hasAlpha;
+            res->isManual = forceManual;
             res->durationMs = QuickView::PluginHost::Instance().GetLastDurationMs();
             res->hr = hr;
 
@@ -8517,7 +8526,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                 std::wstring modelDisplayName = QuickView::PluginHost::Instance().GetModelDisplayName(res->modelId);
 
-                if (QuickView::PluginHost::Instance().IsSrOpenInCompareMode() && AppContext::GetInstance().CompareCtrl) {
+                bool shouldEnterCompare = res->isManual && QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
+                if (shouldEnterCompare && AppContext::GetInstance().CompareCtrl) {
                     if (!IsCompareModeActive()) {
                         AppContext::GetInstance().CompareCtrl->EnterSrCompareMode(hwnd);
                         primaryPane.resource.bitmap = srBitmap;
@@ -8527,6 +8537,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         primaryPane.resource.bitmap = srBitmap;
                         primaryPane.resource.srScale = res->modelScale;
                         primaryPane.resource.currentSrLevel = res->modelScale;
+                        AppContext::GetInstance().CompareCtrl->MarkDirty();
+                    }
+                    RequestRepaint(PaintLayer::All);
+                } else if (IsCompareModeActive()) {
+                    primaryPane.resource.bitmap = srBitmap;
+                    primaryPane.resource.srScale = res->modelScale;
+                    primaryPane.resource.currentSrLevel = res->modelScale;
+                    if (AppContext::GetInstance().CompareCtrl) {
                         AppContext::GetInstance().CompareCtrl->MarkDirty();
                     }
                     RequestRepaint(PaintLayer::All);
@@ -8541,19 +8559,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                 wchar_t msg[128];
                 if (res->modelId == "realesr-animevideov3-auto") {
-                    swprintf_s(msg, L"✓ AI 超分完成: %s [%.0fx] (耗时: %.1fms)",
+                    swprintf_s(msg, AppStrings::OSD_SrSuccessFormat,
                                modelDisplayName.c_str(),
                                res->modelScale,
                                res->durationMs);
                 } else {
-                    swprintf_s(msg, L"✓ AI 超分完成: %s (耗时: %.1fms)",
+                    swprintf_s(msg, AppStrings::OSD_SrSuccessFormatSimple,
                                modelDisplayName.c_str(),
                                res->durationMs);
                 }
                 g_osd.Show(hwnd, msg, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f), OSDPosition::Bottom, 2000);
             }
         } else if (FAILED(res->hr) && res->requestId == s_srRequestSeq.load()) {
-            g_osd.Show(hwnd, L"✗ AI 超分执行失败", true, false, D2D1::ColorF(1.0f, 0.3f, 0.3f), OSDPosition::Bottom, 3000);
+            g_osd.Show(hwnd, AppStrings::OSD_SrFailed, true, false, D2D1::ColorF(1.0f, 0.3f, 0.3f), OSDPosition::Bottom, 3000);
         }
         return 0;
     }
@@ -17660,18 +17678,15 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
             }
 
             if (!installedModels.empty()) {
-                bool isChinese = (g_config.Language == static_cast<int>(AppStrings::Language::ChineseSimplified) ||
-                                  g_config.Language == static_cast<int>(AppStrings::Language::ChineseTraditional));
-
                 std::vector<DialogButton> buttons = {
-                    { DialogResult::Yes, isChinese ? L"确定" : L"OK", true },
-                    { DialogResult::Cancel, isChinese ? L"取消" : L"Cancel", false }
+                    { DialogResult::Yes, AppStrings::Dialog_Button_OK, true },
+                    { DialogResult::Cancel, AppStrings::Dialog_Cancel, false }
                 };
 
-                std::wstring dlgTitle = isChinese ? L"选择 AI 超分辨率模型" : L"Select AI Model";
-                std::wstring dlgMsg = isChinese ? L"请选择要应用的超分辨率模型：" : L"Choose the AI Super-Resolution model to execute:";
+                std::wstring dlgTitle = AppStrings::Dialog_Title_SelectSrModel;
+                std::wstring dlgMsg = AppStrings::Dialog_Msg_SelectSrModel;
                 std::wstring chk1Text = AppStrings::Settings_Label_SrOpenInCompare;
-                std::wstring chk2Text = isChinese ? L"记住选择，下次手动触发直接使用" : L"Remember choice and do not prompt on manual trigger";
+                std::wstring chk2Text = AppStrings::Dialog_Checkbox_RememberSrModelChoice;
 
                 int selectedIdx = defaultSelectIdx;
                 bool defaultOpenInCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();

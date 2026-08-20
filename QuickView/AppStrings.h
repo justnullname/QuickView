@@ -78,7 +78,6 @@ namespace AppStrings {
     extern const wchar_t* Context_OpenFolder;
     extern const wchar_t* Context_CopyPixels;
     extern const wchar_t* Context_CopyFile;
-    extern const wchar_t* Context_CopyImage; // Alias for backward compatibility
     extern const wchar_t* Context_CopyPath;
     extern const wchar_t* Context_Print;
     extern const wchar_t* Context_RotateCW;
@@ -348,9 +347,6 @@ namespace AppStrings {
     extern const wchar_t* Settings_Tooltip_ShowBorderIndicator;
     extern const wchar_t* Settings_Label_ShowNavigator;
     extern const wchar_t* Settings_Tooltip_ShowNavigator;
-    extern const wchar_t* Settings_Option_NavigatorAuto;
-    extern const wchar_t* Settings_Option_NavigatorOn;
-    extern const wchar_t* Settings_Option_NavigatorOff;
 
     extern const wchar_t* Settings_Label_KeepWindowSizeOnNav;
     extern const wchar_t* Settings_Label_RememberLastWindowSizeAndPosition;
@@ -371,13 +367,11 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_ItemsInCompareMode;
     extern const wchar_t* Settings_Label_SeparatorPreset;
     extern const wchar_t* Settings_Option_FitScreen;
-    extern const wchar_t* Settings_Option_AutoFit;
     
     extern const wchar_t* Settings_Option_Black;
     extern const wchar_t* Settings_Option_White;
     extern const wchar_t* Settings_Option_Grid;
     extern const wchar_t* Settings_Option_Custom;
-    extern const wchar_t* Settings_Option_ZoomAuto;
     extern const wchar_t* Settings_Option_Off;
     extern const wchar_t* Settings_Option_On;
     extern const wchar_t* Settings_Option_Lite;
@@ -494,6 +488,17 @@ namespace AppStrings {
     extern const wchar_t* Settings_Button_Download;
     extern const wchar_t* Settings_Option_SrPlugin_Anime4K;
     extern const wchar_t* Settings_Option_SrPlugin_Ref;
+
+    // Super-Resolution OSD & Dialog
+    extern const wchar_t* OSD_SrProcessing;
+    extern const wchar_t* OSD_SrSuccessFormat;
+    extern const wchar_t* OSD_SrSuccessFormatSimple;
+    extern const wchar_t* OSD_SrFailed;
+    extern const wchar_t* OSD_SrPluginDisabledOrMissing;
+    extern const wchar_t* Dialog_Title_SelectSrModel;
+    extern const wchar_t* Dialog_Msg_SelectSrModel;
+    extern const wchar_t* Dialog_Checkbox_RememberSrModelChoice;
+    extern const wchar_t* Dialog_Button_OK;
     extern const wchar_t* Settings_Label_CMS;
     extern const wchar_t* Settings_Label_AdvancedColor;
     extern const wchar_t* Settings_Label_CmsFallback;

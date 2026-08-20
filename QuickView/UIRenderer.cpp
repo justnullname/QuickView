@@ -5405,15 +5405,28 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
 	                }
 
 		                std::wstring originalVal = GetHudRowText(row);
-		                if (label == L"File") {
-		                    std::wstring fullPath = isLeft ? leftMeta.SourcePath : rightMeta.SourcePath;
-		                    size_t lastSlash = fullPath.find_last_of(L"\\/");
-		                    originalVal = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
-		                }
-
+		                std::wstring val;
 		                float arrowWidth = winnerMark.empty() ? 0.0f : MeasureTextWidth(winnerMark, m_panelFormat.Get());
 		                float textMaxW = winnerMark.empty() ? w : (std::max)(0.0f, w - arrowWidth - 2.0f * s);
-		                std::wstring val = MakeMiddleEllipsis(textMaxW, originalVal, m_panelFormat.Get());
+
+		                if (label == L"File") {
+		                    const auto& meta = isLeft ? leftMeta : rightMeta;
+		                    std::wstring badge = L"";
+		                    if (meta.HasSr && meta.SrScale > 1.0f) {
+		                        wchar_t badgeBuf[16];
+		                        swprintf_s(badgeBuf, L" \u2605%.0fx", meta.SrScale);
+		                        badge = badgeBuf;
+		                    }
+		                    std::wstring fullPath = isLeft ? leftMeta.SourcePath : rightMeta.SourcePath;
+		                    size_t lastSlash = fullPath.find_last_of(L"\\/");
+		                    std::wstring baseName = (lastSlash != std::wstring::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
+		                    originalVal = baseName + badge;
+		                    float badgeW = badge.empty() ? 0.0f : MeasureTextWidth(badge, m_panelFormat.Get());
+		                    float fnameMaxW = (std::max)(0.0f, textMaxW - badgeW);
+		                    val = MakeMiddleEllipsis(fnameMaxW, baseName, m_panelFormat.Get()) + badge;
+		                } else {
+		                    val = MakeMiddleEllipsis(textMaxW, originalVal, m_panelFormat.Get());
+		                }
 		                
 	                D2D1_RECT_F rect = D2D1::RectF(x, y, x + w, y + rowH);
 	                
