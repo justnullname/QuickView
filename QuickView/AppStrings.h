@@ -70,6 +70,8 @@ namespace AppStrings {
 
     // Context Menu
     extern const wchar_t* Context_Open;
+    extern const wchar_t* Context_Crop;
+    extern const wchar_t* Context_SuperResolution;
     extern const wchar_t* Context_OpenWith;
     extern const wchar_t* Context_Edit;
     extern const wchar_t* Context_ShowInExplorer;
@@ -122,7 +124,6 @@ namespace AppStrings {
     extern const wchar_t* Context_GalleryOpenCompare;
     extern const wchar_t* Context_GalleryOpenNewWindow;
     extern const wchar_t* Context_Exit;
-    extern const wchar_t* Context_Crop;
     
     // Taskbar / System Menu
     extern const wchar_t* Menu_ExitPassthrough;
@@ -474,6 +475,13 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_SrPluginModule;
     extern const wchar_t* Settings_Label_SrModel;
     extern const wchar_t* Settings_Tooltip_SrModel;
+    extern const wchar_t* Settings_Label_SrAutoTrigger;
+    extern const wchar_t* Settings_Label_SrOpenInCompare;
+    extern const wchar_t* Settings_Label_SrPromptModel;
+    extern const wchar_t* Settings_Button_DownloadSrPlugin;
+    extern const wchar_t* Settings_Button_UpdateSrPlugin;
+    extern const wchar_t* Settings_Desc_PluginNotInstalled;
+    extern const wchar_t* Export_Checkbox_SuperResolution;
     extern const wchar_t* Settings_Label_SrDebounce;
     extern const wchar_t* Settings_Tooltip_SrDebounce;
     extern const wchar_t* Settings_Header_PluginParams;

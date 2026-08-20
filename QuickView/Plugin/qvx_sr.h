@@ -13,7 +13,11 @@
 #include <windows.h>
 #include <d3d11.h>
 
-#define QVX_SR_INTERFACE_VERSION 0x00020000 // 2.0.0
+#define QVX_SR_INTERFACE_VERSION 0x00020100 // 2.1.0
+
+// Official Built-in / Target Super-Resolution Plugin Version Handshake
+#define QVX_OFFICIAL_SR_PLUGIN_VERSION "2.1.0"
+#define QVX_OFFICIAL_SR_PLUGIN_VERSION_INT 0x00020100
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,15 +35,17 @@ extern "C" {
 // Super-Resolution Model Metadata Description
 typedef struct QVX_SR_ModelInfo {
     uint32_t struct_size;         // sizeof(QVX_SR_ModelInfo)
-    const char* model_id;         // e.g. "realesrgan_compact_x2"
-    const char* display_name;     // e.g. "Real-ESRGAN Compact 2x"
-    const char* description;      // e.g. "SRVGGNet-Compact (~1.4MB), ultra-fast anime/photo upscaling"
+    const char* model_id;         // e.g. "realesr-animevideov3-x2"
+    const char* display_name;     // e.g. "Anime Fast 2x" (Localizable UTF-8)
+    const char* description;      // e.g. "Ultra-fast anime & illustration upscaler, lightweight VRAM" (Localizable UTF-8)
     float scale;                  // e.g. 2.0f, 4.0f
     bool is_hdr_capable;          // Supports FP16 / HDR input & output
     bool is_installed;            // True if model file/weights ready locally
     uint64_t file_size_bytes;     // Size in bytes, 0 if embedded
     const char* download_url;     // Direct download URL if not installed
     uint32_t preferred_tile_size; // Recommended tile dimension (e.g. 512, 0 = full frame)
+    uint32_t default_debounce_ms; // Recommended debounce delay in ms
+    bool default_compare_mode;    // Recommend compare mode by default
 } QVX_SR_ModelInfo;
 
 // Execution Parameters for Upscale Call
@@ -111,6 +117,10 @@ typedef struct QVX_SR_VTable {
     const QVX_ParamDesc* (*get_param_desc)(uint32_t index);
     int32_t (*get_param_value)(QVX_SR_Context ctx, const char* param_id, float* out_val);
     int32_t (*set_param_value)(QVX_SR_Context ctx, const char* param_id, float val);
+
+    // 7. Multi-language Localization (Pure C ABI, zero host bloat)
+    // @param lang_code: ISO 639-1 / BCP-47 tag, e.g. "zh-CN", "zh-TW", "en-US", "ja-JP", "de-DE", "es-ES", "fr-FR"
+    int32_t (*set_language)(const char* lang_code);
 } QVX_SR_VTable;
 
 #ifdef __cplusplus

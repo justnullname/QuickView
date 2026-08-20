@@ -105,6 +105,7 @@ const wchar_t *Settings_Status_Enabled = nullptr;
 const wchar_t *Settings_Header_PoweredBy = nullptr;
 const wchar_t *Context_Open = nullptr;
 const wchar_t *Context_Crop = nullptr;
+const wchar_t *Context_SuperResolution = nullptr;
 const wchar_t *Context_OpenWith = nullptr;
 const wchar_t *Context_Edit = nullptr;
 const wchar_t *Context_ShowInExplorer = nullptr;
@@ -397,6 +398,13 @@ const wchar_t *Settings_Header_Plugins_SR = nullptr;
 const wchar_t *Settings_Label_EnableSrPlugin = nullptr;
 const wchar_t *Settings_Tooltip_EnableSrPlugin = nullptr;
 const wchar_t *Settings_Label_SrPluginModule = nullptr;
+const wchar_t *Settings_Label_SrAutoTrigger = nullptr;
+const wchar_t *Settings_Label_SrOpenInCompare = nullptr;
+const wchar_t *Settings_Label_SrPromptModel = nullptr;
+const wchar_t *Settings_Button_DownloadSrPlugin = nullptr;
+const wchar_t *Settings_Button_UpdateSrPlugin = nullptr;
+const wchar_t *Settings_Desc_PluginNotInstalled = nullptr;
+const wchar_t *Export_Checkbox_SuperResolution = nullptr;
 const wchar_t *Settings_Label_SrDebounce = nullptr;
 const wchar_t *Settings_Tooltip_SrDebounce = nullptr;
 const wchar_t *Settings_Label_SrSharpness = nullptr;
@@ -667,6 +675,7 @@ struct LanguageTable {
     const wchar_t *OSD_EnterCropMode;
     const wchar_t *OSD_CropCopied;
     const wchar_t *Context_Crop;
+    const wchar_t *Context_SuperResolution;
     const wchar_t *Checkbox_AlwaysSaveLossless;
     const wchar_t *Checkbox_AlwaysSaveEdgeAdapted;
     const wchar_t *Checkbox_AlwaysSaveLossy;
@@ -988,6 +997,13 @@ struct LanguageTable {
     const wchar_t *Settings_Label_EnableSrPlugin;
     const wchar_t *Settings_Tooltip_EnableSrPlugin;
     const wchar_t *Settings_Label_SrPluginModule;
+    const wchar_t *Settings_Label_SrAutoTrigger;
+    const wchar_t *Settings_Label_SrOpenInCompare;
+    const wchar_t *Settings_Label_SrPromptModel;
+    const wchar_t *Settings_Button_DownloadSrPlugin;
+    const wchar_t *Settings_Button_UpdateSrPlugin;
+    const wchar_t *Settings_Desc_PluginNotInstalled;
+    const wchar_t *Export_Checkbox_SuperResolution;
     const wchar_t *Settings_Label_SrDebounce;
     const wchar_t *Settings_Tooltip_SrDebounce;
     const wchar_t *Settings_Label_SrSharpness;
@@ -1262,6 +1278,7 @@ static const LanguageTable Table_EN = {
     L"Entered Crop Mode", // OSD_EnterCropMode
     L"Copied crop selection", // OSD_CropCopied
     L"Crop", // Context_Crop
+    L"AI Super-Resolution", // Context_SuperResolution
     L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
     L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
     L"Always Save Re-Encoded", // Checkbox_AlwaysSaveLossy
@@ -1583,7 +1600,14 @@ static const LanguageTable Table_EN = {
     L"Enable AI Super-Resolution", // Settings_Label_EnableSrPlugin
     L"Enable external neural upscaling / super-resolution plugin (.qvx) from plugins folder.", // Settings_Tooltip_EnableSrPlugin
     L"Plugin Module", // Settings_Label_SrPluginModule
-    L"Zoom Settle Delay (Debounce)", // Settings_Label_SrDebounce
+    L"Auto Trigger", // Settings_Label_SrAutoTrigger
+    L"Show in Compare Mode on Manual Trigger", // Settings_Label_SrOpenInCompare
+    L"Prompt Model Selection on Manual Trigger", // Settings_Label_SrPromptModel
+    L"Download Super-Resolution Plugin (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"Update Super-Resolution Plugin", // Settings_Button_UpdateSrPlugin
+    L"AI Super-Resolution extension is not installed. Click below to download and setup automatically.", // Settings_Desc_PluginNotInstalled
+    L"Export Super-Resolution Quality", // Export_Checkbox_SuperResolution
+    L"Trigger Delay", // Settings_Label_SrDebounce
     L"Delay in milliseconds (0 - 5000 ms) before neural super-resolution triggers after zoom settles.\nMaintains smooth interpolation during interaction and reconstructs ultra-crisp AI details once settled.", // Settings_Tooltip_SrDebounce
     L"AI Sharpness", // Settings_Label_SrSharpness
     L"Adjust edge sharpening strength for AI super-resolution plugin.", // Settings_Tooltip_SrSharpness
@@ -1857,6 +1881,7 @@ static const LanguageTable Table_CN = {
     L"已进入裁剪模式", // OSD_EnterCropMode
     L"已复制裁剪选区", // OSD_CropCopied
     L"裁剪", // Context_Crop
+    L"AI 超分辨率", // Context_SuperResolution
     L"总是保存无损变换", // Checkbox_AlwaysSaveLossless
     L"总是保存边缘优化结果", // Checkbox_AlwaysSaveEdgeAdapted
     L"总是保存重编码结果", // Checkbox_AlwaysSaveLossy
@@ -2176,9 +2201,16 @@ static const LanguageTable Table_CN = {
     L"插件", // Settings_Tab_Plugins
     L"超分辨率 AI 引擎", // Settings_Header_Plugins_SR
     L"启用 AI 超分辨率插件", // Settings_Label_EnableSrPlugin
-    L"启用 plugins 目录下的外部神经放大与超分辨率插件 (.qvx)。", // Settings_Tooltip_EnableSrPlugin
-    L"超分插件模块", // Settings_Label_SrPluginModule
-    L"缩放静止防抖延迟", // Settings_Label_SrDebounce
+    L"启用位于 plugins 目录的外部神经网络超分辨率扩展插件 (.qvx)。", // Settings_Tooltip_EnableSrPlugin
+    L"超分辨率插件模块", // Settings_Label_SrPluginModule
+    L"自动触发", // Settings_Label_SrAutoTrigger
+    L"手动触发后在对比模式中显示", // Settings_Label_SrOpenInCompare
+    L"手动触发时提示选择模型", // Settings_Label_SrPromptModel
+    L"一键下载超分辨率插件 (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"更新超分辨率插件 (有新版本)", // Settings_Button_UpdateSrPlugin
+    L"未安装超分辨率 AI 扩展组件。点击下方按钮即可一键下载并自动就绪。", // Settings_Desc_PluginNotInstalled
+    L"导出超分辨率画质", // Export_Checkbox_SuperResolution
+    L"触发延迟", // Settings_Label_SrDebounce
     L"缩放停止后触发 AI 神经超分的等待时间 (0 - 5000 毫秒)。\n缩放交互过程中保持当前放大插值算法的流畅度，静止后无缝重构成 AI 极清画质。", // Settings_Tooltip_SrDebounce
     L"AI 锐化强度", // Settings_Label_SrSharpness
     L"调节 AI 超分辨率插件的边缘轮廓锐化强度。", // Settings_Tooltip_SrSharpness
@@ -2452,6 +2484,7 @@ static const LanguageTable Table_TW = {
     L"已進入裁剪模式", // OSD_EnterCropMode
     L"已複製裁剪選區", // OSD_CropCopied
     L"裁剪", // Context_Crop
+    L"AI 超解析度", // Context_SuperResolution
     L"總是儲存無損變換", // Checkbox_AlwaysSaveLossless
     L"總是儲存邊緣優化結果", // Checkbox_AlwaysSaveEdgeAdapted
     L"總是儲存重新編碼結果", // Checkbox_AlwaysSaveLossy
@@ -2771,9 +2804,16 @@ static const LanguageTable Table_TW = {
     L"外掛程式", // Settings_Tab_Plugins
     L"超解析度 AI 引擎", // Settings_Header_Plugins_SR
     L"啟用 AI 超解析度外掛程式", // Settings_Label_EnableSrPlugin
-    L"啟用 plugins 目錄下的外部神經放大與超解析度外掛程式 (.qvx)。", // Settings_Tooltip_EnableSrPlugin
-    L"超分外掛程式模組", // Settings_Label_SrPluginModule
-    L"縮放靜止防抖延遲", // Settings_Label_SrDebounce
+    L"啟用位於 plugins 目錄的外部神經網路超解析度擴充外掛 (.qvx)。", // Settings_Tooltip_EnableSrPlugin
+    L"超解析度外掛模組", // Settings_Label_SrPluginModule
+    L"自動觸發", // Settings_Label_SrAutoTrigger
+    L"手動觸發後在對比模式中顯示", // Settings_Label_SrOpenInCompare
+    L"手動觸發時提示選擇模型", // Settings_Label_SrPromptModel
+    L"一鍵下載超解析度外掛 (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"更新超解析度外掛 (有新版本)", // Settings_Button_UpdateSrPlugin
+    L"尚未安裝超解析度 AI 擴充組件。點擊下方按鈕即可一鍵下載並自動就緒。", // Settings_Desc_PluginNotInstalled
+    L"匯出超解析度畫質", // Export_Checkbox_SuperResolution
+    L"觸發延遲", // Settings_Label_SrDebounce
     L"縮放停止後觸發 AI 神經超分的等待時間 (0 - 5000 毫秒)。\n縮放互動過程中保持當前放大插值演算法的流暢度，靜止後無縫重構成 AI 極清畫質。", // Settings_Tooltip_SrDebounce
     L"AI 銳化強度", // Settings_Label_SrSharpness
     L"調節 AI 超解析度外掛程式的邊緣輪廓銳化強度。", // Settings_Tooltip_SrSharpness
@@ -3047,6 +3087,7 @@ static const LanguageTable Table_JA = {
     L"クロップモードに入りました", // OSD_EnterCropMode
     L"クロップ範囲をコピーしました", // OSD_CropCopied
     L"クロップ", // Context_Crop
+    L"AI 超解像", // Context_SuperResolution
     L"常にロスレス変換で保存する", // Checkbox_AlwaysSaveLossless
     L"常にエッジ最適化で保存する", // Checkbox_AlwaysSaveEdgeAdapted
     L"常に再エンコードして保存する", // Checkbox_AlwaysSaveLossy
@@ -3367,8 +3408,15 @@ static const LanguageTable Table_JA = {
     L"超解像 AI エンジン", // Settings_Header_Plugins_SR
     L"AI 超解像プラグインを有効化", // Settings_Label_EnableSrPlugin
     L"plugins フォルダ内の外部超解像プラグイン (.qvx) を有効にします。", // Settings_Tooltip_EnableSrPlugin
-    L"超解像プラグインモジュール", // Settings_Label_SrPluginModule
-    L"ズーム停止時デバウンス遅延", // Settings_Label_SrDebounce
+    L"プラグインモジュール", // Settings_Label_SrPluginModule
+    L"自動トリガー", // Settings_Label_SrAutoTrigger
+    L"手動実行後に比較モードで表示", // Settings_Label_SrOpenInCompare
+    L"手動トリガー時にモデル選択を表示", // Settings_Label_SrPromptModel
+    L"超解像プラグインをダウンロード (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"超解像プラグインをアップデート", // Settings_Button_UpdateSrPlugin
+    L"超解像 AI 拡張機能は未インストールです。下のボタンでダウンロードできます。", // Settings_Desc_PluginNotInstalled
+    L"超解像画質で書き出す", // Export_Checkbox_SuperResolution
+    L"トリガー遅延", // Settings_Label_SrDebounce
     L"ズーム操作停止後に AI 超解像をトリガーする遅延時間 (0 - 5000 ミリ秒)。\n操作中は高速補間を維持し、停止後に超高画質 AI 復元を行います。", // Settings_Tooltip_SrDebounce
     L"AI シャープネス", // Settings_Label_SrSharpness
     L"AI 超解像プラグインのエッジシャープネス強度を調整します。", // Settings_Tooltip_SrSharpness
@@ -3642,6 +3690,7 @@ static const LanguageTable Table_RU = {
     L"Режим кадрирования", // OSD_EnterCropMode
     L"Область кадрирования скопирована", // OSD_CropCopied
     L"Кадрировать", // Context_Crop
+    L"ИИ Супер-разрешение", // Context_SuperResolution
     L"Всегда сохранять без потерь", // Checkbox_AlwaysSaveLossless
     L"Всегда сохранять с оптимизацией краёв", // Checkbox_AlwaysSaveEdgeAdapted
     L"Всегда сохранять перекодированное", // Checkbox_AlwaysSaveLossy
@@ -3963,7 +4012,14 @@ static const LanguageTable Table_RU = {
     L"Включить AI масштабирование", // Settings_Label_EnableSrPlugin
     L"Включить внешний плагин сверхразрешения (.qvx) из папки plugins.", // Settings_Tooltip_EnableSrPlugin
     L"Модуль плагина", // Settings_Label_SrPluginModule
-    L"Задержка после зума (Debounce)", // Settings_Label_SrDebounce
+    L"Автоматический запуск", // Settings_Label_SrAutoTrigger
+    L"Показать в режиме сравнения при ручном запуске", // Settings_Label_SrOpenInCompare
+    L"Запрашивать выбор модели при ручном запуске", // Settings_Label_SrPromptModel
+    L"Скачать плагин AI сверхразрешения (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"Обновить плагин сверхразрешения", // Settings_Button_UpdateSrPlugin
+    L"Плагин AI сверхразрешения не установлен. Нажмите для загрузки.", // Settings_Desc_PluginNotInstalled
+    L"Экспортировать с AI масштабированием", // Export_Checkbox_SuperResolution
+    L"Задержка запуска", // Settings_Label_SrDebounce
     L"Задержка в миллисекундах (0 - 5000 мс) перед запуском нейросетевого сверхразрешения после остановки зума.", // Settings_Tooltip_SrDebounce
     L"AI Резкость", // Settings_Label_SrSharpness
     L"Настройка резкости краев для AI плагина.", // Settings_Tooltip_SrSharpness
@@ -4237,6 +4293,7 @@ static const LanguageTable Table_DE = {
     L"Zuschneiden-Modus aktiv", // OSD_EnterCropMode
     L"Zuschneide-Auswahl kopiert", // OSD_CropCopied
     L"Zuschneiden", // Context_Crop
+    L"KI-Super-Resolution", // Context_SuperResolution
     L"Immer verlustfrei speichern", // Checkbox_AlwaysSaveLossless
     L"Immer kantenoptimiert speichern", // Checkbox_AlwaysSaveEdgeAdapted
     L"Immer neu kodiert speichern", // Checkbox_AlwaysSaveLossy
@@ -4558,7 +4615,14 @@ static const LanguageTable Table_DE = {
     L"KI-Super-Resolution aktivieren", // Settings_Label_EnableSrPlugin
     L"Externes KI-Upscaling / Super-Resolution-Plugin (.qvx) aus dem plugins-Ordner aktivieren.", // Settings_Tooltip_EnableSrPlugin
     L"Plugin-Modul", // Settings_Label_SrPluginModule
-    L"Zoom-Ruheverzögerung (Debounce)", // Settings_Label_SrDebounce
+    L"Automatisches Auslösen", // Settings_Label_SrAutoTrigger
+    L"Nach manuellem Auslösen im Vergleichsmodus anzeigen", // Settings_Label_SrOpenInCompare
+    L"Modellauswahl bei manuellem Auslösen abfragen", // Settings_Label_SrPromptModel
+    L"Super-Resolution Plugin herunterladen (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"Super-Resolution Plugin aktualisieren", // Settings_Button_UpdateSrPlugin
+    L"Super-Resolution KI-Erweiterung ist nicht installiert. Klicken Sie zum Herunterladen.", // Settings_Desc_PluginNotInstalled
+    L"Super-Resolution Qualität exportieren", // Export_Checkbox_SuperResolution
+    L"Auslöseverzögerung", // Settings_Label_SrDebounce
     L"Verzögerung in Millisekunden (0 - 5000 ms), bevor die neuronale Super-Resolution nach dem Zoomen ausgelöst wird.", // Settings_Tooltip_SrDebounce
     L"KI-Schärfe", // Settings_Label_SrSharpness
     L"Kantenschärfe für KI-Super-Resolution-Plugin anpassen.", // Settings_Tooltip_SrSharpness
@@ -4832,6 +4896,7 @@ static const LanguageTable Table_ES = {
     L"Modo de recorte activado", // OSD_EnterCropMode
     L"Selección de recorte copiada", // OSD_CropCopied
     L"Recortar", // Context_Crop
+    L"Superresolución IA", // Context_SuperResolution
     L"Siempre guardar sin pérdida", // Checkbox_AlwaysSaveLossless
     L"Siempre guardar con bordes optimizados", // Checkbox_AlwaysSaveEdgeAdapted
     L"Siempre guardar recodificado", // Checkbox_AlwaysSaveLossy
@@ -5152,8 +5217,15 @@ static const LanguageTable Table_ES = {
     L"Motor IA de Superresolución", // Settings_Header_Plugins_SR
     L"Activar superresolución IA", // Settings_Label_EnableSrPlugin
     L"Habilita el complemento de superresolución / escalado por IA (.qvx) desde la carpeta plugins.", // Settings_Tooltip_EnableSrPlugin
-    L"Módulo de complemento", // Settings_Label_SrPluginModule
-    L"Retardo tras zoom (Debounce)", // Settings_Label_SrDebounce
+    L"Módulo de plugin", // Settings_Label_SrPluginModule
+    L"Activación automática", // Settings_Label_SrAutoTrigger
+    L"Mostrar en modo comparación al activar manualmente", // Settings_Label_SrOpenInCompare
+    L"Preguntar modelo al activar manualmente", // Settings_Label_SrPromptModel
+    L"Descargar plugin de superresolución (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"Actualizar plugin de superresolución", // Settings_Button_UpdateSrPlugin
+    L"La extensión de Superresolución IA no está instalada. Haga clic para descargar.", // Settings_Desc_PluginNotInstalled
+    L"Exportar calidad de superresolución", // Export_Checkbox_SuperResolution
+    L"Retardo de activación", // Settings_Label_SrDebounce
     L"Retardo en milisegundos (0 - 5000 ms) antes de activar la superresolución neuronal tras finalizar el zoom.", // Settings_Tooltip_SrDebounce
     L"Nitidez IA", // Settings_Label_SrSharpness
     L"Ajusta la nitidez del complemento de superresolución IA.", // Settings_Tooltip_SrSharpness
@@ -5427,6 +5499,7 @@ static const LanguageTable Table_FR = {
     L"Mode recadrage activé", // OSD_EnterCropMode
     L"Sélection de recadrage copiée", // OSD_CropCopied
     L"Recadrer", // Context_Crop
+    L"Super-Résolution IA", // Context_SuperResolution
     L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
     L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
     L"Always Save Re-Encoded", // Checkbox_AlwaysSaveLossy
@@ -5747,8 +5820,15 @@ static const LanguageTable Table_FR = {
     L"Moteur IA de super-résolution", // Settings_Header_Plugins_SR
     L"Activer la super-résolution IA", // Settings_Label_EnableSrPlugin
     L"Activer le plugin de super-résolution IA (.qvx) externe depuis le dossier plugins.", // Settings_Tooltip_EnableSrPlugin
-    L"Module du plugin", // Settings_Label_SrPluginModule
-    L"Délai d'attente après zoom (Debounce)", // Settings_Label_SrDebounce
+    L"Module de plugin", // Settings_Label_SrPluginModule
+    L"Déclenchement automatique", // Settings_Label_SrAutoTrigger
+    L"Afficher en mode comparaison après déclenchement manuel", // Settings_Label_SrOpenInCompare
+    L"Demander le modèle lors du déclenchement manuel", // Settings_Label_SrPromptModel
+    L"Télécharger le plugin de super-résolution (~15 MB)", // Settings_Button_DownloadSrPlugin
+    L"Mettre à jour le plugin de super-résolution", // Settings_Button_UpdateSrPlugin
+    L"L'extension de super-résolution IA n'est pas installée. Cliquez ci-dessous pour télécharger.", // Settings_Desc_PluginNotInstalled
+    L"Exporter la qualité de super-résolution", // Export_Checkbox_SuperResolution
+    L"Délai de déclenchement", // Settings_Label_SrDebounce
     L"Délai en millisecondes (0 - 5000 ms) avant le déclenchement de la super-résolution neuronale après l'arrêt du zoom.", // Settings_Tooltip_SrDebounce
     L"Netteté IA", // Settings_Label_SrSharpness
     L"Ajuster la netteté du plugin de super-résolution IA.", // Settings_Tooltip_SrSharpness
@@ -6022,6 +6102,7 @@ void Apply(const LanguageTable& t) {
   OSD_EnterCropMode = t.OSD_EnterCropMode;
   OSD_CropCopied = t.OSD_CropCopied;
   Context_Crop = t.Context_Crop;
+  Context_SuperResolution = t.Context_SuperResolution;
   Checkbox_AlwaysSaveLossless = t.Checkbox_AlwaysSaveLossless;
   Checkbox_AlwaysSaveEdgeAdapted = t.Checkbox_AlwaysSaveEdgeAdapted;
   Checkbox_AlwaysSaveLossy = t.Checkbox_AlwaysSaveLossy;
@@ -6348,6 +6429,13 @@ void Apply(const LanguageTable& t) {
   Settings_Label_EnableSrPlugin = t.Settings_Label_EnableSrPlugin;
   Settings_Tooltip_EnableSrPlugin = t.Settings_Tooltip_EnableSrPlugin;
   Settings_Label_SrPluginModule = t.Settings_Label_SrPluginModule;
+  Settings_Label_SrAutoTrigger = t.Settings_Label_SrAutoTrigger;
+  Settings_Label_SrOpenInCompare = t.Settings_Label_SrOpenInCompare;
+  Settings_Label_SrPromptModel = t.Settings_Label_SrPromptModel;
+  Settings_Button_DownloadSrPlugin = t.Settings_Button_DownloadSrPlugin;
+  Settings_Button_UpdateSrPlugin = t.Settings_Button_UpdateSrPlugin;
+  Settings_Desc_PluginNotInstalled = t.Settings_Desc_PluginNotInstalled;
+  Export_Checkbox_SuperResolution = t.Export_Checkbox_SuperResolution;
   Settings_Label_SrDebounce = t.Settings_Label_SrDebounce;
   Settings_Tooltip_SrDebounce = t.Settings_Tooltip_SrDebounce;
   Settings_Label_SrSharpness = t.Settings_Label_SrSharpness;
@@ -6645,6 +6733,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"平移步长";
     Settings_Label_PanStepNormal = L"平移步长 (普通)";
     Settings_Label_PanStepFast = L"按键平移步长 (加速)";
+    Settings_Header_PluginParams = L"插件参数";
     break;
   case Language::ChineseTraditional:
     Settings_Tab_Shortcuts = L"快捷鍵";
@@ -6657,6 +6746,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"平移步長";
     Settings_Label_PanStepNormal = L"平移步長 (普通)";
     Settings_Label_PanStepFast = L"按鍵平移步長 (加速)";
+    Settings_Header_PluginParams = L"外掛參數";
     break;
   case Language::Japanese:
     Settings_Tab_Shortcuts = L"ショートカット";
@@ -6669,6 +6759,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"パン歩幅";
     Settings_Label_PanStepNormal = L"パン歩幅 (標準)";
     Settings_Label_PanStepFast = L"キーボードパン歩幅 (高速)";
+    Settings_Header_PluginParams = L"プラグイン設定";
     break;
   case Language::Russian:
     Settings_Tab_Shortcuts = L"Клавиши";
@@ -6681,6 +6772,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"Шаг сдвига";
     Settings_Label_PanStepNormal = L"Шаг сдвига (Обычный)";
     Settings_Label_PanStepFast = L"Шаг клавиатурного сдвига (Быстрый)";
+    Settings_Header_PluginParams = L"Параметры плагина";
     break;
   case Language::German:
     Settings_Tab_Shortcuts = L"Kürzel";
@@ -6693,6 +6785,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"Pan-Schrittweite";
     Settings_Label_PanStepNormal = L"Pan-Schrittweite (Normal)";
     Settings_Label_PanStepFast = L"Tastatur-Pan-Schrittweite (Schnell)";
+    Settings_Header_PluginParams = L"Plugin-Parameter";
     break;
   case Language::Spanish:
     Settings_Tab_Shortcuts = L"Atajos";
@@ -6705,6 +6798,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"Paso de pan";
     Settings_Label_PanStepNormal = L"Paso de pan (Normal)";
     Settings_Label_PanStepFast = L"Paso de pan con teclado (Rápido)";
+    Settings_Header_PluginParams = L"Parámetros del plugin";
     break;
   case Language::French:
     Settings_Tab_Shortcuts = L"Raccourcis";
@@ -6717,6 +6811,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"Pas de pan";
     Settings_Label_PanStepNormal = L"Pas de pan (Normal)";
     Settings_Label_PanStepFast = L"Pas de pan clavier (Rapide)";
+    Settings_Header_PluginParams = L"Paramètres du plugin";
     break;
   case Language::English:
   default:
@@ -6730,6 +6825,7 @@ void SetLanguage(Language lang) {
     Settings_Header_KeyboardPan = L"Pan Step";
     Settings_Label_PanStepNormal = L"Pan Step (Normal)";
     Settings_Label_PanStepFast = L"Keyboard Pan Step (Fast)";
+    Settings_Header_PluginParams = L"Plugin Parameters";
     break;
   }
 }
@@ -6828,6 +6924,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         case AppStrings::Language::Spanish:            raw = L"Alternar minimapa"; break;
         case AppStrings::Language::French:             raw = L"Basculer la minicarte"; break;
         default:                                       raw = L"Toggle Minimap"; break;
+        }
+        break;
+    }
+    case HotkeyAction::SuperResolution: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"AI 超分辨率"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"AI 超解析度"; break;
+        case AppStrings::Language::Japanese:           raw = L"AI 超解像"; break;
+        case AppStrings::Language::Russian:            raw = L"AI Сверхразрешение"; break;
+        case AppStrings::Language::German:             raw = L"AI Super-Resolution"; break;
+        case AppStrings::Language::Spanish:            raw = L"Superresolución IA"; break;
+        case AppStrings::Language::French:             raw = L"Super-résolution IA"; break;
+        default:                                       raw = L"AI Super-Resolution"; break;
         }
         break;
     }

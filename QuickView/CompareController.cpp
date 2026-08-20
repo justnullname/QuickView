@@ -329,6 +329,20 @@ void CompareController::CaptureCurrentImageAsLeft() {
     GetPaneContext(PaneSlot::Left).Reset();
     GetPaneContext(PaneSlot::Left).resource = GetPaneContext(PaneSlot::Primary).resource.Clone();
     GetPaneContext(PaneSlot::Left).metadata = GetPaneContext(PaneSlot::Primary).metadata;
+
+    // Ensure Left pane represents the pristine 1.0x unscaled original frame
+    if (GetPaneContext(PaneSlot::Left).resource.baseNormalBitmap) {
+        GetPaneContext(PaneSlot::Left).resource.bitmap = GetPaneContext(PaneSlot::Left).resource.baseNormalBitmap;
+    }
+    GetPaneContext(PaneSlot::Left).resource.srScale = 1.0f;
+    GetPaneContext(PaneSlot::Left).resource.currentSrLevel = 1.0f;
+    GetPaneContext(PaneSlot::Left).resource.promotedSrBitmap.Reset();
+    GetPaneContext(PaneSlot::Left).resource.promotedSrTexture.Reset();
+    GetPaneContext(PaneSlot::Left).metadata.HasSr = false;
+    GetPaneContext(PaneSlot::Left).metadata.SrWidth = 0;
+    GetPaneContext(PaneSlot::Left).metadata.SrHeight = 0;
+    GetPaneContext(PaneSlot::Left).metadata.SrScale = 1.0f;
+
     GetPaneContext(PaneSlot::Left).path = GetPaneContext(PaneSlot::Primary).path;
     GetPaneContext(PaneSlot::Left).valid = true;
     GetPaneContext(PaneSlot::Left).view.Zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
@@ -644,6 +658,49 @@ void CompareController::EnterMode(HWND hwnd) {
     }
 }
 
+void CompareController::EnterSrCompareMode(HWND hwnd) {
+    m_hwnd = hwnd;
+    if (!GetPaneContext(PaneSlot::Primary).resource) return;
+
+    if (g_slideshowState.IsActive) {
+        g_slideshowState.Reset();
+        KillTimer(hwnd, IDT_SLIDESHOW);
+        g_toolbar.SetSlideshowMode(false, false);
+    }
+
+    // 1. Capture current un-upscaled 1.0x image as Left
+    CaptureCurrentImageAsLeft();
+    if (!GetPaneContext(PaneSlot::Left).valid) return;
+
+    // 2. Set to Wipe Mode (split-screen curtain)
+    m_context.Compare.mode = ViewMode::CompareWipe;
+    m_context.Compare.splitRatio = 0.5f;
+    m_context.Compare.syncZoom = true;
+    m_context.Compare.syncPan = true;
+    m_context.Compare.draggingDivider = false;
+    m_context.Compare.activePane = ComparePane::Right;
+    m_context.Compare.contextPane = ComparePane::Right;
+    m_context.Compare.selectedPane = ComparePane::Right;
+    m_context.Compare.dividerOpacity = 1.0f;
+    m_context.Compare.showDividerHandle = true;
+    MarkDirty();
+
+    GetPaneContext(PaneSlot::Primary).view.CompareActive = true;
+    GetPaneContext(PaneSlot::Primary).view.CompareSplitRatio = 0.5f;
+
+    // Synchronize Left pane view to Primary pane view (zoom, pan)
+    GetPaneContext(PaneSlot::Left).view.Zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
+    GetPaneContext(PaneSlot::Left).view.PanX = GetPaneContext(PaneSlot::Primary).view.PanX;
+    GetPaneContext(PaneSlot::Left).view.PanY = GetPaneContext(PaneSlot::Primary).view.PanY;
+
+    g_toolbar.SetCompareMode(true);
+    g_toolbar.SetCompareSyncStates(m_context.Compare.syncZoom, m_context.Compare.syncPan);
+    g_toolbar.SetCompareInfoState(g_runtime.ShowCompareInfo);
+    RefreshCompareRawUI(hwnd);
+
+    // Show OSD banner
+    g_osd.ShowCompare(hwnd, AppStrings::OSD_CompareBefore, AppStrings::OSD_CompareAfter, D2D1::ColorF(D2D1::ColorF::White), 2500);
+}
 
 void CompareController::ExitMode(HWND hwnd) {
     if (!IsActive()) return;

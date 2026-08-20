@@ -19,6 +19,7 @@ public:
     bool RenderComposite(HWND hwnd);
     void MarkDirty();
     void EnterMode(HWND hwnd);
+    void EnterSrCompareMode(HWND hwnd);
     void ExitMode(HWND hwnd);
     bool IsActive() const;
     

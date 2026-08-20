@@ -4,6 +4,7 @@
 #include "AppStrings.h"
 #include "EditState.h"
 #include "UndoManager.h"
+#include "Plugin/PluginHost.h"
 
 extern AppConfig g_config;
 extern RuntimeConfig g_runtime;
@@ -36,6 +37,9 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
         return menuStrings.back()->c_str();
     };
 
+    bool isSrAvailable = (QuickView::PluginHost::Instance().GetSrPluginInstallState() != QuickView::PluginInstallState::NotInstalled) &&
+                         QuickView::PluginHost::Instance().IsSrPluginEnabled();
+
     // ========================================================
     // Top Action Row (4 buttons)
     // ========================================================
@@ -57,6 +61,7 @@ void ShowContextMenu(HWND hwnd, POINT pt, bool hasImage, bool needsExtensionFix,
     items.push_back(MI::Normal(IDM_COPY_FILE, AppStrings::Context_CopyFile, GeekIcons::Copy, getHK(HotkeyAction::CopyFileItem)).Enabled(hasImage));
     items.push_back(MI::Normal(IDM_COPY_PATH, AppStrings::Context_CopyPath, GeekIcons::Link, getHK(HotkeyAction::CopyPath)).Enabled(hasImage));
     items.push_back(MI::Normal(IDM_ENTER_CROP_MODE, AppStrings::Context_Crop, GeekIcons::Crop, getHK(HotkeyAction::EnterCropMode)).Enabled(hasImage));
+    items.push_back(MI::Normal(IDM_SUPER_RESOLUTION, AppStrings::Context_SuperResolution, GeekIcons::SuperResolution, getHK(HotkeyAction::SuperResolution)).Enabled(hasImage && isSrAvailable));
     items.push_back(MI::Normal(IDM_SAVE_AS, AppStrings::Dialog_ButtonSaveAs, GeekIcons::Save, getHK(HotkeyAction::SaveAs)));
     items.push_back(MI::Normal(IDM_SHOW_IN_EXPLORER, AppStrings::Context_ShowInExplorer, GeekIcons::Explorer, getHK(HotkeyAction::ShowInExplorer)));
     items.push_back(MI::Normal(IDM_OPEN_FOLDER, AppStrings::Context_OpenFolder, GeekIcons::Folder));

@@ -51,6 +51,10 @@ struct PanelLayout {
     bool showLosslessCheckbox = false;
     D2D1_RECT_F losslessCheckboxRect = {};
 
+    // Super-Resolution Switch
+    bool showSrCheckbox = false;
+    D2D1_RECT_F srCheckboxRect = {};
+
     // Preserve EXIF Metadata Switch
     D2D1_RECT_F preserveMetadataCheckboxRect = {};
 
@@ -141,6 +145,11 @@ private:
     PendingAction m_pendingAction = PendingAction::None;
     bool m_isModified = false;
 
+    // Super-Resolution Export
+    bool m_hasSrBitmap = false;
+    bool m_exportSr = false;
+    float m_srScale = 1.0f;
+
     // UI Input State
     enum class HoverState { 
         None, 
@@ -152,6 +161,7 @@ private:
         FormatDropdownBtn,
         FormatDropdownItem,
         LosslessCheckbox,
+        SrCheckbox,
         PreserveMetadataCheckbox,
         QualitySlider,
         QualityInput,

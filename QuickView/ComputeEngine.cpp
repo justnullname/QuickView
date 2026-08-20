@@ -834,8 +834,8 @@ HRESULT ComputeEngine::UploadAndConvert(const uint8_t* srcPixels, int width, int
 
     bool isHdrFloat = (srcFormat == PixelFormat::R32G32B32A32_FLOAT || srcFormat == PixelFormat::R16G16B16A16_FLOAT);
 
-    // 1. For standard SDR formats (BGRA/BGRX/RGBA), directly create DEFAULT texture without Compute Shader dispatch (100% Thread-Safe)
-    if (!isHdrFloat && srcFormat != PixelFormat::R16G16B16A16_UNORM) {
+    // 1. For standard 32-bit SDR formats (BGRA/BGRX/RGBA), directly create DEFAULT texture without Compute Shader dispatch (100% Thread-Safe)
+    if (srcFormat == PixelFormat::BGRA8888 || srcFormat == PixelFormat::BGRX8888 || srcFormat == PixelFormat::RGBA8888) {
         D3D11_TEXTURE2D_DESC directDesc = {};
         directDesc.Width = width;
         directDesc.Height = height;

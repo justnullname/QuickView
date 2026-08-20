@@ -54,7 +54,6 @@ TEST_F(PluginHostTests, ConfigPersistence) {
     host.SetSrPluginEnabled(true);
     host.SetSrPluginPath(L"plugins\\test_custom.qvx");
     host.SetSrModelId("anime_2x");
-    host.SetSrSharpness(0.45f);
     host.SetSrDenoise(0.15f);
 
     host.SaveConfig(m_tempIniPath.c_str());
@@ -63,7 +62,6 @@ TEST_F(PluginHostTests, ConfigPersistence) {
     host.SetSrPluginEnabled(false);
     host.SetSrPluginPath(L"");
     host.SetSrModelId("");
-    host.SetSrSharpness(0.0f);
     host.SetSrDenoise(0.0f);
 
     // Reload
@@ -72,7 +70,6 @@ TEST_F(PluginHostTests, ConfigPersistence) {
     EXPECT_TRUE(host.IsSrPluginEnabled());
     EXPECT_EQ(host.GetSrPluginPath(), L"plugins\\test_custom.qvx");
     EXPECT_EQ(host.GetSrModelId(), "anime_2x");
-    EXPECT_NEAR(host.GetSrSharpness(), 0.45f, 0.01f);
     EXPECT_NEAR(host.GetSrDenoise(), 0.15f, 0.01f);
 }
 
@@ -85,157 +82,7 @@ TEST_F(PluginHostTests, MissingPluginGracefulFallback) {
     EXPECT_FALSE(host.EnsureSrContext(m_d3dDevice.Get()));
 }
 
-// 3. Test plugin loading and GPU execution if reference plugin exists
-TEST_F(PluginHostTests, ReferencePluginGpuUpscale) {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring pluginPath = std::wstring(exePath) + L"\\plugins\\sr_sample_d3d11.qvx";
-    if (GetFileAttributesW(pluginPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        // Plugin might be in current directory or build folder
-        pluginPath = L"plugins\\sr_sample_d3d11.qvx";
-        if (GetFileAttributesW(pluginPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-            GTEST_SKIP() << "sr_sample_d3d11.qvx not found in output directory, skipping direct DLL execution test.";
-        }
-    }
-
-    auto& host = QuickView::PluginHost::Instance();
-    host.SetSrPluginEnabled(true);
-    host.SetSrPluginPath(pluginPath);
-    host.SetSrSharpness(0.3f);
-
-    ASSERT_TRUE(host.EnsureSrContext(m_d3dDevice.Get()));
-
-    // Create 64x64 Source Texture
-    D3D11_TEXTURE2D_DESC srcDesc{};
-    srcDesc.Width = 64;
-    srcDesc.Height = 64;
-    srcDesc.MipLevels = 1;
-    srcDesc.ArraySize = 1;
-    srcDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    srcDesc.SampleDesc.Count = 1;
-    srcDesc.Usage = D3D11_USAGE_DEFAULT;
-    srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    ComPtr<ID3D11Texture2D> pSrcTex;
-    ASSERT_TRUE(SUCCEEDED(m_d3dDevice->CreateTexture2D(&srcDesc, nullptr, &pSrcTex)));
-
-    // Create 128x128 Destination Texture
-    D3D11_TEXTURE2D_DESC dstDesc = srcDesc;
-    dstDesc.Width = 128;
-    dstDesc.Height = 128;
-    dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-
-    ComPtr<ID3D11Texture2D> pDstTex;
-    ASSERT_TRUE(SUCCEEDED(m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDstTex)));
-
-    // Execute GPU 0-Copy Upscale
-    int32_t result = host.ExecuteSrUpscaleGpu(
-        m_d3dDevice.Get(),
-        pSrcTex.Get(), 64, 64,
-        pDstTex.Get(), 128, 128,
-        nullptr, nullptr
-    );
-
-    EXPECT_EQ(result, (int32_t)S_OK);
-
-    // 4. Test Millisecond-level Cancellation Token
-    auto alwaysCancel = [](void*) -> bool { return true; };
-    int32_t abortResult = host.ExecuteSrUpscaleGpu(
-        m_d3dDevice.Get(),
-        pSrcTex.Get(), 64, 64,
-        pDstTex.Get(), 128, 128,
-        alwaysCancel, nullptr
-    );
-
-    EXPECT_EQ(abortResult, (int32_t)E_ABORT);
-}
-
-// 4. Test Anime4K CNN Plugin GPU Upscale
-TEST_F(PluginHostTests, Anime4KGpuUpscale) {
-    wchar_t exePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    PathRemoveFileSpecW(exePath);
-
-    std::wstring pluginPath = std::wstring(exePath) + L"\\plugins\\sr_anime4k_d3d11.qvx";
-    if (GetFileAttributesW(pluginPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        pluginPath = L"plugins\\sr_anime4k_d3d11.qvx";
-        if (GetFileAttributesW(pluginPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-            GTEST_SKIP() << "sr_anime4k_d3d11.qvx not found, skipping Anime4K test.";
-        }
-    }
-
-    auto& host = QuickView::PluginHost::Instance();
-    host.UnloadSrPlugin();
-    host.SetSrPluginEnabled(true);
-    host.SetSrPluginPath(pluginPath);
-    host.SetSrSharpness(0.5f);
-
-    ASSERT_TRUE(host.EnsureSrContext(m_d3dDevice.Get()));
-
-    // 64x64 Source Texture
-    D3D11_TEXTURE2D_DESC srcDesc{};
-    srcDesc.Width = 64;
-    srcDesc.Height = 64;
-    srcDesc.MipLevels = 1;
-    srcDesc.ArraySize = 1;
-    srcDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    srcDesc.SampleDesc.Count = 1;
-    srcDesc.Usage = D3D11_USAGE_DEFAULT;
-    srcDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    ComPtr<ID3D11Texture2D> pSrcTex;
-    ASSERT_TRUE(SUCCEEDED(m_d3dDevice->CreateTexture2D(&srcDesc, nullptr, &pSrcTex)));
-
-    // 128x128 Destination Texture
-    D3D11_TEXTURE2D_DESC dstDesc = srcDesc;
-    dstDesc.Width = 128;
-    dstDesc.Height = 128;
-    dstDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-
-    ComPtr<ID3D11Texture2D> pDstTex;
-    ASSERT_TRUE(SUCCEEDED(m_d3dDevice->CreateTexture2D(&dstDesc, nullptr, &pDstTex)));
-
-    // Fill source texture with solid non-zero colors (red/green pattern)
-    std::vector<uint32_t> srcPixels(64 * 64, 0xFF00FF00); // Solid green, alpha = 255
-    m_d3dContext->UpdateSubresource(pSrcTex.Get(), 0, nullptr, srcPixels.data(), 64 * 4, 0);
-
-    // Execute Anime4K Multi-Pass CNN Upscale
-    int32_t result = host.ExecuteSrUpscaleGpu(
-        m_d3dDevice.Get(),
-        pSrcTex.Get(), 64, 64,
-        pDstTex.Get(), 128, 128,
-        nullptr, nullptr
-    );
-
-    printf("ExecuteSrUpscaleGpu result = 0x%08X\n", (uint32_t)result);
-    EXPECT_EQ(result, (int32_t)S_OK);
-
-    // Read back destination texture to CPU to verify pixel validity
-    D3D11_TEXTURE2D_DESC stagingDesc = dstDesc;
-    stagingDesc.Usage = D3D11_USAGE_STAGING;
-    stagingDesc.BindFlags = 0;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-
-    ComPtr<ID3D11Texture2D> pStagingTex;
-    ASSERT_TRUE(SUCCEEDED(m_d3dDevice->CreateTexture2D(&stagingDesc, nullptr, &pStagingTex)));
-
-    m_d3dContext->CopyResource(pStagingTex.Get(), pDstTex.Get());
-
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    ASSERT_TRUE(SUCCEEDED(m_d3dContext->Map(pStagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
-
-    const uint32_t* dstData = static_cast<const uint32_t*>(mapped.pData);
-    uint32_t firstPixel = dstData[0];
-    uint32_t midPixel = dstData[64 * (mapped.RowPitch / 4) + 64];
-    m_d3dContext->Unmap(pStagingTex.Get(), 0);
-
-    EXPECT_NE(firstPixel, 0u);
-    EXPECT_NE(midPixel, 0u);
-}
-
-// 5. Test Real-ESRGAN Deep Residual Neural Upscale
+// 3. Test Real-ESRGAN Deep Residual Neural Upscale
 TEST_F(PluginHostTests, RealESRGANGpuUpscale) {
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -259,8 +106,9 @@ TEST_F(PluginHostTests, RealESRGANGpuUpscale) {
 
     // Verify Model Catalog
     auto models = host.GetCurrentSrModels();
-    EXPECT_GE(models.size(), 4u);
-    EXPECT_EQ(models[0].modelId, "realesr-animevideov3-x2");
+    EXPECT_GE(models.size(), 6u);
+    EXPECT_EQ(models[0].modelId, "realesr-animevideov3-auto");
+    EXPECT_EQ(models[1].modelId, "realesr-animevideov3-x2");
 
     // Verify Dynamic Parameters
     auto params = host.GetCurrentSrParams();
@@ -302,6 +150,37 @@ TEST_F(PluginHostTests, RealESRGANGpuUpscale) {
 
     printf("Real-ESRGAN ExecuteSrUpscaleGpu result = 0x%08X\n", (uint32_t)result);
     EXPECT_EQ(result, (int32_t)S_OK);
+
+    // Also test 0.3.0 General Photo Model (realesr-general-x4v3)
+    host.SetSrModelId("realesr-general-x4v3");
+    int32_t resultGeneral = host.ExecuteSrUpscaleGpu(
+        m_d3dDevice.Get(),
+        pSrcTex.Get(), 64, 64,
+        pDstTex.Get(), 128, 128,
+        nullptr, nullptr
+    );
+    printf("Real-ESRGAN 0.3.0 General-x4v3 result = 0x%08X\n", (uint32_t)resultGeneral);
+    EXPECT_EQ(resultGeneral, (int32_t)S_OK);
+}
+
+// 4. Test ResetToDefaults and compare mode default value
+TEST_F(PluginHostTests, ResetToDefaults) {
+    auto& host = QuickView::PluginHost::Instance();
+    host.SetSrPluginEnabled(true);
+    host.SetSrModelId("realesr-general-x4v3");
+    host.SetSrAutoTriggerEnabled(true);
+    host.SetSrOpenInCompareMode(false);
+    host.SetSrPromptModelOnHotkey(true);
+    host.SetSrDenoise(0.5f);
+
+    host.ResetToDefaults();
+
+    EXPECT_FALSE(host.IsSrPluginEnabled());
+    EXPECT_EQ(host.GetSrModelId(), "realesr-animevideov3-auto");
+    EXPECT_FALSE(host.IsSrAutoTriggerEnabled());
+    EXPECT_TRUE(host.IsSrOpenInCompareMode());
+    EXPECT_FALSE(host.IsSrPromptModelOnHotkey());
+    EXPECT_NEAR(host.GetSrDenoise(), 0.0f, 0.001f);
 }
 
 

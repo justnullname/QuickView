@@ -22,11 +22,120 @@ void PluginHost::SetSrPluginPath(const std::wstring& path) {
     }
 }
 
+PluginInstallState PluginHost::GetSrPluginInstallState() const {
+    std::lock_guard<std::mutex> lock(m_srMutex);
+    std::wstring fullPath = m_srPluginPath;
+    if (fullPath.empty()) {
+        fullPath = L"plugins\\sr_realesrgan_d3d11.qvx";
+    }
+    if (PathIsRelativeW(fullPath.c_str())) {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        PathRemoveFileSpecW(exePath);
+        wchar_t combined[MAX_PATH];
+        PathCombineW(combined, exePath, fullPath.c_str());
+        fullPath = combined;
+    }
+
+    DWORD attrs = GetFileAttributesW(fullPath.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        return PluginInstallState::NotInstalled;
+    }
+
+    HMODULE hMod = LoadLibraryExW(fullPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!hMod) {
+        hMod = LoadLibraryW(fullPath.c_str());
+    }
+    if (!hMod) return PluginInstallState::NotInstalled;
+
+    auto pfnInit = reinterpret_cast<QVX_InitFn>(GetProcAddress(hMod, "qvx_init"));
+    if (!pfnInit) {
+        FreeLibrary(hMod);
+        return PluginInstallState::NotInstalled;
+    }
+
+    const QVX_PluginHeader* header = nullptr;
+    if (!pfnInit(&header) || !header || header->abi_version != QVX_ABI_VERSION) {
+        FreeLibrary(hMod);
+        return PluginInstallState::NotInstalled;
+    }
+
+    std::string installedVer = (header->version_str) ? header->version_str : "";
+    std::string pluginId = (header->plugin_id) ? header->plugin_id : "";
+    FreeLibrary(hMod);
+
+    // For official plugin, verify version consistency
+    if (pluginId == "com.quickview.sr.realesrgan" && installedVer != QVX_OFFICIAL_SR_PLUGIN_VERSION) {
+        return PluginInstallState::UpdateAvailable;
+    }
+    return PluginInstallState::Installed;
+}
+
+std::string PluginHost::GetInstalledPluginVersion() const {
+    std::lock_guard<std::mutex> lock(m_srMutex);
+    if (m_srHeader && m_srHeader->version_str) {
+        return m_srHeader->version_str;
+    }
+
+    std::wstring fullPath = m_srPluginPath;
+    if (PathIsRelativeW(fullPath.c_str())) {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        PathRemoveFileSpecW(exePath);
+        wchar_t combined[MAX_PATH];
+        PathCombineW(combined, exePath, fullPath.c_str());
+        fullPath = combined;
+    }
+
+    HMODULE hMod = LoadLibraryExW(fullPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!hMod) hMod = LoadLibraryW(fullPath.c_str());
+    if (!hMod) return "";
+
+    auto pfnInit = reinterpret_cast<QVX_InitFn>(GetProcAddress(hMod, "qvx_init"));
+    std::string ver;
+    if (pfnInit) {
+        const QVX_PluginHeader* header = nullptr;
+        if (pfnInit(&header) && header && header->version_str) {
+            ver = header->version_str;
+        }
+    }
+    FreeLibrary(hMod);
+    return ver;
+}
+
+void PluginHost::SetLanguage(const std::string& langCode) {
+    std::lock_guard<std::mutex> lock(m_srMutex);
+    m_currentLanguage = langCode;
+    if (m_srVTable && m_srVTable->set_language) {
+        m_srVTable->set_language(m_currentLanguage.c_str());
+    }
+}
+
+bool PluginHost::CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstring* outReason) const {
+    if (inW == 0 || inH == 0) {
+        if (outReason) *outReason = L"Invalid image dimensions";
+        return false;
+    }
+
+    uint64_t totalPixels = static_cast<uint64_t>(inW) * inH;
+    if (inW > MAX_SR_INPUT_DIMENSION || inH > MAX_SR_INPUT_DIMENSION || totalPixels > MAX_SR_INPUT_PIXELS) {
+        if (outReason) {
+            wchar_t buf[256];
+            swprintf_s(buf, L"图像分辨率过大 (%ux%u, 超过 1600 万像素)，已阻止全图超分以防止显存溢出", inW, inH);
+            *outReason = buf;
+        }
+        return false;
+    }
+    return true;
+}
+
 bool PluginHost::EnsureSrModuleLoaded() {
     if (m_hSrModule && m_srHeader && m_srVTable) {
         return true;
     }
-    if (m_srPluginPath.empty()) return false;
+    if (m_srPluginPath.empty()) {
+        m_srPluginPath = L"plugins\\sr_realesrgan_d3d11.qvx";
+    }
 
     // Resolve full path (if relative, anchor to executable directory)
     std::wstring fullPath = m_srPluginPath;
@@ -73,6 +182,11 @@ bool PluginHost::EnsureSrModuleLoaded() {
             m_srHeader = nullptr;
             m_srVTable = nullptr;
             return false;
+        }
+
+        // Apply active language to newly loaded plugin
+        if (m_srVTable->set_language) {
+            m_srVTable->set_language(m_currentLanguage.c_str());
         }
     }
     return true;
@@ -171,9 +285,11 @@ std::vector<SrModelEntry> PluginHost::GetCurrentSrModels() const {
         entry.fileSizeBytes = info->file_size_bytes;
         entry.downloadUrl = info->download_url ? info->download_url : "";
         entry.preferredTileSize = info->preferred_tile_size;
+        entry.defaultDebounceMs = info->default_debounce_ms > 0 ? info->default_debounce_ms : 150;
+        entry.defaultCompareMode = info->default_compare_mode;
 
-        // Verify local existence in plugins/models/ if download_url is present
-        if (!entry.downloadUrl.empty()) {
+        // If plugin didn't determine installation status, fallback to checking plugins/models/<modelId>.bin
+        if (!entry.isInstalled && !entry.downloadUrl.empty()) {
             std::string filename = entry.modelId + ".bin";
             std::wstring wideFilename(filename.begin(), filename.end());
             std::wstring modelFullPath = modelsDir + L"\\" + wideFilename;
@@ -195,6 +311,20 @@ float PluginHost::GetCurrentSrModelScale() const {
         }
     }
     return 2.0f;
+}
+
+std::wstring PluginHost::GetModelDisplayName(const std::string& modelId) const {
+    auto models = GetCurrentSrModels();
+    for (const auto& m : models) {
+        if (m.modelId == modelId) {
+            wchar_t wName[128] = { 0 };
+            MultiByteToWideChar(CP_UTF8, 0, m.displayName.c_str(), -1, wName, 128);
+            return wName;
+        }
+    }
+    wchar_t wFallback[128] = { 0 };
+    MultiByteToWideChar(CP_UTF8, 0, modelId.c_str(), -1, wFallback, 128);
+    return wFallback;
 }
 
 std::vector<SrParamEntry> PluginHost::GetCurrentSrParams() const {
@@ -246,24 +376,56 @@ std::vector<SrParamEntry> PluginHost::GetCurrentSrParams() const {
     return result;
 }
 
+void PluginHost::ResetToDefaults() {
+    std::lock_guard<std::mutex> lock(m_srMutex);
+    m_enableSrPlugin = false;
+    m_srPluginPath = L"plugins\\sr_realesrgan_d3d11.qvx";
+    m_srModelId = "realesr-animevideov3-auto";
+    m_srAutoTrigger = false;
+    m_srOpenInCompareMode = true;
+    m_srPromptModelOnHotkey = false;
+    m_srDenoise = 0.0f;
+    m_srDebounceDelayMs = 150;
+    m_dynamicParams.clear();
+
+    if (m_srVTable && m_srContext) {
+        m_srVTable->destroy_context(m_srContext);
+        m_srContext = nullptr;
+    }
+}
+
 void PluginHost::LoadConfig(const wchar_t* iniPath) {
     if (!iniPath || iniPath[0] == L'\0') return;
 
     std::lock_guard<std::mutex> lock(m_srMutex);
     m_cachedIniPath = iniPath;
 
-    // [SuperResolution]
     m_enableSrPlugin = (GetPrivateProfileIntW(L"SuperResolution", L"EnableSrPlugin", 0, iniPath) != 0);
 
     wchar_t pathBuf[MAX_PATH] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrPluginPath", L"plugins\\sr_anime4k_d3d11.qvx", pathBuf, MAX_PATH, iniPath);
+    GetPrivateProfileStringW(L"SuperResolution", L"SrPluginPath", L"plugins\\sr_realesrgan_d3d11.qvx", pathBuf, MAX_PATH, iniPath);
     m_srPluginPath = pathBuf;
+    if (m_srPluginPath.empty()) {
+        m_srPluginPath = L"plugins\\sr_realesrgan_d3d11.qvx";
+    }
 
     wchar_t modelBuf[128] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrModelId", L"", modelBuf, 128, iniPath);
+    GetPrivateProfileStringW(L"SuperResolution", L"SrModelId", L"realesr-animevideov3-auto", modelBuf, 128, iniPath);
     char modelIdUtf8[256] = { 0 };
     WideCharToMultiByte(CP_UTF8, 0, modelBuf, -1, modelIdUtf8, sizeof(modelIdUtf8), nullptr, nullptr);
     m_srModelId = modelIdUtf8;
+    if (m_srModelId.empty()) {
+        m_srModelId = "realesr-animevideov3-auto";
+    }
+
+    int autoTriggerVal = GetPrivateProfileIntW(L"SuperResolution", L"SrAutoTrigger", -1, iniPath);
+    if (autoTriggerVal == -1) {
+        m_srAutoTrigger = (GetPrivateProfileIntW(L"SuperResolution", L"SrTriggerMode", 0, iniPath) == 1);
+    } else {
+        m_srAutoTrigger = (autoTriggerVal != 0);
+    }
+    m_srOpenInCompareMode = (GetPrivateProfileIntW(L"SuperResolution", L"SrOpenInCompareMode", 1, iniPath) != 0);
+    m_srPromptModelOnHotkey = (GetPrivateProfileIntW(L"SuperResolution", L"SrPromptModelOnHotkey", 0, iniPath) != 0);
 
     auto setParamInternal = [this](const std::string& key, float val) {
         for (auto& kv : m_dynamicParams) {
@@ -275,21 +437,15 @@ void PluginHost::LoadConfig(const wchar_t* iniPath) {
         m_dynamicParams.push_back({ key, val });
     };
 
-    wchar_t sharpBuf[32] = { 0 };
-    GetPrivateProfileStringW(L"SuperResolution", L"SrSharpness", L"0.20", sharpBuf, 32, iniPath);
-    wchar_t* endPtr = nullptr;
-    float sharp = wcstof(sharpBuf, &endPtr);
-    m_srSharpness = (sharp >= 0.0f && sharp <= 1.0f) ? sharp : 0.20f;
-    setParamInternal("sharpness", m_srSharpness);
-
     wchar_t denoiseBuf[32] = { 0 };
     GetPrivateProfileStringW(L"SuperResolution", L"SrDenoise", L"0.00", denoiseBuf, 32, iniPath);
+    wchar_t* endPtr = nullptr;
     float denoise = wcstof(denoiseBuf, &endPtr);
     m_srDenoise = (denoise >= 0.0f && denoise <= 1.0f) ? denoise : 0.00f;
     setParamInternal("denoise", m_srDenoise);
 
-    int debounce = GetPrivateProfileIntW(L"SuperResolution", L"SrDebounceDelayMs", 150, iniPath);
-    m_srDebounceDelayMs = (debounce >= 0 && debounce <= 5000) ? debounce : 150;
+    int debounce = GetPrivateProfileIntW(L"SuperResolution", L"SrDebounceDelayMs", 3000, iniPath);
+    m_srDebounceDelayMs = (debounce >= 0 && debounce <= 5000) ? debounce : 3000;
 }
 
 void PluginHost::SaveConfig(const wchar_t* iniPath) const {
@@ -304,10 +460,11 @@ void PluginHost::SaveConfig(const wchar_t* iniPath) const {
     MultiByteToWideChar(CP_UTF8, 0, m_srModelId.c_str(), -1, modelWide, 128);
     WritePrivateProfileStringW(L"SuperResolution", L"SrModelId", modelWide, iniPath);
 
-    wchar_t numBuf[32];
-    swprintf_s(numBuf, L"%.2f", m_srSharpness);
-    WritePrivateProfileStringW(L"SuperResolution", L"SrSharpness", numBuf, iniPath);
+    WritePrivateProfileStringW(L"SuperResolution", L"SrAutoTrigger", m_srAutoTrigger ? L"1" : L"0", iniPath);
+    WritePrivateProfileStringW(L"SuperResolution", L"SrOpenInCompareMode", m_srOpenInCompareMode ? L"1" : L"0", iniPath);
+    WritePrivateProfileStringW(L"SuperResolution", L"SrPromptModelOnHotkey", m_srPromptModelOnHotkey ? L"1" : L"0", iniPath);
 
+    wchar_t numBuf[32];
     swprintf_s(numBuf, L"%.2f", m_srDenoise);
     WritePrivateProfileStringW(L"SuperResolution", L"SrDenoise", numBuf, iniPath);
 
@@ -451,7 +608,6 @@ int32_t PluginHost::ExecuteSrUpscaleGpu(
     params.out_height = outHeight;
     params.check_cancel = checkCancel;
     params.cancel_user_data = cancelUserData;
-    params.sharpness = m_srSharpness;
     params.denoise = m_srDenoise;
 
     LARGE_INTEGER freq, t0, t1;
@@ -465,10 +621,10 @@ int32_t PluginHost::ExecuteSrUpscaleGpu(
     m_lastDurationMs = (freq.QuadPart > 0) ? (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart : 0.0;
 
     char logBuf[256];
-    sprintf_s(logBuf, "[QVX-SR] Upscale %ux%u -> %ux%u with %s (Sharpness=%.2f, Denoise=%.2f) took %.2f ms (ret=0x%08X)\n",
+    sprintf_s(logBuf, "[QVX-SR] Upscale %ux%u -> %ux%u with %s (Denoise=%.2f) took %.2f ms (ret=0x%08X)\n",
               inWidth, inHeight, outWidth, outHeight,
               m_srHeader && m_srHeader->plugin_name ? m_srHeader->plugin_name : "Anime4K",
-              m_srSharpness, m_srDenoise, m_lastDurationMs, result);
+              m_srDenoise, m_lastDurationMs, result);
     m_lastLog = logBuf;
     OutputDebugStringA(logBuf);
 
@@ -691,8 +847,12 @@ static bool WinHttpDownloadFile(
     return false;
 }
 
-bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl) {
-    std::wstring destDir = L"plugins";
+bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl, DownloadProgressCallback onProgress, void* userData) {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    PathRemoveFileSpecW(exePath);
+
+    std::wstring destDir = std::wstring(exePath) + L"\\plugins";
     CreateDirectoryW(destDir.c_str(), nullptr);
 
     std::wstring targetPath = destDir + L"\\" + pluginName;
@@ -704,11 +864,12 @@ bool PluginHost::DownloadPlugin(const std::wstring& pluginName, const std::strin
         url = std::string("https://github.com/justnullname/QuickView/releases/latest/download/") + nameBuf;
     }
 
-    bool ok = WinHttpDownloadFile(url, targetPath);
+    bool ok = WinHttpDownloadFile(url, targetPath, onProgress, userData);
     if (ok) {
         std::lock_guard<std::mutex> lock(m_srMutex);
         m_srPluginPath = targetPath;
         UnloadSrPlugin();
+        EnsureSrModuleLoaded();
     }
     return ok;
 }
@@ -757,6 +918,15 @@ bool PluginHost::DownloadModel(
     } else {
         std::wstring targetFullPath = fullModelsDir + L"\\" + targetRelativePath;
         ok = WinHttpDownloadFile(downloadUrl, targetFullPath, onProgress, userData);
+        if (ok && targetRelativePath.length() >= 4 && targetRelativePath.ends_with(L".bin")) {
+            // Automatically download the matching .param companion file
+            std::wstring paramRelativePath = targetRelativePath.substr(0, targetRelativePath.length() - 4) + L".param";
+            std::wstring paramFullPath = fullModelsDir + L"\\" + paramRelativePath;
+            if (downloadUrl.length() >= 4 && downloadUrl.ends_with(".bin")) {
+                std::string paramUrl = downloadUrl.substr(0, downloadUrl.length() - 4) + ".param";
+                WinHttpDownloadFile(paramUrl, paramFullPath, nullptr, nullptr);
+            }
+        }
     }
 
     if (ok) {

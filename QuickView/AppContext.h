@@ -9,7 +9,7 @@
 #include "PaneTypes.h"
 
 // --- Dialog Definitions ---
-enum class DialogResult { None, Yes, No, Cancel, Custom1, Custom2 };
+enum class DialogResult { None, Yes, No, Cancel, Custom1, Custom2, Custom3, Custom4, Custom5, Custom6, Custom7, Custom8, Custom9, Custom10 };
 
 struct DialogButton {
     DialogResult Result;
@@ -25,7 +25,11 @@ struct DialogButton {
 struct DialogLayout {
     D2D1_RECT_F Box;
     D2D1_RECT_F Checkbox;
+    D2D1_RECT_F Checkbox2;
     D2D1_RECT_F Input; 
+    D2D1_RECT_F Choice;
+    D2D1_RECT_F ChoicePopup;
+    std::vector<D2D1_RECT_F> ChoiceItemRects;
     std::vector<D2D1_RECT_F> Buttons;
 };
 
@@ -40,6 +44,10 @@ struct DialogState {
     bool HasCheckbox = false;
     std::wstring CheckboxText;
     bool IsChecked = false;
+
+    bool HasCheckbox2 = false;
+    std::wstring Checkbox2Text;
+    bool IsChecked2 = false;
     
     // [Input Mode]
     bool HasInput = false;
@@ -48,6 +56,14 @@ struct DialogState {
     HWND hInputHost = nullptr; 
     WNDPROC oldEditProc = nullptr;
     HFONT hFont = nullptr;
+
+    // [Choice / ComboBox Mode]
+    bool HasChoice = false;
+    std::vector<std::wstring> ChoiceOptions;
+    int SelectedChoiceIndex = 0;
+    bool IsChoiceDropdownOpen = false;
+    int HoverChoiceIndex = -1;
+    bool IsChoiceHovered = false;
 
     DialogResult FinalResult = DialogResult::None;
     bool UseCustomCenter = false;

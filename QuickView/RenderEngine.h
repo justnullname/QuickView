@@ -137,6 +137,12 @@ public:
     HRESULT CreateBitmapFromD3DTexture(ID3D11Texture2D* pTexture, bool hasAlpha, ID2D1Bitmap** outBitmap);
 
     /// <summary>
+    /// Extract GPU bitmap/texture pixels back to CPU memory (RawImageFrame).
+    /// </summary>
+    HRESULT ExtractBitmapPixels(ID2D1Bitmap* pBitmap, QuickView::RawImageFrame* outFrame);
+    HRESULT ExtractTexturePixels(ID3D11Texture2D* pTexture, QuickView::RawImageFrame* outFrame);
+
+    /// <summary>
     /// Estimate the peak luminance of a floating point frame (scRGB) using SIMD.
     /// </summary>
     float EstimateFramePeakScRgb(const QuickView::RawImageFrame& frame);
@@ -220,4 +226,10 @@ private:
     ComPtr<IWICImagingFactory> m_wicFactory;
     
     std::unique_ptr<QuickView::ComputeEngine> m_computeEngine;
+
+    // GPU Context synchronization mutex across UI thread and background AI worker threads
+    mutable std::recursive_mutex m_gpuContextMutex;
+
+public:
+    std::recursive_mutex& GetGpuContextMutex() const noexcept { return m_gpuContextMutex; }
 };

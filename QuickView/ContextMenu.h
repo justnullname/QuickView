@@ -55,8 +55,9 @@ enum ContextMenuCommand : UINT {
     IDM_GALLERY_DELETE,
 
 
-    // [Transform] Group
+    // [Transform & AI] Group
     IDM_ENTER_CROP_MODE,
+    IDM_SUPER_RESOLUTION,
     IDM_ROTATE_CW,
     IDM_ROTATE_CCW,
     IDM_FLIP_H,

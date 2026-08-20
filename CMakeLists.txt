@@ -379,26 +379,6 @@ target_link_libraries(QuickView PRIVATE
 # ============================================================================
 # Super-Resolution Plugins (QVX)
 # ============================================================================
-add_library(sr_sample_d3d11 SHARED plugins/sr_sample_d3d11.cpp)
-set_target_properties(sr_sample_d3d11 PROPERTIES
-    SUFFIX ".qvx"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins"
-)
-target_include_directories(sr_sample_d3d11 PRIVATE QuickView)
-target_link_libraries(sr_sample_d3d11 PRIVATE d3d11.lib d3dcompiler.lib dxgi.lib)
-
-add_library(sr_anime4k_d3d11 SHARED plugins/sr_anime4k_d3d11.cpp)
-set_target_properties(sr_anime4k_d3d11 PROPERTIES
-    SUFFIX ".qvx"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/plugins"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/plugins"
-)
-target_include_directories(sr_anime4k_d3d11 PRIVATE QuickView)
-target_link_libraries(sr_anime4k_d3d11 PRIVATE d3d11.lib d3dcompiler.lib dxgi.lib)
-
 add_library(sr_realesrgan_d3d11 SHARED plugins/sr_realesrgan_d3d11.cpp)
 set_target_properties(sr_realesrgan_d3d11 PROPERTIES
     SUFFIX ".qvx"
@@ -467,7 +447,7 @@ target_link_libraries(QuickViewTests PRIVATE
 )
 target_include_directories(QuickViewTests PRIVATE QuickView third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
-add_dependencies(QuickViewTests sr_sample_d3d11 sr_anime4k_d3d11)
+add_dependencies(QuickViewTests sr_realesrgan_d3d11)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)
 
 # ============================================================================

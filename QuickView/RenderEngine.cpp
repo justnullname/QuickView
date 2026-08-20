@@ -3050,6 +3050,8 @@ HRESULT CRenderEngine::GenerateSuperResolutionTexture(
   if (!outTexture) return E_POINTER;
   *outTexture = nullptr;
 
+  std::lock_guard<std::recursive_mutex> lock(m_gpuContextMutex);
+
   if (!m_computeEngine || !m_computeEngine->IsAvailable() || !frame.pixels ||
       frame.width == 0 || frame.height == 0) {
     return E_FAIL;
@@ -3064,11 +3066,12 @@ HRESULT CRenderEngine::GenerateSuperResolutionTexture(
   float modelScale = QuickView::PluginHost::Instance().GetCurrentSrModelScale();
   uint32_t scaleMultiplier = (modelScale >= 3.0f) ? 4 : 2;
   if (targetScale >= 3.5f) scaleMultiplier = 4;
+  else if (targetScale >= 2.5f) scaleMultiplier = 3;
   uint32_t targetW = (uint32_t)frame.width * scaleMultiplier;
   uint32_t targetH = (uint32_t)frame.height * scaleMultiplier;
 
   ComPtr<ID3D11Texture2D> pSrTex;
-  float sharpness = QuickView::PluginHost::Instance().GetSrSharpness();
+  float sharpness = g_config.FsrSharpness;
 
   hr = m_computeEngine->ExecuteSuperResolution(
       pSrcTex.Get(), (uint32_t)frame.width, (uint32_t)frame.height,
@@ -3086,6 +3089,8 @@ HRESULT CRenderEngine::CreateBitmapFromD3DTexture(
   if (!outBitmap) return E_POINTER;
   *outBitmap = nullptr;
   if (!pTexture || !m_d2dContext) return E_INVALIDARG;
+
+  std::lock_guard<std::recursive_mutex> lock(m_gpuContextMutex);
 
   ComPtr<IDXGISurface> dxgiSurface;
   HRESULT hr = pTexture->QueryInterface(IID_PPV_ARGS(&dxgiSurface));
@@ -3129,4 +3134,65 @@ HRESULT CRenderEngine::GenerateSuperResolutionBitmap(
 
   bool hasAlpha = (frame.format != QuickView::PixelFormat::BGRX8888);
   return CreateBitmapFromD3DTexture(pSrTex.Get(), hasAlpha, outBitmap);
+}
+
+HRESULT CRenderEngine::ExtractTexturePixels(ID3D11Texture2D* pTexture, QuickView::RawImageFrame* outFrame) {
+    if (!pTexture || !outFrame) return E_INVALIDARG;
+    if (!m_d3dDevice || !m_d3dContext) return E_FAIL;
+
+    std::lock_guard<std::recursive_mutex> lock(m_gpuContextMutex);
+
+    D3D11_TEXTURE2D_DESC desc;
+    pTexture->GetDesc(&desc);
+
+    D3D11_TEXTURE2D_DESC stagingDesc = desc;
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.BindFlags = 0;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    stagingDesc.MiscFlags = 0;
+
+    ComPtr<ID3D11Texture2D> stagingTex;
+    HRESULT hr = m_d3dDevice->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
+    if (FAILED(hr) || !stagingTex) return hr;
+
+    m_d3dContext->CopyResource(stagingTex.Get(), pTexture);
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    hr = m_d3dContext->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) return hr;
+
+    outFrame->width = static_cast<int>(desc.Width);
+    outFrame->height = static_cast<int>(desc.Height);
+    outFrame->stride = static_cast<int>(desc.Width * 4);
+    outFrame->format = (desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) 
+                       ? QuickView::PixelFormat::RGBA8888 
+                       : QuickView::PixelFormat::BGRA8888;
+    outFrame->pixels = new uint8_t[static_cast<size_t>(outFrame->stride) * outFrame->height];
+    outFrame->memoryDeleter = QuickView::MemoryDeleter::FromDeleteArray();
+
+    const uint8_t* pSrc = static_cast<const uint8_t*>(mapped.pData);
+    uint8_t* pDst = outFrame->pixels;
+    for (UINT row = 0; row < desc.Height; ++row) {
+        memcpy(pDst + static_cast<size_t>(row) * outFrame->stride, pSrc + static_cast<size_t>(row) * mapped.RowPitch, outFrame->stride);
+    }
+
+    m_d3dContext->Unmap(stagingTex.Get(), 0);
+    return S_OK;
+}
+
+HRESULT CRenderEngine::ExtractBitmapPixels(ID2D1Bitmap* pBitmap, QuickView::RawImageFrame* outFrame) {
+    if (!pBitmap || !outFrame) return E_INVALIDARG;
+    if (!m_d3dDevice || !m_d3dContext) return E_FAIL;
+
+    std::lock_guard<std::recursive_mutex> lock(m_gpuContextMutex);
+
+    ComPtr<IDXGISurface> dxgiSurface;
+    HRESULT hr = pBitmap->QueryInterface(IID_PPV_ARGS(&dxgiSurface));
+    if (SUCCEEDED(hr) && dxgiSurface) {
+        ComPtr<ID3D11Texture2D> srcTexture;
+        if (SUCCEEDED(dxgiSurface.As(&srcTexture)) && srcTexture) {
+            return ExtractTexturePixels(srcTexture.Get(), outFrame);
+        }
+    }
+    return E_FAIL;
 }

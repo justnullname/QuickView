@@ -23,6 +23,12 @@
 
 namespace QuickView {
 
+enum class PluginInstallState {
+    NotInstalled,    // Plugin binary not found in plugins/ directory
+    UpdateAvailable, // Installed but version does not match host's target version
+    Installed        // Installed and up-to-date
+};
+
 struct PluginCandidate {
     std::wstring filePath;
     std::string pluginId;
@@ -42,6 +48,8 @@ struct SrModelEntry {
     uint64_t fileSizeBytes = 0;
     std::string downloadUrl;
     uint32_t preferredTileSize = 0;
+    uint32_t defaultDebounceMs = 150;
+    bool defaultCompareMode = false;
 };
 
 struct SrParamEntry {
@@ -60,6 +68,11 @@ public:
     void LoadConfig(const wchar_t* iniPath);
     void SaveConfig(const wchar_t* iniPath) const;
 
+    // --- Plugin Lifecycle & Version State ---
+    PluginInstallState GetSrPluginInstallState() const;
+    std::string GetInstalledPluginVersion() const;
+    std::string GetTargetPluginVersion() const { return QVX_OFFICIAL_SR_PLUGIN_VERSION; }
+
     // --- Super-Resolution Plugin Control ---
     bool IsSrPluginEnabled() const noexcept { return m_enableSrPlugin; }
     void SetSrPluginEnabled(bool enable) noexcept { m_enableSrPlugin = enable; }
@@ -70,18 +83,34 @@ public:
     const std::string& GetSrModelId() const noexcept { return m_srModelId; }
     void SetSrModelId(const std::string& modelId);
 
+    bool IsSrAutoTriggerEnabled() const noexcept { return m_srAutoTrigger; }
+    void SetSrAutoTriggerEnabled(bool enable) noexcept { m_srAutoTrigger = enable; }
+
+    bool IsSrOpenInCompareMode() const noexcept { return m_srOpenInCompareMode; }
+    void SetSrOpenInCompareMode(bool enable) noexcept { m_srOpenInCompareMode = enable; }
+
+    bool IsSrPromptModelOnHotkey() const noexcept { return m_srPromptModelOnHotkey; }
+    void SetSrPromptModelOnHotkey(bool prompt) noexcept { m_srPromptModelOnHotkey = prompt; }
+
     int GetSrDebounceDelayMs() const noexcept { return m_srDebounceDelayMs; }
     void SetSrDebounceDelayMs(int delayMs) noexcept { m_srDebounceDelayMs = delayMs; }
+
+    // Multi-Language localization propagation to active plugin
+    void SetLanguage(const std::string& langCode);
+
+    // Reset all plugin host settings to defaults
+    void ResetToDefaults();
+
+    // VRAM Safety Guard: Check if input image dimensions are safe for AI Super-Resolution
+    static constexpr uint32_t MAX_SR_INPUT_DIMENSION = 4096;
+    static constexpr uint64_t MAX_SR_INPUT_PIXELS = 16777216; // 16 MegaPixels
+    bool CanExecuteSrOnDimensions(uint32_t inW, uint32_t inH, std::wstring* outReason = nullptr) const;
 
     // --- Dynamic Parameter Manifest API ---
     // Returns the active plugin's exported parameters (reflects QVX_ParamDesc)
     std::vector<SrParamEntry> GetCurrentSrParams() const;
     float GetParamValue(const std::string& paramId, float defaultVal = 0.0f) const;
     void SetParamValue(const std::string& paramId, float val);
-
-    // Legacy parameter accessors for backward compatibility
-    float GetSrSharpness() const noexcept { return GetParamValue("sharpness", m_srSharpness); }
-    void SetSrSharpness(float val) noexcept { m_srSharpness = val; SetParamValue("sharpness", val); }
 
     float GetSrDenoise() const noexcept { return GetParamValue("denoise", m_srDenoise); }
     void SetSrDenoise(float val) noexcept { m_srDenoise = val; SetParamValue("denoise", val); }
@@ -90,11 +119,12 @@ public:
     // Returns all supported models declared by the active SR plugin
     std::vector<SrModelEntry> GetCurrentSrModels() const;
     float GetCurrentSrModelScale() const;
+    std::wstring GetModelDisplayName(const std::string& modelId) const;
 
     using DownloadProgressCallback = void (*)(float progress, bool finished, bool success, void* userData);
 
     // Download / update plugin or model asset into plugins/ directory
-    bool DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl = "");
+    bool DownloadPlugin(const std::wstring& pluginName, const std::string& downloadUrl = "", DownloadProgressCallback onProgress = nullptr, void* userData = nullptr);
     bool DownloadModel(const std::wstring& targetRelativePath, const std::string& downloadUrl, DownloadProgressCallback onProgress = nullptr, void* userData = nullptr);
     void OpenModelsDirectory() const;
 
@@ -147,11 +177,14 @@ private:
 
     // Config settings
     bool m_enableSrPlugin = false;
-    std::wstring m_srPluginPath = L"plugins\\sr_anime4k_d3d11.qvx";
-    std::string m_srModelId;
-    float m_srSharpness = 0.20f;
+    std::wstring m_srPluginPath = L"plugins\\sr_realesrgan_d3d11.qvx";
+    std::string m_srModelId = "realesr-animevideov3-auto";
+    bool m_srAutoTrigger = false;
+    bool m_srOpenInCompareMode = true;
+    bool m_srPromptModelOnHotkey = false;
     float m_srDenoise = 0.00f;
     int m_srDebounceDelayMs = 150;
+    std::string m_currentLanguage = "zh-CN";
 
     // Dynamic Parameter storage: key -> value
     std::vector<std::pair<std::string, float>> m_dynamicParams;

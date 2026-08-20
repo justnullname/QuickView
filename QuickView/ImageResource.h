@@ -43,6 +43,7 @@ struct ImageResource {
     float currentSrLevel = 1.0f;   // [QVX-SR] Cached SR level (1.0f, 2.0f, 4.0f)
     ComPtr<ID2D1Bitmap> baseNormalBitmap; // [QVX-SR] Original 1.0x native frame bitmap
     ComPtr<ID2D1Bitmap> promotedSrBitmap; // [QVX-SR] Cached full-frame promoted SR bitmap (2x or 4x)
+    ComPtr<ID3D11Texture2D> promotedSrTexture; // [QVX-SR] Cached raw D3D11 promoted SR texture for export/processing
     float promotedSrScale = 1.0f;          // [QVX-SR] Scale factor of promotedSrBitmap
     std::string promotedModelId;           // [QVX-SR] Model ID used to generate promotedSrBitmap
     std::wstring webviewHtml;      // [DComp] Pre-built HTML for WebView2 navigation
@@ -58,6 +59,7 @@ struct ImageResource {
         bitmap.Reset();
         baseNormalBitmap.Reset();
         promotedSrBitmap.Reset();
+        promotedSrTexture.Reset();
         promotedSrScale = 1.0f;
         promotedModelId.clear();
         svgDoc.Reset();
@@ -87,6 +89,7 @@ struct ImageResource {
         cloned.bitmap = bitmap;
         cloned.baseNormalBitmap = baseNormalBitmap;
         cloned.promotedSrBitmap = promotedSrBitmap;
+        cloned.promotedSrTexture = promotedSrTexture;
         cloned.promotedSrScale = promotedSrScale;
         cloned.promotedModelId = promotedModelId;
         cloned.svgDoc = svgDoc;

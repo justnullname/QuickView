@@ -4,6 +4,7 @@
 #include "ImageExporter.h"
 #include "UIRenderer.h"
 #include "AppContext.h"
+#include "CompareController.h"
 #include "CompositionEngine.h"
 #include "EditState.h"
 #include "HeavyLanePool.h"
@@ -35,6 +36,7 @@ extern void ReloadCurrentImage(HWND hwnd);
 extern void ReleaseImageResources();
 extern HCURSOR g_currentCursor;
 extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
+extern CRenderEngine* g_pRenderEngine;
 
 namespace {
 inline float MeasureStringWidth(const wchar_t* text, float fontSize) {
@@ -47,6 +49,7 @@ inline float MeasureStringWidth(const wchar_t* text, float fontSize) {
 }
 }
 extern bool IsImageModified();
+extern bool IsCompareModeActive();
 extern std::vector<std::wstring>& GetSystemIccProfiles();
 
 namespace QuickView {
@@ -71,10 +74,13 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     float contentW = panelWidth - padX * 2.0f;
 
     // Dynamic panel height computation:
-    // TopPadding (20) + Title (26) + Gap (12) + WH (28) + Gap (12) + Format (28) + [Lossless/Quality (36)] + ICC (24) + Gap (16) + Buttons (36) + BottomPadding (18)
+    // TopPadding (20) + Title (26) + Gap (12) + WH (28) + Gap (12) + Format (28) + [Lossless/Quality (36)] + [SR Checkbox (32)] + ICC (24) + Gap (16) + Buttons (36) + BottomPadding (18)
     float baseHeight = 232.0f * s;
     if (showLossless || showQuality) {
         baseHeight += 36.0f * s;
+    }
+    if (m_hasSrBitmap) {
+        baseHeight += 32.0f * s;
     }
 
     float panelHeight = baseHeight;
@@ -131,6 +137,15 @@ PanelLayout ExportPanel::ComputeLayout(float canvasWidth, float canvasHeight) co
     } else {
         l.showLosslessCheckbox = false;
         l.showQualitySlider = false;
+    }
+
+    // 3.5 Super-Resolution Checkbox (Conditional)
+    if (m_hasSrBitmap) {
+        curY += 32.0f * s;
+        l.showSrCheckbox = true;
+        l.srCheckboxRect = D2D1::RectF(startX + padX, curY + 2.0f * s, startX + panelWidth - padX, curY + 26.0f * s);
+    } else {
+        l.showSrCheckbox = false;
     }
 
     // 4. Preserve EXIF Checkbox & Embed ICC Checkbox & Dropdown & Size Label (Multi-language Dynamic Flow Layout)
@@ -233,6 +248,21 @@ void ExportPanel::Show(HWND hwnd, int initialWidth, int initialHeight, const std
     m_focusedState = HoverState::None;
     m_inputStarted = false;
     m_lockAspectRatio = true;
+
+    // Check if current viewport has active super-resolution bitmap
+    auto& primaryPane = GetPaneContext(PaneSlot::Primary);
+    m_hasSrBitmap = (primaryPane.resource.promotedSrBitmap != nullptr || primaryPane.resource.currentSrLevel > 1.0f);
+    if (m_hasSrBitmap) {
+        m_exportSr = true;
+        m_isModified = true; // [QVX-SR] Super-resolution content can overwrite original or be saved as new
+        m_srScale = (primaryPane.resource.srScale > 1.0f) ? primaryPane.resource.srScale : primaryPane.resource.currentSrLevel;
+        if (m_srScale < 2.0f) m_srScale = 2.0f;
+        m_targetWidth = (int)std::round(m_cropWidth * m_srScale);
+        m_targetHeight = (int)std::round(m_cropHeight * m_srScale);
+    } else {
+        m_exportSr = false;
+        m_srScale = 1.0f;
+    }
     
     // Expand window if needed to accommodate ExportPanel
     if (m_hwnd) {
@@ -477,7 +507,8 @@ void ExportPanel::Hide() {
 bool ExportPanel::CanOverwriteOriginal() const {
     if (m_originalPath.empty()) return false;
     
-    if (!m_isModified) return false;
+    bool hasModifications = m_isModified || (m_exportSr && m_hasSrBitmap);
+    if (!hasModifications) return false;
     
     DWORD attr = GetFileAttributesW(m_originalPath.c_str());
     if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_READONLY)) return false;
@@ -521,6 +552,13 @@ void ExportPanel::TriggerAsyncEstimate() {
     opts.Lossless = m_isLossless;
     opts.PreserveMetadata = m_preserveMetadata;
     CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
+
+    if (m_exportSr && m_hasSrBitmap) {
+        opts.CropX = 0;
+        opts.CropY = 0;
+        opts.CropWidth = 0;
+        opts.CropHeight = 0;
+    }
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -691,6 +729,21 @@ bool ExportPanel::OnLButtonDown(float x, float y) {
             m_focusedState = HoverState::None;
             m_formatDropdownOpen = false;
             m_iccDropdownOpen = false;
+        } else if (layout.showSrCheckbox && (m_focusedState == HoverState::SrCheckbox || hit(layout.srCheckboxRect))) {
+            m_exportSr = !m_exportSr;
+            if (m_exportSr) {
+                m_targetWidth = (int)std::round(m_cropWidth * m_srScale);
+                m_targetHeight = (int)std::round(m_cropHeight * m_srScale);
+                m_isModified = true;
+            } else {
+                m_targetWidth = m_cropWidth;
+                m_targetHeight = m_cropHeight;
+                m_isModified = IsImageModified();
+            }
+            TriggerAsyncEstimate();
+            m_focusedState = HoverState::None;
+            m_formatDropdownOpen = false;
+            m_iccDropdownOpen = false;
         } else if (m_focusedState == HoverState::PreserveMetadataCheckbox) {
             m_preserveMetadata = !m_preserveMetadata;
             TriggerAsyncEstimate();
@@ -828,6 +881,7 @@ bool ExportPanel::OnMouseMove(float x, float y) {
         else if (hit(layout.lockRect)) newState = HoverState::LockBtn;
         else if (hit(layout.formatDropdownRect)) newState = HoverState::FormatDropdownBtn;
         else if (layout.showLosslessCheckbox && hit(layout.losslessCheckboxRect)) newState = HoverState::LosslessCheckbox;
+        else if (layout.showSrCheckbox && hit(layout.srCheckboxRect)) newState = HoverState::SrCheckbox;
         else if (layout.showQualitySlider && hit(layout.qualityRect)) {
             newState = HoverState::QualitySlider;
             qualitySubPart = QuickView::UI::GeekWidgets::HitTestSliderPill(layout.qualityRect, x, y, m_uiScale);
@@ -994,6 +1048,25 @@ void ExportPanel::CommitSave(bool overwrite) {
   ++m_estimateGeneration; // Cancel any running background estimate so real save
                           // gets 100% CPU & IO
 
+  // [QVX-SR] Extract SR pixels BEFORE ReleaseImageResources() destroys
+  // promotedSrTexture/promotedSrBitmap via resource.Reset().
+  std::shared_ptr<RawImageFrame> capturedSrFrame;
+  if (m_exportSr && m_hasSrBitmap) {
+      auto& srPane = GetPaneContext(PaneSlot::Primary);
+      capturedSrFrame = std::make_shared<RawImageFrame>();
+      HRESULT hrExtract = E_FAIL;
+      if (g_pRenderEngine) {
+          if (srPane.resource.promotedSrTexture) {
+              hrExtract = g_pRenderEngine->ExtractTexturePixels(srPane.resource.promotedSrTexture.Get(), capturedSrFrame.get());
+          } else if (srPane.resource.promotedSrBitmap) {
+              hrExtract = g_pRenderEngine->ExtractBitmapPixels(srPane.resource.promotedSrBitmap.Get(), capturedSrFrame.get());
+          }
+      }
+      if (FAILED(hrExtract)) {
+          capturedSrFrame.reset(); // Extraction failed; fall back to normal path
+      }
+  }
+
   // Release image locks and clear engine caches BEFORE export thread runs
   ::ReleaseImageResources();
   if (g_imageEngine && !m_originalPath.empty()) {
@@ -1026,6 +1099,27 @@ void ExportPanel::CommitSave(bool overwrite) {
     opts.Lossless = m_isLossless;
     opts.PreserveMetadata = m_preserveMetadata;
     CalculateNetTransform(opts.Rotation, opts.FlipH, opts.FlipV);
+
+    // Apply captured SR frame (extracted before resource release)
+    if (capturedSrFrame && capturedSrFrame->pixels && capturedSrFrame->width > 0) {
+        opts.SourceFrame = capturedSrFrame;
+        // SR SourceFrame already contains full-resolution upscaled pixels.
+        // Neutralize crop and target to SourceFrame dimensions so the WIC
+        // pipeline uses the pixels as-is without re-cropping or re-scaling.
+        opts.CropX = 0;
+        opts.CropY = 0;
+        opts.CropWidth = capturedSrFrame->width;
+        opts.CropHeight = capturedSrFrame->height;
+        int expectedSrW = (int)std::round(m_cropWidth * m_srScale);
+        int expectedSrH = (int)std::round(m_cropHeight * m_srScale);
+        if (m_targetWidth == expectedSrW && m_targetHeight == expectedSrH) {
+            opts.TargetWidth = capturedSrFrame->width;
+            opts.TargetHeight = capturedSrFrame->height;
+        } else {
+            opts.TargetWidth = m_targetWidth;
+            opts.TargetHeight = m_targetHeight;
+        }
+    }
 
     if (m_embedIcc && m_selectedIccIndex >= 0 && m_selectedIccIndex < (int)m_iccProfiles.size()) {
         const auto& item = m_iccProfiles[m_selectedIccIndex];
@@ -1154,6 +1248,29 @@ void ExportPanel::OnExportDone(bool success, const std::wstring &errorMsg,
       g_imageEngine->InvalidateCache(savePath);
     }
     primaryPane.editState.HasCrop = false;
+
+    bool isOverwrite = (!m_originalPath.empty() && _wcsicmp(savePath.c_str(), m_originalPath.c_str()) == 0);
+
+    if (IsCompareModeActive()) {
+        if (isOverwrite) {
+            // Overwriting the original replaces the file -> exit compare mode to view single image
+            if (AppContext::GetInstance().CompareCtrl) {
+                AppContext::GetInstance().CompareCtrl->ExitMode(m_hwnd);
+            }
+        } else {
+            // Save As creates a new file -> KEEP compare mode active (Left = original, Right = new SR image)
+            GetPaneContext(PaneSlot::Left).view.Zoom = 1.0f;
+            GetPaneContext(PaneSlot::Left).view.PanX = 0.0f;
+            GetPaneContext(PaneSlot::Left).view.PanY = 0.0f;
+            primaryPane.view.Zoom = 1.0f;
+            primaryPane.view.PanX = 0.0f;
+            primaryPane.view.PanY = 0.0f;
+            if (AppContext::GetInstance().CompareCtrl) {
+                AppContext::GetInstance().CompareCtrl->MarkDirty();
+            }
+        }
+    }
+
     if (!savePath.empty()) {
       primaryPane.path = savePath;
       ::ReloadCurrentImage(m_hwnd);
@@ -1318,6 +1435,11 @@ void ExportPanel::Render(ID2D1DeviceContext* dc, float width, float height, IDWr
     // 6.5 Quality Slider (Conditional)
     if (layout.showQualitySlider) {
         DrawQualitySlider(dc, layout.qualityRect, layout.qualityTrackRect, textFormat);
+    }
+
+    // 6.8 Super-Resolution Checkbox (Conditional)
+    if (layout.showSrCheckbox) {
+        DrawCheckbox(dc, layout.srCheckboxRect, AppStrings::Export_Checkbox_SuperResolution, m_exportSr, HoverState::SrCheckbox, textFormat);
     }
 
     // 7. Preserve EXIF Checkbox & Embed ICC Checkbox & ICC Dropdown & Size

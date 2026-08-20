@@ -210,6 +210,29 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         }
     }
 
+    // ComboBox (Choice Mode)
+    if (m_context.Dialog.HasChoice && !m_context.Dialog.ChoiceOptions.empty()) {
+        QuickView::UI::WidgetPalette comboPal = {};
+        comboPal.accent = m_context.Dialog.AccentColor;
+        if (comboPal.accent.a <= 0.01f) comboPal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        comboPal.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
+        comboPal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f);
+        comboPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+        comboPal.textDim = isLight ? D2D1::ColorF(0.35f, 0.35f, 0.4f, 1.0f) : D2D1::ColorF(0.75f, 0.75f, 0.8f, 1.0f);
+        comboPal.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+
+        int selIdx = m_context.Dialog.SelectedChoiceIndex;
+        std::wstring curText = (selIdx >= 0 && selIdx < static_cast<int>(m_context.Dialog.ChoiceOptions.size())) 
+            ? m_context.Dialog.ChoiceOptions[selIdx] : L"";
+
+        QuickView::UI::GeekWidgets::DrawPillComboBox(
+            context, layout.Choice, curText,
+            m_context.Dialog.IsChoiceDropdownOpen,
+            m_context.Dialog.IsChoiceHovered,
+            false,
+            fmtBtn.Get(), 1.0f, comboPal);
+    }
+
     // Quality Info
     if (!m_context.Dialog.QualityText.empty()) {
         float qualityY = layout.Checkbox.top - 45.0f;
@@ -218,7 +241,7 @@ void DialogController::Render(ID2D1DeviceContext* context) {
             D2D1::RectF(layout.Box.left + 30, qualityY, layout.Box.right - 30, qualityY + 25), pBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
-    // Checkbox (GeekWidgets Circular Checkbox)
+    // Checkbox 1 (GeekWidgets Circular Checkbox)
     if (m_context.Dialog.HasCheckbox) {
         D2D1_RECT_F fullCheckRect = D2D1::RectF(layout.Checkbox.left, layout.Checkbox.top, layout.Box.right - 30, layout.Checkbox.bottom + 5);
         QuickView::UI::WidgetPalette checkPal = {};
@@ -233,6 +256,23 @@ void DialogController::Render(ID2D1DeviceContext* context) {
             context, fullCheckRect, m_context.Dialog.CheckboxText,
             m_context.Dialog.IsChecked, false, false,
             fmtBtn.Get(), 1.0f, checkPal);
+    }
+
+    // Checkbox 2 (GeekWidgets Circular Checkbox)
+    if (m_context.Dialog.HasCheckbox2) {
+        D2D1_RECT_F fullCheck2Rect = D2D1::RectF(layout.Checkbox2.left, layout.Checkbox2.top, layout.Box.right - 30, layout.Checkbox2.bottom + 5);
+        QuickView::UI::WidgetPalette checkPal2 = {};
+        checkPal2.accent = m_context.Dialog.AccentColor;
+        if (checkPal2.accent.a <= 0.01f) checkPal2.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        checkPal2.controlBg = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f);
+        checkPal2.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.35f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.45f);
+        checkPal2.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+        checkPal2.white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+
+        QuickView::UI::GeekWidgets::DrawCircleCheckbox(
+            context, fullCheck2Rect, m_context.Dialog.Checkbox2Text,
+            m_context.Dialog.IsChecked2, false, false,
+            fmtBtn.Get(), 1.0f, checkPal2);
     }
 
     // Buttons (GeekWidgets Pill Buttons)
@@ -257,6 +297,44 @@ void DialogController::Render(ID2D1DeviceContext* context) {
         ButtonState state = isSelected ? ButtonState::Hovered : ButtonState::Normal;
 
         GeekWidgets::DrawPillButton(context, btnRect, m_context.Dialog.Buttons[i].Text, style, state, fmtBtnCenter.Get(), 1.0f, pal);
+    }
+
+    // Choice Dropdown Floating Popup (Rendered on top of everything)
+    if (m_context.Dialog.HasChoice && m_context.Dialog.IsChoiceDropdownOpen && !layout.ChoiceItemRects.empty()) {
+        QuickView::UI::WidgetPalette dropPal = {};
+        dropPal.accent = m_context.Dialog.AccentColor;
+        if (dropPal.accent.a <= 0.01f) dropPal.accent = D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f);
+        dropPal.controlBg = isLight ? D2D1::ColorF(0.96f, 0.96f, 0.98f, 0.98f) : D2D1::ColorF(0.18f, 0.18f, 0.22f, 0.98f);
+        dropPal.border = isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.25f);
+        dropPal.text = isLight ? D2D1::ColorF(0.12f, 0.12f, 0.15f) : D2D1::ColorF(0.95f, 0.95f, 0.98f);
+
+        // Background
+        pBrush->SetColor(dropPal.controlBg);
+        context->FillRoundedRectangle(D2D1::RoundedRect(layout.ChoicePopup, 6.0f, 6.0f), pBrush.Get());
+        // Border
+        pBrush->SetColor(dropPal.border);
+        context->DrawRoundedRectangle(D2D1::RoundedRect(layout.ChoicePopup, 6.0f, 6.0f), pBrush.Get(), 1.0f);
+
+        for (size_t i = 0; i < layout.ChoiceItemRects.size(); ++i) {
+            D2D1_RECT_F itemRect = layout.ChoiceItemRects[i];
+            bool isItemHovered = (static_cast<int>(i) == m_context.Dialog.HoverChoiceIndex);
+            bool isItemSelected = (static_cast<int>(i) == m_context.Dialog.SelectedChoiceIndex);
+
+            if (isItemHovered || isItemSelected) {
+                D2D1_COLOR_F itemBg = isItemSelected 
+                    ? dropPal.accent 
+                    : (isLight ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f));
+                pBrush->SetColor(itemBg);
+                context->FillRoundedRectangle(D2D1::RoundedRect(itemRect, 4.0f, 4.0f), pBrush.Get());
+            }
+
+            D2D1_COLOR_F txtClr = (isItemSelected) ? D2D1::ColorF(1.0f, 1.0f, 1.0f) : dropPal.text;
+            pBrush->SetColor(txtClr);
+            D2D1_RECT_F textRect = D2D1::RectF(itemRect.left + 8.0f, itemRect.top + 4.0f, itemRect.right - 8.0f, itemRect.bottom - 4.0f);
+            if (i < m_context.Dialog.ChoiceOptions.size()) {
+                context->DrawText(m_context.Dialog.ChoiceOptions[i].c_str(), (UINT32)m_context.Dialog.ChoiceOptions[i].length(), fmtBtn.Get(), textRect, pBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            }
+        }
     }
 }
 
@@ -418,7 +496,11 @@ std::optional<LRESULT> DialogController::HandleMessage(HWND hwnd, UINT message, 
             int y = (short)HIWORD(lParam);
             return OnLButtonDown(hwnd, x, y);
         }
-        case WM_MOUSEMOVE:
+        case WM_MOUSEMOVE: {
+            int x = (short)LOWORD(lParam);
+            int y = (short)HIWORD(lParam);
+            return OnMouseMove(hwnd, x, y);
+        }
         case WM_LBUTTONUP:
         case WM_RBUTTONDOWN:
         case WM_MBUTTONDOWN:
@@ -437,8 +519,46 @@ std::optional<LRESULT> DialogController::HandleMessage(HWND hwnd, UINT message, 
     return std::nullopt;
 }
 
+std::optional<LRESULT> DialogController::OnMouseMove(HWND hwnd, int x, int y) {
+    if (!IsActive()) return 0;
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+
+    if (m_context.Dialog.HasChoice) {
+        RECT clientRect; GetClientRect(hwnd, &clientRect);
+        D2D1_SIZE_F size = D2D1::SizeF((float)(clientRect.right - clientRect.left), (float)(clientRect.bottom - clientRect.top));
+        DialogLayout layout = CalculateDialogLayout(size);
+        float mx = (float)x;
+        float my = (float)y;
+
+        bool wasHovered = m_context.Dialog.IsChoiceHovered;
+        m_context.Dialog.IsChoiceHovered = (mx >= layout.Choice.left && mx <= layout.Choice.right && my >= layout.Choice.top && my <= layout.Choice.bottom);
+
+        int oldHoverIdx = m_context.Dialog.HoverChoiceIndex;
+        m_context.Dialog.HoverChoiceIndex = -1;
+        if (m_context.Dialog.IsChoiceDropdownOpen) {
+            for (size_t i = 0; i < layout.ChoiceItemRects.size(); ++i) {
+                const auto& r = layout.ChoiceItemRects[i];
+                if (mx >= r.left && mx <= r.right && my >= r.top && my <= r.bottom) {
+                    m_context.Dialog.HoverChoiceIndex = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+
+        if (wasHovered != m_context.Dialog.IsChoiceHovered || oldHoverIdx != m_context.Dialog.HoverChoiceIndex) {
+            MarkDirty();
+        }
+    }
+    return 0;
+}
+
 std::optional<LRESULT> DialogController::OnKeyDown([[maybe_unused]] HWND hwnd, WPARAM key) {
     if (key == VK_ESCAPE) {
+        if (m_context.Dialog.HasChoice && m_context.Dialog.IsChoiceDropdownOpen) {
+            m_context.Dialog.IsChoiceDropdownOpen = false;
+            MarkDirty();
+            return 0;
+        }
         m_context.Dialog.FinalResult = DialogResult::None;
         extern DWORD g_lastOverlayCloseTime;
         g_lastOverlayCloseTime = GetTickCount();
@@ -449,6 +569,22 @@ std::optional<LRESULT> DialogController::OnKeyDown([[maybe_unused]] HWND hwnd, W
     if (m_context.Dialog.HasInput) {
         if (key == VK_TAB) return 0; // Swallow tab
         return std::nullopt; // Let input control handle text
+    }
+
+    if (m_context.Dialog.HasChoice) {
+        if (key == VK_UP) {
+            if (m_context.Dialog.SelectedChoiceIndex > 0) {
+                m_context.Dialog.SelectedChoiceIndex--;
+                MarkDirty();
+            }
+            return 0;
+        } else if (key == VK_DOWN) {
+            if (m_context.Dialog.SelectedChoiceIndex < static_cast<int>(m_context.Dialog.ChoiceOptions.size()) - 1) {
+                m_context.Dialog.SelectedChoiceIndex++;
+                MarkDirty();
+            }
+            return 0;
+        }
     }
     
     // Standard dialog key handling
@@ -467,9 +603,18 @@ std::optional<LRESULT> DialogController::OnKeyDown([[maybe_unused]] HWND hwnd, W
         }
         return 0;
     } else if (key == VK_RETURN) {
+        if (m_context.Dialog.HasChoice && m_context.Dialog.IsChoiceDropdownOpen) {
+            m_context.Dialog.IsChoiceDropdownOpen = false;
+            MarkDirty();
+            return 0;
+        }
         extern DWORD g_lastOverlayCloseTime;
         g_lastOverlayCloseTime = GetTickCount();
-        m_context.Dialog.FinalResult = m_context.Dialog.Buttons[m_context.Dialog.SelectedButtonIndex].Result;
+        if (m_context.Dialog.SelectedButtonIndex >= 0 && m_context.Dialog.SelectedButtonIndex < static_cast<int>(m_context.Dialog.Buttons.size())) {
+            m_context.Dialog.FinalResult = m_context.Dialog.Buttons[m_context.Dialog.SelectedButtonIndex].Result;
+        } else {
+            m_context.Dialog.FinalResult = DialogResult::Yes;
+        }
         m_context.Dialog.IsVisible = false;
         return 0;
     }
@@ -483,11 +628,46 @@ std::optional<LRESULT> DialogController::OnLButtonDown(HWND hwnd, int x, int y) 
     
     float mouseX = (float)x;
     float mouseY = (float)y;
+
+    // Choice / Dropdown interaction
+    if (m_context.Dialog.HasChoice) {
+        if (m_context.Dialog.IsChoiceDropdownOpen) {
+            for (size_t i = 0; i < layout.ChoiceItemRects.size(); ++i) {
+                const auto& itemR = layout.ChoiceItemRects[i];
+                if (mouseX >= itemR.left && mouseX <= itemR.right && mouseY >= itemR.top && mouseY <= itemR.bottom) {
+                    m_context.Dialog.SelectedChoiceIndex = static_cast<int>(i);
+                    m_context.Dialog.IsChoiceDropdownOpen = false;
+                    MarkDirty();
+                    return 0;
+                }
+            }
+            // Click outside dropdown popup closes dropdown
+            m_context.Dialog.IsChoiceDropdownOpen = false;
+            MarkDirty();
+            return 0;
+        } else {
+            if (mouseX >= layout.Choice.left && mouseX <= layout.Choice.right &&
+                mouseY >= layout.Choice.top && mouseY <= layout.Choice.bottom) {
+                m_context.Dialog.IsChoiceDropdownOpen = true;
+                MarkDirty();
+                return 0;
+            }
+        }
+    }
     
     if (m_context.Dialog.HasCheckbox) {
         if (mouseX >= layout.Checkbox.left - 10 && mouseX <= layout.Box.right - 20 &&
             mouseY >= layout.Checkbox.top - 10 && mouseY <= layout.Checkbox.bottom + 10) {
             m_context.Dialog.IsChecked = !m_context.Dialog.IsChecked;
+            MarkDirty();
+            return 0;
+        }
+    }
+
+    if (m_context.Dialog.HasCheckbox2) {
+        if (mouseX >= layout.Checkbox2.left - 10 && mouseX <= layout.Box.right - 20 &&
+            mouseY >= layout.Checkbox2.top - 10 && mouseY <= layout.Checkbox2.bottom + 10) {
+            m_context.Dialog.IsChecked2 = !m_context.Dialog.IsChecked2;
             MarkDirty();
             return 0;
         }
@@ -568,4 +748,66 @@ std::wstring DialogController::ShowInputDialog(HWND hwnd, const std::wstring& ti
         return m_context.Dialog.InputText;
     }
     return L"";
+}
+
+
+
+DialogResult DialogController::ShowChoiceDialog(
+    HWND hwnd,
+    const std::wstring& title,
+    const std::wstring& messageContent,
+    D2D1_COLOR_F accentColor,
+    const std::vector<std::wstring>& options,
+    int& inOutSelectedIndex,
+    const std::vector<DialogButton>& buttons,
+    bool hasCheckbox,
+    const std::wstring& checkboxText,
+    bool isCheckedDefault,
+    bool hasCheckbox2,
+    const std::wstring& checkbox2Text,
+    bool isChecked2Default
+) {
+    m_hwnd = hwnd;
+    m_context.Dialog.IsVisible = true;
+    m_context.Dialog.Title = title;
+    m_context.Dialog.Message = messageContent;
+    m_context.Dialog.QualityText.clear();
+    m_context.Dialog.AccentColor = accentColor;
+    m_context.Dialog.Buttons = buttons;
+    m_context.Dialog.SelectedButtonIndex = 0;
+    m_context.Dialog.HasCheckbox = hasCheckbox;
+    m_context.Dialog.CheckboxText = checkboxText;
+    m_context.Dialog.IsChecked = isCheckedDefault;
+    m_context.Dialog.HasCheckbox2 = hasCheckbox2;
+    m_context.Dialog.Checkbox2Text = checkbox2Text;
+    m_context.Dialog.IsChecked2 = isChecked2Default;
+    m_context.Dialog.HasInput = false;
+    m_context.Dialog.HasChoice = true;
+    m_context.Dialog.ChoiceOptions = options;
+    m_context.Dialog.SelectedChoiceIndex = (inOutSelectedIndex >= 0 && inOutSelectedIndex < static_cast<int>(options.size())) ? inOutSelectedIndex : 0;
+    m_context.Dialog.IsChoiceDropdownOpen = false;
+    m_context.Dialog.HoverChoiceIndex = -1;
+    m_context.Dialog.IsChoiceHovered = false;
+    m_context.Dialog.hEdit = nullptr;
+    m_context.Dialog.FinalResult = DialogResult::None;
+
+    EnsureWindowSizeForDialog(hwnd);
+    RequestRepaint(QuickView::PaintLayer::Dynamic);
+    UpdateWindow(hwnd);
+
+    MSG msgStruct;
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+
+    while (m_context.Dialog.IsVisible && GetMessageW(&msgStruct, NULL, 0, 0)) {
+        TranslateMessage(&msgStruct);
+        DispatchMessageW(&msgStruct);
+    }
+
+    RequestRepaint(QuickView::PaintLayer::Dynamic);
+    if (!IsCompareModeActive()) {
+        AdjustWindowForOverlay(hwnd, true);
+    }
+
+    inOutSelectedIndex = m_context.Dialog.SelectedChoiceIndex;
+    return m_context.Dialog.FinalResult;
 }

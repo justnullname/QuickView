@@ -2543,19 +2543,31 @@ namespace {
             if (const auto* pairedRaw = g_navigator.GetPairedRaw(FileNavigator::PathToImageID(p))) {
                 displayFname += L" (" + FileNavigator::PairedRawLabel(*pairedRaw) + L")";
             }
+            // [QVX-SR] Append scale badge for super-resolved images
+            if (meta.HasSr && meta.SrScale > 1.0f) {
+                wchar_t srBadge[16];
+                swprintf_s(srBadge, L" \u2605%.0fx", meta.SrScale);
+                displayFname += srBadge;
+            }
             return displayFname;
         }
         else if (key == L"Size") {
             const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-            UINT displayW = meta.Width;
-            UINT displayH = meta.Height;
+            // [QVX-SR] Use super-resolution dimensions when available
+            UINT displayW = (meta.HasSr && meta.SrWidth > 0) ? meta.SrWidth : meta.Width;
+            UINT displayH = (meta.HasSr && meta.SrHeight > 0) ? meta.SrHeight : meta.Height;
             if (editState.HasCrop) {
-                displayW = (UINT)std::round(editState.CropRight - editState.CropLeft);
-                displayH = (UINT)std::round(editState.CropBottom - editState.CropTop);
+                float cropScale = (meta.HasSr && meta.SrScale > 1.0f) ? meta.SrScale : 1.0f;
+                displayW = (UINT)std::round((editState.CropRight - editState.CropLeft) * cropScale);
+                displayH = (UINT)std::round((editState.CropBottom - editState.CropTop) * cropScale);
             }
             if (displayW > 0 && displayH > 0) {
                 wchar_t sz[64];
-                swprintf_s(sz, L"%u\u00d7%u", displayW, displayH);
+                if (meta.HasSr && meta.SrScale > 1.0f) {
+                    swprintf_s(sz, L"%u\u00d7%u \u2605%.0fx", displayW, displayH, meta.SrScale);
+                } else {
+                    swprintf_s(sz, L"%u\u00d7%u", displayW, displayH);
+                }
                 return sz;
             }
             return std::nullopt;
@@ -2843,6 +2855,12 @@ std::wstring UIRenderer::BuildCompactInfoText(float maxFileW) const {
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
     CombineHash(stateHash, hasHistR);
+    CombineHash(stateHash, g_currentMetadata.HasSr);
+    if (g_currentMetadata.HasSr) {
+        CombineHash(stateHash, g_currentMetadata.SrWidth);
+        CombineHash(stateHash, g_currentMetadata.SrHeight);
+        CombineHash(stateHash, g_currentMetadata.SrScale);
+    }
     const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
     CombineHash(stateHash, editState.HasCrop);
     if (editState.HasCrop) {
@@ -2916,6 +2934,12 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         displayPath = metadata.SourcePath;
     }
     std::wstring filename = displayPath.substr(displayPath.find_last_of(L"\\/") + 1);
+    // [QVX-SR] Append scale badge for super-resolved images
+    if (metadata.HasSr && metadata.SrScale > 1.0f) {
+        wchar_t srBadge[16];
+        swprintf_s(srBadge, L" \u2605%.0fx", metadata.SrScale);
+        filename += srBadge;
+    }
     rows.push_back({L"\U0001F4C4", L"File", filename, L"", filename, TruncateMode::MiddleEllipsis, true});
 
     // Position: Folder progress (e.g. 33/999) (Disabled in compare mode via showAdvanced flag)
@@ -2976,11 +3000,13 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
 
     // Row 2: Dimensions + Megapixels
     const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
-    UINT displayW = metadata.Width;
-    UINT displayH = metadata.Height;
+    // [QVX-SR] Use super-resolution dimensions when available
+    UINT displayW = (metadata.HasSr && metadata.SrWidth > 0) ? metadata.SrWidth : metadata.Width;
+    UINT displayH = (metadata.HasSr && metadata.SrHeight > 0) ? metadata.SrHeight : metadata.Height;
     if (editState.HasCrop) {
-        displayW = (UINT)std::round(editState.CropRight - editState.CropLeft);
-        displayH = (UINT)std::round(editState.CropBottom - editState.CropTop);
+        float cropScale = (metadata.HasSr && metadata.SrScale > 1.0f) ? metadata.SrScale : 1.0f;
+        displayW = (UINT)std::round((editState.CropRight - editState.CropLeft) * cropScale);
+        displayH = (UINT)std::round((editState.CropBottom - editState.CropTop) * cropScale);
     }
     if (displayW > 0 && displayH > 0) {
         UINT64 totalPixels = (UINT64)displayW * displayH;
@@ -2988,7 +3014,11 @@ std::vector<InfoRow> UIRenderer::BuildGridRows(const CImageLoader::ImageMetadata
         wchar_t dimBuf[64];
         swprintf_s(dimBuf, L"%u\u00d7%u", displayW, displayH);
         wchar_t mpBuf[48];
-        swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, GetCurrentZoomPercent());
+        if (metadata.HasSr && metadata.SrScale > 1.0f) {
+            swprintf_s(mpBuf, L"(%.1fMP) SR %.0fx", megapixels, metadata.SrScale);
+        } else {
+            swprintf_s(mpBuf, L"(%.1fMP)@%d%%", megapixels, GetCurrentZoomPercent());
+        }
         rows.push_back({L"\U0001F4D0", L"Size", dimBuf, mpBuf, L"", TruncateMode::None, false});
     }
 
@@ -3511,6 +3541,12 @@ void UIRenderer::BuildInfoGrid() {
     CombineHash(stateHash, g_currentMetadata.HasSharpness);
     CombineHash(stateHash, g_currentMetadata.HasEntropy);
     CombineHash(stateHash, hasHistR);
+    CombineHash(stateHash, g_currentMetadata.HasSr);
+    if (g_currentMetadata.HasSr) {
+        CombineHash(stateHash, g_currentMetadata.SrWidth);
+        CombineHash(stateHash, g_currentMetadata.SrHeight);
+        CombineHash(stateHash, g_currentMetadata.SrScale);
+    }
     const auto& editState = GetPaneContext(PaneSlot::Primary).editState;
     CombineHash(stateHash, editState.HasCrop);
     if (editState.HasCrop) {
@@ -4736,7 +4772,9 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
                 if (valOpt.has_value()) {
                     bool win = false;
                     if (itemKey == L"Size") {
-                        win = (m.Width * m.Height) > (other.Width * other.Height);
+                        UINT64 myArea = (m.HasSr && m.SrWidth > 0) ? ((UINT64)m.SrWidth * m.SrHeight) : ((UINT64)m.Width * m.Height);
+                        UINT64 otherArea = (other.HasSr && other.SrWidth > 0) ? ((UINT64)other.SrWidth * other.SrHeight) : ((UINT64)other.Width * other.Height);
+                        win = myArea > otherArea;
                     }
                     else if (itemKey == L"Disk") {
                         win = m.FileSize > other.FileSize;
@@ -4988,6 +5026,18 @@ void UIRenderer::DrawCompareInfoHUD(ID2D1DeviceContext* dc) {
     CombineHash(stateHash, rightMeta.HasSharpness);
     CombineHash(stateHash, leftMeta.HasEntropy);
     CombineHash(stateHash, rightMeta.HasEntropy);
+    CombineHash(stateHash, leftMeta.HasSr);
+    if (leftMeta.HasSr) {
+        CombineHash(stateHash, leftMeta.SrWidth);
+        CombineHash(stateHash, leftMeta.SrHeight);
+        CombineHash(stateHash, leftMeta.SrScale);
+    }
+    CombineHash(stateHash, rightMeta.HasSr);
+    if (rightMeta.HasSr) {
+        CombineHash(stateHash, rightMeta.SrWidth);
+        CombineHash(stateHash, rightMeta.SrHeight);
+        CombineHash(stateHash, rightMeta.SrScale);
+    }
     CombineHash(stateHash, g_runtime.ShowHdrDetailsExpanded);
     
     if (m_compareLeftRows.empty() || m_lastCompareStateHash != stateHash) {

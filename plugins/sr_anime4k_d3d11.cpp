@@ -538,7 +538,8 @@ static const QVX_SR_VTable s_anime4kSRVTable = {
     Anime4K_GetParamCount,
     Anime4K_GetParamDesc,
     Anime4K_GetParamValue,
-    Anime4K_SetParamValue
+    Anime4K_SetParamValue,
+    nullptr  // set_language
 };
 
 static const void* Anime4K_GetInterface(uint32_t interface_id, uint32_t version) {

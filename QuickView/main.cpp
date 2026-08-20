@@ -366,6 +366,7 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::OverlayAlphaDown, KeyCombo{ VK_DOWN, 4 }, KeyCombo{ VK_DOWN, 4 } }, // Alt + Down
     HotkeyBinding{ HotkeyAction::OverlayTogglePassthrough, KeyCombo{ VK_ESCAPE, 2 }, KeyCombo{ VK_ESCAPE, 2 } }, // Shift + Esc
     HotkeyBinding{ HotkeyAction::Help, KeyCombo{ VK_F1, 0 }, KeyCombo{ VK_F1, 0 } },
+    HotkeyBinding{ HotkeyAction::SuperResolution, KeyCombo{ 'S', 2 }, KeyCombo{ 'S', 2 } }, // AI Super-Resolution (Shift + S)
     HotkeyBinding{ HotkeyAction::Exit, KeyCombo{ VK_ESCAPE, 0 }, KeyCombo{ VK_ESCAPE, 0 } },
     HotkeyBinding{ HotkeyAction::Undo, KeyCombo{ 'Z', 1 }, KeyCombo{ 'Z', 1 } },
     HotkeyBinding{ HotkeyAction::PanUp, KeyCombo{ VK_UP, 1 }, KeyCombo{ VK_UP, 1 } },
@@ -2863,8 +2864,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
 
              const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
              bool hasMetrics = meta.HasSharpness && meta.HasEntropy;
-             bool isSrPluginActive = QuickView::PluginHost::Instance().IsSrPluginEnabled();
-             float effectiveSharpness = isSrPluginActive ? QuickView::PluginHost::Instance().GetSrSharpness() : g_config.FsrSharpness;
+             float effectiveSharpness = g_config.FsrSharpness;
              float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(effectiveSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
 
              // Use Smart Interpolation
@@ -2872,8 +2872,11 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, rawRect.right - rawRect.left, rawRect.bottom - rawRect.top, meta.Entropy, meta.HasEntropy);
 
              auto DrawBitmapWithFsr = [&](const D2D1_RECT_F& dst, const D2D1_RECT_F& src, D2D1_INTERPOLATION_MODE mode, float imgW, float imgH) {
+                 bool isSrPromoted = (res.srScale > 1.01f);
+                 bool canEngageSharpen = !isSrPromoted || (absoluteScale > res.srScale * 1.05f);
+
                  bool isPixelArt = IsEffectivelyPixelArtMode(absoluteScale, imgW, imgH, meta.Entropy, meta.HasEntropy);
-                 bool enableFsr = (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
+                 bool enableFsr = canEngageSharpen && (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
                  if (enableFsr && absoluteScale > 1.0f && adaptiveFsrSharpness > 0.005f) {
                      ComPtr<ID2D1Effect> sharpenEffect;
                      if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Sharpen, &sharpenEffect))) {
@@ -2928,8 +2931,7 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
 
              const auto& meta = GetPaneContext(PaneSlot::Primary).metadata;
              bool hasMetrics = meta.HasSharpness && meta.HasEntropy;
-             bool isSrPluginActive = QuickView::PluginHost::Instance().IsSrPluginEnabled();
-             float effectiveSharpness = isSrPluginActive ? QuickView::PluginHost::Instance().GetSrSharpness() : g_config.FsrSharpness;
+             float effectiveSharpness = g_config.FsrSharpness;
              float adaptiveFsrSharpness = ColorMath::GetAdaptiveFsrSharpness(effectiveSharpness, meta.Sharpness, meta.Entropy, hasMetrics);
 
              // Use Smart Interpolation
@@ -2937,8 +2939,11 @@ bool RenderImageToDComp(HWND hwnd, ImageResource& res, bool isFastUpgrade) {
              D2D1_INTERPOLATION_MODE interpMode = GetOptimalD2DInterpolationMode(absoluteScale, cropW, cropH, meta.Entropy, meta.HasEntropy);
 
              auto DrawBitmapWithFsr = [&](const D2D1_RECT_F& dst, const D2D1_RECT_F& src, D2D1_INTERPOLATION_MODE mode, float imgW, float imgH) {
+                 bool isSrPromoted = (res.srScale > 1.01f);
+                 bool canEngageSharpen = !isSrPromoted || (absoluteScale > res.srScale * 1.05f);
+
                  bool isPixelArt = IsEffectivelyPixelArtMode(absoluteScale, imgW, imgH, meta.Entropy, meta.HasEntropy);
-                 bool enableFsr = (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
+                 bool enableFsr = canEngageSharpen && (g_config.ZoomModeIn == 4 || (g_config.ZoomModeIn == 0 && absoluteScale >= 1.05f && absoluteScale < 3.0f && !isPixelArt));
                  if (enableFsr && absoluteScale > 1.0f && adaptiveFsrSharpness > 0.005f) {
                      ComPtr<ID2D1Effect> sharpenEffect;
                      if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Sharpen, &sharpenEffect))) {
@@ -3151,13 +3156,19 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     float contentHeight = (titleLines * titleHeight) + (msgLines * messageHeight);
     float qualityHeight = !AppContext::GetInstance().Dialog.QualityText.empty() ? 28.0f * s : 0.0f; // Add space for quality text
     float inputHeight = AppContext::GetInstance().Dialog.HasInput ? 45.0f * s : 0.0f; // [Input Mode] Space for edit box
-    float checkboxHeight = AppContext::GetInstance().Dialog.HasCheckbox ? 40.0f * s : 0.0f;
+    float choiceHeight = AppContext::GetInstance().Dialog.HasChoice ? 48.0f * s : 0.0f; // [Choice Mode] Space for ComboBox
+    float checkboxHeight = 0.0f;
+    if (AppContext::GetInstance().Dialog.HasCheckbox && AppContext::GetInstance().Dialog.HasCheckbox2) {
+        checkboxHeight = 65.0f * s;
+    } else if (AppContext::GetInstance().Dialog.HasCheckbox || AppContext::GetInstance().Dialog.HasCheckbox2) {
+        checkboxHeight = 36.0f * s;
+    }
     float buttonsHeight = 50.0f * s;
     float padding = 32.0f * s; 
     
-    float dlgH = padding + contentHeight + qualityHeight + inputHeight + checkboxHeight + buttonsHeight + 10.0f * s; 
+    float dlgH = padding + contentHeight + qualityHeight + inputHeight + choiceHeight + checkboxHeight + buttonsHeight + 10.0f * s; 
     if (dlgH < 150.0f * s) dlgH = 150.0f * s;
-    if (dlgH > 480.0f * s) dlgH = 480.0f * s;
+    if (dlgH > 520.0f * s) dlgH = 520.0f * s;
     
     auto clamp = [](float v, float minV, float maxV) {
         if (v < minV) return minV;
@@ -3179,7 +3190,7 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
     }
     layout.Box = D2D1::RectF(left, top, left + dlgW, top + dlgH);
     
-    // Input Field (Placed below Message)
+    // Input & Choice Fields (Placed below Message)
     float currentY = top + padding + contentHeight;
     
     if (AppContext::GetInstance().Dialog.HasInput) {
@@ -3187,17 +3198,38 @@ DialogLayout CalculateDialogLayout(D2D1_SIZE_F size) {
         currentY += inputHeight;
     }
 
-    // Checkbox area (only used if HasCheckbox)
-    // float checkY = top + dlgH - 95; // Old absolute positioning
-    // Let's stack it properly if we have flexible height
-    float checkY = currentY + qualityHeight + 10.0f * s; 
-    
-    // Use bottom-aligned logic for checkbox usually to stick to buttons
-    if (AppContext::GetInstance().Dialog.HasCheckbox) {
-         // Stick to bottom area above buttons
-         checkY = top + dlgH - 45.0f * s - buttonsHeight - 10.0f * s;
+    if (AppContext::GetInstance().Dialog.HasChoice) {
+        layout.Choice = D2D1::RectF(left + 25.0f * s, currentY + 8.0f * s, left + dlgW - 25.0f * s, currentY + 38.0f * s);
+        currentY += choiceHeight;
+
+        // Calculate dropdown popup bounds if open
+        const auto& options = AppContext::GetInstance().Dialog.ChoiceOptions;
+        if (!options.empty()) {
+            float itemH = 28.0f * s;
+            float popupH = options.size() * itemH + 8.0f * s;
+            layout.ChoicePopup = D2D1::RectF(layout.Choice.left, layout.Choice.bottom + 4.0f * s, layout.Choice.right, layout.Choice.bottom + 4.0f * s + popupH);
+            layout.ChoiceItemRects.clear();
+            float curItemY = layout.ChoicePopup.top + 4.0f * s;
+            for (size_t i = 0; i < options.size(); ++i) {
+                layout.ChoiceItemRects.push_back(D2D1::RectF(layout.ChoicePopup.left + 4.0f * s, curItemY, layout.ChoicePopup.right - 4.0f * s, curItemY + itemH));
+                curItemY += itemH;
+            }
+        }
     }
-    layout.Checkbox = D2D1::RectF(left + 25.0f * s, checkY, left + 45.0f * s, checkY + 20.0f * s);
+
+    // Checkbox areas
+    if (AppContext::GetInstance().Dialog.HasCheckbox && AppContext::GetInstance().Dialog.HasCheckbox2) {
+        float check1Y = top + dlgH - buttonsHeight - 65.0f * s;
+        float check2Y = top + dlgH - buttonsHeight - 35.0f * s;
+        layout.Checkbox = D2D1::RectF(left + 25.0f * s, check1Y, left + 45.0f * s, check1Y + 20.0f * s);
+        layout.Checkbox2 = D2D1::RectF(left + 25.0f * s, check2Y, left + 45.0f * s, check2Y + 20.0f * s);
+    } else if (AppContext::GetInstance().Dialog.HasCheckbox) {
+        float checkY = top + dlgH - buttonsHeight - 38.0f * s;
+        layout.Checkbox = D2D1::RectF(left + 25.0f * s, checkY, left + 45.0f * s, checkY + 20.0f * s);
+    } else if (AppContext::GetInstance().Dialog.HasCheckbox2) {
+        float checkY = top + dlgH - buttonsHeight - 38.0f * s;
+        layout.Checkbox2 = D2D1::RectF(left + 25.0f * s, checkY, left + 45.0f * s, checkY + 20.0f * s);
+    }
     
     // Buttons area
     float btnH = 30.0f * s;
@@ -5403,8 +5435,8 @@ void LoadConfig() {
         float val = (float)_wtof(fsrBuf);
         g_config.FsrSharpness = std::clamp(val, 0.0f, 1.0f);
     }
-    g_config.SrDebounceDelayMs = GetPrivateProfileIntW(L"Controls", L"SrDebounceDelayMs", 150, iniPath.c_str());
-    if (g_config.SrDebounceDelayMs < 0 || g_config.SrDebounceDelayMs > 5000) g_config.SrDebounceDelayMs = 150;
+    g_config.SrDebounceDelayMs = GetPrivateProfileIntW(L"Controls", L"SrDebounceDelayMs", 3000, iniPath.c_str());
+    if (g_config.SrDebounceDelayMs < 0 || g_config.SrDebounceDelayMs > 5000) g_config.SrDebounceDelayMs = 3000;
     QuickView::PluginHost::Instance().SetSrDebounceDelayMs(g_config.SrDebounceDelayMs);
     g_config.InvertWheel = GetPrivateProfileIntW(L"Controls", L"InvertWheel", 0, iniPath.c_str()) != 0;
     g_config.WheelActionMode = GetPrivateProfileIntW(L"Controls", L"WheelActionMode", 0, iniPath.c_str());
@@ -6370,18 +6402,46 @@ static std::atomic<uint64_t> s_srRequestSeq{0};
 static std::atomic<bool> s_isSrInProgress{false};
 
 // [QVX-SR] Single-Pass Promoted SR Texture Controller with Zero-Recomputation Viewport Caching
-static void TriggerDebouncedSuperResolution(HWND hwnd) {
-    if (!QuickView::PluginHost::Instance().IsSrPluginEnabled()) return;
+static void TriggerDebouncedSuperResolution(HWND hwnd, bool forceManual = false) {
+    if (!QuickView::PluginHost::Instance().IsSrPluginEnabled()) {
+        if (forceManual) {
+            g_osd.Show(hwnd, L"AI 超分辨率插件未启用或未安装", true, false, D2D1::ColorF(1.0f, 0.4f, 0.4f), OSDPosition::Bottom, 3000);
+            RequestRepaint(PaintLayer::Dynamic);
+        }
+        return;
+    }
     if (!g_renderEngine || !g_pImageEngine) return;
+
+    // If auto trigger is disabled, only explicit manual action can trigger SR
+    if (!forceManual && !QuickView::PluginHost::Instance().IsSrAutoTriggerEnabled()) {
+        return;
+    }
 
     auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     if (!primaryPane.resource || primaryPane.path.empty()) return;
+
+    // [QVX-SR] Super-resolution requires full pristine frame; intercept if crop is active/pending
+    if (g_cropState.IsActive || primaryPane.editState.HasCrop) {
+        if (forceManual) {
+            CheckUnsavedChanges(hwnd);
+        }
+        return;
+    }
 
     auto frame = primaryPane.currentFrame;
     if (!frame || !frame->pixels) {
         frame = g_pImageEngine->GetCachedImage(primaryPane.path);
     }
     if (!frame || !frame->pixels) return;
+
+    std::wstring safetyReason;
+    if (!QuickView::PluginHost::Instance().CanExecuteSrOnDimensions(frame->width, frame->height, &safetyReason)) {
+        if (forceManual) {
+            g_osd.Show(hwnd, safetyReason.c_str(), false, false, D2D1::ColorF(1.0f, 0.4f, 0.4f), OSDPosition::Bottom, 4000);
+            RequestRepaint(PaintLayer::Dynamic);
+        }
+        return;
+    }
 
     VisualState vs = GetVisualState();
     RECT rcClient{};
@@ -6400,28 +6460,43 @@ static void TriggerDebouncedSuperResolution(HWND hwnd) {
     float pixelStretchRatio = (nativeW > 0.0f) ? (currentDisplayedW / nativeW) : 1.0f;
 
     std::string activeModelId = QuickView::PluginHost::Instance().GetSrModelId();
-    float modelScale = QuickView::PluginHost::Instance().GetCurrentSrModelScale();
-    if (modelScale < 2.0f) modelScale = 2.0f;
+    float targetScale = 2.0f;
+    if (activeModelId == "realesr-animevideov3-auto") {
+        if (pixelStretchRatio <= 2.2f) {
+            targetScale = 2.0f;
+        } else if (pixelStretchRatio <= 3.2f) {
+            targetScale = 3.0f;
+        } else {
+            targetScale = 4.0f;
+        }
+    } else {
+        targetScale = QuickView::PluginHost::Instance().GetCurrentSrModelScale();
+        if (targetScale < 2.0f) targetScale = 2.0f;
+    }
 
     // Cache the original 1.0x native bitmap if not yet stored
     if (!primaryPane.resource.baseNormalBitmap && primaryPane.resource.bitmap && primaryPane.resource.currentSrLevel <= 1.0f) {
         primaryPane.resource.baseNormalBitmap = primaryPane.resource.bitmap;
     }
 
-    if (pixelStretchRatio > 1.001f) {
-        // --- CASE 1: Zoom In (> 100%) -> Use Promoted SR Texture ---
+    if (forceManual || pixelStretchRatio > 1.001f) {
+        // --- CASE 1: Zoom In (> 100%) or Forced Manual Trigger -> Use Promoted SR Texture ---
 
-        // Check if we already have the promoted full-resolution SR texture cached
+        // Check if we already have a suitable promoted SR texture cached for this active model
         if (primaryPane.resource.promotedSrBitmap && primaryPane.resource.promotedModelId == activeModelId) {
-            if (primaryPane.resource.bitmap != primaryPane.resource.promotedSrBitmap) {
-                primaryPane.resource.bitmap = primaryPane.resource.promotedSrBitmap;
-                primaryPane.resource.srScale = primaryPane.resource.promotedSrScale;
-                primaryPane.resource.currentSrLevel = primaryPane.resource.promotedSrScale;
-                RenderImageToDComp(hwnd, primaryPane.resource, true);
-                SyncDCompState(hwnd, winW, winH, false);
-                RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
+            if (primaryPane.resource.promotedSrScale >= targetScale) {
+                if (primaryPane.resource.bitmap != primaryPane.resource.promotedSrBitmap) {
+                    primaryPane.resource.bitmap = primaryPane.resource.promotedSrBitmap;
+                    primaryPane.resource.srScale = primaryPane.resource.promotedSrScale;
+                    primaryPane.resource.currentSrLevel = primaryPane.resource.promotedSrScale;
+                    RenderImageToDComp(hwnd, primaryPane.resource, true);
+                    SyncDCompState(hwnd, winW, winH, false);
+                    RequestRepaint(PaintLayer::Dynamic | PaintLayer::Image | PaintLayer::Static);
+                }
+                return; // Zero recomputation! Instantly reuse existing texture.
             }
-            return; // Zero recomputation! Instantly reuse 4x texture.
+            // If promotedSrScale < targetScale (e.g. cached was 2x, but user zoomed deeper to 3.5x needing 4x),
+            // proceed to upscale from the 1.0x raw native frame directly to the higher targetScale.
         }
 
         // If already in progress for this request sequence, avoid duplicate threads
@@ -6438,15 +6513,15 @@ static void TriggerDebouncedSuperResolution(HWND hwnd) {
 
         std::wstring curPath = primaryPane.path;
         bool hasAlpha = (frame->format != QuickView::PixelFormat::BGRX8888);
-        std::thread([hwnd, curReqId, curPath, activeModelId, modelScale, frame, hasAlpha]() {
+        std::thread([hwnd, curReqId, curPath, activeModelId, targetScale, frame, hasAlpha]() {
             ComPtr<ID3D11Texture2D> srTex;
-            HRESULT hr = g_renderEngine ? g_renderEngine->GenerateSuperResolutionTexture(*frame, modelScale, &srTex) : E_FAIL;
+            HRESULT hr = g_renderEngine ? g_renderEngine->GenerateSuperResolutionTexture(*frame, targetScale, &srTex) : E_FAIL;
 
             auto* res = new AsyncSrResult();
             res->requestId = curReqId;
             res->imagePath = curPath;
             res->modelId = activeModelId;
-            res->modelScale = modelScale;
+            res->modelScale = targetScale;
             res->srTexture = srTex;
             res->hasAlpha = hasAlpha;
             res->durationMs = QuickView::PluginHost::Instance().GetLastDurationMs();
@@ -8425,27 +8500,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (SUCCEEDED(res->hr) && res->srTexture && res->requestId == s_srRequestSeq.load() && primaryPane.path == res->imagePath) {
             ComPtr<ID2D1Bitmap> srBitmap;
             if (g_renderEngine && SUCCEEDED(g_renderEngine->CreateBitmapFromD3DTexture(res->srTexture.Get(), res->hasAlpha, &srBitmap)) && srBitmap) {
+                primaryPane.resource.promotedSrTexture = res->srTexture;
                 primaryPane.resource.promotedSrBitmap = srBitmap;
                 primaryPane.resource.promotedSrScale = res->modelScale;
                 primaryPane.resource.promotedModelId = res->modelId;
 
-                VisualState vs = GetVisualState();
+                primaryPane.metadata.SrWidth = static_cast<UINT>(primaryPane.metadata.Width * res->modelScale);
+                primaryPane.metadata.SrHeight = static_cast<UINT>(primaryPane.metadata.Height * res->modelScale);
+                primaryPane.metadata.SrScale = res->modelScale;
+                primaryPane.metadata.HasSr = true;
+
                 RECT rcClient{};
                 GetClientRect(hwnd, &rcClient);
                 float winW = (float)rcClient.right;
                 float winH = (float)rcClient.bottom;
-                float galleryH = (g_gallery.IsPinned() && g_gallery.IsVisible()) ? g_gallery.GetVisualHeight(winH) : 0.0f;
-                float effWinH = winH - galleryH;
-                if (effWinH < 1.0f) effWinH = 1.0f;
 
-                float baseFit = ComputeBaseFitScaleForVisual(vs, winW, effWinH);
-                float nativeW = (float)(vs.IsRotated90 ? primaryPane.metadata.Height : primaryPane.metadata.Width);
-                if (nativeW <= 0.0f) nativeW = vs.VisualSize.width;
+                std::wstring modelDisplayName = QuickView::PluginHost::Instance().GetModelDisplayName(res->modelId);
 
-                float currentDisplayedW = vs.VisualSize.width * baseFit * primaryPane.view.Zoom;
-                float pixelStretchRatio = (nativeW > 0.0f) ? (currentDisplayedW / nativeW) : 1.0f;
-
-                if (pixelStretchRatio > 1.001f) {
+                if (QuickView::PluginHost::Instance().IsSrOpenInCompareMode() && AppContext::GetInstance().CompareCtrl) {
+                    if (!IsCompareModeActive()) {
+                        AppContext::GetInstance().CompareCtrl->EnterSrCompareMode(hwnd);
+                        primaryPane.resource.bitmap = srBitmap;
+                        primaryPane.resource.srScale = res->modelScale;
+                        primaryPane.resource.currentSrLevel = res->modelScale;
+                    } else {
+                        primaryPane.resource.bitmap = srBitmap;
+                        primaryPane.resource.srScale = res->modelScale;
+                        primaryPane.resource.currentSrLevel = res->modelScale;
+                        AppContext::GetInstance().CompareCtrl->MarkDirty();
+                    }
+                    RequestRepaint(PaintLayer::All);
+                } else {
                     primaryPane.resource.bitmap = srBitmap;
                     primaryPane.resource.srScale = res->modelScale;
                     primaryPane.resource.currentSrLevel = res->modelScale;
@@ -8455,9 +8540,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
 
                 wchar_t msg[128];
-                swprintf_s(msg, L"✓ AI 超分完成: %.0fx (耗时: %.1fms)",
-                           res->modelScale,
-                           res->durationMs);
+                if (res->modelId == "realesr-animevideov3-auto") {
+                    swprintf_s(msg, L"✓ AI 超分完成: %s [%.0fx] (耗时: %.1fms)",
+                               modelDisplayName.c_str(),
+                               res->modelScale,
+                               res->durationMs);
+                } else {
+                    swprintf_s(msg, L"✓ AI 超分完成: %s (耗时: %.1fms)",
+                               modelDisplayName.c_str(),
+                               res->durationMs);
+                }
                 g_osd.Show(hwnd, msg, false, false, D2D1::ColorF(0.4f, 1.0f, 0.4f), OSDPosition::Bottom, 2000);
             }
         } else if (FAILED(res->hr) && res->requestId == s_srRequestSeq.load()) {
@@ -12574,6 +12666,11 @@ SKIP_EDGE_NAV:;
             return 0;
         }
 
+        if (wmId == IDM_SUPER_RESOLUTION) {
+            HandleHotkeyAction(hwnd, HotkeyAction::SuperResolution);
+            return 0;
+        }
+
         // Soft Proofing Profile Dynamic Dispatch
         if (cmdId >= IDM_SOFT_PROOF_BASE && cmdId <= IDM_SOFT_PROOF_BASE + 99) {
             extern std::vector<std::wstring>& GetSystemIccProfiles();
@@ -14488,6 +14585,13 @@ void ProcessEngineEvents(HWND hwnd) {
 
 
                 if (IsCompareModeActive()) {
+                    if (AppContext::GetInstance().Compare.syncZoom) {
+                        GetPaneContext(PaneSlot::Left).view.Zoom = GetPaneContext(PaneSlot::Primary).view.Zoom;
+                    }
+                    if (AppContext::GetInstance().Compare.syncPan) {
+                        GetPaneContext(PaneSlot::Left).view.PanX = GetPaneContext(PaneSlot::Primary).view.PanX;
+                        GetPaneContext(PaneSlot::Left).view.PanY = GetPaneContext(PaneSlot::Primary).view.PanY;
+                    }
                     MarkCompareDirty();
                     if (AppContext::GetInstance().Compare.pendingSnap && !isPreview) {
                         SnapWindowToCompareImages(hwnd);
@@ -15885,8 +15989,6 @@ void OnPaint(HWND hwnd) {
             if (AppContext::GetInstance().Compare.dirty) {
                 if (AppContext::GetInstance().CompareCtrl->RenderComposite(hwnd)) {
                     AppContext::GetInstance().Compare.dirty = false;
-                } else {
-                    AppContext::GetInstance().CompareCtrl->ExitMode(hwnd);
                 }
             }
         } else {
@@ -17520,6 +17622,84 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         if (IsCompareModeActive()) AppContext::GetInstance().Compare.contextPane = AppContext::GetInstance().Compare.activePane;
         SendMessage(hwnd, WM_COMMAND, IDM_SAVE_AS, 0);
         return true;
+
+    case HotkeyAction::SuperResolution: {
+        if (QuickView::PluginHost::Instance().GetSrPluginInstallState() == QuickView::PluginInstallState::NotInstalled) {
+            return true;
+        }
+        if (!QuickView::PluginHost::Instance().IsSrPluginEnabled()) {
+            return true;
+        }
+        auto models = QuickView::PluginHost::Instance().GetCurrentSrModels();
+        std::string curModel = QuickView::PluginHost::Instance().GetSrModelId();
+        bool isModelInstalled = false;
+        for (const auto& m : models) {
+            if (m.modelId == curModel) {
+                isModelInstalled = m.isInstalled;
+                break;
+            }
+        }
+        if (!isModelInstalled) {
+            return true;
+        }
+
+        if (QuickView::PluginHost::Instance().IsSrPromptModelOnHotkey()) {
+            std::vector<QuickView::SrModelEntry> installedModels;
+            std::vector<std::wstring> modelOptions;
+            int defaultSelectIdx = 0;
+            for (const auto& m : models) {
+                if (m.isInstalled && m.modelId != "realesr-animevideov3-auto") {
+                    if (m.modelId == curModel) {
+                        defaultSelectIdx = static_cast<int>(installedModels.size());
+                    }
+                    installedModels.push_back(m);
+                    wchar_t wName[128] = { 0 };
+                    MultiByteToWideChar(CP_UTF8, 0, m.displayName.c_str(), -1, wName, 128);
+                    modelOptions.push_back(wName);
+                }
+            }
+
+            if (!installedModels.empty()) {
+                bool isChinese = (g_config.Language == static_cast<int>(AppStrings::Language::ChineseSimplified) ||
+                                  g_config.Language == static_cast<int>(AppStrings::Language::ChineseTraditional));
+
+                std::vector<DialogButton> buttons = {
+                    { DialogResult::Yes, isChinese ? L"确定" : L"OK", true },
+                    { DialogResult::Cancel, isChinese ? L"取消" : L"Cancel", false }
+                };
+
+                std::wstring dlgTitle = isChinese ? L"选择 AI 超分辨率模型" : L"Select AI Model";
+                std::wstring dlgMsg = isChinese ? L"请选择要应用的超分辨率模型：" : L"Choose the AI Super-Resolution model to execute:";
+                std::wstring chk1Text = AppStrings::Settings_Label_SrOpenInCompare;
+                std::wstring chk2Text = isChinese ? L"记住选择，下次手动触发直接使用" : L"Remember choice and do not prompt on manual trigger";
+
+                int selectedIdx = defaultSelectIdx;
+                bool defaultOpenInCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
+                DialogResult dlgRes = AppContext::GetInstance().DialogCtrl->ShowChoiceDialog(
+                    hwnd, dlgTitle, dlgMsg, D2D1::ColorF(0.0f, 0.478f, 0.8f, 1.0f),
+                    modelOptions, selectedIdx, buttons,
+                    true, chk1Text, defaultOpenInCompare,
+                    true, chk2Text, false);
+
+                if (dlgRes != DialogResult::Yes) {
+                    return true;
+                }
+
+                if (selectedIdx >= 0 && selectedIdx < static_cast<int>(installedModels.size())) {
+                    QuickView::PluginHost::Instance().SetSrModelId(installedModels[selectedIdx].modelId);
+                    bool shouldOpenCompare = AppContext::GetInstance().Dialog.IsChecked;
+                    QuickView::PluginHost::Instance().SetSrOpenInCompareMode(shouldOpenCompare);
+
+                    if (AppContext::GetInstance().Dialog.IsChecked2) {
+                        QuickView::PluginHost::Instance().SetSrPromptModelOnHotkey(false);
+                    }
+                    SaveConfig();
+                }
+            }
+        }
+        TriggerDebouncedSuperResolution(hwnd, true);
+        return true;
+    }
 
 
     case HotkeyAction::ToggleOverlay:

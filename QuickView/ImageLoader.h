@@ -56,6 +56,10 @@ public:
 
     UINT Width = 0;
     UINT Height = 0;
+    UINT SrWidth = 0;           // [QVX-SR] Super-resolution pixel width
+    UINT SrHeight = 0;          // [QVX-SR] Super-resolution pixel height
+    float SrScale = 1.0f;       // [QVX-SR] Active super-resolution scale
+    bool HasSr = false;         // [QVX-SR] True if super-resolution metadata is present
     double DpiX = 96.0;         // [v10.5] Embedded Physical Resolution
     double DpiY = 96.0;
     bool hasAlpha = true;       // [Titan Perf] Alpha mode for Zero-Blend

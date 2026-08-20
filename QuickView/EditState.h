@@ -211,6 +211,7 @@ enum class HotkeyAction : uint8_t {
     OverlayAlphaDown,  // Adjust Overlay Alpha Down
     OverlayTogglePassthrough, // Toggle Passthrough Mode
     Help,              // Toggle Help Overlay
+    SuperResolution,   // AI Super-Resolution (Default: Shift+S)
     Exit,              // Exit App / Restore Screen
     Undo,              // Undo last operation (Ctrl+Z)
     PanUp,
@@ -275,6 +276,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::OverlayAlphaDown: return L"OverlayAlphaDown";
         case HotkeyAction::OverlayTogglePassthrough: return L"OverlayTogglePassthrough";
         case HotkeyAction::Help: return L"Help";
+        case HotkeyAction::SuperResolution: return L"SuperResolution";
         case HotkeyAction::ToggleSlideshow: return L"ToggleSlideshow";
         case HotkeyAction::ToggleSettings: return L"ToggleSettings";
         case HotkeyAction::Exit: return L"Exit";
@@ -328,6 +330,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"ShowInExplorer") return HotkeyAction::ShowInExplorer;
     if (sv == L"ToggleCompare") return HotkeyAction::ToggleCompare;
     if (sv == L"ComparePair") return HotkeyAction::ComparePair;
+    if (sv == L"SuperResolution") return HotkeyAction::SuperResolution;
     if (sv == L"AlwaysOnTop") return HotkeyAction::AlwaysOnTop;
     if (sv == L"ToggleDebugHud") return HotkeyAction::ToggleDebugHud;
     if (sv == L"Print") return HotkeyAction::Print;
@@ -660,7 +663,7 @@ struct AppConfig {
     int ZoomModeIn = 0;                 // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic, 4=AMD FSR 1.0
     int ZoomModeOut = 0;                // 0=Auto, 1=Linear, 2=Nearest, 3=High Quality Cubic
     float FsrSharpness = 0.20f;         // 0.0f to 1.0f (RCAS sharpness for AMD FSR 1.0)
-    int SrDebounceDelayMs = 150;        // 0ms to 5000ms delay after zoom settle before neural SR triggers
+    int SrDebounceDelayMs = 3000;       // 0ms to 5000ms delay after zoom settle before neural SR triggers (Default 3s)
     bool InvertWheel = false;
     int WheelActionMode = 0;            // 0=Zoom, 1=Navigate
     int ThumbWheelMode = 0;             // 0=Navigate, 1=Zoom
