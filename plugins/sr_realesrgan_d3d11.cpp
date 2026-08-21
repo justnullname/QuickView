@@ -64,7 +64,7 @@ static QVX_SR_ModelInfo s_models[] = {
         true,
         false,
         1247368,
-        "https://raw.githubusercontent.com/justnullname/QuickView/main/models/realesr-animevideov3-x2.bin",
+        "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x2.bin",
         512,
         100,   // default_debounce_ms
         false  // default_compare_mode
@@ -78,7 +78,7 @@ static QVX_SR_ModelInfo s_models[] = {
         true,
         false,
         1247368,
-        "https://raw.githubusercontent.com/justnullname/QuickView/main/models/realesr-animevideov3-x3.bin",
+        "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x3.bin",
         512,
         120,   // default_debounce_ms
         false  // default_compare_mode
@@ -92,7 +92,7 @@ static QVX_SR_ModelInfo s_models[] = {
         true,
         false,
         1247368,
-        "https://raw.githubusercontent.com/justnullname/QuickView/main/models/realesr-animevideov3-x4.bin",
+        "https://justnullname.github.io/QuickView/models/realesr-animevideov3-x4.bin",
         512,
         150,   // default_debounce_ms
         false  // default_compare_mode
@@ -106,7 +106,7 @@ static QVX_SR_ModelInfo s_models[] = {
         true,
         false,
         8943500,
-        "https://raw.githubusercontent.com/justnullname/QuickView/main/models/realesrgan-x4plus-anime.bin",
+        "https://justnullname.github.io/QuickView/models/realesrgan-x4plus-anime.bin",
         512,
         250,   // default_debounce_ms
         true   // default_compare_mode
@@ -120,7 +120,7 @@ static QVX_SR_ModelInfo s_models[] = {
         true,
         false,
         1500000,
-        "https://raw.githubusercontent.com/justnullname/QuickView/main/models/realesr-general-x4v3.bin",
+        "https://justnullname.github.io/QuickView/models/realesr-general-x4v3.bin",
         512,
         100,   // default_debounce_ms
         false  // default_compare_mode
@@ -134,7 +134,7 @@ static QVX_SR_ModelInfo s_models[] = {
         true,
         false,
         33424520,
-        "https://raw.githubusercontent.com/justnullname/QuickView/main/models/realesrgan-x4plus.bin",
+        "https://justnullname.github.io/QuickView/models/realesrgan-x4plus.bin",
         512,
         300,   // default_debounce_ms
         true   // default_compare_mode
