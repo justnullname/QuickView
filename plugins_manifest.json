@@ -8,10 +8,10 @@
       "version": "2.1.0",
       "author": "QuickView Team",
       "interface": "super_resolution",
-      "description": "Deep residual neural super-resolution engine (D3D11 GPU 0-copy acceleration).",
-      "download_url": "https://github.com/justnullname/QuickView/releases/latest/download/sr_realesrgan_d3d11.qvx",
-      "file_name": "sr_realesrgan_d3d11.qvx",
-      "file_size": 1500000,
+      "description": "Deep residual neural super-resolution engine (D3D11 GPU 0-copy acceleration with NCNN pipeline).",
+      "download_url": "https://justnullname.github.io/QuickView/plugins/sr_realesrgan_d3d11.zip",
+      "file_name": "sr_realesrgan_d3d11.zip",
+      "file_size": 2280850,
       "min_app_version": "2.0.0"
     }
   ]
