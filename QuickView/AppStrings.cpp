@@ -408,8 +408,6 @@ const wchar_t *Settings_Label_SrDenoise = nullptr;
 const wchar_t *Settings_Tooltip_SrDenoise = nullptr;
 const wchar_t *Settings_Label_SrDownload = nullptr;
 const wchar_t *Settings_Tooltip_SrDownload = nullptr;
-const wchar_t *Settings_Option_SrPlugin_Anime4K = nullptr;
-const wchar_t *Settings_Option_SrPlugin_Ref = nullptr;
 const wchar_t *OSD_SrProcessing = nullptr;
 const wchar_t *OSD_SrSuccessFormat = nullptr;
 const wchar_t *OSD_SrSuccessFormatSimple = nullptr;
@@ -1010,8 +1008,6 @@ struct LanguageTable {
     const wchar_t *Settings_Tooltip_SrDenoise;
     const wchar_t *Settings_Label_SrDownload;
     const wchar_t *Settings_Tooltip_SrDownload;
-    const wchar_t *Settings_Option_SrPlugin_Anime4K;
-    const wchar_t *Settings_Option_SrPlugin_Ref;
     const wchar_t *OSD_SrProcessing;
     const wchar_t *OSD_SrSuccessFormat;
     const wchar_t *OSD_SrSuccessFormatSimple;
@@ -1616,8 +1612,6 @@ static const LanguageTable Table_EN = {
     L"Adjust pre-denoising strength for neural super-resolution.", // Settings_Tooltip_SrDenoise
     L"Download / Update Plugins", // Settings_Label_SrDownload
     L"Download or update super-resolution plugin from official release.", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (Fast Zero-Dependency)", // Settings_Option_SrPlugin_Anime4K
-    L"Official Reference D3D11 Plugin", // Settings_Option_SrPlugin_Ref
     L"AI Super-Resolution Processing...", // OSD_SrProcessing
     L"✓ AI Upscale Ready: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
     L"✓ AI Upscale Ready: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
@@ -2222,8 +2216,6 @@ static const LanguageTable Table_CN = {
     L"调节 AI 神经超分的预降噪处理强度。", // Settings_Tooltip_SrDenoise
     L"下载 / 更新插件", // Settings_Label_SrDownload
     L"从官方发布源自动下载最新超分插件包并放置于 plugins/ 目录。", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (内置极速 0 依赖)", // Settings_Option_SrPlugin_Anime4K
-    L"官方参考 D3D11 插件", // Settings_Option_SrPlugin_Ref
     L"AI 超分辨率计算中...", // OSD_SrProcessing
     L"✓ AI 超分完成: %s [%.0fx] (耗时: %.1f ms)", // OSD_SrSuccessFormat
     L"✓ AI 超分完成: %s (耗时: %.1f ms)", // OSD_SrSuccessFormatSimple
@@ -2828,8 +2820,6 @@ static const LanguageTable Table_TW = {
     L"調節 AI 神經超分的預降噪處理強度。", // Settings_Tooltip_SrDenoise
     L"下載 / 更新外掛程式", // Settings_Label_SrDownload
     L"從官方發布源自動下載最新超分外掛程式包並放置於 plugins/ 目錄。", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (內建極速 0 依賴)", // Settings_Option_SrPlugin_Anime4K
-    L"官方參考 D3D11 外掛程式", // Settings_Option_SrPlugin_Ref
     L"AI 超解析度計算中...", // OSD_SrProcessing
     L"✓ AI 超解析度完成: %s [%.0fx] (耗時: %.1f ms)", // OSD_SrSuccessFormat
     L"✓ AI 超解析度完成: %s (耗時: %.1f ms)", // OSD_SrSuccessFormatSimple
@@ -3434,8 +3424,6 @@ static const LanguageTable Table_JA = {
     L"AI 超解像の事前ノイズ除去強度を調整します。", // Settings_Tooltip_SrDenoise
     L"プラグインのダウンロード / 更新", // Settings_Label_SrDownload
     L"公式リリースから最新の超解像プラグインを自動ダウンロードします。", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (超高速・ゼロ依存)", // Settings_Option_SrPlugin_Anime4K
-    L"公式リファレンス D3D11 プラグイン", // Settings_Option_SrPlugin_Ref
     L"AI 超解像処理中...", // OSD_SrProcessing
     L"✓ AI 超解像完了: %s [%.0fx] (処理時間: %.1f ms)", // OSD_SrSuccessFormat
     L"✓ AI 超解像完了: %s (処理時間: %.1f ms)", // OSD_SrSuccessFormatSimple
@@ -4040,8 +4028,6 @@ static const LanguageTable Table_RU = {
     L"Настройка предварительного шумоподавления для AI сверхразрешения.", // Settings_Tooltip_SrDenoise
     L"Скачать / Обновить плагины", // Settings_Label_SrDownload
     L"Скачать или обновить плагины из официального репозитория.", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (Быстрый без зависимостей)", // Settings_Option_SrPlugin_Anime4K
-    L"Официальный D3D11 референс-плагин", // Settings_Option_SrPlugin_Ref
     L"Идет обработка сверхразрешения ИИ...", // OSD_SrProcessing
     L"✓ ИИ Сверхразрешение готово: %s [%.0fx] (%.1f мс)", // OSD_SrSuccessFormat
     L"✓ ИИ Сверхразрешение готово: %s (%.1f мс)", // OSD_SrSuccessFormatSimple
@@ -4646,8 +4632,6 @@ static const LanguageTable Table_DE = {
     L"Vorab-Rauschunterdrückung für neuronale Super-Resolution anpassen.", // Settings_Tooltip_SrDenoise
     L"Plugins herunterladen / aktualisieren", // Settings_Label_SrDownload
     L"Super-Resolution-Plugin aus offiziellem Release herunterladen oder aktualisieren.", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (Extrem schnell, 0 Abhängigkeiten)", // Settings_Option_SrPlugin_Anime4K
-    L"Offizielles D3D11-Referenz-Plugin", // Settings_Option_SrPlugin_Ref
     L"KI-Super-Resolution wird berechnet...", // OSD_SrProcessing
     L"✓ KI-Super-Resolution fertig: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
     L"✓ KI-Super-Resolution fertig: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
@@ -5252,8 +5236,6 @@ static const LanguageTable Table_ES = {
     L"Ajusta la reducción de ruido previa para superresolución IA.", // Settings_Tooltip_SrDenoise
     L"Descargar / Actualizar complementos", // Settings_Label_SrDownload
     L"Descargar o actualizar complementos desde el repositorio oficial.", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (Ultrarrápido, 0 dependencias)", // Settings_Option_SrPlugin_Anime4K
-    L"Complemento oficial D3D11 de referencia", // Settings_Option_SrPlugin_Ref
     L"Procesando superresolución IA...", // OSD_SrProcessing
     L"✓ Superresolución IA completada: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
     L"✓ Superresolución IA completada: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
@@ -5858,8 +5840,6 @@ static const LanguageTable Table_FR = {
     L"Ajuster le pré-débruitage pour la super-résolution IA.", // Settings_Tooltip_SrDenoise
     L"Télécharger / Mettre à jour les plugins", // Settings_Label_SrDownload
     L"Télécharger ou mettre à jour les plugins depuis la release officielle.", // Settings_Tooltip_SrDownload
-    L"Anime4K v4.0 CNN (Ultra-rapide, 0 dépendance)", // Settings_Option_SrPlugin_Anime4K
-    L"Plugin officiel D3D11 de référence", // Settings_Option_SrPlugin_Ref
     L"Calcul de super-résolution IA en cours...", // OSD_SrProcessing
     L"✓ Super-résolution IA prête: %s [%.0fx] (%.1f ms)", // OSD_SrSuccessFormat
     L"✓ Super-résolution IA prête: %s (%.1f ms)", // OSD_SrSuccessFormatSimple
@@ -6469,8 +6449,6 @@ void Apply(const LanguageTable& t) {
   Settings_Tooltip_SrDenoise = t.Settings_Tooltip_SrDenoise;
   Settings_Label_SrDownload = t.Settings_Label_SrDownload;
   Settings_Tooltip_SrDownload = t.Settings_Tooltip_SrDownload;
-  Settings_Option_SrPlugin_Anime4K = t.Settings_Option_SrPlugin_Anime4K;
-  Settings_Option_SrPlugin_Ref = t.Settings_Option_SrPlugin_Ref;
   OSD_SrProcessing = t.OSD_SrProcessing;
   OSD_SrSuccessFormat = t.OSD_SrSuccessFormat;
   OSD_SrSuccessFormatSimple = t.OSD_SrSuccessFormatSimple;

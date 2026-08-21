@@ -24,6 +24,9 @@ jobs:
           DATE=$(date +'%Y-%m-%d')
           
           mkdir -p public
+          if [ -f "plugins/plugins_manifest.json" ]; then
+            cp plugins/plugins_manifest.json public/
+          fi
           
           # 1. Get all assets in JSON
           ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets')

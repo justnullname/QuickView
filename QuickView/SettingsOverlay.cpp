@@ -2518,141 +2518,228 @@ void SettingsOverlay::BuildMenu() {
     tabImage.items.push_back({ AppStrings::Checkbox_AlwaysSaveLossy, OptionType::Toggle, &g_config.AlwaysSaveLossy });
     m_tabs.push_back(tabImage);
 
-    // --- 5. Plugins ---
+    // --- 5. Plugins (Modern Extensions Center & Market) ---
     SettingsTab tabPlugins;
     tabPlugins.name = AppStrings::Settings_Tab_Plugins;
     tabPlugins.icon = Icons::FixExt;
 
-    SettingsItem headerSr = { AppStrings::Settings_Header_Plugins_SR, OptionType::Header };
-    headerSr.isNewOption = true;
-    tabPlugins.items.push_back(headerSr);
-
-    static bool s_srPluginEnabled = QuickView::PluginHost::Instance().IsSrPluginEnabled();
+    static bool s_srPluginEnabled = false;
     s_srPluginEnabled = QuickView::PluginHost::Instance().IsSrPluginEnabled();
 
-    auto installState = QuickView::PluginHost::Instance().GetSrPluginInstallState();
+    QuickView::PluginHost::Instance().SetUINotifyCallback([]([[maybe_unused]] void* u) {
+        extern HWND g_mainHwnd;
+        if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+    });
 
-    if (installState == QuickView::PluginInstallState::NotInstalled) {
-        // --- State A: Plugin Not Installed -> Show Clean Download Card ---
-        tabPlugins.items.push_back({ AppStrings::Settings_Desc_PluginNotInstalled, OptionType::InfoLabel });
+    // 1. Header: 云端插件市场 (Online Plugin Store)
+    SettingsItem headerMarket = { L"云端插件市场 (Online Plugin Store)", OptionType::Header };
+    headerMarket.isNewOption = true;
+    tabPlugins.items.push_back(headerMarket);
 
-        SettingsItem itemDownloadPlugin = { L"", OptionType::ActionButton };
-        itemDownloadPlugin.buttonText = AppStrings::Settings_Button_DownloadSrPlugin;
-        itemDownloadPlugin.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
-            if (!item) return;
-            item->progress = 0.0f;
-            item->isSuccess = false;
-            item->isFailed = false;
-            item->buttonText = L"Connecting (0%)...";
-            item->isDisabled = true;
+    // Trigger manifest fetch if not yet fetched
+    auto& pluginHost = QuickView::PluginHost::Instance();
+    const auto& remotePlugins = pluginHost.GetCachedRemoteManifest();
+    bool isFetching = pluginHost.IsFetchingManifest();
 
-            extern HWND g_mainHwnd;
-            if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+    if (remotePlugins.empty() && !isFetching) {
+        static bool s_autoFetched = false;
+        if (!s_autoFetched) {
+            s_autoFetched = true;
+            pluginHost.TriggerManifestFetch();
+        }
+    }
 
-            std::thread([overlay, item]() {
-                struct ProgressData {
-                    SettingsOverlay* overlay;
-                    SettingsItem* item;
-                };
-                ProgressData progData{ overlay, item };
+    // Refresh action button
+    SettingsItem itemRefresh = { L"插件清单同步", OptionType::ActionButton };
+    itemRefresh.buttonText = isFetching ? L"正在从云端同步清单..." : L"从云端刷新插件清单";
+    itemRefresh.isDisabled = isFetching;
+    itemRefresh.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+        if (!item) return;
+        QuickView::PluginHost::Instance().TriggerManifestFetch();
+        if (overlay) overlay->m_pendingRebuild = true;
+    };
+    tabPlugins.items.push_back(itemRefresh);
 
-                auto progressCb = [](float progress, bool finished, bool success, void* uData) {
-                    auto* pData = static_cast<ProgressData*>(uData);
-                    if (!pData || !pData->item) return;
+    auto installState = pluginHost.GetSrPluginInstallState();
+    std::string curVer = pluginHost.GetInstalledPluginVersion();
 
+    static std::vector<std::pair<std::wstring, std::string>> s_marketPluginSpecs;
+    s_marketPluginSpecs.clear();
+
+    // Render Remote Market Cards
+    if (!remotePlugins.empty()) {
+        for (size_t rpIdx = 0; rpIdx < remotePlugins.size(); ++rpIdx) {
+            const auto& rp = remotePlugins[rpIdx];
+            s_marketPluginSpecs.push_back({ std::wstring(rp.fileName.begin(), rp.fileName.end()), rp.downloadUrl });
+
+            std::wstring wName(rp.name.begin(), rp.name.end());
+            std::wstring wVer(rp.version.begin(), rp.version.end());
+            std::wstring wDesc(rp.description.begin(), rp.description.end());
+            std::wstring wAuthor(rp.author.begin(), rp.author.end());
+
+            // Card title row
+            std::wstring cardTitle = wName + L" (v" + wVer + L") - " + wAuthor;
+            SettingsItem itemMarketCard = { cardTitle, OptionType::ActionButton };
+            itemMarketCard.pIntVal = reinterpret_cast<int*>(static_cast<uintptr_t>(rpIdx));
+
+            if (installState == QuickView::PluginInstallState::Installed && (curVer == rp.version || rp.version.empty())) {
+                itemMarketCard.buttonText = L"✓ 已安装 (Up-to-date)";
+                itemMarketCard.isDisabled = true;
+                itemMarketCard.isSuccess = true;
+            } else if (installState == QuickView::PluginInstallState::UpdateAvailable || (!curVer.empty() && curVer != rp.version)) {
+                itemMarketCard.buttonText = L"⚡ 更新至 v" + wVer;
+                itemMarketCard.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item) return;
+                    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(item->pIntVal));
+                    if (idx >= s_marketPluginSpecs.size()) return;
+                    std::wstring wFile = s_marketPluginSpecs[idx].first;
+                    std::string dlUrl = s_marketPluginSpecs[idx].second;
+
+                    item->progress = 0.0f;
+                    item->isDisabled = true;
+                    item->buttonText = L"Updating (0%)...";
                     extern HWND g_mainHwnd;
-                    if (finished) {
-                        if (success) {
-                            pData->item->progress = 1.0f;
-                            pData->item->isSuccess = true;
-                            pData->item->isFailed = false;
-                            pData->item->buttonText = L"✓ Plugin Ready";
-                        } else {
-                            pData->item->progress = -1.0f;
-                            pData->item->isSuccess = false;
-                            pData->item->isFailed = true;
-                            pData->item->buttonText = L"✗ Download Failed (Retry)";
-                            pData->item->isDisabled = false;
+                    if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+
+                    std::thread([overlay, item, wFile, dlUrl]() {
+                        struct ProgressData { SettingsOverlay* overlay; SettingsItem* item; };
+                        ProgressData progData{ overlay, item };
+                        auto progressCb = [](float progress, bool finished, bool success, void* uData) {
+                            auto* pData = static_cast<ProgressData*>(uData);
+                            if (!pData || !pData->item) return;
+                            extern HWND g_mainHwnd;
+                            if (finished) {
+                                if (success) {
+                                    pData->item->progress = 1.0f;
+                                    pData->item->isSuccess = true;
+                                    pData->item->buttonText = L"✓ Updated";
+                                } else {
+                                    pData->item->progress = -1.0f;
+                                    pData->item->isFailed = true;
+                                    pData->item->buttonText = L"✗ Update Failed";
+                                    pData->item->isDisabled = false;
+                                }
+                            } else {
+                                pData->item->progress = (progress >= 0.0f) ? progress : 0.5f;
+                                int percent = static_cast<int>(pData->item->progress * 100.0f);
+                                pData->item->buttonText = L"Updating (" + std::to_wstring(percent) + L"%)...";
+                            }
+                            if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+                        };
+
+                        bool ok = QuickView::PluginHost::Instance().DownloadPlugin(wFile, dlUrl, progressCb, &progData);
+                        if (ok) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                            if (overlay) overlay->m_pendingRebuild = true;
+                            extern void RefreshImageDisplay(HWND hwnd);
+                            if (g_mainHwnd) RefreshImageDisplay(g_mainHwnd);
                         }
-                    } else {
-                        pData->item->progress = (progress >= 0.0f) ? progress : 0.5f;
-                        int percent = static_cast<int>(pData->item->progress * 100.0f);
-                        if (percent > 100) percent = 100;
-                        pData->item->buttonText = L"Downloading (" + std::to_wstring(percent) + L"%)...";
-                    }
-                    if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+                    }).detach();
                 };
+            } else {
+                uint64_t mb = (rp.fileSize + 1024 * 1024 - 1) / (1024 * 1024);
+                itemMarketCard.buttonText = L"⬇ 获取插件 (~" + std::to_wstring(mb > 0 ? mb : 2) + L" MB)";
+                itemMarketCard.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+                    if (!item) return;
+                    size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(item->pIntVal));
+                    if (idx >= s_marketPluginSpecs.size()) return;
+                    std::wstring wFile = s_marketPluginSpecs[idx].first;
+                    std::string dlUrl = s_marketPluginSpecs[idx].second;
 
-                bool ok = QuickView::PluginHost::Instance().DownloadPlugin(L"sr_realesrgan_d3d11.qvx", "", progressCb, &progData);
-                if (ok) {
-                    QuickView::PluginHost::Instance().SetSrPluginEnabled(true);
-                    SaveConfig();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-                    if (overlay) overlay->m_pendingRebuild = true;
-                    extern void RefreshImageDisplay(HWND hwnd);
-                    if (g_mainHwnd) RefreshImageDisplay(g_mainHwnd);
-                } else {
+                    item->progress = 0.0f;
+                    item->isDisabled = true;
+                    item->buttonText = L"Connecting (0%)...";
+                    extern HWND g_mainHwnd;
                     if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
-                }
-            }).detach();
-        };
-        tabPlugins.items.push_back(itemDownloadPlugin);
-    } else {
-        // --- State B / C: Plugin Installed (Optionally Update Available) ---
-        if (installState == QuickView::PluginInstallState::UpdateAvailable) {
-            std::string curVer = QuickView::PluginHost::Instance().GetInstalledPluginVersion();
-            std::string tgtVer = QuickView::PluginHost::Instance().GetTargetPluginVersion();
-            std::wstring updateTip = L"Update Available (v" + std::wstring(curVer.begin(), curVer.end()) + L" -> v" + std::wstring(tgtVer.begin(), tgtVer.end()) + L")";
 
-            SettingsItem itemUpdate = { L"", OptionType::ActionButton };
-            itemUpdate.buttonText = AppStrings::Settings_Button_UpdateSrPlugin;
-            itemUpdate.tooltipText = updateTip.c_str();
-            itemUpdate.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
+                    std::thread([overlay, item, wFile, dlUrl]() {
+                        struct ProgressData { SettingsOverlay* overlay; SettingsItem* item; };
+                        ProgressData progData{ overlay, item };
+                        auto progressCb = [](float progress, bool finished, bool success, void* uData) {
+                            auto* pData = static_cast<ProgressData*>(uData);
+                            if (!pData || !pData->item) return;
+                            extern HWND g_mainHwnd;
+                            if (finished) {
+                                if (success) {
+                                    pData->item->progress = 1.0f;
+                                    pData->item->isSuccess = true;
+                                    pData->item->buttonText = L"✓ Ready";
+                                } else {
+                                    pData->item->progress = -1.0f;
+                                    pData->item->isFailed = true;
+                                    pData->item->buttonText = L"✗ Failed (Retry)";
+                                    pData->item->isDisabled = false;
+                                }
+                            } else {
+                                pData->item->progress = (progress >= 0.0f) ? progress : 0.5f;
+                                int percent = static_cast<int>(pData->item->progress * 100.0f);
+                                pData->item->buttonText = L"Downloading (" + std::to_wstring(percent) + L"%)...";
+                            }
+                            if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
+                        };
+
+                        bool ok = QuickView::PluginHost::Instance().DownloadPlugin(wFile, dlUrl, progressCb, &progData);
+                        if (ok) {
+                            QuickView::PluginHost::Instance().SetSrPluginEnabled(true);
+                            SaveConfig();
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                            if (overlay) overlay->m_pendingRebuild = true;
+                            extern void RefreshImageDisplay(HWND hwnd);
+                            if (g_mainHwnd) RefreshImageDisplay(g_mainHwnd);
+                        }
+                    }).detach();
+                };
+            }
+            tabPlugins.items.push_back(itemMarketCard);
+
+            // Description info label
+            SettingsItem itemDesc = { wDesc, OptionType::InfoLabel };
+            tabPlugins.items.push_back(itemDesc);
+        }
+    } else {
+        if (installState == QuickView::PluginInstallState::NotInstalled) {
+            tabPlugins.items.push_back({ AppStrings::Settings_Desc_PluginNotInstalled, OptionType::InfoLabel });
+
+            SettingsItem itemDownloadPlugin = { L"Real-ESRGAN Neural Upscaler (D3D11)", OptionType::ActionButton };
+            itemDownloadPlugin.buttonText = AppStrings::Settings_Button_DownloadSrPlugin;
+            itemDownloadPlugin.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
                 if (!item) return;
                 item->progress = 0.0f;
-                item->isSuccess = false;
-                item->isFailed = false;
-                item->buttonText = L"Updating (0%)...";
                 item->isDisabled = true;
-
+                item->buttonText = L"Connecting (0%)...";
                 extern HWND g_mainHwnd;
                 if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
 
                 std::thread([overlay, item]() {
-                    struct ProgressData {
-                        SettingsOverlay* overlay;
-                        SettingsItem* item;
-                    };
+                    struct ProgressData { SettingsOverlay* overlay; SettingsItem* item; };
                     ProgressData progData{ overlay, item };
-
                     auto progressCb = [](float progress, bool finished, bool success, void* uData) {
                         auto* pData = static_cast<ProgressData*>(uData);
                         if (!pData || !pData->item) return;
-
                         extern HWND g_mainHwnd;
                         if (finished) {
                             if (success) {
                                 pData->item->progress = 1.0f;
                                 pData->item->isSuccess = true;
-                                pData->item->isFailed = false;
-                                pData->item->buttonText = L"✓ Updated";
+                                pData->item->buttonText = L"✓ Ready";
                             } else {
                                 pData->item->progress = -1.0f;
-                                pData->item->isSuccess = false;
                                 pData->item->isFailed = true;
-                                pData->item->buttonText = L"✗ Update Failed";
+                                pData->item->buttonText = L"✗ Download Failed (Retry)";
                                 pData->item->isDisabled = false;
                             }
                         } else {
                             pData->item->progress = (progress >= 0.0f) ? progress : 0.5f;
                             int percent = static_cast<int>(pData->item->progress * 100.0f);
-                            pData->item->buttonText = L"Updating (" + std::to_wstring(percent) + L"%)...";
+                            pData->item->buttonText = L"Downloading (" + std::to_wstring(percent) + L"%)...";
                         }
                         if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
                     };
 
                     bool ok = QuickView::PluginHost::Instance().DownloadPlugin(L"sr_realesrgan_d3d11.qvx", "", progressCb, &progData);
                     if (ok) {
+                        QuickView::PluginHost::Instance().SetSrPluginEnabled(true);
+                        SaveConfig();
                         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
                         if (overlay) overlay->m_pendingRebuild = true;
                         extern void RefreshImageDisplay(HWND hwnd);
@@ -2660,8 +2747,17 @@ void SettingsOverlay::BuildMenu() {
                     }
                 }).detach();
             };
-            tabPlugins.items.push_back(itemUpdate);
+            tabPlugins.items.push_back(itemDownloadPlugin);
         }
+    }
+
+    // 2. Header: 已安装插件中心 (Installed Extensions Hub)
+    SettingsItem headerInstalled = { L"已安装插件中心 (Installed Extensions)", OptionType::Header };
+    headerInstalled.isNewOption = true;
+    tabPlugins.items.push_back(headerInstalled);
+
+    if (installState != QuickView::PluginInstallState::NotInstalled) {
+        s_srPluginEnabled = QuickView::PluginHost::Instance().IsSrPluginEnabled();
 
         // 1. Data-Driven Dynamic Model Selector & Downloader
         static std::vector<QuickView::SrModelEntry> s_models;
@@ -2700,15 +2796,15 @@ void SettingsOverlay::BuildMenu() {
             }
         }
 
-        // If selected model is not installed locally, force disable SR plugin toggle
+        // If selected model is not installed locally, disable toggle
         if (!isCurrentModelInstalled) {
             s_srPluginEnabled = false;
             QuickView::PluginHost::Instance().SetSrPluginEnabled(false);
         }
 
-        // 2. Enable AI SR Plugin Toggle
-        SettingsItem itemSrPlugin = { AppStrings::Settings_Label_EnableSrPlugin, OptionType::Toggle, &s_srPluginEnabled };
-        itemSrPlugin.tooltipText = nullptr;
+        // Plugin Enabled Toggle
+        std::wstring pluginTitle = L"Real-ESRGAN (D3D11 深度残差超分)";
+        SettingsItem itemSrPlugin = { pluginTitle, OptionType::Toggle, &s_srPluginEnabled };
         itemSrPlugin.isDisabled = !isCurrentModelInstalled;
         itemSrPlugin.disabledText = !isCurrentModelInstalled ? L"需先下载选中的模型" : L"";
         itemSrPlugin.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
@@ -2721,7 +2817,7 @@ void SettingsOverlay::BuildMenu() {
         };
         tabPlugins.items.push_back(itemSrPlugin);
 
-        // 3. AI Model Selector
+        // AI Model Selector
         if (!s_models.empty()) {
             SettingsItem itemModel = { AppStrings::Settings_Label_SrModel, OptionType::ComboBox, nullptr, nullptr, BindEnum(&s_modelChoiceIndex), nullptr, 0, 0, s_modelOptionViews };
             if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_modelDescriptions.size() && !s_modelDescriptions[s_modelChoiceIndex].empty()) {
@@ -2739,17 +2835,12 @@ void SettingsOverlay::BuildMenu() {
             };
             tabPlugins.items.push_back(itemModel);
 
-            // If selected model is not installed locally, show Download button
+            // Single model on-demand download button if not installed locally
             if (s_modelChoiceIndex >= 0 && s_modelChoiceIndex < (int)s_models.size() && !s_models[s_modelChoiceIndex].isInstalled && !s_models[s_modelChoiceIndex].downloadUrl.empty()) {
-                static std::wstring s_dlBtnText;
-                std::string curUrl = s_models[s_modelChoiceIndex].downloadUrl;
-                if (curUrl.find(".zip") != std::string::npos) {
-                    s_dlBtnText = L"Download Official Models (~45 MB)";
-                } else {
-                    uint64_t bytes = s_models[s_modelChoiceIndex].fileSizeBytes;
-                    s_dlBtnText = L"Download Model (~" + std::to_wstring((bytes + 1024 * 1024 - 1) / (1024 * 1024)) + L" MB)";
-                }
-                SettingsItem itemDl = { L"Model Asset", OptionType::ActionButton };
+                uint64_t bytes = s_models[s_modelChoiceIndex].fileSizeBytes;
+                std::wstring s_dlBtnText = L"下载该模型 (~" + std::to_wstring((bytes + 1024 * 1024 - 1) / (1024 * 1024)) + L" MB)";
+                
+                SettingsItem itemDl = { L"模型资源缺失", OptionType::ActionButton };
                 itemDl.buttonText = s_dlBtnText;
                 itemDl.onChange = [](SettingsOverlay* overlay, SettingsItem* item) {
                     if (!item) return;
@@ -2759,35 +2850,27 @@ void SettingsOverlay::BuildMenu() {
                         std::wstring wFilename(filename.begin(), filename.end());
 
                         item->progress = 0.0f;
-                        item->isSuccess = false;
-                        item->isFailed = false;
-                        item->buttonText = L"Connecting (0%)...";
                         item->isDisabled = true;
+                        item->buttonText = L"Connecting (0%)...";
 
                         extern HWND g_mainHwnd;
                         if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
 
                         std::thread([overlay, item, wFilename, url]() {
-                            struct ProgressData {
-                                SettingsOverlay* overlay;
-                                SettingsItem* item;
-                            };
+                            struct ProgressData { SettingsOverlay* overlay; SettingsItem* item; };
                             ProgressData progData{ overlay, item };
 
                             auto progressCb = [](float progress, bool finished, bool success, void* uData) {
                                 auto* pData = static_cast<ProgressData*>(uData);
                                 if (!pData || !pData->item) return;
-
                                 extern HWND g_mainHwnd;
                                 if (finished) {
                                     if (success) {
                                         pData->item->progress = 1.0f;
                                         pData->item->isSuccess = true;
-                                        pData->item->isFailed = false;
                                         pData->item->buttonText = L"✓ Download Complete";
                                     } else {
                                         pData->item->progress = -1.0f;
-                                        pData->item->isSuccess = false;
                                         pData->item->isFailed = true;
                                         pData->item->buttonText = L"✗ Download Failed (Retry)";
                                         pData->item->isDisabled = false;
@@ -2795,10 +2878,8 @@ void SettingsOverlay::BuildMenu() {
                                 } else {
                                     pData->item->progress = (progress >= 0.0f) ? progress : 0.5f;
                                     int percent = static_cast<int>(pData->item->progress * 100.0f);
-                                    if (percent > 100) percent = 100;
                                     pData->item->buttonText = L"Downloading (" + std::to_wstring(percent) + L"%)...";
                                 }
-
                                 if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
                             };
 
@@ -2808,8 +2889,6 @@ void SettingsOverlay::BuildMenu() {
                                 if (overlay) overlay->m_pendingRebuild = true;
                                 extern void RefreshImageDisplay(HWND hwnd);
                                 if (g_mainHwnd) RefreshImageDisplay(g_mainHwnd);
-                            } else {
-                                if (g_mainHwnd) InvalidateRect(g_mainHwnd, nullptr, FALSE);
                             }
                         }).detach();
                     }
@@ -2817,72 +2896,18 @@ void SettingsOverlay::BuildMenu() {
                 tabPlugins.items.push_back(itemDl);
             }
         }
-
-        // 4. Auto Trigger: Toggle
-        static bool s_srAutoTrigger = QuickView::PluginHost::Instance().IsSrAutoTriggerEnabled();
-        s_srAutoTrigger = QuickView::PluginHost::Instance().IsSrAutoTriggerEnabled();
-
-        SettingsItem itemAutoTrigger = { 
-            AppStrings::Settings_Label_SrAutoTrigger, 
-            OptionType::Toggle, 
-            &s_srAutoTrigger 
-        };
-        itemAutoTrigger.isDisabled = !s_srPluginEnabled;
-        itemAutoTrigger.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            QuickView::PluginHost::Instance().SetSrAutoTriggerEnabled(s_srAutoTrigger);
-            SaveConfig();
-            if (overlay) overlay->m_pendingRebuild = true;
-        };
-        tabPlugins.items.push_back(itemAutoTrigger);
-
-        // 5. Trigger Delay (0ms ~ 5000ms, visible only when Auto Trigger enabled)
-        if (s_srAutoTrigger) {
-            static float s_srDebounceFloat = (float)g_config.SrDebounceDelayMs;
-            s_srDebounceFloat = (float)g_config.SrDebounceDelayMs;
-            SettingsItem itemDebounce = { AppStrings::Settings_Label_SrDebounce, OptionType::Slider, nullptr, &s_srDebounceFloat };
-            itemDebounce.tooltipText = AppStrings::Settings_Tooltip_SrDebounce;
-            itemDebounce.minVal = 0.0f;
-            itemDebounce.maxVal = 5000.0f;
-            itemDebounce.step = 50.0f;
-            itemDebounce.displayFormat = L"%.0f ms";
-            itemDebounce.isDisabled = !s_srPluginEnabled;
-            itemDebounce.onChange2 = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-                g_config.SrDebounceDelayMs = (int)(s_srDebounceFloat + 0.5f);
-                QuickView::PluginHost::Instance().SetSrDebounceDelayMs(g_config.SrDebounceDelayMs);
-                SaveConfig();
-            };
-            itemDebounce.onReset = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-                s_srDebounceFloat = 3000.0f;
-                g_config.SrDebounceDelayMs = 3000;
-                QuickView::PluginHost::Instance().SetSrDebounceDelayMs(3000);
-                SaveConfig();
-                if (overlay) overlay->m_pendingRebuild = true;
-            };
-            tabPlugins.items.push_back(itemDebounce);
-        }
-
-        // 6. Show in Compare Mode on Manual Trigger Toggle (without tooltip)
-        static bool s_srOpenCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
-        s_srOpenCompare = QuickView::PluginHost::Instance().IsSrOpenInCompareMode();
-        SettingsItem itemOpenCompare = { AppStrings::Settings_Label_SrOpenInCompare, OptionType::Toggle, &s_srOpenCompare };
-        itemOpenCompare.isDisabled = !s_srPluginEnabled;
-        itemOpenCompare.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            QuickView::PluginHost::Instance().SetSrOpenInCompareMode(s_srOpenCompare);
-            SaveConfig();
-        };
-        tabPlugins.items.push_back(itemOpenCompare);
-
-        // 7. Prompt Model Selection on Manual Trigger Toggle (without tooltip)
-        static bool s_srPromptModel = QuickView::PluginHost::Instance().IsSrPromptModelOnHotkey();
-        s_srPromptModel = QuickView::PluginHost::Instance().IsSrPromptModelOnHotkey();
-        SettingsItem itemPromptModel = { AppStrings::Settings_Label_SrPromptModel, OptionType::Toggle, &s_srPromptModel };
-        itemPromptModel.isDisabled = !s_srPluginEnabled;
-        itemPromptModel.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
-            QuickView::PluginHost::Instance().SetSrPromptModelOnHotkey(s_srPromptModel);
-            SaveConfig();
-        };
-        tabPlugins.items.push_back(itemPromptModel);
+    } else {
+        SettingsItem itemNoPlugin = { L"暂无已安装插件，可在上方市场中一键安装。", OptionType::InfoLabel };
+        tabPlugins.items.push_back(itemNoPlugin);
     }
+
+    // Open models/plugins directory button
+    SettingsItem itemOpenFolder = { L"插件与模型本地目录", OptionType::ActionButton };
+    itemOpenFolder.buttonText = L"📂 打开本地目录 (Explorer)";
+    itemOpenFolder.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+        QuickView::PluginHost::Instance().OpenModelsDirectory();
+    };
+    tabPlugins.items.push_back(itemOpenFolder);
 
     // 5. Data-Driven Dynamic Parameter Reflection
     static std::vector<QuickView::SrParamEntry> s_dynParams;

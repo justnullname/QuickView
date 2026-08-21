@@ -424,6 +424,7 @@ add_executable(QuickViewTests
     QuickView/exif.cpp
     QuickView/QuickViewETW.cpp
     QuickView/Plugin/PluginHost.cpp
+    third_party/yyjson/yyjson.c
     QuickView/pch.cpp
 )
 target_precompile_headers(QuickViewTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
@@ -445,7 +446,7 @@ target_link_libraries(QuickViewTests PRIVATE
     ZLIB::ZLIB
     libjpeg-turbo::turbojpeg-static
 )
-target_include_directories(QuickViewTests PRIVATE QuickView third_party/unrar-mini)
+target_include_directories(QuickViewTests PRIVATE QuickView third_party/yyjson third_party/unrar-mini)
 target_compile_definitions(QuickViewTests PRIVATE UNICODE _UNICODE)
 add_dependencies(QuickViewTests sr_realesrgan_d3d11)
 add_test(NAME QuickViewTests COMMAND QuickViewTests)

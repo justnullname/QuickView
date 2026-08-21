@@ -486,8 +486,6 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_SrDownload;
     extern const wchar_t* Settings_Tooltip_SrDownload;
     extern const wchar_t* Settings_Button_Download;
-    extern const wchar_t* Settings_Option_SrPlugin_Anime4K;
-    extern const wchar_t* Settings_Option_SrPlugin_Ref;
 
     // Super-Resolution OSD & Dialog
     extern const wchar_t* OSD_SrProcessing;

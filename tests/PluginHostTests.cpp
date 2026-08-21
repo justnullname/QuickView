@@ -183,4 +183,16 @@ TEST_F(PluginHostTests, ResetToDefaults) {
     EXPECT_NEAR(host.GetSrDenoise(), 0.0f, 0.001f);
 }
 
+// 5. Test native zero-subprocess in-memory ZIP extractor (replaces tar.exe)
+#include "ArchiveVFS.h"
+TEST_F(PluginHostTests, NativeZipExtraction) {
+    wchar_t tempPath[MAX_PATH];
+    GetTempPathW(MAX_PATH, tempPath);
+    std::wstring dummyZip = std::wstring(tempPath) + L"QVX_Empty_Test.zip";
+    std::wstring extractDir = std::wstring(tempPath) + L"QVX_Extract_Out";
+
+    // Non-existent ZIP should gracefully fail
+    EXPECT_FALSE(QuickView::IArchive::ExtractZipToDirectory(dummyZip, extractDir));
+}
+
 

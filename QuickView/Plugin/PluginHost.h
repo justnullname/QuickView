@@ -38,6 +38,19 @@ struct PluginCandidate {
     bool isLoaded = false;
 };
 
+struct RemotePluginItem {
+    std::string id;
+    std::string name;
+    std::string version;
+    std::string author;
+    std::string interfaceName;
+    std::string description;
+    std::string downloadUrl;
+    std::string fileName;
+    uint64_t fileSize = 0;
+    std::string minAppVersion;
+};
+
 struct SrModelEntry {
     std::string modelId;
     std::string displayName;
@@ -150,6 +163,22 @@ public:
     // Unload active SR plugin and destroy cached GPU context
     void UnloadSrPlugin();
 
+    // --- Remote Manifest & Market API ---
+    using ManifestCallback = void (*)(const std::vector<RemotePluginItem>& items, void* userData);
+    void FetchRemoteManifestAsync(ManifestCallback callback, void* userData = nullptr);
+    const std::vector<RemotePluginItem>& GetCachedRemoteManifest() const noexcept { return m_cachedManifest; }
+    bool IsFetchingManifest() const noexcept { return m_isFetchingManifest; }
+    void TriggerManifestFetch();
+
+    using UINotifyCallback = void (*)(void* userData);
+    void SetUINotifyCallback(UINotifyCallback cb, void* userData = nullptr) noexcept {
+        m_uiNotifyCb = cb;
+        m_uiNotifyUserData = userData;
+    }
+    void NotifyUI() const noexcept {
+        if (m_uiNotifyCb) m_uiNotifyCb(m_uiNotifyUserData);
+    }
+
     // --- Cold Scanning ---
     // Discovers all .qvx / .dll files in plugins directory (Called from Settings UI)
     std::vector<PluginCandidate> ScanPluginsDirectory(const std::wstring& pluginsDir);
@@ -194,7 +223,17 @@ private:
 
     std::string m_lastLog;
     double m_lastDurationMs = 0.0;
+
+    // Remote market cache
+    std::vector<RemotePluginItem> m_cachedManifest;
+    bool m_isFetchingManifest = false;
+    UINotifyCallback m_uiNotifyCb = nullptr;
+    void* m_uiNotifyUserData = nullptr;
 };
 
+// Seamless architectural alias
+using PluginManager = PluginHost;
+
 } // namespace QuickView
+
 

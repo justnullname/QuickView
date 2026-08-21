@@ -32,6 +32,90 @@ namespace QuickView {
 
 
 
+    static bool EnsureParentDirectory(const ::std::wstring& filePath) {
+        size_t lastSlash = filePath.find_last_of(L"\\/");
+        if (lastSlash == ::std::wstring::npos) return true;
+        ::std::wstring dir = filePath.substr(0, lastSlash);
+        for (size_t i = 0; i < dir.length(); ++i) {
+            if (dir[i] == L'\\' || dir[i] == L'/') {
+                ::std::wstring sub = dir.substr(0, i);
+                if (!sub.empty() && sub.back() != L':') {
+                    CreateDirectoryW(sub.c_str(), nullptr);
+                }
+            }
+        }
+        CreateDirectoryW(dir.c_str(), nullptr);
+        return true;
+    }
+
+    bool IArchive::ExtractZipToDirectory(
+        const ::std::wstring& zipPath,
+        const ::std::wstring& destDir,
+        void (*progressCb)(float progress, void* userData),
+        void* userData
+    ) {
+        ZipArchive zip(zipPath);
+        if (!zip.IsValid()) return false;
+
+        size_t totalEntries = zip.GetEntryCount();
+        if (totalEntries == 0) return true;
+
+        EnsureParentDirectory(destDir + L"\\dummy.tmp");
+
+        ::std::vector<uint8_t> buffer;
+
+        for (size_t i = 0; i < totalEntries; ++i) {
+            ::std::wstring relName = zip.GetEntryName(i);
+            if (relName.empty()) continue;
+
+            for (auto& ch : relName) {
+                if (ch == L'/') ch = L'\\';
+            }
+
+            // Security: Prevent Directory Traversal
+            if (relName.find(L"..\\") != ::std::wstring::npos || relName.find(L"\\..") != ::std::wstring::npos) {
+                continue;
+            }
+
+            ::std::wstring outPath = destDir + L"\\" + relName;
+            EnsureParentDirectory(outPath);
+
+            const ArchiveEntry& entry = zip.GetEntry(i);
+            if (buffer.size() < entry.uncompSize) {
+                buffer.resize(entry.uncompSize);
+            }
+
+            size_t extractedSize = zip.ExtractEntry(i, buffer.data(), buffer.size());
+            if (extractedSize != entry.uncompSize) {
+                return false;
+            }
+
+            HANDLE hFile = CreateFileW(outPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                return false;
+            }
+
+            DWORD written = 0;
+            BOOL writeOk = TRUE;
+            if (entry.uncompSize > 0) {
+                writeOk = WriteFile(hFile, buffer.data(), static_cast<DWORD>(entry.uncompSize), &written, nullptr);
+            }
+            CloseHandle(hFile);
+
+            if (!writeOk || written != entry.uncompSize) {
+                DeleteFileW(outPath.c_str());
+                return false;
+            }
+
+            if (progressCb) {
+                float progress = static_cast<float>(i + 1) / static_cast<float>(totalEntries);
+                progressCb(progress, userData);
+            }
+        }
+
+        return true;
+    }
+
     ZipArchive::ZipArchive(const ::std::wstring& path) : m_mappedFile(path) {
         if (m_mappedFile.IsValid()) {
             m_valid = ParseCentralDirectory();

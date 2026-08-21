@@ -131,3 +131,9 @@ CMakeUserPresets.json
 
 # Local salvage files
 Local-Files/
+
+# Plugins and AI Models (Downloaded on-demand, not stored in repo)
+plugins/*.qvx
+plugins/*.dll
+plugins/models/
+plugins/temp_models.zip

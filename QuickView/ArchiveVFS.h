@@ -34,6 +34,14 @@ namespace QuickView {
         // [v6.0.8] Efficient Archive Handle Reuse
         static ::std::shared_ptr<IArchive> OpenCached(const ::std::wstring& path);
 
+        // High-performance in-memory ZIP extractor (replaces external tar.exe, zero new dependencies)
+        static bool ExtractZipToDirectory(
+            const ::std::wstring& zipPath,
+            const ::std::wstring& destDir,
+            void (*progressCb)(float progress, void* userData) = nullptr,
+            void* userData = nullptr
+        );
+
         virtual ~IArchive() = default;
         virtual bool IsValid() const = 0;
         virtual size_t GetEntryCount() const = 0;

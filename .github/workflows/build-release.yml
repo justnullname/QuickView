@@ -87,6 +87,15 @@ jobs:
           $zipName = "QuickView_${tag}_${archUpper}.zip"
           Compress-Archive -Path $exePath -DestinationPath "Release/dist/$zipName" -Force
 
+          # Package standalone QVX plugin artifact
+          $pluginPath = "${{ github.workspace }}/out/build/${{ matrix.preset }}/plugins/sr_realesrgan_d3d11.qvx"
+          if (Test-Path $pluginPath) {
+              Copy-Item -Path $pluginPath -Destination "Release/dist/sr_realesrgan_d3d11_${archUpper}.qvx" -Force
+              if ("${{ matrix.platform }}" -eq "x64") {
+                  Copy-Item -Path $pluginPath -Destination "Release/dist/sr_realesrgan_d3d11.qvx" -Force
+              }
+          }
+
       - name: Build Inno Setup Installer
         shell: pwsh
         run: |

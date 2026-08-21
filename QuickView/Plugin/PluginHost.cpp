@@ -1,9 +1,12 @@
 #include "PluginHost.h"
 #include "pch.h"
+#include "ArchiveVFS.h"
+#include "yyjson.h"
 #include <cwchar>
 #include <cstdlib>
 #include <charconv>
 #include <algorithm>
+#include <thread>
 #include <winhttp.h>
 #include <shlwapi.h>
 #include <shellapi.h>
@@ -623,7 +626,7 @@ int32_t PluginHost::ExecuteSrUpscaleGpu(
     char logBuf[256];
     sprintf_s(logBuf, "[QVX-SR] Upscale %ux%u -> %ux%u with %s (Denoise=%.2f) took %.2f ms (ret=0x%08X)\n",
               inWidth, inHeight, outWidth, outHeight,
-              m_srHeader && m_srHeader->plugin_name ? m_srHeader->plugin_name : "Anime4K",
+              m_srHeader && m_srHeader->plugin_name ? m_srHeader->plugin_name : "Real-ESRGAN",
               m_srDenoise, m_lastDurationMs, result);
     m_lastLog = logBuf;
     OutputDebugStringA(logBuf);
@@ -898,21 +901,8 @@ bool PluginHost::DownloadModel(
         std::wstring tempZipPath = pluginsDir + L"\\temp_models.zip";
         ok = WinHttpDownloadFile(downloadUrl, tempZipPath, onProgress, userData);
         if (ok) {
-            // Extract models folder using Windows built-in tar.exe
-            wchar_t cmd[1024];
-            swprintf_s(cmd, L"tar.exe -xf \"%s\" -C \"%s\"", tempZipPath.c_str(), pluginsDir.c_str());
-
-            STARTUPINFOW si{};
-            si.cb = sizeof(si);
-            si.dwFlags = STARTF_USESHOWWINDOW;
-            si.wShowWindow = SW_HIDE;
-            PROCESS_INFORMATION pi{};
-
-            if (CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-                WaitForSingleObject(pi.hProcess, 30000);
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
-            }
+            // Extract models folder using built-in ArchiveVFS (Zero subprocess, zero tar.exe dependency)
+            ok = IArchive::ExtractZipToDirectory(tempZipPath, pluginsDir);
             DeleteFileW(tempZipPath.c_str());
         }
     } else {
@@ -939,6 +929,95 @@ bool PluginHost::DownloadModel(
     return ok;
 }
 
+void PluginHost::FetchRemoteManifestAsync(ManifestCallback callback, void* userData) {
+    std::thread([callback, userData]() {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        PathRemoveFileSpecW(exePath);
+
+        std::wstring tempPath = std::wstring(exePath) + L"\\plugins\\plugins_manifest.json.tmp";
+        
+        std::vector<std::string> candidates = {
+            "https://justnullname.github.io/QuickView/plugins_manifest.json",
+            "https://raw.githubusercontent.com/justnullname/QuickView/main/plugins/plugins_manifest.json",
+            "https://ghfast.top/https://raw.githubusercontent.com/justnullname/QuickView/main/plugins/plugins_manifest.json"
+        };
+        
+        std::vector<RemotePluginItem> items;
+        for (const auto& candUrl : candidates) {
+            if (WinHttpDownloadFile(candUrl, tempPath, nullptr, nullptr)) {
+                HANDLE hFile = CreateFileW(tempPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    DWORD sz = GetFileSize(hFile, nullptr);
+                    if (sz > 0 && sz < 1024 * 1024) {
+                        std::vector<char> buf(sz + 1, 0);
+                        DWORD read = 0;
+                        ReadFile(hFile, buf.data(), sz, &read, nullptr);
+                        CloseHandle(hFile);
+                        DeleteFileW(tempPath.c_str());
+                        
+                        yyjson_doc* doc = yyjson_read(buf.data(), read, 0);
+                        if (doc) {
+                            yyjson_val* root = yyjson_doc_get_root(doc);
+                            yyjson_val* pluginsArr = yyjson_obj_get(root, "plugins");
+                            if (yyjson_is_arr(pluginsArr)) {
+                                size_t idx, max;
+                                yyjson_val* item;
+                                yyjson_arr_foreach(pluginsArr, idx, max, item) {
+                                    RemotePluginItem r;
+                                    yyjson_val* v = yyjson_obj_get(item, "id");
+                                    if (v && yyjson_get_str(v)) r.id = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "name");
+                                    if (v && yyjson_get_str(v)) r.name = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "version");
+                                    if (v && yyjson_get_str(v)) r.version = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "author");
+                                    if (v && yyjson_get_str(v)) r.author = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "interface");
+                                    if (v && yyjson_get_str(v)) r.interfaceName = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "description");
+                                    if (v && yyjson_get_str(v)) r.description = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "download_url");
+                                    if (v && yyjson_get_str(v)) r.downloadUrl = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "file_name");
+                                    if (v && yyjson_get_str(v)) r.fileName = yyjson_get_str(v);
+                                    v = yyjson_obj_get(item, "file_size");
+                                    if (v) r.fileSize = yyjson_get_uint(v);
+                                    v = yyjson_obj_get(item, "min_app_version");
+                                    if (v && yyjson_get_str(v)) r.minAppVersion = yyjson_get_str(v);
+                                    items.push_back(std::move(r));
+                                }
+                            }
+                            yyjson_doc_free(doc);
+                            if (!items.empty()) break;
+                        }
+                    } else {
+                        CloseHandle(hFile);
+                        DeleteFileW(tempPath.c_str());
+                    }
+                }
+            }
+        }
+        if (callback) {
+            callback(items, userData);
+        }
+    }).detach();
+}
+
+void PluginHost::TriggerManifestFetch() {
+    if (m_isFetchingManifest) return;
+    m_isFetchingManifest = true;
+    FetchRemoteManifestAsync([](const std::vector<RemotePluginItem>& items, void* userData) {
+        auto* self = static_cast<PluginHost*>(userData);
+        if (self) {
+            std::lock_guard<std::mutex> lock(self->m_srMutex);
+            self->m_cachedManifest = items;
+            self->m_isFetchingManifest = false;
+            self->NotifyUI();
+        }
+    }, this);
+}
+
 void PluginHost::OpenModelsDirectory() const {
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -957,4 +1036,5 @@ void PluginHost::Shutdown() {
 }
 
 } // namespace QuickView
+
 

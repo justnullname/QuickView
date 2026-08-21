@@ -5,6 +5,7 @@
 #include <ctime>
 #include "UpdateManager.h"
 #include "yyjson.h"
+#include "ArchiveVFS.h"
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <wincrypt.h>
@@ -137,46 +138,33 @@ void UpdateManager::CheckThread(int delaySeconds) {
         }
         
         if (downloadSuccess) {
-            // 3. Extraction (if ZIP)
+            // 3. Native Zero-Subprocess Extraction (if ZIP)
             if (isZip) {
-                   std::wstring extractDir = dest + L"_extracted";
-                   CreateDirectoryW(extractDir.c_str(), NULL);
-                   
-                   std::wstring exeInZip = extractDir + L"\\QuickView.exe";
-                   bool extracted = false;
-                   
-                   if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                       extracted = true;
-                       m_tempPath = exeInZip;
-                   } else {
-                       std::wstring fullCmd = L"-xf \"" + dest + L"\" -C \"" + extractDir + L"\"";
-
-                       SHELLEXECUTEINFOW sei = {};
-                       sei.cbSize = sizeof(sei);
-                       sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-                       sei.lpVerb = L"open";
-                       sei.lpFile = L"tar.exe";
-                       sei.lpParameters = fullCmd.c_str();
-                       sei.nShow = SW_HIDE;
-                       
-                       if (ShellExecuteExW(&sei)) {
-                           WaitForSingleObject(sei.hProcess, 15000); // 15s timeout
-                           CloseHandle(sei.hProcess);
-                           
-                           if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                               m_tempPath = exeInZip;
-                               extracted = true;
-                           }
-                       }
-                   }
-                   
-                   if (extracted) {
-                        m_status = UpdateStatus::ReadyToInstall;
-                        if (m_callback) m_callback(true, m_remoteInfo, m_callbackContext);
-                    } else {
-                        m_status = UpdateStatus::Error; // Extraction failed
-                        if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+                std::wstring extractDir = dest + L"_extracted";
+                CreateDirectoryW(extractDir.c_str(), NULL);
+                
+                std::wstring exeInZip = extractDir + L"\\QuickView.exe";
+                bool extracted = false;
+                
+                if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    extracted = true;
+                    m_tempPath = exeInZip;
+                } else {
+                    if (QuickView::IArchive::ExtractZipToDirectory(dest, extractDir)) {
+                        if (GetFileAttributesW(exeInZip.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                            m_tempPath = exeInZip;
+                            extracted = true;
+                        }
                     }
+                }
+                
+                if (extracted) {
+                    m_status = UpdateStatus::ReadyToInstall;
+                    if (m_callback) m_callback(true, m_remoteInfo, m_callbackContext);
+                } else {
+                    m_status = UpdateStatus::Error; // Extraction failed
+                    if (m_callback) m_callback(false, VersionInfo(), m_callbackContext);
+                }
             } else {
                 // Direct EXE
                 m_status = UpdateStatus::ReadyToInstall;
@@ -190,16 +178,9 @@ void UpdateManager::CheckThread(int delaySeconds) {
     }
 }
 
-
-
 bool UpdateManager::CheckVersion() {
     // Config: Host and Path
     // Example: https://justnullname.github.io/QuickView/version.json
-    // Host: justnullname.github.io
-    // Path: /QuickView/version.json
-    
-    // Host: justnullname.github.io
-    // Path: /QuickView/version.json
     
     // Timestamp for cache busting
     std::time_t now = std::time(nullptr);
@@ -220,45 +201,55 @@ bool UpdateManager::CheckVersion() {
 }
 
 bool UpdateManager::DownloadUpdate(const std::string& url, const std::wstring& destPath) {
-    // Extract Host/Path from URL (Simple assumption: HTTPS)
-    // URL: https://github.com/.../release.exe
-    size_t protocolPos = url.find("://");
-    if (protocolPos == std::string::npos) return false;
-    
-    std::string domainPath = url.substr(protocolPos + 3);
-    size_t flashPos = domainPath.find('/');
-    if (flashPos == std::string::npos) return false;
+    if (url.empty()) return false;
 
-    std::string hostStr = domainPath.substr(0, flashPos);
-    std::string pathStr = domainPath.substr(flashPos);
-    
-    std::wstring host(hostStr.begin(), hostStr.end());
-    std::wstring path(pathStr.begin(), pathStr.end());
+    std::vector<std::string> candidates;
+    candidates.push_back(url);
 
-    std::string data = HttpGet(host, path); 
-    if (data.empty()) return false;
-
-    // Validate Binary Header
-    // MZ = EXE (0x4D 0x5A)
-    // PK = ZIP (0x50 0x4B)
-    if (data.size() < 2) return false;
-    
-    bool isExe = (data[0] == 'M' && data[1] == 'Z');
-    bool isZip = (data[0] == 'P' && data[1] == 'K');
-
-    if (!isExe && !isZip) {
-        return false; // Invalid format
+    // Multi-source fallback with ghfast.top mirror acceleration
+    if (url.find("github.com") != std::string::npos || url.find("githubusercontent.com") != std::string::npos) {
+        candidates.push_back("https://ghfast.top/" + url);
     }
 
-    // Write to file
-    HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    DWORD written = 0;
-    BOOL res = WriteFile(hFile, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
-    CloseHandle(hFile);
-    return res && (written == data.size());
+    for (const auto& candUrl : candidates) {
+        size_t protocolPos = candUrl.find("://");
+        if (protocolPos == std::string::npos) continue;
+        
+        std::string domainPath = candUrl.substr(protocolPos + 3);
+        size_t slashPos = domainPath.find('/');
+        if (slashPos == std::string::npos) continue;
 
-    return true;
+        std::string hostStr = domainPath.substr(0, slashPos);
+        std::string pathStr = domainPath.substr(slashPos);
+        
+        std::wstring host(hostStr.begin(), hostStr.end());
+        std::wstring path(pathStr.begin(), pathStr.end());
+
+        std::string data = HttpGet(host, path); 
+        if (data.size() < 2) continue;
+
+        bool isExe = (data[0] == 'M' && data[1] == 'Z');
+        bool isZip = (data[0] == 'P' && data[1] == 'K');
+
+        if (!isExe && !isZip) {
+            continue;
+        }
+
+        HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) continue;
+
+        DWORD written = 0;
+        BOOL res = WriteFile(hFile, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
+        CloseHandle(hFile);
+
+        if (res && (written == data.size())) {
+            return true;
+        } else {
+            DeleteFileW(destPath.c_str());
+        }
+    }
+
+    return false;
 }
 
 std::string UpdateManager::HttpGet(const std::wstring& host, const std::wstring& path) {
