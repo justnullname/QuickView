@@ -1,0 +1,21 @@
+{
+  "schema_version": "2.0",
+  "updated_at": "2026-08-25",
+  "plugins": [
+    {
+      "id": "com.quickview.sr.ncnn_vulkan",
+      "name": "Real-ESRGAN NCNN Vulkan",
+      "version": "0.1.0",
+      "author": "QuickView Core Team",
+      "interface": "super_resolution",
+      "description": "High-Performance In-Process Vulkan Compute Neural Super-Resolution Engine.",
+      "download_url": "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_AMD64.zip",
+      "download_url_amd64": "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_AMD64.zip",
+      "download_url_arm64": "https://justnullname.github.io/QuickView/plugins/sr_ncnn_vulkan_ARM64.zip",
+      "file_name": "sr_ncnn_vulkan_AMD64.zip",
+      "file_name_arm64": "sr_ncnn_vulkan_ARM64.zip",
+      "file_size": 2600000,
+      "min_app_version": "0.1.0"
+    }
+  ]
+}
