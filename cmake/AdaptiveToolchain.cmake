@@ -123,6 +123,24 @@ find_program(ADAPTIVE_LLD_LINK lld-link HINTS ${LLVM_HINTS})
 find_program(ADAPTIVE_LLVM_LIB  llvm-lib HINTS ${LLVM_HINTS})
 find_program(ADAPTIVE_LLVM_RC   llvm-rc   HINTS ${LLVM_HINTS})
 
+# vcpkg evaluates triplets in a scrubbed environment, so the PATH that made clang-cl
+# discoverable above is gone by the time the triplet (and the port builds) run.
+# Forward the discovered LLVM root to those child processes.
+if(ADAPTIVE_CLANG_CL)
+    get_filename_component(_LLVM_BIN_DIR "${ADAPTIVE_CLANG_CL}" DIRECTORY)
+    get_filename_component(_LLVM_ROOT_DIR "${_LLVM_BIN_DIR}" DIRECTORY)
+    if(NOT DEFINED ENV{LLVM_INSTALL_DIR})
+        set(ENV{LLVM_INSTALL_DIR} "${_LLVM_ROOT_DIR}")
+    endif()
+    if(NOT "$ENV{VCPKG_KEEP_ENV_VARS}" MATCHES "LLVM_INSTALL_DIR")
+        if("$ENV{VCPKG_KEEP_ENV_VARS}" STREQUAL "")
+            set(ENV{VCPKG_KEEP_ENV_VARS} "LLVM_INSTALL_DIR")
+        else()
+            set(ENV{VCPKG_KEEP_ENV_VARS} "$ENV{VCPKG_KEEP_ENV_VARS};LLVM_INSTALL_DIR")
+        endif()
+    endif()
+endif()
+
 # 5. Locate Ninja and NASM (Prioritize vcpkg downloads for project consistency)
 get_filename_component(WORKSPACE_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(VCPKG_TOOLS_DIR "${WORKSPACE_ROOT}/third_party/vcpkg/downloads/tools")

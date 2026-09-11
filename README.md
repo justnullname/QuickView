@@ -253,23 +253,45 @@ If you prefer a standard Windows installation (includes a deep uninstallation to
 > ⚠️ **Architecture Note**: The project has fully migrated to a `CMake + Ninja + vcpkg` build system. It uses the **Clang-cl** compiler and **Full LTO** (Link-Time Optimization) to achieve extreme binary size compression. The legacy `.sln` and `.vcxproj` files have been deprecated and removed.
 
 ### Prerequisites
-1. **Visual Studio 2022** (with the "Desktop development with C++" workload installed).
-2. **LLVM / Clang Toolchain** (Ensure `clang-cl.exe` and `lld-link.exe` are added to your system's `PATH`).
-3. **CMake** and **Ninja** (Bundled with VS or installed separately).
+1. **Visual Studio 2022** (with the "Desktop development with C++" workload installed) — provides the Windows SDK and the MSVC libraries that the Clang-cl toolchain links against.
+2. **LLVM / Clang Toolchain** (Ensure `clang-cl.exe` and `lld-link.exe` are added to your system's `PATH`; the LLVM bundled with VS under `<VS>\VC\Tools\Llvm\x64\bin` is detected automatically as well. For any other location, set the `LLVM_INSTALL_DIR` environment variable to the LLVM root, e.g. `D:\dev\lang\clang`).
+3. **CMake** (3.25+) and **Ninja** (Bundled with VS or installed separately).
 4. **Git**.
 
-### One-Click Build
-After cloning the repository, run the following two commands in the root directory:
+### 1. Clone with Submodules
+Dependencies such as `vcpkg`, `wuffs` and `unrar-mini` are Git submodules and are required for the build:
 
 ```powershell
-# 1. Automatically fetch dependencies via vcpkg and configure the Release-LTO build matrix
+git clone --recursive https://github.com/justnullname/QuickView.git
+```
+
+If the repository was cloned without `--recursive`, fetch them afterwards:
+
+```powershell
+git submodule update --init --recursive
+```
+
+### 2. Bootstrap vcpkg (One Time)
+```powershell
+.\third_party\vcpkg\bootstrap-vcpkg.bat
+```
+
+### 3. Configure & Build
+Run the following two commands in the root directory:
+
+```powershell
+# 1. Fetch the dependencies via vcpkg and configure the Release-LTO build matrix
 cmake --preset Release-LTO
 
 # 2. Launch the Ninja backend for multi-core compilation and LTO linking
 cmake --build out/build/Release-LTO
 ```
 
-The final executable will be located in the `out/build/Release-LTO/` directory.
+The first configure builds every dependency from source (libjxl, libavif, LibRaw, ...), so it takes a while; later configures reuse the vcpkg binary cache.
+
+The final executable will be located at `out/build/Release-LTO/QuickView.exe`.
+
+> **Other presets**: `Debug-ASan` (AddressSanitizer, no LTO) and `ARM64-Release-LTO` (ARM64 + Full LTO). The build directory always matches the preset name, e.g. `out/build/Debug-ASan`.
 
 ---
 

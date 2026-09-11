@@ -15,7 +15,7 @@
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/custom-triplet",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/custom-ports",
         "VCPKG_MANIFEST_MODE": "ON",
-        "VCPKG_MANIFEST_INSTALL": "OFF",
+        "VCPKG_MANIFEST_INSTALL": "ON",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "CMAKE_LINKER": "${sourceDir}/cmake/lld-link-wrapper.bat",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
