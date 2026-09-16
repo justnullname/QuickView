@@ -1185,11 +1185,11 @@ static const LanguageTable Table_EN = {
     L"Cropped", // OSD_EdgeAdapted
     L"Lossy", // OSD_Reencoded
     L"Access denied - file may be in use or read-only", // OSD_ReadOnly
-    L"Transform is not perfect (Edge optimized)", // OSD_NotPerfect
+    L"Transform is not perfect (edge optimized)", // OSD_NotPerfect
     L"Video Wall: ON", // OSD_SpanOn
     L"Video Wall: OFF", // OSD_SpanOff
-    L"Before (Original)", // OSD_CompareBefore
-    L"After (Proofed)", // OSD_CompareAfter
+    L"Before (original)", // OSD_CompareBefore
+    L"After (proofed)", // OSD_CompareAfter
     L"Undo delete succeeded", // OSD_UndoDeleteSuccess
     L"Undo delete failed", // OSD_UndoDeleteFailed
     L"Undo rename succeeded", // OSD_UndoRenameSuccess
@@ -1204,10 +1204,10 @@ static const LanguageTable Table_EN = {
     L"Rotate 180\x00B0", // Action_Rotate180
     L"Flip Horizontal", // Action_FlipH
     L"Flip Vertical", // Action_FlipV
-    L"Save Changes?", // Dialog_SaveTitle
+    L"Save changes?", // Dialog_SaveTitle
     L"The image has been modified. Do you want to save changes?", // Dialog_SaveContent
     L"Save", // Dialog_ButtonSave
-    L"Save As...", // Dialog_ButtonSaveAs
+    L"Save as...", // Dialog_ButtonSaveAs
     L"Discard", // Dialog_ButtonDiscard
     L"Continue", // Dialog_ButtonContinue
     L"Unsaved crop modifications. Save changes?", // Dialog_CropUnsavedTitle
@@ -1222,7 +1222,7 @@ static const LanguageTable Table_EN = {
     L"Apply (Enter)", // Toolbar_Tooltip_CropApply
     L"Exit (Esc)", // Toolbar_Tooltip_CropCancel
     L"Entered Crop Mode", // OSD_EnterCropMode
-    L"Copied crop selection", // OSD_CropCopied
+    L"Crop selection has been copied", // OSD_CropCopied
     L"Crop", // Context_Crop
     L"Always Save Lossless Transforms", // Checkbox_AlwaysSaveLossless
     L"Always Save Edge-Adapted", // Checkbox_AlwaysSaveEdgeAdapted
@@ -1251,7 +1251,7 @@ static const LanguageTable Table_EN = {
     L"Always Sort Archives by Name", // Settings_Label_SortArchivesByNameAscending
     L"Confirm Before Delete", // Settings_Label_ConfirmDel
     L"Portable Mode / Cleanup", // Settings_Label_Portable
-    L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application directory instead of AppData.", // Settings_Tooltip_Portable
+    L"Portable Mode / Registry Cleanup:\nWhen enabled, QuickView runs in " L"portable mode. It will automatically clean up existing registry " L"associations, disable automatic registry modification, and store " L"configuration files in the application folder instead of AppData.", // Settings_Tooltip_Portable
     L"Span Displays", // Settings_Label_SpanDisplays
     L"UI Scale", // Settings_Label_UIScale
     L"Restart required", // Settings_Status_RestartRequired
@@ -1259,7 +1259,7 @@ static const LanguageTable Table_EN = {
     L"Enabled", // Settings_Status_Enabled
     L"Powered by", // Settings_Header_PoweredBy
     L"Open...\tCtrl+O", // Context_Open
-    L"Open With...", // Context_OpenWith
+    L"Open with...", // Context_OpenWith
     L"Edit\tE", // Context_Edit
     L"Show in Explorer", // Context_ShowInExplorer
     L"Open Folder", // Context_OpenFolder
@@ -3519,7 +3519,7 @@ static const LanguageTable Table_RU = {
     L"Сохранение и экспорт", // Dialog_ExportTitle
     L"Перезаписать", // Dialog_ButtonOverwrite
     L"Профиль ICC", // Dialog_EmbedICC
-    L"Размер: Оценка...", // Dialog_SizeEstimating
+    L"Оценка размера...", // Dialog_SizeEstimating
     L"Ошибка экспорта", // Dialog_ExportError
     L"Скопировать выделение (Ctrl+C)", // Toolbar_Tooltip_CropCopy
     L"Сохранить (Ctrl+S)", // Toolbar_Tooltip_CropSave
@@ -3585,7 +3585,7 @@ static const LanguageTable Table_RU = {
     L"Уменьшить\t- / Ctrl -", // Context_ZoomOut
     L"Заблокировать окно", // Context_LockWindow
     L"Поверх всех окон\tCtrl+T", // Context_AlwaysOnTop
-    L"HUD-галерея\tT", // Context_HUDGallery
+    L"Миниатюры\tT", // Context_HUDGallery
     L"Краткая панель информации\tTab", // Context_LiteInfoPanel
     L"Полная панель информации\tI", // Context_FullInfoPanel
     L"Рендеринг RAW", // Context_RenderRAW
@@ -3683,9 +3683,9 @@ static const LanguageTable Table_RU = {
     L"Кнопка обновляемых областей в анимации", // Settings_Label_ShowDirtyRect
     L"Показывать кнопку отладки отображаемой области на панели инструментов анимации для отображения обновляемых участков.", // Settings_Tooltip_ShowDirtyRect
     L"Скопировано.", // OSD_Copied
-    L"Пиксели скопированы в буфер обмена!", // OSD_PixelsCopied
+    L"Пиксели скопированы в буфер обмена.", // OSD_PixelsCopied
     L"Извлечение пикселей...", // OSD_PixelsExtracting
-    L"Файл скопирован в буфер обмена!", // OSD_FileCopied
+    L"Файл скопирован в буфер обмена.", // OSD_FileCopied
     L"Координаты скопированы.", // OSD_CoordinatesCopied
     L"Путь к файлу скопирован.", // OSD_FilePathCopied
     L"Масштаб: 100%", // OSD_Zoom100
@@ -3740,7 +3740,7 @@ static const LanguageTable Table_RU = {
     L"Блики", // Settings_Label_SpecularOpacity
     L"Яркость диагональных световых бликов.", // Settings_Tooltip_SpecularOpacity
     L"Тени", // Settings_Label_ShadowIntensity
-    L"Сила теней окружающего затенения.", // Settings_Tooltip_ShadowIntensity
+    L"Интенсивность теней окружающего затенения.", // Settings_Tooltip_ShadowIntensity
     L"Векторный рендеринг", // Settings_Header_VectorAssets
     L"Обводка значков", // Settings_Label_VectorStrokeWeight
     L"Обычная (1.5 пкс)", // Settings_Option_StrokeStandard
@@ -3750,15 +3750,15 @@ static const LanguageTable Table_RU = {
     L"Авто (адаптивно)", // Settings_Option_TintAuto
     L"Свой цвет", // Settings_Option_TintCustom
     L"Оттенок вручную", // Settings_Label_GlassCustomColor
-    L"Плотность контрольной поверхности (%)", // Settings_Header_DensityMatrix
-    L"OSD и HUD", // Settings_Label_OsdDensity
-    L"Прозрачность для небольших плавающих наложений.", // Settings_Tooltip_OsdDensity
+    L"Прозрачность элементов (%)", // Settings_Header_DensityMatrix
+    L"OSD и миниатюры", // Settings_Label_OsdDensity
+    L"Прозрачность небольших плавающих наложений.", // Settings_Tooltip_OsdDensity
     L"Панель инструментов и боковые панели", // Settings_Label_PanelsDensity
-    L"Прозрачность для нижней панели, информационной панели, галереи и элементов управления в правом верхнем углу окна.", // Settings_Tooltip_PanelsDensity
+    L"Прозрачность нижней и информационной панелей, галереи миниатюр и элементов управления в правом верхнем углу окна.", // Settings_Tooltip_PanelsDensity
     L"Окна и настройки", // Settings_Label_ModalsDensity
     L"Прозрачность центрированных всплывающих окон.", // Settings_Tooltip_ModalsDensity
     L"Меню", // Settings_Label_MenusDensity
-    L"Плотность материала контекстного меню (настраивается только для Acrylic).", // Settings_Tooltip_MenusDensity
+    L"Прозрачность контекстного меню (только для Acrylic).", // Settings_Tooltip_MenusDensity
     L"Тема", // Settings_Tab_Theme
     L"Тема", // Settings_Label_ThemeMode
     L"Авто", // Settings_Option_ThemeAuto
@@ -3785,9 +3785,9 @@ static const LanguageTable Table_RU = {
     L"Закрепить нижнюю панель", // Settings_Label_LockToolbar
     L"Минимальная ширина окна", // Settings_Label_WindowMinSize
     L"Максимальный начальный размер", // Settings_Label_WindowMaxSizePercent
-    L"Индикаторы переполнения границ", // Settings_Label_ShowBorderIndicator
+    L"Индикаторы выхода за границы", // Settings_Label_ShowBorderIndicator
     L"Показывать индикаторную линию в направлении, где изображение выходит за границы окна.", // Settings_Tooltip_ShowBorderIndicator
-    L"Показывать миникарту", // Settings_Label_ShowNavigator
+    L"Миникарта", // Settings_Label_ShowNavigator
     L"Когда мышь находится над миникартой, колёсико/боковое колёсико (Shift + колёсико) перемещает изображение.", // Settings_Tooltip_ShowNavigator
     L"Авто", // Settings_Option_NavigatorAuto
     L"Вкл", // Settings_Option_NavigatorOn
@@ -3850,14 +3850,14 @@ static const LanguageTable Table_RU = {
     L"Пиковая яркость HDR (ниты)", // Settings_Label_HdrPeakNitsOverride
     L"Установите 0 для системной яркости.", // Settings_Tooltip_HdrPeakNitsOverride
     L"Пиковый процентиль HDR", // Settings_Label_HdrPeakPercentile
-    L"Удаление слишком ярких пикселов для повышения общей яркости (mpv по умолчанию: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
+    L"Удаление слишком ярких пикселей для повышения общей яркости (mpv по умолчанию: 99.995%).", // Settings_Tooltip_HdrPeakPercentile
     L"100% (абсолютный пик)", // Settings_Option_HdrPeakPercentile_100
     L"99.995% (стабильный)", // Settings_Option_HdrPeakPercentile_99995
     L"99.9% (агрессивный)", // Settings_Option_HdrPeakPercentile_999
     L"Диапазон обесцвечивания светов HDR", // Settings_Label_HdrDesatThreshold
     L"Порог начала обесцвечивания светлых участков. 0.0 - обесцвечивать все света, 1.0 - не обесцвечивать. Рекомендуемое значение: 0.18.", // Settings_Tooltip_HdrDesatThreshold
     L"Степень обесцвечивания светов HDR", // Settings_Label_HdrMaxDesat
-    L"Максимальная интенсивность обесцвечивания экстремальных светов. 0.0 - не обесцвечивать, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.", // Settings_Tooltip_HdrMaxDesat
+    L"Максимальная интенсивность обесцвечивания светлых участков. 0.0 - не обесцвечивать, 1.0 - полностью до белого. Рекомендуемое значение: 0.75.", // Settings_Tooltip_HdrMaxDesat
     L"Колориметрическая", // Settings_Option_HdrColorimetric
     L"Сплайн", // Settings_Option_HdrSpline
     L"BT.2390 (EETF)", // Settings_Option_HdrLegacyReinhard
@@ -4050,7 +4050,7 @@ static const LanguageTable Table_RU = {
     L"Квадратная", // Settings_Option_LoupeShapeSquare
     L"Круглая", // Settings_Option_LoupeShapeCircle
     L"Чтобы настроить размер лупы, удерживайте сочетание клавиш и вращайте колёсико мыши.", // Settings_Tooltip_LoupeHotkey
-    L"Удерживайте Ctrl и перетаскивайте левую кнопку мыши для быстрого кадрирования.", // Settings_Tooltip_CropModeHotkey
+    L"Удерживайте Ctrl и перемещайте мышь с нажатой левой кнопкой для быстрого кадрирования.", // Settings_Tooltip_CropModeHotkey
 };
 
 // ----------------------------------------------------------------
