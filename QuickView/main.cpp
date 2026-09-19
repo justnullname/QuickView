@@ -581,7 +581,6 @@ GalleryOverlay g_gallery;  // Non-static for extern access from UIRenderer
 Toolbar g_toolbar;  // Non-static for extern access from UIRenderer
 SettingsOverlay g_settingsOverlay;  // Non-static for extern access from UIRenderer
 HelpOverlay g_helpOverlay; // Non-static for extern access
-static UINT g_windowDpi = USER_DEFAULT_SCREEN_DPI;
 float g_uiScale = 1.0f;
 extern HWND g_mainHwnd;
 
@@ -1430,7 +1429,6 @@ static void RefreshWindowDpi(HWND hwnd, UINT dpiHint = 0) {
         dpi = GetDpiForWindow(hwnd);
     }
     if (dpi == 0) dpi = USER_DEFAULT_SCREEN_DPI;
-    g_windowDpi = dpi;
     ApplyUIScale(ResolveUIScale(dpi));
     if (hwnd && (g_settingsOverlay.IsVisible() || g_helpOverlay.IsVisible() || g_gallery.IsVisible() || AppContext::GetInstance().Dialog.IsVisible || g_imagePath.empty())) {
         AdjustWindowForOverlay(hwnd, false);
