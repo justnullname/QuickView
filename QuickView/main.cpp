@@ -3230,7 +3230,7 @@ static bool ExecuteWindowControlButton(HWND hwnd, int buttonIndex) {
             return true;
         }
         case 2:
-            ShowWindow(hwnd, SW_MINIMIZE);
+            PostMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
             return true;
         case 3:
             SendMessage(hwnd, WM_COMMAND, IDM_ALWAYS_ON_TOP, 0);
@@ -10060,6 +10060,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_ACTIVATE:
         if (LOWORD(wParam) != WA_INACTIVE) {
             g_hasBeenForeground = true;
+            // [Fix] If the window is activated while minimized (e.g. taskbar single-click in custom-frame mode),
+            // restore it immediately so Windows Shell doesn't treat it as an unhandled activation and beep.
+            if (IsIconic(hwnd) || HIWORD(wParam) != 0) {
+                ShowWindow(hwnd, SW_RESTORE);
+                return 0;
+            }
             if (g_runtime.SortOrder == 0) {
                 GetPaneContext(PaneSlot::Primary).navigator.SyncWithExplorer();
             }
@@ -14244,9 +14250,14 @@ SKIP_EDGE_NAV:;
         if (!CheckUnsavedChanges(hwnd)) return 0;
         HDROP hDrop = reinterpret_cast<HDROP>(wParam);
         wchar_t path[MAX_PATH];
-        if (DragQueryFileW(hDrop, 0, path, MAX_PATH)) {
-            POINT dropPt{};
+        bool hasFile = (DragQueryFileW(hDrop, 0, path, MAX_PATH) > 0);
+        POINT dropPt{};
+        if (hasFile) {
             DragQueryPoint(hDrop, &dropPt);
+        }
+        DragFinish(hDrop);
+
+        if (hasFile) {
             if (IsCompareModeActive()) {
                 ComparePane pane = AppContext::GetInstance().CompareCtrl->HitTest(hwnd, dropPt);
                 if (pane == ComparePane::Left) {
@@ -14265,8 +14276,8 @@ SKIP_EDGE_NAV:;
             } else {
                 OpenPathOrDirectory(hwnd, path);
             }
+            ForceForegroundWindow(hwnd);
         }
-        DragFinish(hDrop);
         return 0;
     }
     case WM_CAPTURECHANGED:
