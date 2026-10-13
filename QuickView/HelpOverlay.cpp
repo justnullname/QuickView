@@ -113,6 +113,8 @@ void HelpOverlay::RebuildList() {
         m_strOpenText = m_strOpenText.substr(0, openTab);
     }
 
+    m_strCloseWindow = AppStrings::GetHotkeyActionName(HotkeyAction::CloseWindow);
+
     // 2. Build list with safe pointer assignments
     m_items.push_back({ false, AppStrings::Help_Tip_ContextScope, L"" });
 
@@ -170,6 +172,9 @@ void HelpOverlay::RebuildList() {
 
     m_items.push_back({ true, L"Interface", L"" });
     m_items.push_back({ false, L"Esc", AppStrings::Help_Item_Close });
+    // Ctrl+W always closes the window directly (unlike Esc, which dismisses
+    // the topmost panel/mode first), so it gets its own description.
+    m_items.push_back({ false, L"Ctrl + W", m_strCloseWindow.c_str() });
 
     m_items.push_back({ true, AppStrings::Help_Header_Tips, L"" });
     m_items.push_back({ false, AppStrings::Help_Tip_Rotation, L"" });

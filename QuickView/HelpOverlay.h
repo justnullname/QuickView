@@ -85,4 +85,5 @@ private:
     std::wstring m_strOpenText;
     std::wstring m_strOverlayAlpha;
     std::wstring m_strHudTopCombined;
+    std::wstring m_strCloseWindow;
 };

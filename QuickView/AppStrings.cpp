@@ -9056,6 +9056,20 @@ std::wstring GetHotkeyActionName(HotkeyAction action) {
         }
         break;
     }
+    case HotkeyAction::CloseWindow: {
+        needsCleaning = false;
+        switch (GetActiveLanguage()) {
+        case AppStrings::Language::ChineseSimplified:  raw = L"关闭窗口"; break;
+        case AppStrings::Language::ChineseTraditional: raw = L"關閉視窗"; break;
+        case AppStrings::Language::Japanese:           raw = L"ウィンドウを閉じる"; break;
+        case AppStrings::Language::Russian:            raw = L"Закрыть окно"; break;
+        case AppStrings::Language::German:             raw = L"Fenster schließen"; break;
+        case AppStrings::Language::Spanish:            raw = L"Cerrar ventana"; break;
+        case AppStrings::Language::French:             raw = L"Fermer la fenêtre"; break;
+        default:                                       raw = L"Close Window"; break;
+        }
+        break;
+    }
     case HotkeyAction::Undo:
         raw = AppStrings::Context_Undo;
         break;

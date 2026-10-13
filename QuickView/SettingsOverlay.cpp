@@ -3241,6 +3241,9 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
         if (action == HotkeyAction::Undo) {
             continue; // Placed manually under EditFile
         }
+        if (action == HotkeyAction::CloseWindow) {
+            continue; // Placed manually under DeleteFile (File Operations)
+        }
 
         // Category Group Headers
         if (action == HotkeyAction::NavNext) {
@@ -3309,6 +3312,23 @@ void SettingsOverlay::BuildKeysTab(SettingsTab& tabKeys) {
                 undoItem.statusSetTime = m_lastConflictTime;
             }
             tabKeys.items.push_back(undoItem);
+        }
+
+        // Manually insert "Close Window" (HotkeyAction::CloseWindow) directly under
+        // "Delete" so it groups with the other file lifecycle actions; the enum-order
+        // loop would otherwise drop it at the end under the "Image Panning" header.
+        if (action == HotkeyAction::DeleteFile) {
+            SettingsItem closeItem;
+            closeItem.label = AppStrings::GetHotkeyActionName(HotkeyAction::CloseWindow);
+            closeItem.type = OptionType::HotkeyBindRow;
+            closeItem.hotkeyAction = HotkeyAction::CloseWindow;
+
+            if (m_lastConflictAction == HotkeyAction::CloseWindow && GetTickCount() - m_lastConflictTime < 3000) {
+                closeItem.statusText = m_lastConflictMsg;
+                closeItem.statusColor = D2D1::ColorF(D2D1::ColorF::Red);
+                closeItem.statusSetTime = m_lastConflictTime;
+            }
+            tabKeys.items.push_back(closeItem);
         }
     }
 }

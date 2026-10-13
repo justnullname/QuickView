@@ -229,6 +229,7 @@ enum class HotkeyAction : uint8_t {
     PanDownFast,
     PanLeftFast,
     PanRightFast,
+    CloseWindow,       // Close Window (Default: Ctrl+W)
     Count              // Sentinel
 };
 
@@ -304,6 +305,7 @@ inline std::wstring_view HotkeyActionToString(HotkeyAction action) noexcept {
         case HotkeyAction::PanDownFast: return L"PanDownFast";
         case HotkeyAction::PanLeftFast: return L"PanLeftFast";
         case HotkeyAction::PanRightFast: return L"PanRightFast";
+        case HotkeyAction::CloseWindow: return L"CloseWindow";
         default: return L"None";
     }
 }
@@ -375,6 +377,7 @@ inline HotkeyAction StringToHotkeyAction(std::wstring_view sv) noexcept {
     if (sv == L"PanDownFast") return HotkeyAction::PanDownFast;
     if (sv == L"PanLeftFast") return HotkeyAction::PanLeftFast;
     if (sv == L"PanRightFast") return HotkeyAction::PanRightFast;
+    if (sv == L"CloseWindow") return HotkeyAction::CloseWindow;
     return HotkeyAction::None;
 }
 

@@ -400,6 +400,30 @@ LRESULT GeekContextMenu::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         break;
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) { DismissAll(0); return 0; }
+        // The menu takes the foreground and holds keyboard focus while open
+        // (that's how Esc reaches us above), so the app's global hotkey
+        // dispatch in the main WndProc never sees other keys. Forward the
+        // Close-Window combo (Ctrl+W by default) to the app so the window
+        // can still be closed directly while the menu is up — Esc remains
+        // "just close the menu". Matched against the live binding so a
+        // rebind is honored too.
+        {
+            const auto& closeBinding = g_hotkeys[static_cast<size_t>(HotkeyAction::CloseWindow)];
+            if (!closeBinding.combo.IsEmpty() && closeBinding.combo.virtualKey == wp && m_parentAppHwnd) {
+                KeyCombo pressed;
+                pressed.virtualKey = static_cast<uint16_t>(wp);
+                pressed.modifiers = 0;
+                if (GetKeyState(VK_CONTROL) & 0x8000) pressed.modifiers |= 1;
+                if (GetKeyState(VK_SHIFT) & 0x8000)   pressed.modifiers |= 2;
+                if (GetKeyState(VK_MENU) & 0x8000)    pressed.modifiers |= 4;
+                if (pressed == closeBinding.combo) {
+                    HWND app = m_parentAppHwnd;
+                    DismissAll(0); // Destroys `this`; do not touch members after.
+                    PostMessage(app, WM_CLOSE, 0, 0);
+                    return 0;
+                }
+            }
+        }
         break;
     case WM_MOUSEWHEEL: {
         POINT pt;

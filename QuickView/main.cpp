@@ -396,7 +396,8 @@ std::array<HotkeyBinding, static_cast<size_t>(HotkeyAction::Count)> g_hotkeys = 
     HotkeyBinding{ HotkeyAction::PanUpFast, KeyCombo{ VK_UP, 3 }, KeyCombo{ VK_UP, 3 } },
     HotkeyBinding{ HotkeyAction::PanDownFast, KeyCombo{ VK_DOWN, 3 }, KeyCombo{ VK_DOWN, 3 } },
     HotkeyBinding{ HotkeyAction::PanLeftFast, KeyCombo{ VK_LEFT, 3 }, KeyCombo{ VK_LEFT, 3 } },
-    HotkeyBinding{ HotkeyAction::PanRightFast, KeyCombo{ VK_RIGHT, 3 }, KeyCombo{ VK_RIGHT, 3 } }
+    HotkeyBinding{ HotkeyAction::PanRightFast, KeyCombo{ VK_RIGHT, 3 }, KeyCombo{ VK_RIGHT, 3 } },
+    HotkeyBinding{ HotkeyAction::CloseWindow, KeyCombo{ 'W', 1 }, KeyCombo{ 'W', 1 } } // Ctrl + W
 };
 RuntimeConfig g_runtime;
 UndoManager g_undoManager;
@@ -14386,6 +14387,33 @@ SKIP_EDGE_NAV:;
     case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
         EnsureBootHydrated(hwnd);
+
+        // Close-Window hotkey (Ctrl+W by default) closes the window directly,
+        // dispatched ahead of every overlay interceptor below (Settings, Help,
+        // Gallery, AI palette) — those swallow all other keys by design, but
+        // "close window" must keep working while any of them is open. Matched
+        // against the live binding so a rebind is honored too. Skipped while
+        // recording a hotkey in Settings (the combo must be captured there,
+        // not fired) and while a crop size field has focus (numeric entry
+        // context behaves like every other hotkey: suspended).
+        {
+            const auto& closeBinding = g_hotkeys[static_cast<size_t>(HotkeyAction::CloseWindow)];
+            if (!closeBinding.combo.IsEmpty() && closeBinding.combo.virtualKey == wParam
+                && !g_settingsOverlay.IsCapturingHotkey()
+                && !(g_cropState.IsActive && g_cropState.FocusedField != CropState::InputField::None)) {
+                KeyCombo pressedClose;
+                pressedClose.virtualKey = static_cast<uint16_t>(wParam);
+                pressedClose.modifiers = 0;
+                if (GetKeyState(VK_CONTROL) & 0x8000) pressedClose.modifiers |= 1;
+                if (GetKeyState(VK_SHIFT) & 0x8000)   pressedClose.modifiers |= 2;
+                if (GetKeyState(VK_MENU) & 0x8000)    pressedClose.modifiers |= 4;
+                if (pressedClose == closeBinding.combo) {
+                    PostMessage(hwnd, WM_CLOSE, 0, 0);
+                    return 0;
+                }
+            }
+        }
+
         if (QuickView::UI::AiActionOverlay::Instance().IsVisible()) {
             if (QuickView::UI::AiActionOverlay::Instance().OnKeyDown(wParam)) {
                 return 0;
@@ -18985,6 +19013,14 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         } else {
             PostMessage(hwnd, WM_CLOSE, 0, 0);
         }
+        return true;
+
+    case HotkeyAction::CloseWindow:
+        // Unlike Esc (layered Exit: dismiss panels/restore first), Ctrl+W always
+        // closes the window, matching the common convention (e.g. Windows Photos).
+        // WM_CLOSE performs the export-in-progress confirmation and the
+        // unsaved-changes check before actually destroying the window.
+        PostMessage(hwnd, WM_CLOSE, 0, 0);
         return true;
 
     case HotkeyAction::Loupe:
