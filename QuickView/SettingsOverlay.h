@@ -281,6 +281,8 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushSuccess;
     ComPtr<ID2D1SolidColorBrush> m_brushError;
     ComPtr<ID2D1SolidColorBrush> m_brushWhite;
+    ComPtr<ID2D1SolidColorBrush> m_brushTooltipBg;
+    ComPtr<ID2D1SolidColorBrush> m_brushShadow;
     
     ComPtr<IDWriteFactory> m_dwriteFactory;
     ComPtr<IDWriteTextFormat> m_textFormatHeader;

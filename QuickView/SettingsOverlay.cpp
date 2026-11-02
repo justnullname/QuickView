@@ -65,6 +65,7 @@ struct SettingsThemePalette {
     D2D1_COLOR_F disabledFill;
     D2D1_COLOR_F subtleTint;
     D2D1_COLOR_F shadow;
+    D2D1_COLOR_F tooltipBg;
 
     constexpr operator QuickView::UI::WidgetPalette() const noexcept {
         return {
@@ -113,6 +114,7 @@ SettingsThemePalette GetSettingsThemePalette() {
                 D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
                 D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
+                D2D1::ColorF(0.14f, 0.14f, 0.16f, 0.96f),
             };
         } else {
             return {
@@ -129,6 +131,7 @@ SettingsThemePalette GetSettingsThemePalette() {
                 D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
                 D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
                 D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
+                D2D1::ColorF(0.96f, 0.97f, 0.99f, 0.96f),
             };
         }
     }
@@ -148,6 +151,7 @@ SettingsThemePalette GetSettingsThemePalette() {
             D2D1::ColorF(0.85f, 0.88f, 0.92f, 0.65f),
             D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.06f),
             D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f),
+            D2D1::ColorF(0.96f, 0.97f, 0.99f, 0.96f),
         };
     }
 
@@ -165,6 +169,7 @@ SettingsThemePalette GetSettingsThemePalette() {
         D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.5f),
         D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
         D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f),
+        D2D1::ColorF(0.14f, 0.14f, 0.16f, 0.96f),
     };
 }
 
@@ -795,6 +800,8 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         pRT->CreateSolidColorBrush(palette.success, &m_brushSuccess);
         pRT->CreateSolidColorBrush(palette.error, &m_brushError);
         pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brushWhite);
+        pRT->CreateSolidColorBrush(palette.tooltipBg, &m_brushTooltipBg);
+        pRT->CreateSolidColorBrush(palette.shadow, &m_brushShadow);
     }
 
     if (m_brushBg) {
@@ -806,6 +813,8 @@ void SettingsOverlay::CreateResources(ID2D1DeviceContext* pRT) {
         m_brushBorder->SetColor(palette.border);
         m_brushSuccess->SetColor(palette.success);
         m_brushError->SetColor(palette.error);
+        if (m_brushTooltipBg) m_brushTooltipBg->SetColor(palette.tooltipBg);
+        if (m_brushShadow) m_brushShadow->SetColor(palette.shadow);
     }
 
     // Get System Message Font (e.g. Microsoft YaHei UI on CN, Segoe UI on EN)
@@ -8398,7 +8407,6 @@ void SettingsOverlay::DrawComboDropdown(ID2D1DeviceContext* pRT) {
 
 void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
     if (!m_pHoverTooltipItem || m_pHoverTooltipItem->tooltipText == nullptr || m_pHoverTooltipItem->tooltipText[0] == L'\0') return;
-    const auto palette = GetSettingsThemePalette();
 
     float s = m_uiScale;
 
@@ -8439,12 +8447,13 @@ void SettingsOverlay::RenderTooltip(ID2D1DeviceContext* pRT) {
 
     // Soft shadow (simulated)
     D2D1_ROUNDED_RECT shadow = D2D1::RoundedRect(D2D1::RectF(bgRect.left, bgRect.top + 4.0f, bgRect.right, bgRect.bottom + 4.0f), 4.0f * s, 4.0f * s);
-    ComPtr<ID2D1SolidColorBrush> shadowBrush;
-    pRT->CreateSolidColorBrush(palette.shadow, &shadowBrush);
-    pRT->FillRoundedRectangle(shadow, shadowBrush.Get());
+    if (m_brushShadow) {
+        pRT->FillRoundedRectangle(shadow, m_brushShadow.Get());
+    }
 
-    // Background and border
-    pRT->FillRoundedRectangle(roundedBg, m_brushControlBg.Get());
+    // Background and border (High opacity tooltip card to prevent background bleeding)
+    ID2D1Brush* bgBrush = m_brushTooltipBg ? m_brushTooltipBg.Get() : m_brushControlBg.Get();
+    pRT->FillRoundedRectangle(roundedBg, bgBrush);
     pRT->DrawRoundedRectangle(roundedBg, m_brushBorder.Get(), 1.0f * s);
 
     // Text
