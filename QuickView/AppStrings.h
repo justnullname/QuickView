@@ -274,6 +274,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_GalleryTriggerMode;
     extern const wchar_t* Settings_Label_KeepGalleryVisibleOnThumbnailClick;
     extern const wchar_t* Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
+    extern const wchar_t* Settings_Label_GalleryExpandOnClickOnly;
+    extern const wchar_t* Settings_Tooltip_GalleryExpandOnClickOnly;
     extern const wchar_t* Settings_Option_GalleryTriggerAuto;
     extern const wchar_t* Settings_Option_GalleryTriggerDelay;
     extern const wchar_t* Settings_Option_GalleryTriggerClick;

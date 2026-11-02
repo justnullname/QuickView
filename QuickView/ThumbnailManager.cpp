@@ -70,6 +70,17 @@ void ThumbnailManager::ClearCache() {
     m_slowQueue = std::priority_queue<Task, std::vector<Task>, std::greater<Task>>();
 }
 
+void ThumbnailManager::Evict(size_t imageId) {
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    m_l1Cache.erase(imageId);
+    m_l2Cache.erase(imageId);
+    auto itLru = m_lruMap.find(imageId);
+    if (itLru != m_lruMap.end()) {
+        m_lruList.erase(itLru->second);
+        m_lruMap.erase(itLru);
+    }
+}
+
 ComPtr<ID2D1Bitmap> ThumbnailManager::GetThumbnail(size_t imageId, LPCWSTR /*filePath*/, ID2D1RenderTarget* pRT) {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
 

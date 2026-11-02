@@ -99,6 +99,7 @@ public:
     size_t Count() const;
     int Index() const;
     void SetIndex(int index);
+    bool RemoveAt(int index);
     const std::wstring& GetWatchedDir() const { return m_watchedDir; }
 
     // Random Access (For Gallery Virtualization)

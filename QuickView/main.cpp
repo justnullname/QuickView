@@ -4998,6 +4998,7 @@ void SaveConfig() {
     WriteConfigBool(L"Controls", L"EdgeNavClick", g_config.EdgeNavClick, iniPath.c_str());
     WriteConfigInt(L"Controls", L"GalleryTriggerMode", g_config.GalleryTriggerMode, iniPath.c_str());
     WriteConfigBool(L"Controls", L"GalleryKeepVisibleOnThumbnailClick", g_config.GalleryKeepVisibleOnThumbnailClick, iniPath.c_str());
+    WriteConfigBool(L"Controls", L"GalleryExpandOnClickOnly", g_config.GalleryExpandOnClickOnly, iniPath.c_str());
     WriteConfigFloat(L"Controls", L"GalleryTriggerAreaHeight", g_config.GalleryTriggerAreaHeight, iniPath.c_str());
     WriteConfigFloat(L"Controls", L"GalleryDwellTime", g_config.GalleryDwellTime, iniPath.c_str());
     WriteConfigFloat(L"Controls", L"GalleryExitDelay", g_config.GalleryExitDelay, iniPath.c_str());
@@ -5344,6 +5345,7 @@ void LoadConfig() {
     g_config.EdgeNavClick = GetPrivateProfileIntW(L"Controls", L"EdgeNavClick", 1, iniPath.c_str()) != 0;
     g_config.GalleryTriggerMode = GetPrivateProfileIntW(L"Controls", L"GalleryTriggerMode", 1, iniPath.c_str());
     g_config.GalleryKeepVisibleOnThumbnailClick = GetPrivateProfileIntW(L"Controls", L"GalleryKeepVisibleOnThumbnailClick", 0, iniPath.c_str()) != 0;
+    g_config.GalleryExpandOnClickOnly = GetPrivateProfileIntW(L"Controls", L"GalleryExpandOnClickOnly", 1, iniPath.c_str()) != 0;
     GetPrivateProfileStringW(L"Controls", L"GalleryTriggerAreaHeight", L"20.0", buf, 64, iniPath.c_str());
     g_config.GalleryTriggerAreaHeight = std::clamp((float)_wtof(buf), 5.0f, 100.0f);
     GetPrivateProfileStringW(L"Controls", L"GalleryDwellTime", L"0.18", buf, 64, iniPath.c_str());
@@ -8283,6 +8285,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, [[maybe_unused]] LPWSTR lpCm
     g_toolbar.SetLockState(g_runtime.LockWindowSize);
     g_toolbar.SetExifState(g_runtime.ShowInfoPanel);
     g_toolbar.SetPinned(g_config.LockBottomToolbar); // Lock toolbar from config
+    if (g_config.LockBottomToolbar) g_toolbar.SetVisible(true);
     
     if (g_isBootingWithImage) {
         SetTimer(hwnd, TIMER_ID_STARTUP_SHOW, 1500, nullptr); // Safe 1500ms failsafe timeout for huge/RAW images
@@ -8873,22 +8876,31 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                         }
 
                         if (confirmed) {
+                            std::vector<std::wstring> victims = { recycleTarget };
                             if (isViewingTarget) {
-                                SendMessage(hwnd, WM_COMMAND, IDM_DELETE, 0);
-                            } else {
-                                std::vector<std::wstring> victims = { recycleTarget };
-                                if (RecycleFiles(victims)) {
-                                    g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
-                                    g_undoManager.PushDelete(recycleTarget, false);
-                                    
-                                    // Refresh current navigator
-                                    std::wstring currentPath = GetPaneContext(PaneSlot::Primary).path;
-                                    GetPaneContext(PaneSlot::Primary).navigator.Initialize(currentPath, hwnd);
-                                    
-                                    // Force gallery to refresh cache and repaint
-                                    g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
-                                    RequestRepaint(PaintLayer::All);
+                                ReleaseImageResources();
+                            }
+                            if (RecycleFiles(victims)) {
+                                g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
+                                g_undoManager.PushDelete(recycleTarget, false);
+                                
+                                g_thumbMgr.Evict(targetId);
+                                nav.RemoveAt(g_galleryContextMenuIndex);
+                                g_gallery.AdjustSelectionAfterRemoval(g_galleryContextMenuIndex);
+
+                                if (isViewingTarget) {
+                                    GetPaneContext(PaneSlot::Primary).editState.Reset();
+                                    GetPaneContext(PaneSlot::Primary).view.Reset();
+                                    GetPaneContext(PaneSlot::Primary).resource.Reset();
+                                    if (nav.Count() > 0) {
+                                        std::wstring nextP = nav.GetFile(nav.Index());
+                                        GetPaneContext(PaneSlot::Primary).path = nextP;
+                                        LoadImageAsync(hwnd, nav.GetResolvedPath(nextP).c_str());
+                                    } else {
+                                        GetPaneContext(PaneSlot::Primary).path.clear();
+                                    }
                                 }
+                                RequestRepaint(PaintLayer::All);
                             }
                         }
                     }
@@ -9508,6 +9520,11 @@ static LRESULT HandleWmCommand(HWND hwnd, WPARAM wParam, [[maybe_unused]] LPARAM
                     if (SHFileOperationW(&op) == 0) {
                         g_osd.Show(hwnd, AppStrings::OSD_MovedToRecycleBin, false);
                         g_undoManager.PushDelete(recycleTarget, false);
+                        ImageID targetId = FileNavigator::PathToImageID(recycleTarget);
+                        g_thumbMgr.Evict(targetId);
+                        if (g_gallery.IsVisible()) {
+                            g_gallery.Initialize(&g_thumbMgr, &GetPaneContext(PaneSlot::Primary).navigator);
+                        }
                         
                         // [Fix] Verify and delete the temp file if it exists
                         if (!tempToDelete.empty() && FileExists(tempToDelete.c_str())) {
@@ -10032,11 +10049,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return TRUE;
         }
 
-        // Don't show Wait cursor when gallery is visible
-        if (g_isLoading && !g_gallery.IsVisible()) {
-            SetCursor(LoadCursor(nullptr, IDC_WAIT));
-            return TRUE;
-        }
+        // Keep normal cursor during async navigation to prevent annoying flicker
 
         // Default Client Cursor - Coordinate with WM_MOUSEMOVE to prevent Win10 flicker
         if (LOWORD(lParam) == HTCLIENT) {
@@ -11062,7 +11075,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Toolbar Animation Timer (997)
         if (wParam == 997) {
             // Auto-Hide Delay Logic
-            if (g_toolbarHideTime > 0 && (GetTickCount() - g_toolbarHideTime > 2000)) {
+            if (g_toolbarHideTime > 0 && (GetTickCount() - g_toolbarHideTime > 600)) {
                  if (!g_toolbar.IsPinned()) g_toolbar.SetVisible(false);
             }
             
@@ -11827,8 +11840,13 @@ case WM_DESTROY: {
                   inGalleryTriggerZone = false;
               }
               
+              if (g_gallery.IsHoverSuppressed()) {
+                  if (!inGalleryTriggerZone && pt.y > g_config.GalleryFilmstripHeight * g_uiScale) {
+                      g_gallery.ClearHoverSuppression();
+                  }
+              }
               if (!g_gallery.IsVisible()) {
-                  if (g_cropState.IsActive) {
+                  if (g_cropState.IsActive || g_gallery.IsHoverSuppressed()) {
                       g_gallery.SetHoveringHotspot(false);
                   } else if (g_config.GalleryTriggerMode == 0) {
                       if (inGalleryTriggerZone) {
@@ -11968,7 +11986,7 @@ SKIP_EDGE_NAV:;
           // Toolbar Trigger
           RECT rc; GetClientRect(hwnd, &rc);
           float winH = (float)(rc.bottom - rc.top);
-          float zoneHeight = g_toolbar.IsVisible() ? 80.0f * g_uiScale : 48.0f * g_uiScale; // Expanded zone if visible
+          float zoneHeight = g_toolbar.IsVisible() ? 110.0f * g_uiScale : 48.0f * g_uiScale; // Expanded hysteresis safety zone when visible
           bool inZone = (pt.y > winH - zoneHeight) || g_toolbar.HitTest((float)pt.x, (float)pt.y);
           
           static DWORD s_hideRequestTime = 0;
@@ -16114,25 +16132,14 @@ static FireAndForget LoadPhase1WicFallbackAsync(
 }
 
 static void PrimePhase1Placeholder(HWND hwnd, const std::wstring& path, ImageID imageId) {
+    // Non-Titan decoding is lightning fast (<100ms); avoid reading header sync on UI thread entirely!
+    if (!g_isNavigatingToTitan) {
+        return;
+    }
+
     UINT sourceW = 0;
     UINT sourceH = 0;
     TryReadPhase1DimensionsFromHeader(path, &sourceW, &sourceH);
-
-    // [Phase 1 Optimization]
-    // Non-Titan decoding is fast enough (<100ms typical) that showing a ~256px
-    // Shell cached thumbnail as placeholder causes visible flicker instead of
-    // helping perception. Only use skeleton placeholder so the full decode
-    // (>8192px or >50MP) still benefit
-    // from the placeholder chain because their decode can take 1-5 seconds.
-    {
-        bool isTitan = g_isNavigatingToTitan;
-        if (!isTitan) {
-            QV_LOG("Phase1_Route", TraceLoggingString("NonTitan Skip", "Action"));
-            // [Fix] Do not apply skeleton. Leave current image intact for visual continuity.
-            // Do not update metadata early to avoid DComp scaling artifacts on the old layer.
-            return; // No Shell/WIC extraction and NO skeleton for non-Titan images
-        }
-    }
 
     // Shell thumbnail: multi-level cache-only extraction (no disk decode, safe for UI thread)
     std::shared_ptr<QuickView::RawImageFrame> shellFrame;
@@ -16155,6 +16162,11 @@ static void PrimePhase1Placeholder(HWND hwnd, const std::wstring& path, ImageID 
 
 static bool ShouldUsePhase2TitanDebounce(const std::wstring& path, uintmax_t fileSize) {
     if (path.empty() || !g_imageLoader) return false;
+    // Fast path: small-to-medium files are never Titan images (>50MP or >8192px).
+    // Skipping header peek for everyday files keeps the UI thread 100% free of sync disk I/O!
+    if (fileSize > 0 && fileSize < 24ull * 1024ull * 1024ull) {
+        return false;
+    }
 
     CImageLoader::ImageHeaderInfo info = g_imageLoader->PeekHeader(path.c_str());
 
@@ -16417,7 +16429,8 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
     if (idx != -1) {
         fileSize = GetPaneContext(PaneSlot::Primary).navigator.GetFileSize(idx);
     }
-    g_isNavigatingToTitan = ShouldUsePhase2TitanDebounce(path, fileSize);
+    const bool isTitanNav = ShouldUsePhase2TitanDebounce(path, fileSize);
+    g_isNavigatingToTitan = isTitanNav;
     
     g_isBlurry = true; // Reset for new image
     g_imageQualityLevel = 0; // [v3.1] Reset Quality Level
@@ -16462,12 +16475,8 @@ void StartNavigation(HWND hwnd, std::wstring path, [[maybe_unused]] bool showOSD
         RefreshCompareRawUI(hwnd);
     }
     
-    PostMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
-    
-// Phase 2 Kick: queue-drop debounce (Titan only)
-    // (Moved fileSize lookup to top of StartNavigation)
-
-    if (ShouldUsePhase2TitanDebounce(path, fileSize)) {
+    // Phase 2 Kick: queue-drop debounce (Titan only)
+    if (isTitanNav) {
         EnqueuePhase2NavigationTask(hwnd, path, fileSize, idx, myToken, myImageId, dir);
     } else {
         DispatchNavigationToEngine(path, fileSize, myToken, idx, dir);
@@ -18513,18 +18522,24 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
         if (g_gallery.IsVisible()) {
             g_gallery.Close();
             FinishGallery(hwnd, GalleryFinishKind::Dismiss);
+            g_lastOverlayCloseTime = GetTickCount();
+            g_gallery.SuppressHoverUntilMouseLeave();
             RequestRepaint(PaintLayer::All);
         } else {
+            g_gallery.ClearHoverSuppression();
             ShowGallery(hwnd);
         }
         return true;
 
     case HotkeyAction::ToggleFilmstrip:
-        if (g_gallery.IsVisible() && g_gallery.GetMode() == GalleryMode::Filmstrip) {
+        if (g_gallery.IsVisible()) {
             g_gallery.Close(true);
             FinishGallery(hwnd, GalleryFinishKind::Dismiss);
+            g_lastOverlayCloseTime = GetTickCount();
+            g_gallery.SuppressHoverUntilMouseLeave();
             RequestRepaint(PaintLayer::All);
         } else {
+            g_gallery.ClearHoverSuppression();
             ShowFilmstrip(hwnd);
         }
         return true;

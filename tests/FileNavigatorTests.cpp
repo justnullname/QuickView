@@ -833,6 +833,46 @@ TEST(FileNavigatorTest, SortArchivesByNameAscendingOverride) {
     g_runtime.SortDescending = oldSortDescending;
 }
 
+TEST(FileNavigatorTest, RemoveAtCorrectlyRemovesEntryAndUpdatesIndex) {
+    namespace fs = std::filesystem;
+    fs::path tempDir = fs::current_path() / "test_remove_at_dir";
+    std::error_code ec;
+    fs::create_directory(tempDir, ec);
+    ASSERT_FALSE(ec);
+
+    fs::path zipFile = tempDir / "archive.zip";
+    std::vector<std::string> fileNames = { "a.png", "b.png", "c.png" };
+    ASSERT_TRUE(CreateMockZipMultiple(zipFile.wstring(), fileNames));
+
+    FileNavigator nav;
+    std::wstring startPath = zipFile.wstring() + L"|1|b.png";
+    nav.Initialize(startPath, nullptr);
+    ASSERT_EQ(nav.Count(), 3);
+    EXPECT_EQ(nav.Index(), 1);
+
+    // Remove index 0 ("a.png") -> index 1 ("b.png") should shift to index 0
+    EXPECT_TRUE(nav.RemoveAt(0));
+    EXPECT_EQ(nav.Count(), 2);
+    EXPECT_EQ(nav.Index(), 0);
+    EXPECT_NE(nav.GetFile(0).find(L"b.png"), std::wstring::npos);
+
+    // Remove current index 0 ("b.png") -> should stay at index 0 which becomes "c.png"
+    EXPECT_TRUE(nav.RemoveAt(0));
+    EXPECT_EQ(nav.Count(), 1);
+    EXPECT_EQ(nav.Index(), 0);
+    EXPECT_NE(nav.GetFile(0).find(L"c.png"), std::wstring::npos);
+
+    // Remove last remaining item
+    EXPECT_TRUE(nav.RemoveAt(0));
+    EXPECT_EQ(nav.Count(), 0);
+    EXPECT_EQ(nav.Index(), -1);
+
+    // Boundary check
+    EXPECT_FALSE(nav.RemoveAt(0));
+
+    fs::remove_all(tempDir, ec);
+}
+
 #include "UndoManager.h"
 
 TEST(UndoManagerTest, PushDeletePairAndPop) {

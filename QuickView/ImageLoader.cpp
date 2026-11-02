@@ -14175,6 +14175,37 @@ HRESULT CImageLoader::LoadToFrame(
           }
         }
 
+        // =========================================================
+        // PHASE 3: CURRENTCOLOR RESOLUTION (Fix Modern Icon Sets)
+        // =========================================================
+        // Direct2D SVG parser fails or renders transparent on CSS 'currentColor'.
+        // Modern icon libraries (e.g. Fluent UI system icons) use fill="currentColor".
+        // Replace with a concrete theme-aware contrast color.
+        {
+          auto CiFind = [](std::string_view haystack, std::string_view needle, size_t start = 0) -> size_t {
+            if (needle.empty() || haystack.size() < needle.size()) return std::string_view::npos;
+            for (size_t i = start; i + needle.size() <= haystack.size(); ++i) {
+              bool match = true;
+              for (size_t j = 0; j < needle.size(); ++j) {
+                if (::tolower(static_cast<unsigned char>(haystack[i + j])) != ::tolower(static_cast<unsigned char>(needle[j]))) {
+                  match = false;
+                  break;
+                }
+              }
+              if (match) return i;
+            }
+            return std::string_view::npos;
+          };
+
+          size_t pos = 0;
+          constexpr std::string_view kTarget = "currentColor";
+          const std::string replacementColor = IsLightThemeActive() ? "#212121" : "#F0F0F0";
+          while ((pos = CiFind(svgContent, kTarget, pos)) != std::string_view::npos) {
+            svgContent.replace(pos, kTarget.size(), replacementColor);
+            pos += replacementColor.size();
+          }
+        }
+
         // Commit changes
         fileData.assign(svgContent.begin(), svgContent.end());
       }

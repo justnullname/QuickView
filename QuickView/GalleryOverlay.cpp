@@ -317,7 +317,7 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
     }
     
     // 6c. Hover Expand logic (Mode 0 & 1)
-    if ((g_config.GalleryTriggerMode == 0 || g_config.GalleryTriggerMode == 1) && 
+    if (!g_config.GalleryExpandOnClickOnly && (g_config.GalleryTriggerMode == 0 || g_config.GalleryTriggerMode == 1) && 
         m_mode == GalleryMode::Filmstrip && m_bottomHintHover && m_gridProgress < 0.01f) {
         m_expandHoverTimer += deltaTime;
         if (m_expandHoverTimer >= g_config.GalleryDwellTime) { // Configurable dwell time for expand hotspot
@@ -742,17 +742,12 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         }
         
 
-        // Selection border (rounded, DodgerBlue/Accent, single crisp ring)
-        if (i == m_selectedIndex) {
-            float borderOffset = 1.5f * scale;
-            float borderRadius = 6.5f * scale;
-            float borderWidth = 2.0f * scale;
-            m_brushSelection->SetOpacity(1.0f * m_transitionProgress);
-            pDC->DrawRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(cellRect.left - borderOffset, cellRect.top - borderOffset, cellRect.right + borderOffset, cellRect.bottom + borderOffset), borderRadius, borderRadius),
-                m_brushSelection.Get(), borderWidth);
-            m_brushSelection->SetOpacity(1.0f);
-        }
+        // Pixel-align thumbnail bounding box and compute concentric geometry
+        cellRect.left = std::round(cellRect.left);
+        cellRect.top = std::round(cellRect.top);
+        cellRect.right = std::round(cellRect.right);
+        cellRect.bottom = std::round(cellRect.bottom);
+        const float thumbCornerRadius = std::round(6.0f * scale);
         
         // Draw thumbnail
         ImageID imgId = m_pNav->GetImageID(i);
@@ -760,7 +755,7 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
         auto bmp = m_pThumbMgr->GetThumbnail(imgId, path.c_str(), pDC);
         
         if (bmp) {
-            // Use BitmapBrush to draw with elegant 6px rounded corners
+            // Use BitmapBrush to draw with elegant rounded corners
             ComPtr<ID2D1BitmapBrush> bmpBrush;
             HRESULT hr = pDC->CreateBitmapBrush(bmp.Get(), &bmpBrush);
             if (SUCCEEDED(hr) && bmpBrush) {
@@ -776,31 +771,43 @@ void GalleryOverlay::Render(ID2D1DeviceContext *pDC, const D2D1_SIZE_F &size,
                                           D2D1::Matrix3x2F::Translation(cellRect.left - src.left * scaleX, cellRect.top - src.top * scaleY);
                 bmpBrush->SetTransform(trans);
                 
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, 6.0f * scale, 6.0f * scale), bmpBrush.Get());
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, thumbCornerRadius, thumbCornerRadius), bmpBrush.Get());
             } else if (m_brushBg) {
                 // Fallback to placeholder box if CreateBitmapBrush fails
                 D2D1_COLOR_F phBase = isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f) : D2D1::ColorF(0.2f, 0.2f, 0.2f, 1.0f);
                 phBase.a *= m_transitionProgress;
                 m_brushBg->SetColor(phBase);
                 m_brushBg->SetOpacity(1.0f);
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, 6.0f * scale, 6.0f * scale), m_brushBg.Get());
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, thumbCornerRadius, thumbCornerRadius), m_brushBg.Get());
             }
         } else {
-            // Draw placeholder box (matching 6px rounded corners)
+            // Draw placeholder box (matching rounded corners)
             if (m_brushBg) {
                 D2D1_COLOR_F phBase = isLight ? D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f) : D2D1::ColorF(0.2f, 0.2f, 0.2f, 1.0f);
                 phBase.a *= m_transitionProgress;
                 
                 m_brushBg->SetColor(phBase);
                 m_brushBg->SetOpacity(1.0f);
-                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, 6.0f * scale, 6.0f * scale), m_brushBg.Get());
+                pDC->FillRoundedRectangle(D2D1::RoundedRect(cellRect, thumbCornerRadius, thumbCornerRadius), m_brushBg.Get());
             }
-            
+
             // Queue request only if NOT actively columns-zooming (performance LOD)
             if (!m_isZooming) {
                 int prio = std::abs(i - centerIdx);
                 m_pThumbMgr->QueueRequest(imgId, path.c_str(), prio);
             }
+        }
+
+        // Selection border (drawn on top of thumbnail, perfectly concentric with zero gap, sharp 2px/4px)
+        if (i == m_selectedIndex) {
+            const float borderWidth = (scale >= 1.5f) ? 4.0f : 2.0f;
+            const float borderOffset = borderWidth * 0.5f;
+            const float borderRadius = thumbCornerRadius + borderOffset;
+            m_brushSelection->SetOpacity(1.0f * m_transitionProgress);
+            pDC->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(cellRect.left - borderOffset, cellRect.top - borderOffset, cellRect.right + borderOffset, cellRect.bottom + borderOffset), borderRadius, borderRadius),
+                m_brushSelection.Get(), borderWidth);
+            m_brushSelection->SetOpacity(1.0f);
         }
         // [Ratings] Filled stars in the opposite corner from the RAW badge.
         // The read is queued lazily, riding the same visibility pass as the

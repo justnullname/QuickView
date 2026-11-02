@@ -789,6 +789,35 @@ void FileNavigator::SetIndex(int index) {
     }
 }
 
+bool FileNavigator::RemoveAt(int index) {
+    if (UsingExplorerCursor()) {
+        EnsureMaterialized();
+    }
+    if (index < 0 || index >= (int)m_files.size()) return false;
+    
+    ImageID id = (index < (int)m_ids.size()) ? m_ids[index] : 0;
+    if (id != 0) {
+        m_pairedRaws.erase(id);
+    }
+    
+    m_files.erase(m_files.begin() + index);
+    if (index < (int)m_sizes.size()) m_sizes.erase(m_sizes.begin() + index);
+    if (index < (int)m_ids.size()) m_ids.erase(m_ids.begin() + index);
+    
+    if (m_files.empty()) {
+        m_currentIndex = -1;
+    } else {
+        if (m_currentIndex == index) {
+            if (m_currentIndex >= (int)m_files.size()) {
+                m_currentIndex = (int)m_files.size() - 1;
+            }
+        } else if (m_currentIndex > index) {
+            m_currentIndex--;
+        }
+    }
+    return true;
+}
+
 const std::wstring& FileNavigator::GetFile(int index) const {
     static std::wstring empty;
     if (UsingExplorerCursor()) {

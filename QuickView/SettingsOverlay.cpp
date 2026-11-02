@@ -3190,6 +3190,11 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
         };
         tabControl.items.push_back(itemKeepVisible);
 
+        SettingsItem itemExpandClickOnly = { AppStrings::Settings_Label_GalleryExpandOnClickOnly, OptionType::Toggle, &g_config.GalleryExpandOnClickOnly };
+        itemExpandClickOnly.tooltipText = AppStrings::Settings_Tooltip_GalleryExpandOnClickOnly;
+        itemExpandClickOnly.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+        tabControl.items.push_back(itemExpandClickOnly);
+
         if (g_config.GalleryTriggerMode == 0) {
             SettingsItem itemAreaHeight = { AppStrings::Settings_Label_GalleryTriggerAreaHeight, OptionType::Slider, nullptr, &g_config.GalleryTriggerAreaHeight };
             itemAreaHeight.minVal = 5.0f;

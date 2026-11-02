@@ -49,9 +49,28 @@ public:
 
   void SetMouseInGallery(bool inGallery);
   void SetHoveringHotspot(bool hovering) {
+    if (m_suppressHoverUntilMouseLeave && hovering) return;
     m_hoveringHotspot = hovering;
     if (!hovering)
       m_hoverDelayTimer = 0.0f;
+  }
+
+  void SuppressHoverUntilMouseLeave() {
+    m_suppressHoverUntilMouseLeave = true;
+    m_hoveringHotspot = false;
+    m_hoverDelayTimer = 0.0f;
+  }
+  bool IsHoverSuppressed() const { return m_suppressHoverUntilMouseLeave; }
+  void ClearHoverSuppression() { m_suppressHoverUntilMouseLeave = false; }
+
+  void AdjustSelectionAfterRemoval(int removedIndex) {
+    if (m_selectedIndex == removedIndex) {
+      if (m_pNav && m_selectedIndex >= (int)m_pNav->Count()) {
+        m_selectedIndex = (int)m_pNav->Count() - 1;
+      }
+    } else if (m_selectedIndex > removedIndex) {
+      m_selectedIndex--;
+    }
   }
 
   float GetOpacity() const { return m_transitionProgress; }
@@ -192,6 +211,7 @@ private:
   // Bottom visual handle indicator
   bool m_bottomHintHover = false;
   float m_bottomHintAlpha = 0.0f;
+  bool m_suppressHoverUntilMouseLeave = false;
 
   bool m_gridCloseHover = false;
   bool m_gridSliderHover = false;

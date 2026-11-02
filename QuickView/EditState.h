@@ -715,6 +715,7 @@ struct AppConfig {
     bool DisableEdgeNavInCompare = true;
     int NavIndicator = 0;               // 0=Arrow
     int GalleryTriggerMode = 1;         // 0=Hover Auto, 1=Hover Hotspot Delay, 2=Click Hotspot
+    bool GalleryExpandOnClickOnly = true; // Require click on expand arrow to avoid accidental hover
     bool GalleryKeepVisibleOnThumbnailClick = false;
     float GalleryTriggerAreaHeight = 20.0f; // Auto hover trigger zone height in logical pixels (5 ~ 100)
     float GalleryDwellTime = 0.18f;        // Dwell time for hotspot hover / expand hotspot in seconds (0.05 ~ 2.0)
