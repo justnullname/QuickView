@@ -139,3 +139,42 @@ TEST(SuperResolutionDimensionTest, Exif8DimensionAndCropMapping) {
 }
 
 
+
+TEST(Transform2DTest, LoupeViewportAnchorZoomPrecision) {
+    // Simulates the exact anchor zoom math used in HotkeyAction::Loupe & WM_MOUSEWHEEL
+    const float vpW = 1920.0f;
+    const float vpH = 1080.0f;
+    const float imgW = 3840.0f;
+    const float imgH = 2160.0f;
+
+    const float fitScale = std::min(vpW / imgW, vpH / imgH); // 0.5f
+    const float baseZoom = 1.0f;
+    const float initialTotalScale = fitScale * baseZoom; // 0.5f
+    const float initialPanX = 50.0f;
+    const float initialPanY = -30.0f;
+
+    // Pick an arbitrary cursor screen position
+    const float cursorX = 1200.0f;
+    const float cursorY = 700.0f;
+
+    // 1. ScreenToImage mapping:
+    // imgDrawX = vpW * 0.5f + PanX - (imgW * 0.5f * totalScale)
+    float imgDrawX = vpW * 0.5f + initialPanX - (imgW * 0.5f * initialTotalScale);
+    float imgDrawY = vpH * 0.5f + initialPanY - (imgH * 0.5f * initialTotalScale);
+    float imgX = (cursorX - imgDrawX) / initialTotalScale;
+    float imgY = (cursorY - imgDrawY) / initialTotalScale;
+
+    // 2. Perform Loupe Viewport Zoom to targetTotalScale (e.g. 2.5x magnification)
+    const float targetTotalScale = 2.5f;
+    float newPanX = cursorX - vpW * 0.5f + (imgW * 0.5f - imgX) * targetTotalScale;
+    float newPanY = cursorY - vpH * 0.5f + (imgH * 0.5f - imgY) * targetTotalScale;
+
+    // 3. Project imgX back to screen with newPan and targetTotalScale
+    float newImgDrawX = vpW * 0.5f + newPanX - (imgW * 0.5f * targetTotalScale);
+    float newImgDrawY = vpH * 0.5f + newPanY - (imgH * 0.5f * targetTotalScale);
+    float reprojectedScreenX = newImgDrawX + imgX * targetTotalScale;
+    float reprojectedScreenY = newImgDrawY + imgY * targetTotalScale;
+
+    EXPECT_NEAR(reprojectedScreenX, cursorX, 1e-4f);
+    EXPECT_NEAR(reprojectedScreenY, cursorY, 1e-4f);
+}

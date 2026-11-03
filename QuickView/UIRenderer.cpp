@@ -964,7 +964,7 @@ extern int GetEffectiveExifOrientation(int orientation, const EditState& state);
 // Compare mode the same image location is magnified on both panes at once.
 void UIRenderer::DrawLoupe(ID2D1DeviceContext* dc, HWND hwnd) {
     AppContext& app = AppContext::GetInstance();
-    if (!app.Loupe.active || !g_config.LoupeEnabled) return;
+    if (!app.Loupe.active || !g_config.LoupeEnabled || app.Loupe.isViewportMode) return;
 
     RECT rcClient; GetClientRect(hwnd, &rcClient);
     const float winW = (float)(rcClient.right - rcClient.left);

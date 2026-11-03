@@ -139,6 +139,8 @@ struct LoupeState {
     bool active = false;
     POINT cursorClient = { 0, 0 }; // current cursor position in client coords
     bool sizeChanged = false;      // wheel resized the loupe this session -> persist on release
+    bool isViewportMode = false;   // Whole-image/viewport magnification mode (LoupeShape == 2)
+    ViewState baselineView;        // Snapshot of view state prior to activating viewport loupe
 };
 
 enum class MinimapOverride : uint8_t {

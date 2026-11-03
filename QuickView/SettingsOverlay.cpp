@@ -3032,9 +3032,13 @@ void SettingsOverlay::BuildVisualsTab(SettingsTab& tabVisuals) {
     itemShowDirtyRect.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
     tabVisuals.items.push_back(itemShowDirtyRect);
 
-    SettingsItem itemLoupeShape = { AppStrings::Settings_Label_LoupeShape, OptionType::Segment, nullptr, nullptr, &g_config.LoupeShape, nullptr, 0, 0, { AppStrings::Settings_Option_LoupeShapeSquare, AppStrings::Settings_Option_LoupeShapeCircle } };
+    SettingsItem itemLoupeShape = { AppStrings::Settings_Label_LoupeShape, OptionType::Segment, nullptr, nullptr, &g_config.LoupeShape, nullptr, 0, 0, { AppStrings::Settings_Option_LoupeShapeSquare, AppStrings::Settings_Option_LoupeShapeCircle, AppStrings::Settings_Option_LoupeShapeFullscreen } };
     itemLoupeShape.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
     tabVisuals.items.push_back(itemLoupeShape);
+
+    SettingsItem itemLoupeZoom = { AppStrings::Settings_Label_LoupeZoom, OptionType::Slider, nullptr, &g_config.LoupeZoom, nullptr, nullptr, 1.0f, 8.0f, {}, L"%.1fx" };
+    itemLoupeZoom.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
+    tabVisuals.items.push_back(itemLoupeZoom);
 }
 
 void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {

@@ -5377,7 +5377,7 @@ void LoadConfig() {
 
     // Loupe (activation key lives in the [Hotkeys] Loupe binding)
     g_config.LoupeEnabled = GetPrivateProfileIntW(L"Controls", L"LoupeEnabled", 1, iniPath.c_str()) != 0;
-    g_config.LoupeShape = GetPrivateProfileIntW(L"Controls", L"LoupeShape", 0, iniPath.c_str());
+    g_config.LoupeShape = std::clamp((int)GetPrivateProfileIntW(L"Controls", L"LoupeShape", 0, iniPath.c_str()), 0, 2);
     GetPrivateProfileStringW(L"Controls", L"LoupeSizeRatio", L"0.25", buf, 64, iniPath.c_str());
     g_config.LoupeSizeRatio = std::clamp((float)_wtof(buf), 0.1f, 0.5f);
     GetPrivateProfileStringW(L"Controls", L"LoupeZoom", L"1.0", buf, 64, iniPath.c_str());
@@ -10091,10 +10091,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     if (message == WM_SETCURSOR) {
-        // [Loupe] Hide the cursor while the loupe is active so it does not
-        // obscure the magnified region it sits on.
+        // [Loupe] Cursor appearance while the loupe is active
         if (AppContext::GetInstance().Loupe.active && LOWORD(lParam) == HTCLIENT) {
-            SetCursor(nullptr);
+            if (AppContext::GetInstance().Loupe.isViewportMode) {
+                SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+            } else {
+                SetCursor(nullptr);
+            }
             return TRUE;
         }
 
@@ -10139,13 +10142,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             // [Loupe] When the window loses focus, ensure the loupe state is reset and mouse pointer is restored, in case the key release event is lost
             if (AppContext::GetInstance().Loupe.active) {
-                AppContext::GetInstance().Loupe.active = false;
+                auto& loupe = AppContext::GetInstance().Loupe;
+                if (loupe.isViewportMode) {
+                    auto& pane = GetPaneContext(PaneSlot::Primary);
+                    pane.view = loupe.baselineView;
+                    if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+                        auto& leftPane = GetPaneContext(PaneSlot::Left);
+                        if (leftPane.valid && AppContext::GetInstance().Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
+                        if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
+                            leftPane.view.PanX = pane.view.PanX;
+                            leftPane.view.PanY = pane.view.PanY;
+                        }
+                    }
+                    loupe.isViewportMode = false;
+                    RequestRepaint(PaintLayer::All);
+                } else {
+                    RequestRepaint(PaintLayer::Dynamic);
+                }
+                loupe.active = false;
                 SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW));
-                if (AppContext::GetInstance().Loupe.sizeChanged) {
-                    AppContext::GetInstance().Loupe.sizeChanged = false;
+                if (loupe.sizeChanged) {
+                    loupe.sizeChanged = false;
                     SaveConfig();
                 }
-                RequestRepaint(PaintLayer::Dynamic);
             }
         }
         break;
@@ -11711,10 +11730,30 @@ case WM_DESTROY: {
           bool hasGallery = g_gallery.IsVisible() && g_gallery.HitTestArea(pt.x, pt.y, winW, winH);
 
           // [Loupe] While the loupe key is held, the magnifier follows the
-          // cursor. Update its position, keep the cursor hidden, and skip the
-          // normal pan/hover handling (which would re-show the cursor below).
+          // cursor. In viewport mode, mouse movement pans the view.
           if (AppContext::GetInstance().Loupe.active) {
-              AppContext::GetInstance().Loupe.cursorClient = pt;
+              auto& loupe = AppContext::GetInstance().Loupe;
+              if (loupe.isViewportMode) {
+                  int dx = pt.x - loupe.cursorClient.x;
+                  int dy = pt.y - loupe.cursorClient.y;
+                  loupe.cursorClient = pt;
+                  SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+                  if (dx != 0 || dy != 0) {
+                      auto& pane = GetPaneContext(PaneSlot::Primary);
+                      pane.view.PanX += (float)dx;
+                      pane.view.PanY += (float)dy;
+                      if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+                          auto& leftPane = GetPaneContext(PaneSlot::Left);
+                          if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
+                              leftPane.view.PanX += (float)dx;
+                              leftPane.view.PanY += (float)dy;
+                          }
+                      }
+                      RequestRepaint(PaintLayer::All);
+                  }
+                  return 0;
+              }
+              loupe.cursorClient = pt;
               SetCursor(nullptr);
               RequestRepaint(PaintLayer::Dynamic);
               return 0;
@@ -14060,13 +14099,61 @@ SKIP_EDGE_NAV:;
         float wheelDelta = (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
 
         // [Loupe] While the loupe is held, the wheel resizes the loupe box
-        // (a fraction of the viewport's short side) instead of zooming the image.
+        // or adjusts LoupeZoom magnification if in viewport mode.
         if (AppContext::GetInstance().Loupe.active) {
-            const float before = g_config.LoupeSizeRatio;
-            g_config.LoupeSizeRatio = std::clamp(g_config.LoupeSizeRatio + wheelDelta * 0.02f, 0.1f, 0.5f);
-            if (g_config.LoupeSizeRatio != before) {
-                AppContext::GetInstance().Loupe.sizeChanged = true;
-                RequestRepaint(PaintLayer::Dynamic);
+            auto& loupe = AppContext::GetInstance().Loupe;
+            if (loupe.isViewportMode) {
+                const float before = g_config.LoupeZoom;
+                float step = (wheelDelta > 0.0f) ? 0.25f : -0.25f;
+                g_config.LoupeZoom = std::clamp(g_config.LoupeZoom + step, 1.0f, 8.0f);
+                if (g_config.LoupeZoom != before) {
+                    loupe.sizeChanged = true;
+                    auto& pane = GetPaneContext(PaneSlot::Primary);
+                    int baseExif = pane.view.ExifOrientation;
+                    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
+                    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
+
+                    RECT rc; GetClientRect(hwnd, &rc);
+                    float vpW = (float)(rc.right - rc.left);
+                    float vpH = (float)(rc.bottom - rc.top);
+
+                    if (orientedSize.width > 0.0f && orientedSize.height > 0.0f && vpW > 1.0f && vpH > 1.0f) {
+                        float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
+                        if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
+                            fitScale = 1.0f;
+                        }
+                        float oldTotalScale = fitScale * (std::max)(0.0001f, pane.view.Zoom);
+                        float newTotalScale = std::clamp(g_config.LoupeZoom, 1.0f, 8.0f);
+                        float newZoom = (fitScale > 0.0001f) ? (newTotalScale / fitScale) : newTotalScale;
+
+                        float cursorX = (float)loupe.cursorClient.x;
+                        float cursorY = (float)loupe.cursorClient.y;
+                        pane.view.PanX = cursorX - vpW * 0.5f - ((cursorX - vpW * 0.5f - pane.view.PanX) / oldTotalScale) * newTotalScale;
+                        pane.view.PanY = cursorY - vpH * 0.5f - ((cursorY - vpH * 0.5f - pane.view.PanY) / oldTotalScale) * newTotalScale;
+                        pane.view.Zoom = newZoom;
+
+                        if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+                            auto& leftPane = GetPaneContext(PaneSlot::Left);
+                            if (leftPane.valid && AppContext::GetInstance().Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
+                            if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
+                                leftPane.view.PanX = pane.view.PanX;
+                                leftPane.view.PanY = pane.view.PanY;
+                            }
+                        }
+
+                        wchar_t zoomBuf[32];
+                        swprintf_s(zoomBuf, L"%.2fx (%d%%)", g_config.LoupeZoom, (int)std::round(g_config.LoupeZoom * 100.0f));
+                        g_osd.Show(hwnd, zoomBuf, false);
+                        RequestRepaint(PaintLayer::All);
+                    }
+                }
+            } else {
+                const float before = g_config.LoupeSizeRatio;
+                g_config.LoupeSizeRatio = std::clamp(g_config.LoupeSizeRatio + wheelDelta * 0.02f, 0.1f, 0.5f);
+                if (g_config.LoupeSizeRatio != before) {
+                    loupe.sizeChanged = true;
+                    RequestRepaint(PaintLayer::Dynamic);
+                }
             }
             return 0;
         }
@@ -14381,13 +14468,29 @@ SKIP_EDGE_NAV:;
         // user remapping rather than a hardcoded key.
         if (AppContext::GetInstance().Loupe.active
             && wParam == g_hotkeys[static_cast<size_t>(HotkeyAction::Loupe)].combo.virtualKey) {
-            AppContext::GetInstance().Loupe.active = false;
-            SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW)); // restore now
-            if (AppContext::GetInstance().Loupe.sizeChanged) {
-                AppContext::GetInstance().Loupe.sizeChanged = false;
-                SaveConfig(); // persist the wheel-adjusted loupe size
+            auto& loupe = AppContext::GetInstance().Loupe;
+            if (loupe.isViewportMode) {
+                auto& pane = GetPaneContext(PaneSlot::Primary);
+                pane.view = loupe.baselineView;
+                if (IsCompareModeActive() && AppContext::GetInstance().CompareCtrl) {
+                    auto& leftPane = GetPaneContext(PaneSlot::Left);
+                    if (leftPane.valid && AppContext::GetInstance().Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
+                    if (leftPane.valid && AppContext::GetInstance().Compare.syncPan) {
+                        leftPane.view.PanX = pane.view.PanX;
+                        leftPane.view.PanY = pane.view.PanY;
+                    }
+                }
+                loupe.isViewportMode = false;
+                RequestRepaint(PaintLayer::All);
+            } else {
+                RequestRepaint(PaintLayer::Dynamic);
             }
-            RequestRepaint(PaintLayer::Dynamic);
+            loupe.active = false;
+            SetCursor(g_currentCursor ? g_currentCursor : LoadCursor(nullptr, IDC_ARROW)); // restore now
+            if (loupe.sizeChanged) {
+                loupe.sizeChanged = false;
+                SaveConfig(); // persist the wheel-adjusted loupe size or zoom
+            }
             return 0;
         }
         if (wParam == VK_MENU) return 0; // Intercept Alt release to prevent entering the menu loop and losing focus
@@ -19014,15 +19117,60 @@ bool HandleHotkeyAction(HWND hwnd, HotkeyAction action) {
     case HotkeyAction::Loupe:
         // Press-and-hold magnifier: activate on key-down (this dispatch); the
         // matching key-up in WndProc hides it. Auto-repeat re-enters here and is
-        // idempotent. Only fires with an image loaded, the feature enabled, and
-        // the image shown below 100% — at/above actual size the loupe (which
-        // magnifies to actual pixels) would add nothing.
+        // idempotent. Fires if current zoom percent is below the target LoupeZoom.
         if (g_config.LoupeEnabled && GetPaneContext(PaneSlot::Primary).resource
-            && GetCurrentZoomPercent() < 100
+            && GetCurrentZoomPercent() < (int)std::round(g_config.LoupeZoom * 100.0f)
             && !AppContext::GetInstance().Loupe.active) {
             POINT cp; GetCursorPos(&cp); ScreenToClient(hwnd, &cp);
-            AppContext::GetInstance().Loupe.active = true;
-            AppContext::GetInstance().Loupe.cursorClient = cp;
+            auto& app = AppContext::GetInstance();
+            app.Loupe.active = true;
+            app.Loupe.cursorClient = cp;
+            app.Loupe.isViewportMode = (g_config.LoupeShape == 2);
+
+            if (app.Loupe.isViewportMode) {
+                auto& pane = GetPaneContext(PaneSlot::Primary);
+                app.Loupe.baselineView = pane.view;
+
+                float imgX = 0.0f, imgY = 0.0f;
+                if (ScreenToImageSpace(hwnd, cp.x, cp.y, imgX, imgY, PaneSlot::Primary)) {
+                    int baseExif = pane.view.ExifOrientation;
+                    int exifOrientation = GetEffectiveExifOrientation(baseExif, pane.editState);
+                    D2D1_SIZE_F orientedSize = GetOrientedSize(pane.resource, exifOrientation);
+
+                    RECT rc; GetClientRect(hwnd, &rc);
+                    float vpW = (float)(rc.right - rc.left);
+                    float vpH = (float)(rc.bottom - rc.top);
+
+                    if (orientedSize.width > 0.0f && orientedSize.height > 0.0f && vpW > 1.0f && vpH > 1.0f) {
+                        float fitScale = std::min(vpW / orientedSize.width, vpH / orientedSize.height);
+                        if (orientedSize.width < 200.0f && orientedSize.height < 200.0f && fitScale > 1.0f) {
+                            fitScale = 1.0f;
+                        }
+                        float targetTotalScale = std::clamp(g_config.LoupeZoom, 1.0f, 8.0f);
+                        float targetZoom = (fitScale > 0.0001f) ? (targetTotalScale / fitScale) : targetTotalScale;
+
+                        float newPanX = (float)cp.x - vpW * 0.5f + (orientedSize.width * 0.5f - imgX) * targetTotalScale;
+                        float newPanY = (float)cp.y - vpH * 0.5f + (orientedSize.height * 0.5f - imgY) * targetTotalScale;
+
+                        pane.view.Zoom = targetZoom;
+                        pane.view.PanX = newPanX;
+                        pane.view.PanY = newPanY;
+
+                        if (IsCompareModeActive() && app.CompareCtrl) {
+                            auto& leftPane = GetPaneContext(PaneSlot::Left);
+                            if (leftPane.valid && app.Compare.syncZoom) leftPane.view.Zoom = pane.view.Zoom;
+                            if (leftPane.valid && app.Compare.syncPan) {
+                                leftPane.view.PanX = pane.view.PanX;
+                                leftPane.view.PanY = pane.view.PanY;
+                            }
+                        }
+
+                        RequestRepaint(PaintLayer::All);
+                        return true;
+                    }
+                }
+            }
+
             RequestRepaint(PaintLayer::Dynamic);
         }
         return true;

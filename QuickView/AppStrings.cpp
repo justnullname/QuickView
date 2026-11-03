@@ -225,6 +225,8 @@ const wchar_t *Settings_Tooltip_ShowDirtyRect = nullptr;
 const wchar_t *Settings_Label_LoupeShape = nullptr;
 const wchar_t *Settings_Option_LoupeShapeSquare = nullptr;
 const wchar_t *Settings_Option_LoupeShapeCircle = nullptr;
+const wchar_t *Settings_Option_LoupeShapeFullscreen = nullptr;
+const wchar_t *Settings_Label_LoupeZoom = nullptr;
 const wchar_t *Settings_Tooltip_LoupeHotkey = nullptr;
 const wchar_t *Settings_Tooltip_CropModeHotkey = nullptr;
 const wchar_t *OSD_Copied = nullptr;
@@ -1416,6 +1418,8 @@ struct LanguageTable {
     const wchar_t *Settings_Label_LoupeShape;
     const wchar_t *Settings_Option_LoupeShapeSquare;
     const wchar_t *Settings_Option_LoupeShapeCircle;
+    const wchar_t *Settings_Option_LoupeShapeFullscreen;
+    const wchar_t *Settings_Label_LoupeZoom;
     const wchar_t *Settings_Tooltip_LoupeHotkey;
     const wchar_t *Settings_Tooltip_CropModeHotkey;
     const wchar_t *Toolbar_Tooltip_CompareSave;
@@ -2176,6 +2180,8 @@ static const LanguageTable Table_EN = {
     L"Magnifier Shape", // Settings_Label_LoupeShape
     L"Square", // Settings_Option_LoupeShapeSquare
     L"Circle", // Settings_Option_LoupeShapeCircle
+    L"Full Window", // Settings_Option_LoupeShapeFullscreen
+    L"Magnifier Zoom", // Settings_Label_LoupeZoom
     L"Hold the shortcut key and scroll the mouse wheel to adjust the magnifier size.", // Settings_Tooltip_LoupeHotkey
     L"Hold Ctrl and drag with the left mouse button to quick-crop.", // Settings_Tooltip_CropModeHotkey
     L"Save / Export (S)", // Toolbar_Tooltip_CompareSave
@@ -2936,6 +2942,8 @@ static const LanguageTable Table_CN = {
     L"放大镜形状", // Settings_Label_LoupeShape
     L"正方形", // Settings_Option_LoupeShapeSquare
     L"圆形", // Settings_Option_LoupeShapeCircle
+    L"全图", // Settings_Option_LoupeShapeFullscreen
+    L"放大镜倍率", // Settings_Label_LoupeZoom
     L"按住快捷键并滚动鼠标滚轮可调节放大镜尺寸。", // Settings_Tooltip_LoupeHotkey
     L"按住 Ctrl 并使用鼠标左键拖动可快速进入框选剪裁模式。", // Settings_Tooltip_CropModeHotkey
     L"保存/导出图像 (S)", // Toolbar_Tooltip_CompareSave
@@ -3696,6 +3704,8 @@ static const LanguageTable Table_TW = {
     L"放大鏡形狀", // Settings_Label_LoupeShape
     L"正方形", // Settings_Option_LoupeShapeSquare
     L"圓形", // Settings_Option_LoupeShapeCircle
+    L"全圖", // Settings_Option_LoupeShapeFullscreen
+    L"放大鏡倍率", // Settings_Label_LoupeZoom
     L"按住快捷鍵並滾動滑鼠滾輪可調節放大鏡尺寸。", // Settings_Tooltip_LoupeHotkey
     L"按住 Ctrl 並使用滑鼠左鍵拖曳可快速進入框選剪裁模式。", // Settings_Tooltip_CropModeHotkey
     L"儲存/匯出影像 (S)", // Toolbar_Tooltip_CompareSave
@@ -4456,6 +4466,8 @@ static const LanguageTable Table_JA = {
     L"ルーペの形状", // Settings_Label_LoupeShape
     L"四角形", // Settings_Option_LoupeShapeSquare
     L"円形", // Settings_Option_LoupeShapeCircle
+    L"全画面", // Settings_Option_LoupeShapeFullscreen
+    L"ルーペ倍率", // Settings_Label_LoupeZoom
     L"ショートカットキーを押しながらマウスホイールをスクロールすると、ルーペのサイズを調整できます。", // Settings_Tooltip_LoupeHotkey
     L"Ctrl キーを押しながら左クリックでドラッグすると、すばやく範囲選択してトリミングできます。", // Settings_Tooltip_CropModeHotkey
     L"画像を保存/エクスポート (S)", // Toolbar_Tooltip_CompareSave
@@ -5216,6 +5228,8 @@ static const LanguageTable Table_RU = {
     L"Форма экранной лупы", // Settings_Label_LoupeShape
     L"Квадратная", // Settings_Option_LoupeShapeSquare
     L"Круглая", // Settings_Option_LoupeShapeCircle
+    L"На весь экран", // Settings_Option_LoupeShapeFullscreen
+    L"Масштаб лупы", // Settings_Label_LoupeZoom
     L"Чтобы настроить размер лупы, удерживайте сочетание клавиш и вращайте колёсико мыши.", // Settings_Tooltip_LoupeHotkey
     L"Удерживайте Ctrl и перетаскивайте левую кнопку мыши для быстрого кадрирования.", // Settings_Tooltip_CropModeHotkey
     L"Сохранить / Экспорт (S)", // Toolbar_Tooltip_CompareSave
@@ -5976,6 +5990,8 @@ static const LanguageTable Table_DE = {
     L"Lupenform", // Settings_Label_LoupeShape
     L"Quadrat", // Settings_Option_LoupeShapeSquare
     L"Kreis", // Settings_Option_LoupeShapeCircle
+    L"Vollbild", // Settings_Option_LoupeShapeFullscreen
+    L"Lupen-Zoom", // Settings_Label_LoupeZoom
     L"Halten Sie die Tastenkombination gedrückt und scrollen Sie mit dem Mausrad, um die Lupengröße anzupassen.", // Settings_Tooltip_LoupeHotkey
     L"Halten Sie Strg gedrückt und ziehen Sie mit der linken Maustaste, um schnell zuzuschneiden.", // Settings_Tooltip_CropModeHotkey
     L"Bild speichern / exportieren (S)", // Toolbar_Tooltip_CompareSave
@@ -6736,6 +6752,8 @@ static const LanguageTable Table_ES = {
     L"Forma de la lupa", // Settings_Label_LoupeShape
     L"Cuadrado", // Settings_Option_LoupeShapeSquare
     L"Círculo", // Settings_Option_LoupeShapeCircle
+    L"Ventana completa", // Settings_Option_LoupeShapeFullscreen
+    L"Zoom de la lupa", // Settings_Label_LoupeZoom
     L"Mantenga presionada la tecla de acceso rápido y gire la rueda del mouse para ajustar el tamaño de la lupa.", // Settings_Tooltip_LoupeHotkey
     L"Mantenga presionado Ctrl y arrastre con el botón izquierdo del mouse para un recorte rápido.", // Settings_Tooltip_CropModeHotkey
     L"Guardar / Exportar (S)", // Toolbar_Tooltip_CompareSave
@@ -7496,6 +7514,8 @@ static const LanguageTable Table_FR = {
     L"Forme de la loupe", // Settings_Label_LoupeShape
     L"Carré", // Settings_Option_LoupeShapeSquare
     L"Cercle", // Settings_Option_LoupeShapeCircle
+    L"Plein écran", // Settings_Option_LoupeShapeFullscreen
+    L"Zoom de la loupe", // Settings_Label_LoupeZoom
     L"Maintenez la touche de raccourci enfoncée et faites défiler la molette de la souris pour ajuster la taille de la loupe.", // Settings_Tooltip_LoupeHotkey
     L"Maintenez la touche Ctrl enfoncée et faites glisser avec le bouton gauche de la souris pour un recadrage rapide.", // Settings_Tooltip_CropModeHotkey
     L"Enregistrer / Exporter (S)", // Toolbar_Tooltip_CompareSave
@@ -7832,6 +7852,8 @@ void Apply(const LanguageTable& t) {
   Settings_Label_LoupeShape = t.Settings_Label_LoupeShape;
   Settings_Option_LoupeShapeSquare = t.Settings_Option_LoupeShapeSquare;
   Settings_Option_LoupeShapeCircle = t.Settings_Option_LoupeShapeCircle;
+  Settings_Option_LoupeShapeFullscreen = t.Settings_Option_LoupeShapeFullscreen;
+  Settings_Label_LoupeZoom = t.Settings_Label_LoupeZoom;
   Settings_Tooltip_LoupeHotkey = t.Settings_Tooltip_LoupeHotkey;
   Settings_Tooltip_CropModeHotkey = t.Settings_Tooltip_CropModeHotkey;
   OSD_Copied = t.OSD_Copied;

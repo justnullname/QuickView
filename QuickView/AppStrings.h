@@ -743,6 +743,8 @@ namespace AppStrings {
     extern const wchar_t* Settings_Label_LoupeShape;
     extern const wchar_t* Settings_Option_LoupeShapeSquare;
     extern const wchar_t* Settings_Option_LoupeShapeCircle;
+    extern const wchar_t* Settings_Option_LoupeShapeFullscreen;
+    extern const wchar_t* Settings_Label_LoupeZoom;
     extern const wchar_t* Settings_Tooltip_LoupeHotkey;
     extern const wchar_t* Settings_Tooltip_CropModeHotkey;
 
