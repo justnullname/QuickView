@@ -3190,10 +3190,24 @@ void SettingsOverlay::BuildControlTab(SettingsTab& tabControl) {
         };
         tabControl.items.push_back(itemKeepVisible);
 
-        SettingsItem itemExpandClickOnly = { AppStrings::Settings_Label_GalleryExpandOnClickOnly, OptionType::Toggle, &g_config.GalleryExpandOnClickOnly };
-        itemExpandClickOnly.tooltipText = AppStrings::Settings_Tooltip_GalleryExpandOnClickOnly;
-        itemExpandClickOnly.onChange = []([[maybe_unused]] SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) { SaveConfig(); };
-        tabControl.items.push_back(itemExpandClickOnly);
+        m_galleryExpandTriggerIndex = g_config.GalleryExpandOnClickOnly ? 0 : 1;
+        SettingsItem itemExpandTrigger = { 
+            AppStrings::Settings_Label_GalleryExpandOnClickOnly, 
+            OptionType::Segment, 
+            nullptr, 
+            nullptr, 
+            &m_galleryExpandTriggerIndex, 
+            nullptr, 0, 0, 
+            { AppStrings::Settings_Option_TriggerClick, AppStrings::Settings_Option_TriggerHover } 
+        };
+        itemExpandTrigger.isNewOption = true;
+        itemExpandTrigger.onChange = [](SettingsOverlay* overlay, [[maybe_unused]] SettingsItem* item) {
+            if (overlay) {
+                g_config.GalleryExpandOnClickOnly = (overlay->m_galleryExpandTriggerIndex == 0);
+            }
+            SaveConfig();
+        };
+        tabControl.items.push_back(itemExpandTrigger);
 
         if (g_config.GalleryTriggerMode == 0) {
             SettingsItem itemAreaHeight = { AppStrings::Settings_Label_GalleryTriggerAreaHeight, OptionType::Slider, nullptr, &g_config.GalleryTriggerAreaHeight };
@@ -5065,6 +5079,8 @@ void SettingsOverlay::SetVisible(bool visible) {
              extern void AdjustWindowForOverlay(HWND hwnd, bool isClosed);
              if (!m_showUpdateToast) AdjustWindowForOverlay(m_hwnd, true);
         }
+        extern void RequestRepaint(QuickView::PaintLayer layer);
+        RequestRepaint(QuickView::PaintLayer::All);
     }
 }
 

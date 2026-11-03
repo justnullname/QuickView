@@ -626,6 +626,8 @@ const wchar_t *Settings_Label_KeepGalleryVisibleOnThumbnailClick = nullptr;
 const wchar_t *Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick = nullptr;
 const wchar_t *Settings_Label_GalleryExpandOnClickOnly = nullptr;
 const wchar_t *Settings_Tooltip_GalleryExpandOnClickOnly = nullptr;
+const wchar_t *Settings_Option_TriggerClick = nullptr;
+const wchar_t *Settings_Option_TriggerHover = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerAuto = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerDelay = nullptr;
 const wchar_t *Settings_Option_GalleryTriggerClick = nullptr;
@@ -1380,6 +1382,8 @@ struct LanguageTable {
     const wchar_t *Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
     const wchar_t *Settings_Label_GalleryExpandOnClickOnly;
     const wchar_t *Settings_Tooltip_GalleryExpandOnClickOnly;
+    const wchar_t *Settings_Option_TriggerClick;
+    const wchar_t *Settings_Option_TriggerHover;
     const wchar_t *Settings_Option_GalleryTriggerAuto;
     const wchar_t *Settings_Option_GalleryTriggerDelay;
     const wchar_t *Settings_Option_GalleryTriggerClick;
@@ -2133,11 +2137,13 @@ static const LanguageTable Table_EN = {
     L"Low: ", // HUD_Label_Low
     L"Ref: ", // HUD_Label_Ref
     L"Gallery Filmstrip (Top Hover)", // Settings_Header_GalleryTrigger
-    L"Trigger Mode", // Settings_Label_GalleryTriggerMode
+    L"Filmstrip Trigger Mode", // Settings_Label_GalleryTriggerMode
     L"Keep Visible After Clicking Thumbnail", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"This feature will automatically enable Window Lock and Keep Window Size On Navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Require Click on Expand Arrow", // Settings_Label_GalleryExpandOnClickOnly
+    L"Expand Arrow Trigger Mode", // Settings_Label_GalleryExpandOnClickOnly
     L"Requires clicking the arrow to expand to folder gallery view, preventing accidental triggers when hovering over thumbnails.", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"Click", // Settings_Option_TriggerClick
+    L"Hover", // Settings_Option_TriggerHover
     L"Auto Hover", // Settings_Option_GalleryTriggerAuto
     L"Hotspot Hover", // Settings_Option_GalleryTriggerDelay
     L"Click Hotspot", // Settings_Option_GalleryTriggerClick
@@ -2891,11 +2897,13 @@ static const LanguageTable Table_CN = {
     L"低: ", // HUD_Label_Low
     L"参考: ", // HUD_Label_Ref
     L"图库胶片带 (顶部悬浮)", // Settings_Header_GalleryTrigger
-    L"触发模式", // Settings_Label_GalleryTriggerMode
+    L"胶片带触发模式", // Settings_Label_GalleryTriggerMode
     L"缩略图切图时不自动隐藏", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"开启此功能将自动开启“锁定窗口”和“导航时保持窗口尺寸不变”。", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"展开箭头需点击触发", // Settings_Label_GalleryExpandOnClickOnly
+    L"展开箭头触发模式", // Settings_Label_GalleryExpandOnClickOnly
     L"展开至文件夹视图需要明确点击箭头，防止在胶片带中滑动时不慎悬停误触。", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"点击", // Settings_Option_TriggerClick
+    L"停留", // Settings_Option_TriggerHover
     L"自动悬停", // Settings_Option_GalleryTriggerAuto
     L"热点停留", // Settings_Option_GalleryTriggerDelay
     L"点击热点", // Settings_Option_GalleryTriggerClick
@@ -3649,11 +3657,13 @@ static const LanguageTable Table_TW = {
     L"低: ", // HUD_Label_Low
     L"參考: ", // HUD_Label_Ref
     L"圖庫底片帶 (頂部懸浮)", // Settings_Header_GalleryTrigger
-    L"觸發模式", // Settings_Label_GalleryTriggerMode
+    L"底片帶觸發模式", // Settings_Label_GalleryTriggerMode
     L"縮圖切圖時不自動隱藏", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"開啟此功能將自動開啟「鎖定視窗」和「導覽時保持視窗尺寸不變」。", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"展開箭頭需點擊觸發", // Settings_Label_GalleryExpandOnClickOnly
+    L"展開箭頭觸發模式", // Settings_Label_GalleryExpandOnClickOnly
     L"展開至資料夾檢視需要明確點擊箭頭，防止在底片帶中滑動時不慎懸停誤觸。", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"點擊", // Settings_Option_TriggerClick
+    L"停留", // Settings_Option_TriggerHover
     L"自動懸停", // Settings_Option_GalleryTriggerAuto
     L"熱點停留", // Settings_Option_GalleryTriggerDelay
     L"點擊熱點", // Settings_Option_GalleryTriggerClick
@@ -4407,11 +4417,13 @@ static const LanguageTable Table_JA = {
     L"低 : ", // HUD_Label_Low
     L"参考 : ", // HUD_Label_Ref
     L"ギャラリー フィルムストリップ (上部ホバー)", // Settings_Header_GalleryTrigger
-    L"トリガーモード", // Settings_Label_GalleryTriggerMode
+    L"フィルムストリップのトリガーモード", // Settings_Label_GalleryTriggerMode
     L"サムネイルクリック後に表示を維持", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"この機能をオンにすると、「ウィンドウをロック」と「ナビゲーション時にウィンドウサイズを維持」が自動的にオンになります。", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"展開矢印はクリックで発火", // Settings_Label_GalleryExpandOnClickOnly
+    L"展開矢印のトリガーモード", // Settings_Label_GalleryExpandOnClickOnly
     L"フォルダギャラリー表示への展開を矢印クリックに限定し、誤ったホバー展開を防止します。", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"クリック", // Settings_Option_TriggerClick
+    L"ホバー", // Settings_Option_TriggerHover
     L"自動ホバー", // Settings_Option_GalleryTriggerAuto
     L"ホットスポットホバー", // Settings_Option_GalleryTriggerDelay
     L"ホットスポットクリック", // Settings_Option_GalleryTriggerClick
@@ -5165,11 +5177,13 @@ static const LanguageTable Table_RU = {
     L"Низкая: ", // HUD_Label_Low
     L"Эталон: ", // HUD_Label_Ref
     L"Фотоплёнка (при наведении вверху)", // Settings_Header_GalleryTrigger
-    L"Режим триггера", // Settings_Label_GalleryTriggerMode
+    L"Режим триггера фотопленки", // Settings_Label_GalleryTriggerMode
     L"Не скрывать после щелчка", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"Эта функция автоматически включит блокировку окна и сохранение размера окна при навигации.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Требовать щелчок по стрелке развертывания", // Settings_Label_GalleryExpandOnClickOnly
+    L"Режим триггера стрелки развертывания", // Settings_Label_GalleryExpandOnClickOnly
     L"Для развертывания фотопленки требуется щелчок по стрелке, предотвращая случайное наведение.", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"Щелчок", // Settings_Option_TriggerClick
+    L"Наведение", // Settings_Option_TriggerHover
     L"Автонаведение", // Settings_Option_GalleryTriggerAuto
     L"Наведение на точку", // Settings_Option_GalleryTriggerDelay
     L"Щелчок по точке", // Settings_Option_GalleryTriggerClick
@@ -5923,11 +5937,13 @@ static const LanguageTable Table_DE = {
     L"Low: ", // HUD_Label_Low
     L"Ref: ", // HUD_Label_Ref
     L"Galerie-Filmstreifen (Hover oben)", // Settings_Header_GalleryTrigger
-    L"Trigger-Modus", // Settings_Label_GalleryTriggerMode
+    L"Filmstreifen-Triggermodus", // Settings_Label_GalleryTriggerMode
     L"Nach Klick sichtbar bleiben", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"Diese Funktion aktiviert automatisch die Fenstersperre und die Beibehaltung der Fenstergröße bei der Navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Klick auf Erweiterungspfeil erforderlich", // Settings_Label_GalleryExpandOnClickOnly
+    L"Erweiterungspfeil-Triggermodus", // Settings_Label_GalleryExpandOnClickOnly
     L"Erfordert Klick auf den Pfeil zum Erweitern der Galerie, verhindert versehentliches Hovern.", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"Klick", // Settings_Option_TriggerClick
+    L"Hover", // Settings_Option_TriggerHover
     L"Automatischer Hover", // Settings_Option_GalleryTriggerAuto
     L"Hotspot-Hover", // Settings_Option_GalleryTriggerDelay
     L"Hotspot-Klick", // Settings_Option_GalleryTriggerClick
@@ -6681,11 +6697,13 @@ static const LanguageTable Table_ES = {
     L"Low: ", // HUD_Label_Low
     L"Ref: ", // HUD_Label_Ref
     L"Tira de imágenes de galería (Hover superior)", // Settings_Header_GalleryTrigger
-    L"Modo de activación", // Settings_Label_GalleryTriggerMode
+    L"Modo de activación de tira de imágenes", // Settings_Label_GalleryTriggerMode
     L"Mantener visible tras clic", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"Esta función habilitará automáticamente el bloqueo de ventana y mantener el tamaño de la ventana en la navegación.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Requerir clic en flecha de expandir", // Settings_Label_GalleryExpandOnClickOnly
+    L"Modo de activación de flecha de expandir", // Settings_Label_GalleryExpandOnClickOnly
     L"Requiere hacer clic en la flecha para expandir, evitando activaciones accidentales al pasar el ratón.", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"Clic", // Settings_Option_TriggerClick
+    L"Pasar cursor", // Settings_Option_TriggerHover
     L"Hover automático", // Settings_Option_GalleryTriggerAuto
     L"Hover en punto caliente", // Settings_Option_GalleryTriggerDelay
     L"Clic en punto caliente", // Settings_Option_GalleryTriggerClick
@@ -7439,11 +7457,13 @@ static const LanguageTable Table_FR = {
     L"Low: ", // HUD_Label_Low
     L"Ref: ", // HUD_Label_Ref
     L"Film fixe de la galerie (Survol supérieur)", // Settings_Header_GalleryTrigger
-    L"Mode de déclenchement", // Settings_Label_GalleryTriggerMode
+    L"Mode de déclenchement du film", // Settings_Label_GalleryTriggerMode
     L"Maintenir visible après clic", // Settings_Label_KeepGalleryVisibleOnThumbnailClick
     L"Cette fonction activera automatiquement le verrouillage de la fenêtre et le maintien de la taille de la fenêtre lors de la navigation.", // Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick
-    L"Exiger clic sur flèche d'expansion", // Settings_Label_GalleryExpandOnClickOnly
+    L"Mode de déclenchement de la flèche", // Settings_Label_GalleryExpandOnClickOnly
     L"Exige un clic sur la flèche pour développer, évitant les déclenchements accidentels par survol.", // Settings_Tooltip_GalleryExpandOnClickOnly
+    L"Clic", // Settings_Option_TriggerClick
+    L"Survol", // Settings_Option_TriggerHover
     L"Survol automatique", // Settings_Option_GalleryTriggerAuto
     L"Survol du point chaud", // Settings_Option_GalleryTriggerDelay
     L"Clic sur le point chaud", // Settings_Option_GalleryTriggerClick
@@ -8206,6 +8226,8 @@ void Apply(const LanguageTable& t) {
   Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick = t.Settings_Tooltip_KeepGalleryVisibleOnThumbnailClick;
   Settings_Label_GalleryExpandOnClickOnly = t.Settings_Label_GalleryExpandOnClickOnly;
   Settings_Tooltip_GalleryExpandOnClickOnly = t.Settings_Tooltip_GalleryExpandOnClickOnly;
+  Settings_Option_TriggerClick = t.Settings_Option_TriggerClick;
+  Settings_Option_TriggerHover = t.Settings_Option_TriggerHover;
   Settings_Option_GalleryTriggerAuto = t.Settings_Option_GalleryTriggerAuto;
   Settings_Option_GalleryTriggerDelay = t.Settings_Option_GalleryTriggerDelay;
   Settings_Option_GalleryTriggerClick = t.Settings_Option_GalleryTriggerClick;

@@ -316,11 +316,12 @@ void GalleryOverlay::Update(float deltaTime, HWND hwnd) {
         repaintNeeded = true;
     }
     
-    // 6c. Hover Expand logic (Mode 0 & 1)
-    if (!g_config.GalleryExpandOnClickOnly && (g_config.GalleryTriggerMode == 0 || g_config.GalleryTriggerMode == 1) && 
+    // 6c. Hover Expand logic (when GalleryExpandOnClickOnly is false and not disabled)
+    if (!g_config.GalleryExpandOnClickOnly && g_config.GalleryTriggerMode != 3 && 
         m_mode == GalleryMode::Filmstrip && m_bottomHintHover && m_gridProgress < 0.01f) {
         m_expandHoverTimer += deltaTime;
-        if (m_expandHoverTimer >= g_config.GalleryDwellTime) { // Configurable dwell time for expand hotspot
+        const float dwellTime = (g_config.GalleryDwellTime > 0.01f) ? g_config.GalleryDwellTime : 0.25f;
+        if (m_expandHoverTimer >= dwellTime) { // Configurable dwell time for expand hotspot
             SetMode(GalleryMode::FullGrid);
             m_expandHoverTimer = 0.0f;
         }

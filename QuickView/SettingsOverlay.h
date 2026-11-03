@@ -331,5 +331,6 @@ private:
     D2D1_MATRIX_3X2_F m_bgTransform = D2D1::Matrix3x2F::Identity();
     int m_borderStrokeOption = 0; // [UX Fix] 3-state border options (0=None, 1=Fine, 2=Standard)
     int m_separatorPresetIndex = 0;
+    int m_galleryExpandTriggerIndex = 0; // 0=Click, 1=Hover
 };
 

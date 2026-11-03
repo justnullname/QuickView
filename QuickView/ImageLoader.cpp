@@ -14197,12 +14197,29 @@ HRESULT CImageLoader::LoadToFrame(
             return std::string_view::npos;
           };
 
-          size_t pos = 0;
-          constexpr std::string_view kTarget = "currentColor";
-          const std::string replacementColor = IsLightThemeActive() ? "#212121" : "#F0F0F0";
-          while ((pos = CiFind(svgContent, kTarget, pos)) != std::string_view::npos) {
-            svgContent.replace(pos, kTarget.size(), replacementColor);
-            pos += replacementColor.size();
+          const bool isLight = IsLightThemeActive();
+          const std::string contrastReplacement = isLight ? "#212121" : "#F0F0F0";
+
+          // 1. currentColor replacement
+          {
+            size_t pos = 0;
+            constexpr std::string_view kTarget = "currentColor";
+            while ((pos = CiFind(svgContent, kTarget, pos)) != std::string_view::npos) {
+              svgContent.replace(pos, kTarget.size(), contrastReplacement);
+              pos += contrastReplacement.size();
+            }
+          }
+
+          // 2. Dark theme fill replacement for dark icon sets (#212121, #242424, etc.)
+          if (!isLight) {
+            constexpr std::string_view kDarkFills[] = { "#212121", "#242424", "#202020", "#1f1f1f" };
+            for (const auto& darkFill : kDarkFills) {
+              size_t pos = 0;
+              while ((pos = CiFind(svgContent, darkFill, pos)) != std::string_view::npos) {
+                svgContent.replace(pos, darkFill.size(), "#F0F0F0");
+                pos += 7;
+              }
+            }
           }
         }
 

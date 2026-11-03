@@ -1492,6 +1492,7 @@ static void RestoreOverlayWindowState(HWND hwnd) {
     
     g_savedState.isValid = false;
     g_isImageDirty = true; // Force Image layer recalculation
+    RequestRepaint(QuickView::PaintLayer::All);
 }
 
 bool CheckWritePermission(const std::wstring& path) {
@@ -1797,7 +1798,8 @@ void DrawResourceIntoViewport(ID2D1DeviceContext* ctx,
     if (effectiveSize.width <= 0.0f || effectiveSize.height <= 0.0f) return;
 
     float fitScale = std::min(vpW / effectiveSize.width, vpH / effectiveSize.height);
-    if (effectiveSize.width < 200.0f && effectiveSize.height < 200.0f && fitScale > 1.0f) {
+    const bool isVector = (res.isSvg || res.isWebView);
+    if (!isVector && effectiveSize.width < 200.0f && effectiveSize.height < 200.0f && fitScale > 1.0f) {
         fitScale = 1.0f;
     }
 
@@ -3784,11 +3786,12 @@ static float ComputeBaseFitScaleForVisual(const VisualState& vs, float winW, flo
     }
 
     float baseFit = std::min(winW / vs.VisualSize.width, winH / vs.VisualSize.height);
+    const bool isVector = (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView);
     if (g_runtime.LockWindowSize) {
         if (!g_config.UpscaleSmallImagesWhenLocked && baseFit > 1.0f) {
             baseFit = 1.0f;
         }
-    } else if (vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f && baseFit > 1.0f) {
+    } else if (!isVector && vs.VisualSize.width < 200.0f && vs.VisualSize.height < 200.0f && baseFit > 1.0f) {
         baseFit = 1.0f;
     }
 
@@ -4122,7 +4125,8 @@ static float GetCurrentTotalScale(HWND hwnd) {
             fitScale = 1.0f;
         }
     } else {
-        if (imageWidth < 200.0f && imageHeight < 200.0f && fitScale > 1.0f) {
+        const bool isVector = (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView);
+        if (!isVector && imageWidth < 200.0f && imageHeight < 200.0f && fitScale > 1.0f) {
             fitScale = 1.0f;
         }
     }
@@ -5865,7 +5869,8 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
     float curBaseFit = 1.0f;
     if (hasImage) {
         curBaseFit = std::min(curClientW / imgW, curClientH / imgH);
-        if (imgW < 200.0f && imgH < 200.0f) {
+        const bool isVector = (GetPaneContext(PaneSlot::Primary).resource && (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView));
+        if (!isVector && imgW < 200.0f && imgH < 200.0f) {
             if (curBaseFit > 1.0f) curBaseFit = 1.0f;
         }
         absoluteZoom = GetPaneContext(PaneSlot::Primary).view.Zoom * curBaseFit;
@@ -5949,8 +5954,11 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
         float finalClientW = (float)(targetW - borderW);
         float finalClientH = (float)(targetH - borderH);
 
+        const bool isVector = (GetPaneContext(PaneSlot::Primary).resource && 
+                               (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView));
+
         float newBaseFit = std::min(finalClientW / imgW, finalClientH / imgH);
-        if (imgW < 200.0f && imgH < 200.0f) {
+        if (!isVector && imgW < 200.0f && imgH < 200.0f) {
             if (newBaseFit > 1.0f) newBaseFit = 1.0f;
         }
 
@@ -5958,7 +5966,11 @@ void AdjustWindowForOverlay(HWND hwnd, bool isClosed) {
             GetPaneContext(PaneSlot::Primary).view.Zoom = absoluteZoom / newBaseFit;
         }
 
-        SyncDCompState(hwnd, finalClientW, finalClientH);
+        if (UseSvgViewportRendering(GetPaneContext(PaneSlot::Primary).resource)) {
+            UpgradeSvgSurface(hwnd, GetPaneContext(PaneSlot::Primary).resource);
+        } else {
+            SyncDCompState(hwnd, finalClientW, finalClientH);
+        }
         if (g_compEngine) g_compEngine->Commit();
     }
 
@@ -6154,7 +6166,8 @@ void AdjustWindowToImage(HWND hwnd) {
     
     // [Fix] Do not auto-resize the window to absurdly small dimensions (e.g., 1x1 fake base or 4x4 skeleton)
     // if we haven't even finished loading the real image or if we're looking at a Titan Fake Base.
-    if (imgWidth <= 16 && imgHeight <= 16) return;
+    const bool isVector = (GetPaneContext(PaneSlot::Primary).resource.isSvg || GetPaneContext(PaneSlot::Primary).resource.isWebView);
+    if (!isVector && imgWidth <= 16 && imgHeight <= 16) return;
     
     // VisualState vs = GetVisualState(); // Refresh VS (Rotation state)
     
@@ -7796,6 +7809,19 @@ static InitialWindowMetrics CalculateInitialWindowMetrics(int imgWidth, int imgH
     return metrics;
 }
 
+static bool CreateSvgDocumentFromMemory(ID2D1DeviceContext* ctxBase, const uint8_t* xmlBytes, size_t xmlSize, float svgW, float svgH, ComPtr<ID2D1SvgDocument>& outDoc) {
+    if (!ctxBase || !xmlBytes || xmlSize == 0) return false;
+    ComPtr<ID2D1DeviceContext5> ctx5;
+    if (FAILED(ctxBase->QueryInterface(IID_PPV_ARGS(&ctx5))) || !ctx5) return false;
+
+    ComPtr<IStream> stream;
+    stream.Attach(SHCreateMemStream(xmlBytes, static_cast<UINT>(xmlSize)));
+    if (!stream) return false;
+
+    D2D1_SIZE_F vpSize = { svgW > 0.0f ? svgW : 100.0f, svgH > 0.0f ? svgH : 100.0f };
+    return SUCCEEDED(ctx5->CreateSvgDocument(stream.Get(), vpSize, &outDoc)) && outDoc;
+}
+
 static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialImagePath) {
     if (initialImagePath.empty() || !g_renderEngine || !g_compEngine) return false;
 
@@ -7811,17 +7837,40 @@ static bool TryPresentBootPreloadedFrame(HWND hwnd, const std::wstring& initialI
         return false;
     }
 
-    ComPtr<ID2D1Bitmap> bootBitmap;
-    if (FAILED(g_renderEngine->UploadRawFrameToGPU(*preloadedFrame, &bootBitmap)) || !bootBitmap) {
-        return false;
-    }
-
     auto& primaryPane = GetPaneContext(PaneSlot::Primary);
     primaryPane.resource.Reset();
-    primaryPane.resource.bitmap = bootBitmap;
+
+    if (preloadedFrame->IsSvg()) {
+        if (!preloadedFrame->svg || preloadedFrame->svg->xmlData.empty()) {
+            return false;
+        }
+        ComPtr<ID2D1SvgDocument> svgDoc;
+        if (!CreateSvgDocumentFromMemory(g_renderEngine->GetDeviceContext(),
+                                         preloadedFrame->svg->xmlData.data(),
+                                         preloadedFrame->svg->xmlData.size(),
+                                         preloadedFrame->svg->viewBoxW,
+                                         preloadedFrame->svg->viewBoxH,
+                                         svgDoc) || !svgDoc) {
+            return false;
+        }
+        primaryPane.resource.isSvg = true;
+        primaryPane.resource.svgW = preloadedFrame->svg->viewBoxW;
+        primaryPane.resource.svgH = preloadedFrame->svg->viewBoxH;
+        primaryPane.resource.svgDoc = svgDoc;
+    } else {
+        ComPtr<ID2D1Bitmap> bootBitmap;
+        if (FAILED(g_renderEngine->UploadRawFrameToGPU(*preloadedFrame, &bootBitmap)) || !bootBitmap) {
+            return false;
+        }
+        primaryPane.resource.bitmap = bootBitmap;
+    }
+
     primaryPane.path = initialImagePath;
     primaryPane.metadata = preloadedMeta;
     primaryPane.metadata.LoaderName = preloadedLoaderName;
+    if (primaryPane.resource.isSvg) {
+        primaryPane.metadata.Format = L"SVG";
+    }
     if (primaryPane.metadata.Width == 0) primaryPane.metadata.Width = preloadedFrame->width;
     if (primaryPane.metadata.Height == 0) primaryPane.metadata.Height = preloadedFrame->height;
     int frameExif = preloadedFrame->exifOrientation;
@@ -12895,7 +12944,7 @@ SKIP_EDGE_NAV:;
         
         // Check if Settings closed itself (e.g. Back button or Help transition)
         if (wasSettingsVisible && !g_settingsOverlay.IsVisible()) {
-             RequestRepaint(PaintLayer::Static);
+             RequestRepaint(PaintLayer::All);
              return 0;
         }
 
@@ -12930,7 +12979,7 @@ SKIP_EDGE_NAV:;
         if (g_settingsOverlay.IsVisible()) {
             g_settingsOverlay.SetVisible(false);
             RestoreOverlayWindowState(hwnd); // Restore window state
-            RequestRepaint(PaintLayer::Static); // Only Static needed to clear overlay
+            RequestRepaint(PaintLayer::All);
             return 0;
         }
         
@@ -14603,7 +14652,7 @@ SKIP_EDGE_NAV:;
             }
             if (wParam == VK_ESCAPE) {
                 g_settingsOverlay.Toggle(); // Close (which handles window restore)
-                RequestRepaint(PaintLayer::Static);
+                RequestRepaint(PaintLayer::All);
                 return 0;
             }
             if (g_settingsOverlay.OnKeyDown(wParam)) {
@@ -15108,36 +15157,15 @@ void ProcessEngineEvents(HWND hwnd) {
                      GetPaneContext(PaneSlot::Primary).resource.svgW = evt.rawFrame->svg->viewBoxW;
                      GetPaneContext(PaneSlot::Primary).resource.svgH = evt.rawFrame->svg->viewBoxH;
                      
-                     // Get D2D Context (from RenderEngine)
-                     ComPtr<ID2D1DeviceContext> ctxBase = g_renderEngine->GetDeviceContext();
-                     ComPtr<ID2D1DeviceContext5> ctx5;
-                     
-                     if (ctxBase && SUCCEEDED(ctxBase.As(&ctx5))) {
-                         const auto& xml = evt.rawFrame->svg->xmlData;
-                         
-                         // Create Stream
-                         ComPtr<IStream> stream;
-                         HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xml.size());
-                         if (hMem) {
-                             void* pMem = GlobalLock(hMem);
-                             if (pMem) {
-                                 memcpy(pMem, xml.data(), xml.size());
-                                 GlobalUnlock(hMem);
-                                 CreateStreamOnHGlobal(hMem, TRUE, &stream);
-                             } else GlobalFree(hMem);
+                     if (evt.rawFrame->svg && !evt.rawFrame->svg->xmlData.empty()) {
+                         if (CreateSvgDocumentFromMemory(g_renderEngine->GetDeviceContext(),
+                                                         evt.rawFrame->svg->xmlData.data(),
+                                                         evt.rawFrame->svg->xmlData.size(),
+                                                         GetPaneContext(PaneSlot::Primary).resource.svgW,
+                                                         GetPaneContext(PaneSlot::Primary).resource.svgH,
+                                                         GetPaneContext(PaneSlot::Primary).resource.svgDoc)) {
+                             resourceReady = true;
                          }
-                         
-                         if (stream) {
-                             D2D1_SIZE_F vpSize = { GetPaneContext(PaneSlot::Primary).resource.svgW, GetPaneContext(PaneSlot::Primary).resource.svgH };
-                             if (vpSize.width <= 0) vpSize.width = 100;
-                             if (vpSize.height <= 0) vpSize.height = 100;
-                             
-                             hr = ctx5->CreateSvgDocument(stream.Get(), vpSize, &GetPaneContext(PaneSlot::Primary).resource.svgDoc);
-                         } else hr = E_OUTOFMEMORY;
-                     } else hr = E_NOINTERFACE;
-                     
-                     if (SUCCEEDED(hr)) {
-                         resourceReady = true;
                      }
                      
                 } else if (evt.rawFrame->IsWebView()) {
@@ -15223,31 +15251,12 @@ void ProcessEngineEvents(HWND hwnd) {
                          res.isWebView = false;
                          res.svgW = evt.rawFrame->svg->viewBoxW;
                          res.svgH = evt.rawFrame->svg->viewBoxH;
-                         ComPtr<ID2D1DeviceContext> ctxBase = g_renderEngine ? g_renderEngine->GetDeviceContext() : nullptr;
-                         ComPtr<ID2D1DeviceContext5> ctx5;
-                         const auto& xml = evt.rawFrame->svg->xmlData;
-                         HRESULT hrDoc = E_FAIL;
-                         if (ctxBase && SUCCEEDED(ctxBase.As(&ctx5))) {
-                             ComPtr<IStream> stream;
-                             HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, xml.size());
-                             if (hMem) {
-                                 void* pMem = GlobalLock(hMem);
-                                 if (pMem) {
-                                     memcpy(pMem, xml.data(), xml.size());
-                                     GlobalUnlock(hMem);
-                                     CreateStreamOnHGlobal(hMem, TRUE, &stream);
-                                 } else {
-                                     GlobalFree(hMem);
-                                 }
-                             }
-                             if (stream) {
-                                 D2D1_SIZE_F vpSize = { res.svgW, res.svgH };
-                                 if (vpSize.width <= 0.0f) vpSize.width = 100.0f;
-                                 if (vpSize.height <= 0.0f) vpSize.height = 100.0f;
-                                 hrDoc = ctx5->CreateSvgDocument(stream.Get(), vpSize, &res.svgDoc);
-                             }
-                         }
-                         if (SUCCEEDED(hrDoc)) {
+                         if (CreateSvgDocumentFromMemory(g_renderEngine ? g_renderEngine->GetDeviceContext() : nullptr,
+                                                         evt.rawFrame->svg->xmlData.data(),
+                                                         evt.rawFrame->svg->xmlData.size(),
+                                                         res.svgW,
+                                                         res.svgH,
+                                                         res.svgDoc)) {
                              resourceReady = true;
                              g_osd.Show(hwnd, AppStrings::OSD_SvgStaticFallback, false);
                          }
